@@ -231,3 +231,39 @@ test('CodeBuddy elicitation validation follows standard email and date-time boun
     [{ fieldId: 'email', code: 'format' }],
   );
 });
+
+test('CodeBuddy required fields allow empty values unless size constraints reject them', () => {
+  const fields = parseCodebuddyElicitationFields({
+    type: 'object',
+    properties: {
+      note: { type: 'string' },
+      choices: {
+        type: 'array',
+        items: { enum: ['a', 'b'] },
+      },
+      constrainedNote: {
+        type: 'string',
+        minLength: 1,
+      },
+      constrainedChoices: {
+        type: 'array',
+        minItems: 1,
+        items: { enum: ['a', 'b'] },
+      },
+    },
+    required: ['note', 'choices', 'constrainedNote', 'constrainedChoices'],
+  });
+
+  assert.deepEqual(
+    validateCodebuddyElicitationValues(fields, {
+      note: '',
+      choices: [],
+      constrainedNote: '',
+      constrainedChoices: [],
+    }).map(({ fieldId, code }) => ({ fieldId, code })),
+    [
+      { fieldId: 'constrainedNote', code: 'minLength' },
+      { fieldId: 'constrainedChoices', code: 'minItems' },
+    ],
+  );
+});

@@ -9,6 +9,7 @@ function collector() {
     reasoning: (d) => events.push({ k: "reasoning", d }),
     toolCall: (name, args, id) => events.push({ k: "toolCall", name, args, id }),
     toolResult: (id, out, name) => events.push({ k: "toolResult", id, out, name }),
+    usage: (usage) => events.push({ k: "usage", usage }),
     status: (m) => events.push({ k: "status", m }),
     sessionId: (s) => events.push({ k: "sessionId", s }),
     emitDone: () => events.push({ k: "done" }),
@@ -146,16 +147,121 @@ test("getOrCreateSession closes stale session when options change", async () => 
   );
 });
 
+test("runTurn closes a session when initial send fails before fallback", async () => {
+  const session = fakeSession([], { sessionId: "failed-connect-session" });
+  session.send = async () => {
+    throw new Error("connect failed");
+  };
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => session,
+      unstable_v2_resumeSession: () => session,
+    }),
+  });
+
+  const { events, emitter } = collector();
+  const result = await mgr.runTurn({
+    sessionKey: "failed-connect-key",
+    prompt: "hello",
+    attachments: [],
+    options: { abortController: new AbortController() },
+    emitter,
+    sessionOptions: {},
+  });
+
+  assert.equal(result, null);
+  assert.equal(session.closed, true);
+  assert.equal(mgr.sessions.has("failed-connect-key"), false);
+  assert.deepEqual(events, []);
+});
+
+test("runTurn closes and evicts a session when response streaming fails", async () => {
+  const session = fakeSession([], { sessionId: "failed-stream-session" });
+  session.stream = async function* stream() {
+    throw new Error("transport died");
+  };
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => session,
+      unstable_v2_resumeSession: () => session,
+    }),
+  });
+
+  const { events, emitter } = collector();
+  const result = await mgr.runTurn({
+    sessionKey: "failed-stream-key",
+    prompt: "hello",
+    attachments: [],
+    options: { abortController: new AbortController() },
+    emitter,
+    sessionOptions: {},
+  });
+
+  assert.deepEqual(result, {
+    sessionId: "failed-stream-session",
+    usedV2: true,
+  });
+  assert.equal(session.closed, true);
+  assert.equal(mgr.sessions.has("failed-stream-key"), false);
+  assert.deepEqual(events, [
+    { k: "sessionId", s: "failed-stream-session" },
+    { k: "error", m: "transport died" },
+  ]);
+});
+
 test("computeOptionsFingerprint detects option changes", () => {
-  const base = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "high" };
-  const same = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "high" };
+  const base = {
+    cwd: "/tmp",
+    model: "glm-5",
+    maxTurns: 10,
+    effort: "high",
+    extraArgs: { "dangerously-skip-permissions": null },
+  };
+  const same = {
+    cwd: "/tmp",
+    model: "glm-5",
+    maxTurns: 10,
+    effort: "high",
+    extraArgs: { "dangerously-skip-permissions": null },
+  };
   const diffModel = { cwd: "/tmp", model: "glm-4", maxTurns: 10, effort: "high" };
   const diffMaxTurns = { cwd: "/tmp", model: "glm-5", maxTurns: 20, effort: "high" };
   const diffEffort = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "low" };
+  const diffExtraArgs = {
+    ...base,
+    extraArgs: { "dangerously-skip-permissions": "false" },
+  };
   assert.equal(computeOptionsFingerprint(base), computeOptionsFingerprint(same));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffModel));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffMaxTurns));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffEffort));
+  assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffExtraArgs));
+});
+
+test("getOrCreateSession never reuses sessions with unserializable option fingerprints", async () => {
+  const circular = {};
+  circular.self = circular;
+  const oldSession = fakeSession([], { sessionId: "circular-old" });
+  const replacementSession = fakeSession([], { sessionId: "circular-new" });
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => replacementSession,
+      unstable_v2_resumeSession: () => replacementSession,
+    }),
+  });
+  mgr.sessions.set("circular-key", {
+    session: oldSession,
+    fingerprint: computeOptionsFingerprint({ mcpServers: circular }),
+  });
+
+  const result = await mgr.getOrCreateSession({
+    sessionKey: "circular-key",
+    sessionOptions: { mcpServers: circular },
+  });
+
+  assert.equal(result, replacementSession);
+  assert.equal(oldSession.closed, true);
+  assert.equal(mgr.sessions.get("circular-key").session, replacementSession);
 });
 
 test("runTurn streams messages via V2 session when available", async () => {
@@ -181,7 +287,63 @@ test("runTurn streams messages via V2 session when available", async () => {
   assert.deepEqual(result, { sessionId: "sess-v2", usedV2: true });
   assert.ok(events.some((e) => e.k === "text" && e.t === "hi from v2"));
   assert.ok(events.some((e) => e.k === "done"));
+  assert.deepEqual(
+    events.filter((event) => event.k === "sessionId"),
+    [{ k: "sessionId", s: "sess-v2" }],
+  );
   assert.ok(session.sentMessages.includes("say hi"));
+});
+
+test("runTurn sends before connecting a resumed session and skips replayed history", async () => {
+  let explicitlyConnected = false;
+  const session = fakeSession([], { sessionId: "resumed-session" });
+  session.connect = async () => {
+    explicitlyConnected = true;
+  };
+  session.send = async (message) => {
+    session.sentMessages.push(message);
+  };
+  session.stream = async function* stream() {
+    if (explicitlyConnected) {
+      yield {
+        type: "assistant",
+        message: { content: [{ type: "text", text: "old response" }] },
+      };
+    }
+    yield {
+      type: "assistant",
+      message: { content: [{ type: "text", text: "new response" }] },
+    };
+  };
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => session,
+      unstable_v2_resumeSession: () => session,
+    }),
+  });
+  const { events, emitter } = collector();
+
+  const result = await mgr.runTurn({
+    sessionKey: "resumed-key",
+    prompt: "new question",
+    attachments: [],
+    options: { abortController: new AbortController() },
+    emitter,
+    sessionOptions: {},
+    resumeSessionId: "resumed-session",
+  });
+
+  assert.deepEqual(result, { sessionId: "resumed-session", usedV2: true });
+  assert.equal(explicitlyConnected, false);
+  assert.deepEqual(session.sentMessages, ["new question"]);
+  assert.deepEqual(
+    events.filter((event) => event.k === "text").map((event) => event.t),
+    ["new response"],
+  );
+  assert.deepEqual(
+    events.filter((event) => event.k === "sessionId"),
+    [{ k: "sessionId", s: "resumed-session" }],
+  );
 });
 
 test("runTurn does not connect or send when already aborted", async () => {
@@ -210,11 +372,12 @@ test("runTurn does not connect or send when already aborted", async () => {
   assert.deepEqual(events, [{ k: "done" }]);
 });
 
-test("runTurn does not send when aborted while the session connects", async () => {
-  let releaseConnect;
+test("runTurn does not stream when aborted while the initial send connects", async () => {
+  let releaseSend;
   const session = fakeSession([], { sessionId: "slow-connect-session" });
-  session.connect = () => new Promise((resolve) => {
-    releaseConnect = resolve;
+  session.send = (message) => new Promise((resolve) => {
+    session.sentMessages.push(message);
+    releaseSend = resolve;
   });
   const mgr = new CodebuddySessionManager({
     loadSdk: async () => ({
@@ -234,19 +397,62 @@ test("runTurn does not send when aborted while the session connects", async () =
     sessionOptions: {},
   });
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(typeof releaseConnect, "function");
+  assert.equal(typeof releaseSend, "function");
 
   controller.abort();
-  releaseConnect();
+  releaseSend();
   const result = await runPromise;
 
   assert.deepEqual(result, {
     sessionId: "slow-connect-session",
     usedV2: true,
   });
-  assert.deepEqual(session.sentMessages, []);
+  assert.deepEqual(session.sentMessages, ["must not run"]);
   assert.equal(session.interruptCalls, 1);
   assert.deepEqual(events, [{ k: "done" }]);
+});
+
+test("runTurn treats an abort rejection while streaming as normal completion", async () => {
+  let rejectStream;
+  const session = fakeSession([], { sessionId: "stream-abort-session" });
+  session.stream = async function* stream() {
+    await new Promise((_resolve, reject) => {
+      rejectStream = reject;
+    });
+  };
+  session.interrupt = async () => {
+    rejectStream?.(new Error("interrupted"));
+  };
+  const mgr = new CodebuddySessionManager({
+    loadSdk: async () => ({
+      unstable_v2_createSession: () => session,
+      unstable_v2_resumeSession: () => session,
+    }),
+  });
+  const controller = new AbortController();
+  const { events, emitter } = collector();
+
+  const runPromise = mgr.runTurn({
+    sessionKey: "stream-abort-key",
+    prompt: "wait",
+    attachments: [],
+    options: { abortController: controller },
+    emitter,
+    sessionOptions: {},
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+
+  assert.deepEqual(await runPromise, {
+    sessionId: "stream-abort-session",
+    usedV2: true,
+  });
+  assert.ok(mgr.sessions.has("stream-abort-key"));
+  assert.equal(session.closed, false);
+  assert.deepEqual(events, [
+    { k: "sessionId", s: "stream-abort-session" },
+    { k: "done" },
+  ]);
 });
 
 test("steer returns unsupported when no session exists", async () => {

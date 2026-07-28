@@ -245,7 +245,6 @@ function validateField(
 
   if (field.type === 'array') {
     if (!Array.isArray(value)) return issue(field, 'invalidType');
-    if (field.required && value.length === 0) return issue(field, 'required');
     if (field.minItems !== undefined && value.length < field.minItems) {
       return issue(field, 'minItems', { limit: field.minItems });
     }
@@ -281,7 +280,6 @@ function validateField(
   }
 
   if (typeof value !== 'string') return issue(field, 'invalidType');
-  if (field.required && value.trim().length === 0) return issue(field, 'required');
   const length = [...value].length;
   if (field.minLength !== undefined && length < field.minLength) {
     return issue(field, 'minLength', { limit: field.minLength });

@@ -227,3 +227,70 @@ test('CodebuddyElicitationCard can clear optional constrained values back to omi
     renderer!.unmount();
   });
 });
+
+test('CodebuddyElicitationCard submits required empty values when no size constraint forbids them', async () => {
+  const responses: Array<{
+    action: string;
+    content?: Record<string, unknown>;
+  }> = [];
+  let renderer: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(
+      <CodebuddyElicitationCard
+        elicitation={{
+          elicitationId: 'el-required-empty',
+          chatSessionId: 'chat-1',
+          request: {
+            requestedSchema: {
+              type: 'object',
+              properties: {
+                note: {
+                  type: 'string',
+                  default: 'temporary',
+                },
+                regions: {
+                  type: 'array',
+                  default: ['us-east'],
+                  items: { enum: ['us-east'] },
+                },
+              },
+              required: ['note', 'regions'],
+            },
+          },
+        }}
+        onRespond={async (action, content) => {
+          responses.push({ action, content });
+        }}
+      />,
+    );
+  });
+
+  const noteInput = renderer!.root.findByProps({ type: 'text' });
+  const regionInput = renderer!.root.findByProps({ type: 'checkbox' });
+  await act(async () => {
+    noteInput.props.onChange({ target: { value: '' } });
+    regionInput.props.onChange({ target: { checked: false } });
+  });
+
+  const continueButton = renderer!.root
+    .findAllByType('button')
+    .find((button) => button.children.join('') === 'ai.codebuddy.elicitation.accept');
+  assert.ok(continueButton);
+  assert.equal(continueButton.props.disabled, false);
+
+  await act(async () => {
+    continueButton.props.onClick();
+    await Promise.resolve();
+  });
+  assert.deepEqual(responses, [{
+    action: 'accept',
+    content: {
+      note: '',
+      regions: [],
+    },
+  }]);
+
+  await act(async () => {
+    renderer!.unmount();
+  });
+});

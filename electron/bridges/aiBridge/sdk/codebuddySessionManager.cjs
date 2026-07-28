@@ -19,6 +19,8 @@ const {
   buildCodebuddyHooks,
   buildCodebuddyElicitation,
   translateCodebuddyMessage,
+  inspectCodebuddyMessageContent,
+  codebuddyResultFallbackText,
   classifyCodebuddySpawnError,
 } = require("./codebuddyDriver.cjs");
 
@@ -36,9 +38,11 @@ function computeOptionsFingerprint(sessionOptions) {
     pathToCodebuddyCode: sessionOptions.pathToCodebuddyCode,
     mcpServers: sessionOptions.mcpServers,
     permissionMode: sessionOptions.permissionMode,
+    extraArgs: sessionOptions.extraArgs,
     systemPrompt: sessionOptions.systemPrompt,
     tools: sessionOptions.tools,
     disallowedTools: sessionOptions.disallowedTools,
+    settingSources: sessionOptions.settingSources,
     maxTurns: sessionOptions.maxTurns,
     agents: sessionOptions.agents,
     thinking: sessionOptions.thinking,
@@ -120,7 +124,7 @@ class CodebuddySessionManager {
     if (existing) {
       // Reuse only when serialized options still match, but always refresh
       // turn-scoped callbacks so events target the current request emitter.
-      if (existing.fingerprint === fingerprint) {
+      if (fingerprint !== null && existing.fingerprint === fingerprint) {
         try {
           if (refreshSessionCallbacks(existing, sessionOptions)) {
             return existing.session;
@@ -156,10 +160,14 @@ class CodebuddySessionManager {
       } else {
         session = createSession(sdkSessionOptions);
       }
-      await session.connect();
+      // Do not connect before the first send. In resume mode, send() marks the
+      // initialization as having a prompt so the SDK does not replay historical
+      // messages into the new turn's stream.
       this.sessions.set(sessionKey, { session, fingerprint, callbackState });
       return session;
     } catch {
+      // A factory failure can still leave a partially constructed session.
+      try { session?.close(); } catch { /* best effort */ }
       // V2 session creation failed — caller should fall back to query().
       return null;
     }
@@ -193,7 +201,12 @@ class CodebuddySessionManager {
     const promptInput = buildCodebuddyPromptInput(prompt, attachments);
     let sessionId = session.sessionId || null;
     let hasContent = false;
+    let hasAssistantText = false;
     let hasStreamedText = false;
+    let hasStreamedReasoning = false;
+    let hasTerminalError = false;
+    let resultFallbackText = "";
+    let emittedSessionId = null;
     let removeAbortListener = null;
 
     try {
@@ -216,19 +229,35 @@ class CodebuddySessionManager {
         }
       }
 
-      // Send the prompt (string or async iterable).
-      if (typeof promptInput === "string") {
-        await session.send(promptInput);
-      } else {
-        // Async iterable of UserMessage — send first message.
-        for await (const msg of promptInput) {
-          await session.send(msg);
+      try {
+        // Send before the initial connection so resumed sessions suppress
+        // historical replay and stream only the response to this prompt.
+        if (typeof promptInput === "string") {
+          await session.send(promptInput);
+        } else {
+          // Async iterable of UserMessage — send first message.
+          for await (const msg of promptInput) {
+            await session.send(msg);
+          }
         }
+      } catch {
+        // Initial transport setup happens inside send(). Release any acquired
+        // session lock/process before the caller falls back to legacy query().
+        this.closeSession(sessionKey);
+        if (signal?.aborted) {
+          emitter.emitDone();
+          return { sessionId, usedV2: true };
+        }
+        return null;
       }
 
       if (signal?.aborted) {
         emitter.emitDone();
         return { sessionId, usedV2: true };
+      }
+      if (sessionId) {
+        emitter.sessionId(sessionId);
+        emittedSessionId = sessionId;
       }
 
       // Stream responses.
@@ -243,23 +272,35 @@ class CodebuddySessionManager {
         if (message?.session_id && message.session_id !== sessionId) {
           sessionId = message.session_id;
         }
-        if (
-          message?.type === "stream_event" ||
-          (message?.type === "assistant" && Array.isArray(message?.message?.content) && message.message.content.length > 0)
-        ) {
-          hasContent = true;
+        if (sessionId && sessionId !== emittedSessionId) {
+          emitter.sessionId(sessionId);
+          emittedSessionId = sessionId;
         }
-        translateCodebuddyMessage(message, emitter, { skipAssistantText: hasStreamedText });
-        if (
-          message?.type === "stream_event" &&
-          message.event?.type === "content_block_delta" &&
-          message.event?.delta?.type === "text_delta" &&
-          message.event.delta.text
-        ) {
-          hasStreamedText = true;
-        }
+        const contentState = inspectCodebuddyMessageContent(message);
+        if (contentState.hasContent) hasContent = true;
+        if (contentState.hasText) hasAssistantText = true;
+        resultFallbackText ||= codebuddyResultFallbackText(message);
+        const translation = translateCodebuddyMessage(
+          message,
+          emitter,
+          {
+            skipAssistantText: hasStreamedText,
+            skipAssistantReasoning: hasStreamedReasoning,
+            skipSessionId: true,
+          },
+        );
+        if (translation?.terminalError) hasTerminalError = true;
+        if (contentState.streamedText) hasStreamedText = true;
+        if (contentState.streamedReasoning) hasStreamedReasoning = true;
       }
 
+      if (hasTerminalError) {
+        return { sessionId, usedV2: true };
+      }
+      if (!hasAssistantText && resultFallbackText) {
+        emitter.text(resultFallbackText);
+        hasContent = true;
+      }
       if (!hasContent && !options.abortController?.signal?.aborted) {
         emitter.emitError(
           "CodeBuddy returned an empty response. Run `codebuddy` in a terminal to log in, " +
@@ -270,6 +311,13 @@ class CodebuddySessionManager {
       emitter.emitDone();
       return { sessionId, usedV2: true };
     } catch (error) {
+      if (signal?.aborted) {
+        emitter.emitDone();
+        return { sessionId, usedV2: true };
+      }
+      // A stream failure means the transport is no longer safe to reuse. Close
+      // it now so the next turn can create/resume a fresh V2 session.
+      this.closeSession(sessionKey);
       const classified = classifyCodebuddySpawnError(error);
       if (classified.isSpawnEnoent) {
         emitter.emitError(

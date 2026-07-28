@@ -13,6 +13,7 @@
  *   resume, thinking mode config, and model listing.
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
+const { isLikelyNetcattyCliShellCommand } = require("./copilotDriver.cjs");
 const { randomUUID } = require("node:crypto");
 
 // Built-in tools that need interactive UI netcatty doesn't provide — they would
@@ -240,20 +241,33 @@ function buildCodebuddyQueryOptions({
       : systemPrompt;
   }
   // Effort level for model reasoning.
-  if (effort) options.effort = effort;
+  if (["low", "medium", "high", "xhigh"].includes(effort)) {
+    options.effort = effort;
+  }
   // Safety guardrails.
-  if (maxTurns != null && maxTurns > 0) options.maxTurns = maxTurns;
-  if (maxBudgetUsd != null && maxBudgetUsd > 0) options.maxBudgetUsd = maxBudgetUsd;
+  if (Number.isInteger(maxTurns) && maxTurns > 0) options.maxTurns = maxTurns;
+  if (Number.isFinite(maxBudgetUsd) && maxBudgetUsd > 0) {
+    options.maxBudgetUsd = maxBudgetUsd;
+  }
   // Fallback model when primary is unavailable.
-  if (fallbackModel) options.fallbackModel = fallbackModel;
+  if (typeof fallbackModel === "string" && fallbackModel.trim()) {
+    options.fallbackModel = fallbackModel.trim();
+  }
   // Sandbox settings.
-  if (sandbox && typeof sandbox === "object") options.sandbox = sandbox;
+  if (
+    sandbox &&
+    typeof sandbox === "object" &&
+    !Array.isArray(sandbox) &&
+    sandbox.enabled === true
+  ) {
+    options.sandbox = sandbox;
+  }
   // Custom subagent definitions.
   if (agents && typeof agents === "object") options.agents = agents;
   // Structured output format.
   if (outputFormat && typeof outputFormat === "object") options.outputFormat = outputFormat;
   // File checkpointing for rollback.
-  if (enableFileCheckpointing != null) options.enableFileCheckpointing = enableFileCheckpointing;
+  if (enableFileCheckpointing === true) options.enableFileCheckpointing = true;
   // Distributed tracing.
   if (traceId) options.traceId = traceId;
   if (parentSpanId) options.parentSpanId = parentSpanId;
@@ -294,7 +308,7 @@ function translateCodebuddyMessage(message, emitter, opts = {}) {
   const type = message.type;
 
   if (type === "system") {
-    if (message.session_id) emitter.sessionId(message.session_id);
+    if (!opts.skipSessionId && message.session_id) emitter.sessionId(message.session_id);
     if (message.message) emitter.status(message.message);
     return;
   }
@@ -312,13 +326,28 @@ function translateCodebuddyMessage(message, emitter, opts = {}) {
     return;
   }
 
+  if (type === "error") {
+    emitter.emitError(String(message.error || "CodeBuddy execution failed."));
+    return { terminalError: true };
+  }
+
   if (type === "assistant" && message.message && Array.isArray(message.message.content)) {
+    if (message.error) {
+      emitter.emitError(String(message.error));
+      return { terminalError: true };
+    }
     for (const block of message.message.content) {
       if (!block || typeof block !== "object") continue;
       if (block.type === "tool_use") {
         emitter.toolCall(block.name, block.input || {}, block.id);
       } else if (!opts.skipAssistantText && block.type === "text" && block.text) {
         emitter.text(block.text);
+      } else if (
+        !opts.skipAssistantReasoning &&
+        block.type === "thinking" &&
+        block.thinking
+      ) {
+        emitter.reasoning(block.thinking);
       }
     }
     return;
@@ -341,8 +370,26 @@ function translateCodebuddyMessage(message, emitter, opts = {}) {
     return;
   }
 
-  // result carries final duration/cost/usage — emit as status summary.
+  // result carries final duration/cost/usage.
   if (type === "result") {
+    const usage = message.usage;
+    if (usage && typeof usage === "object") {
+      const uncachedInputTokens = Number(usage.input_tokens) || 0;
+      const cachedInputTokens = Number(usage.cache_read_input_tokens) || 0;
+      const cacheCreationInputTokens = Number(usage.cache_creation_input_tokens) || 0;
+      // CodeBuddy follows Anthropic usage semantics: cache read/creation tokens
+      // are reported separately from input_tokens. AgentUsage expects total
+      // prompt tokens with cachedPromptTokens as the cached subset.
+      const inputTokens =
+        uncachedInputTokens + cachedInputTokens + cacheCreationInputTokens;
+      const outputTokens = Number(usage.output_tokens) || 0;
+      emitter.usage?.({
+        inputTokens,
+        cachedInputTokens,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens,
+      });
+    }
     const parts = [];
     if (message.num_turns) parts.push(`${message.num_turns} turns`);
     if (message.total_cost_usd > 0) parts.push(`$${message.total_cost_usd.toFixed(4)}`);
@@ -352,9 +399,53 @@ function translateCodebuddyMessage(message, emitter, opts = {}) {
     if (parts.length > 0) {
       emitter.status(`CodeBuddy: ${parts.join(", ")}`);
     }
-    return;
+    if (message.is_error) {
+      const detail = Array.isArray(message.errors) && message.errors.length > 0
+        ? message.errors.join("; ")
+        : message.subtype === "error_max_turns"
+          ? "CodeBuddy stopped after reaching the maximum turn limit."
+          : message.subtype === "error_max_budget_usd"
+            ? "CodeBuddy stopped after reaching the configured budget limit."
+            : "CodeBuddy execution failed.";
+      emitter.emitError(detail);
+      return { terminalError: true };
+    }
+    return { terminalError: false };
   }
   // tool_progress, compact_boundary — no renderer mapping.
+}
+
+function inspectCodebuddyMessageContent(message) {
+  const delta = message?.type === "stream_event" ? message.event?.delta : null;
+  const blocks = Array.isArray(message?.message?.content) ? message.message.content : [];
+  const streamedText = delta?.type === "text_delta" && Boolean(delta.text);
+  const streamedReasoning = delta?.type === "thinking_delta" && Boolean(delta.thinking);
+  const assistantText = message?.type === "assistant" &&
+    blocks.some((block) => block?.type === "text" && block.text);
+  const assistantReasoning = message?.type === "assistant" &&
+    blocks.some((block) => block?.type === "thinking" && block.thinking);
+  const assistantTool = message?.type === "assistant" &&
+    blocks.some((block) => block?.type === "tool_use");
+  const toolResult = message?.type === "user" &&
+    blocks.some((block) => block?.type === "tool_result");
+  return {
+    hasContent: streamedText || streamedReasoning ||
+      assistantText || assistantReasoning || assistantTool || toolResult,
+    hasText: streamedText || assistantText,
+    streamedText,
+    streamedReasoning,
+  };
+}
+
+function codebuddyResultFallbackText(message) {
+  if (message?.type !== "result" || message.is_error) return "";
+  if (typeof message.result === "string" && message.result) return message.result;
+  if (message.structured_output === undefined) return "";
+  try {
+    return JSON.stringify(message.structured_output, null, 2);
+  } catch {
+    return String(message.structured_output);
+  }
 }
 
 /** Classify a spawn failure for user-friendly error messages. */
@@ -413,6 +504,11 @@ function buildCodebuddyPromptInput(prompt, attachments) {
  * @param {Function} [args.queryFn] inject @tencent-ai/agent-sdk query (for tests)
  */
 async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn }) {
+  if (options.abortController?.signal?.aborted) {
+    emitter.emitDone();
+    return { sessionId: null };
+  }
+
   let query = queryFn;
   if (!query) {
     let sdk;
@@ -427,7 +523,11 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
 
   let sessionId = null;
   let hasContent = false;
+  let hasAssistantText = false;
   let hasStreamedText = false;
+  let hasStreamedReasoning = false;
+  let hasTerminalError = false;
+  let resultFallbackText = "";
   let queryRef = null;
   let removeAbortListener = null;
   try {
@@ -460,21 +560,28 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
       if (message?.session_id && message.session_id !== sessionId) {
         sessionId = message.session_id;
       }
-      if (
-        message?.type === "stream_event" ||
-        (message?.type === "assistant" && Array.isArray(message?.message?.content) && message.message.content.length > 0)
-      ) {
-        hasContent = true;
-      }
-      translateCodebuddyMessage(message, emitter, { skipAssistantText: hasStreamedText });
-      if (
-        message?.type === "stream_event" &&
-        message.event?.type === "content_block_delta" &&
-        message.event?.delta?.type === "text_delta" &&
-        message.event.delta.text
-      ) {
-        hasStreamedText = true;
-      }
+      const contentState = inspectCodebuddyMessageContent(message);
+      if (contentState.hasContent) hasContent = true;
+      if (contentState.hasText) hasAssistantText = true;
+      resultFallbackText ||= codebuddyResultFallbackText(message);
+      const translation = translateCodebuddyMessage(
+        message,
+        emitter,
+        {
+          skipAssistantText: hasStreamedText,
+          skipAssistantReasoning: hasStreamedReasoning,
+        },
+      );
+      if (translation?.terminalError) hasTerminalError = true;
+      if (contentState.streamedText) hasStreamedText = true;
+      if (contentState.streamedReasoning) hasStreamedReasoning = true;
+    }
+    if (hasTerminalError) {
+      return { sessionId };
+    }
+    if (!hasAssistantText && resultFallbackText) {
+      emitter.text(resultFallbackText);
+      hasContent = true;
     }
     if (!hasContent && !options.abortController?.signal?.aborted) {
       emitter.emitError(
@@ -486,6 +593,10 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
     emitter.emitDone();
     return { sessionId };
   } catch (error) {
+    if (options.abortController?.signal?.aborted) {
+      emitter.emitDone();
+      return { sessionId };
+    }
     const classified = classifyCodebuddySpawnError(error);
     if (classified.isSpawnEnoent) {
       emitter.emitError(
@@ -579,7 +690,18 @@ async function listCodebuddyModels({ pathToCodebuddyCode, env, queryFn }) {
  * @param {object} emitter  createStreamEmitter(...)
  * @returns {object} hooks map suitable for Options.hooks
  */
-function buildCodebuddyHooks(emitter) {
+function isAllowedCodebuddySkillsBash(command, allowedCliCommandPrefix) {
+  const text = String(command || "").trim();
+  const prefix = String(allowedCliCommandPrefix || "").trim();
+  if (!text || !prefix) return false;
+  if (text !== prefix && !text.startsWith(`${prefix} `)) return false;
+  return isLikelyNetcattyCliShellCommand(text);
+}
+
+function buildCodebuddyHooks(
+  emitter,
+  { toolIntegrationMode, additionalHooks, allowedCliCommandPrefix } = {},
+) {
   const makeHook = (hookEventName, extract) => ([{
     hooks: [async (input, _toolUseID, _opts) => {
       try {
@@ -589,12 +711,40 @@ function buildCodebuddyHooks(emitter) {
     }],
   }]);
 
-  return {
-    PreToolUse: makeHook("PreToolUse", (input) => ({
-      toolName: input.tool_name,
-      toolInput: input.tool_input,
-      toolUseId: input.tool_use_id,
-    })),
+  const hooks = {
+    PreToolUse: [{
+      hooks: [async (input, _toolUseID, _opts) => {
+        try {
+          emitter.emitEvent({
+            type: "hook",
+            hookEvent: "PreToolUse",
+            toolName: input.tool_name,
+            toolInput: input.tool_input,
+            toolUseId: input.tool_use_id,
+          });
+        } catch { /* best effort — never block the turn */ }
+        if (
+          toolIntegrationMode === "skills" &&
+          input.tool_name === "Bash" &&
+          (
+            input.tool_input?.run_in_background === true ||
+            !isAllowedCodebuddySkillsBash(
+              input.tool_input?.command,
+              allowedCliCommandPrefix,
+            )
+          )
+        ) {
+          return {
+            continue: true,
+            decision: "block",
+            reason:
+              "Only Netcatty CLI commands are allowed in Skills mode. " +
+              "Use the netcatty-tool-cli command prefix provided by the host.",
+          };
+        }
+        return { continue: true };
+      }],
+    }],
     PostToolUse: makeHook("PostToolUse", (input) => ({
       toolName: input.tool_name,
       toolInput: input.tool_input,
@@ -615,6 +765,11 @@ function buildCodebuddyHooks(emitter) {
       notificationType: input.notification_type,
     })),
   };
+  for (const [eventName, matchers] of Object.entries(additionalHooks || {})) {
+    if (!Array.isArray(matchers) || matchers.length === 0) continue;
+    hooks[eventName] = [...(hooks[eventName] || []), ...matchers];
+  }
+  return hooks;
 }
 
 // ---------------------------------------------------------------------------
@@ -633,13 +788,21 @@ function buildCodebuddyHooks(emitter) {
  * @returns {object} ElicitationHandler
  */
 function buildCodebuddyElicitation(emitter, pendingMap, { chatSessionId } = {}) {
+  const scopedId = (protocolElicitationId) => {
+    const rawId = String(protocolElicitationId || "");
+    if (!rawId) return "";
+    return chatSessionId
+      ? `codebuddy:${encodeURIComponent(String(chatSessionId))}:${encodeURIComponent(rawId)}`
+      : rawId;
+  };
   return {
     async create(request, { signal } = {}) {
       if (signal?.aborted) {
         return { action: "cancel" };
       }
-      const elicitationId = request?._meta?.["codebuddy.ai"]?.elicitationId
+      const protocolElicitationId = request?._meta?.["codebuddy.ai"]?.elicitationId
         || `elicitation_${randomUUID()}`;
+      const elicitationId = scopedId(protocolElicitationId);
 
       const previous = pendingMap.get(elicitationId);
       if (previous) {
@@ -687,13 +850,20 @@ function buildCodebuddyElicitation(emitter, pendingMap, { chatSessionId } = {}) 
       });
     },
     complete(notification) {
-      const elicitationId = String(notification?.elicitationId || "");
+      const protocolElicitationId = String(notification?.elicitationId || "");
+      const elicitationId = scopedId(protocolElicitationId);
       const pending = elicitationId ? pendingMap.get(elicitationId) : null;
       if (pending) {
         pendingMap.delete(elicitationId);
         pending.resolve({ action: "cancel" });
       }
-      emitter.emitEvent({ type: "elicitation-complete", notification });
+      emitter.emitEvent({
+        type: "elicitation-complete",
+        notification: {
+          ...notification,
+          elicitationId,
+        },
+      });
     },
   };
 }
@@ -799,6 +969,8 @@ module.exports = {
   buildCodebuddyQueryOptions,
   buildCodebuddyCanUseTool,
   translateCodebuddyMessage,
+  inspectCodebuddyMessageContent,
+  codebuddyResultFallbackText,
   classifyCodebuddySpawnError,
   buildCodebuddyPromptInput,
   buildCodebuddyThinkingEnv,
@@ -810,6 +982,7 @@ module.exports = {
   mapCodebuddyModels,
   codebuddyBuiltinTools,
   buildCodebuddyHooks,
+  isAllowedCodebuddySkillsBash,
   buildCodebuddyElicitation,
   getCodebuddyMcpStatus,
   getCodebuddyAccountInfo,

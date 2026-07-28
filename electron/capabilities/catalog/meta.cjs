@@ -60,6 +60,7 @@ const META_CAPABILITIES = [
     },
     surfaces: {
       builtin: { rpcMethod: "netcatty/listAttachments", mcpTool: "list_attachments" },
+      cli: { command: ["attachment", "list"] },
     },
   },
   {
@@ -78,6 +79,7 @@ const META_CAPABILITIES = [
     },
     surfaces: {
       builtin: { rpcMethod: "netcatty/readAttachment", mcpTool: "read_attachment" },
+      cli: { command: ["attachment", "read"] },
     },
   },
   {

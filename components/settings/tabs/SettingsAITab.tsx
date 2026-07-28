@@ -61,6 +61,7 @@ import {
   buildManagedAgentState,
   getInitialManagedAgentPaths,
   updateCodebuddyManagedEnv,
+  updateCodebuddyManagedOptions,
 } from "./ai/managedAgentState";
 import { splitClaudeEnv, buildClaudeEnv } from "./ai/claudeConfigEnv";
 import { splitCodebuddyEnv } from "./ai/codebuddyConfigEnv";
@@ -290,11 +291,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const codebuddyAdvancedOptions = codebuddyManagedAgent?.codebuddyOptions;
   const updateCodebuddyAdvancedOptions = useCallback(
     (options: import("../../../infrastructure/ai/types").CodebuddyAdvancedOptions | undefined) => {
-      setExternalAgents((prev) =>
-        prev.map((a) =>
-          a.id === "discovered_codebuddy" ? { ...a, codebuddyOptions: options } : a,
-        ),
-      );
+      setExternalAgents((prev) => updateCodebuddyManagedOptions(prev, options));
     },
     [setExternalAgents],
   );

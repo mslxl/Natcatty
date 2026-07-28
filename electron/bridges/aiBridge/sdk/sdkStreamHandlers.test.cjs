@@ -8,6 +8,7 @@ const {
   normalizeSdkListModelsResult,
   resolveSdkPromptPlacement,
   resolveSdkResumeSessionId,
+  shouldReplaySdkHistory,
   expireSiblingCursorCliModeSessions,
   resolveBackendKey,
   resolveSdkBackendBinPath,
@@ -439,6 +440,27 @@ test("buildSdkTurnPrompt replays history only when requested", () => {
   assert.equal(steadyStatePrompt, "latest question");
 });
 
+test("CodeBuddy does not replay renderer history when a persisted session can resume", () => {
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "codebuddy",
+    codexRuntime: "sdk",
+    resumeSessionId: "resumed-codebuddy",
+    hasInMemorySession: false,
+  }), false);
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "codebuddy",
+    codexRuntime: "sdk",
+    resumeSessionId: undefined,
+    hasInMemorySession: false,
+  }), true);
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "claude",
+    codexRuntime: "sdk",
+    resumeSessionId: "resumed-claude",
+    hasInMemorySession: false,
+  }), true);
+});
+
 test("buildSdkTurnPrompt stages attachments as local file hints", () => {
   const staged = [];
   const prompt = buildSdkTurnPrompt({
@@ -461,6 +483,20 @@ test("buildSdkTurnPrompt stages attachments as local file hints", () => {
     filePath: "/tmp/screen.png",
     base64Data: Buffer.from("img").toString("base64"),
   }]);
+});
+
+test("buildSdkTurnPrompt directs Skills-mode attachments to the controlled CLI", () => {
+  const prompt = buildSdkTurnPrompt({
+    prompt: "read it",
+    toolIntegrationMode: "skills",
+    attachments: [
+      { base64Data: "ZGF0YQ==", mediaType: "text/plain", filename: "notes.txt" },
+    ],
+    writeAttachmentToTemp: (attachment) => `/tmp/${attachment.filename}`,
+  });
+
+  assert.match(prompt, /attachment list\/read CLI commands/);
+  assert.doesNotMatch(prompt, /list_attachments|read_attachment/);
 });
 
 test("resolveSdkBackendBinPath prefers configured CodeBuddy path", () => {

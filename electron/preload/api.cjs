@@ -1554,7 +1554,36 @@ function createPreloadApi(ctx) {
   },
   // SDK external agent streaming
   aiSdkAgentStream: async (requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode, codebuddyOptions) => {
-    return ipcRenderer.invoke("netcatty:ai:sdk-agent:stream", { requestId, chatSessionId, sdkBackend, prompt, cwd, providerId, model, existingSessionId, historyMessages, images, toolIntegrationMode, defaultTargetSession, userSkillsContext, agentEnv, agentCommand, codexRuntime, permissionMode, ...(codebuddyOptions || {}) });
+    const advanced = codebuddyOptions && typeof codebuddyOptions === "object"
+      ? {
+          effort: codebuddyOptions.effort,
+          maxTurns: codebuddyOptions.maxTurns,
+          maxBudgetUsd: codebuddyOptions.maxBudgetUsd,
+          fallbackModel: codebuddyOptions.fallbackModel,
+          sandbox: codebuddyOptions.sandbox,
+          enableFileCheckpointing: codebuddyOptions.enableFileCheckpointing,
+        }
+      : {};
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:stream", {
+      requestId,
+      chatSessionId,
+      sdkBackend,
+      prompt,
+      cwd,
+      providerId,
+      model,
+      existingSessionId,
+      historyMessages,
+      images,
+      toolIntegrationMode,
+      defaultTargetSession,
+      userSkillsContext,
+      agentEnv,
+      agentCommand,
+      codexRuntime,
+      permissionMode,
+      ...advanced,
+    });
   },
   aiSdkAgentSteer: async (requestId, chatSessionId, prompt, images, clientUserMessageId) => {
     return ipcRenderer.invoke("netcatty:ai:sdk-agent:steer", {

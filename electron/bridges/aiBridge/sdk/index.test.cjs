@@ -5,6 +5,7 @@ const {
   listBackends,
   hasCodebuddyQueryOnlyOptions,
 } = require("./index.cjs");
+const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 test("registry exposes SDK backends", () => {
   assert.deepEqual(listBackends().sort(), ["claude", "codebuddy", "codex", "copilot", "cursor", "opencode"]);
@@ -36,7 +37,40 @@ test("CodeBuddy keeps V2 for SessionOptions fields and falls back for query-only
   }), false);
   assert.equal(hasCodebuddyQueryOnlyOptions({ maxBudgetUsd: 1 }), true);
   assert.equal(hasCodebuddyQueryOnlyOptions({ sandbox: { enabled: true } }), true);
+  assert.equal(hasCodebuddyQueryOnlyOptions({ sandbox: { enabled: false } }), false);
   assert.equal(hasCodebuddyQueryOnlyOptions({ fallbackModel: "fallback" }), true);
-  assert.equal(hasCodebuddyQueryOnlyOptions({ enableFileCheckpointing: false }), true);
+  assert.equal(hasCodebuddyQueryOnlyOptions({ enableFileCheckpointing: false }), false);
   assert.equal(hasCodebuddyQueryOnlyOptions({ outputFormat: { type: "json_schema" } }), true);
+});
+
+test("CodeBuddy forwards the explicit bypass opt-in to V2 sessions", async () => {
+  const originalRunTurn = codebuddySessionManager.runTurn;
+  let capturedSessionOptions;
+  codebuddySessionManager.runTurn = async ({ sessionOptions }) => {
+    capturedSessionOptions = sessionOptions;
+    return { sessionId: "v2-session", usedV2: true };
+  };
+
+  try {
+    const result = await getDriver("codebuddy").runTurn({
+      chatSessionId: "chat-1",
+      prompt: "hello",
+      attachments: [],
+      cwd: "/tmp",
+      env: {},
+      injectedMcpServers: [],
+      permissionMode: "auto",
+      toolIntegrationMode: "mcp",
+      emitter: {},
+    });
+
+    assert.deepEqual(capturedSessionOptions.extraArgs, {
+      "dangerously-skip-permissions": null,
+    });
+    assert.equal(capturedSessionOptions.permissionMode, "bypassPermissions");
+    assert.deepEqual(capturedSessionOptions.settingSources, []);
+    assert.deepEqual(result, { sessionId: "v2-session", usedV2: true });
+  } finally {
+    codebuddySessionManager.runTurn = originalRunTurn;
+  }
 });

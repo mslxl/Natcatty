@@ -148,7 +148,9 @@ export const CodebuddyElicitationCard: React.FC<{
                             );
                             return {
                               ...current,
-                              [field.id]: next.length === 0 ? undefined : next,
+                              [field.id]: next.length === 0 && !field.required
+                                ? undefined
+                                : next,
                             };
                           });
                         }}
@@ -216,7 +218,9 @@ export const CodebuddyElicitationCard: React.FC<{
                   markFieldTouched(field.id);
                   const raw = event.target.value;
                   const value = raw === ''
-                    ? undefined
+                    ? field.type === 'string' && field.required
+                      ? ''
+                      : undefined
                     : field.type === 'number' || field.type === 'integer'
                       ? Number(raw)
                       : raw;

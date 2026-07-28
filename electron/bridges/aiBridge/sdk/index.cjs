@@ -21,9 +21,9 @@ const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 function hasCodebuddyQueryOnlyOptions(options) {
   return Boolean(
     options.maxBudgetUsd ||
-    options.sandbox ||
+    options.sandbox?.enabled === true ||
     options.fallbackModel ||
-    options.enableFileCheckpointing != null ||
+    options.enableFileCheckpointing === true ||
     options.outputFormat,
   );
 }
@@ -179,7 +179,11 @@ const DRIVER_REGISTRY = {
         enableFileCheckpointing: ctx.enableFileCheckpointing,
         traceId: ctx.traceId,
         parentSpanId: ctx.parentSpanId,
-        hooks: ctx.hooks || codebuddy.buildCodebuddyHooks(ctx.emitter),
+        hooks: codebuddy.buildCodebuddyHooks(ctx.emitter, {
+          toolIntegrationMode: ctx.toolIntegrationMode,
+          additionalHooks: ctx.hooks,
+          allowedCliCommandPrefix: ctx.skillsCliCommandPrefix,
+        }),
         elicitation,
         canUseTool,
       });
@@ -203,6 +207,7 @@ const DRIVER_REGISTRY = {
           pathToCodebuddyCode: options.pathToCodebuddyCode,
           mcpServers: options.mcpServers,
           permissionMode: options.permissionMode,
+          extraArgs: options.extraArgs,
           systemPrompt: options.systemPrompt,
           hooks: options.hooks,
           elicitation: options.elicitation,
@@ -210,6 +215,7 @@ const DRIVER_REGISTRY = {
           includePartialMessages: true,
           tools: options.tools,
           disallowedTools: options.disallowedTools,
+          settingSources: options.settingSources,
           maxTurns: options.maxTurns,
           agents: options.agents,
           thinking: options.thinking,

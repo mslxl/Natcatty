@@ -330,6 +330,7 @@ function buildSdkTurnPrompt({
   historyMessages,
   replayHistory,
   attachments,
+  toolIntegrationMode,
   writeAttachmentToTemp = defaultWriteAttachmentToTemp,
   onStagedAttachment,
 }) {
@@ -365,10 +366,13 @@ function buildSdkTurnPrompt({
       }
     }
     if (hints.length > 0) {
+      const attachmentAccessHint = toolIntegrationMode === "skills"
+        ? "[If direct local filesystem tools are unavailable, use Netcatty's attachment list/read CLI commands described in the host context.]"
+        : "[If local filesystem tools are unavailable, use Netcatty's list_attachments and read_attachment MCP tools to inspect these user-supplied files.]";
       sections.push(
         [
           "[Attached files: these paths are local to the machine running Netcatty, not remote hosts. Inspect them locally if needed.]",
-          "[If local filesystem tools are unavailable, use Netcatty's list_attachments and read_attachment MCP tools to inspect these user-supplied files.]",
+          attachmentAccessHint,
           ...hints,
         ].join("\n"),
       );
@@ -379,6 +383,21 @@ function buildSdkTurnPrompt({
   return sections.length > 0
     ? `${sections.join("\n\n")}\n\n${trimmedPrompt}`
     : trimmedPrompt;
+}
+
+function shouldReplaySdkHistory({
+  backendKey,
+  codexRuntime,
+  resumeSessionId,
+  hasInMemorySession,
+}) {
+  // CodeBuddy and Codex App Server resumes restore their own conversation
+  // history. Replaying renderer history as well duplicates every prior turn
+  // after the main-process session map is recreated.
+  if (backendKey === "codebuddy" || codexRuntime === "app-server") {
+    return !resumeSessionId;
+  }
+  return !hasInMemorySession;
 }
 
 function registerSdkStreamHandlers(ctx) {
@@ -509,7 +528,12 @@ function registerSdkStreamHandlers(ctx) {
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
-          sdkRequestRuntimes.set(requestId, { backendKey, codexRuntime, binPath });
+          sdkRequestRuntimes.set(requestId, {
+            backendKey,
+            codexRuntime,
+            binPath,
+            toolIntegrationMode: effectiveMode,
+          });
 
           const hasConfiguredCommand = isPathLikeCommand(agentCommand);
           const sessionBinPath = backendKey === "cursor" && cursorAuthMode === "cli-login"
@@ -557,8 +581,14 @@ function registerSdkStreamHandlers(ctx) {
           const turnPrompt = buildSdkTurnPrompt({
             prompt,
             historyMessages: payload?.historyMessages,
-            replayHistory: codexRuntime === "app-server" ? !resumeSessionId : !hasInMemorySession,
+            replayHistory: shouldReplaySdkHistory({
+              backendKey,
+              codexRuntime,
+              resumeSessionId,
+              hasInMemorySession,
+            }),
             attachments: payload?.images,
+            toolIntegrationMode: effectiveMode,
             onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
           });
           mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
@@ -630,6 +660,9 @@ function registerSdkStreamHandlers(ctx) {
             injectedMcpServers,
             claudeSettings,
             toolIntegrationMode: effectiveMode,
+            skillsCliCommandPrefix: effectiveMode === "skills"
+              ? getSkillsCliInvocation().commandPrefix
+              : undefined,
             skillsPathAllowlist,
             emitter: driverEmitter,
             signal: abortController.signal,
@@ -843,6 +876,7 @@ function registerSdkStreamHandlers(ctx) {
         prompt,
         replayHistory: false,
         attachments: payload?.images,
+        toolIntegrationMode: runtime.toolIntegrationMode,
         onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
       });
       mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
@@ -1070,4 +1104,5 @@ module.exports = {
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,
+  shouldReplaySdkHistory,
 };
