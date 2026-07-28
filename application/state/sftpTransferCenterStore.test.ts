@@ -2978,3 +2978,63 @@ test("unstamped panel completed sticks after soft-resume bumps control epoch", a
   assert.equal(row?.status, "completed");
   assert.equal(store.getSnapshot().activeCount, 0);
 });
+
+test("unstamped terminal panel publish keeps newer main-process checkpoint", async (t) => {
+  const {
+    registerTransferWalk,
+    unregisterTransferWalk,
+    resetTransferWalkRegistryForTests,
+  } = await import("./sftp/transferWalkRegistry");
+  const {
+    bumpTransferControlEpoch,
+    resetTransferControlEpochsForTests,
+  } = await import("./sftp/transferControlEpoch");
+  resetTransferWalkRegistryForTests();
+  resetTransferControlEpochsForTests();
+  registerTransferWalk("file-fail");
+  // softResume bumps control epoch while walk stays live; both sides stay unstamped.
+  bumpTransferControlEpoch("file-fail");
+  bumpTransferControlEpoch("file-fail");
+  t.after(() => {
+    unregisterTransferWalk("file-fail");
+    resetTransferWalkRegistryForTests();
+    resetTransferControlEpochsForTests();
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [{
+    ...makeTask("file-fail", "transferring"),
+    transferredBytes: 100,
+    totalBytes: 1000,
+    checkpointBytes: 100,
+    lifecycleEpoch: undefined,
+  }]);
+
+  store.ingestBackgroundEvent({
+    type: "progress",
+    transferId: "file-fail",
+    transferred: 700,
+    totalBytes: 1000,
+    speed: 50,
+    checkpointBytes: 700,
+  });
+  assert.equal(store.getSnapshot().tasks[0]?.checkpointBytes, 700);
+
+  // Panel paints failed from a stale snapshot; accept terminal status but keep
+  // the newer resume watermarks already advanced by main-process progress.
+  store.publishOwner("panel-a", [{
+    ...makeTask("file-fail", "failed"),
+    transferredBytes: 100,
+    totalBytes: 1000,
+    checkpointBytes: 100,
+    speed: 0,
+    endTime: Date.now(),
+    error: "network reset",
+    lifecycleEpoch: undefined,
+  }]);
+
+  const row = store.getSnapshot().tasks.find((task) => task.id === "file-fail");
+  assert.equal(row?.status, "failed");
+  assert.equal(row?.transferredBytes, 700);
+  assert.equal(row?.checkpointBytes, 700);
+});

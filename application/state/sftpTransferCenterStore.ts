@@ -1156,16 +1156,23 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
               TERMINAL_OWNER_STATUSES.has(replacement.status)
               && !Number.isFinite(task.lifecycleEpoch)
               && !Number.isFinite(replacement.lifecycleEpoch);
-            if (!isUnstampedTerminalRace) {
-              merged = {
-                ...merged,
-                status: task.status,
-                lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
-                speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
-                transferredBytes: Math.max(task.transferredBytes ?? 0, merged.transferredBytes ?? 0),
-                checkpointBytes: Math.max(task.checkpointBytes ?? 0, merged.checkpointBytes ?? 0),
-              };
-            }
+            // Always keep newer progress/checkpoint watermarks. mergeOwnerPublishedTask
+            // returns terminal snapshots wholesale, so a stale failed/cancelled panel
+            // paint would otherwise roll bytes back past main-process progress.
+            // For the #2568 unstamped terminal race, accept the terminal status;
+            // otherwise keep the store's live status/epoch (soft pause/resume).
+            merged = {
+              ...merged,
+              ...(isUnstampedTerminalRace
+                ? {}
+                : {
+                  status: task.status,
+                  lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
+                  speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
+                }),
+              transferredBytes: Math.max(task.transferredBytes ?? 0, merged.transferredBytes ?? 0),
+              checkpointBytes: Math.max(task.checkpointBytes ?? 0, merged.checkpointBytes ?? 0),
+            };
           }
         }
         if (areTransferTasksEquivalent(task, merged)) return [task];
