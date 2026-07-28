@@ -82,12 +82,15 @@ function fingerprintJumpHosts(jumpHosts) {
   if (!Array.isArray(jumpHosts) || jumpHosts.length === 0) return "-";
   return jumpHosts.map((h) => {
     if (typeof h === "string") return h;
-    // Prefer stable vault ids when present so profile edits change the key.
+    // Include vault id AND effective endpoint/proxy so editing a jump host's
+    // hostname/port/user/proxy while keeping the same id still invalidates reuse.
     const id = h?.hostId || h?.id || "";
     const host = h?.hostname || h?.host || "";
     const port = h?.port || 22;
     const user = h?.username || "root";
-    return id ? `id:${id}` : `${host}:${port}:${user}`;
+    const hopProxy = fingerprintProxy(h?.proxy || h?.proxyConfig || null);
+    const ep = `${host}:${port}:${user}:${hopProxy}`;
+    return id ? `id:${id}|${ep}` : ep;
   }).join(">");
 }
 

@@ -231,19 +231,24 @@ function bindPortForwardChannels({
 
       server.listen(localPort, bindAddress, () => {
         console.log(`[PortForward] Local forwarding active: ${bindAddress}:${localPort} -> ${remoteHost}:${remotePort}`);
-        tunnelState.type = "local";
-        tunnelState.conn = conn;
-        tunnelState.server = server;
-        tunnelState.chainConnections = chainConnections;
-        tunnelState.status = "active";
-        tunnelState.webContentsId = sender.id;
-        tunnelState.pendingConn = null;
-        if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-          attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+        try {
+          tunnelState.type = "local";
+          tunnelState.conn = conn;
+          tunnelState.server = server;
+          tunnelState.chainConnections = chainConnections;
+          tunnelState.status = "active";
+          tunnelState.webContentsId = sender.id;
+          tunnelState.pendingConn = null;
+          if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
+            attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+          }
+          portForwardingTunnels.set(tunnelId, tunnelState);
+          sendStatus?.("active");
+          resolve({ tunnelId, success: true });
+        } catch (regErr) {
+          try { server.close(); } catch { /* ignore */ }
+          fail(regErr);
         }
-        portForwardingTunnels.set(tunnelId, tunnelState);
-        sendStatus?.("active");
-        resolve({ tunnelId, success: true });
       });
       return;
     }
@@ -291,25 +296,35 @@ function bindPortForwardChannels({
         }
 
         console.log(`[PortForward] Remote forwarding active: remote ${bindAddress}:${localPort} -> local ${remoteHost}:${remotePort}`);
-        tunnelState.type = "remote";
-        tunnelState.conn = conn;
-        tunnelState.server = null;
-        tunnelState.bindAddress = bindAddress;
-        tunnelState.localPort = localPort;
-        tunnelState.remoteHost = remoteHost;
-        tunnelState.remotePort = remotePort;
-        tunnelState.tcpConnectionHandler = onTcpConnection;
-        tunnelState.chainConnections = chainConnections;
-        tunnelState.status = "active";
-        tunnelState.webContentsId = sender.id;
-        tunnelState.pendingConn = null;
-        conn.on("tcp connection", onTcpConnection);
-        if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-          attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+        try {
+          tunnelState.type = "remote";
+          tunnelState.conn = conn;
+          tunnelState.server = null;
+          tunnelState.bindAddress = bindAddress;
+          tunnelState.localPort = localPort;
+          tunnelState.remoteHost = remoteHost;
+          tunnelState.remotePort = remotePort;
+          tunnelState.tcpConnectionHandler = onTcpConnection;
+          tunnelState.chainConnections = chainConnections;
+          tunnelState.status = "active";
+          tunnelState.webContentsId = sender.id;
+          tunnelState.pendingConn = null;
+          conn.on("tcp connection", onTcpConnection);
+          if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
+            attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+          }
+          portForwardingTunnels.set(tunnelId, tunnelState);
+          sendStatus?.("active");
+          resolve({ tunnelId, success: true });
+        } catch (regErr) {
+          try { conn.removeListener("tcp connection", onTcpConnection); } catch { /* ignore */ }
+          try {
+            if (typeof conn.unforwardIn === "function") {
+              conn.unforwardIn(bindAddress, localPort, () => {});
+            }
+          } catch { /* ignore */ }
+          fail(regErr);
         }
-        portForwardingTunnels.set(tunnelId, tunnelState);
-        sendStatus?.("active");
-        resolve({ tunnelId, success: true });
       });
       return;
     }
@@ -384,19 +399,24 @@ function bindPortForwardChannels({
 
       server.listen(localPort, bindAddress, () => {
         console.log(`[PortForward] Dynamic SOCKS5 proxy active on ${bindAddress}:${localPort}`);
-        tunnelState.type = "dynamic";
-        tunnelState.conn = conn;
-        tunnelState.server = server;
-        tunnelState.chainConnections = chainConnections;
-        tunnelState.status = "active";
-        tunnelState.webContentsId = sender.id;
-        tunnelState.pendingConn = null;
-        if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-          attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+        try {
+          tunnelState.type = "dynamic";
+          tunnelState.conn = conn;
+          tunnelState.server = server;
+          tunnelState.chainConnections = chainConnections;
+          tunnelState.status = "active";
+          tunnelState.webContentsId = sender.id;
+          tunnelState.pendingConn = null;
+          if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
+            attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+          }
+          portForwardingTunnels.set(tunnelId, tunnelState);
+          sendStatus?.("active");
+          resolve({ tunnelId, success: true });
+        } catch (regErr) {
+          try { server.close(); } catch { /* ignore */ }
+          fail(regErr);
         }
-        portForwardingTunnels.set(tunnelId, tunnelState);
-        sendStatus?.("active");
-        resolve({ tunnelId, success: true });
       });
       return;
     }
