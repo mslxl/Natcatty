@@ -10,6 +10,43 @@ const {
 } = require("../sdk/codexDriver.cjs");
 
 const INTERACTION_TIMEOUT_MS = 5 * 60 * 1000;
+const INTERRUPT_REQUEST_TIMEOUT_MS = 5_000;
+const INTERRUPT_GRACE_MS = 2_000;
+const MAX_STREAMED_PREFIX_CHARS = 256 * 1024;
+const MAX_TOOL_OUTPUT_CHARS = 1024 * 1024;
+
+function appendStreamState(map, itemId, delta, maxPrefixChars = MAX_STREAMED_PREFIX_CHARS) {
+  const text = String(delta || "");
+  const previous = map.get(itemId) || { prefix: "", length: 0, truncated: false };
+  const remaining = Math.max(0, maxPrefixChars - previous.prefix.length);
+  const next = {
+    prefix: remaining > 0 ? previous.prefix + text.slice(0, remaining) : previous.prefix,
+    length: previous.length + text.length,
+    truncated: previous.truncated || text.length > remaining,
+  };
+  map.set(itemId, next);
+  return next;
+}
+
+function appendToolOutputState(map, itemId, delta) {
+  const text = String(delta || "");
+  const previous = map.get(itemId) || { text: "", totalLength: 0, truncated: false };
+  const remaining = Math.max(0, MAX_TOOL_OUTPUT_CHARS - previous.text.length);
+  const next = {
+    text: remaining > 0 ? previous.text + text.slice(0, remaining) : previous.text,
+    totalLength: previous.totalLength + text.length,
+    truncated: previous.truncated || text.length > remaining,
+  };
+  map.set(itemId, next);
+  return next;
+}
+
+function formatBoundedToolOutput(value, totalLength = String(value || "").length) {
+  const text = String(value || "");
+  if (text.length <= MAX_TOOL_OUTPUT_CHARS && totalLength <= MAX_TOOL_OUTPUT_CHARS) return text;
+  const kept = text.slice(0, MAX_TOOL_OUTPUT_CHARS);
+  return `${kept}\n[output truncated: ${Math.max(totalLength, text.length)} characters total]`;
+}
 
 function resolveCodexPermissionConfig(permissionMode) {
   if (permissionMode === "observer") {
@@ -74,12 +111,21 @@ function normalizeGrantedPermissions(requested) {
 function stringifyMcpContent(result) {
   if (!result) return "";
   const content = Array.isArray(result.content) ? result.content : [];
-  const text = content.map((item) => {
-    if (item && typeof item === "object" && typeof item.text === "string") return item.text;
-    return typeof item === "string" ? item : JSON.stringify(item);
-  }).join("");
-  if (text) return text;
-  return result.structuredContent == null ? "" : JSON.stringify(result.structuredContent);
+  let text = "";
+  let totalLength = 0;
+  for (const item of content) {
+    const rawPart = item && typeof item === "object" && typeof item.text === "string"
+      ? item.text
+      : typeof item === "string" ? item : JSON.stringify(item);
+    const part = typeof rawPart === "string" ? rawPart : "";
+    totalLength += part.length;
+    if (text.length < MAX_TOOL_OUTPUT_CHARS) {
+      text += part.slice(0, MAX_TOOL_OUTPUT_CHARS - text.length);
+    }
+  }
+  if (text || totalLength > 0) return formatBoundedToolOutput(text, totalLength);
+  if (result.structuredContent == null) return "";
+  return formatBoundedToolOutput(JSON.stringify(result.structuredContent));
 }
 
 function buildTurnInput(prompt, attachments) {
@@ -134,12 +180,17 @@ class CodexAppServerRuntime {
     connectionFactory,
     sendInteractionRequest,
     sendInteractionCleared,
+    interruptRequestTimeoutMs = INTERRUPT_REQUEST_TIMEOUT_MS,
+    interruptGraceMs = INTERRUPT_GRACE_MS,
   } = {}) {
     this.appVersion = appVersion;
     this.connectionFactory = connectionFactory;
     this.sendInteractionRequest = sendInteractionRequest;
     this.sendInteractionCleared = sendInteractionCleared;
+    this.interruptRequestTimeoutMs = interruptRequestTimeoutMs;
+    this.interruptGraceMs = interruptGraceMs;
     this.connections = new Map();
+    this.preferredConnectionKey = null;
     this.activeByRequest = new Map();
     this.activeByThread = new Map();
     this.activeByTurn = new Map();
@@ -154,16 +205,13 @@ class CodexAppServerRuntime {
 
   #getConnection(binPath, env) {
     const connectionKey = buildCodexAppServerKey(binPath, env);
+    this.preferredConnectionKey = connectionKey;
     const existing = this.connections.get(connectionKey);
-    if (existing) return { connection: existing, connectionKey };
-    for (const [otherKey, otherConnection] of this.connections) {
-      const inUse = Array.from(this.activeByRequest.values())
-        .some((context) => context.connectionKey === otherKey);
-      if (!inUse) {
-        otherConnection.close();
-        this.connections.delete(otherKey);
-      }
+    if (existing) {
+      this.#closeIdleConnections(connectionKey);
+      return { connection: existing, connectionKey };
     }
+    this.#closeIdleConnections(connectionKey);
     const factory = this.connectionFactory || ((options) => new CodexAppServerConnection(options));
     const connection = factory({
       binPath,
@@ -175,6 +223,23 @@ class CodexAppServerRuntime {
     });
     this.connections.set(connectionKey, connection);
     return { connection, connectionKey };
+  }
+
+  #closeIdleConnections(keepKey = this.preferredConnectionKey) {
+    const activeConnectionKeys = new Set(
+      Array.from(this.activeByRequest.values(), (context) => context.connectionKey),
+    );
+    for (const [connectionKey, connection] of this.connections) {
+      if (connectionKey === keepKey || activeConnectionKeys.has(connectionKey)) continue;
+      this.connections.delete(connectionKey);
+      try { connection.close(); } catch {}
+    }
+  }
+
+  #refreshPreferredConnectionKey() {
+    if (this.preferredConnectionKey && this.connections.has(this.preferredConnectionKey)) return;
+    const connectionKeys = Array.from(this.connections.keys());
+    this.preferredConnectionKey = connectionKeys.at(-1) || null;
   }
 
   async runTurn({
@@ -243,6 +308,8 @@ class CodexAppServerRuntime {
       commandOutputByItem: new Map(),
       emittedToolCalls: new Set(),
       emittedToolResults: new Set(),
+      forceCancelTimer: null,
+      abortListener: null,
     };
     this.activeByRequest.set(requestId, context);
     this.activeByThread.set(this.#scopedKey(connectionKey, threadId), context);
@@ -251,6 +318,11 @@ class CodexAppServerRuntime {
       context.resolve = resolve;
       context.reject = reject;
     });
+    if (signal) {
+      context.abortListener = () => { void this.cancelTurn(requestId); };
+      signal.addEventListener("abort", context.abortListener, { once: true });
+      if (signal.aborted) context.abortListener();
+    }
 
     try {
       const turnResult = await connection.request("turn/start", {
@@ -366,17 +438,78 @@ class CodexAppServerRuntime {
     }
     context.turnId = turnId;
     this.activeByTurn.set(this.#scopedKey(context.connectionKey, turnId), context);
-    if (context.cancelRequested) void this.#interruptContext(context);
+    if (context.cancelRequested) void this.#interruptAndSchedule(context);
   }
 
   #interruptContext(context) {
     if (!context.turnId) return Promise.resolve(false);
     if (context.interruptPromise) return context.interruptPromise;
-    context.interruptPromise = context.connection.request("turn/interrupt", {
+    let timeout;
+    const request = Promise.resolve().then(() => context.connection.request("turn/interrupt", {
       threadId: context.threadId,
       turnId: context.turnId,
-    }, 5_000).then(() => true).catch(() => false);
+    }, this.interruptRequestTimeoutMs)).then(() => true).catch(() => false);
+    const deadline = new Promise((resolve) => {
+      timeout = setTimeout(() => resolve(false), this.interruptRequestTimeoutMs);
+      timeout.unref?.();
+    });
+    context.interruptPromise = Promise.race([request, deadline])
+      .finally(() => clearTimeout(timeout));
     return context.interruptPromise;
+  }
+
+  #scheduleForcedCancellation(context, delayMs) {
+    if (context.settled) return;
+    clearTimeout(context.forceCancelTimer);
+    context.forceCancelTimer = setTimeout(() => {
+      this.#forceCancelContext(context, "Codex App Server did not complete the interrupted turn");
+    }, Math.max(0, delayMs));
+    context.forceCancelTimer.unref?.();
+  }
+
+  async #interruptAndSchedule(context) {
+    if (context.settled) return;
+    if (!context.turnId) {
+      this.#scheduleForcedCancellation(
+        context,
+        this.interruptRequestTimeoutMs + this.interruptGraceMs,
+      );
+      return;
+    }
+    const interrupted = await this.#interruptContext(context);
+    if (context.settled) return;
+    if (!interrupted) {
+      this.#forceCancelContext(context, "Codex App Server could not interrupt the turn");
+      return;
+    }
+    this.#scheduleForcedCancellation(context, this.interruptGraceMs);
+  }
+
+  #forceCancelContext(context, reason) {
+    if (context.settled) return;
+    context.settled = true;
+    clearTimeout(context.forceCancelTimer);
+    context.forceCancelTimer = null;
+    this.#closeReasoning(context);
+    this.#clearInteractionsForContext(context, "cancel");
+    context.emitter.emitDone();
+    context.resolve();
+
+    const connection = this.connections.get(context.connectionKey);
+    if (connection === context.connection) {
+      this.connections.delete(context.connectionKey);
+      try { connection.close(); } catch {}
+      this.#refreshPreferredConnectionKey();
+    }
+    const error = new Error(reason);
+    for (const candidate of this.activeByRequest.values()) {
+      if (candidate === context || candidate.connectionKey !== context.connectionKey || candidate.settled) continue;
+      candidate.settled = true;
+      clearTimeout(candidate.forceCancelTimer);
+      candidate.forceCancelTimer = null;
+      this.#clearInteractionsForContext(candidate, "cancel");
+      candidate.reject(error);
+    }
   }
 
   #findContext(connectionKey, params) {
@@ -413,21 +546,18 @@ class CodexAppServerRuntime {
         this.#assignTurnId(context, params.turn?.id);
         return;
       case "item/agentMessage/delta": {
-        const previous = context.streamedTextByItem.get(params.itemId) || "";
-        context.streamedTextByItem.set(params.itemId, previous + String(params.delta || ""));
+        appendStreamState(context.streamedTextByItem, params.itemId, params.delta);
         emitter.text(params.delta || "");
         return;
       }
       case "item/reasoning/summaryTextDelta": {
-        const previous = context.streamedReasoningByItem.get(params.itemId) || "";
-        context.streamedReasoningByItem.set(params.itemId, previous + String(params.delta || ""));
+        appendStreamState(context.streamedReasoningByItem, params.itemId, params.delta);
         emitter.reasoning(params.delta || "");
         context.reasoningOpen = true;
         return;
       }
       case "item/commandExecution/outputDelta": {
-        const previous = context.commandOutputByItem.get(params.itemId) || "";
-        context.commandOutputByItem.set(params.itemId, previous + String(params.delta || ""));
+        appendToolOutputState(context.commandOutputByItem, params.itemId, params.delta);
         return;
       }
       case "item/started":
@@ -506,17 +636,21 @@ class CodexAppServerRuntime {
       case "agentMessage": {
         if (!completed) return;
         this.#closeReasoning(context);
-        const streamed = context.streamedTextByItem.get(item.id) || "";
-        if (item.text && item.text.startsWith(streamed)) emitter.text(item.text.slice(streamed.length));
-        else if (item.text && !streamed) emitter.text(item.text);
+        const streamed = context.streamedTextByItem.get(item.id);
+        context.streamedTextByItem.delete(item.id);
+        if (item.text && streamed && item.text.startsWith(streamed.prefix)) {
+          if (item.text.length > streamed.length) emitter.text(item.text.slice(streamed.length));
+        } else if (item.text && !streamed) emitter.text(item.text);
         return;
       }
       case "reasoning": {
         if (!completed) return;
         const finalText = Array.isArray(item.summary) ? item.summary.join("\n") : "";
-        const streamed = context.streamedReasoningByItem.get(item.id) || "";
-        if (finalText && finalText.startsWith(streamed)) emitter.reasoning(finalText.slice(streamed.length));
-        else if (finalText && !streamed) emitter.reasoning(finalText);
+        const streamed = context.streamedReasoningByItem.get(item.id);
+        context.streamedReasoningByItem.delete(item.id);
+        if (finalText && streamed && finalText.startsWith(streamed.prefix)) {
+          if (finalText.length > streamed.length) emitter.reasoning(finalText.slice(streamed.length));
+        } else if (finalText && !streamed) emitter.reasoning(finalText);
         context.reasoningOpen = true;
         this.#closeReasoning(context);
         return;
@@ -525,7 +659,14 @@ class CodexAppServerRuntime {
         const toolName = "codex.command";
         this.#emitToolCallOnce(context, item, toolName, { command: item.command, cwd: item.cwd });
         if (completed) {
-          const output = item.aggregatedOutput ?? context.commandOutputByItem.get(item.id) ?? "";
+          const streamedOutput = context.commandOutputByItem.get(item.id);
+          context.commandOutputByItem.delete(item.id);
+          const output = item.aggregatedOutput == null
+            ? formatBoundedToolOutput(
+                streamedOutput?.text || "",
+                streamedOutput?.totalLength || 0,
+              )
+            : formatBoundedToolOutput(item.aggregatedOutput);
           const suffix = item.exitCode == null ? "" : `\n[exit code: ${item.exitCode}]`;
           this.#emitToolResultOnce(context, item, `${output}${suffix}`, toolName);
         }
@@ -560,6 +701,8 @@ class CodexAppServerRuntime {
   #completeTurn(context, turn) {
     if (context.settled) return;
     context.settled = true;
+    clearTimeout(context.forceCancelTimer);
+    context.forceCancelTimer = null;
     this.#closeReasoning(context);
     this.#clearInteractionsForContext(context, "cancel");
     if (turn?.status === "failed") {
@@ -713,8 +856,7 @@ class CodexAppServerRuntime {
     if (!context) return false;
     context.cancelRequested = true;
     this.#clearInteractionsForContext(context, "cancel");
-    if (!context.turnId) return true;
-    await this.#interruptContext(context);
+    await this.#interruptAndSchedule(context);
     return true;
   }
 
@@ -726,21 +868,33 @@ class CodexAppServerRuntime {
 
   #handleConnectionFatal(connectionKey, error) {
     const connection = this.connections.get(connectionKey);
-    if (connection) this.connections.delete(connectionKey);
+    if (connection) {
+      this.connections.delete(connectionKey);
+      this.#refreshPreferredConnectionKey();
+    }
     const contexts = Array.from(this.activeByRequest.values())
       .filter((context) => context.connectionKey === connectionKey);
     for (const context of contexts) {
       if (context.settled) continue;
       context.settled = true;
+      clearTimeout(context.forceCancelTimer);
+      context.forceCancelTimer = null;
       this.#clearInteractionsForContext(context, "cancel");
       context.reject(error);
     }
   }
 
   #removeContext(context) {
+    clearTimeout(context.forceCancelTimer);
+    context.forceCancelTimer = null;
+    if (context.abortListener && context.signal) {
+      context.signal.removeEventListener("abort", context.abortListener);
+      context.abortListener = null;
+    }
     this.activeByRequest.delete(context.requestId);
     this.activeByThread.delete(this.#scopedKey(context.connectionKey, context.threadId));
     if (context.turnId) this.activeByTurn.delete(this.#scopedKey(context.connectionKey, context.turnId));
+    this.#closeIdleConnections();
   }
 
   close() {
@@ -749,9 +903,12 @@ class CodexAppServerRuntime {
     }
     for (const [, connection] of this.connections) connection.close();
     this.connections.clear();
+    this.preferredConnectionKey = null;
     for (const context of this.activeByRequest.values()) {
       if (!context.settled) {
         context.settled = true;
+        clearTimeout(context.forceCancelTimer);
+        context.forceCancelTimer = null;
         context.reject(new Error("Codex App Server shut down"));
       }
     }

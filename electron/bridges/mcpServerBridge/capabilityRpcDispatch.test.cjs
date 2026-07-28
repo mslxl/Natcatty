@@ -267,6 +267,23 @@ test("dispatchCapabilityRpc routes portforward start to portforward service", as
   assert.equal(result.ruleId, "rule-1");
 });
 
+test("dispatchCapabilityRpc lists port forwards from the configured runtime", async () => {
+  const calls = [];
+  const dispatch = createTestDispatcher({
+    listPortForwards: async () => {
+      calls.push("list");
+      return [{ tunnelId: "worker-pf", status: "active" }];
+    },
+  });
+
+  const result = await dispatch("portforward/tunnels/list", {});
+  assert.deepEqual(result, {
+    ok: true,
+    tunnels: [{ tunnelId: "worker-pf", status: "active" }],
+  });
+  assert.deepEqual(calls, ["list"]);
+});
+
 test("dispatchCapabilityRpc reads permissionMode from deps on each call", async () => {
   const seenModes = [];
   const mutableDeps = { permissionMode: PERMISSION_MODES.CONFIRM };

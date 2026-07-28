@@ -27,6 +27,9 @@
  */
 
 const { randomUUID, createHash } = require("node:crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 /**
  * Default idle park after last lease returns (5 minutes).
@@ -34,6 +37,12 @@ const { randomUUID, createHash } = require("node:crypto");
  * Positive = park that many ms then end.
  */
 const DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS = 5 * 60_000;
+
+/**
+ * Global safety bound for authenticated transports with no active leases.
+ * Active transports never count toward this limit and are never evicted.
+ */
+const DEFAULT_MAX_IDLE_SSH_TRANSPORTS = 128;
 
 /** Storage key mirrored in infrastructure/config/storageKeys.ts (main + renderer). */
 const STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS = "netcatty_ssh_transport_idle_ttl_ms_v1";
@@ -51,14 +60,169 @@ const transportsById = new Map();
 const transportIdsByEndpoint = new Map();
 /** @type {Map<string, { transport: object, holder: object|null }>} leaseId -> entry */
 const leasesById = new Map();
+/** @type {Map<string, Set<object>>} endpointKey -> pending physical dials */
+const pendingDialsByEndpoint = new Map();
+/** @type {Map<string, object>} oldest -> newest idle transport */
+const idleTransportsLru = new Map();
 
 let defaultIdleTtlMs = resolveEnvIdleTtlMs(DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS);
+let maxIdleTransports = DEFAULT_MAX_IDLE_SSH_TRANSPORTS;
 let timerApi = {
   setTimeout: (...args) => setTimeout(...args),
   clearTimeout: (...args) => clearTimeout(...args),
 };
 let nowFn = () => Date.now();
 let nextLeaseSeq = 0;
+
+function removePendingDial(record) {
+  if (!record?.endpointKey) return;
+  const records = pendingDialsByEndpoint.get(record.endpointKey);
+  if (!records) return;
+  records.delete(record);
+  if (records.size === 0) pendingDialsByEndpoint.delete(record.endpointKey);
+}
+
+/**
+ * Atomically choose whether an opener should reuse, join, or lead a physical
+ * SSH dial. Keeping this registry beside the authenticated transport index
+ * closes the gap where two callers both observe "no transport" and connect.
+ */
+function beginTransportDial(endpoint, opts = {}) {
+  const kind = opts?.kind === "shell" ? "shell" : "channel";
+  const reusable = findTransportByEndpoint(endpoint, { kind });
+  if (reusable) {
+    return { role: "reuse", transport: reusable, endpoint, kind };
+  }
+
+  const normalizedEndpoint = normalizeEndpoint(endpoint);
+  const endpointKey = buildEndpointKey(normalizedEndpoint);
+  if (!endpointKey) {
+    throw new Error("Cannot coordinate SSH dial without a valid endpoint");
+  }
+
+  const pending = pendingDialsByEndpoint.get(endpointKey);
+  if (pending) {
+    for (const record of pending) {
+      if (record.settled) continue;
+      // Reuse is evaluated from the waiter's requirements against the leader's
+      // negotiated policy. This preserves ForwardAgent's asymmetric channel
+      // rule and exact shell rule while the connection is still being opened.
+      if (endpointAllowsReuse(normalizedEndpoint, record.endpoint, kind)) {
+        return {
+          role: "join",
+          promise: record.promise,
+          endpoint: normalizedEndpoint,
+          kind,
+          _record: record,
+        };
+      }
+    }
+  }
+
+  let resolvePromise;
+  let rejectPromise;
+  const promise = new Promise((resolve, reject) => {
+    resolvePromise = resolve;
+    rejectPromise = reject;
+  });
+  // A leader may fail before any waiter joins. Mark the rejection observed
+  // without changing what actual waiters receive from the original promise.
+  promise.catch(() => {});
+  const record = {
+    endpoint: normalizedEndpoint,
+    endpointKey,
+    kind,
+    promise,
+    resolve: resolvePromise,
+    reject: rejectPromise,
+    settled: false,
+  };
+  let records = pendingDialsByEndpoint.get(endpointKey);
+  if (!records) {
+    records = new Set();
+    pendingDialsByEndpoint.set(endpointKey, records);
+  }
+  records.add(record);
+  return {
+    role: "leader",
+    promise,
+    endpoint: normalizedEndpoint,
+    kind,
+    _record: record,
+  };
+}
+
+function waitForTransportDial(coordination, opts = {}) {
+  if (coordination?.role === "reuse") {
+    return Promise.resolve(coordination.transport);
+  }
+  const promise = coordination?.promise;
+  if (!promise || typeof promise.then !== "function") {
+    return Promise.reject(new Error("Invalid SSH dial coordination handle"));
+  }
+  const validateTransport = (transport) => {
+    if (!endpointAllowsReuse(coordination.endpoint, transport?.endpoint, coordination.kind)) {
+      throw new Error("SSH dial completed with an incompatible endpoint");
+    }
+    return transport;
+  };
+  const signal = opts?.signal;
+  if (!signal) return promise.then(validateTransport);
+  if (signal.aborted) {
+    return Promise.reject(signal.reason || new Error("SSH connection wait cancelled"));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(signal.reason || new Error("SSH connection wait cancelled"));
+    };
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (transport) => {
+        cleanup();
+        try {
+          resolve(validateTransport(transport));
+        } catch (error) {
+          reject(error);
+        }
+      },
+      (err) => { cleanup(); reject(err); },
+    );
+  });
+}
+
+function completeTransportDial(coordination, transport) {
+  const record = coordination?._record;
+  if (coordination?.role !== "leader" || !record || record.settled) return false;
+  if (!transport || !isTransportSocketHealthy(transport)) {
+    return failTransportDial(coordination, new Error("SSH dial completed without a healthy transport"));
+  }
+  record.settled = true;
+  removePendingDial(record);
+  record.resolve(transport);
+  return true;
+}
+
+function failTransportDial(coordination, error) {
+  const record = coordination?._record;
+  if (coordination?.role !== "leader" || !record || record.settled) return false;
+  record.settled = true;
+  removePendingDial(record);
+  record.reject(error instanceof Error ? error : new Error(String(error || "SSH dial failed")));
+  return true;
+}
+
+function failAllPendingDials(reason = "SSH connection pool reset") {
+  const records = [];
+  for (const set of pendingDialsByEndpoint.values()) records.push(...set);
+  for (const record of records) {
+    failTransportDial(
+      { role: "leader", _record: record },
+      new Error(reason),
+    );
+  }
+}
 
 function resolveEnvIdleTtlMs(fallback) {
   const raw = process.env.NETCATTY_SSH_TRANSPORT_IDLE_TTL_MS;
@@ -68,33 +232,137 @@ function resolveEnvIdleTtlMs(fallback) {
   return n;
 }
 
+function stableSerialize(value, seen = new WeakSet()) {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (Buffer.isBuffer(value)) return `buffer:${value.toString("base64")}`;
+  const type = typeof value;
+  if (type === "string" || type === "boolean") return JSON.stringify(value);
+  if (type === "number") return Number.isFinite(value) ? String(value) : JSON.stringify(String(value));
+  if (type !== "object") return JSON.stringify(String(value));
+  if (seen.has(value)) return '"[circular]"';
+  seen.add(value);
+  let result;
+  if (Array.isArray(value)) {
+    result = `[${value.map((item) => stableSerialize(item, seen)).join(",")}]`;
+  } else {
+    result = `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableSerialize(value[key], seen)}`
+    )).join(",")}}`;
+  }
+  seen.delete(value);
+  return result;
+}
+
+function secureDigest(value) {
+  return createHash("sha256").update(stableSerialize(value)).digest("hex");
+}
+
+function expandIdentityFilePath(filePath) {
+  if (typeof filePath !== "string" || !filePath.trim()) return "";
+  return filePath.trim()
+    .replace(/^~(?=$|[\\/])/, os.homedir())
+    .replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => process.env[name] ?? "")
+    .replace(/\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, name) => process.env[name] ?? "");
+}
+
+function fingerprintIdentityFiles(identityFilePaths) {
+  const paths = Array.isArray(identityFilePaths)
+    ? identityFilePaths
+    : (identityFilePaths ? [identityFilePaths] : []);
+  return secureDigest(paths.map((filePath) => {
+    const expanded = expandIdentityFilePath(filePath);
+    if (!expanded) return { path: String(filePath || ""), state: "invalid" };
+    try {
+      return {
+        path: path.normalize(expanded),
+        content: createHash("sha256").update(fs.readFileSync(expanded)).digest("hex"),
+      };
+    } catch (err) {
+      return {
+        path: path.normalize(expanded),
+        state: err?.code || "unreadable",
+      };
+    }
+  }));
+}
+
 function fingerprintProxy(proxy) {
   if (!proxy || typeof proxy !== "object") return "-";
   const type = proxy.type || proxy.proxyType || proxy.mode || "";
   const host = proxy.host || proxy.hostname || proxy.server || "";
   const port = proxy.port || "";
-  const user = proxy.username || proxy.user || "";
-  // Command/ProxyCommand proxies often have empty host/port — include the
-  // command string so edits invalidate warm-transport reuse.
   const command = proxy.command || proxy.proxyCommand || proxy.cmd || "";
   if (!type && !host && !port && !command) return "-";
-  return `${type}:${host}:${port}:${user}:${command}`;
+  // The full resolved proxy object includes authentication and identity
+  // selection. Only the digest is retained in the transport registry.
+  return secureDigest(proxy);
 }
 
 function fingerprintJumpHosts(jumpHosts) {
   if (!Array.isArray(jumpHosts) || jumpHosts.length === 0) return "-";
-  return jumpHosts.map((h) => {
-    if (typeof h === "string") return h;
-    // Include vault id AND effective endpoint/proxy so editing a jump host's
-    // hostname/port/user/proxy while keeping the same id still invalidates reuse.
-    const id = h?.hostId || h?.id || "";
-    const host = h?.hostname || h?.host || "";
-    const port = h?.port || 22;
-    const user = h?.username || "root";
-    const hopProxy = fingerprintProxy(h?.proxy || h?.proxyConfig || null);
-    const ep = `${host}:${port}:${user}:${hopProxy}`;
-    return id ? `id:${id}|${ep}` : ep;
-  }).join(">");
+  return secureDigest(jumpHosts.map((hop) => {
+    if (!hop || typeof hop !== "object") return hop;
+    return {
+      ...hop,
+      identityFileContentFingerprint: fingerprintIdentityFiles(hop.identityFilePaths),
+      proxyFingerprint: fingerprintProxy(hop.proxy || hop.proxyConfig || null),
+    };
+  }));
+}
+
+function parseKnownHostTarget(value) {
+  const first = String(value || "").trim().split(",")[0];
+  if (!first) return null;
+  const bracketed = first.match(/^\[([^\]]+)\]:(\d+)$/);
+  if (bracketed) {
+    return {
+      hostname: bracketed[1].trim().toLowerCase(),
+      port: Number.parseInt(bracketed[2], 10),
+    };
+  }
+  return { hostname: first.toLowerCase(), port: 22 };
+}
+
+/**
+ * Digest only the known-host records that can authorize this target or one of
+ * its SSH jump hosts. The registry retains only the digest, never public-key
+ * text or the full known-hosts vault.
+ */
+function fingerprintKnownHostTrust(endpoint) {
+  if (!endpoint || endpoint.verifyHostKeys === false) return "disabled";
+  const targets = [];
+  const addTarget = (hostname, port, verifyHostKeys = true) => {
+    if (verifyHostKeys === false) return;
+    const normalizedHostname = String(hostname || "").trim().toLowerCase();
+    if (!normalizedHostname) return;
+    targets.push(`${normalizedHostname}|${Number(port) || 22}`);
+  };
+  addTarget(endpoint.hostname, endpoint.port, endpoint.verifyHostKeys);
+  for (const hop of Array.isArray(endpoint.jumpHosts) ? endpoint.jumpHosts : []) {
+    addTarget(
+      hop?.hostname,
+      hop?.port,
+      hop?.verifyHostKeys ?? endpoint.verifyHostKeys,
+    );
+  }
+  const targetSet = new Set(targets);
+  const relevant = [];
+  for (const knownHost of Array.isArray(endpoint.knownHosts) ? endpoint.knownHosts : []) {
+    const parsed = parseKnownHostTarget(knownHost?.hostname);
+    if (!parsed || parsed.hostname === "(hashed)") continue;
+    const port = Number.isFinite(knownHost?.port) ? Number(knownHost.port) : parsed.port;
+    if (!targetSet.has(`${parsed.hostname}|${port || 22}`)) continue;
+    relevant.push({
+      hostname: parsed.hostname,
+      port: port || 22,
+      keyType: String(knownHost?.keyType || ""),
+      fingerprint: String(knownHost?.fingerprint || ""),
+      publicKeyDigest: secureDigest(String(knownHost?.publicKey || "")),
+    });
+  }
+  relevant.sort((a, b) => stableSerialize(a).localeCompare(stableSerialize(b)));
+  return secureDigest(relevant);
 }
 
 /**
@@ -115,6 +383,7 @@ function digestAuthMaterial(endpoint) {
   const identityPaths = Array.isArray(endpoint.identityFilePaths)
     ? endpoint.identityFilePaths.join("\n")
     : (endpoint.identityFilePaths || "");
+  const identityFileContentFingerprint = fingerprintIdentityFiles(endpoint.identityFilePaths);
 
   if (method === "password") {
     h.update(String(endpoint.password || ""));
@@ -130,27 +399,30 @@ function digestAuthMaterial(endpoint) {
     h.update(String(endpoint.passphrase || ""));
     h.update("\0");
     h.update(String(identityPaths));
+    h.update("\0");
+    h.update(identityFileContentFingerprint);
   } else {
     // auto / agent: prefer publicKey / identity paths as rotation signals.
     // Do not always fold password + privateKey together — transfer key-first
     // strips password and would miss a multi-material parked transport.
     h.update(String(endpoint.publicKey || ""));
     h.update("\0");
+    if (endpoint.privateKey) {
+      h.update("private-key:");
+      h.update(String(endpoint.privateKey));
+      h.update("\0");
+    }
     h.update(endpoint.certificate ? "cert" : "nocert");
     h.update("\0");
     h.update(String(identityPaths));
+    h.update("\0");
+    h.update(identityFileContentFingerprint);
     // Password-only auto (no key material): include password so vault password
     // rotation invalidates parked reuse. When any key material is present,
     // omit password so key-first opens still match.
     if (!endpoint.privateKey && !endpoint.publicKey && !identityPaths) {
       h.update("\0pw:");
       h.update(String(endpoint.password || ""));
-    } else if (endpoint.privateKey && !endpoint.publicKey && !identityPaths) {
-      // Key material present only as privateKey (common) — digest it so key
-      // rotation invalidates; password-retry that strips privateKey will miss
-      // park and dial dedicated (acceptable).
-      h.update("\0pk:");
-      h.update(String(endpoint.privateKey));
     }
   }
   return h.digest("hex").slice(0, 16);
@@ -163,12 +435,91 @@ function fingerprintAuth(endpoint) {
   // the same hostId/route (key rotation, MFA toggle, verifyHostKeys, etc.).
   const authType = endpoint.authType || endpoint.authMethod || "";
   const keyId = endpoint.keyId || endpoint.identityId || "";
-  const cert = endpoint.certificate ? "cert" : "nocert";
-  const mfa = endpoint.requiresMfa ? "mfa" : "nomfa";
-  const verify = endpoint.verifyHostKeys === false ? "noverify" : "verify";
-  const agent = endpoint.useSshAgent === false ? "noagent" : (endpoint.useSshAgent ? "agent" : "agentauto");
   const material = digestAuthMaterial(endpoint);
-  return [authType, keyId, cert, mfa, verify, agent, material].join(":");
+  return secureDigest({
+    authType,
+    keyId,
+    material,
+    certificate: endpoint.certificate ? secureDigest(endpoint.certificate) : "none",
+    requiresMfa: Boolean(endpoint.requiresMfa),
+    verifyHostKeys: endpoint.verifyHostKeys !== false,
+    knownHostTrust: fingerprintKnownHostTrust(endpoint),
+    authPolicyVersion: endpoint.authPolicyVersion ?? null,
+    useSshAgent: endpoint.useSshAgent ?? null,
+    identityAgent: endpoint.identityAgent ?? null,
+    identitiesOnly: endpoint.identitiesOnly ?? null,
+    addKeysToAgent: endpoint.addKeysToAgent ?? null,
+    useKeychain: endpoint.useKeychain ?? null,
+    agentPublicKeys: endpoint.agentPublicKeys ?? null,
+    legacyAlgorithms: endpoint.legacyAlgorithms ?? null,
+    skipEcdsaHostKey: endpoint.skipEcdsaHostKey ?? null,
+    algorithmOverrides: endpoint.algorithmOverrides ?? null,
+  });
+}
+
+function resolveConnectionKeepalivePolicy(options = {}) {
+  const configuredInterval = options.keepaliveInterval;
+  const intervalSeconds = configuredInterval == null
+    ? 10
+    : Number(configuredInterval);
+  const keepaliveIntervalMs = Number.isFinite(intervalSeconds) && intervalSeconds > 0
+    ? intervalSeconds * 1000
+    : 0;
+  const configuredCount = configuredInterval == null
+    ? 3
+    : options.keepaliveCountMax;
+  const count = Number(configuredCount ?? 3);
+  return {
+    keepaliveIntervalMs,
+    keepaliveCountMax: keepaliveIntervalMs > 0 && Number.isFinite(count) && count >= 0
+      ? count
+      : 0,
+  };
+}
+
+/**
+ * Build the common terminal/SFTP endpoint description consumed by the pool.
+ * Raw credentials exist only while the caller computes the normalized hashes;
+ * beginTransportDial/createTransport retain the normalized, digest-only form.
+ */
+function buildConnectionReuseEndpoint(options = {}, overrides = {}) {
+  const keepalive = resolveConnectionKeepalivePolicy({
+    keepaliveInterval: overrides.keepaliveInterval ?? options.keepaliveInterval,
+    keepaliveCountMax: overrides.keepaliveCountMax ?? options.keepaliveCountMax,
+  });
+  return {
+    hostId: options.hostId || "",
+    hostname: options.hostname,
+    port: options.port || 22,
+    username: options.username || "root",
+    protocol: options.protocol || "ssh",
+    sftpSudo: overrides.sftpSudo ?? Boolean(options.sftpSudo || options.sudo),
+    jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
+    proxy: options.proxy || null,
+    authType: options.authType || options.authMethod || "",
+    authPolicyVersion: options.authPolicyVersion,
+    keyId: options.keyId || options.identityId || "",
+    certificate: options.certificate || "",
+    requiresMfa: Boolean(options.requiresMfa),
+    verifyHostKeys: options.verifyHostKeys,
+    knownHosts: options.knownHosts,
+    useSshAgent: options.useSshAgent,
+    identityAgent: options.identityAgent,
+    identitiesOnly: options.identitiesOnly,
+    addKeysToAgent: options.addKeysToAgent,
+    useKeychain: options.useKeychain,
+    agentPublicKeys: options.agentPublicKeys,
+    agentForwarding: Boolean(overrides.agentForwarding ?? options.agentForwarding),
+    ...keepalive,
+    password: options.password,
+    privateKey: options.privateKey,
+    publicKey: options.publicKey,
+    passphrase: options.passphrase,
+    identityFilePaths: options.identityFilePaths,
+    legacyAlgorithms: options.legacyAlgorithms,
+    skipEcdsaHostKey: options.skipEcdsaHostKey,
+    algorithmOverrides: options.algorithmOverrides,
+  };
 }
 
 function normalizeEndpoint(endpoint) {
@@ -181,6 +532,12 @@ function normalizeEndpoint(endpoint) {
   const hostId = endpoint.hostId != null && String(endpoint.hostId).trim()
     ? String(endpoint.hostId).trim()
     : "";
+  const keepalive = endpoint.keepaliveIntervalMs != null
+    ? {
+      keepaliveIntervalMs: Number(endpoint.keepaliveIntervalMs) || 0,
+      keepaliveCountMax: Number(endpoint.keepaliveCountMax) || 0,
+    }
+    : resolveConnectionKeepalivePolicy(endpoint);
   return {
     hostId,
     hostname,
@@ -199,6 +556,7 @@ function normalizeEndpoint(endpoint) {
     // A transport opened with ForwardAgent can serve SFTP/PF; a transport
     // without it cannot satisfy a later shell open that needs agentForwarding.
     agentForwarding: Boolean(endpoint.agentForwarding),
+    ...keepalive,
   };
 }
 
@@ -220,6 +578,7 @@ function buildEndpointKey(endpoint) {
     jump,
     proxy,
     auth,
+    `keepalive:${ep.keepaliveIntervalMs}:${ep.keepaliveCountMax}`,
   ].join("|");
 }
 
@@ -238,7 +597,9 @@ function sameEndpoint(a, b) {
     && left.sftpSudo === right.sftpSudo
     && left.jumpFingerprint === right.jumpFingerprint
     && left.proxyFingerprint === right.proxyFingerprint
-    && left.authFingerprint === right.authFingerprint;
+    && left.authFingerprint === right.authFingerprint
+    && left.keepaliveIntervalMs === right.keepaliveIntervalMs
+    && left.keepaliveCountMax === right.keepaliveCountMax;
 }
 
 /**
@@ -283,8 +644,46 @@ function clearIdleTimer(transport) {
   transport.idleDeadlineAt = null;
 }
 
+function removeIdleTransportLru(transport) {
+  if (!transport?.id) return;
+  idleTransportsLru.delete(transport.id);
+}
+
+function touchIdleTransportLru(transport) {
+  if (!transport?.id || transport.state !== "idle" || transport.leases?.size !== 0) {
+    removeIdleTransportLru(transport);
+    return;
+  }
+  idleTransportsLru.delete(transport.id);
+  idleTransportsLru.set(transport.id, transport);
+}
+
+function enforceIdleTransportLimit() {
+  for (const [id, transport] of idleTransportsLru) {
+    if (
+      transportsById.get(id) !== transport
+      || transport.state !== "idle"
+      || transport.leases?.size !== 0
+    ) {
+      idleTransportsLru.delete(id);
+    }
+  }
+
+  while (idleTransportsLru.size > maxIdleTransports) {
+    const oldest = idleTransportsLru.values().next().value;
+    if (!oldest) break;
+    idleTransportsLru.delete(oldest.id);
+    // Only zero-lease idle transports are eligible. If state changed between
+    // selection and eviction, leave the active transport alone.
+    if (oldest.state === "idle" && oldest.leases?.size === 0) {
+      endTransport(oldest, "idle-cap");
+    }
+  }
+}
+
 function unregisterTransport(transport) {
   if (!transport) return;
+  removeIdleTransportLru(transport);
   transportsById.delete(transport.id);
   if (transport.endpointKey) {
     const set = transportIdsByEndpoint.get(transport.endpointKey);
@@ -295,12 +694,41 @@ function unregisterTransport(transport) {
   }
 }
 
-function endTransport(transport, reason = "end") {
+function detachTransportLifecycle(transport) {
+  const conn = transport?.conn;
+  if (!conn?.removeListener) return;
+  if (transport._poolOnConnectionClose) {
+    try { conn.removeListener("close", transport._poolOnConnectionClose); } catch { /* ignore */ }
+  }
+  if (transport._poolOnConnectionError) {
+    try { conn.removeListener("error", transport._poolOnConnectionError); } catch { /* ignore */ }
+  }
+  transport._poolOnConnectionClose = null;
+  transport._poolOnConnectionError = null;
+}
+
+function attachTransportLifecycle(transport) {
+  const conn = transport?.conn;
+  if (!conn?.once) return;
+  const onClose = () => {
+    endTransport(transport, "socket-close", { skipConnectionEnd: true });
+  };
+  const onError = () => {
+    endTransport(transport, "socket-error");
+  };
+  transport._poolOnConnectionClose = onClose;
+  transport._poolOnConnectionError = onError;
+  conn.once("close", onClose);
+  conn.once("error", onError);
+}
+
+function endTransport(transport, reason = "end", opts = {}) {
   if (!transport) return false;
   if (transport.state === "dead" || transport.state === "closing") return false;
 
   transport.state = "closing";
   clearIdleTimer(transport);
+  detachTransportLifecycle(transport);
 
   for (const leaseId of [...transport.leases.keys()]) {
     const entry = leasesById.get(leaseId);
@@ -313,10 +741,12 @@ function endTransport(transport, reason = "end") {
   }
   transport.count = 0;
 
-  try {
-    transport.conn?.end();
-  } catch {
-    /* connection may already be gone */
+  if (!opts.skipConnectionEnd) {
+    try {
+      transport.conn?.end();
+    } catch {
+      /* connection may already be gone */
+    }
   }
   const chain = Array.isArray(transport.chainConnections) ? transport.chainConnections : [];
   for (const c of chain) {
@@ -337,9 +767,10 @@ function endTransport(transport, reason = "end") {
 /**
  * Park a transport until TTL elapses (or forever when TTL is 0).
  * @param {object} transport
- * @param {{ preserveIdleSince?: boolean }} [opts]
+ * @param {{ preserveIdleSince?: boolean, preserveLru?: boolean }} [opts]
  *   preserveIdleSince: when rescheduling after a settings change, keep the
  *   original idle start so remaining lifetime is not extended.
+ *   preserveLru: keep the existing idle recency while only changing its timer.
  */
 function scheduleIdleEnd(transport, opts = {}) {
   clearIdleTimer(transport);
@@ -354,6 +785,14 @@ function scheduleIdleEnd(transport, opts = {}) {
   transport.state = "idle";
   if (!opts.preserveIdleSince || !Number.isFinite(transport.idleSince)) {
     transport.idleSince = now;
+  }
+
+  if (!opts.preserveLru || !idleTransportsLru.has(transport.id)) {
+    touchIdleTransportLru(transport);
+  }
+  enforceIdleTransportLimit();
+  if (transport.state === "dead" || transport.state === "closing") {
+    return { ended: true, idle: false };
   }
 
   // 0 (or negative/non-finite): park until quit/discard — matches settings
@@ -375,12 +814,16 @@ function scheduleIdleEnd(transport, opts = {}) {
     if (transport.state !== "idle" || transport.leases.size > 0) return;
     endTransport(transport, "idle-ttl");
   }, remaining);
+  // Idle reuse is an optimization, not a reason to keep the app/test process
+  // alive after every consumer has gone away.
+  transport.idleTimer?.unref?.();
 
   return { ended: false, idle: true };
 }
 
 function wakeFromIdle(transport) {
   if (transport.state !== "idle") return;
+  removeIdleTransportLru(transport);
   clearIdleTimer(transport);
   transport.state = "live";
   transport.idleSince = null;
@@ -436,10 +879,13 @@ function createTransport({
     createdAt: nowFn(),
     meta: meta || null,
     endedReason: null,
+    _poolOnConnectionClose: null,
+    _poolOnConnectionError: null,
   };
 
   transportsById.set(transport.id, transport);
   attachEndpointIndex(transport);
+  attachTransportLifecycle(transport);
   return transport;
 }
 
@@ -600,6 +1046,7 @@ function discardTransport(transportOrId, reason = "discard") {
 }
 
 function discardAllTransports(reason = "discard-all") {
+  failAllPendingDials(reason);
   let n = 0;
   for (const transport of [...transportsById.values()]) {
     if (endTransport(transport, reason)) n += 1;
@@ -610,6 +1057,7 @@ function discardAllTransports(reason = "discard-all") {
 function findTransportById(id) {
   const transport = transportsById.get(id);
   if (!transport || !isTransportSocketHealthy(transport)) return null;
+  if (transport.state === "idle") touchIdleTransportLru(transport);
   return transport;
 }
 
@@ -658,7 +1106,9 @@ function findTransportByEndpoint(endpoint, opts = {}) {
     if (a.state !== b.state) return a.state === "live" ? -1 : 1;
     return a.leases.size - b.leases.size;
   });
-  return candidates[0];
+  const selected = candidates[0];
+  if (selected.state === "idle") touchIdleTransportLru(selected);
+  return selected;
 }
 
 function getTransportStats() {
@@ -672,6 +1122,8 @@ function getTransportStats() {
   }
   return {
     transports: transportsById.size,
+    pendingDials: [...pendingDialsByEndpoint.values()]
+      .reduce((total, records) => total + records.size, 0),
     live,
     idle,
     leases,
@@ -691,7 +1143,7 @@ function setDefaultTransportIdleTtlMs(ms) {
   for (const transport of transportsById.values()) {
     transport.idleTtlMs = defaultIdleTtlMs;
     if (transport.state === "idle" && transport.leases.size === 0) {
-      scheduleIdleEnd(transport, { preserveIdleSince: true });
+      scheduleIdleEnd(transport, { preserveIdleSince: true, preserveLru: true });
     }
   }
   return defaultIdleTtlMs;
@@ -709,10 +1161,16 @@ function resetSshTransportRegistryForTests(options = {}) {
   transportsById.clear();
   transportIdsByEndpoint.clear();
   leasesById.clear();
+  pendingDialsByEndpoint.clear();
+  idleTransportsLru.clear();
   nextLeaseSeq = 0;
   defaultIdleTtlMs = Number.isFinite(options.defaultIdleTtlMs)
     ? options.defaultIdleTtlMs
     : resolveEnvIdleTtlMs(DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS);
+  maxIdleTransports = Number.isFinite(options.maxIdleTransports)
+    && options.maxIdleTransports >= 0
+    ? Math.floor(options.maxIdleTransports)
+    : DEFAULT_MAX_IDLE_SSH_TRANSPORTS;
   timerApi = {
     setTimeout: options.setTimeout || ((...args) => setTimeout(...args)),
     clearTimeout: options.clearTimeout || ((...args) => clearTimeout(...args)),
@@ -755,6 +1213,8 @@ function createConnectionRef(session, conn, chainConnections) {
       verifyHostKeys: session._reuseEndpoint.verifyHostKeys,
       useSshAgent: session._reuseEndpoint.useSshAgent,
       agentForwarding: session._reuseEndpoint.agentForwarding,
+      keepaliveIntervalMs: session._reuseEndpoint.keepaliveIntervalMs,
+      keepaliveCountMax: session._reuseEndpoint.keepaliveCountMax,
       authFingerprint: session._reuseEndpoint.authFingerprint,
     }
     : null;
@@ -808,7 +1268,8 @@ function acquireConnectionRef(session, connRef) {
  * Release this session's hold on its shared connection.
  *
  * Decrements the lease count. When it reaches zero the transport enters idle
- * park (or ends immediately when idle TTL is 0). The caller remains responsible
+ * park; TTL 0 keeps it parked until app quit, while a positive TTL reclaims it
+ * when the deadline expires. The caller remains responsible
  * for closing this session's own shell stream/channel; this only governs the
  * *shared* transport.
  *
@@ -899,6 +1360,7 @@ function resolveTransportForReuse({
 module.exports = {
   // Constants
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
+  DEFAULT_MAX_IDLE_SSH_TRANSPORTS,
   STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
   LEASE_KINDS,
   // New registry API
@@ -910,10 +1372,16 @@ module.exports = {
   findTransportById,
   findTransportByEndpoint,
   resolveTransportForReuse,
+  beginTransportDial,
+  waitForTransportDial,
+  completeTransportDial,
+  failTransportDial,
   getTransportStats,
   setDefaultTransportIdleTtlMs,
   getDefaultTransportIdleTtlMs,
   buildEndpointKey,
+  buildConnectionReuseEndpoint,
+  resolveConnectionKeepalivePolicy,
   normalizeEndpoint,
   sameEndpoint,
   endpointAllowsReuse,

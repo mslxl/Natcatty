@@ -45,33 +45,6 @@ export const useSftpBackend = () => {
     return bridge.writeSftpBinary(sftpId, path, content, encoding);
   }, []);
 
-  const writeSftpBinaryWithProgress = useCallback(
-    async (
-      sftpId: string,
-      path: string,
-      content: ArrayBuffer,
-      transferId: string,
-      encoding?: SftpFilenameEncoding,
-      onProgress?: (transferred: number, total: number, speed: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void,
-    ) => {
-      const bridge = netcattyBridge.get();
-      if (!bridge?.writeSftpBinaryWithProgress) return undefined;
-      return bridge.writeSftpBinaryWithProgress(
-        sftpId,
-        path,
-        content,
-        transferId,
-        encoding,
-        onProgress,
-        onComplete,
-        onError,
-      );
-    },
-    [],
-  );
-
   const mkdirSftp = useCallback(async (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.mkdirSftp) throw new Error("mkdirSftp unavailable");
@@ -178,12 +151,6 @@ export const useSftpBackend = () => {
     return bridge.resumeTransfer(transferId);
   }, []);
 
-  const cancelSftpUpload = useCallback(async (transferId: string) => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.cancelSftpUpload) return undefined;
-    return bridge.cancelSftpUpload(transferId);
-  }, []);
-
   const selectApplication = useCallback(async () => {
     const bridge = netcattyBridge.get();
     if (!bridge?.selectApplication) return undefined;
@@ -205,48 +172,6 @@ export const useSftpBackend = () => {
     return bridge.selectDirectory(title, defaultPath);
   };
 
-  const downloadSftpToTempAndOpen = useCallback(async (
-    sftpId: string,
-    remotePath: string,
-    fileName: string,
-    appPath: string,
-    options?: { enableWatch?: boolean; encoding?: SftpFilenameEncoding }
-  ): Promise<{ localTempPath: string; watchId?: string }> => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.downloadSftpToTemp || !bridge?.openWithApplication) {
-      throw new Error("Download to temp / open with unavailable");
-    }
-    
-    // Download the file to temp
-    const tempPath = await bridge.downloadSftpToTemp(sftpId, remotePath, fileName, options?.encoding);
-    
-    // Register temp file for cleanup when SFTP session closes (regardless of auto-sync setting)
-    if (bridge.registerTempFile) {
-      try {
-        await bridge.registerTempFile(sftpId, tempPath);
-      } catch (err) {
-        console.warn("[SFTPBackend] Failed to register temp file for cleanup:", err);
-      }
-    }
-    
-    // Open with the selected application
-    await bridge.openWithApplication(tempPath, appPath);
-    
-    // Start file watching if enabled
-    let watchId: string | undefined;
-    if (options?.enableWatch && bridge.startFileWatch) {
-      try {
-        const result = await bridge.startFileWatch(tempPath, remotePath, sftpId, options?.encoding);
-        watchId = result.watchId;
-      } catch (err) {
-        console.warn("[SFTPBackend] Failed to start file watch:", err);
-        // Don't fail the operation if watching fails
-      }
-    }
-    
-    return { localTempPath: tempPath, watchId };
-  }, []);
-
   return {
     openSftp,
     closeSftp,
@@ -255,7 +180,6 @@ export const useSftpBackend = () => {
     readSftpBinary,
     writeSftp,
     writeSftpBinary,
-    writeSftpBinaryWithProgress,
     mkdirSftp,
     deleteSftp,
     renameSftp,
@@ -276,10 +200,8 @@ export const useSftpBackend = () => {
     cancelTransfer,
     pauseTransfer,
     resumeTransfer,
-    cancelSftpUpload,
     selectApplication,
     showSaveDialog,
     selectDirectory,
-    downloadSftpToTempAndOpen,
   };
 };

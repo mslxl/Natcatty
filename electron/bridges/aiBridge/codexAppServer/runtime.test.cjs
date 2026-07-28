@@ -15,6 +15,7 @@ class FakeConnection {
     this.responses = [];
     this.threadId = "thread-1";
     this.turnId = "turn-1";
+    this.closed = false;
   }
   async start() { return this; }
   async request(method, params) {
@@ -31,7 +32,11 @@ class FakeConnection {
       if (this.turnSteerError) throw this.turnSteerError;
       return { turnId: this.turnId };
     }
-    if (method === "turn/interrupt") return {};
+    if (method === "turn/interrupt") {
+      if (this.turnInterruptGate) await this.turnInterruptGate;
+      if (this.turnInterruptError) throw this.turnInterruptError;
+      return {};
+    }
     if (method === "model/list") {
       return {
         data: [
@@ -63,7 +68,7 @@ class FakeConnection {
   respondError(id, code, message) { this.responses.push({ id, error: { code, message } }); }
   notify(message) { this.options.onNotification(message); }
   serverRequest(message) { return this.options.onServerRequest(message, this); }
-  close() {}
+  close() { this.closed = true; }
 }
 
 function createEmitter() {
@@ -153,6 +158,55 @@ test("runtime maps lifecycle, activities, usage, and retry warnings", async () =
   assert.ok(emitter.events.some((event) => event[0] === "warning" && /retrying/.test(event[2])));
   assert.ok(emitter.events.some((event) => event[0] === "warning" && event[2] === "global warning"));
   assert.ok(emitter.events.some((event) => event[0] === "done"));
+});
+
+test("runtime bounds command output and avoids replaying streamed message prefixes", async () => {
+  let connection;
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => (connection = new FakeConnection(options)),
+  });
+  const emitter = createEmitter();
+  const run = runtime.runTurn({
+    requestId: "request-bounded-output",
+    chatSessionId: "chat-bounded-output",
+    prompt: "run",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter,
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  connection.notify({ method: "item/agentMessage/delta", params: {
+    threadId: "thread-1", turnId: "turn-1", itemId: "msg-bounded", delta: "Hello",
+  } });
+  connection.notify({ method: "item/completed", params: {
+    threadId: "thread-1", turnId: "turn-1",
+    item: { type: "agentMessage", id: "msg-bounded", text: "Hello world" },
+  } });
+  connection.notify({ method: "item/commandExecution/outputDelta", params: {
+    threadId: "thread-1", turnId: "turn-1", itemId: "cmd-bounded",
+    delta: "x".repeat(1024 * 1024 + 1024),
+  } });
+  connection.notify({ method: "item/completed", params: {
+    threadId: "thread-1", turnId: "turn-1",
+    item: { type: "commandExecution", id: "cmd-bounded", command: "large", exitCode: 0 },
+  } });
+  connection.notify({ method: "turn/completed", params: {
+    threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null },
+  } });
+  await run;
+
+  assert.deepEqual(
+    emitter.events.filter((event) => event[0] === "text"),
+    [["text", "Hello"], ["text", " world"]],
+  );
+  const toolResult = emitter.events.find((event) => event[0] === "tool-result");
+  assert.ok(toolResult);
+  assert.ok(toolResult[2].length < 1024 * 1024 + 200);
+  assert.match(toolResult[2], /output truncated: 1049600 characters total/);
+  assert.match(toolResult[2], /\[exit code: 0\]$/);
 });
 
 test("runtime delegates injected MCP approvals to Netcatty's policy gate", async () => {
@@ -426,6 +480,202 @@ test("stop requested while turn/start is pending interrupts the assigned turn", 
   await run;
   assert.equal(connection.requests.filter((request) => request.method === "turn/interrupt").length, 1);
   assert.ok(emitter.events.some((event) => event[0] === "done"));
+});
+
+test("failed interrupt force-settles the turn and releases its connection", async () => {
+  let connection;
+  const runtime = new CodexAppServerRuntime({
+    interruptGraceMs: 5,
+    connectionFactory: (options) => {
+      connection = new FakeConnection(options);
+      connection.turnInterruptError = new Error("interrupt unavailable");
+      return connection;
+    },
+  });
+  const run = runtime.runTurn({
+    requestId: "request-interrupt-failure",
+    chatSessionId: "chat-interrupt-failure",
+    prompt: "wait",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  assert.equal(await runtime.cancelTurn("request-interrupt-failure"), true);
+  await Promise.race([
+    run,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("turn did not settle")), 50)),
+  ]);
+
+  assert.equal(connection.closed, true);
+  assert.equal(runtime.activeByRequest.size, 0);
+  assert.equal(runtime.activeByThread.size, 0);
+  assert.equal(runtime.activeByTurn.size, 0);
+});
+
+test("hung interrupt request times out and force-settles the turn", async () => {
+  let connection;
+  const runtime = new CodexAppServerRuntime({
+    interruptRequestTimeoutMs: 5,
+    interruptGraceMs: 5,
+    connectionFactory: (options) => {
+      connection = new FakeConnection(options);
+      connection.turnInterruptGate = new Promise(() => {});
+      return connection;
+    },
+  });
+  const run = runtime.runTurn({
+    requestId: "request-interrupt-hung",
+    chatSessionId: "chat-interrupt-hung",
+    prompt: "wait",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  assert.equal(await runtime.cancelTurn("request-interrupt-hung"), true);
+  await Promise.race([
+    run,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("turn did not settle")), 50)),
+  ]);
+
+  assert.equal(connection.closed, true);
+  assert.equal(runtime.activeByRequest.size, 0);
+});
+
+test("acknowledged interrupt force-settles when completion never arrives", async () => {
+  let connection;
+  const runtime = new CodexAppServerRuntime({
+    interruptGraceMs: 5,
+    connectionFactory: (options) => (connection = new FakeConnection(options)),
+  });
+  const run = runtime.runTurn({
+    requestId: "request-interrupt-no-completion",
+    chatSessionId: "chat-interrupt-no-completion",
+    prompt: "wait",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  assert.equal(await runtime.cancelTurn("request-interrupt-no-completion"), true);
+  await Promise.race([
+    run,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("turn did not settle")), 50)),
+  ]);
+
+  assert.equal(connection.closed, true);
+  assert.equal(runtime.activeByRequest.size, 0);
+});
+
+test("idle superseded app-server connections close when their active turn finishes", async () => {
+  const connections = [];
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => {
+      const connection = new FakeConnection(options);
+      connection.threadId = `thread-${connections.length + 1}`;
+      connection.turnId = `turn-${connections.length + 1}`;
+      connections.push(connection);
+      return connection;
+    },
+  });
+  const firstRun = runtime.runTurn({
+    requestId: "request-config-a",
+    chatSessionId: "chat-config-a",
+    prompt: "first",
+    permissionMode: "confirm",
+    env: { PROFILE: "a" },
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connections[0]?.requests.some((request) => request.method === "turn/start"));
+  const secondRun = runtime.runTurn({
+    requestId: "request-config-b",
+    chatSessionId: "chat-config-b",
+    prompt: "second",
+    permissionMode: "confirm",
+    env: { PROFILE: "b" },
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connections[1]?.requests.some((request) => request.method === "turn/start"));
+
+  connections[0].notify({
+    method: "turn/completed",
+    params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } },
+  });
+  await firstRun;
+  assert.equal(connections[0].closed, true);
+  assert.equal(connections[1].closed, false);
+
+  connections[1].notify({
+    method: "turn/completed",
+    params: { threadId: "thread-2", turn: { id: "turn-2", status: "completed", error: null } },
+  });
+  await secondRun;
+  assert.equal(connections[1].closed, false);
+  runtime.close();
+});
+
+test("force-cancelling the preferred connection keeps another active connection reusable", async () => {
+  const connections = [];
+  const runtime = new CodexAppServerRuntime({
+    interruptGraceMs: 5,
+    connectionFactory: (options) => {
+      const connection = new FakeConnection(options);
+      connection.threadId = `thread-reuse-${connections.length + 1}`;
+      connection.turnId = `turn-reuse-${connections.length + 1}`;
+      connections.push(connection);
+      return connection;
+    },
+  });
+  const firstRun = runtime.runTurn({
+    requestId: "request-reuse-a",
+    chatSessionId: "chat-reuse-a",
+    prompt: "first",
+    permissionMode: "confirm",
+    env: { PROFILE: "reuse-a" },
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connections[0]?.requests.some((request) => request.method === "turn/start"));
+  const secondRun = runtime.runTurn({
+    requestId: "request-reuse-b",
+    chatSessionId: "chat-reuse-b",
+    prompt: "second",
+    permissionMode: "confirm",
+    env: { PROFILE: "reuse-b" },
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connections[1]?.requests.some((request) => request.method === "turn/start"));
+
+  assert.equal(await runtime.cancelTurn("request-reuse-b"), true);
+  await secondRun;
+  connections[0].notify({
+    method: "turn/completed",
+    params: {
+      threadId: "thread-reuse-1",
+      turn: { id: "turn-reuse-1", status: "completed", error: null },
+    },
+  });
+  await firstRun;
+
+  assert.equal(connections[0].closed, false);
+  runtime.close();
 });
 
 test("unsupported requests fail immediately and warn without hanging", async () => {

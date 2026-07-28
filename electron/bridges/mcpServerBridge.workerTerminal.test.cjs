@@ -10,13 +10,18 @@ function loadFreshBridge() {
 }
 
 test("MCP/Catty capability context uses scoped metadata when terminal sessions live in worker", async () => {
+  const requests = [];
   const bridge = loadFreshBridge();
   bridge.init({
     sessions: new Map(),
     electronModule: null,
     terminalWorkerManager: {
-      request() {
-        throw new Error("getContext should not need a worker round trip");
+      request(channel, payload, options) {
+        requests.push({ channel, payload, options });
+        if (channel === "netcatty:portforward:list") {
+          return Promise.resolve([{ tunnelId: "worker-pf-1", status: "active" }]);
+        }
+        throw new Error(`unexpected worker request: ${channel}`);
       },
     },
   });
@@ -41,6 +46,14 @@ test("MCP/Catty capability context uses scoped metadata when terminal sessions l
   assert.equal(result.tools.terminal.execute, "terminal_execute");
   assert.equal(result.tools.terminal.start, "terminal_start");
   assert.match(result.description, /terminal_execute/);
+  assert.deepEqual(result.activePortForwardTunnels, [
+    { tunnelId: "worker-pf-1", status: "active" },
+  ]);
+  assert.deepEqual(requests, [{
+    channel: "netcatty:portforward:list",
+    payload: {},
+    options: {},
+  }]);
   assert.deepEqual(result.hosts[0], {
     sessionId: "ssh-1",
     hostname: "host.example",

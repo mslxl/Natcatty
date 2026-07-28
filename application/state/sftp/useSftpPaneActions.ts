@@ -16,6 +16,11 @@ import {
   shouldClearSftpFilterForPathChange,
 } from "./utils";
 import { buildCacheKey, setSharedRemoteHostCache } from "./sharedRemoteHostCache";
+import {
+  getDirectoryCacheEntry,
+  setDirectoryCacheEntry,
+  type DirectoryListingCache,
+} from "./directoryListingCache";
 
 /** Shared empty set for navigation resets — never mutate this. */
 const EMPTY_SET = new Set<string>();
@@ -28,7 +33,7 @@ interface UseSftpPaneActionsParams {
   leftTabsRef: React.MutableRefObject<{ tabs: SftpPane[]; activeTabId: string | null }>;
   rightTabsRef: React.MutableRefObject<{ tabs: SftpPane[]; activeTabId: string | null }>;
   navSeqRef: React.MutableRefObject<{ left: number; right: number }>;
-  dirCacheRef: React.MutableRefObject<Map<string, { files: SftpFileEntry[]; timestamp: number }>>;
+  dirCacheRef: React.MutableRefObject<DirectoryListingCache>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   lastConnectedHostRef: React.MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   connectionCacheKeyMapRef: React.MutableRefObject<Map<string, string>>;
@@ -38,6 +43,7 @@ interface UseSftpPaneActionsParams {
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
   listRemoteFiles: (sftpId: string, path: string, encoding?: SftpFilenameEncoding) => Promise<SftpFileEntry[]>;
   handleSessionError: (side: "left" | "right", error: Error) => void;
+  releaseConnection: (connectionId: string) => Promise<void>;
   isSessionError: (err: unknown) => boolean;
   clearSelectionsExcept: (target: { side: "left" | "right"; tabId: string } | null) => void;
   dirCacheTtlMs: number;
@@ -96,6 +102,7 @@ export const useSftpPaneActions = ({
   listLocalFiles,
   listRemoteFiles,
   handleSessionError,
+  releaseConnection,
   isSessionError,
   clearSelectionsExcept,
   dirCacheTtlMs,
@@ -192,7 +199,7 @@ export const useSftpPaneActions = ({
       const nextConfirmedFilter = getSftpFilterAfterPathChange(pane.connection.currentPath, path, pane.filter);
       const cached = options?.force
         ? undefined
-        : dirCacheRef.current.get(cacheKey);
+        : getDirectoryCacheEntry(dirCacheRef.current, cacheKey, Date.now(), dirCacheTtlMs);
 
       if (
         cached &&
@@ -334,8 +341,7 @@ export const useSftpPaneActions = ({
                 restoreConfirmedStateIfCurrent();
                 return "aborted";
               }
-              sftpSessionsRef.current.delete(pane.connection.id);
-              clearCacheForConnection(pane.connection.id);
+              await releaseConnection(pane.connection.id);
               if (options?.tabId) {
                 updateTab(side, targetTabId, (prev) => ({
                   ...prev,
@@ -367,10 +373,10 @@ export const useSftpPaneActions = ({
           return "aborted";
         }
 
-        dirCacheRef.current.set(cacheKey, {
+        setDirectoryCacheEntry(dirCacheRef.current, cacheKey, {
           files,
           timestamp: Date.now(),
-        });
+        }, { ttlMs: dirCacheTtlMs });
 
         lastConfirmedRef.current.set(targetTabId, {
           connectionId,
@@ -446,6 +452,7 @@ export const useSftpPaneActions = ({
       sftpSessionsRef,
       clearCacheForConnection,
       handleSessionError,
+      releaseConnection,
       isSessionError,
     ],
   );

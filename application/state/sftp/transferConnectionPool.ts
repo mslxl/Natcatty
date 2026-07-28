@@ -5,17 +5,19 @@
  * limits how many SFTP channels (sftpIds) may be open per host for parallel
  * transfers, and reuses a busy-vs-idle slot within that cap.
  *
- * When the last transfer releases a channel it is closed immediately so the
- * transport lease can return and the unified SSH idle park can reclaim the
- * connection. SSH keep-alive is controlled only by ssh transport idle TTL.
+ * A released channel stays available for a short bounded idle window so a
+ * directory of sequential small files does not reopen one SFTP channel per
+ * file. The global idle cap prevents many visited hosts from retaining an
+ * unbounded number of channels; SSH transports remain owned by the unified
+ * main-process registry.
  */
 
 export const DEFAULT_TRANSFER_CONNECTIONS_PER_HOST = 2;
 export const MIN_TRANSFER_CONNECTIONS_PER_HOST = 1;
 export const MAX_TRANSFER_CONNECTIONS_PER_HOST = 4;
 
-/** @deprecated Idle TTL moved to SSH transport registry; kept for import stability. */
-export const DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS = 0;
+export const DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS = 5_000;
+export const DEFAULT_MAX_IDLE_TRANSFER_CONNECTIONS = 16;
 
 export type TransferPoolOpenFn = (poolKey: string) => Promise<string>;
 export type TransferPoolCloseFn = (sftpId: string) => void | Promise<void>;
@@ -23,7 +25,7 @@ export type TransferPoolCloseFn = (sftpId: string) => void | Promise<void>;
 export interface TransferConnectionLease {
   sftpId: string;
   poolKey: string;
-  /** Drop the holder count; last holder closes the channel. */
+  /** Drop the holder count; last holder enters the short idle park. */
   release: () => void;
   /** Drop holder, remove from pool, and close — use when the session is dead. */
   discard: () => void;
@@ -33,6 +35,9 @@ interface PoolSlot {
   sftpId: string;
   holders: Set<string>;
   lastUsedAt: number;
+  idleSince?: number;
+  idleOrder?: number;
+  idleTimer?: unknown;
   /** Session is dead; do not hand out to new transfers. Close when idle. */
   unhealthy?: boolean;
   opening?: Promise<string>;
@@ -40,10 +45,52 @@ interface PoolSlot {
 
 export interface TransferConnectionPoolOptions {
   maxPerHost?: number;
-  /** @deprecated Ignored — channels close when idle; SSH park owns keep-alive. */
   idleTtlMs?: number;
+  /** Global cap across all host pools; oldest idle channels are evicted first. */
+  maxIdleConnections?: number;
   closeSession?: TransferPoolCloseFn;
   now?: () => number;
+  /** Deterministic timer hooks for tests. */
+  setTimeoutFn?: (callback: () => void, delayMs: number) => unknown;
+  clearTimeoutFn?: (handle: unknown) => void;
+}
+
+export interface TransferPoolKeyInput {
+  hostId?: string;
+  hostname?: string;
+  port?: number;
+  username?: string;
+  protocol?: string;
+  sftpSudo?: boolean;
+  /** Full resolved transport identity; kept private inside the in-memory pool. */
+  connectionOptions?: NetcattySSHOptions;
+}
+
+export interface TransferPoolKeyCache {
+  get(host: object, createInput: () => TransferPoolKeyInput): Promise<string>;
+}
+
+/**
+ * Resolving a transfer identity includes credential expansion and SHA-256.
+ * Directory transfers may acquire a lease once per file, so cache that work
+ * by the immutable Host object for the lifetime of the current vault inputs.
+ */
+export function createTransferPoolKeyCache(
+  build: (input: TransferPoolKeyInput) => Promise<string> = buildTransferPoolKey,
+): TransferPoolKeyCache {
+  const cache = new WeakMap<object, Promise<string>>();
+  return {
+    get(host, createInput) {
+      const existing = cache.get(host);
+      if (existing) return existing;
+      const pending = Promise.resolve().then(() => build(createInput()));
+      cache.set(host, pending);
+      void pending.catch(() => {
+        if (cache.get(host) === pending) cache.delete(host);
+      });
+      return pending;
+    },
+  };
 }
 
 export interface TransferConnectionPool {
@@ -52,18 +99,18 @@ export interface TransferConnectionPool {
   /** Remove a dead session from the pool and close it (best-effort). */
   discard(sftpId: string): void;
   getStats(poolKey?: string): {
+    poolKeys: number;
     connections: number;
     busy: number;
     idle: number;
     holders: number;
+    pendingOpenLocks: number;
   };
-  /** Close every channel with zero holders (defensive sweep). */
+  /** Close channels whose idle deadline has passed. */
   closeIdle(now?: number): Promise<number>;
   closeAll(): Promise<void>;
   setMaxPerHost(max: number): void;
-  /** @deprecated No-op — transfer channels no longer park independently. */
   setIdleTtlMs(ms: number): void;
-  /** @deprecated Always 0 (immediate reclaim of idle channels). */
   getIdleTtlMs(): number;
 }
 
@@ -75,12 +122,29 @@ function normalizeMaxPerHost(value: number | undefined): number {
   );
 }
 
+function normalizeIdleTtlMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS;
+  if (!Number.isFinite(value)) return DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS;
+  return Math.max(0, Math.floor(value));
+}
+
+function normalizeMaxIdleConnections(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_MAX_IDLE_TRANSFER_CONNECTIONS;
+  if (!Number.isFinite(value)) return DEFAULT_MAX_IDLE_TRANSFER_CONNECTIONS;
+  return Math.max(0, Math.floor(value));
+}
+
 export function createTransferConnectionPool(
   options: TransferConnectionPoolOptions = {},
 ): TransferConnectionPool {
   let maxPerHost = normalizeMaxPerHost(options.maxPerHost);
+  let idleTtlMs = normalizeIdleTtlMs(options.idleTtlMs);
+  const maxIdleConnections = normalizeMaxIdleConnections(options.maxIdleConnections);
   const closeSession = options.closeSession;
   const now = options.now ?? (() => Date.now());
+  const setTimeoutFn = options.setTimeoutFn ?? ((callback, delayMs) => setTimeout(callback, delayMs));
+  const clearTimeoutFn = options.clearTimeoutFn ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
+  let nextIdleOrder = 1;
 
   /** poolKey -> open slots for that host endpoint */
   const pools = new Map<string, PoolSlot[]>();
@@ -101,21 +165,102 @@ export function createTransferConnectionPool(
     let releaseLock!: () => void;
     const gate = new Promise<void>((resolve) => { releaseLock = resolve; });
     // Chain waiters so concurrent acquires never exceed maxPerHost.
-    openLocks.set(poolKey, previous.catch(() => {}).then(() => gate));
+    const tail = previous.catch(() => {}).then(() => gate);
+    openLocks.set(poolKey, tail);
     await previous.catch(() => {});
     try {
       return await work();
     } finally {
       releaseLock();
+      // A later waiter replaces our tail. Only the last waiter may remove the
+      // per-host serialization entry, otherwise concurrent opens can overlap.
+      if (openLocks.get(poolKey) === tail) openLocks.delete(poolKey);
+    }
+  };
+
+  const clearIdleTimer = (slot: PoolSlot) => {
+    if (slot.idleTimer === undefined) return;
+    clearTimeoutFn(slot.idleTimer);
+    slot.idleTimer = undefined;
+  };
+
+  const detachSlot = (poolKey: string, list: PoolSlot[], idx: number): PoolSlot | undefined => {
+    const [slot] = list.splice(idx, 1);
+    if (slot) clearIdleTimer(slot);
+    if (list.length === 0) pools.delete(poolKey);
+    else pools.set(poolKey, list);
+    return slot;
+  };
+
+  const closeSessionBestEffort = (sftpId: string) => {
+    try {
+      void Promise.resolve(closeSession?.(sftpId)).catch(() => {});
+    } catch {
+      // best-effort
     }
   };
 
   const removeAndCloseSlot = (poolKey: string, list: PoolSlot[], idx: number) => {
-    const [slot] = list.splice(idx, 1);
-    if (list.length === 0) pools.delete(poolKey);
-    else pools.set(poolKey, list);
+    const slot = detachSlot(poolKey, list, idx);
     if (slot) {
-      void Promise.resolve(closeSession?.(slot.sftpId)).catch(() => {});
+      closeSessionBestEffort(slot.sftpId);
+    }
+  };
+
+  const scheduleIdleClose = (poolKey: string, slot: PoolSlot, delayMs?: number) => {
+    clearIdleTimer(slot);
+    if (slot.holders.size > 0) return;
+    const list = pools.get(poolKey);
+    const idx = list?.indexOf(slot) ?? -1;
+    if (!list || idx < 0) return;
+    if (slot.unhealthy || idleTtlMs <= 0) {
+      removeAndCloseSlot(poolKey, list, idx);
+      return;
+    }
+
+    const remaining = delayMs ?? Math.max(0, (slot.idleSince ?? now()) + idleTtlMs - now());
+    if (remaining <= 0) {
+      removeAndCloseSlot(poolKey, list, idx);
+      return;
+    }
+    const handle = setTimeoutFn(() => {
+      slot.idleTimer = undefined;
+      const currentList = pools.get(poolKey);
+      const currentIdx = currentList?.indexOf(slot) ?? -1;
+      if (!currentList || currentIdx < 0 || slot.holders.size > 0) return;
+      const deadline = (slot.idleSince ?? slot.lastUsedAt) + idleTtlMs;
+      const remainingAtFire = deadline - now();
+      if (remainingAtFire > 0) {
+        scheduleIdleClose(poolKey, slot, remainingAtFire);
+        return;
+      }
+      removeAndCloseSlot(poolKey, currentList, currentIdx);
+    }, remaining);
+    slot.idleTimer = handle;
+    const maybeTimer = handle as { unref?: () => void } | null;
+    maybeTimer?.unref?.();
+  };
+
+  const enforceGlobalIdleCap = () => {
+    const idleSlots: Array<{ poolKey: string; slot: PoolSlot }> = [];
+    for (const [poolKey, list] of pools.entries()) {
+      for (const slot of list) {
+        if (slot.holders.size === 0) idleSlots.push({ poolKey, slot });
+      }
+    }
+    idleSlots.sort((left, right) => {
+      if (left.slot.lastUsedAt !== right.slot.lastUsedAt) {
+        return left.slot.lastUsedAt - right.slot.lastUsedAt;
+      }
+      return (left.slot.idleOrder ?? 0) - (right.slot.idleOrder ?? 0);
+    });
+    for (let index = 0; index < idleSlots.length - maxIdleConnections; index += 1) {
+      const candidate = idleSlots[index]!;
+      const currentList = pools.get(candidate.poolKey);
+      const currentIdx = currentList?.indexOf(candidate.slot) ?? -1;
+      if (currentList && currentIdx >= 0 && candidate.slot.holders.size === 0) {
+        removeAndCloseSlot(candidate.poolKey, currentList, currentIdx);
+      }
     }
   };
 
@@ -137,11 +282,18 @@ export function createTransferConnectionPool(
     const idx = list.findIndex((candidate) => candidate.sftpId === sftpId);
     if (idx < 0) return;
     const slot = list[idx]!;
-    slot.holders.delete(transferId);
+    if (!slot.holders.delete(transferId)) return;
     slot.lastUsedAt = now();
-    // Last holder → close channel so the SSH transport lease can return.
     if (slot.holders.size === 0) {
-      removeAndCloseSlot(poolKey, list, idx);
+      if (slot.unhealthy) {
+        removeAndCloseSlot(poolKey, list, idx);
+        return;
+      }
+      slot.idleSince = slot.lastUsedAt;
+      slot.idleOrder = nextIdleOrder;
+      nextIdleOrder += 1;
+      scheduleIdleClose(poolKey, slot, idleTtlMs);
+      enforceGlobalIdleCap();
     }
   };
 
@@ -190,22 +342,39 @@ export function createTransferConnectionPool(
       const existing = pickSlot(list);
       // Reuse when we already have max healthy connections, or when an idle one exists.
       // FileZilla-style: open a second connection only when the first is busy.
-      // Note: idle slots are rare now (release closes immediately) but still
-      // possible while a close is in-flight or under concurrent acquire.
+      // Idle slots are available during the short reuse window.
       if (existing && (existing.holders.size === 0 || healthyCount >= maxPerHost)) {
+        clearIdleTimer(existing);
+        existing.idleSince = undefined;
+        existing.idleOrder = undefined;
         existing.holders.add(transferId);
         existing.lastUsedAt = now();
         return makeLease(poolKey, existing.sftpId, transferId);
       }
 
       if (healthyCount < maxPerHost) {
-        const sftpId = await open(poolKey);
+        let sftpId: string;
+        try {
+          sftpId = await open(poolKey);
+        } catch (error) {
+          // getList() installs the per-host array before opening. A failed
+          // connection must not leave one empty key behind forever in the
+          // process-wide pool (notably when many different hosts are tried).
+          if (list.length === 0 && pools.get(poolKey) === list) {
+            pools.delete(poolKey);
+          }
+          throw error;
+        }
         const slot: PoolSlot = {
           sftpId,
           holders: new Set([transferId]),
           lastUsedAt: now(),
         };
-        list.push(slot);
+        // The last holder of the old list can release while open() is awaiting,
+        // which removes that empty list from `pools`. Re-read/recreate the
+        // canonical list before publishing the new slot; otherwise the lease is
+        // returned from a detached array and can never be released or closed.
+        getList(poolKey).push(slot);
         return makeLease(poolKey, sftpId, transferId);
       }
 
@@ -222,19 +391,23 @@ export function createTransferConnectionPool(
         return makeLease(poolKey, sftpId, transferId);
       }
       fallback.holders.add(transferId);
+      clearIdleTimer(fallback);
+      fallback.idleSince = undefined;
+      fallback.idleOrder = undefined;
       fallback.lastUsedAt = now();
       return makeLease(poolKey, fallback.sftpId, transferId);
     });
   };
 
-  const closeIdle = async (): Promise<number> => {
-    // Defensive: release() already closes zero-holder slots. Sweep any leftover
-    // idle channels (e.g. after a failed close) so transport leases do not stick.
+  const closeIdle = async (sweepNow = now()): Promise<number> => {
     const toClose: string[] = [];
     for (const [poolKey, list] of pools.entries()) {
       const kept: PoolSlot[] = [];
       for (const slot of list) {
-        if (slot.holders.size === 0) {
+        const expired = slot.holders.size === 0
+          && (slot.unhealthy || idleTtlMs <= 0 || (slot.idleSince ?? slot.lastUsedAt) + idleTtlMs <= sweepNow);
+        if (expired) {
+          clearIdleTimer(slot);
           toClose.push(slot.sftpId);
           continue;
         }
@@ -256,16 +429,16 @@ export function createTransferConnectionPool(
   };
 
   const closeAll = async () => {
-    for (const list of pools.values()) {
-      for (const slot of list) {
-        try {
-          await closeSession?.(slot.sftpId);
-        } catch {
-          // best-effort
-        }
+    const toClose = [...pools.values()].flatMap((list) => list);
+    pools.clear();
+    for (const slot of toClose) clearIdleTimer(slot);
+    for (const slot of toClose) {
+      try {
+        await closeSession?.(slot.sftpId);
+      } catch {
+        // best-effort
       }
     }
-    pools.clear();
   };
 
   const getStats = (poolKey?: string) => {
@@ -282,7 +455,10 @@ export function createTransferConnectionPool(
         else idle += 1;
       }
     }
-    return { connections, busy, idle, holders };
+    const pendingOpenLocks = poolKey
+      ? (openLocks.has(poolKey) ? 1 : 0)
+      : openLocks.size;
+    return { poolKeys: pools.size, connections, busy, idle, holders, pendingOpenLocks };
   };
 
   return {
@@ -295,11 +471,22 @@ export function createTransferConnectionPool(
     setMaxPerHost(max: number) {
       maxPerHost = normalizeMaxPerHost(max);
     },
-    setIdleTtlMs(_ms: number) {
-      // No-op: SSH transport registry owns connection keep-alive.
+    setIdleTtlMs(ms: number) {
+      idleTtlMs = normalizeIdleTtlMs(ms);
+      for (const [poolKey, list] of [...pools.entries()]) {
+        for (const slot of [...list]) {
+          if (slot.holders.size > 0) continue;
+          scheduleIdleClose(
+            poolKey,
+            slot,
+            Math.max(0, (slot.idleSince ?? slot.lastUsedAt) + idleTtlMs - now()),
+          );
+        }
+      }
+      enforceGlobalIdleCap();
     },
     getIdleTtlMs() {
-      return 0;
+      return idleTtlMs;
     },
   };
 }
@@ -328,14 +515,16 @@ export function resetSharedTransferConnectionPoolForTests(): void {
   sharedPool = null;
 }
 
-export function buildTransferPoolKey(input: {
-  hostId?: string;
-  hostname?: string;
-  port?: number;
-  username?: string;
-  protocol?: string;
-  sftpSudo?: boolean;
-}): string {
+export async function buildTransferPoolKey(input: TransferPoolKeyInput): Promise<string> {
+  const stableSerialize = (value: unknown): string => {
+    if (value === undefined) return '"__undefined__"';
+    if (value === null || typeof value !== "object") return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "sessionId")
+      .sort(([left], [right]) => left.localeCompare(right));
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableSerialize(item)}`).join(",")}}`;
+  };
   // Include endpoint identity whenever hostname is known so session-time
   // hostname/port/username overrides do not share a pool with the vault host.
   if (input.hostname) {
@@ -344,7 +533,12 @@ export function buildTransferPoolKey(input: {
     const protocol = input.protocol || "ssh";
     const sudo = input.sftpSudo ? "sudo" : "nosudo";
     const ep = `${input.hostname}:${port}:${user}:${protocol}:${sudo}`;
-    return input.hostId ? `host:${input.hostId}|ep:${ep}` : `ep:${ep}`;
+    const base = input.hostId ? `host:${input.hostId}|ep:${ep}` : `ep:${ep}`;
+    if (!input.connectionOptions) return base;
+    const encoded = new TextEncoder().encode(stableSerialize(input.connectionOptions));
+    const digest = await crypto.subtle.digest("SHA-256", encoded);
+    const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+    return `${base}|identity:${fingerprint}`;
   }
   if (input.hostId) return `host:${input.hostId}`;
   return "ep:unknown:22:root:ssh:nosudo";

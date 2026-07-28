@@ -1,4 +1,123 @@
 /* eslint-disable no-undef */
+const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+const MAX_IN_MEMORY_SFTP_READ_BYTES = 10 * 1024 * 1024;
+const DEFAULT_IN_MEMORY_SFTP_READ_TIMEOUT_MS = 30_000;
+
+function createSftpReadLimitError(size) {
+  const error = new Error(
+    `Remote file is too large to read into memory (${size} bytes; maximum 10 MB). `
+    + "Use SFTP download for large files, or open it with an external app.",
+  );
+  error.code = "SFTP_READ_TOO_LARGE";
+  error.maxBytes = MAX_IN_MEMORY_SFTP_READ_BYTES;
+  error.actualBytes = size;
+  return error;
+}
+
+function assertSftpReadSize(size) {
+  const value = Number(size);
+  if (Number.isFinite(value) && value > MAX_IN_MEMORY_SFTP_READ_BYTES) {
+    throw createSftpReadLimitError(value);
+  }
+}
+
+function createSftpReadTimeoutError(timeoutMs) {
+  const error = new Error(`SFTP in-memory read timed out after ${timeoutMs} ms`);
+  error.code = "SFTP_READ_TIMEOUT";
+  return error;
+}
+
+async function runBoundedSftpMemoryRead(payload, operation) {
+  const requestedTimeout = Number(payload?.timeoutMs);
+  const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
+    ? requestedTimeout
+    : DEFAULT_IN_MEMORY_SFTP_READ_TIMEOUT_MS;
+  const controller = new AbortController();
+  const parentSignal = payload?.abortSignal || null;
+  const abortFromParent = () => {
+    const reason = parentSignal?.reason instanceof Error
+      ? parentSignal.reason
+      : new Error("SFTP read cancelled");
+    controller.abort(reason);
+  };
+  if (parentSignal?.aborted) abortFromParent();
+  else parentSignal?.addEventListener?.("abort", abortFromParent, { once: true });
+
+  let rejectOnAbort;
+  const aborted = new Promise((_, reject) => { rejectOnAbort = reject; });
+  const onAbort = () => rejectOnAbort(controller.signal.reason || new Error("SFTP read cancelled"));
+  controller.signal.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(createSftpReadTimeoutError(timeoutMs)), timeoutMs);
+  timer.unref?.();
+  try {
+    return await Promise.race([operation(controller.signal), aborted]);
+  } finally {
+    clearTimeout(timer);
+    controller.signal.removeEventListener("abort", onAbort);
+    parentSignal?.removeEventListener?.("abort", abortFromParent);
+  }
+}
+
+function readSftpStreamIntoBuffer(stream, signal = null) {
+  if (!stream || typeof stream.on !== "function") {
+    throw new Error("SFTP streaming read is unavailable. Use SFTP download instead.");
+  }
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalBytes = 0;
+    let settled = false;
+    const cleanup = () => {
+      stream.removeListener("data", onData);
+      stream.removeListener("end", onEnd);
+      stream.removeListener("error", onError);
+      stream.removeListener("close", onClose);
+      signal?.removeEventListener?.("abort", onAbort);
+    };
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const stopStream = () => {
+      try { stream.destroy?.(); } catch { /* ignore */ }
+      try { stream.close?.(); } catch { /* ignore */ }
+    };
+    const onData = (chunk) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      const nextTotal = totalBytes + buffer.length;
+      if (nextTotal > MAX_IN_MEMORY_SFTP_READ_BYTES) {
+        finish(createSftpReadLimitError(nextTotal));
+        stopStream();
+        return;
+      }
+      chunks.push(buffer);
+      totalBytes = nextTotal;
+    };
+    const onEnd = () => finish(null, Buffer.concat(chunks, totalBytes));
+    const onError = (error) => finish(error);
+    const onClose = () => {
+      if (!settled) finish(new Error("SFTP read stream closed before the file was complete"));
+    };
+    const onAbort = () => {
+      const reason = signal?.reason instanceof Error ? signal.reason : new Error("SFTP read cancelled");
+      finish(reason);
+      stopStream();
+    };
+
+    stream.on("data", onData);
+    stream.once("end", onEnd);
+    stream.once("error", onError);
+    stream.once("close", onClose);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+  });
+}
+
 function createFileOpsApi(ctx) {
   with (ctx) {
     const {
@@ -223,52 +342,104 @@ function createFileOpsApi(ctx) {
     
       return results;
     }
+
+    async function realpathSftp(event, payload) {
+      const client = sftpClients.get(payload.sftpId);
+      if (!client) throw new Error("SFTP session not found");
+      const signal = payload?.abortSignal || null;
+      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+      if (isScpModeClient(client)) {
+        return getScpBackendForClient(client).realpath(payload.path || ".", { encoding, signal });
+      }
+      const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
+      const encodedPath = encodePath(payload.path || ".", encoding);
+      return realpathAsync(sftp, encodedPath);
+    }
     
     /**
      * Read file content
      */
     async function readSftp(event, payload) {
-      const client = sftpClients.get(payload.sftpId);
-      if (!client) throw new Error("SFTP session not found");
+      return runBoundedSftpMemoryRead(payload, async (signal) => {
+        const client = sftpClients.get(payload.sftpId);
+        if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+        if (isScpModeClient(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        const buffer = await getScpBackendForClient(client).readFile(payload.path, {
+        const backend = getScpBackendForClient(client);
+        try {
+          const attrs = await backend.stat(payload.path, {
+            encoding,
+            signal,
+          });
+          assertSftpReadSize(attrs?.size);
+        } catch (error) {
+          if (signal.aborted || error?.code === "SFTP_READ_TOO_LARGE") throw error;
+          // Some restricted shells cannot stat even though scp -f is allowed.
+          // The SCP protocol header below still enforces the limit before data.
+        }
+        const buffer = await backend.readFile(payload.path, {
           encoding,
-          signal: payload?.abortSignal || null,
+          signal,
+          maxBytes: MAX_IN_MEMORY_SFTP_READ_BYTES,
         });
+        assertSftpReadSize(buffer?.length);
         return buffer.toString();
-      }
+        }
     
-      await requireSftpChannel(client);
+      const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(payload.path, encoding);
-      const buffer = await client.get(encodedPath);
+      const attrs = await statAsync(sftp, encodedPath);
+      if (signal.aborted) throw signal.reason;
+      assertSftpReadSize(attrs?.size);
+      const stream = sftp.createReadStream?.(encodedPath);
+      const buffer = await readSftpStreamIntoBuffer(stream, signal);
       return buffer.toString();
+      });
     }
     
     /**
      * Read file as binary (returns ArrayBuffer for binary files like images)
      */
     async function readSftpBinary(event, payload) {
-      const client = sftpClients.get(payload.sftpId);
-      if (!client) throw new Error("SFTP session not found");
+      return runBoundedSftpMemoryRead(payload, async (signal) => {
+        const client = sftpClients.get(payload.sftpId);
+        if (!client) throw new Error("SFTP session not found");
 
-      if (isScpModeClient(client)) {
+        if (isScpModeClient(client)) {
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        const buffer = await getScpBackendForClient(client).readFile(payload.path, {
+        const backend = getScpBackendForClient(client);
+        try {
+          const attrs = await backend.stat(payload.path, {
+            encoding,
+            signal,
+          });
+          assertSftpReadSize(attrs?.size);
+        } catch (error) {
+          if (signal.aborted || error?.code === "SFTP_READ_TOO_LARGE") throw error;
+          // See the text-read path: protocol-header enforcement is the fallback.
+        }
+        const buffer = await backend.readFile(payload.path, {
           encoding,
-          signal: payload?.abortSignal || null,
+          signal,
+          maxBytes: MAX_IN_MEMORY_SFTP_READ_BYTES,
         });
+        assertSftpReadSize(buffer?.length);
         return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-      }
+        }
     
-      await requireSftpChannel(client);
+      const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(payload.path, encoding);
-      const buffer = await client.get(encodedPath);
+      const attrs = await statAsync(sftp, encodedPath);
+      if (signal.aborted) throw signal.reason;
+      assertSftpReadSize(attrs?.size);
+      const stream = sftp.createReadStream?.(encodedPath);
+      const buffer = await readSftpStreamIntoBuffer(stream, signal);
       // Convert Node.js Buffer to ArrayBuffer
       return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+      });
     }
     
     /**
@@ -369,197 +540,6 @@ function createFileOpsApi(ctx) {
     }
     
     /**
-     * Write binary data with progress callback
-     * Supports cancellation via activeSftpUploads map
-     * Optimized for performance with throttled progress updates
-     */
-    async function writeSftpBinaryWithProgress(event, payload) {
-      const client = sftpClients.get(payload.sftpId);
-      if (!client) throw new Error("SFTP session not found");
-    
-      const { sftpId, path: remotePath, content, transferId } = payload;
-
-      if (!isScpModeClient(client)) {
-        await requireSftpChannel(client);
-      }
-      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-    
-      // Extract callback functions from payload
-      const onProgress = payload.onProgress;
-      const onComplete = payload.onComplete;
-      const onError = payload.onError;
-    
-      // Optimize: Use Buffer.isBuffer to avoid unnecessary copy if already a Buffer
-      // For ArrayBuffer from renderer, we still need to convert but use a more efficient method
-      const buffer = Buffer.isBuffer(content) ? content : Buffer.from(content);
-      const totalBytes = buffer.length;
-      const emitProgress = (transferred, speed = 0) => {
-        if (typeof onProgress === "function") {
-          try {
-            onProgress(transferred, totalBytes, speed);
-          } catch (err) {
-            console.warn("[SFTP] Progress callback error:", err);
-          }
-        } else {
-          const contents = electronModule.webContents.fromId(event.sender.id);
-          contents?.send("netcatty:upload:progress", {
-            transferId,
-            transferred,
-            totalBytes,
-            speed,
-          });
-        }
-      };
-
-      const emitComplete = () => {
-        if (typeof onComplete === "function") {
-          try {
-            onComplete();
-          } catch (err) {
-            console.warn("[SFTP] Complete callback error:", err);
-          }
-        } else {
-          const contents = electronModule.webContents.fromId(event.sender.id);
-          contents?.send("netcatty:upload:complete", { transferId });
-        }
-      };
-
-      const emitError = (message) => {
-        if (typeof onError === "function") {
-          try {
-            onError(message);
-          } catch (callbackErr) {
-            console.warn("[SFTP] Error callback error:", callbackErr);
-          }
-        } else {
-          const contents = electronModule.webContents.fromId(event.sender.id);
-          contents?.send("netcatty:upload:error", { transferId, error: message });
-        }
-      };
-
-      // Pipelined fastPut via local temp + optional remote .part. Serial put()/WriteStream
-      // is not used as a silent fallback (#2449). Prefer disposable channel for cancel.
-      // Stage+rename by default so shared-channel cancel cannot keep writing the final path.
-      let tempPath = null;
-      let lastProgressTime = Date.now();
-      let lastTransferredBytes = 0;
-      let lastProgressSentTime = 0;
-      let lastProgressSentBytes = 0;
-      const PROGRESS_THROTTLE_MS = 500;
-
-      const transferControl = {
-        cancelled: false,
-        abort: null,
-      };
-      const abortController = typeof AbortController === "function"
-        ? new AbortController()
-        : null;
-      transferControl.abort = () => {
-        transferControl.cancelled = true;
-        try { abortController?.abort(); } catch { /* ignore */ }
-      };
-      activeSftpUploads.set(transferId, {
-        cancelled: false,
-        transfer: transferControl,
-      });
-
-      try {
-        tempPath = await tempDirBridge.getTempFilePath(
-          `sftp-upload-${transferId || Date.now()}.bin`,
-        );
-        // Stage to disk with abort support (Node writeFile accepts signal).
-        const writeOpts = abortController?.signal
-          ? { signal: abortController.signal }
-          : undefined;
-        await fs.promises.writeFile(tempPath, buffer, writeOpts);
-        // Buffer uploads have always created ordinary data files. Do not let a
-        // restrictive process umask leak scratch-file permissions to SCP.
-        await fs.promises.chmod(tempPath, 0o644);
-        if (activeSftpUploads.get(transferId)?.cancelled || transferControl.cancelled) {
-          throw new Error("Upload cancelled");
-        }
-
-        const step = (transferred, _chunk, total) => {
-          if (activeSftpUploads.get(transferId)?.cancelled || transferControl.cancelled) return;
-          const now = Date.now();
-          const elapsed = (now - lastProgressTime) / 1000;
-          let speed = 0;
-          if (elapsed >= 0.1) {
-            speed = (transferred - lastTransferredBytes) / elapsed;
-            lastProgressTime = now;
-            lastTransferredBytes = transferred;
-          }
-          const totalSize = Number(total) > 0 ? Number(total) : totalBytes;
-          const isComplete = transferred >= totalSize;
-          const timeSinceLast = now - lastProgressSentTime;
-          if (isComplete || timeSinceLast >= PROGRESS_THROTTLE_MS) {
-            emitProgress(transferred, speed);
-            lastProgressSentTime = now;
-            lastProgressSentBytes = transferred;
-          }
-        };
-
-        await runUnifiedSftpTransfer({
-          sftpId,
-          localPath: tempPath,
-          remotePath,
-          transferId,
-          encoding,
-          abortSignal: abortController?.signal || null,
-          resumable: false,
-          sourceIsOwnedTemp: true,
-          onTransferEvent(channel, eventPayload) {
-            if (channel === "netcatty:transfer:progress") {
-              step(eventPayload.transferred, 0, eventPayload.totalBytes);
-            }
-          },
-        }, "upload");
-        emitComplete();
-        return { success: true, transferId };
-      } catch (err) {
-        const uploadState = activeSftpUploads.get(transferId);
-        if (
-          uploadState?.cancelled
-          || transferControl.cancelled
-          || err.message === "Upload cancelled"
-          || /abort/i.test(err.message || "")
-        ) {
-          try {
-            const contents = electronModule.webContents.fromId(event?.sender?.id);
-            contents?.send("netcatty:upload:cancelled", { transferId });
-          } catch { /* ignore */ }
-          return { success: false, transferId, cancelled: true };
-        }
-        emitError(err.message);
-        throw err;
-      } finally {
-        activeSftpUploads.delete(transferId);
-        if (tempPath) {
-          try { await fs.promises.unlink(tempPath); } catch { /* ignore */ }
-        }
-      }
-    }
-    
-    /**
-     * Cancel an in-progress buffer upload (writeBinaryWithProgress).
-     * Only sets cancelled / aborts the owned signal here; cleanup of
-     * activeSftpUploads stays in writeSftpBinaryWithProgress's finally block.
-     * Panel bulk transfers cancel via transferBridge.cancelTransfer instead.
-     */
-    async function cancelSftpUpload(event, payload) {
-      const { transferId } = payload;
-      const uploadState = activeSftpUploads.get(transferId);
-      if (uploadState) {
-        uploadState.cancelled = true;
-        if (uploadState.transfer) {
-          uploadState.transfer.cancelled = true;
-          try { uploadState.transfer.abort?.(); } catch { /* ignore */ }
-        }
-      }
-      return { success: true };
-    }
-    
-    /**
      * Close an SFTP connection.
      * Also cleans up any jump host connections and file watchers if present.
      *
@@ -598,6 +578,20 @@ function createFileOpsApi(ctx) {
               deferred: true,
               leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(sftpId),
             };
+          }
+          // No transfer currently holds the client. Commit the close before
+          // the first async teardown step so a new transfer cannot borrow a
+          // client whose end() is already in progress.
+          const closeToken = sftpTransferSessionLeaseStore.beginHardClose(sftpId);
+          if (!sftpTransferSessionLeaseStore.commitHardClose(sftpId, closeToken)) {
+            if (sftpTransferSessionLeaseStore.isHeld(sftpId)) {
+              sftpTransferSessionLeaseStore.markSoftClosed(sftpId);
+              return {
+                success: true,
+                deferred: true,
+                leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(sftpId),
+              };
+            }
           }
         } catch {
           // Lease module unavailable — fall through to hard close.
@@ -915,62 +909,12 @@ function createFileOpsApi(ctx) {
       if (sshClient && typeof sshClient.exec === "function") {
         let execStream = null;
         try {
-          const result = await new Promise((resolve, reject) => {
-            let settled = false;
-            let timer = null;
-            const cleanup = () => {
-              if (timer) {
-                clearTimeout(timer);
-                timer = null;
-              }
-              if (signal) {
-                signal.removeEventListener("abort", onAbort);
-              }
-            };
-            const closeExecStream = () => {
-              try { execStream?.close?.(); } catch {}
-              try { execStream?.destroy?.(); } catch {}
-            };
-            const finishResolve = (value) => {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              resolve(value);
-            };
-            const finishReject = (err) => {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              reject(err);
-            };
-            const onAbort = () => {
-              closeExecStream();
-              finishReject(createAbortError(signal, "SFTP home probe was aborted"));
-            };
-            if (signal) {
-              signal.addEventListener("abort", onAbort, { once: true });
-            }
-            timer = setTimeout(() => {
-              closeExecStream();
-              finishReject(new Error("SFTP home probe timed out after 5000ms"));
-            }, 5000);
-            sshClient.exec("echo ~", (err, stream) => {
-              if (err) {
-                finishReject(err);
-                return;
-              }
-              if (settled) {
-                try { stream?.close?.(); } catch {}
-                try { stream?.destroy?.(); } catch {}
-                return;
-              }
-              execStream = stream;
-              let stdout = "";
-              stream.once("error", finishReject);
-              stream.on("close", (code) => finishResolve({ stdout, code }));
-              stream.on("data", (data) => { stdout += data.toString(); });
-              stream.stderr.on("data", () => {});
-            });
+          const result = await executeBoundedSshCommand(sshClient, "echo ~", {
+            signal,
+            openingTimeoutMs: 5000,
+            runTimeoutMs: 5000,
+            maxOutputBytes: 16 * 1024,
+            onStream(stream) { execStream = stream; },
           });
           throwIfAborted(signal);
           const home = result.stdout?.trim();
@@ -1013,12 +957,11 @@ function createFileOpsApi(ctx) {
 
     return {
       listSftp,
+      realpathSftp,
       readSftp,
       readSftpBinary,
       writeSftp,
       writeSftpBinary,
-      writeSftpBinaryWithProgress,
-      cancelSftpUpload,
       closeSftp,
       mkdirSftp,
       deleteSftp,

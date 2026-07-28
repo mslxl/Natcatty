@@ -11,6 +11,10 @@ import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from '../sta
 import { hasNewSourceFingerprint } from '../state/sftp/transferProgressMetadata';
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from '../../infrastructure/config/storageKeys';
 import type { TransferTask } from '../../domain/models';
+import {
+  canApplyDedicatedResumeProgress,
+  createDedicatedResumeChildUpdateBatcher,
+} from './dedicatedResumeProgress';
 
 type StartupEffectsContext = Record<string, any>;
 
@@ -94,6 +98,10 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           }
           return;
         }
+        // The final sample can still be queued in requestAnimationFrame after
+        // the resume promise settles. Never let it turn a completed/failed row
+        // back into a permanently "transferring" task.
+        if (!canApplyDedicatedResumeProgress(current.status)) return;
         // Directory parents use file-count progress; single files use bytes.
         // Prefer durable contiguous checkpoint when the bridge supplies it.
         const durableCheckpoint = task.isDirectory
@@ -131,36 +139,56 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         pendingProgress = null;
         if (progress) applyProgress(progress);
       };
-      return resumeTransferWithDedicatedSession(
-        task,
-        {
-          hosts,
-          keys,
-          identities,
-          knownHosts,
-          terminalSettings,
-        },
-        (progress) => {
-          pendingProgress = progress;
-          if (progressRaf == null) {
-            progressRaf = window.requestAnimationFrame(flushProgress);
-          }
-        },
-        {
-          children,
-          onChildUpdate: (child) => {
-            sftpTransferCenterStore.upsertTasks([{ ...child, ownerId: "dedicated-resume" }]);
+      const childUpdateBatcher = createDedicatedResumeChildUpdateBatcher({
+        // Use the restart snapshot, not repeated linear store lookups. Completed
+        // rows disappear as batches compact, but later updates for those ids can
+        // still stay in the same bounded batching path safely.
+        getTaskCount: () => children.length + 1,
+        hasTask: (() => {
+          const retainedChildIds = new Set(children.map((child) => child.id));
+          return (taskId: string) => retainedChildIds.has(taskId);
+        })(),
+        upsertTasks: (updates) => sftpTransferCenterStore.upsertTasks(updates),
+      });
+      try {
+        return await resumeTransferWithDedicatedSession(
+          task,
+          {
+            hosts,
+            keys,
+            identities,
+            knownHosts,
+            terminalSettings,
           },
-          shouldAbort: () => {
-            const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
-            // interrupted is the pre-reconnect persisted state — do not abort a
-            // live dedicated walk just because children/parent still show it.
-            return !current
-              || current.status === "cancelled"
-              || current.status === "paused";
+          (progress) => {
+            pendingProgress = progress;
+            if (progressRaf == null) {
+              progressRaf = window.requestAnimationFrame(flushProgress);
+            }
           },
-        },
-      );
+          {
+            children,
+            onChildUpdate: (child) => {
+              childUpdateBatcher.push({ ...child, ownerId: "dedicated-resume" });
+            },
+            onDirectoryCheckpointUpdate: (checkpoint) => {
+              sftpTransferCenterStore.patchTask(task.id, {
+                directoryResumeCheckpoint: checkpoint,
+              });
+            },
+            shouldAbort: () => {
+              const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+              // interrupted is the pre-reconnect persisted state — do not abort a
+              // live dedicated walk just because children/parent still show it.
+              return !current
+                || current.status === "cancelled"
+                || current.status === "paused";
+            },
+          },
+        );
+      } finally {
+        childUpdateBatcher.flush();
+      }
     });
     return () => sftpTransferCenterStore.setDedicatedResumeHandler(null);
   }, [enabled, hosts, identities, isVaultInitialized, keys, knownHosts, terminalSettings]);

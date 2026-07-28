@@ -62,6 +62,7 @@ export interface SftpExternalOperationsResult {
   ) => Promise<{ localTempPath: string; watchId?: string }>;
   openWithSystemDefault: (side: "left" | "right", remotePath: string, fileName: string, options?: { enableWatch?: boolean }) => Promise<void>;
   activeFileWatchCountRef: React.MutableRefObject<number>;
+  releaseExternalFileWatches: (cleanupTempFiles?: boolean) => Promise<void>;
   uploadExternalFiles: (
     side: "left" | "right",
     dataTransfer: DataTransfer,

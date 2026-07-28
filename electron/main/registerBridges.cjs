@@ -2,7 +2,6 @@
 
 let bridgesRegistered = false;
 let cloudSyncSessionPassword = null;
-const { randomUUID } = require("node:crypto");
 const { readClipboardFiles, readClipboardImage } = require("../bridges/clipboardFiles.cjs");
 
 const excludedFigSpecPrefixes = ["aws", "gcloud", "az"];
@@ -13,6 +12,34 @@ function isExcludedFigSpec(commandName) {
 
 function filterExcludedFigSpecs(specNames) {
   return specNames.filter((name) => !isExcludedFigSpec(name));
+}
+
+function waitForApplicationSpawn(child, requireCleanLauncherExit = false) {
+  return new Promise((resolve, reject) => {
+    const onSpawn = () => {
+      if (requireCleanLauncherExit) return;
+      cleanup();
+      resolve();
+    };
+    const onClose = (code) => {
+      if (!requireCleanLauncherExit) return;
+      cleanup();
+      if (code === 0) resolve();
+      else reject(new Error(`Application launcher exited with code ${code}`));
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const cleanup = () => {
+      child.removeListener("spawn", onSpawn);
+      child.removeListener("error", onError);
+      child.removeListener("close", onClose);
+    };
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
+    if (requireCleanLauncherExit) child.once("close", onClose);
+  });
 }
 
 function createBridgeRegistrar(context) {
@@ -339,6 +366,16 @@ function createBridgeRegistrar(context) {
           MessageChannelMain: electronModule.MessageChannelMain,
         })
       : null;
+    if (terminalWorkerManager) {
+      const { registerPluginShutdown } = require("../plugins/shutdownCoordinator.cjs");
+      registerPluginShutdown(async () => {
+        try {
+          await terminalWorkerManager.request("netcatty:portforward:stopAll", {}, {});
+        } catch (error) {
+          console.warn("[PortForward] Worker shutdown cleanup failed:", error?.message || error);
+        }
+      });
+    }
     const terminalPipelineSessionManager = terminalWorkerManager ?? {
       getSessionOwnerWebContentsId(sessionId) {
         const owner = sessions.get(sessionId)?.webContentsId;
@@ -394,7 +431,7 @@ function createBridgeRegistrar(context) {
     sftpBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     localFsBridge.registerHandlers(ipcMain);
     transferBridge.registerHandlers(ipcMain, { terminalWorkerManager });
-    portForwardingBridge.registerHandlers(ipcMain);
+    portForwardingBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     terminalBridge.registerHandlers(ipcMain, { terminalWorkerManager });
 
     const scriptBridge = require("../bridges/scriptBridge.cjs");
@@ -886,11 +923,10 @@ function createBridgeRegistrar(context) {
           console.log(`[Main]   Command: open ${args.join(' ')}`);
           child = cpSpawn("open", args, { detached: true, stdio: "pipe" });
         } else if (process.platform === "win32") {
-          // On Windows, use cmd /c start to properly handle paths with spaces
-          // The empty string "" as window title is required when the first arg has quotes
-          const args = ["/c", "start", "\"\"", `"${appPath}"`, `"${filePath}"`];
-          console.log(`[Main]   Command: cmd ${args.join(' ')}`);
-          child = cpSpawn("cmd", args, { detached: true, stdio: "pipe", windowsVerbatimArguments: true });
+          // Spawn the selected executable directly. This preserves paths with
+          // spaces without a shell and reports an invalid app path as ENOENT.
+          console.log(`[Main]   Command: ${appPath} ${filePath}`);
+          child = cpSpawn(appPath, [filePath], { detached: true, stdio: "pipe" });
         } else {
           // On Linux, spawn the app with the file
           console.log(`[Main]   Command: ${appPath} ${filePath}`);
@@ -933,7 +969,11 @@ function createBridgeRegistrar(context) {
             console.log(`[Main] Application started successfully`);
           }
         });
-        
+
+        // spawn() reports ENOENT and similar launch failures asynchronously.
+        // Do not acknowledge success until the child has actually started, so
+        // the renderer can unregister and delete its downloaded temp file.
+        await waitForApplicationSpawn(child, process.platform === "darwin");
         child.unref();
         return true;
       } catch (err) {
@@ -1006,54 +1046,6 @@ function createBridgeRegistrar(context) {
       }
   
       return result.filePaths[0];
-    });
-  
-    // Download SFTP file to temp and return local path
-    ipcMain.handle("netcatty:sftp:downloadToTemp", async (event, { sftpId, remotePath, fileName, encoding }) => {
-      console.log(`[Main] Downloading SFTP file to temp:`);
-      console.log(`[Main]   SFTP ID: ${sftpId}`);
-      console.log(`[Main]   Remote path: ${remotePath}`);
-      console.log(`[Main]   File name: ${fileName}`);
-      
-      // Use tempDirBridge for dedicated Netcatty temp directory
-      const localPath = await getTempDirBridge().getTempFilePath(fileName);
-      
-      console.log(`[Main]   Local temp path: ${localPath}`);
-
-      const payload = {
-        transferId: `download-temp-${randomUUID()}`,
-        sourcePath: remotePath,
-        targetPath: localPath,
-        sourceType: "sftp",
-        targetType: "local",
-        sourceSftpId: sftpId,
-        sourceEncoding: encoding,
-        totalBytes: 0,
-      };
-
-      try {
-        const result = terminalWorkerManager
-          ? await (transferBridge.runAdmittedTransfer ? transferBridge.runAdmittedTransfer(
-              event,
-              payload,
-              undefined,
-              () => terminalWorkerManager.request("netcatty:transfer:start", {
-                ...payload,
-                skipAdmission: true,
-              }, {
-                webContentsId: event?.sender?.id,
-              }),
-            ) : terminalWorkerManager.request("netcatty:transfer:start", payload, {
-              webContentsId: event?.sender?.id,
-            }))
-          : await transferBridge.startTransfer(event, payload);
-        if (result?.error) throw new Error(result.error);
-        console.log(`[Main]   File downloaded successfully`);
-        return localPath;
-      } catch (err) {
-        try { await fs.promises.rm(localPath, { force: true }); } catch { /* ignore */ }
-        throw err;
-      }
     });
   
     // Download SFTP file to temp with progress reporting via transfer events.
@@ -1140,4 +1132,9 @@ function createBridgeRegistrar(context) {
   return registerBridges;
 }
 
-module.exports = { createBridgeRegistrar, filterExcludedFigSpecs, isExcludedFigSpec };
+module.exports = {
+  createBridgeRegistrar,
+  filterExcludedFigSpecs,
+  isExcludedFigSpec,
+  _waitForApplicationSpawnForTests: waitForApplicationSpawn,
+};

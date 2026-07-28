@@ -94,7 +94,10 @@ import { TerminalToolbar } from "./terminal/TerminalToolbar";
 import { ScriptRecordingIndicator } from "./terminal/ScriptRecordingIndicator";
 import { ScriptSaveRecordingDialog } from "./scripts/ScriptSaveRecordingDialog";
 import { registerScreenSnapshotProvider } from "@/infrastructure/scripts/screenSnapshotRegistry.ts";
-import { useScriptRecorder } from "@/application/state/useScriptRecorder.ts";
+import {
+  SCRIPT_RECORDING_LIMIT_EVENT,
+  useScriptRecorder,
+} from "@/application/state/useScriptRecorder.ts";
 import { getScriptRecordingSnapshot, setScriptRecordingState } from "@/application/state/scriptRecordingStore.ts";
 import {
   runAutomationScript,
@@ -2432,11 +2435,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         setSaveRecordingOpen(true);
       });
     };
+    const limitHandler = (event: Event) => {
+      const detail = (event as CustomEvent<{ sessionId?: string; code?: string }>).detail;
+      if (detail?.sessionId !== sessionId) return;
+      setRecordedCode(detail.code ?? '');
+      setSaveRecordingOpen(true);
+    };
     window.addEventListener('netcatty:script:recording:start', startHandler);
     window.addEventListener('netcatty:script:recording:stop', stopHandler);
+    window.addEventListener(SCRIPT_RECORDING_LIMIT_EVENT, limitHandler);
     return () => {
       window.removeEventListener('netcatty:script:recording:start', startHandler);
       window.removeEventListener('netcatty:script:recording:stop', stopHandler);
+      window.removeEventListener(SCRIPT_RECORDING_LIMIT_EVENT, limitHandler);
     };
   }, [sessionId]);
 

@@ -2,7 +2,6 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronsLeft, GripVertical, X as XIcon } from 'lucide-react';
 
-import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHibernate';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { classifyDistroId } from '../../domain/host';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
@@ -523,11 +522,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                 {showHostInfoBar && !compactToolbar && (
                   <TerminalServerStats
                     sessionId={sessionId}
-                    enabled={(terminalSettings?.showServerStats ?? true) && shouldKeepTerminalBackgroundWorkActive(
-                      terminalSettings,
-                      host.protocol,
-                      isVisible,
-                    )}
+                    enabled={(terminalSettings?.showServerStats ?? true) && isVisible}
                     refreshInterval={terminalSettings?.serverStatsRefreshInterval ?? 5}
                     isSupportedOs={isSupportedOs}
                     isConnected={status === 'connected'}

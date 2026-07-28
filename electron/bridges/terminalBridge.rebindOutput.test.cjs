@@ -529,6 +529,28 @@ test("failed attach restores retry when a main renderer becomes ready", async ()
   assert.equal(calls, 2, "successful retry clears the pending restore");
 });
 
+test("closing a terminal clears failed restore and popup authorization state", async () => {
+  const registry = require("./terminalAttachRestore.cjs");
+  let calls = 0;
+  registry.setRestoreAttachedSessionOutput(() => {
+    calls += 1;
+    return { success: false, restored: false };
+  });
+  registry.registerAttachPopupAuthorization("closed-grant", "closed-session", 42);
+  await registry.restoreAttachedSessionOutput("closed-session");
+
+  registry.releaseAttachedSessionState("closed-session");
+  const result = await registry.retryPendingAttachedSessionOutput("closed-session", 42);
+
+  assert.equal(calls, 1);
+  assert.deepEqual(result, { success: true, restored: false });
+  assert.equal(
+    registry.validateAttachPopupAuthorization("closed-grant", "closed-session", 42),
+    false,
+  );
+  registry.setRestoreAttachedSessionOutput(null);
+});
+
 test("a ready replacement main renderer becomes the explicit restore target", async () => {
   const registry = require("./terminalAttachRestore.cjs");
   const targets = [];

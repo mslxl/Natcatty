@@ -69,6 +69,11 @@ import {
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
+import {
+  pruneSftpSidePanelTabConnectionKeys,
+  recallSftpSidePanelPath,
+  rememberSftpSidePanelPath,
+} from "./sftp/sftpSidePanelConnectionMemory";
 import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import type { TerminalSession } from "../domain/models";
 
@@ -422,6 +427,16 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const [interactiveWorkActive, setInteractiveWorkActive] = useState(false);
   const [sftpUiReady, setSftpUiReady] = useState(false);
 
+  useEffect(() => {
+    pruneSftpSidePanelTabConnectionKeys(
+      tabConnectionKeyMapRef.current,
+      [
+        ...sftp.leftTabs.tabs.map((tab) => tab.id),
+        ...sftp.rightTabs.tabs.map((tab) => tab.id),
+      ],
+    );
+  }, [sftp.leftTabs.tabs, sftp.rightTabs.tabs]);
+
   const runAutoConnect = useCallback(() => {
     if (!activeHost) return;
 
@@ -569,7 +584,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       && activeTab.connection.currentPath
       && activeTabConnectionKey === connectionKey
     ) {
-      lastBrowsedPathByConnectionKeyRef.current.set(
+      rememberSftpSidePanelPath(
+        lastBrowsedPathByConnectionKeyRef.current,
         connectionKey,
         activeTab.connection.currentPath,
       );
@@ -624,7 +640,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         )
       )
     );
-    const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
+    const rememberedPath = recallSftpSidePanelPath(
+      lastBrowsedPathByConnectionKeyRef.current,
+      connectionKey,
+    );
     const initialPath = resolveSftpAutoConnectPath({
       explicitPath:
         initialLocation?.hostId === activeHost.id ? initialLocation.path : null,
@@ -660,11 +679,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const connection = sftp.leftPane.connection;
     if (!connection || connection.status === "error" || connection.status === "disconnected") {
       connectedKeyRef.current = null;
-      if (sftp.activeFileWatchCountRef) {
-        sftp.activeFileWatchCountRef.current = 0;
-      }
     }
-  }, [sftp.leftPane.connection, sftp.leftPane.connection?.status, sftp.activeFileWatchCountRef]);
+  }, [sftp.leftPane.connection, sftp.leftPane.connection?.status]);
 
   useEffect(() => {
     if (!activeHost || !initialLocation) return;
@@ -725,7 +741,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     }
     tabConnectionKeyMapRef.current.set(sftp.leftPane.id, connectionKey);
 
-    lastBrowsedPathByConnectionKeyRef.current.set(connectionKey, connection.currentPath);
+    rememberSftpSidePanelPath(
+      lastBrowsedPathByConnectionKeyRef.current,
+      connectionKey,
+      connection.currentPath,
+    );
     onCurrentPathChangeRef.current?.({
       hostId: connection.hostId,
       connectionKey,

@@ -35,6 +35,27 @@ test("plugin management bridge is unavailable unless the local development gate 
   await assert.rejects(ipcMain.handlers.get(CHANNELS.list)({}), /runtime is disabled/);
 });
 
+test("disabled plugin runtime keeps passive host integration channels quiet", async () => {
+  const ipcMain = createIpcMain();
+  registerPluginBridge(ipcMain, {
+    manager: null,
+    env: {},
+    isTrustedSender: () => true,
+  });
+
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.terminalProviders)({}, {}), []);
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.terminalSessionEvent)({}, {}), []);
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.extensionProviders)({}, {}), []);
+  assert.equal(await ipcMain.handlers.get(CHANNELS.credentialCatalogUpdate)({}, { entries: [] }), 0);
+  assert.equal(await ipcMain.handlers.get(CHANNELS.setScopeCatalog)({}, {}), null);
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.getScopeCatalog)({}, {}), {
+    workspace: [],
+    host: [],
+    session: [],
+    device: [{ id: "device", label: "This device" }],
+  });
+});
+
 test("plugin management bridge fails closed when the host manager is unavailable", async () => {
   const ipcMain = createIpcMain();
   registerPluginBridge(ipcMain, {

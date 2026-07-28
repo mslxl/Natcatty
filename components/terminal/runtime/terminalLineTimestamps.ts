@@ -1,6 +1,7 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 import { shouldSkipTerminalLineTimestamps } from "./terminalOutputPressure";
+import { canRetainIncompleteTerminalControlSequence } from "./terminalControlSequenceLimits";
 
 export type TerminalLineTimestampSegment =
   | { kind: "data"; data: string }
@@ -407,7 +408,14 @@ export const createTerminalLineTimestampSegmenter = (
           const sequence = readEscapeSequence(input, index);
           if (sequence) {
             if (!sequence.complete) {
-              pendingEscapeSequence = sequence.sequence;
+              if (canRetainIncompleteTerminalControlSequence(sequence.sequence)) {
+                pendingEscapeSequence = sequence.sequence;
+              } else {
+                // Fail open: xterm still receives the original data, while the
+                // timestamp parser drops the malformed prefix and resumes fresh
+                // on the next chunk instead of retaining/scanning it forever.
+                pushDataSegment(segments, sequence.sequence);
+              }
               break;
             }
             const alternateScreenAction = getAlternateScreenAction(sequence.sequence);
@@ -1574,15 +1582,6 @@ export const resolveTerminalTimestampGutterRowsFromLedger = ({
     .filter((entry) => entry.line >= 0)
     .sort((left, right) => left.line - right.line || left.secondKey - right.secondKey);
 
-  const labelAtOrBefore = (line: number): string | undefined => {
-    let label: string | undefined;
-    for (const stamp of stamps) {
-      if (stamp.line > line) break;
-      label = stamp.label;
-    }
-    return label;
-  };
-
   const resolveSourceLine = (line: number): number => {
     if (!isWrappedLine?.(line)) return line;
     let sourceLine = line;
@@ -1597,13 +1596,18 @@ export const resolveTerminalTimestampGutterRowsFromLedger = ({
     : Number.POSITIVE_INFINITY;
 
   const visible: TerminalTimestampGutterRow[] = [];
+  let stampIndex = -1;
+  let currentLabel: string | undefined;
   for (let row = 0; row < rows; row += 1) {
     const line = viewportY + row;
     if (line > maxLine) break;
     const sourceLine = resolveSourceLine(line);
-    const label = labelAtOrBefore(sourceLine);
-    if (label) {
-      visible.push({ row, label });
+    while (stampIndex + 1 < stamps.length && stamps[stampIndex + 1].line <= sourceLine) {
+      stampIndex += 1;
+      currentLabel = stamps[stampIndex].label;
+    }
+    if (currentLabel) {
+      visible.push({ row, label: currentLabel });
     }
   }
   return visible;

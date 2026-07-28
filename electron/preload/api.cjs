@@ -3,12 +3,16 @@ const {
   hasPluginPipelineIngressMarker,
 } = require("./terminalDataBacklog.cjs");
 const { randomUUID } = require("node:crypto");
+const fs = require("node:fs");
+const { stageRendererFileToTemp } = require("./stageUploadFile.cjs");
 
 function createPreloadApi(ctx) {
   const terminalDataBacklog = ctx.terminalDataBacklog || null;
   const displayDataListeners = ctx.displayDataListeners || new Map();
   const closedTerminalDataSessions = ctx.closedTerminalDataSessions || null;
   const globalSftpTransferListeners = ctx.globalSftpTransferListeners || new Set();
+  const pluginContributionsChangedListeners = ctx.pluginContributionsChangedListeners || new Set();
+  const uploadStageControllers = new Map();
   // Lightweight test contexts may omit this map; default so closeSession never throws.
   if (!ctx.moshSessionReadyListeners) {
     ctx.moshSessionReadyListeners = new Map();
@@ -23,12 +27,25 @@ function createPreloadApi(ctx) {
   const markTerminalDataSessionClosed = (sessionId) => {
     if (!sessionId) return;
     closedTerminalDataSessions?.add?.(sessionId);
+    ctx.clearTerminalOutputSessionState?.(sessionId);
     clearTerminalDataSession({
       dataListeners: ctx.dataListeners,
       displayDataListeners,
       terminalDataBacklog,
     }, sessionId);
     ctx.terminalOutputPorts?.closeSession?.(sessionId);
+  };
+  const removeSessionListener = (listeners, sessionId, cb) => {
+    const set = listeners?.get?.(sessionId);
+    set?.delete(cb);
+    if (set?.size === 0) listeners.delete(sessionId);
+  };
+  const clearSessionScopedTerminalListeners = (sessionId) => {
+    ctx.telnetAutoLoginCompleteListeners?.delete?.(sessionId);
+    ctx.telnetAutoLoginCancelledListeners?.delete?.(sessionId);
+    ctx.moshSessionReadyListeners?.delete?.(sessionId);
+    ctx.telnetEchoModeListeners?.delete?.(sessionId);
+    ctx.authFailedListeners?.delete?.(sessionId);
   };
   const sanitizeInterruptTrace = (trace) => {
     if (!trace || typeof trace !== "object") return undefined;
@@ -173,9 +190,8 @@ function createPreloadApi(ctx) {
   }),
   postPluginViewMessage: (instanceId, message) => ipcRenderer.invoke("netcatty:plugins:view-message", { instanceId, message }),
   onPluginContributionsChanged: (callback) => {
-    const listener = (_event, payload) => callback(payload);
-    ipcRenderer.on("netcatty:plugins:contributions-changed", listener);
-    return () => ipcRenderer.removeListener("netcatty:plugins:contributions-changed", listener);
+    pluginContributionsChangedListeners.add(callback);
+    return () => pluginContributionsChangedListeners.delete(callback);
   },
   onPluginViewMessage: (callback) => {
     const listener = (_event, payload) => callback(payload);
@@ -431,10 +447,9 @@ function createPreloadApi(ctx) {
   },
   closeSession: async (sessionId) => {
     markTerminalDataSessionClosed(sessionId);
-    telnetEchoModeListeners.delete(sessionId);
-    // closeSession sets session.closed before kill; mosh exit handlers skip
-    // the exit event in that case, so clear ready listeners here too.
-    moshSessionReadyListeners.delete(sessionId);
+    // closeSession sets session.closed before kill, so some protocol-specific
+    // exit events can be skipped. Release every session-scoped listener here.
+    clearSessionScopedTerminalListeners(sessionId);
     try {
       await ipcRenderer.invoke("netcatty:close:await", { sessionId });
     } catch {
@@ -614,35 +629,35 @@ function createPreloadApi(ctx) {
       telnetAutoLoginCompleteListeners.set(sessionId, new Set());
     }
     telnetAutoLoginCompleteListeners.get(sessionId).add(cb);
-    return () => telnetAutoLoginCompleteListeners.get(sessionId)?.delete(cb);
+    return () => removeSessionListener(telnetAutoLoginCompleteListeners, sessionId, cb);
   },
   onTelnetAutoLoginCancelled: (sessionId, cb) => {
     if (!telnetAutoLoginCancelledListeners.has(sessionId)) {
       telnetAutoLoginCancelledListeners.set(sessionId, new Set());
     }
     telnetAutoLoginCancelledListeners.get(sessionId).add(cb);
-    return () => telnetAutoLoginCancelledListeners.get(sessionId)?.delete(cb);
+    return () => removeSessionListener(telnetAutoLoginCancelledListeners, sessionId, cb);
   },
   onMoshSessionReady: (sessionId, cb) => {
     if (!moshSessionReadyListeners.has(sessionId)) {
       moshSessionReadyListeners.set(sessionId, new Set());
     }
     moshSessionReadyListeners.get(sessionId).add(cb);
-    return () => moshSessionReadyListeners.get(sessionId)?.delete(cb);
+    return () => removeSessionListener(moshSessionReadyListeners, sessionId, cb);
   },
   onTelnetEchoMode: (sessionId, cb) => {
     if (!telnetEchoModeListeners.has(sessionId)) {
       telnetEchoModeListeners.set(sessionId, new Set());
     }
     telnetEchoModeListeners.get(sessionId).add(cb);
-    return () => telnetEchoModeListeners.get(sessionId)?.delete(cb);
+    return () => removeSessionListener(telnetEchoModeListeners, sessionId, cb);
   },
   getTelnetEchoMode: (sessionId) =>
     ipcRenderer.invoke("netcatty:telnet:getEchoMode", { sessionId }),
   onAuthFailed: (sessionId, cb) => {
     if (!authFailedListeners.has(sessionId)) authFailedListeners.set(sessionId, new Set());
     authFailedListeners.get(sessionId).add(cb);
-    return () => authFailedListeners.get(sessionId)?.delete(cb);
+    return () => removeSessionListener(authFailedListeners, sessionId, cb);
   },
   // Keyboard-interactive authentication (2FA/MFA)
   onKeyboardInteractive: (cb) => {
@@ -706,12 +721,18 @@ function createPreloadApi(ctx) {
       const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
       return result.sftpId;
     },
-  openSftpForSession: async (sessionId) => {
-    const result = await ipcRenderer.invoke("netcatty:sftp:openForSession", { sessionId });
+  openSftpForSession: async (sessionId, expectedEndpoint) => {
+    const result = await ipcRenderer.invoke("netcatty:sftp:openForSession", {
+      sessionId,
+      expectedEndpoint,
+    });
     return result.sftpId;
   },
   listSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:list", { sftpId, path, encoding });
+  },
+  realpathSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:realpath", { sftpId, path, encoding });
   },
   readSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:read", { sftpId, path, encoding });
@@ -745,29 +766,6 @@ function createPreloadApi(ctx) {
   },
   getSftpHomeDir: async (sftpId, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:homeDir", { sftpId, encoding });
-  },
-  // Write binary with real-time progress callback
-  writeSftpBinaryWithProgress: async (sftpId, path, content, transferId, encoding, onProgress, onComplete, onError) => {
-    // Register callbacks
-    if (onProgress) uploadProgressListeners.set(transferId, onProgress);
-    if (onComplete) uploadCompleteListeners.set(transferId, onComplete);
-    if (onError) uploadErrorListeners.set(transferId, onError);
-    
-    return ipcRenderer.invoke("netcatty:sftp:writeBinaryWithProgress", { 
-      sftpId, 
-      path, 
-      content, 
-      transferId,
-      encoding,
-    });
-  },
-  // Cancel an in-progress SFTP upload
-  cancelSftpUpload: async (transferId) => {
-    // Cleanup listeners
-    uploadProgressListeners.delete(transferId);
-    uploadCompleteListeners.delete(transferId);
-    uploadErrorListeners.delete(transferId);
-    return ipcRenderer.invoke("netcatty:sftp:cancelUpload", { transferId });
   },
   // Local filesystem operations
   listLocalDir: async (path) => {
@@ -860,20 +858,10 @@ function createPreloadApi(ctx) {
     return ipcRenderer.invoke("netcatty:transfer:same-host-copy-dir", { sftpId, sourcePath, targetPath, encoding, transferId });
   },
   // Compressed folder upload
-  startCompressedUpload: async (options, onProgress, onComplete, onError) => {
-    const { compressionId } = options;
-    // Register callbacks
-    if (onProgress) compressProgressListeners.set(compressionId, onProgress);
-    if (onComplete) compressCompleteListeners.set(compressionId, onComplete);
-    if (onError) compressErrorListeners.set(compressionId, onError);
-    
+  startCompressedUpload: async (options) => {
     return ipcRenderer.invoke("netcatty:compress:start", options);
   },
   cancelCompressedUpload: async (compressionId) => {
-    // Cleanup listeners
-    compressProgressListeners.delete(compressionId);
-    compressCompleteListeners.delete(compressionId);
-    compressErrorListeners.delete(compressionId);
     return ipcRenderer.invoke("netcatty:compress:cancel", { compressionId });
   },
   pauseCompressedUpload: async (compressionId) => {
@@ -1157,8 +1145,6 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:openWithApplication", { filePath, appPath }),
   openWithSystemDefault: (filePath) =>
     ipcRenderer.invoke("netcatty:openWithSystemDefault", { filePath }),
-  downloadSftpToTemp: (sftpId, remotePath, fileName, encoding) =>
-    ipcRenderer.invoke("netcatty:sftp:downloadToTemp", { sftpId, remotePath, fileName, encoding }),
   downloadSftpToTempWithProgress: (sftpId, remotePath, fileName, encoding, transferId) =>
     ipcRenderer.invoke("netcatty:sftp:downloadToTempWithProgress", {
       sftpId,
@@ -1185,6 +1171,8 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:filewatch:list"),
   registerTempFile: (sftpId, localPath) =>
     ipcRenderer.invoke("netcatty:filewatch:registerTempFile", { sftpId, localPath }),
+  unregisterTempFile: (sftpId, localPath) =>
+    ipcRenderer.invoke("netcatty:filewatch:unregisterTempFile", { sftpId, localPath }),
   onFileWatchSynced: (cb) => {
     fileWatchSyncedListeners.add(cb);
     return () => fileWatchSyncedListeners.delete(cb);
@@ -1192,6 +1180,10 @@ function createPreloadApi(ctx) {
   onFileWatchError: (cb) => {
     fileWatchErrorListeners.add(cb);
     return () => fileWatchErrorListeners.delete(cb);
+  },
+  onFileWatchStopped: (cb) => {
+    fileWatchStoppedListeners.add(cb);
+    return () => fileWatchStoppedListeners.delete(cb);
   },
   
   // Temp file cleanup
@@ -1343,6 +1335,31 @@ function createPreloadApi(ctx) {
     } catch {
       return undefined;
     }
+  },
+  stageUploadFile: async (file, transferId) => {
+    uploadStageControllers.get(transferId)?.abort(new Error("Upload staging superseded"));
+    const controller = new AbortController();
+    uploadStageControllers.set(transferId, controller);
+    const localPath = await ipcRenderer.invoke("netcatty:tempdir:createUploadPath", {
+      transferId,
+      fileName: file?.name || "upload.bin",
+    });
+    try {
+      return await stageRendererFileToTemp(file, localPath, fs, controller.signal);
+    } catch (error) {
+      await ipcRenderer.invoke("netcatty:deleteTempFile", { filePath: localPath }).catch(() => {});
+      throw error;
+    } finally {
+      if (uploadStageControllers.get(transferId) === controller) {
+        uploadStageControllers.delete(transferId);
+      }
+    }
+  },
+  cancelStagedUploadFile: async (transferId) => {
+    const controller = uploadStageControllers.get(transferId);
+    if (!controller) return { success: false };
+    controller.abort(new Error("Upload staging cancelled"));
+    return { success: true };
   },
 
   // Clipboard fallback helpers

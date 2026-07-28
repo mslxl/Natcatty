@@ -34,6 +34,10 @@ import {
 import { SystemPanelConfirmDialog } from './SystemPanelConfirmDialog';
 import { SystemPanelPromptDialog } from './SystemPanelPromptDialog';
 import { usePolling, useStableTranslate } from './hooks/useSystemManager';
+import {
+  getCachedProcessList,
+  setCachedProcessList,
+} from './processListCache';
 
 type Backend = ReturnType<typeof useSystemManagerBackend>;
 type SortKey = 'cpuPercent' | 'memPercent' | 'pid' | 'command' | 'user';
@@ -54,15 +58,9 @@ function processSignalTitleKey(signal: ProcessSignal): string {
   }
 }
 
-const PROCESS_CACHE_TTL_MS = 30_000;
 const PROCESS_ROW_HEIGHT = 56;
 const PROCESS_DETAIL_HEIGHT = 112;
 const PROCESS_OVERSCAN_ROWS = 8;
-
-const processListCache = new Map<string, {
-  processes: SystemProcessInfo[];
-  updatedAt: number;
-}>();
 
 const SORT_OPTIONS: Array<{ key: SortKey; labelKey: string }> = [
   { key: 'cpuPercent', labelKey: 'systemManager.processes.sort.cpu' },
@@ -86,16 +84,6 @@ const mergeProcesses = (
   prev: SystemProcessInfo[] | null,
   next: SystemProcessInfo[],
 ) => mergePollListByKey(prev, next, (p) => p.pid, systemProcessInfoEqual);
-
-function getCachedProcesses(sessionId: string): SystemProcessInfo[] | null {
-  const cached = processListCache.get(sessionId);
-  if (!cached) return null;
-  if (Date.now() - cached.updatedAt > PROCESS_CACHE_TTL_MS) {
-    processListCache.delete(sessionId);
-    return null;
-  }
-  return cached.processes;
-}
 
 const ProcessListLoading = memo(function ProcessListLoading({
   message,
@@ -274,7 +262,7 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
   const [pendingSignal, setPendingSignal] = useState<PendingProcessSignal | null>(null);
   const [signalBusy, setSignalBusy] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [cachedProcesses, setCachedProcesses] = useState<SystemProcessInfo[] | null>(() => getCachedProcesses(sessionId));
+  const [cachedProcesses, setCachedProcesses] = useState<SystemProcessInfo[] | null>(() => getCachedProcessList(sessionId));
   const [cachedProcessesSessionId, setCachedProcessesSessionId] = useState(sessionId);
   const [processListPending, setProcessListPending] = useState(false);
   const processFetchGenerationRef = useRef(0);
@@ -287,7 +275,7 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
 
   useEffect(() => {
     processFetchGenerationRef.current += 1;
-    setCachedProcesses(getCachedProcesses(sessionId));
+    setCachedProcesses(getCachedProcessList(sessionId));
     setCachedProcessesSessionId(sessionId);
     setProcessListPending(false);
     // Drop in-flight dialogs so a confirm cannot act on a different host/session.
@@ -339,14 +327,14 @@ export const ProcessManagerTab = memo(function ProcessManagerTab({
 
   useEffect(() => {
     if (!processes) return;
-    processListCache.set(sessionId, { processes, updatedAt: Date.now() });
+    setCachedProcessList(sessionId, processes);
     setCachedProcesses(processes);
     setCachedProcessesSessionId(sessionId);
   }, [processes, sessionId]);
 
   const sessionCachedProcesses = cachedProcessesSessionId === sessionId
     ? cachedProcesses
-    : getCachedProcesses(sessionId);
+    : getCachedProcessList(sessionId);
   const visibleProcesses = processes ?? sessionCachedProcesses;
   const showingCachedProcesses = processes === null && sessionCachedProcesses !== null;
 

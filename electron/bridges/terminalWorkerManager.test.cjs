@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   createTerminalWorkerManager,
   isTerminalWorkerEnabled,
+  shouldForwardWorkerRendererEvent,
 } = require("./terminalWorkerManager.cjs");
 const { createTerminalWorkerRuntime } = require("../terminalWorker/runtime.cjs");
 
@@ -25,6 +26,17 @@ class FakeChild extends EventEmitter {
     this.killed = true;
   }
 }
+
+test("compressed transfer lifecycle uses only the global renderer channel", () => {
+  for (const channel of [
+    "netcatty:compress:progress",
+    "netcatty:compress:complete",
+    "netcatty:compress:cancelled",
+    "netcatty:compress:error",
+  ]) {
+    assert.equal(shouldForwardWorkerRendererEvent(channel), false, channel);
+  }
+});
 
 class LinkedRuntimeChild extends FakeChild {
   connectRuntime(registerBridges) {
@@ -122,6 +134,62 @@ test("request sends a worker command and resolves matching response", async () =
   });
 
   assert.deepEqual(await promise, { sessionId: "local-1" });
+});
+
+test("worker lifecycle observers receive renderer events and survive a worker replacement", async () => {
+  const children = [new FakeChild(), new FakeChild()];
+  let forkIndex = 0;
+  const rendererEvents = [];
+  const exits = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => children[forkIndex++] },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onWorkerRendererEvent((message) => rendererEvents.push(message.payload));
+  manager.onWorkerExit((error) => exits.push(error.message));
+
+  const firstRequest = manager.request("netcatty:test", {});
+  children[0].emit("message", {
+    kind: "response",
+    requestId: children[0].messages[0].requestId,
+    result: { ok: true },
+  });
+  await firstRequest;
+  children[0].emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:portforward:status",
+    payload: { tunnelId: "pf-first", status: "active" },
+  });
+  children[0].emit("exit", 9);
+
+  const secondRequest = manager.request("netcatty:test", {});
+  children[1].emit("message", {
+    kind: "response",
+    requestId: children[1].messages[0].requestId,
+    result: { ok: true },
+  });
+  await secondRequest;
+  children[1].emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:portforward:status",
+    payload: { tunnelId: "pf-second", status: "active" },
+  });
+
+  assert.deepEqual(rendererEvents, [
+    { tunnelId: "pf-first", status: "active" },
+    { tunnelId: "pf-second", status: "active" },
+  ]);
+  assert.deepEqual(exits, ["Terminal worker exited with code 9"]);
+  manager.stop();
 });
 
 test("worker manager retains the stable host id for session-backed transfers", async () => {
@@ -2951,6 +3019,87 @@ test("an old start response cannot reopen a session claimed by a later same-id s
   await second;
   assert.equal(manager.hasOpenSession("session-1"), true);
   assert.deepEqual(routed, [{ sessionId: "session-1", data: "new-banner" }]);
+});
+
+test("closed-session tombstones are bounded without admitting recent stale output", async () => {
+  const child = new FakeChild();
+  const tapped = [];
+  let now = 0;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, isDestroyed: () => false, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+    now: () => now,
+    closedSessionTombstoneTtlMs: 100,
+    maxClosedSessionTombstones: 8,
+  });
+  manager.addOutputTap((sessionId, data) => tapped.push({ sessionId, data }));
+
+  for (let index = 0; index < 24; index += 1) {
+    const sessionId = `closed-${index}`;
+    const started = manager.request("netcatty:local:reconnect", { sessionId }, { webContentsId: 7 });
+    const startRequest = [...child.messages].reverse().find((message) => (
+      message.kind === "request" && message.payload?.sessionId === sessionId
+    ));
+    child.emit("message", {
+      kind: "response",
+      requestId: startRequest.requestId,
+      result: { sessionId },
+      sessionGeneration: 0,
+    });
+    await started;
+    manager.send("netcatty:close", { sessionId }, { webContentsId: 7 });
+  }
+
+  assert.deepEqual(manager._getClosedSessionTombstoneCountsForTests(), {
+    sessions: 8,
+    sequences: 8,
+    generations: 8,
+  });
+
+  const sessionId = "closed-23";
+  now = 99;
+  child.emit("message", {
+    kind: "output-tap",
+    sessionId,
+    data: "stale",
+    sessionGeneration: 0,
+  });
+  assert.deepEqual(tapped, [], "a recent close still rejects its old generation");
+
+  const restarted = manager.request("netcatty:local:reconnect", { sessionId }, { webContentsId: 7 });
+  const restartRequest = [...child.messages].reverse().find((message) => (
+    message.kind === "request" && message.payload?.sessionId === sessionId
+  ));
+  child.emit("message", {
+    kind: "output-tap",
+    sessionId,
+    data: "fresh",
+    sessionGeneration: 1,
+    originRequestId: restartRequest.requestId,
+  });
+  child.emit("message", {
+    kind: "response",
+    requestId: restartRequest.requestId,
+    result: { sessionId },
+    sessionGeneration: 1,
+  });
+  await restarted;
+
+  assert.deepEqual(tapped, [{ sessionId, data: "fresh" }]);
+  assert.equal(manager.hasOpenSession(sessionId), true, "same-id restart is not killed by its tombstone");
+  assert.deepEqual(manager._getClosedSessionTombstoneCountsForTests(), {
+    sessions: 7,
+    sequences: 7,
+    generations: 7,
+  });
 });
 
 test("a later same-id start response cannot be overwritten by an older response", async () => {

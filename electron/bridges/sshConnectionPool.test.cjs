@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
   createConnectionRef,
@@ -14,14 +18,21 @@ const {
   discardAllTransports,
   findTransportByEndpoint,
   resolveTransportForReuse,
+  beginTransportDial,
+  waitForTransportDial,
+  completeTransportDial,
+  failTransportDial,
   getTransportStats,
   setDefaultTransportIdleTtlMs,
   getDefaultTransportIdleTtlMs,
   buildEndpointKey,
+  buildConnectionReuseEndpoint,
+  normalizeEndpoint,
   endpointAllowsReuse,
   fingerprintAuth,
   resetSshTransportRegistryForTests,
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
+  DEFAULT_MAX_IDLE_SSH_TRANSPORTS,
   LEASE_KINDS,
 } = require("./sshConnectionPool.cjs");
 
@@ -38,6 +49,17 @@ function makeChainConn() {
     ended: 0,
     end() { this.ended += 1; },
   };
+}
+
+function makeLifecycleConn({ emitCloseFromEnd = false } = {}) {
+  const conn = new EventEmitter();
+  conn.ended = 0;
+  conn._sock = { destroyed: false };
+  conn.end = () => {
+    conn.ended += 1;
+    if (emitCloseFromEnd) conn.emit("close");
+  };
+  return conn;
 }
 
 /** Product default: TTL 0 parks until quit (never auto-reclaim). */
@@ -77,6 +99,150 @@ test.beforeEach(() => {
 
 test.afterEach(() => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+});
+
+test("concurrent compatible opens share one in-flight physical dial", async () => {
+  const endpoint = {
+    hostId: "host-1",
+    hostname: "same.example",
+    username: "alice",
+    authType: "password",
+    password: "secret",
+  };
+  let physicalDials = 0;
+  let releaseDial;
+  const dialGate = new Promise((resolve) => { releaseDial = resolve; });
+
+  const open = async () => {
+    const coordination = beginTransportDial(endpoint, { kind: "shell" });
+    if (coordination.role === "reuse") return coordination.transport;
+    if (coordination.role === "join") return waitForTransportDial(coordination);
+
+    physicalDials += 1;
+    await dialGate;
+    const transport = createTransport({ conn: makeConn(), endpoint });
+    completeTransportDial(coordination, transport);
+    return transport;
+  };
+
+  const first = open();
+  const second = open();
+  assert.equal(physicalDials, 1, "only the leader may create the physical SSH connection");
+  releaseDial();
+  const [left, right] = await Promise.all([first, second]);
+  assert.equal(left, right);
+
+  const sequential = beginTransportDial(endpoint, { kind: "shell" });
+  assert.equal(sequential.role, "reuse");
+  assert.equal(sequential.transport, left);
+});
+
+test("in-flight dials isolate endpoint, profile, credentials, and ForwardAgent policy", () => {
+  const base = {
+    hostId: "host-1",
+    hostname: "same.example",
+    username: "alice",
+    authType: "password",
+    password: "secret",
+    agentForwarding: false,
+  };
+  const leader = beginTransportDial(base, { kind: "shell" });
+  assert.equal(leader.role, "leader");
+  assert.equal(beginTransportDial({ ...base }, { kind: "shell" }).role, "join");
+
+  assert.equal(
+    beginTransportDial({ ...base, hostname: "other.example" }, { kind: "shell" }).role,
+    "leader",
+  );
+  assert.equal(
+    beginTransportDial({ ...base, hostId: "host-2" }, { kind: "shell" }).role,
+    "leader",
+  );
+  assert.equal(
+    beginTransportDial({ ...base, password: "rotated" }, { kind: "shell" }).role,
+    "leader",
+  );
+  assert.equal(
+    beginTransportDial({ ...base, agentForwarding: true }, { kind: "shell" }).role,
+    "leader",
+  );
+});
+
+test("channel opens can join a ForwardAgent leader but not the reverse", () => {
+  const base = {
+    hostId: "host-1",
+    hostname: "same.example",
+    username: "alice",
+  };
+  const forwardAgentLeader = beginTransportDial(
+    { ...base, agentForwarding: true },
+    { kind: "shell" },
+  );
+  assert.equal(forwardAgentLeader.role, "leader");
+  assert.equal(
+    beginTransportDial({ ...base, agentForwarding: false }, { kind: "channel" }).role,
+    "join",
+  );
+
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  const noForwardAgentLeader = beginTransportDial(
+    { ...base, agentForwarding: false },
+    { kind: "channel" },
+  );
+  assert.equal(noForwardAgentLeader.role, "leader");
+  assert.equal(
+    beginTransportDial({ ...base, agentForwarding: true }, { kind: "shell" }).role,
+    "leader",
+  );
+});
+
+test("a channel waiter can use a leader transport that negotiated ForwardAgent off", async () => {
+  const requestedByLeader = {
+    hostId: "host-agent-downgrade",
+    hostname: "agent-downgrade.example",
+    username: "alice",
+    agentForwarding: true,
+  };
+  const leader = beginTransportDial(requestedByLeader, { kind: "shell" });
+  const channelWaiter = beginTransportDial({
+    ...requestedByLeader,
+    agentForwarding: false,
+  }, { kind: "channel" });
+  assert.equal(channelWaiter.role, "join");
+
+  const transport = createTransport({
+    conn: makeConn(),
+    endpoint: { ...requestedByLeader, agentForwarding: false },
+  });
+  assert.equal(completeTransportDial(leader, transport), true);
+  assert.equal(await waitForTransportDial(channelWaiter), transport);
+  await assert.rejects(waitForTransportDial(leader), /incompatible/i);
+});
+
+test("cancelled in-flight waiter does not cancel the shared physical dial", async () => {
+  const endpoint = { hostname: "same.example", username: "alice" };
+  const leader = beginTransportDial(endpoint, { kind: "shell" });
+  const joined = beginTransportDial(endpoint, { kind: "shell" });
+  const controller = new AbortController();
+  const waiting = waitForTransportDial(joined, { signal: controller.signal });
+  controller.abort(new Error("caller cancelled"));
+  await assert.rejects(waiting, /caller cancelled/);
+
+  const transport = createTransport({ conn: makeConn(), endpoint });
+  assert.equal(completeTransportDial(leader, transport), true);
+  assert.equal(beginTransportDial(endpoint, { kind: "shell" }).transport, transport);
+});
+
+test("failed in-flight dial releases the slot so a later open can retry", async () => {
+  const endpoint = { hostname: "retry.example", username: "alice" };
+  const leader = beginTransportDial(endpoint, { kind: "shell" });
+  const joined = beginTransportDial(endpoint, { kind: "shell" });
+  const waiting = waitForTransportDial(joined);
+  assert.equal(failTransportDial(leader, new Error("authentication failed")), true);
+  await assert.rejects(waiting, /authentication failed/);
+
+  const retry = beginTransportDial(endpoint, { kind: "shell" });
+  assert.equal(retry.role, "leader");
 });
 
 test("releaseConnectionRef parks on last channel when TTL is 0 (until quit)", () => {
@@ -246,6 +412,115 @@ test("findReusableSession refuses reuse when the source has no recorded endpoint
 
 test("default idle TTL constant is 5 minutes", () => {
   assert.equal(DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS, 5 * 60_000);
+  assert.equal(DEFAULT_MAX_IDLE_SSH_TRANSPORTS, 128);
+});
+
+test("TTL-zero idle pool enforces a hard global limit without ending active transports", () => {
+  resetSshTransportRegistryForTests({
+    defaultIdleTtlMs: 0,
+    maxIdleTransports: 3,
+  });
+
+  const activeConn = makeConn();
+  const active = createTransport({
+    conn: activeConn,
+    endpoint: { hostname: "active.example", username: "root" },
+  });
+  borrowTransport(active, { holder: {} });
+
+  const parked = [];
+  for (let index = 0; index < 5; index += 1) {
+    const conn = makeConn();
+    const holder = {};
+    const transport = createTransport({
+      conn,
+      endpoint: { hostname: `idle-${index}.example`, username: "root" },
+    });
+    borrowTransport(transport, { holder });
+    returnTransport(holder);
+    parked.push({ conn, transport });
+  }
+
+  assert.deepEqual(getTransportStats(), {
+    transports: 4,
+    pendingDials: 0,
+    live: 1,
+    idle: 3,
+    leases: 1,
+    defaultIdleTtlMs: 0,
+  });
+  assert.equal(active.state, "live");
+  assert.equal(activeConn.ended, 0, "a leased transport must never be evicted");
+  assert.deepEqual(parked.map(({ conn }) => conn.ended), [1, 1, 0, 0, 0]);
+  assert.deepEqual(parked.map(({ transport }) => transport.state), [
+    "dead",
+    "dead",
+    "idle",
+    "idle",
+    "idle",
+  ]);
+});
+
+test("idle endpoint hits refresh LRU order before the next eviction", () => {
+  resetSshTransportRegistryForTests({
+    defaultIdleTtlMs: 0,
+    maxIdleTransports: 2,
+  });
+
+  const park = (hostname) => {
+    const endpoint = { hostname, username: "root" };
+    const conn = makeConn();
+    const holder = {};
+    const transport = createTransport({ conn, endpoint });
+    borrowTransport(transport, { holder });
+    returnTransport(holder);
+    return { conn, endpoint, transport };
+  };
+
+  const first = park("first.example");
+  const second = park("second.example");
+  assert.equal(findTransportByEndpoint(first.endpoint), first.transport);
+  const third = park("third.example");
+
+  assert.equal(first.conn.ended, 0);
+  assert.equal(second.conn.ended, 1, "the untouched oldest idle transport is evicted");
+  assert.equal(third.conn.ended, 0);
+  assert.equal(findTransportByEndpoint(first.endpoint), first.transport);
+  assert.equal(findTransportByEndpoint(second.endpoint), null);
+  assert.equal(findTransportByEndpoint(third.endpoint), third.transport);
+});
+
+test("borrow and return make a previously idle transport the newest LRU entry", () => {
+  resetSshTransportRegistryForTests({
+    defaultIdleTtlMs: 0,
+    maxIdleTransports: 2,
+  });
+
+  const park = (hostname) => {
+    const conn = makeConn();
+    const holder = {};
+    const transport = createTransport({
+      conn,
+      endpoint: { hostname, username: "root" },
+    });
+    borrowTransport(transport, { holder });
+    returnTransport(holder);
+    return { conn, transport };
+  };
+
+  const first = park("first.example");
+  const second = park("second.example");
+  const borrowed = {};
+  borrowTransport(first.transport, { holder: borrowed });
+  const third = park("third.example");
+
+  assert.equal(second.conn.ended, 0, "capacity ignores the active borrowed transport");
+  returnTransport(borrowed);
+
+  assert.equal(first.conn.ended, 0);
+  assert.equal(second.conn.ended, 1, "returning the borrowed transport evicts the oldest idle one");
+  assert.equal(third.conn.ended, 0);
+  assert.equal(first.transport.state, "idle");
 });
 
 test("buildEndpointKey normalizes port and username defaults", () => {
@@ -329,6 +604,229 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
     fingerprintAuth({ authType: "auto", password: "old" }),
     fingerprintAuth({ authType: "auto", password: "new" }),
   );
+});
+
+test("endpoint key securely covers jump, proxy, agent, and SSH security policy", () => {
+  const base = buildConnectionReuseEndpoint({
+    hostId: "target-id",
+    hostname: "target.example",
+    username: "alice",
+    authMethod: "key",
+    privateKey: "target-private-key",
+    passphrase: "target-passphrase",
+    useSshAgent: true,
+    identityAgent: "/run/user/1000/agent-a.sock",
+    identitiesOnly: true,
+    agentPublicKeys: ["ssh-ed25519 TARGET-A"],
+    verifyHostKeys: true,
+    legacyAlgorithms: false,
+    skipEcdsaHostKey: false,
+    algorithmOverrides: { kex: ["curve25519-sha256"] },
+    proxy: {
+      type: "socks5",
+      host: "proxy.example",
+      port: 1080,
+      identityId: "proxy-identity-a",
+      username: "proxy-user",
+      password: "proxy-secret-a",
+    },
+    jumpHosts: [{
+      hostId: "jump-id",
+      hostname: "jump.example",
+      username: "jump-user",
+      authMethod: "password",
+      password: "jump-secret-a",
+      requiresMfa: true,
+      verifyHostKeys: true,
+      legacyAlgorithms: false,
+      skipEcdsaHostKey: false,
+      algorithmOverrides: { serverHostKey: ["ssh-ed25519"] },
+      proxy: {
+        type: "http",
+        host: "jump-proxy.example",
+        port: 8080,
+        username: "jump-proxy-user",
+        password: "jump-proxy-secret-a",
+      },
+    }],
+  });
+  const baseKey = buildEndpointKey(base);
+  const variants = [
+    { ...base, identityAgent: "/run/user/1000/agent-b.sock" },
+    { ...base, identitiesOnly: false },
+    { ...base, agentPublicKeys: ["ssh-ed25519 TARGET-B"] },
+    { ...base, verifyHostKeys: false },
+    { ...base, algorithmOverrides: { kex: ["diffie-hellman-group14-sha256"] } },
+    { ...base, proxy: { ...base.proxy, password: "proxy-secret-b" } },
+    { ...base, proxy: { ...base.proxy, identityId: "proxy-identity-b" } },
+    { ...base, jumpHosts: [{ ...base.jumpHosts[0], password: "jump-secret-b" }] },
+    { ...base, jumpHosts: [{ ...base.jumpHosts[0], verifyHostKeys: false }] },
+    { ...base, jumpHosts: [{
+      ...base.jumpHosts[0],
+      proxy: { ...base.jumpHosts[0].proxy, password: "jump-proxy-secret-b" },
+    }] },
+  ];
+
+  for (const variant of variants) {
+    assert.notEqual(buildEndpointKey(variant), baseKey);
+  }
+  for (const secret of [
+    "target-private-key",
+    "target-passphrase",
+    "proxy-secret-a",
+    "jump-secret-a",
+    "jump-proxy-secret-a",
+  ]) {
+    assert.equal(baseKey.includes(secret), false, `endpoint key must not expose ${secret}`);
+  }
+});
+
+test("endpoint key changes when known-host trust content changes", () => {
+  const base = {
+    hostId: "known-host-profile",
+    hostname: "known-host.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "secret",
+    verifyHostKeys: true,
+  };
+  const first = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...base,
+    knownHosts: [{ hostname: "known-host.example", port: 22, publicKey: "ssh-ed25519 AAAA_FIRST" }],
+  }));
+  const rotated = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...base,
+    knownHosts: [{ hostname: "known-host.example", port: 22, publicKey: "ssh-ed25519 AAAA_ROTATED" }],
+  }));
+
+  assert.notEqual(rotated, first);
+
+  const jumpFirst = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...base,
+    jumpHosts: [{ hostname: "bastion.example", port: 2222 }],
+    knownHosts: [{
+      hostname: "[bastion.example]:2222",
+      port: 2222,
+      publicKey: "ssh-ed25519 AAAA_JUMP_FIRST",
+    }],
+  }));
+  const jumpRotatedEndpoint = buildConnectionReuseEndpoint({
+    ...base,
+    jumpHosts: [{ hostname: "bastion.example", port: 2222 }],
+    knownHosts: [{
+      hostname: "[bastion.example]:2222",
+      port: 2222,
+      publicKey: "ssh-ed25519 AAAA_JUMP_ROTATED",
+    }],
+  });
+  assert.notEqual(buildEndpointKey(jumpRotatedEndpoint), jumpFirst);
+  assert.equal(
+    JSON.stringify(normalizeEndpoint(jumpRotatedEndpoint)).includes("AAAA_JUMP_ROTATED"),
+    false,
+  );
+});
+
+test("endpoint key changes when an identity file changes in place", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-pool-key-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const identityPath = path.join(dir, "id_ed25519");
+  fs.writeFileSync(identityPath, "first-private-key");
+  const endpoint = buildConnectionReuseEndpoint({
+    hostname: "identity-file.example",
+    username: "alice",
+    authMethod: "key",
+    identityFilePaths: [identityPath],
+  });
+  const first = buildEndpointKey(endpoint);
+
+  fs.writeFileSync(identityPath, "rotated-private-key");
+  const second = buildEndpointKey(endpoint);
+  assert.notEqual(second, first);
+  assert.equal(first.includes("first-private-key"), false);
+  assert.equal(second.includes("rotated-private-key"), false);
+});
+
+test("auto-auth endpoint changes when the inline private key rotates", () => {
+  const base = {
+    hostId: "inline-key-profile",
+    hostname: "inline-key.example",
+    username: "alice",
+    authMethod: "auto",
+    publicKey: "stale-public-key-metadata",
+  };
+  const first = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...base,
+    privateKey: "first-private-key",
+  }));
+  const rotated = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...base,
+    privateKey: "rotated-private-key",
+  }));
+
+  assert.notEqual(rotated, first);
+  assert.equal(first.includes("first-private-key"), false);
+  assert.equal(rotated.includes("rotated-private-key"), false);
+});
+
+test("Terminal and SFTP aliases build the same reuse endpoint semantics", () => {
+  const options = {
+    hostId: "shared-profile",
+    hostname: "shared.example",
+    username: "alice",
+    authMethod: "certificate",
+    keyId: "key-1",
+    privateKey: "private",
+    publicKey: "public",
+    certificate: "certificate",
+    passphrase: "passphrase",
+    identityFilePaths: ["/keys/id"],
+    useSshAgent: true,
+    identityAgent: "SSH_AUTH_SOCK",
+    identitiesOnly: true,
+    addKeysToAgent: "confirm",
+    useKeychain: true,
+    agentPublicKeys: ["ssh-ed25519 SELECTED"],
+    verifyHostKeys: true,
+    legacyAlgorithms: true,
+    skipEcdsaHostKey: true,
+    algorithmOverrides: { hmac: ["hmac-sha2-256"] },
+    jumpHosts: [{ hostname: "jump", password: "jump-password" }],
+    proxy: { type: "http", host: "proxy", port: 8080, password: "proxy-password" },
+  };
+  assert.equal(
+    buildEndpointKey(buildConnectionReuseEndpoint(options)),
+    buildEndpointKey(buildConnectionReuseEndpoint({
+      ...options,
+      authType: options.authMethod,
+      authMethod: undefined,
+    })),
+  );
+});
+
+test("connection reuse identity changes with the effective keepalive policy", () => {
+  const base = { hostname: "keepalive.example", username: "root", port: 22 };
+  const enabled = buildConnectionReuseEndpoint({
+    ...base,
+    keepaliveInterval: 30,
+    keepaliveCountMax: 10,
+  });
+  const disabled = buildConnectionReuseEndpoint({
+    ...base,
+    keepaliveInterval: 0,
+    keepaliveCountMax: 0,
+  });
+
+  assert.notEqual(buildEndpointKey(enabled), buildEndpointKey(disabled));
+  assert.equal(endpointAllowsReuse(enabled, disabled, "shell"), false);
+});
+
+test("connection endpoint can record negotiated agent forwarding instead of the request", () => {
+  const endpoint = buildConnectionReuseEndpoint(
+    { hostname: "agent.example", username: "root", agentForwarding: true },
+    { agentForwarding: false },
+  );
+  assert.equal(normalizeEndpoint(endpoint).agentForwarding, false);
 });
 
 test("endpointAllowsReuse: shell exact vs channel asymmetric for agentForwarding", () => {
@@ -421,6 +919,24 @@ test("last return parks with positive TTL then ends when timer fires", () => {
   timers[0].fn();
   assert.equal(conn.ended, 1);
   assert.equal(transport.state, "dead");
+});
+
+test("idle reclaim timer does not keep the app process alive", () => {
+  let unrefCalls = 0;
+  resetSshTransportRegistryForTests({
+    defaultIdleTtlMs: 60_000,
+    setTimeout: () => ({
+      unref() { unrefCalls += 1; },
+    }),
+    clearTimeout: () => {},
+  });
+  const transport = createTransport({ conn: makeConn() });
+  const holder = {};
+  borrowTransport(transport, { holder });
+
+  returnTransport(holder);
+
+  assert.equal(unrefCalls, 1);
 });
 
 test("TTL 0 parks forever without scheduling a timer", () => {
@@ -561,6 +1077,54 @@ test("discardAllTransports clears the registry", () => {
   borrowTransport(b, { holder: {} });
   assert.equal(discardAllTransports(), 2);
   assert.equal(getTransportStats().transports, 0);
+});
+
+test("active transport error unregisters leases and closes its jump chain once", () => {
+  useParkForever();
+  const conn = makeLifecycleConn({ emitCloseFromEnd: true });
+  const chain = makeChainConn();
+  const holder = {};
+  const transport = createTransport({
+    conn,
+    chainConnections: [chain],
+    endpoint: { hostname: "active-error.example", username: "alice" },
+  });
+  borrowTransport(transport, { holder, kind: "sftp" });
+
+  conn.emit("error", new Error("remote transport failed"));
+
+  assert.equal(getTransportStats().transports, 0);
+  assert.equal(getTransportStats().leases, 0);
+  assert.equal(holder.connRef, null);
+  assert.equal(holder._sshTransportLeaseId, null);
+  assert.equal(conn.ended, 1);
+  assert.equal(chain.ended, 1);
+  assert.equal(transport.state, "dead");
+});
+
+test("remote close unregisters a TTL-zero idle transport and its jump chain once", () => {
+  useParkForever();
+  const conn = makeLifecycleConn();
+  const chain = makeChainConn();
+  const holder = {};
+  const transport = createTransport({
+    conn,
+    chainConnections: [chain],
+    endpoint: { hostname: "idle-close.example", username: "alice" },
+  });
+  borrowTransport(transport, { holder, kind: "shell" });
+  returnTransport(holder);
+  assert.equal(getTransportStats().idle, 1);
+
+  conn._sock.destroyed = true;
+  conn.emit("close");
+  conn.emit("close");
+
+  assert.equal(getTransportStats().transports, 0);
+  assert.equal(getTransportStats().idle, 0);
+  assert.equal(conn.ended, 0, "a remote close must not call end on the closed socket again");
+  assert.equal(chain.ended, 1);
+  assert.equal(transport.state, "dead");
 });
 
 test("setDefaultTransportIdleTtlMs updates default and reschedules idle transports", () => {

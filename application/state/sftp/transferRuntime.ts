@@ -23,6 +23,8 @@ import {
   registerTransferWalk,
   unregisterTransferWalk,
 } from "./transferWalkRegistry";
+import { settleTransferCancelTree } from "./transferCancelLatch";
+import { settleTransferControlEpochTree } from "./transferControlEpoch";
 
 export type TransferRuntimeSnapshot = SftpTransferCenterSnapshot;
 
@@ -101,6 +103,11 @@ export function createTransferRuntime(
         try {
           await runner();
         } finally {
+          const childIds = store.getSnapshot().tasks
+            .filter((task) => task.parentTaskId === rootTaskId)
+            .map((task) => task.id);
+          const relatedChildIds = settleTransferCancelTree(rootTaskId, childIds);
+          settleTransferControlEpochTree(rootTaskId, relatedChildIds);
           unregisterTransferWalk(rootTaskId);
           if (inFlightRunPromises.get(rootTaskId) === run) {
             inFlightRunPromises.delete(rootTaskId);

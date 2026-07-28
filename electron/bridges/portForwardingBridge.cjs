@@ -12,6 +12,10 @@ const { connectThroughChain, buildAlgorithms } = require("./sshBridge.cjs");
 const { resolveSshConnectionTimeouts } = require("./sshBridge/startSession.cjs");
 const hostKeyVerifier = require("./hostKeyVerifier.cjs");
 const { createProxySocket, runWhenProxyConnectionReady } = require("./proxyUtils.cjs");
+const {
+  openBoundedForwardInCallback,
+  openBoundedForwardOutCallback,
+} = require("./boundedSshChannelOpen.cjs");
 const { 
   buildAuthHandler, 
   createKeyboardInteractiveHandler, 
@@ -30,42 +34,36 @@ const {
   returnTransport,
   discardTransport,
   findTransportByEndpoint,
+  beginTransportDial,
+  waitForTransportDial,
+  completeTransportDial,
+  failTransportDial,
+  buildConnectionReuseEndpoint,
+  resolveConnectionKeepalivePolicy,
   LEASE_KINDS,
 } = require("./sshConnectionPool.cjs");
 
 // Active port forwarding tunnels
 const portForwardingTunnels = new Map();
 
-function buildPortForwardEndpoint({
-  hostId, hostname, port, username, jumpHosts, proxy,
-  authType, authMethod, keyId, identityId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
-  agentForwarding,
-  password, privateKey, publicKey, passphrase, identityFilePaths,
-}) {
-  return {
-    hostId: hostId || "",
-    hostname,
-    port: port || 22,
-    username: username || "root",
-    jumpHosts: Array.isArray(jumpHosts) ? jumpHosts : [],
-    proxy: proxy || null,
-    authType: authType || authMethod || "",
-    keyId: keyId || identityId || "",
-    certificate: certificate || "",
-    requiresMfa: !!requiresMfa,
-    verifyHostKeys,
-    useSshAgent,
-    // Port-forward never enables agent forwarding; record nofwd so a terminal
-    // transport with ForwardAgent enabled does not get cross-matched incorrectly
-    // only when the PF caller later wants a different policy (future-proof).
-    agentForwarding: !!agentForwarding,
-    // Credential material for digest fingerprint (not retained on transport).
-    password,
-    privateKey,
-    publicKey,
-    passphrase,
-    identityFilePaths,
-  };
+function buildPortForwardEndpoint(options = {}) {
+  return buildConnectionReuseEndpoint({
+    ...options,
+    // Port forwarding never requests agent forwarding. Channel reuse remains
+    // asymmetric: a ForwardAgent terminal can serve PF, but not vice versa.
+    agentForwarding: false,
+    protocol: "ssh",
+    sftpSudo: false,
+  }, { sftpSudo: false });
+}
+
+function buildPortForwardEndpointFromStartPayload(payload = {}) {
+  return buildPortForwardEndpoint({
+    ...payload,
+    authType: payload.authType || payload.authMethod,
+    keepaliveInterval: payload.resolvedKeepaliveInterval ?? payload.keepaliveInterval,
+    keepaliveCountMax: payload.resolvedKeepaliveCountMax ?? payload.keepaliveCountMax,
+  });
 }
 
 function normalizeRemoteAddress(value) {
@@ -101,7 +99,9 @@ function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus)
         // Errors mean the shared conn may be half-dead; discard so later
         // terminal/SFTP/PF work does not park and reuse a broken socket.
         if (discard && typeof discardTransport === "function") {
-          discardTransport(tunnel.connRef || tunnel, "shared-transport-error");
+          if (tunnel.connRef) {
+            discardTransport(tunnel.connRef, "shared-transport-error");
+          }
         } else {
           returnTransport(tunnel);
         }
@@ -153,28 +153,62 @@ function isLocalBindFailure(err) {
     || message.includes("listen");
 }
 
-function trackTunnelPipe(tunnelState, socket, stream) {
-  if (!tunnelState) return;
-  if (!(tunnelState.activePipes instanceof Set)) tunnelState.activePipes = new Set();
-  const entry = { socket, stream };
-  tunnelState.activePipes.add(entry);
-  const drop = () => {
-    try { tunnelState.activePipes?.delete(entry); } catch { /* ignore */ }
-  };
-  try { socket?.once?.("close", drop); } catch { /* ignore */ }
+function destroyTunnelPipeEndpoint(endpoint) {
+  if (!endpoint) return;
+  try { endpoint.destroy?.(); } catch { /* ignore */ }
+  try { endpoint.close?.(); } catch { /* ignore */ }
+  try { endpoint.end?.(); } catch { /* ignore */ }
+}
+
+function destroyTunnelPipeEntry(tunnelState, entry) {
+  if (!entry || entry.closed) return;
+  entry.closed = true;
+  const openAbortController = entry.openAbortController;
+  entry.openAbortController = null;
+  if (openAbortController && !openAbortController.signal.aborted) {
+    try { openAbortController.abort(new Error("Port forward client closed during SSH channel open")); } catch { /* ignore */ }
+  }
+  try { tunnelState?.activePipes?.delete(entry); } catch { /* ignore */ }
+  destroyTunnelPipeEndpoint(entry.socket);
+  destroyTunnelPipeEndpoint(entry.stream);
+}
+
+function attachTunnelPipeStream(tunnelState, entry, stream) {
+  if (!entry || entry.closed || isTunnelCancelled(tunnelState)) {
+    destroyTunnelPipeEndpoint(entry?.socket);
+    destroyTunnelPipeEndpoint(stream);
+    if (entry) destroyTunnelPipeEntry(tunnelState, entry);
+    return false;
+  }
+  entry.openAbortController = null;
+  entry.stream = stream;
+  const drop = () => destroyTunnelPipeEntry(tunnelState, entry);
   try { stream?.once?.("close", drop); } catch { /* ignore */ }
-  try { socket?.once?.("error", drop); } catch { /* ignore */ }
   try { stream?.once?.("error", drop); } catch { /* ignore */ }
+  return true;
+}
+
+function trackTunnelPipe(tunnelState, socket, stream = null) {
+  if (!tunnelState) return null;
+  if (!(tunnelState.activePipes instanceof Set)) tunnelState.activePipes = new Set();
+  const entry = {
+    socket,
+    stream: null,
+    closed: false,
+    openAbortController: stream ? null : new AbortController(),
+  };
+  tunnelState.activePipes.add(entry);
+  const drop = () => destroyTunnelPipeEntry(tunnelState, entry);
+  try { socket?.once?.("close", drop); } catch { /* ignore */ }
+  try { socket?.once?.("error", drop); } catch { /* ignore */ }
+  if (stream) attachTunnelPipeStream(tunnelState, entry, stream);
+  return entry;
 }
 
 function destroyTunnelPipes(tunnel) {
   if (!(tunnel?.activePipes instanceof Set)) return;
-  for (const entry of tunnel.activePipes) {
-    try { entry.socket?.destroy?.(); } catch { /* ignore */ }
-    try { entry.socket?.end?.(); } catch { /* ignore */ }
-    try { entry.stream?.close?.(); } catch { /* ignore */ }
-    try { entry.stream?.end?.(); } catch { /* ignore */ }
-    try { entry.stream?.destroy?.(); } catch { /* ignore */ }
+  for (const entry of [...tunnel.activePipes]) {
+    destroyTunnelPipeEntry(tunnel, entry);
   }
   tunnel.activePipes.clear();
 }
@@ -211,7 +245,7 @@ function releaseTunnelSsh(tunnel) {
  * Lets terminal/SFTP later borrow the same conn; stop returns the lease only.
  */
 function attachForwardTransportLease(tunnel, conn, chainConnections, endpoint) {
-  if (!tunnel || !conn) return;
+  if (!tunnel || !conn) return null;
   const transport = createTransport({
     conn,
     chainConnections: Array.isArray(chainConnections) ? chainConnections : [],
@@ -227,10 +261,12 @@ function attachForwardTransportLease(tunnel, conn, chainConnections, endpoint) {
   tunnel.conn = conn;
   // Chain is owned by the transport registry now.
   tunnel.chainConnections = [];
+  return transport;
 }
 
 /** Max wait for remote-side unforwardIn before treating the listen as stuck. */
 const UNFORWARD_TIMEOUT_MS = 5_000;
+const REMOTE_FORWARD_START_CLEANUP_TIMEOUT_MS = 5_000;
 
 /**
  * Force-end a shared transport after unforward failure/timeout so a remote
@@ -312,6 +348,53 @@ function unforwardRemoteListen(conn, bindAddress, port, transport = null) {
   });
 }
 
+function settleRemoteForwardStart(tunnel, outcome) {
+  tunnel._remoteForwardOutcome = outcome;
+  tunnel.pendingRemoteForward = false;
+  const resolve = tunnel._resolveRemoteForwardStart;
+  tunnel._resolveRemoteForwardStart = null;
+  resolve?.(outcome);
+}
+
+function waitForRemoteForwardStart(tunnel) {
+  if (!tunnel?.pendingRemoteForward) {
+    return Promise.resolve(tunnel?._remoteForwardOutcome || { ok: false });
+  }
+  const pending = tunnel._remoteForwardStartPromise;
+  if (!pending) return Promise.resolve({ ok: false });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (outcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    const configuredTimeoutMs = Number(tunnel?._remoteForwardStartCleanupTimeoutMs);
+    const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs >= 0
+      ? configuredTimeoutMs
+      : REMOTE_FORWARD_START_CLEANUP_TIMEOUT_MS;
+    const timer = setTimeout(() => finish({ ok: false, timedOut: true }), timeoutMs);
+    timer.unref?.();
+    pending.then(finish, (error) => finish({ ok: false, error }));
+  });
+}
+
+function unforwardRemoteListenOnce(tunnel, conn, bindAddress, port, transport = null) {
+  if (tunnel._remoteUnforwardPromise) return tunnel._remoteUnforwardPromise;
+  if (tunnel._remoteUnforwardDone) {
+    return Promise.resolve(tunnel._remoteUnforwardResult || { ok: true });
+  }
+  const promise = unforwardRemoteListen(conn, bindAddress, port, transport)
+    .then((result) => {
+      tunnel._remoteUnforwardDone = true;
+      tunnel._remoteUnforwardResult = result;
+      return result;
+    });
+  tunnel._remoteUnforwardPromise = promise;
+  return promise;
+}
+
 /**
  * Bind local/remote/dynamic forwarding onto an already-authenticated conn.
  * Used for both shared-transport and post-dial paths.
@@ -331,6 +414,7 @@ function bindPortForwardChannels({
   releaseOnError = false,
   endpoint = null,
   registerTransport = false,
+  dialCoordination = null,
 }) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -370,7 +454,9 @@ function bindPortForwardChannels({
 
     if (type === "local") {
       const server = net.createServer((socket) => {
-        conn.forwardOut(
+        const pipeEntry = trackTunnelPipe(tunnelState, socket);
+        openBoundedForwardOutCallback(
+          conn,
           bindAddress,
           localPort,
           remoteHost,
@@ -378,14 +464,15 @@ function bindPortForwardChannels({
           (err, stream) => {
             if (err) {
               console.error(`[PortForward] Forward error:`, err.message);
-              socket.end();
+              destroyTunnelPipeEntry(tunnelState, pipeEntry);
               return;
             }
-            trackTunnelPipe(tunnelState, socket, stream);
+            if (!attachTunnelPipeStream(tunnelState, pipeEntry, stream)) return;
             socket.pipe(stream).pipe(socket);
             socket.on("error", (e) => console.warn("[PortForward] Socket error:", e.message));
             stream.on("error", (e) => console.warn("[PortForward] Stream error:", e.message));
           },
+          { signal: pipeEntry?.openAbortController?.signal },
         );
       });
 
@@ -414,7 +501,8 @@ function bindPortForwardChannels({
           tunnelState.webContentsId = sender.id;
           tunnelState.pendingConn = null;
           if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-            attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+            const transport = attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+            if (dialCoordination && transport) completeTransportDial(dialCoordination, transport);
           }
           portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus?.("active");
@@ -473,10 +561,21 @@ function bindPortForwardChannels({
       tunnelState.remotePort = remotePort;
       tunnelState.pendingRemoteForward = true;
       tunnelState.conn = conn;
+      tunnelState._remoteForwardOutcome = null;
+      tunnelState._remoteForwardStartPromise = new Promise((resolve) => {
+        tunnelState._resolveRemoteForwardStart = resolve;
+      });
+      tunnelState.remoteForwardAbortController = new AbortController();
 
-      conn.forwardIn(bindAddress, localPort, (err) => {
-        tunnelState.pendingRemoteForward = false;
+      openBoundedForwardInCallback(conn, bindAddress, localPort, (err) => {
+        tunnelState.remoteForwardAbortController = null;
+        settleRemoteForwardStart(tunnelState, err ? { ok: false, error: err } : { ok: true });
         if (err) {
+          if (isTunnelCancelled(tunnelState)) {
+            settled = true;
+            resolve({ tunnelId, success: false, cancelled: true });
+            return;
+          }
           console.error(`[PortForward] Remote forward error:`, err.message);
           fail(err);
           return;
@@ -488,21 +587,14 @@ function bindPortForwardChannels({
         void (async () => {
           try {
             if (isTunnelCancelled(tunnelState)) {
-              // Cancel path may already have awaited unforward via cancelTunnel;
-              // only unforward again if stop did not clear the pending bind.
-              if (tunnelState._remoteUnforwardDone) {
-                settled = true;
-                resolve({ tunnelId, success: false, cancelled: true });
-                return;
-              }
               const transport = tunnelState.connRef || null;
-              const unfwd = await unforwardRemoteListen(
+              const unfwd = await unforwardRemoteListenOnce(
+                tunnelState,
                 conn,
                 bindAddress,
                 localPort,
                 transport,
               );
-              tunnelState._remoteUnforwardDone = true;
               if (unfwd.discarded || unfwd.timedOut) {
                 // Transport already discarded; drop local refs so release does
                 // not try to park a dead shared conn.
@@ -522,7 +614,8 @@ function bindPortForwardChannels({
             tunnelState.pendingConn = null;
             conn.on("tcp connection", onTcpConnection);
             if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-              attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+              const transport = attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+              if (dialCoordination && transport) completeTransportDial(dialCoordination, transport);
             }
             portForwardingTunnels.set(tunnelId, tunnelState);
             sendStatus?.("active");
@@ -531,13 +624,13 @@ function bindPortForwardChannels({
           } catch (regErr) {
             try { conn.removeListener("tcp connection", onTcpConnection); } catch { /* ignore */ }
             const transport = tunnelState.connRef || null;
-            const unfwd = await unforwardRemoteListen(
+            const unfwd = await unforwardRemoteListenOnce(
+              tunnelState,
               conn,
               bindAddress,
               localPort,
               transport,
             );
-            tunnelState._remoteUnforwardDone = true;
             if (unfwd.discarded || unfwd.timedOut) {
               tunnelState.sshTransportManaged = false;
               tunnelState.conn = null;
@@ -546,12 +639,13 @@ function bindPortForwardChannels({
             fail(regErr);
           }
         })();
-      });
+      }, { signal: tunnelState.remoteForwardAbortController.signal });
       return;
     }
 
     if (type === "dynamic") {
       const server = net.createServer((socket) => {
+        const pipeEntry = trackTunnelPipe(tunnelState, socket);
         socket.once("data", (data) => {
           if (data[0] !== 0x05) {
             socket.end();
@@ -586,7 +680,8 @@ function bindPortForwardChannels({
               return;
             }
 
-            conn.forwardOut(
+            openBoundedForwardOutCallback(
+              conn,
               bindAddress,
               0,
               targetHost,
@@ -597,6 +692,7 @@ function bindPortForwardChannels({
                   socket.end();
                   return;
                 }
+                if (!attachTunnelPipeStream(tunnelState, pipeEntry, stream)) return;
                 const reply = Buffer.alloc(10);
                 reply[0] = 0x05;
                 reply[1] = 0x00;
@@ -604,11 +700,11 @@ function bindPortForwardChannels({
                 reply[3] = 0x01;
                 reply.writeUInt16BE(0, 8);
                 socket.write(reply);
-                trackTunnelPipe(tunnelState, socket, stream);
                 socket.pipe(stream).pipe(socket);
                 socket.on("error", () => stream.end());
                 stream.on("error", () => socket.end());
               },
+              { signal: pipeEntry?.openAbortController?.signal },
             );
           });
         });
@@ -637,7 +733,8 @@ function bindPortForwardChannels({
           tunnelState.webContentsId = sender.id;
           tunnelState.pendingConn = null;
           if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-            attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+            const transport = attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+            if (dialCoordination && transport) completeTransportDial(dialCoordination, transport);
           }
           portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus?.("active");
@@ -715,6 +812,34 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
   if (tunnel.passphraseAbortController && !tunnel.passphraseAbortController.signal.aborted) {
     cleanup('passphrase prompt', () => tunnel.passphraseAbortController.abort());
   }
+  if (tunnel.transportWaitAbortController && !tunnel.transportWaitAbortController.signal.aborted) {
+    cleanup('shared SSH wait', () => tunnel.transportWaitAbortController.abort(
+      new Error("Port forward connection cancelled"),
+    ));
+  }
+  if (tunnel.remoteForwardAbortController && !tunnel.remoteForwardAbortController.signal.aborted) {
+    const transport = tunnel.connRef || null;
+    const abortedRemoteOpen = cleanup('remote forward open', () => tunnel.remoteForwardAbortController.abort(
+      new Error("Port forward connection cancelled"),
+    ));
+    if (abortedRemoteOpen) {
+      // forwardIn has no request-level cancellation in ssh2. The bounded open
+      // invalidates the physical connection so its retained callback cannot
+      // accumulate. Drop the tunnel's references as well: release cleanup must
+      // not end the same dedicated client twice or return the dead shared
+      // transport to the pool.
+      if (transport && typeof discardTransport === "function") {
+        cleanup('remote forward transport', () => discardTransport(
+          transport,
+          "pending-remote-forward-cancel",
+        ));
+      }
+      tunnel._remoteForwardTransportInvalidated = true;
+      tunnel.sshTransportManaged = false;
+      tunnel.conn = null;
+      tunnel.connRef = null;
+    }
+  }
   if (tunnel.pendingConn) {
     if (cleanup('pending SSH connection', () => tunnel.pendingConn.end())) tunnel.pendingConn = null;
   }
@@ -727,6 +852,27 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
       tunnel.tcpConnectionHandler = null;
     });
   }
+  if (tunnel.pendingRemoteForward && tunnel._remoteForwardStartPromise) {
+    const startOutcome = await waitForRemoteForwardStart(tunnel);
+    if (tunnel._remoteForwardTransportInvalidated) {
+      tunnel.pendingRemoteForward = false;
+    }
+    if (startOutcome?.timedOut) {
+      const transport = tunnel.connRef || null;
+      discardUnforwardTransport(
+        tunnel.conn,
+        transport,
+        "pending-remote-forward-timeout",
+      );
+      tunnel._remoteForwardOutcome = startOutcome;
+      tunnel._remoteUnforwardDone = true;
+      tunnel._remoteUnforwardResult = { ok: true, discarded: true, timedOut: true };
+      tunnel.pendingRemoteForward = false;
+      tunnel.sshTransportManaged = false;
+      tunnel.conn = null;
+      tunnel.connRef = null;
+    }
+  }
   // Remote forwards leave a server-side listen until unforwardIn succeeds.
   // Also cover cancel-during-forwardIn: bind target is recorded before the
   // ssh2 callback so we never skip unforward just because status was still
@@ -737,16 +883,20 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
     && typeof tunnel.conn.unforwardIn === "function"
     && Number.isFinite(tunnel.localPort)
     && !tunnel._remoteUnforwardDone
+    && (
+      tunnel._remoteForwardOutcome?.ok === true
+      || !tunnel._remoteForwardStartPromise
+    )
   ) {
     const bind = tunnel.bindAddress || "127.0.0.1";
     const port = tunnel.localPort;
-    const unfwd = await unforwardRemoteListen(
+    const unfwd = await unforwardRemoteListenOnce(
+      tunnel,
       tunnel.conn,
       bind,
       port,
       tunnel.connRef || null,
     );
-    tunnel._remoteUnforwardDone = true;
     tunnel.pendingRemoteForward = false;
     if (unfwd.discarded || unfwd.timedOut) {
       // Transport already discarded inside the helper; clear local refs so
@@ -774,15 +924,10 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
     } catch { /* ignore */ }
     tunnel.pendingRemoteForward = false;
   }
-  if (errors.length > 0) {
-    const error = errors.join('; ');
-    tunnel.status = 'error';
-    tunnel.error = error;
-    tunnel.cleanupFailed = true;
-    tunnel.cleanupInProgress = false;
-    sendStatus?.('error', error);
-    throw new Error(error);
-  }
+  // Keep cleaning the SSH connection even when an earlier resource (for
+  // example the local listener) failed to close. Throw only after every
+  // independent cleanup step has had a chance to run; otherwise a listener
+  // error strands the underlying SSH socket indefinitely.
   if (tunnel.sshTransportManaged) {
     if (cleanup('SSH transport lease', () => releaseTunnelSsh(tunnel))) {
       /* lease returned */
@@ -834,9 +979,11 @@ async function startPortForward(event, payload) {
     port = 22,
     username,
     authMethod,
+    authPolicyVersion,
     requiresMfa,
     password,
     privateKey,
+    publicKey,
     certificate,
     keyId,
     passphrase,
@@ -858,6 +1005,7 @@ async function startPortForward(event, payload) {
     keepaliveCountMax: resolvedKeepaliveCountMax,
     sshTcpConnectTimeoutMs,
     sshAuthReadyTimeoutMs,
+    reuseTransport = true,
   } = payload;
 
   // The rule is the durable identity; tunnelId is only one renderer's
@@ -908,35 +1056,79 @@ async function startPortForward(event, payload) {
   let chainConnections = [];
   let connectionSocket = null;
   const passphraseAbortController = new AbortController();
-  const reuseEndpoint = buildPortForwardEndpoint({
-    hostId, hostname, port, username, jumpHosts, proxy,
-    authType: authMethod, keyId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
-    password, privateKey, passphrase, identityFilePaths,
-  });
+  const transportWaitAbortController = new AbortController();
+  const tunnelState = {
+    type,
+    tunnelId,
+    conn: null,
+    pendingConn: null,
+    server: null,
+    chainConnections,
+    passphraseAbortController,
+    ruleId,
+    status: 'connecting',
+    webContentsId: sender.id,
+    subscribers: new Map([[sender.id, sender]]),
+    cancelled: false,
+    sshTransportManaged: false,
+  };
+  const sendStatus = (status, error = null) => {
+    publishTunnelStatus(tunnelId, tunnelState, status, error);
+  };
+  // Publish before waiting for another opener's physical dial. A stop request
+  // must be able to find and cancel this waiter immediately.
+  portForwardingTunnels.set(tunnelId, tunnelState);
+  sendStatus('connecting');
+  const reuseEndpoint = buildPortForwardEndpointFromStartPayload(payload);
+
+  // Atomically join a compatible physical dial when no authenticated
+  // transport exists yet. Explicitly dedicated forwards remain isolated and
+  // are not published into the shared pool.
+  let pendingDialCoordination = null;
+  let existingTransport = reuseTransport !== false
+    ? findTransportByEndpoint(reuseEndpoint)
+    : null;
+  try {
+    if (!existingTransport && reuseTransport !== false && typeof beginTransportDial === "function") {
+      const coordination = beginTransportDial(reuseEndpoint, { kind: "channel" });
+      if (coordination.role === "reuse") {
+        existingTransport = coordination.transport;
+      } else if (coordination.role === "join") {
+        tunnelState.transportWaitAbortController = transportWaitAbortController;
+        existingTransport = await waitForTransportDial(coordination, {
+          signal: transportWaitAbortController.signal,
+        });
+        tunnelState.transportWaitAbortController = null;
+      } else {
+        pendingDialCoordination = coordination;
+      }
+    }
+  } catch (error) {
+    if (isTunnelCancelled(tunnelState) || transportWaitAbortController.signal.aborted) {
+      portForwardingTunnels.delete(tunnelId);
+      return { tunnelId, success: false, cancelled: true };
+    }
+    portForwardingTunnels.delete(tunnelId);
+    sendStatus('error', error?.message || String(error));
+    throw error;
+  }
+  if (isTunnelCancelled(tunnelState)) {
+    portForwardingTunnels.delete(tunnelId);
+    return { tunnelId, success: false, cancelled: true };
+  }
+  const abandonPendingDial = (reason) => {
+    if (!pendingDialCoordination) return;
+    failTransportDial(
+      pendingDialCoordination,
+      reason instanceof Error ? reason : new Error(String(reason || "Port forward connection cancelled")),
+    );
+  };
 
   // Prefer an already-authenticated transport (live terminal or idle park).
-  const existingTransport = findTransportByEndpoint(reuseEndpoint);
   if (existingTransport?.conn) {
-    const tunnelState = {
-      type,
-      tunnelId,
-      conn: existingTransport.conn,
-      pendingConn: null,
-      server: null,
-      chainConnections: [],
-      passphraseAbortController,
-      ruleId,
-      status: 'connecting',
-      webContentsId: sender.id,
-      subscribers: new Map([[sender.id, sender]]),
-      cancelled: false,
-      sshTransportManaged: false,
-    };
-    const sendStatus = (status, error = null) => {
-      publishTunnelStatus(tunnelId, tunnelState, status, error);
-    };
+    tunnelState.conn = existingTransport.conn;
+    tunnelState.chainConnections = [];
     portForwardingTunnels.set(tunnelId, tunnelState);
-    sendStatus("connecting");
     try {
       borrowTransport(existingTransport, {
         kind: LEASE_KINDS.forward,
@@ -1001,30 +1193,15 @@ async function startPortForward(event, payload) {
       try { detachSharedTransportLifecycle(tunnelState); } catch { /* ignore */ }
       try { returnTransport(tunnelState); } catch { /* ignore */ }
       portForwardingTunnels.delete(tunnelId);
+      tunnelState.conn = null;
+      tunnelState.sshTransportManaged = false;
       // Fall through to a dedicated dial.
     }
   }
 
   const conn = new SSHClient();
-  const tunnelState = {
-    type,
-    tunnelId,
-    conn,
-    pendingConn: null,
-    server: null,
-    chainConnections,
-    passphraseAbortController,
-    ruleId,
-    status: 'connecting',
-    webContentsId: sender.id,
-    subscribers: new Map([[sender.id, sender]]),
-    cancelled: false,
-    sshTransportManaged: false,
-  };
-
-  const sendStatus = (status, error = null) => {
-    publishTunnelStatus(tunnelId, tunnelState, status, error);
-  };
+  tunnelState.conn = conn;
+  tunnelState.chainConnections = chainConnections;
 
   // Keepalive policy:
   //   - positive value: honor it
@@ -1033,20 +1210,18 @@ async function startPortForward(event, payload) {
   //     otherwise be killed by ssh2 after countMax unanswered probes)
   //   - undefined: legacy caller path, fall back to 10s/3 so an idle
   //     forwarded TCP tunnel doesn't get dropped by NAT state tables.
-  const tunnelKeepaliveMs = resolvedKeepaliveInterval == null
-    ? 10000
-    : (resolvedKeepaliveInterval > 0 ? resolvedKeepaliveInterval * 1000 : 0);
-  const tunnelKeepaliveCountMax = resolvedKeepaliveInterval == null
-    ? 3
-    : (resolvedKeepaliveInterval > 0 ? (resolvedKeepaliveCountMax ?? 3) : 0);
+  const keepalivePolicy = resolveConnectionKeepalivePolicy({
+    keepaliveInterval: resolvedKeepaliveInterval,
+    keepaliveCountMax: resolvedKeepaliveCountMax,
+  });
   const connectOpts = {
     host: hostname,
     port: port,
     username: username || 'root',
     timeout: connectionTimeouts.tcpConnectTimeoutMs,
     readyTimeout: 0,
-    keepaliveInterval: tunnelKeepaliveMs,
-    keepaliveCountMax: tunnelKeepaliveCountMax,
+    keepaliveInterval: keepalivePolicy.keepaliveIntervalMs,
+    keepaliveCountMax: keepalivePolicy.keepaliveCountMax,
     // Enable keyboard-interactive authentication (required for 2FA/MFA)
     tryKeyboard: true,
     algorithms: buildAlgorithms(legacyAlgorithms, { skipEcdsaHostKey, algorithmOverrides }),
@@ -1062,7 +1237,6 @@ async function startPortForward(event, payload) {
   });
 
   const hasCertificate = typeof certificate === "string" && certificate.trim().length > 0;
-  sendStatus('connecting');
   portForwardingTunnels.set(tunnelId, tunnelState);
 
   let defaultKeys = [];
@@ -1116,6 +1290,7 @@ async function startPortForward(event, payload) {
 
     if (isTunnelCancelled(tunnelState)) {
       portForwardingTunnels.delete(tunnelId);
+      abandonPendingDial("Port forward connection cancelled");
       return { tunnelId, success: false, cancelled: true };
     }
 
@@ -1151,6 +1326,7 @@ async function startPortForward(event, payload) {
       : discoveredDefaultKeys;
     if (isTunnelCancelled(tunnelState)) {
       portForwardingTunnels.delete(tunnelId);
+      abandonPendingDial("Port forward connection cancelled");
       return { tunnelId, success: false, cancelled: true };
     }
 
@@ -1172,6 +1348,7 @@ async function startPortForward(event, payload) {
     portForwardAuthPhase = authConfig.authPhase || portForwardAuthPhase;
     if (isTunnelCancelled(tunnelState)) {
       portForwardingTunnels.delete(tunnelId);
+      abandonPendingDial("Port forward connection cancelled");
       return { tunnelId, success: false, cancelled: true };
     }
 
@@ -1220,6 +1397,7 @@ async function startPortForward(event, payload) {
         if (!tunnelState.cleanupFailed) {
           portForwardingTunnels.delete(tunnelId);
         }
+        abandonPendingDial("Port forward connection cancelled");
         return { tunnelId, success: false, cancelled: true };
       }
       connectOpts.sock = connectionSocket;
@@ -1238,6 +1416,7 @@ async function startPortForward(event, payload) {
         if (!tunnelState.cleanupFailed) {
           portForwardingTunnels.delete(tunnelId);
         }
+        abandonPendingDial("Port forward connection cancelled");
         return { tunnelId, success: false, cancelled: true };
       }
       tunnelState.pendingConn = null;
@@ -1250,6 +1429,7 @@ async function startPortForward(event, payload) {
       if (!tunnelState.cleanupFailed) {
         portForwardingTunnels.delete(tunnelId);
       }
+      abandonPendingDial("Port forward connection cancelled");
       return { tunnelId, success: false, cancelled: true };
     }
     if (isPassphraseCancelledError(err)) {
@@ -1258,6 +1438,7 @@ async function startPortForward(event, payload) {
       } catch {
         /* best-effort cancel on passphrase cancel */
       }
+      abandonPendingDial(err);
       return { tunnelId, success: false, cancelled: true };
     }
     tunnelState.cancelled = true;
@@ -1272,6 +1453,7 @@ async function startPortForward(event, payload) {
     keyboardInteractiveHandler.cancelRequestsForSession(tunnelId, "connection-ended");
     portForwardingTunnels.delete(tunnelId);
     sendStatus('error', err?.message || String(err));
+    abandonPendingDial(err);
     throw err;
   }
 
@@ -1332,11 +1514,16 @@ async function startPortForward(event, payload) {
         sendStatus,
         releaseOnError: false,
         endpoint: reuseEndpoint,
-        registerTransport: true,
+        registerTransport: reuseTransport !== false,
+        dialCoordination: pendingDialCoordination,
       }).then((result) => {
+        if (!result?.success && pendingDialCoordination) {
+          failTransportDial(pendingDialCoordination, new Error("Port forward cancelled before activation"));
+        }
         settled = true;
         resolve(result);
       }).catch((err) => {
+        if (pendingDialCoordination) failTransportDial(pendingDialCoordination, err);
         settled = true;
         reject(err);
       });
@@ -1346,6 +1533,7 @@ async function startPortForward(event, payload) {
       clearAuthReadyTimer();
       console.error(`[PortForward] SSH error:`, err.message);
       if (settled) return;
+      if (pendingDialCoordination) failTransportDial(pendingDialCoordination, err);
       sendStatus('error', err.message);
       cleanupChainConnections(chainConnections);
       settled = true;
@@ -1384,9 +1572,14 @@ async function startPortForward(event, payload) {
       if (!settled) {
         settled = true;
         if (wasCancelled) {
+          if (pendingDialCoordination) {
+            failTransportDial(pendingDialCoordination, new Error("Port forward connection cancelled"));
+          }
           resolve({ tunnelId, success: false, cancelled: true });
         } else {
-          reject(new Error(`Tunnel ${tunnelId} closed before connection established`));
+          const err = new Error(`Tunnel ${tunnelId} closed before connection established`);
+          if (pendingDialCoordination) failTransportDial(pendingDialCoordination, err);
+          reject(err);
         }
       }
     });
@@ -1395,6 +1588,7 @@ async function startPortForward(event, payload) {
       clearAuthReadyTimer();
       if (settled) return;
       const err = new Error(`Connection timeout to ${hostname}`);
+      if (pendingDialCoordination) failTransportDial(pendingDialCoordination, err);
       sendStatus('error', err.message);
       cleanupChainConnections(chainConnections);
       settled = true;
@@ -1473,6 +1667,19 @@ async function subscribePortForward(event, payload) {
   };
 }
 
+/** Remove a renderer-owned subscription from every tunnel in this process. */
+async function unsubscribePortForwardSender(event, payload = {}) {
+  const webContentsId = payload.webContentsId ?? event?.sender?.id;
+  if (!Number.isSafeInteger(webContentsId)) return { removed: 0 };
+  let removed = 0;
+  for (const tunnel of portForwardingTunnels.values()) {
+    if (tunnel.subscribers instanceof Map && tunnel.subscribers.delete(webContentsId)) {
+      removed += 1;
+    }
+  }
+  return { removed };
+}
+
 /**
  * List all active port forwards
  */
@@ -1546,7 +1753,132 @@ async function stopPortForwardByRuleId(_event, { ruleId }) {
 /**
  * Register IPC handlers for port forwarding operations
  */
-function registerHandlers(ipcMain) {
+function registerHandlers(ipcMain, options = {}) {
+  const terminalWorkerManager = options.terminalWorkerManager || null;
+  if (terminalWorkerManager) {
+    const subscriptionsBySender = new Map();
+    const trackedTunnelIds = new Set();
+    const tunnelRuleIds = new Map();
+
+    const unsubscribeDestroyedSender = (webContentsId) => {
+      void terminalWorkerManager.request(
+        "netcatty:portforward:unsubscribeSender",
+        { webContentsId },
+        { webContentsId },
+      ).catch(() => {});
+    };
+
+    const forgetTunnel = (tunnelId) => {
+      if (!tunnelId) return;
+      trackedTunnelIds.delete(tunnelId);
+      tunnelRuleIds.delete(tunnelId);
+      for (const [webContentsId, entry] of subscriptionsBySender) {
+        entry.tunnelIds.delete(tunnelId);
+        if (entry.tunnelIds.size > 0) continue;
+        entry.sender.removeListener?.("destroyed", entry.onDestroyed);
+        subscriptionsBySender.delete(webContentsId);
+      }
+    };
+
+    const ensureSenderLifecycle = (sender) => {
+      if (!sender || !Number.isSafeInteger(sender.id)) return null;
+      if (sender.isDestroyed?.()) {
+        unsubscribeDestroyedSender(sender.id);
+        return null;
+      }
+      let entry = subscriptionsBySender.get(sender.id);
+      if (!entry) {
+        const onDestroyed = () => {
+          subscriptionsBySender.delete(sender.id);
+          unsubscribeDestroyedSender(sender.id);
+        };
+        entry = { sender, tunnelIds: new Set(), onDestroyed };
+        subscriptionsBySender.set(sender.id, entry);
+        sender.once?.("destroyed", onDestroyed);
+      }
+      return entry;
+    };
+
+    const releaseEmptySenderLifecycle = (sender, entry) => {
+      if (!entry || entry.tunnelIds.size > 0 || subscriptionsBySender.get(sender?.id) !== entry) return;
+      entry.sender.removeListener?.("destroyed", entry.onDestroyed);
+      subscriptionsBySender.delete(sender.id);
+    };
+
+    const trackSubscription = (sender, tunnelId, ruleId) => {
+      if (!tunnelId) return;
+      const entry = ensureSenderLifecycle(sender);
+      if (!entry) return;
+      entry.tunnelIds.add(tunnelId);
+      trackedTunnelIds.add(tunnelId);
+      if (ruleId) tunnelRuleIds.set(tunnelId, ruleId);
+    };
+
+    const requestWorker = (channel, { track = false, cleanup = null } = {}) => {
+      ipcMain.handle(channel, async (event, payload) => {
+        const pendingSenderEntry = track ? ensureSenderLifecycle(event?.sender) : null;
+        try {
+          const result = await terminalWorkerManager.request(channel, payload, {
+            webContentsId: event?.sender?.id,
+          });
+          if (
+            track
+            && result?.tunnelId
+            && result.success !== false
+            && result.status !== "inactive"
+            && result.status !== "error"
+          ) {
+            trackSubscription(event?.sender, result.tunnelId, payload?.ruleId);
+          }
+          if (cleanup === "tunnel" && result?.success) forgetTunnel(payload?.tunnelId);
+          if (cleanup === "all") {
+            for (const tunnelId of [...trackedTunnelIds]) forgetTunnel(tunnelId);
+          }
+          if (cleanup === "rule" && result?.failed === 0) {
+            for (const [tunnelId, ruleId] of tunnelRuleIds) {
+              if (ruleId === payload?.ruleId) forgetTunnel(tunnelId);
+            }
+          }
+          return result;
+        } finally {
+          releaseEmptySenderLifecycle(event?.sender, pendingSenderEntry);
+        }
+      });
+    };
+
+    requestWorker("netcatty:portforward:start", { track: true });
+    requestWorker("netcatty:portforward:stop", { cleanup: "tunnel" });
+    requestWorker("netcatty:portforward:status");
+    requestWorker("netcatty:portforward:subscribe", { track: true });
+    requestWorker("netcatty:portforward:list");
+    requestWorker("netcatty:portforward:stopAll", { cleanup: "all" });
+    requestWorker("netcatty:portforward:stopByRuleId", { cleanup: "rule" });
+
+    terminalWorkerManager.onWorkerRendererEvent?.((message) => {
+      if (message?.channel !== "netcatty:portforward:status") return;
+      if (message.payload?.status === "inactive" || message.payload?.status === "error") {
+        forgetTunnel(message.payload?.tunnelId);
+      }
+    });
+    terminalWorkerManager.onWorkerExit?.((error) => {
+      const message = error?.message || "Terminal worker exited";
+      const notified = new Set();
+      for (const entry of subscriptionsBySender.values()) {
+        for (const tunnelId of entry.tunnelIds) {
+          const key = `${entry.sender.id}:${tunnelId}`;
+          if (notified.has(key) || entry.sender.isDestroyed?.()) continue;
+          notified.add(key);
+          safeSend(entry.sender, "netcatty:portforward:status", {
+            tunnelId,
+            status: "error",
+            error: message,
+          });
+        }
+      }
+      for (const tunnelId of [...trackedTunnelIds]) forgetTunnel(tunnelId);
+    });
+    return;
+  }
   ipcMain.handle("netcatty:portforward:start", startPortForward);
   ipcMain.handle("netcatty:portforward:stop", stopPortForward);
   ipcMain.handle("netcatty:portforward:status", getPortForwardStatus);
@@ -1554,6 +1886,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:portforward:list", listPortForwards);
   ipcMain.handle("netcatty:portforward:stopAll", () => stopAllPortForwards());
   ipcMain.handle("netcatty:portforward:stopByRuleId", stopPortForwardByRuleId);
+  ipcMain.handle("netcatty:portforward:unsubscribeSender", unsubscribePortForwardSender);
 }
 
 module.exports = {
@@ -1562,6 +1895,7 @@ module.exports = {
   stopPortForward,
   getPortForwardStatus,
   subscribePortForward,
+  unsubscribePortForwardSender,
   listPortForwards,
   stopAllPortForwards,
   stopPortForwardByRuleId,
@@ -1569,4 +1903,10 @@ module.exports = {
   publishTunnelStatus,
   shouldFinalizeTunnelClose,
   isReusableTunnelStatus,
+  buildPortForwardEndpoint,
+  buildPortForwardEndpointFromStartPayload,
+  _bindPortForwardChannelsForTests: bindPortForwardChannels,
+  _trackTunnelPipeForTests: trackTunnelPipe,
+  _attachTunnelPipeStreamForTests: attachTunnelPipeStream,
+  _destroyTunnelPipesForTests: destroyTunnelPipes,
 };

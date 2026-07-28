@@ -4,8 +4,9 @@ declare global {
   interface NetcattyBridge {
     // SFTP operations
     openSftp(options: NetcattySSHOptions): Promise<string>;
-    openSftpForSession?(sessionId: string): Promise<string>;
+    openSftpForSession?(sessionId: string, expectedEndpoint?: NetcattySSHOptions): Promise<string>;
     listSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<RemoteFile[]>;
+    realpathSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
     readSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
     readSftpBinary?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<ArrayBuffer>;
     writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding): Promise<void>;
@@ -18,24 +19,7 @@ declare global {
     chmodSftp?(sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding): Promise<void>;
     getSftpHomeDir?(sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ success: boolean; homeDir?: string; error?: string }>;
 
-    // Write binary with real-time progress callback
-    writeSftpBinaryWithProgress?(
-      sftpId: string,
-      path: string,
-      content: ArrayBuffer,
-      transferId: string,
-      encoding?: SftpFilenameEncoding,
-      onProgress?: (transferred: number, total: number, speed: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void
-    ): Promise<{ success: boolean; transferId: string; cancelled?: boolean }>;
-
-    // Cancel an in-progress SFTP upload
-    cancelSftpUpload?(transferId: string): Promise<{ success: boolean }>;
-
     // Transfer with progress
-    uploadFile?(sftpId: string, localPath: string, remotePath: string, transferId: string): Promise<void>;
-    downloadFile?(sftpId: string, remotePath: string, localPath: string, transferId: string): Promise<void>;
     cancelTransfer?(transferId: string): Promise<void>;
     /** Clear a pre-start cancel latch so intentional same-id resume/retry can run. */
     clearPendingTransferCancel?(transferId: string): Promise<{ success: boolean } | void>;
@@ -50,10 +34,7 @@ declare global {
         sftpId: string;
         folderName: string;
         totalBytes: number;
-      },
-      onProgress?: (phase: string, transferred: number, total: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void
+      }
     ): Promise<{ compressionId: string; success?: boolean; error?: string }>;
     cancelCompressedUpload?(compressionId: string): Promise<{ success: boolean }>;
     pauseCompressedUpload?(compressionId: string): Promise<{ success: boolean; deferred?: boolean; lifecycleEpoch?: number; reason?: string }>;

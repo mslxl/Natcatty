@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS,
+  TOOL_OUTPUT_MAX_FAILED_SESSION_DELETIONS,
   TOOL_OUTPUT_READ_MAX_CHARS,
   type PersistedToolOutputRecord,
   type ToolOutputPersistence,
@@ -636,6 +638,344 @@ test('ToolOutputStore rejects cross-chat handle reads', async () => {
   });
 
   assert.equal(await store.readChunkAsync({ handleId: handle.id }, 'chat-other'), null);
+});
+
+test('ToolOutputStore reclaims chat generations after deletion churn settles', () => {
+  const store = new ToolOutputStore();
+  for (let index = 0; index < 2_000; index += 1) {
+    store.prune(`chat-deleted-${index}`);
+  }
+
+  assert.equal(store.getLifecycleMetadataStatsForTests().sessionGenerations, 0);
+});
+
+test('ToolOutputStore rejects output that arrives after its chat was deleted', () => {
+  const store = new ToolOutputStore();
+  store.prune('chat-deleted-before-late-output');
+
+  const lateHandle = store.store({
+    chatSessionId: 'chat-deleted-before-late-output',
+    capabilityId: 'terminal.execute',
+    content: 'late output',
+  });
+
+  assert.equal(lateHandle.evicted, true);
+  assert.equal(lateHandle.storedChars, 0);
+  assert.equal(store.listPendingHandles('chat-deleted-before-late-output').length, 0);
+});
+
+test('ToolOutputStore reclaims per-chat terminal deletion metadata after churn settles', () => {
+  const store = new ToolOutputStore();
+  for (let index = 0; index < 2_000; index += 1) {
+    store.pruneTerminalSession(`chat-${index}`, `terminal-${index}`);
+  }
+
+  const stats = store.getLifecycleMetadataStatsForTests();
+  assert.equal(stats.terminalMutationGenerations, 0);
+  assert.equal(stats.deletedTerminalSessions, 0);
+});
+
+test('ToolOutputStore bounds closed-terminal tombstones while isolating recent late writes', async () => {
+  const store = new ToolOutputStore();
+  const churnCount = TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS + 2_000;
+  for (let index = 0; index < churnCount; index += 1) {
+    store.pruneTerminalSessionEverywhere(`terminal-closed-${index}`);
+  }
+
+  assert.equal(
+    store.getLifecycleMetadataStatsForTests().closedTerminalSessions,
+    TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS,
+  );
+  const lateHandle = store.store({
+    chatSessionId: 'chat-late-after-churn',
+    capabilityId: 'terminal.execute',
+    sessionId: `terminal-closed-${churnCount - 1}`,
+    content: 'late output after heavy churn',
+  });
+  assert.equal(lateHandle.evicted, true);
+  assert.equal(store.listPendingHandles('chat-late-after-churn').length, 0);
+  assert.equal(await store.readChunkAsync({ handleId: lateHandle.id }, 'chat-late-after-churn'), null);
+  const oldestLateHandle = store.store({
+    chatSessionId: 'chat-oldest-late-after-churn',
+    capabilityId: 'terminal.execute',
+    sessionId: 'terminal-closed-0',
+    content: 'very late output after exact tombstone eviction',
+  });
+  assert.equal(oldestLateHandle.evicted, true);
+  assert.equal(store.listPendingHandles('chat-oldest-late-after-churn').length, 0);
+});
+
+test('ToolOutputStore bounds fallback terminal metadata when durable deletion is unavailable', () => {
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async () => null,
+      read: async () => null,
+      delete: async () => {},
+    },
+  });
+  for (let index = 0; index < 2_000; index += 1) {
+    store.pruneTerminalSession(`chat-fallback-${index}`, `terminal-fallback-${index}`);
+  }
+
+  const stats = store.getLifecycleMetadataStatsForTests();
+  assert.equal(stats.terminalMutationGenerations, TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS);
+  assert.equal(stats.deletedTerminalSessions, TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS);
+});
+
+test('ToolOutputStore keeps an in-flight restore tombstone protected during metadata churn', async () => {
+  const chatSessionId = 'chat-protected-restore';
+  const terminalSessionId = 'terminal-protected-restore';
+  const handleId = 'tool-output-protected-restore';
+  let finishRestore!: (value: { path: string; record: PersistedToolOutputRecord }) => void;
+  const restoreFinished = new Promise<{ path: string; record: PersistedToolOutputRecord }>(resolve => {
+    finishRestore = resolve;
+  });
+  const deletedPaths: string[] = [];
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async (requestedHandleId, requestedChatSessionId) => {
+        if (requestedHandleId !== handleId || requestedChatSessionId !== chatSessionId) return null;
+        return restoreFinished;
+      },
+      read: async () => null,
+      delete: async path => { deletedPaths.push(path); },
+    },
+  });
+
+  const reading = store.readChunkAsync({ handleId }, chatSessionId);
+  store.pruneTerminalSession(chatSessionId, terminalSessionId);
+  for (let index = 0; index < 2_000; index += 1) {
+    store.pruneTerminalSession(`chat-churn-${index}`, `terminal-churn-${index}`);
+  }
+  finishRestore({
+    path: '/netcatty/protected-old-output.log',
+    record: {
+      schemaVersion: 1,
+      handleId,
+      chatSessionId,
+      capabilityId: 'terminal.execute',
+      terminalSessionId,
+      totalChars: 3,
+      storedChars: 3,
+      sourceTruncated: false,
+      preview: 'old',
+      storedAt: 1,
+      accessedAt: 1,
+    },
+  });
+
+  assert.equal(await reading, null);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.deepEqual(deletedPaths, ['/netcatty/protected-old-output.log']);
+  const stats = store.getLifecycleMetadataStatsForTests();
+  assert.ok(stats.terminalMutationGenerations <= TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS);
+  assert.ok(stats.deletedTerminalSessions <= TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS);
+});
+
+test('ToolOutputStore retains a bounded tombstone when durable terminal deletion fails', async () => {
+  const record: PersistedToolOutputRecord = {
+    schemaVersion: 1,
+    handleId: 'tool-output-delete-failed',
+    chatSessionId: 'chat-delete-failed',
+    capabilityId: 'terminal.execute',
+    terminalSessionId: 'terminal-delete-failed',
+    totalChars: 3,
+    storedChars: 3,
+    sourceTruncated: false,
+    preview: 'old',
+    storedAt: 1,
+    accessedAt: 1,
+  };
+  const deletedPaths: string[] = [];
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async () => ({ path: '/netcatty/delete-failed.log', record }),
+      read: async () => ({
+        mode: 'head',
+        content: 'old',
+        totalChars: 3,
+        startOffset: 0,
+        endOffset: 3,
+        nextOffset: 3,
+        hasMore: false,
+      }),
+      delete: async path => { deletedPaths.push(path); },
+      deleteTerminalSession: async () => { throw new Error('disk busy'); },
+    },
+  });
+
+  store.pruneTerminalSession(record.chatSessionId, record.terminalSessionId!);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(await store.readChunkAsync({ handleId: record.handleId }, record.chatSessionId), null);
+  assert.deepEqual(deletedPaths, ['/netcatty/delete-failed.log']);
+  const stats = store.getLifecycleMetadataStatsForTests();
+  assert.equal(stats.terminalMutationGenerations, 1);
+  assert.equal(stats.deletedTerminalSessions, 1);
+});
+
+test('ToolOutputStore ignores an older terminal deletion failure after a newer deletion succeeds', async () => {
+  let rejectFirstDeletion!: (error: Error) => void;
+  let finishSecondDeletion!: () => void;
+  const firstDeletion = new Promise<void>((_resolve, reject) => {
+    rejectFirstDeletion = reject;
+  });
+  const secondDeletion = new Promise<void>(resolve => {
+    finishSecondDeletion = resolve;
+  });
+  let deletionCalls = 0;
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async () => null,
+      read: async () => null,
+      delete: async () => {},
+      deleteTerminalSession: async () => {
+        deletionCalls += 1;
+        return deletionCalls === 1 ? firstDeletion : secondDeletion;
+      },
+    },
+  });
+
+  store.pruneTerminalSession('chat-repeat-delete', 'terminal-repeat-delete');
+  store.pruneTerminalSession('chat-repeat-delete', 'terminal-repeat-delete');
+  finishSecondDeletion();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  rejectFirstDeletion(new Error('older deletion failed'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const stats = store.getLifecycleMetadataStatsForTests();
+  assert.equal(stats.terminalMutationGenerations, 0);
+  assert.equal(stats.deletedTerminalSessions, 0);
+  assert.equal(stats.failedTerminalDeletions, 0);
+});
+
+test('ToolOutputStore does not restore old output after durable chat deletion fails', async () => {
+  const record: PersistedToolOutputRecord = {
+    schemaVersion: 1,
+    handleId: 'tool-output-chat-delete-failed',
+    chatSessionId: 'chat-delete-failed',
+    capabilityId: 'terminal.execute',
+    totalChars: 3,
+    storedChars: 3,
+    sourceTruncated: false,
+    preview: 'old',
+    storedAt: 1,
+    accessedAt: 1,
+  };
+  const deletedPaths: string[] = [];
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async () => ({ path: '/netcatty/chat-delete-failed.log', record }),
+      read: async () => ({
+        mode: 'head',
+        content: 'old',
+        totalChars: 3,
+        startOffset: 0,
+        endOffset: 3,
+        nextOffset: 3,
+        hasMore: false,
+      }),
+      delete: async path => { deletedPaths.push(path); },
+      deleteSession: async () => { throw new Error('disk busy'); },
+    },
+  });
+
+  store.prune(record.chatSessionId);
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(await store.readChunkAsync({ handleId: record.handleId }, record.chatSessionId), null);
+  assert.deepEqual(deletedPaths, ['/netcatty/chat-delete-failed.log']);
+});
+
+test('ToolOutputStore bounds failed chat deletion tombstones after heavy churn', async () => {
+  const oldRecord: PersistedToolOutputRecord = {
+    schemaVersion: 1,
+    handleId: 'tool-output-old-failed-chat',
+    chatSessionId: 'chat-delete-failure-0',
+    capabilityId: 'terminal.execute',
+    totalChars: 3,
+    storedChars: 3,
+    sourceTruncated: false,
+    preview: 'old',
+    storedAt: 1,
+    accessedAt: 1,
+  };
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async (handleId, chatSessionId) => (
+        handleId === oldRecord.handleId && chatSessionId === oldRecord.chatSessionId
+          ? { path: '/old-failed-chat.log', record: oldRecord }
+          : null
+      ),
+      read: async () => ({
+        mode: 'head', content: 'old', totalChars: 3, startOffset: 0, endOffset: 3, nextOffset: 3, hasMore: false,
+      }),
+      delete: async () => {},
+      deleteSession: async () => { throw new Error('disk busy'); },
+    },
+  });
+  for (let index = 0; index < 2_000; index += 1) {
+    store.prune(`chat-delete-failure-${index}`);
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const stats = store.getLifecycleMetadataStatsForTests();
+  assert.equal(stats.failedSessionDeletions, TOOL_OUTPUT_MAX_FAILED_SESSION_DELETIONS);
+  assert.equal(stats.sessionGenerations, TOOL_OUTPUT_MAX_FAILED_SESSION_DELETIONS);
+  assert.equal(
+    await store.readChunkAsync({ handleId: oldRecord.handleId }, oldRecord.chatSessionId),
+    null,
+  );
+});
+
+test('ToolOutputStore never restores a failed terminal deletion after exact tombstone churn', async () => {
+  const oldRecord: PersistedToolOutputRecord = {
+    schemaVersion: 1,
+    handleId: 'tool-output-old-failed-terminal',
+    chatSessionId: 'chat-terminal-failure-0',
+    capabilityId: 'terminal.execute',
+    terminalSessionId: 'terminal-failure-0',
+    totalChars: 3,
+    storedChars: 3,
+    sourceTruncated: false,
+    preview: 'old',
+    storedAt: 1,
+    accessedAt: 1,
+  };
+  const store = new ToolOutputStore({
+    persistence: {
+      write: async () => '/unused',
+      restore: async (handleId, chatSessionId) => (
+        handleId === oldRecord.handleId && chatSessionId === oldRecord.chatSessionId
+          ? { path: '/old-failed-terminal.log', record: oldRecord }
+          : null
+      ),
+      read: async () => ({
+        mode: 'head', content: 'old', totalChars: 3, startOffset: 0, endOffset: 3, nextOffset: 3, hasMore: false,
+      }),
+      delete: async () => {},
+      deleteTerminalSession: async () => { throw new Error('disk busy'); },
+    },
+  });
+  for (let index = 0; index < 2_000; index += 1) {
+    store.pruneTerminalSession(`chat-terminal-failure-${index}`, `terminal-failure-${index}`);
+  }
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  assert.equal(
+    await store.readChunkAsync({ handleId: oldRecord.handleId }, oldRecord.chatSessionId),
+    null,
+  );
+  assert.ok(
+    store.getLifecycleMetadataStatsForTests().deletedTerminalSessions
+      <= TOOL_OUTPUT_MAX_CLOSED_TERMINAL_SESSIONS,
+  );
 });
 
 test('saved-output read budgets reset at the start of each turn', () => {

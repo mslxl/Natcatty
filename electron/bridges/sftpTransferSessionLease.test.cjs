@@ -69,6 +69,40 @@ describe("sftpTransferSessionLease", () => {
     assert.equal(store.isSoftClosed("sftp-a"), false);
   });
 
+  it("lets the next directory child cancel an uncommitted hard close", () => {
+    const store = createSftpTransferSessionLeaseStore();
+    store.acquire("sftp-a", "child-1");
+    store.markSoftClosed("sftp-a");
+    const firstRelease = store.release("sftp-a", "child-1");
+    const firstCloseToken = store.getPendingHardCloseToken("sftp-a");
+    assert.equal(firstRelease.shouldHardClose, true);
+    assert.equal(Number.isSafeInteger(firstCloseToken), true);
+
+    assert.equal(store.acquire("sftp-a", "child-2"), true);
+    assert.equal(store.commitHardClose("sftp-a", firstCloseToken), false);
+    assert.equal(store.isHeld("sftp-a"), true);
+
+    const secondRelease = store.release("sftp-a", "child-2");
+    assert.equal(secondRelease.shouldHardClose, true);
+    assert.notEqual(store.getPendingHardCloseToken("sftp-a"), firstCloseToken);
+  });
+
+  it("refuses new leases after hard close commits", () => {
+    const store = createSftpTransferSessionLeaseStore();
+    store.acquire("sftp-a", "child-1");
+    store.markSoftClosed("sftp-a");
+    store.release("sftp-a", "child-1");
+    const closeToken = store.getPendingHardCloseToken("sftp-a");
+
+    assert.equal(store.commitHardClose("sftp-a", closeToken), true);
+    assert.equal(store.isHardCloseCommitted("sftp-a"), true);
+    assert.equal(store.acquire("sftp-a", "child-2"), false);
+    assert.equal(store.isHeld("sftp-a"), false);
+
+    store.clear("sftp-a");
+    assert.equal(store.isHardCloseCommitted("sftp-a"), false);
+  });
+
   it("tracks multiple sessions independently", () => {
     const store = createSftpTransferSessionLeaseStore();
     store.acquire("sftp-a", "t1");

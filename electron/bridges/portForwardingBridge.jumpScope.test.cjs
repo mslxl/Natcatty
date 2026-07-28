@@ -7,6 +7,7 @@ const { readFileSync } = require("node:fs");
 const { Duplex } = require("node:stream");
 const Module = require("node:module");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
+const { resetSshTransportRegistryForTests } = require("./sshConnectionPool.cjs");
 
 function createSender(onSend = () => {}) {
   return {
@@ -22,6 +23,7 @@ function loadBridgeWithMocks(t, { systemAgent = false, chainError = null } = {})
   let capturedConnectOptions = null;
   let connectedClient = null;
   let capturedSystemAgentOptions = null;
+  let physicalDialCount = 0;
 
   class MockSshClient extends EventEmitter {
     constructor() {
@@ -33,6 +35,7 @@ function loadBridgeWithMocks(t, { systemAgent = false, chainError = null } = {})
     }
 
     connect(options) {
+      physicalDialCount += 1;
       this.options = options;
       connectedClient = this;
       capturedConnectOptions = options;
@@ -129,8 +132,82 @@ function loadBridgeWithMocks(t, { systemAgent = false, chainError = null } = {})
     getCapturedConnectOptions: () => capturedConnectOptions,
     getConnectedClient: () => connectedClient,
     getCapturedSystemAgentOptions: () => capturedSystemAgentOptions,
+    getPhysicalDialCount: () => physicalDialCount,
   };
 }
+
+test("simultaneous port forwards to one endpoint share one physical SSH dial", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getPhysicalDialCount } = loadBridgeWithMocks(t);
+  const payload = {
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 3306,
+    hostname: "db.internal",
+    hostId: "db-host",
+    port: 22,
+    username: "dbuser",
+    password: "target-password",
+    authMethod: "password",
+    verifyHostKeys: false,
+    useSshAgent: false,
+  };
+  const firstEvent = { sender: { ...createSender(), id: 31 } };
+  const secondEvent = { sender: { ...createSender(), id: 32 } };
+
+  try {
+    const [first, second] = await Promise.all([
+      bridge.startPortForward(firstEvent, { ...payload, tunnelId: "pf-shared-1", ruleId: "rule-shared-1" }),
+      bridge.startPortForward(secondEvent, { ...payload, tunnelId: "pf-shared-2", ruleId: "rule-shared-2" }),
+    ]);
+    assert.equal(first.success, true);
+    assert.equal(second.success, true);
+    assert.equal(getPhysicalDialCount(), 1);
+  } finally {
+    await bridge.stopPortForward(firstEvent, { tunnelId: "pf-shared-1" });
+    await bridge.stopPortForward(secondEvent, { tunnelId: "pf-shared-2" });
+  }
+});
+
+test("explicitly dedicated port forwards do not enter shared dial coordination", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getPhysicalDialCount } = loadBridgeWithMocks(t);
+  const payload = {
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 3306,
+    hostname: "db.internal",
+    hostId: "db-host",
+    port: 22,
+    username: "dbuser",
+    password: "target-password",
+    authMethod: "password",
+    verifyHostKeys: false,
+    useSshAgent: false,
+    reuseTransport: false,
+  };
+  const firstEvent = { sender: { ...createSender(), id: 41 } };
+  const secondEvent = { sender: { ...createSender(), id: 42 } };
+
+  try {
+    const [first, second] = await Promise.all([
+      bridge.startPortForward(firstEvent, { ...payload, tunnelId: "pf-dedicated-1", ruleId: "rule-dedicated-1" }),
+      bridge.startPortForward(secondEvent, { ...payload, tunnelId: "pf-dedicated-2", ruleId: "rule-dedicated-2" }),
+    ]);
+    assert.equal(first.success, true);
+    assert.equal(second.success, true);
+    assert.equal(getPhysicalDialCount(), 2);
+  } finally {
+    await bridge.stopPortForward(firstEvent, { tunnelId: "pf-dedicated-1" });
+    await bridge.stopPortForward(secondEvent, { tunnelId: "pf-dedicated-2" });
+  }
+});
 
 test("port forwarding routes jump-host keyboard-interactive prompts through the external scope", async (t) => {
   const {

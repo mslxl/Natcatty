@@ -56,8 +56,16 @@ export const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
   return entry.type === "directory" || (entry.type === "symlink" && entry.linkTarget === "directory");
 };
 
-// Check if path is Windows-style
-export const isWindowsPath = (path: string): boolean => /^[A-Za-z]:/.test(path);
+const getWindowsUncRoot = (path: string): string | null => {
+  const normalized = path.replace(/\//g, "\\");
+  const match = normalized.match(/^\\\\([^\\]+)\\([^\\]+)(?:\\|$)/);
+  return match ? `\\\\${match[1]}\\${match[2]}` : null;
+};
+
+// Check if path is Windows-style, including network-share (UNC) paths.
+export const isWindowsPath = (path: string): boolean => (
+  /^[A-Za-z]:/.test(path) || getWindowsUncRoot(path) !== null
+);
 
 const normalizeWindowsRoot = (path: string): string => {
   const normalized = path.replace(/\//g, "\\");
@@ -68,7 +76,10 @@ const normalizeWindowsRoot = (path: string): string => {
 
 export const isWindowsRoot = (path: string): boolean => {
   if (!isWindowsPath(path)) return false;
-  return /^[A-Za-z]:\\?$/.test(path.replace(/\//g, "\\"));
+  const normalized = path.replace(/\//g, "\\");
+  if (/^[A-Za-z]:\\?$/.test(normalized)) return true;
+  const uncRoot = getWindowsUncRoot(normalized);
+  return uncRoot !== null && normalized.replace(/[\\]+$/, "") === uncRoot;
 };
 
 export const joinPath = (base: string, name: string): string => {
@@ -80,9 +91,51 @@ export const joinPath = (base: string, name: string): string => {
   return `${base.replace(/\/+$/, "")}/${name}`;
 };
 
+/**
+ * Join a discovered directory entry to a transfer target without allowing a
+ * server-controlled filename to escape the user-selected destination root.
+ * Forward slashes are the traversal's internal separators; a backslash is a
+ * literal POSIX filename character but becomes a separator on Windows targets.
+ */
+export function joinTransferTargetPath(
+  base: string,
+  relativePath: string,
+): string {
+  const unsafe = () => {
+    throw new Error(`Unsafe transfer path outside the selected destination: ${relativePath}`);
+  };
+  if (!relativePath || relativePath.includes("\0")) return unsafe();
+  if (
+    relativePath.startsWith("/")
+    || relativePath.startsWith("\\")
+    || /^[A-Za-z]:[\\/]/.test(relativePath)
+  ) return unsafe();
+
+  const parts = relativePath.split("/");
+  if (parts.some((part) => !part || part === "." || part === "..")) return unsafe();
+
+  if (isWindowsPath(base)) {
+    if (parts.some((part) => (
+      part.includes("\\")
+      || part.includes(":")
+      || /[. ]$/.test(part)
+    ))) return unsafe();
+    return joinPath(base, parts.join("\\"));
+  }
+  return joinPath(base, parts.join("/"));
+}
+
 export const getParentPath = (path: string): string => {
   if (isWindowsPath(path)) {
     const normalized = normalizeWindowsRoot(path).replace(/[\\]+$/, "");
+    const uncRoot = getWindowsUncRoot(normalized);
+    if (uncRoot) {
+      const rest = normalized.slice(uncRoot.length).replace(/^[\\]+/, "");
+      const parts = rest ? rest.split(/[\\]+/).filter(Boolean) : [];
+      if (parts.length <= 1) return uncRoot;
+      parts.pop();
+      return `${uncRoot}\\${parts.join("\\")}`;
+    }
     const drive = normalized.slice(0, 2);
     if (/^[A-Za-z]:$/.test(normalized) || /^[A-Za-z]:\\$/.test(normalized)) {
       return `${drive}\\`;
@@ -117,7 +170,7 @@ export const getFileName = (path: string): string => {
 
 export const normalizeSftpPathForCompare = (path: string): string => {
   if (isWindowsRoot(path)) return path.replace(/\//g, "\\").toLowerCase();
-  if (/^[A-Za-z]:/.test(path)) {
+  if (isWindowsPath(path)) {
     return path.replace(/\//g, "\\").replace(/[\\]+$/, "").toLowerCase();
   }
   if (path === "/") return "/";

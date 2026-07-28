@@ -17,6 +17,7 @@ import {
   writeTerminalDataWithLineTimestamps,
   type StampCursorEstimate,
 } from "./terminalLineTimestamps.ts";
+import { MAX_INCOMPLETE_TERMINAL_CONTROL_SEQUENCE_CHARS } from "./terminalControlSequenceLimits.ts";
 
 const createFakeTerm = (options: {
   cols?: number;
@@ -631,6 +632,24 @@ test("does not withhold output when an OSC sequence is split across chunks", () 
 
   assert.deepEqual(callbacks, ["first", "second"]);
   assert.ok(writes.join("").includes("alice@server:~$ "));
+});
+
+test("drops an oversized unterminated control prefix and resumes timestamp parsing", () => {
+  const segmenter = createTerminalLineTimestampSegmenter({
+    now: () => new Date(2026, 5, 6, 12, 0, 0),
+  });
+  const malformed = `\x1b[?1049${"9".repeat(MAX_INCOMPLETE_TERMINAL_CONTROL_SEQUENCE_CHARS)}`;
+
+  const overflow = segmenter.append(malformed);
+  assert.equal(segmenter.flushPendingEscapeSequence(), "");
+  assert.equal(
+    overflow.filter((segment) => segment.kind === "data").reduce((sum, segment) => sum + segment.data.length, 0),
+    malformed.length,
+  );
+
+  const recovered = segmenter.append("ready\r\n");
+  assert.equal(recovered.some((segment) => segment.kind === "timestamp"), true);
+  assert.equal(recovered.some((segment) => segment.kind === "data" && segment.data.includes("ready")), true);
 });
 
 test("does not timestamp output suspended on the alternate screen", () => {

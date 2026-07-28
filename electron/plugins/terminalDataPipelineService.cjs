@@ -75,6 +75,7 @@ class PluginTerminalDataPipelineService {
     this.finalizedActivations = new WeakSet();
     this.permissionGenerations = new Map();
     this.sessionEpochs = new Map();
+    this.nextSessionEpoch = 0;
     this.pendingOwnership = new Map();
     this.closed = false;
     this.permissionRevocationSubscription = this.permissionEngine.onDidRevoke?.((event) => {
@@ -133,7 +134,7 @@ class PluginTerminalDataPipelineService {
         ...this.pendingActivations,
         ...this.failedActivations,
       ]) {
-        if ((this.sessionEpochs.get(pending.sessionId) ?? 0) !== pending.sessionEpoch) {
+        if (this.sessionEpochs.get(pending.sessionId) !== pending.sessionEpoch) {
           if (this.failedActivations.get(key) === pending) this.failedActivations.delete(key);
           continue;
         }
@@ -226,7 +227,10 @@ class PluginTerminalDataPipelineService {
   #disposeSession(sessionId) {
     this.permissionEngine.revokeSession?.(sessionId);
     this.pendingOwnership.delete(sessionId);
-    this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1);
+    // Absence is itself an invalid generation. A later reuse of the same
+    // session id receives a process-unique token, so late async work from this
+    // lifetime cannot match the replacement without retaining disposed ids.
+    this.sessionEpochs.delete(sessionId);
     this.detachSession(sessionId);
     for (const direction of DIRECTIONS) {
       const key = this.#key(sessionId, direction);
@@ -242,7 +246,7 @@ class PluginTerminalDataPipelineService {
     if (!pending || pending.webContentsId !== event?.webContentsId) return;
     this.pendingOwnership.delete(event.sessionId);
     if (this.closed
-      || (this.sessionEpochs.get(event.sessionId) ?? 0) !== pending.sessionEpoch
+      || this.sessionEpochs.get(event.sessionId) !== pending.sessionEpoch
       || !this.terminalWorkerManager?.ownsSession?.(event.sessionId, event.webContentsId)) {
       return;
     }
@@ -298,8 +302,11 @@ class PluginTerminalDataPipelineService {
   async configureDirection(sessionValue, direction, options = {}) {
     const session = normalizeTerminalSessionSnapshot(sessionValue);
     if (!DIRECTIONS.includes(direction)) throw new TypeError("Terminal interceptor direction is invalid");
+    if (this.closed) {
+      throw new PluginRpcError(RPC_ERRORS.unavailable, "Terminal data pipeline is closed");
+    }
     const key = this.#key(session.sessionId, direction);
-    const epoch = options.sessionEpoch ?? this.sessionEpochs.get(session.sessionId) ?? 0;
+    const epoch = options.sessionEpoch ?? this.#ensureSessionEpoch(session.sessionId);
     const previous = this.operations.get(key) ?? Promise.resolve();
     const operation = previous.catch(() => {}).then(() => (
       this.#configureDirection(session, direction, { ...options, sessionEpoch: epoch })
@@ -312,9 +319,19 @@ class PluginTerminalDataPipelineService {
   }
 
   #assertSessionCurrent(sessionId, epoch) {
-    if (this.closed || (this.sessionEpochs.get(sessionId) ?? 0) !== epoch) {
+    if (this.closed || this.sessionEpochs.get(sessionId) !== epoch) {
       throw new PluginRpcError(RPC_ERRORS.unavailable, "Terminal session changed during interceptor activation");
     }
+  }
+
+  #replaceSessionEpoch(sessionId) {
+    this.nextSessionEpoch += 1;
+    this.sessionEpochs.set(sessionId, this.nextSessionEpoch);
+    return this.nextSessionEpoch;
+  }
+
+  #ensureSessionEpoch(sessionId) {
+    return this.sessionEpochs.get(sessionId) ?? this.#replaceSessionEpoch(sessionId);
   }
 
   #assertAttachmentCurrent(session, direction, providerId, identity, options) {
@@ -430,7 +447,7 @@ class PluginTerminalDataPipelineService {
     try {
       activation = await this.contributionService.activateProvider(providerId);
     } catch (error) {
-      if ((this.sessionEpochs.get(session.sessionId) ?? 0) === options.sessionEpoch
+      if (this.sessionEpochs.get(session.sessionId) === options.sessionEpoch
         && !this.quarantined.has(key)
         && !this.finalizedActivations.has(pendingActivation)) {
         this.failedActivations.set(key, pendingActivation);
@@ -615,14 +632,14 @@ class PluginTerminalDataPipelineService {
 
   async handleSessionEvent(event, options = {}) {
     const session = normalizeTerminalSessionSnapshot(event?.session);
+    if (this.closed) return Object.freeze([]);
     if (!this.acceptsSessionEvent(event, options.webContentsId)) return Object.freeze([]);
     if (event?.type === "disposed") {
       this.#disposeSession(session.sessionId);
       return Object.freeze([]);
     }
     if (event?.type === "disconnected") {
-      const sessionEpoch = (this.sessionEpochs.get(session.sessionId) ?? 0) + 1;
-      this.sessionEpochs.set(session.sessionId, sessionEpoch);
+      const sessionEpoch = this.#replaceSessionEpoch(session.sessionId);
       this.detachSession(session.sessionId, "session-disconnected");
       if (Number.isSafeInteger(options.webContentsId)) {
         this.pendingOwnership.set(session.sessionId, Object.freeze({
@@ -649,10 +666,9 @@ class PluginTerminalDataPipelineService {
         this.selectedProviders.delete(key);
         this.failedActivations.delete(key);
       }
-      this.sessionEpochs.set(session.sessionId, (this.sessionEpochs.get(session.sessionId) ?? 0) + 1);
+      this.#replaceSessionEpoch(session.sessionId);
     }
-    if (!this.sessionEpochs.has(session.sessionId)) this.sessionEpochs.set(session.sessionId, 0);
-    const sessionEpoch = this.sessionEpochs.get(session.sessionId) ?? 0;
+    const sessionEpoch = this.#ensureSessionEpoch(session.sessionId);
     if (event.type === "created" && options.webContentsId != null) {
       this.pendingOwnership.set(session.sessionId, Object.freeze({
         session,
@@ -677,7 +693,7 @@ class PluginTerminalDataPipelineService {
         }
         const key = this.#key(session.sessionId, direction);
         if (error?.code === RPC_ERRORS.cancelled
-          || (this.sessionEpochs.get(session.sessionId) ?? 0) !== sessionEpoch
+          || this.sessionEpochs.get(session.sessionId) !== sessionEpoch
           || this.quarantined.has(key)) {
           results.push(Object.freeze({ status: "cancelled", direction }));
           continue;
@@ -700,9 +716,6 @@ class PluginTerminalDataPipelineService {
 
   shutdown() {
     this.closed = true;
-    for (const sessionId of this.sessionEpochs.keys()) {
-      this.sessionEpochs.set(sessionId, (this.sessionEpochs.get(sessionId) ?? 0) + 1);
-    }
     for (const key of [...this.active.keys()]) this.#detachKey(key, "shutdown");
     this.declined.clear();
     this.quarantined.clear();
@@ -710,6 +723,7 @@ class PluginTerminalDataPipelineService {
     this.pendingActivations.clear();
     this.failedActivations.clear();
     this.pendingOwnership.clear();
+    this.sessionEpochs.clear();
     this.workerWarningSubscription?.dispose?.();
     this.sessionOwnedSubscription?.dispose?.();
     this.sessionClosedSubscription?.dispose?.();
@@ -718,6 +732,10 @@ class PluginTerminalDataPipelineService {
     this.sessionClosedSubscription = null;
     this.permissionRevocationSubscription?.dispose?.();
     this.permissionRevocationSubscription = null;
+  }
+
+  _getSessionEpochCountForTests() {
+    return this.sessionEpochs.size;
   }
 }
 

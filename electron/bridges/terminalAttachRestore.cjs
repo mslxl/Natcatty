@@ -46,6 +46,14 @@ function releaseAttachPopupAuthorization(token) {
   if (token) attachPopupAuthorizations.delete(token);
 }
 
+function releaseAttachedSessionState(sessionId) {
+  if (!sessionId) return;
+  pendingAttachRestores.delete(sessionId);
+  for (const [token, grant] of attachPopupAuthorizations) {
+    if (grant?.sessionId === sessionId) attachPopupAuthorizations.delete(token);
+  }
+}
+
 function setRestoreAttachedSessionOutput(fn) {
   restoreImpl = typeof fn === "function" ? fn : null;
 }
@@ -123,6 +131,7 @@ module.exports = {
   markAttachPopupClosePrepared,
   isAttachPopupClosePrepared,
   releaseAttachPopupAuthorization,
+  releaseAttachedSessionState,
   setRestoreAttachedSessionOutput,
   restoreAttachedSessionOutput,
   retryPendingAttachedSessionOutputs,

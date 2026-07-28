@@ -213,9 +213,10 @@ function createMoshSessionApi(ctx) {
       let lastError = null;
       for (const identity of identities) {
         try {
-          await execFileAsync("icacls.exe", [target, "/grant:r", `${identity}:F`], { windowsHide: true });
-          await execFileAsync("icacls.exe", [target, "/inheritance:r"], { windowsHide: true });
-          await execFileAsync("icacls.exe", [target, "/grant:r", `${identity}:F`], { windowsHide: true });
+          const commandOptions = { timeout: 5_000, maxBuffer: 1024 * 1024, windowsHide: true };
+          await execFileAsync("icacls.exe", [target, "/grant:r", `${identity}:F`], commandOptions);
+          await execFileAsync("icacls.exe", [target, "/inheritance:r"], commandOptions);
+          await execFileAsync("icacls.exe", [target, "/grant:r", `${identity}:F`], commandOptions);
           return true;
         } catch (err) {
           lastError = err;

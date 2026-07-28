@@ -11,11 +11,10 @@ interface UseSftpSessionErrorsParams {
     side: "left" | "right",
     updater: (prev: SftpPane) => SftpPane,
   ) => void;
-  sftpSessionsRef: MutableRefObject<Map<string, string>>;
-  clearCacheForConnection: (connectionId: string) => void;
   navSeqRef: MutableRefObject<{ left: number; right: number }>;
   lastConnectedHostRef: MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   reconnectingRef: MutableRefObject<{ left: boolean; right: boolean }>;
+  releaseConnection: (connectionId: string) => Promise<void>;
 }
 
 /**
@@ -41,11 +40,10 @@ export const useSftpSessionErrors = ({
   leftTabsRef,
   rightTabsRef,
   updateActiveTab,
-  sftpSessionsRef,
-  clearCacheForConnection,
   navSeqRef,
   lastConnectedHostRef,
   reconnectingRef,
+  releaseConnection,
 }: UseSftpSessionErrorsParams) =>
   useCallback(
     (side: "left" | "right", _error: Error) => {
@@ -55,8 +53,7 @@ export const useSftpSessionErrors = ({
       if (!pane || !sideTabs.activeTabId) return;
 
       if (pane.connection) {
-        sftpSessionsRef.current.delete(pane.connection.id);
-        clearCacheForConnection(pane.connection.id);
+        void releaseConnection(pane.connection.id);
       }
 
       navSeqRef.current[side] += 1;
@@ -109,10 +106,9 @@ export const useSftpSessionErrors = ({
       leftTabsRef,
       rightTabsRef,
       updateActiveTab,
-      sftpSessionsRef,
-      clearCacheForConnection,
       navSeqRef,
       lastConnectedHostRef,
       reconnectingRef,
+      releaseConnection,
     ],
   );

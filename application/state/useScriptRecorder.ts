@@ -2,6 +2,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { netcattyBridge } from '@/infrastructure/services/netcattyBridge.ts';
 import { DEFAULT_RECORDING_PROMPT_TIMEOUT_MS } from '@/domain/snippetScript.ts';
 import type { ScriptRecordingStep } from '@/types/global/netcatty-bridge-script.d.ts';
+import { notify } from '../notification';
+
+export const MAX_PENDING_SCRIPT_RECORDING_INPUT_CHARS = 256 * 1024;
+export const SCRIPT_RECORDING_LIMIT_EVENT = 'netcatty:script:recording:limit';
+
+type ScriptRecordingLimitDetail = {
+  sessionId: string;
+  error: string;
+  steps: ScriptRecordingStep[];
+  code: string;
+};
 
 export function useScriptRecorder(sessionId: string | undefined) {
   const [isRecording, setIsRecording] = useState(false);
@@ -58,6 +69,17 @@ export function useScriptRecorder(sessionId: string | undefined) {
     return result;
   }, []);
 
+  const finishAutomaticStop = useCallback((detail: ScriptRecordingLimitDetail) => {
+    isRecordingRef.current = false;
+    isPausedRef.current = false;
+    inputBufferRef.current = '';
+    startedAtRef.current = null;
+    setIsRecording(false);
+    setIsPaused(false);
+    notify.error(detail.error, 'Scripts');
+    window.dispatchEvent(new CustomEvent(SCRIPT_RECORDING_LIMIT_EVENT, { detail }));
+  }, []);
+
   const pauseRecording = useCallback(() => {
     isPausedRef.current = true;
     setIsPaused(true);
@@ -71,14 +93,48 @@ export function useScriptRecorder(sessionId: string | undefined) {
   const appendStep = useCallback(async (step: ScriptRecordingStep) => {
     const sid = sessionIdRef.current;
     if (!sid || !isRecordingRef.current || isPausedRef.current) return;
-    await netcattyBridge.get()?.scriptRecordingAppendStep?.(sid, step);
+    const result = await netcattyBridge.get()?.scriptRecordingAppendStep?.(sid, step);
+    if (result?.stopped) {
+      finishAutomaticStop({
+        sessionId: sid,
+        error: result.error || 'Recording stopped because it reached the safety limit',
+        steps: result.steps ?? [],
+        code: result.code ?? '',
+      });
+      return;
+    }
     lastStepAtRef.current = Date.now();
-  }, []);
+  }, [finishAutomaticStop]);
 
   const recordInput = useCallback((data: string) => {
     if (!isRecordingRef.current || isPausedRef.current) return;
-    inputBufferRef.current += data;
-  }, []);
+    const next = `${inputBufferRef.current}${data}`;
+    if (next.length <= MAX_PENDING_SCRIPT_RECORDING_INPUT_CHARS) {
+      inputBufferRef.current = next;
+      return;
+    }
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    // Stop immediately before awaiting IPC so further key events cannot grow
+    // the renderer buffer while the partial recording is finalized.
+    isRecordingRef.current = false;
+    inputBufferRef.current = '';
+    void netcattyBridge.get()?.scriptRecordingStop?.(sid).then((result) => {
+      finishAutomaticStop({
+        sessionId: sid,
+        error: 'Recording stopped because the current input exceeded the safety limit',
+        steps: result.steps,
+        code: result.code,
+      });
+    }).catch(() => {
+      finishAutomaticStop({
+        sessionId: sid,
+        error: 'Recording stopped because the current input exceeded the safety limit',
+        steps: [],
+        code: '',
+      });
+    });
+  }, [finishAutomaticStop]);
 
   const recordBackspace = useCallback(() => {
     if (!isRecordingRef.current || isPausedRef.current) return;

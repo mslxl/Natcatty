@@ -31,11 +31,13 @@ function createFakePort() {
 
 function loadPreloadWithFakeElectron() {
   const handlers = new Map();
+  const listenerCounts = new Map();
   let exposedApi = null;
   const fakeElectron = {
     ipcRenderer: {
       on(channel, handler) {
         handlers.set(channel, handler);
+        listenerCounts.set(channel, (listenerCounts.get(channel) || 0) + 1);
       },
       send() {},
       async invoke(channel, payload) {
@@ -79,6 +81,7 @@ function loadPreloadWithFakeElectron() {
   return {
     api: exposedApi,
     handlers,
+    listenerCounts,
     cleanup() {
       delete require.cache[preloadPath];
       if (previousElectron) {
@@ -94,6 +97,31 @@ function loadPreloadWithFakeElectron() {
     },
   };
 }
+
+test("plugin contribution subscribers share one IPC listener", (t) => {
+  const preload = loadPreloadWithFakeElectron();
+  t.after(preload.cleanup);
+  const observed = Array.from({ length: 20 }, () => 0);
+  const unsubscribes = observed.map((_value, index) => (
+    preload.api.onPluginContributionsChanged(() => { observed[index] += 1; })
+  ));
+
+  assert.equal(
+    preload.listenerCounts.get("netcatty:plugins:contributions-changed"),
+    1,
+    "one window-wide IPC listener should fan out to every subscriber",
+  );
+
+  preload.handlers.get("netcatty:plugins:contributions-changed")?.({}, { reason: "test" });
+  assert.deepEqual(observed, Array.from({ length: 20 }, () => 1));
+
+  unsubscribes[0]();
+  preload.handlers.get("netcatty:plugins:contributions-changed")?.({}, { reason: "test-2" });
+  assert.equal(observed[0], 1);
+  assert.deepEqual(observed.slice(1), Array.from({ length: 19 }, () => 2));
+
+  for (const unsubscribe of unsubscribes.slice(1)) unsubscribe();
+});
 
 test("stream transfer progress enters the unified transfer event interface", async (t) => {
   const preload = loadPreloadWithFakeElectron();
@@ -530,6 +558,32 @@ test("legacy MCP-filtered plugin output returns ingress credit immediately", () 
   }
 });
 
+test("oversized unterminated MCP marker output stays bounded and hidden", async () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    const received = [];
+    preload.api.onSessionData("session-1", (chunk, meta) => received.push({ chunk, meta }));
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: `__NCMCP_TEST${"x".repeat(70 * 1024)}`,
+    });
+
+    await sleep(100);
+    assert.deepEqual(received, []);
+
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "tail\nREADY\n",
+    });
+    assert.deepEqual(received, [{
+      chunk: "READY\n",
+      meta: undefined,
+    }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
 test("terminal output port delivery preserves terminal perf metadata", () => {
   const preload = loadPreloadWithFakeElectron();
   try {
@@ -823,6 +877,35 @@ test("MCP-filtered empty terminal metadata is cleared on session exit", async ()
       chunk: "READY\n",
       meta: undefined,
     }]);
+  } finally {
+    preload.cleanup();
+  }
+});
+
+test("MCP-filtered tail metadata is cleared on acknowledged close without an exit event", async () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    preload.api.onSessionData("session-1", () => {});
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "__NCMCP_TEST\n",
+      meta: { droppedOutputMayAffectTerminalState: true },
+    });
+
+    // Some protocol close paths intentionally suppress their later exit event.
+    await preload.api.closeSession("session-1");
+    await preload.api.startLocalSession({ sessionId: "session-1" });
+
+    const received = [];
+    preload.api.onSessionData("session-1", (chunk, meta) => {
+      received.push({ chunk, meta });
+    });
+    preload.handlers.get("netcatty:data")?.({}, {
+      sessionId: "session-1",
+      data: "READY\n",
+    });
+
+    assert.deepEqual(received, [{ chunk: "READY\n", meta: undefined }]);
   } finally {
     preload.cleanup();
   }
@@ -1194,6 +1277,60 @@ test("onSessionExit unsubscribe removes empty listener set", () => {
   assert.equal(exitListeners.has("session-1"), false);
 });
 
+test("session-scoped terminal listener unsubscribe removes empty listener sets", () => {
+  const listenerMaps = {
+    telnetAutoLoginCompleteListeners: new Map(),
+    telnetAutoLoginCancelledListeners: new Map(),
+    moshSessionReadyListeners: new Map(),
+    telnetEchoModeListeners: new Map(),
+    authFailedListeners: new Map(),
+  };
+  const api = createPreloadApi({
+    ipcRenderer: {
+      invoke() {},
+      send() {},
+      on() {},
+      removeListener() {},
+    },
+    os: {
+      release: () => "10.0.19045",
+    },
+    dataListeners: new Map(),
+    displayDataListeners: new Map(),
+    terminalDataBacklog: createTerminalDataBacklog(),
+    ...listenerMaps,
+  });
+  const subscriptions = [
+    ["telnetAutoLoginCompleteListeners", api.onTelnetAutoLoginComplete],
+    ["telnetAutoLoginCancelledListeners", api.onTelnetAutoLoginCancelled],
+    ["moshSessionReadyListeners", api.onMoshSessionReady],
+    ["telnetEchoModeListeners", api.onTelnetEchoMode],
+    ["authFailedListeners", api.onAuthFailed],
+  ];
+
+  for (const [mapName, subscribe] of subscriptions) {
+    const off = subscribe("session-1", () => {});
+    assert.equal(listenerMaps[mapName].has("session-1"), true, `${mapName} should register`);
+    off();
+    assert.equal(listenerMaps[mapName].has("session-1"), false, `${mapName} should release its empty session entry`);
+  }
+});
+
+test("backend exit clears auth-failure listeners for the closed session", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    let calls = 0;
+    preload.api.onAuthFailed("session-1", () => { calls += 1; });
+
+    preload.handlers.get("netcatty:exit")?.({}, { sessionId: "session-1" });
+    preload.handlers.get("netcatty:auth:failed")?.({}, { sessionId: "session-1" });
+
+    assert.equal(calls, 0);
+  } finally {
+    preload.cleanup();
+  }
+});
+
 test("closeSession clears terminal data state and waits for close acknowledgement", async () => {
   const listener = () => {};
   const dataListeners = new Map([
@@ -1205,6 +1342,18 @@ test("closeSession clears terminal data state and waits for close acknowledgemen
   const terminalDataBacklog = createTerminalDataBacklog();
   const closedTerminalDataSessions = new Set();
   const telnetEchoModeListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const telnetAutoLoginCompleteListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const telnetAutoLoginCancelledListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const moshSessionReadyListeners = new Map([
+    ["session-1", new Set([listener])],
+  ]);
+  const authFailedListeners = new Map([
     ["session-1", new Set([listener])],
   ]);
   const zmodemListeners = new Map([
@@ -1237,6 +1386,10 @@ test("closeSession clears terminal data state and waits for close acknowledgemen
     terminalDataBacklog,
     closedTerminalDataSessions,
     telnetEchoModeListeners,
+    telnetAutoLoginCompleteListeners,
+    telnetAutoLoginCancelledListeners,
+    moshSessionReadyListeners,
+    authFailedListeners,
     zmodemListeners,
     zmodemOverwriteListeners,
     terminalOutputPorts: {
@@ -1253,6 +1406,10 @@ test("closeSession clears terminal data state and waits for close acknowledgemen
   assert.equal(terminalDataBacklog.take("session-1"), "");
   assert.equal(closedTerminalDataSessions.has("session-1"), true);
   assert.equal(telnetEchoModeListeners.has("session-1"), false);
+  assert.equal(telnetAutoLoginCompleteListeners.has("session-1"), false);
+  assert.equal(telnetAutoLoginCancelledListeners.has("session-1"), false);
+  assert.equal(moshSessionReadyListeners.has("session-1"), false);
+  assert.equal(authFailedListeners.has("session-1"), false);
   // Zmodem listeners are preserved: reconnect closes the session without
   // unmounting the subscriber, so cleanup is left to subscriber dispose.
   assert.equal(zmodemListeners.has("session-1"), true);

@@ -8,6 +8,12 @@ const { spawnSync } = require("node:child_process");
 const passphraseHandler = require("./passphraseHandler.cjs");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const {
+  beginTransportDial,
+  failTransportDial,
+  getTransportStats,
+  resetSshTransportRegistryForTests,
+} = require("./sshConnectionPool.cjs");
+const {
   startPortForward,
   stopPortForward,
   stopPortForwardByRuleId,
@@ -18,6 +24,7 @@ const {
   publishTunnelStatus,
   shouldFinalizeTunnelClose,
   isReusableTunnelStatus,
+  _bindPortForwardChannelsForTests: bindPortForwardChannels,
 } = require("./portForwardingBridge.cjs");
 
 function createEncryptedKey(t) {
@@ -136,6 +143,103 @@ test("cancelling a tunnel clears its pending keyboard-interactive request", asyn
   assert.equal(keyboardInteractiveHandler.getRequests().has(requestId), false);
 });
 
+test("stopping a pending remote forward invalidates its connection immediately", async () => {
+  let finishForward;
+  let endCalls = 0;
+  let unforwardCalls = 0;
+  const conn = {
+    forwardIn(_bind, _port, callback) {
+      finishForward = callback;
+    },
+    unforwardIn(_bind, _port, callback) {
+      unforwardCalls += 1;
+      callback(null);
+    },
+    end() { endCalls += 1; },
+    on() {},
+    removeListener() {},
+  };
+  const tunnelId = "pf-remote-pending-stop";
+  const tunnel = {
+    tunnelId,
+    conn,
+    status: "connecting",
+    cancelled: false,
+    sshTransportManaged: false,
+    chainConnections: [],
+  };
+  const binding = bindPortForwardChannels({
+    type: "remote",
+    conn,
+    tunnelId,
+    tunnelState: tunnel,
+    sender: createSender(),
+    bindAddress: "127.0.0.1",
+    localPort: 22022,
+    remoteHost: "127.0.0.1",
+    remotePort: 22,
+    chainConnections: [],
+    sendStatus() {},
+  });
+
+  const stopping = cancelTunnel(tunnelId, tunnel, () => {});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(unforwardCalls, 0);
+  assert.equal(endCalls, 1, "cancel must invalidate the transport that owns the pending callback");
+
+  finishForward(null);
+  assert.deepEqual(await binding, { tunnelId, success: false, cancelled: true });
+  await stopping;
+  assert.equal(unforwardCalls, 0, "a late response on an invalidated transport must be ignored");
+  assert.equal(endCalls, 1, "cleanup must not end the invalidated connection twice");
+});
+
+test("stopping a remote forward whose bind callback hangs discards the connection", async () => {
+  let endCalls = 0;
+  let unforwardCalls = 0;
+  const conn = {
+    forwardIn() {},
+    unforwardIn() { unforwardCalls += 1; },
+    end() { endCalls += 1; },
+    on() {},
+    removeListener() {},
+  };
+  const tunnelId = "pf-remote-hung-bind-stop";
+  const tunnel = {
+    tunnelId,
+    conn,
+    status: "connecting",
+    cancelled: false,
+    sshTransportManaged: false,
+    chainConnections: [],
+    _remoteForwardStartCleanupTimeoutMs: 5,
+  };
+  const binding = bindPortForwardChannels({
+    type: "remote",
+    conn,
+    tunnelId,
+    tunnelState: tunnel,
+    sender: createSender(),
+    bindAddress: "127.0.0.1",
+    localPort: 22023,
+    remoteHost: "127.0.0.1",
+    remotePort: 22,
+    chainConnections: [],
+    sendStatus() {},
+  });
+
+  await Promise.race([
+    cancelTunnel(tunnelId, tunnel, () => {}),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("cancel did not settle")), 100)),
+  ]);
+  assert.equal(unforwardCalls, 0);
+  assert.equal(endCalls, 1);
+
+  // The bind request itself remains pending because the fake server never
+  // calls back; it must not keep the test process alive.
+  void binding.catch(() => {});
+});
+
 test("port forwarding can be stopped while waiting for a key passphrase", async (t) => {
   const keyPath = createEncryptedKey(t);
   if (!keyPath) return;
@@ -218,6 +322,62 @@ test("port forwarding can be stopped while waiting for a key passphrase", async 
     tunnelId,
     status: "inactive",
   });
+});
+
+test("port forwarding can be stopped while waiting for a matching shared transport dial", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const publicKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestPublicKey";
+  const endpoint = {
+    hostId: "host-shared-wait",
+    hostname: "shared-wait.test",
+    port: 22,
+    username: "alice",
+    jumpHosts: [],
+    proxy: null,
+    authType: "publickey",
+    keyId: "key-shared-wait",
+    certificate: "",
+    requiresMfa: false,
+    verifyHostKeys: false,
+    useSshAgent: false,
+    agentForwarding: false,
+    publicKey,
+  };
+  const leader = beginTransportDial(endpoint, { kind: "channel" });
+  t.after(() => failTransportDial(leader, new Error("test cleanup")));
+  const tunnelId = "pf-shared-wait";
+  const event = { sender: createSender() };
+
+  const started = startPortForward(event, {
+    tunnelId,
+    ruleId: "rule-shared-wait",
+    type: "local",
+    localPort: 0,
+    bindAddress: "127.0.0.1",
+    remoteHost: "127.0.0.1",
+    remotePort: 80,
+    hostname: endpoint.hostname,
+    hostId: endpoint.hostId,
+    port: endpoint.port,
+    username: endpoint.username,
+    authMethod: endpoint.authType,
+    keyId: endpoint.keyId,
+    publicKey,
+    verifyHostKeys: false,
+    useSshAgent: false,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(getTransportStats().pendingDials, 1, "PF joins the matching authenticated identity");
+  assert.deepEqual(await getPortForwardStatus(event, { tunnelId }), {
+    tunnelId,
+    status: "connecting",
+    type: "local",
+  });
+  assert.deepEqual(await stopPortForward(event, { tunnelId }), { tunnelId, success: true });
+  assert.deepEqual(await started, { tunnelId, success: false, cancelled: true });
+  assert.equal(getTransportStats().pendingDials, 1, "stopping a waiter does not cancel the dial leader");
 });
 
 test("port forwarding stops when the key passphrase prompt is cancelled", async (t) => {

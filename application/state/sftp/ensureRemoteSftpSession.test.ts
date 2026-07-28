@@ -35,6 +35,8 @@ const remotePane = (connectionId: string): SftpPane => ({
   connectionLogs: [],
 } as unknown as SftpPane);
 
+const noopReleaseConnection = async () => {};
+
 test("returns an existing mapped SFTP session without reconnecting", async () => {
   let connectCalls = 0;
   const sftpId = await ensureRemoteSftpSession({
@@ -43,6 +45,7 @@ test("returns an existing mapped SFTP session without reconnecting", async () =>
     sftpSessionsRef: { current: new Map([["conn-1", "sftp-live"]]) },
     lastConnectedHostRef: { current: { left: host, right: null } },
     connect: async () => { connectCalls += 1; },
+    releaseConnection: noopReleaseConnection,
   });
   assert.equal(sftpId, "sftp-live");
   assert.equal(connectCalls, 0);
@@ -63,6 +66,7 @@ test("reconnects when the mapped session is missing", async () => {
       connectCalls += 1;
       sessions.current.set("conn-1", "sftp-reconnected");
     },
+    releaseConnection: noopReleaseConnection,
   });
   assert.equal(connectCalls, 1);
   assert.equal(sftpId, "sftp-reconnected");
@@ -70,6 +74,7 @@ test("reconnects when the mapped session is missing", async () => {
 
 test("forceReconnect reopens even when a mapping exists", async () => {
   let connectCalls = 0;
+  const released: string[] = [];
   const sessions = { current: new Map([["conn-1", "sftp-stale"]]) };
   const sftpId = await ensureRemoteSftpSession({
     side: "left",
@@ -77,17 +82,20 @@ test("forceReconnect reopens even when a mapping exists", async () => {
     sftpSessionsRef: sessions,
     lastConnectedHostRef: { current: { left: host, right: null } },
     forceReconnect: true,
+    releaseConnection: async (connectionId) => { released.push(connectionId); },
     connect: async () => {
       connectCalls += 1;
       sessions.current.set("conn-1", "sftp-new");
     },
   });
   assert.equal(connectCalls, 1);
+  assert.deepEqual(released, ["conn-1"]);
   assert.equal(sftpId, "sftp-new");
 });
 
 test("probe failure triggers reconnect", async () => {
   let connectCalls = 0;
+  const released: string[] = [];
   const sessions = { current: new Map([["conn-1", "sftp-dead"]]) };
   const sftpId = await ensureRemoteSftpSession({
     side: "left",
@@ -97,12 +105,14 @@ test("probe failure triggers reconnect", async () => {
     probeSession: async () => {
       throw new Error("SFTP session not found");
     },
+    releaseConnection: async (connectionId) => { released.push(connectionId); },
     connect: async () => {
       connectCalls += 1;
       sessions.current.set("conn-1", "sftp-fresh");
     },
   });
   assert.equal(connectCalls, 1);
+  assert.deepEqual(released, ["conn-1"]);
   assert.equal(sftpId, "sftp-fresh");
 });
 
@@ -119,6 +129,7 @@ test("uses resolveHostById when lastConnectedHostRef is empty", async () => {
       connectedHost = resolved;
       sessions.current.set("conn-1", "sftp-vault");
     },
+    releaseConnection: noopReleaseConnection,
   });
   assert.equal(sftpId, "sftp-vault");
   assert.equal((connectedHost as Host).hostname, "ci.example");
@@ -151,6 +162,7 @@ test("prefers per-tab connect-time host over vault base endpoint", async () => {
       connectedHost = resolved;
       sessions.current.set("conn-1", "sftp-session");
     },
+    releaseConnection: noopReleaseConnection,
   });
   assert.equal((connectedHost as Host).hostname, "session.example");
   assert.equal((connectedHost as Host).port, 2222);
@@ -182,6 +194,7 @@ test("does not retarget background reconnect via side-wide lastConnectedHost ove
       connectedHost = resolved;
       sessions.current.set("conn-1", "sftp-vault");
     },
+    releaseConnection: noopReleaseConnection,
   });
   assert.equal((connectedHost as Host).hostname, "vault.example");
   assert.equal((connectedHost as Host).port, 22);
@@ -197,6 +210,7 @@ test("refuses synthetic root@label:22 when host metadata is missing", async () =
       connect: async () => {
         throw new Error("should not connect");
       },
+      releaseConnection: noopReleaseConnection,
     }),
     /credentials are unavailable/,
   );

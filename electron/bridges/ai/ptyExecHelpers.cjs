@@ -278,8 +278,16 @@ function normalizePtyOutput(stdout, {
 }
 
 function appendBoundedOutput(current, chunk, maxBufferedChars) {
-  const combined = `${current || ""}${chunk || ""}`;
   const limit = Number.isFinite(maxBufferedChars) ? Math.max(0, Math.floor(maxBufferedChars)) : 0;
+  const currentText = String(current || "");
+  const chunkText = String(chunk || "");
+  if (limit > 0 && chunkText.length >= limit) {
+    return {
+      text: chunkText.slice(-limit),
+      dropped: currentText.length + chunkText.length - limit,
+    };
+  }
+  const combined = `${currentText}${chunkText}`;
   if (limit <= 0 || combined.length <= limit) {
     return { text: combined, dropped: 0 };
   }
