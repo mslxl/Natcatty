@@ -37,6 +37,7 @@ import {
 } from "./terminalAutocompleteLayout";
 import { handleTerminalAutocompleteInput } from "./terminalAutocompleteInput";
 import { handleTerminalAutocompleteKeyEvent } from "./terminalAutocompleteKeyEvent";
+import { isTerminalAlternateScreenActive } from "../terminalHibernateRuntime";
 
 export interface AutocompleteSettings {
   enabled: boolean;
@@ -643,6 +644,19 @@ export function useTerminalAutocomplete(
       return;
     }
 
+    // Suppress autocomplete for the entire alternate screen buffer (codex CLI,
+    // vim, htop, less, …). Full-screen apps own their own input UI there;
+    // Netcatty's popup/ghost text would clash — e.g. codex's "/" slash-command
+    // menu gets covered because the composer line also matches the shell-prompt
+    // heuristic. This is intentionally unconditional: multiplexers (tmux/screen)
+    // also keep the outer xterm on the alternate buffer for the whole session,
+    // so Netcatty autocomplete is off while attached — same simple tradeoff as
+    // other terminal hosts, rather than chasing TUI-vs-shell heuristics. #2530
+    if (isTerminalAlternateScreenActive(term)) {
+      clearState();
+      return;
+    }
+
     // Nothing will be rendered when both the popup and ghost text are off, so
     // don't run the (potentially expensive) completion query just to throw the
     // result away. Clear any stale state and bail before touching history,
@@ -711,6 +725,14 @@ export function useTerminalAutocomplete(
     }
 
     if (disposedRef.current || version !== fetchVersionRef.current) return;
+
+    // Recheck after the async lookup: the terminal may have entered the alternate
+    // screen while completions were pending (e.g. launching codex/vim). Drop any
+    // result that would paint popup/ghost over a TUI. Same unconditional policy. #2530
+    if (isTerminalAlternateScreenActive(term)) {
+      clearState();
+      return;
+    }
 
     // Discard stale results: if the user kept typing while getCompletions was running,
     // the current prompt input will have changed. Re-detect and compare.
