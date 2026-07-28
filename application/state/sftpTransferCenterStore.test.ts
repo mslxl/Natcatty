@@ -3536,6 +3536,7 @@ test("patchTask lifecycle failures notify and persist through the full store pat
   });
   store.publishOwner("panel-a", [makeTask("external-open-failure", "completed")]);
   const baselineWrites = writes.length;
+  assert.equal(store.getBadgeSnapshot().hasAttention, false);
   let notifications = 0;
   store.subscribe(() => { notifications += 1; });
 
@@ -3546,8 +3547,12 @@ test("patchTask lifecycle failures notify and persist through the full store pat
   });
 
   assert.equal(store.getSnapshot().tasks[0]?.status, "failed");
+  assert.equal(store.getBadgeSnapshot().hasAttention, true, "failed lifecycle must refresh the badge");
   assert.equal(notifications, 1, "lifecycle subscribers must update immediately");
   assert.ok(writes.length > baselineWrites, "terminal lifecycle changes must be persisted");
+  const persisted = JSON.parse(writes.at(-1) ?? "{}") as { tasks?: TransferTask[] };
+  assert.equal(persisted.tasks?.[0]?.status, "failed", "persisted history must not retain completed");
+  assert.equal(persisted.tasks?.[0]?.error, "Could not open the downloaded file");
 });
 
 test("clearing a changed directory checkpoint is persisted before resume continues", () => {

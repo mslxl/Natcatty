@@ -4,16 +4,84 @@ import type { TransferTask } from "../../domain/models";
 import {
   canApplyDedicatedResumeProgress,
   createDedicatedResumeChildUpdateBatcher,
+  createDedicatedResumeProgressBatcher,
   DEDICATED_RESUME_CHILD_UPDATE_BATCH_SIZE,
 } from "./dedicatedResumeProgress";
 
 test("deferred dedicated-resume progress cannot reopen a settled row", () => {
-  for (const status of ["completed", "failed", "cancelled", "attention", "interrupted"] as const) {
+  for (const status of [
+    "pausing",
+    "paused",
+    "completed",
+    "failed",
+    "cancelled",
+    "attention",
+    "interrupted",
+  ] as const) {
     assert.equal(canApplyDedicatedResumeProgress(status), false, status);
   }
   for (const status of ["pending", "queued", "transferring"] as const) {
     assert.equal(canApplyDedicatedResumeProgress(status), true, status);
   }
+});
+
+test("late animation-frame progress cannot revive any settled resume state", () => {
+  const settledStatuses = [
+    "pausing",
+    "paused",
+    "completed",
+    "failed",
+    "cancelled",
+    "attention",
+    "interrupted",
+  ] as const;
+
+  for (const settledStatus of settledStatuses) {
+    let status: TransferTask["status"] = "transferring";
+    let scheduled: FrameRequestCallback | undefined;
+    const applied: number[] = [];
+    const batcher = createDedicatedResumeProgressBatcher<number>({
+      requestFrame: (callback) => {
+        scheduled = callback;
+        return 41;
+      },
+      cancelFrame: () => undefined,
+      canApply: () => canApplyDedicatedResumeProgress(status),
+      apply: (progress) => applied.push(progress),
+    });
+
+    batcher.push(7);
+    status = settledStatus;
+    scheduled?.(0);
+    assert.deepEqual(applied, [], settledStatus);
+  }
+});
+
+test("finishing a resume flushes once and rejects raced or future progress", () => {
+  let status: TransferTask["status"] = "transferring";
+  let scheduled: FrameRequestCallback | undefined;
+  const cancelledHandles: number[] = [];
+  const applied: number[] = [];
+  const batcher = createDedicatedResumeProgressBatcher<number>({
+    requestFrame: (callback) => {
+      scheduled = callback;
+      return 73;
+    },
+    cancelFrame: (handle) => cancelledHandles.push(handle),
+    canApply: () => canApplyDedicatedResumeProgress(status),
+    apply: (progress) => applied.push(progress),
+  });
+
+  batcher.push(11);
+  batcher.push(12);
+  batcher.finish();
+  status = "completed";
+  scheduled?.(0); // Simulate a frame already dequeued when it was cancelled.
+  batcher.push(13);
+  batcher.finish();
+
+  assert.deepEqual(applied, [12]);
+  assert.deepEqual(cancelledHandles, [73]);
 });
 
 test("50,000 retained child updates use a hard-bounded number of store scans", () => {

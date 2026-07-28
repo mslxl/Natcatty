@@ -14,6 +14,7 @@ import type { TransferTask } from '../../domain/models';
 import {
   canApplyDedicatedResumeProgress,
   createDedicatedResumeChildUpdateBatcher,
+  createDedicatedResumeProgressBatcher,
 } from './dedicatedResumeProgress';
 
 type StartupEffectsContext = Record<string, any>;
@@ -85,8 +86,6 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         uploadCheckpointBytes?: number;
         sourceFingerprint?: string;
       };
-      let pendingProgress: ProgressSample | null = null;
-      let progressRaf: number | null = null;
       // One rAF coalesce only — main process already time-throttles IPC.
       // A second 500ms timer here made dedicated-resume bars jump.
       const applyProgress = (progress: ProgressSample) => {
@@ -133,12 +132,15 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           ownerId: "dedicated-resume",
         });
       };
-      const flushProgress = () => {
-        progressRaf = null;
-        const progress = pendingProgress;
-        pendingProgress = null;
-        if (progress) applyProgress(progress);
-      };
+      const progressBatcher = createDedicatedResumeProgressBatcher<ProgressSample>({
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (handle) => window.cancelAnimationFrame(handle),
+        canApply: () => {
+          const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+          return !!current && canApplyDedicatedResumeProgress(current.status);
+        },
+        apply: applyProgress,
+      });
       const childUpdateBatcher = createDedicatedResumeChildUpdateBatcher({
         // Use the restart snapshot, not repeated linear store lookups. Completed
         // rows disappear as batches compact, but later updates for those ids can
@@ -150,6 +152,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         })(),
         upsertTasks: (updates) => sftpTransferCenterStore.upsertTasks(updates),
       });
+      let acceptsResumeCallbacks = true;
       try {
         return await resumeTransferWithDedicatedSession(
           task,
@@ -161,20 +164,21 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
             terminalSettings,
           },
           (progress) => {
-            pendingProgress = progress;
-            if (progressRaf == null) {
-              progressRaf = window.requestAnimationFrame(flushProgress);
-            }
+            if (acceptsResumeCallbacks) progressBatcher.push(progress);
           },
           {
             children,
             onChildUpdate: (child) => {
-              childUpdateBatcher.push({ ...child, ownerId: "dedicated-resume" });
+              if (acceptsResumeCallbacks) {
+                childUpdateBatcher.push({ ...child, ownerId: "dedicated-resume" });
+              }
             },
             onDirectoryCheckpointUpdate: (checkpoint) => {
-              sftpTransferCenterStore.patchTask(task.id, {
-                directoryResumeCheckpoint: checkpoint,
-              });
+              if (acceptsResumeCallbacks) {
+                sftpTransferCenterStore.patchTask(task.id, {
+                  directoryResumeCheckpoint: checkpoint,
+                });
+              }
             },
             shouldAbort: () => {
               const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
@@ -187,6 +191,8 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           },
         );
       } finally {
+        acceptsResumeCallbacks = false;
+        progressBatcher.finish();
         childUpdateBatcher.flush();
       }
     });

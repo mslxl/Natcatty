@@ -1129,8 +1129,10 @@ test("remote close unregisters a TTL-zero idle transport and its jump chain once
 
 test("setDefaultTransportIdleTtlMs updates default and reschedules idle transports", () => {
   const timers = [];
+  let now = 10_000;
   resetSshTransportRegistryForTests({
     defaultIdleTtlMs: 60_000,
+    now: () => now,
     setTimeout: (fn, ms) => {
       const handle = { fn, ms, cleared: false };
       timers.push(handle);
@@ -1149,11 +1151,12 @@ test("setDefaultTransportIdleTtlMs updates default and reschedules idle transpor
   assert.equal(transport.state, "idle");
   assert.equal(timers[0].ms, 60_000);
 
+  now += 250;
   setDefaultTransportIdleTtlMs(5_000);
   assert.equal(getDefaultTransportIdleTtlMs(), 5_000);
   assert.equal(timers[0].cleared, true, "old idle timer must be cancelled");
   const last = timers[timers.length - 1];
-  assert.equal(last.ms, 5_000);
+  assert.equal(last.ms, 4_750, "reschedule must preserve elapsed idle time");
   assert.equal(transport.idleTtlMs, 5_000);
 });
 

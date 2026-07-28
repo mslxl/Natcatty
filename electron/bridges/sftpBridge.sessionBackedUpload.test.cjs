@@ -214,6 +214,148 @@ test("openSftpForSession rejects a same-target session reached through a differe
   assert.equal(openedChannel, false, "the mismatched transport must not be borrowed even briefly");
 });
 
+test("openSftpForSession skips a mismatched source hint and reuses another session with the full route identity", async () => {
+  let wrongRouteOpened = false;
+  let matchingRouteOpened = false;
+  const wrongConnection = {
+    sftp(callback) {
+      wrongRouteOpened = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const matchingConnection = {
+    sftp(callback) {
+      matchingRouteOpened = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const base = {
+    hostId: "same-host",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "target-password",
+    verifyHostKeys: true,
+    knownHosts: [{
+      hostname: "target.example",
+      port: 22,
+      keyType: "ssh-ed25519",
+      fingerprint: "target-fingerprint",
+    }],
+  };
+  const wrongEndpoint = normalizeEndpoint(buildConnectionReuseEndpoint({
+    ...base,
+    proxy: {
+      type: "socks5",
+      host: "proxy-a.example",
+      port: 1080,
+      username: "proxy-user",
+      password: "proxy-a-password",
+    },
+    jumpHosts: [{
+      hostId: "jump-a",
+      hostname: "jump-a.example",
+      username: "jump-user",
+      password: "jump-a-password",
+    }],
+  }));
+  const matchingOptions = {
+    ...base,
+    proxy: {
+      type: "socks5",
+      host: "proxy-b.example",
+      port: 1080,
+      username: "proxy-user",
+      password: "proxy-b-password",
+    },
+    jumpHosts: [{
+      hostId: "jump-b",
+      hostname: "jump-b.example",
+      username: "jump-user",
+      password: "jump-b-password",
+    }],
+  };
+  const matchingEndpoint = normalizeEndpoint(buildConnectionReuseEndpoint(matchingOptions));
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([
+      ["wrong-source-hint", { conn: wrongConnection, _reuseEndpoint: wrongEndpoint }],
+      ["matching-source", { conn: matchingConnection, _reuseEndpoint: matchingEndpoint }],
+    ]),
+    sftpClients,
+  });
+
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "wrong-source-hint",
+    expectedEndpoint: matchingOptions,
+    fileProtocol: "sftp",
+  });
+
+  assert.equal(wrongRouteOpened, false, "the endpoint-only source hint must never be borrowed");
+  assert.equal(matchingRouteOpened, true, "a session with the complete matching identity should be reused");
+  assert.match(opened.sftpId, /^matching-source-sftp-/);
+  assert.equal(opened.sourceSessionId, "matching-source");
+  assert.equal(sftpClients.has(opened.sftpId), true);
+  await sftpBridge.closeSftp(null, { sftpId: opened.sftpId });
+});
+
+test("openSftpForSession reuses the hinted session when its full route and security identity match", async () => {
+  let openedChannel = false;
+  const connection = {
+    sftp(callback) {
+      openedChannel = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const options = {
+    hostId: "same-host",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "target-password",
+    requiresMfa: true,
+    verifyHostKeys: true,
+    keepaliveInterval: 15,
+    keepaliveCountMax: 4,
+    proxy: {
+      type: "http",
+      host: "proxy.example",
+      port: 8080,
+      username: "proxy-user",
+      password: "proxy-password",
+    },
+    jumpHosts: [{
+      hostId: "jump",
+      hostname: "jump.example",
+      username: "jump-user",
+      password: "jump-password",
+    }],
+  };
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["matching-source", {
+      conn: connection,
+      _reuseEndpoint: normalizeEndpoint(buildConnectionReuseEndpoint(options)),
+    }]]),
+    sftpClients,
+  });
+
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "matching-source",
+    expectedEndpoint: options,
+    fileProtocol: "sftp",
+  });
+
+  assert.equal(openedChannel, true);
+  assert.match(opened.sftpId, /^matching-source-sftp-/);
+  assert.equal(opened.sourceSessionId, "matching-source");
+  await sftpBridge.closeSftp(null, { sftpId: opened.sftpId });
+});
+
 test("downloadSftpToLocal aborts while initial SFTP metadata is stalled", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-stat-abort-"));
   t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));

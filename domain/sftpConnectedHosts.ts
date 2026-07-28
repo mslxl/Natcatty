@@ -131,6 +131,10 @@ export const listSftpConnectedHosts = (
  * Resolve a terminal session id for transfer-pool opens that can reuse the
  * live SSH transport. Unlike the picker list, this keeps every reusable
  * session so same-hostId tabs with different live endpoints can still match.
+ * This renderer-side result is only a source hint: proxy, jump, credential,
+ * host-key and keepalive fingerprints are intentionally retained by the main
+ * process. openSftpForSession reselects and validates the live session against
+ * that complete identity before it borrows a transport.
  *
  * @returns session id, or undefined when no reusable source exists
  */

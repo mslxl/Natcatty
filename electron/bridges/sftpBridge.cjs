@@ -747,6 +747,41 @@ function ensureRemoteSftpSupport(sessionId) {
   return { session, sshClient };
 }
 
+function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint) {
+  const requested = sessions?.get(sourceSessionId);
+  const matchesExpectedEndpoint = (session) => {
+    const actualEndpoint = session?._reuseEndpoint || session?.connRef?.endpoint;
+    return Boolean(
+      actualEndpoint
+      && endpointAllowsReuse(expectedEndpoint, actualEndpoint, "channel"),
+    );
+  };
+  const hasLiveSftpConnection = (session) => {
+    const sshClient = session?.conn || session?.sshClient;
+    return Boolean(sshClient && typeof sshClient.sftp === "function");
+  };
+
+  if (requested && matchesExpectedEndpoint(requested) && hasLiveSftpConnection(requested)) {
+    return { sessionId: sourceSessionId, session: requested, sshClient: requested.conn || requested.sshClient };
+  }
+
+  // The renderer only has endpoint fields when it chooses a sourceSessionId;
+  // route, proxy, credential and host-key fingerprints live in the main
+  // process. Treat its id as a hint, then choose the newest live session whose
+  // authoritative transport identity matches in full.
+  let matchingSource = null;
+  for (const [candidateId, candidate] of sessions || []) {
+    if (candidateId === sourceSessionId) continue;
+    if (!matchesExpectedEndpoint(candidate) || !hasLiveSftpConnection(candidate)) continue;
+    matchingSource = {
+      sessionId: candidateId,
+      session: candidate,
+      sshClient: candidate.conn || candidate.sshClient,
+    };
+  }
+  return matchingSource;
+}
+
 // Common remote NAME_MAX; keep stage/backup basenames within this budget.
 const REMOTE_BASENAME_MAX = 255;
 
@@ -1868,24 +1903,30 @@ async function openSftpForSession(_event, payload) {
   if (!sessionId) throw new Error("sessionId is required");
 
   throwIfAborted(payload?.abortSignal);
-  const { session, sshClient } = ensureRemoteSftpSupport(sessionId);
-  const actualEndpoint = session._reuseEndpoint || session.connRef?.endpoint;
+  let sourceSessionId = sessionId;
+  let source;
   if (payload?.expectedEndpoint) {
     const expectedEndpoint = buildConnectionReuseEndpoint(payload.expectedEndpoint);
-    if (!actualEndpoint || !endpointAllowsReuse(expectedEndpoint, actualEndpoint, "channel")) {
+    source = findRemoteSftpSourceByEndpoint(sessionId, expectedEndpoint);
+    if (!source) {
       const err = new Error("Source session SSH route does not match the requested SFTP endpoint");
       err.code = "ERR_SFTP_SOURCE_ROUTE_MISMATCH";
       throw err;
     }
+    sourceSessionId = source.sessionId;
+  } else {
+    source = { sessionId, ...ensureRemoteSftpSupport(sessionId) };
   }
-  const sftpId = `${sessionId}-sftp-${randomUUID()}`;
+  const { session, sshClient } = source;
+  const actualEndpoint = session._reuseEndpoint || session.connRef?.endpoint;
+  const sftpId = `${sourceSessionId}-sftp-${randomUUID()}`;
   const refHolder = { id: sftpId, __sshLeaseKind: "sftp" };
   if (session.connRef && typeof acquireConnectionRef === "function") {
     acquireConnectionRef(refHolder, session.connRef);
   }
-  const client = createSessionBackedSftpClient(sessionId, sshClient, {
+  const client = createSessionBackedSftpClient(sourceSessionId, sshClient, {
     refHolder,
-    sourceSessionId: sessionId,
+    sourceSessionId,
   });
   client.__netcattyEndpointKey = session.connRef?.endpointKey || buildEndpointKey(actualEndpoint);
   const { normalizeFileProtocol } = require("./sftpBridge/scpShell.cjs");
@@ -1937,7 +1978,7 @@ async function openSftpForSession(_event, payload) {
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
-      return { ok: true, sftpId, fileProtocol: "scp" };
+      return { ok: true, sftpId, fileProtocol: "scp", sourceSessionId };
     }
 
     try {
@@ -1965,13 +2006,13 @@ async function openSftpForSession(_event, payload) {
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
-      return { ok: true, sftpId, fileProtocol: "scp" };
+      return { ok: true, sftpId, fileProtocol: "scp", sourceSessionId };
     }
 
     throwIfAborted(payload?.abortSignal);
     copySftpEncodingState(payload?.encodingStateKey, sftpId);
     sftpClients.set(sftpId, client);
-    return { ok: true, sftpId, fileProtocol: "sftp" };
+    return { ok: true, sftpId, fileProtocol: "sftp", sourceSessionId };
   } catch (err) {
     try {
       await client.end();
@@ -2435,12 +2476,18 @@ function registerActivityHandle(ipcMain, channel, handler, ownership = null) {
         ? await ownership.run(channel, event, payload, invoke)
         : await invoke();
       const sftpId = result?.sftpId;
+      const resolvedSourceSessionId = result?.sourceSessionId
+        || sftpClients?.get?.(sftpId)?.__netcattySourceSessionId
+        || sourceSessionId;
       if (
-        sourceSessionId
+        resolvedSourceSessionId
         && sftpId
         && (!ownership || ownership.shouldRememberOpenResult(event?.sender, sftpId))
       ) {
-        rendererSftpSourceSessions.set(sftpId, sourceSessionId);
+        rendererSftpSourceSessions.set(sftpId, resolvedSourceSessionId);
+        if (resolvedSourceSessionId !== sourceSessionId) {
+          reportSftpActivity(resolvedSourceSessionId, "touch");
+        }
       }
       return result;
     } finally {

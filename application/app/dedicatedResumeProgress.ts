@@ -8,6 +8,11 @@ export interface DedicatedResumeChildUpdateBatcher {
   flush(): void;
 }
 
+export interface DedicatedResumeProgressBatcher<T> {
+  push(progress: T): void;
+  finish(): void;
+}
+
 /**
  * A restarted directory can retain tens of thousands of exception rows. The
  * store intentionally performs full history compaction on each upsert, so
@@ -45,4 +50,51 @@ export function createDedicatedResumeChildUpdateBatcher(deps: {
 /** Only rows still owned by an active resume may accept a deferred rAF sample. */
 export function canApplyDedicatedResumeProgress(status: TransferStatus): boolean {
   return status === "pending" || status === "queued" || status === "transferring";
+}
+
+/**
+ * Coalesce renderer progress without letting a callback outlive the resume
+ * invocation that scheduled it. finish() preserves the newest sample once,
+ * cancels the scheduled paint, and permanently rejects late callbacks.
+ */
+export function createDedicatedResumeProgressBatcher<T>(deps: {
+  requestFrame: (callback: FrameRequestCallback) => number;
+  cancelFrame: (handle: number) => void;
+  canApply: () => boolean;
+  apply: (progress: T) => void;
+}): DedicatedResumeProgressBatcher<T> {
+  let pending: T | undefined;
+  let frame: number | null = null;
+  let finished = false;
+
+  const applyPending = () => {
+    const progress = pending;
+    pending = undefined;
+    if (progress !== undefined && deps.canApply()) deps.apply(progress);
+  };
+  const flushFrame = () => {
+    frame = null;
+    if (finished) return;
+    applyPending();
+  };
+
+  return {
+    push(progress) {
+      if (finished) return;
+      pending = progress;
+      if (frame == null) frame = deps.requestFrame(flushFrame);
+    },
+    finish() {
+      if (finished) return;
+      finished = true;
+      if (frame != null) {
+        deps.cancelFrame(frame);
+        frame = null;
+      }
+      // Preserve the final durable checkpoint while the row is still active.
+      // The caller can now publish its completed/failed/attention result with
+      // no scheduled callback left that could overwrite the terminal state.
+      applyPending();
+    },
+  };
 }
