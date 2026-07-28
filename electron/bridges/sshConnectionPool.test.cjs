@@ -648,10 +648,11 @@ test("acquireConnectionRef upgrades legacy connRef descriptors without leases Ma
   };
   const session = { id: "legacy-share", conn: null, stream: {} };
   // Must not throw on transport.leases.has when leases is missing.
+  // Existing owner (count=1) is preserved so SFTP share yields count=2.
   acquireConnectionRef(session, legacy);
   assert.ok(legacy.leases instanceof Map);
-  assert.equal(legacy.leases.size, 1);
-  assert.equal(legacy.count, 1);
+  assert.equal(legacy.leases.size, 2);
+  assert.equal(legacy.count, 2);
   assert.equal(session.connRef, legacy);
   assert.ok(session._sshTransportLeaseId);
   discardTransport(legacy);

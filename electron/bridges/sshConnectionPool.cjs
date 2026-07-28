@@ -450,15 +450,14 @@ function createTransport({
  */
 function ensureTransportShape(transport) {
   if (!transport || typeof transport !== "object") return transport;
-  if (!(transport.leases instanceof Map)) {
+  const wasLegacy = !(transport.leases instanceof Map);
+  const legacyCount = Number.isFinite(transport.count) ? Math.max(0, transport.count) : 0;
+  if (wasLegacy) {
     transport.leases = new Map();
   }
   if (!transport.id) transport.id = randomUUID();
   if (!transport.state) {
-    transport.state = transport.count > 0 ? "live" : "idle";
-  }
-  if (!Number.isFinite(transport.count)) {
-    transport.count = transport.leases.size;
+    transport.state = legacyCount > 0 || transport.leases.size > 0 ? "live" : "idle";
   }
   if (!Array.isArray(transport.chainConnections)) {
     transport.chainConnections = [];
@@ -469,6 +468,23 @@ function ensureTransportShape(transport) {
   if (transport.endpoint && !transport.endpointKey) {
     transport.endpointKey = buildEndpointKey(transport.endpoint);
   }
+  // Seed placeholder leases for pre-existing owners so the next borrow
+  // increments from the true occupancy (e.g. terminal count=1 + SFTP -> 2).
+  if (wasLegacy && legacyCount > 0 && transport.leases.size === 0) {
+    for (let i = 0; i < legacyCount; i += 1) {
+      const leaseId = allocateLeaseId("legacy");
+      const lease = {
+        id: leaseId,
+        kind: "legacy",
+        holder: null,
+        meta: { source: "legacy-connRef", index: i },
+        borrowedAt: nowFn(),
+      };
+      transport.leases.set(leaseId, lease);
+      leasesById.set(leaseId, { transport, holder: null });
+    }
+  }
+  transport.count = transport.leases.size;
   // Index legacy descriptors so findTransportByEndpoint can see them.
   if (transport.id && !transportsById.has(transport.id)) {
     transportsById.set(transport.id, transport);
