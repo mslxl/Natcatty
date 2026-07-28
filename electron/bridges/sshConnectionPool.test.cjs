@@ -312,9 +312,8 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
     fingerprintAuth({ ...keyBase, privateKey: "same" }),
     fingerprintAuth({ ...keyBase, privateKey: "same" }),
   );
-  // auto must not fold password+key so transfer key-first / password-retry
-  // still match a multi-material parked transport.
-  const autoBoth = {
+  // auto + publicKey: key-first (password stripped) still matches.
+  const autoWithPub = {
     authType: "auto",
     keyId: "k1",
     publicKey: "ssh-ed25519 AAAA",
@@ -322,12 +321,13 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
     password: "pw",
   };
   assert.equal(
-    fingerprintAuth(autoBoth),
-    fingerprintAuth({ ...autoBoth, password: undefined }),
+    fingerprintAuth(autoWithPub),
+    fingerprintAuth({ ...autoWithPub, password: undefined }),
   );
-  assert.equal(
-    fingerprintAuth(autoBoth),
-    fingerprintAuth({ ...autoBoth, privateKey: undefined }),
+  // password-only auto: password rotation invalidates.
+  assert.notEqual(
+    fingerprintAuth({ authType: "auto", password: "old" }),
+    fingerprintAuth({ authType: "auto", password: "new" }),
   );
 });
 

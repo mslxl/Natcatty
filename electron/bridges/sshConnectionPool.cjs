@@ -131,14 +131,27 @@ function digestAuthMaterial(endpoint) {
     h.update("\0");
     h.update(String(identityPaths));
   } else {
-    // auto / agent: use publicKey (stable rotation signal) and cert presence.
-    // Do not fold password + privateKey together — transfer fallback attempts
-    // strip one or the other and would miss the parked transport.
+    // auto / agent: prefer publicKey / identity paths as rotation signals.
+    // Do not always fold password + privateKey together — transfer key-first
+    // strips password and would miss a multi-material parked transport.
     h.update(String(endpoint.publicKey || ""));
     h.update("\0");
     h.update(endpoint.certificate ? "cert" : "nocert");
     h.update("\0");
     h.update(String(identityPaths));
+    // Password-only auto (no key material): include password so vault password
+    // rotation invalidates parked reuse. When any key material is present,
+    // omit password so key-first opens still match.
+    if (!endpoint.privateKey && !endpoint.publicKey && !identityPaths) {
+      h.update("\0pw:");
+      h.update(String(endpoint.password || ""));
+    } else if (endpoint.privateKey && !endpoint.publicKey && !identityPaths) {
+      // Key material present only as privateKey (common) — digest it so key
+      // rotation invalidates; password-retry that strips privateKey will miss
+      // park and dial dedicated (acceptable).
+      h.update("\0pk:");
+      h.update(String(endpoint.privateKey));
+    }
   }
   return h.digest("hex").slice(0, 16);
 }
