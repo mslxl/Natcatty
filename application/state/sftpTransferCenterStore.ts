@@ -1135,11 +1135,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         );
         // Runtime writer is authority for live walks: panel cannot roll lifecycle
         // back past the process-global control epoch (soft pause/resume).
-        // Narrow #2568 exception: processTransfer paints completed via setTransfers
-        // before runWalk unregisters, and a default control epoch (0) is always >
-        // panel undefined (-1). Only skip the epoch guard for that unstamped
-        // default-epoch terminal race — older terminal snapshots after soft
-        // pause/resume must still lose to the runtime-owned newer epoch.
+        // #2568 exception: processTransfer paints completed via setTransfers
+        // before runWalk unregisters. Both sides are often unstamped
+        // (lifecycleEpoch undefined); storeEpoch then falls back to the control
+        // epoch, which softResume bumps even when it clears task.lifecycleEpoch
+        // and continues the live walk. Accept that unstamped terminal publish —
+        // stamped older terminal snapshots after soft pause/resume still lose.
         const runtimeOwned = isTransferWalkInFlight(task.id)
           || (task.parentTaskId ? isTransferWalkInFlight(task.parentTaskId) : false)
           || isTransferOrRootPauseLatched(task.parentTaskId ?? task.id, task.id);
@@ -1151,12 +1152,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             ? (replacement.lifecycleEpoch as number)
             : -1;
           if (storeEpoch > panelEpoch) {
-            const isDefaultEpochTerminalRace =
+            const isUnstampedTerminalRace =
               TERMINAL_OWNER_STATUSES.has(replacement.status)
               && !Number.isFinite(task.lifecycleEpoch)
-              && !Number.isFinite(replacement.lifecycleEpoch)
-              && storeEpoch === 0;
-            if (!isDefaultEpochTerminalRace) {
+              && !Number.isFinite(replacement.lifecycleEpoch);
+            if (!isUnstampedTerminalRace) {
               merged = {
                 ...merged,
                 status: task.status,

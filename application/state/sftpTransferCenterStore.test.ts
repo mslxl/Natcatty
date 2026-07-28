@@ -2927,3 +2927,54 @@ test("stale terminal panel snapshot cannot overwrite newer soft-control epoch", 
   assert.equal(row?.lifecycleEpoch, 2);
   assert.equal(store.getSnapshot().activeCount, 1);
 });
+
+test("unstamped panel completed sticks after soft-resume bumps control epoch", async (t) => {
+  const {
+    registerTransferWalk,
+    unregisterTransferWalk,
+    resetTransferWalkRegistryForTests,
+  } = await import("./sftp/transferWalkRegistry");
+  const {
+    bumpTransferControlEpoch,
+    resetTransferControlEpochsForTests,
+  } = await import("./sftp/transferControlEpoch");
+  resetTransferWalkRegistryForTests();
+  resetTransferControlEpochsForTests();
+  registerTransferWalk("dir-resume-done");
+  // softResumeTransfer bumps control epoch and clears lifecycleEpoch while the
+  // walk stays alive; completion from processTransfer is still unstamped.
+  bumpTransferControlEpoch("dir-resume-done");
+  bumpTransferControlEpoch("dir-resume-done");
+  t.after(() => {
+    unregisterTransferWalk("dir-resume-done");
+    resetTransferWalkRegistryForTests();
+    resetTransferControlEpochsForTests();
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [{
+    ...makeTask("dir-resume-done", "transferring"),
+    fileName: "folder",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 3,
+    transferredBytes: 3,
+    lifecycleEpoch: undefined,
+  }]);
+
+  store.publishOwner("panel-a", [{
+    ...makeTask("dir-resume-done", "completed"),
+    fileName: "folder",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 3,
+    transferredBytes: 3,
+    endTime: Date.now(),
+    speed: 0,
+    lifecycleEpoch: undefined,
+  }]);
+
+  const row = store.getSnapshot().tasks.find((task) => task.id === "dir-resume-done");
+  assert.equal(row?.status, "completed");
+  assert.equal(store.getSnapshot().activeCount, 0);
+});
