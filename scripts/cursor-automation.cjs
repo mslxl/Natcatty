@@ -91,6 +91,7 @@ const PROTECTED_PATH_PREFIXES = Object.freeze([
   '.github/',
   '.cursor/',
   'scripts/cursor-automation',
+  'scripts/prepare-cursor-research-input',
   'scripts/issue-triage',
   'scripts/release',
   'nix/',
@@ -148,12 +149,87 @@ function getUserAuthoredResearchText(input = {}) {
  * Validate the bounded handoff emitted by the isolated WebSearch pass.
  * Research output remains untrusted input for every later agent.
  */
-function normalizeExternalResearchText(value, { input, webToolUsed = false } = {}) {
+function parseExternalResearchEnvelope(value) {
   const text = sanitizeUntrustedText(value, 16_000);
-  const firstLine = text.split('\n').find((line) => line.trim())?.trim() || '';
+  const fenced = text.match(/^```(?:text)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/i);
+  if (!fenced && ((text.match(/```/g) || []).length % 2) !== 0) {
+    return null;
+  }
+  const normalized = fenced ? sanitizeUntrustedText(fenced[1], 16_000) : text;
+  const firstLine = normalized.split('\n').find((line) => line.trim())?.trim() || '';
   const match = firstLine.match(
     /^(RESEARCH_COMPLETE|RESEARCH_NOT_NEEDED|RESEARCH_BLOCKED):\s+(.+)$/,
   );
+  return match ? { text: normalized, match, fenced: Boolean(fenced) } : null;
+}
+
+const USER_AUTHORED_URL_TOKEN_PATTERN = /https?:\/\/[^\s<>()"'`,;]+/gi;
+const GITHUB_USER_ATTACHMENT_ASSET_PATH_PATTERN =
+  /^\/user-attachments\/assets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeGithubUserAttachmentAssetUrl(value) {
+  const candidate = String(value || '').replace(/[.!:\]}]+$/g, '');
+  try {
+    const parsed = new URL(candidate);
+    if (
+      parsed.protocol !== 'https:'
+      || parsed.hostname !== 'github.com'
+      || parsed.username
+      || parsed.password
+      || parsed.search
+      || parsed.hash
+      || !GITHUB_USER_ATTACHMENT_ASSET_PATH_PATTERN.test(parsed.pathname)
+    ) {
+      return '';
+    }
+    return candidate;
+  } catch {
+    return '';
+  }
+}
+
+function extractGithubUserAttachmentAssetUrls(input = {}) {
+  const tokens = getUserAuthoredResearchText(input).match(USER_AUTHORED_URL_TOKEN_PATTERN) || [];
+  return [...new Set(tokens.map(normalizeGithubUserAttachmentAssetUrl).filter(Boolean))];
+}
+
+function rewriteExternalResearchInputAttachments(input, attachments = []) {
+  const replacements = new Map();
+  for (const attachment of attachments) {
+    const sourceUrl = String(attachment?.sourceUrl || '');
+    const relativePath = String(attachment?.relativePath || '');
+    const exactSource = normalizeGithubUserAttachmentAssetUrl(sourceUrl);
+    if (exactSource !== sourceUrl) {
+      throw new Error('Research attachment source must be a GitHub user attachment asset URL.');
+    }
+    if (!/^attachments\/[A-Za-z0-9._/-]+$/.test(relativePath) || relativePath.includes('..')) {
+      throw new Error('Research attachment path must stay under attachments/.');
+    }
+    replacements.set(sourceUrl, `[proxied image: ${relativePath}]`);
+  }
+
+  const rewrite = (value) => {
+    if (typeof value === 'string') {
+      let result = value;
+      for (const [sourceUrl, replacement] of replacements) {
+        result = result.split(sourceUrl).join(replacement);
+      }
+      return result;
+    }
+    if (Array.isArray(value)) return value.map(rewrite);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, nested]) => [key, rewrite(nested)]),
+      );
+    }
+    return value;
+  };
+  return rewrite(input);
+}
+
+function normalizeExternalResearchText(value, { input, webToolUsed = false } = {}) {
+  const envelope = parseExternalResearchEnvelope(value);
+  const match = envelope?.match;
   if (!match) {
     throw new Error('External research output is missing a valid research status.');
   }
@@ -168,14 +244,14 @@ function normalizeExternalResearchText(value, { input, webToolUsed = false } = {
     if (!webToolUsed) {
       throw new Error('Completed external research requires a recorded WebSearch/WebFetch tool call.');
     }
-    const sourceLines = text.match(
+    const sourceLines = envelope.text.match(
       /^-\s+https:\/\/[^\s<>()]+\s+(?:—|–|-)\s+\S.*$/gim,
     ) || [];
     if (!sourceLines.length) {
       throw new Error('Completed external research must include at least one structured HTTPS source URL.');
     }
   }
-  return text;
+  return envelope.text;
 }
 
 function normalizeResearchSourceUrl(value) {
@@ -212,6 +288,9 @@ function extractHttpsUrls(value) {
 /** Parse Cursor stream-json and prove that completed research used a web tool. */
 function parseExternalResearchStream(value, input) {
   let assistantText = '';
+  let partialAssistantText = '';
+  const assistantMessages = [];
+  const partialAssistantMessages = [];
   let terminalResult = '';
   let webToolUsed = false;
   const webEvidenceUrls = new Set();
@@ -256,10 +335,55 @@ function parseExternalResearchStream(value, input) {
       .filter((block) => block?.type === 'text' && block.text)
       .map((block) => String(block.text))
       .join('');
-    if (eventText) assistantText += eventText;
+    if (eventText) {
+      const hasModelCallId = event.model_call_id != null || event.modelCallId != null;
+      const isPartialDelta = event.timestamp_ms != null && !hasModelCallId;
+      assistantMessages.push({
+        text: eventText,
+        isFinalFlush: event.timestamp_ms == null
+          && !hasModelCallId,
+      });
+      if (isPartialDelta) {
+        partialAssistantMessages.push(eventText);
+        partialAssistantText += eventText;
+      }
+      assistantText += eventText;
+    }
   }
 
-  const normalized = normalizeExternalResearchText(terminalResult || assistantText, {
+  // Cursor can prepend earlier text to its terminal result or split a fenced
+  // final envelope across assistant events. Prefer the explicit final flush,
+  // then the shortest complete fenced suffix, before the aggregate terminal
+  // and full delta stream. Never search arbitrary prose for a status marker.
+  const assistantSuffixes = [];
+  let assistantSuffix = '';
+  const suffixMessages = partialAssistantMessages.length
+    ? partialAssistantMessages
+    : assistantMessages.map((message) => message.text);
+  for (let index = suffixMessages.length - 1; index >= 0; index -= 1) {
+    assistantSuffix = suffixMessages[index] + assistantSuffix;
+    assistantSuffixes.push(assistantSuffix);
+  }
+  const fencedAssistantSuffixes = assistantSuffixes.filter(
+    (candidate) => parseExternalResearchEnvelope(candidate)?.fenced,
+  );
+  const finalAssistantText = assistantMessages.findLast(
+    (message) => message.isFinalFlush,
+  )?.text;
+  const candidates = [
+    ...fencedAssistantSuffixes,
+    finalAssistantText,
+    terminalResult,
+    partialAssistantText || assistantText,
+  ].filter(Boolean);
+  const candidateTexts = new Set(candidates
+    .map((candidate) => parseExternalResearchEnvelope(candidate)?.text)
+    .filter(Boolean));
+  if (candidateTexts.size > 1) {
+    throw new Error('External research output contains conflicting research statuses.');
+  }
+  const selected = candidates.find((candidate) => parseExternalResearchEnvelope(candidate));
+  const normalized = normalizeExternalResearchText(selected || candidates[0] || '', {
     input,
     webToolUsed,
   });
@@ -3045,6 +3169,8 @@ module.exports = {
   BOT_PR_LABEL,
   CODEX_TERMINALS,
   sanitizeUntrustedText,
+  extractGithubUserAttachmentAssetUrls,
+  rewriteExternalResearchInputAttachments,
   normalizeExternalResearchText,
   parseExternalResearchStream,
   countSummaryUnits,

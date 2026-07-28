@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  applyPluginImporterDestination,
   buildPluginImporterSafePreview,
   mergePluginImporterDrafts,
   normalizePluginImporterRecords,
@@ -378,6 +379,103 @@ test('plugin importer merge skips duplicates and remaps relationships to retaine
   assert.equal(merged.identities.length, 1);
   assert.equal(merged.hosts.length, 1);
   assert.equal(merged.snippets.length, 1);
+});
+
+test('plugin importer keeps identical provider settings with different credentials', () => {
+  const drafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'credential-a', label: 'Credential A', username: 'root', authMethod: 'password', password: 'first',
+    } } },
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'credential-b', label: 'Credential B', username: 'root', authMethod: 'password', password: 'second',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host A',
+      protocol: 'plugin:com.example.transport.connection',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: { endpoint: 'shared' },
+        credentialId: 'credential-a',
+      },
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host B',
+      protocol: 'plugin:com.example.transport.connection',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: { endpoint: 'shared' },
+        credentialId: 'credential-b',
+      },
+    } } },
+  ]);
+  const merged = mergePluginImporterDrafts({
+    hosts: [], identities: [], keys: [], snippets: [], customGroups: [],
+  }, drafts);
+
+  assert.equal(merged.hosts.length, 2);
+  assert.equal(merged.identities.length, 2);
+  assert.notEqual(
+    merged.hosts[0].pluginConnection?.credentialId,
+    merged.hosts[1].pluginConnection?.credentialId,
+  );
+});
+
+test('plugin importer destination moves only newly imported hosts into the selected group', () => {
+  const existingDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: { label: 'Existing', hostname: 'existing.test', group: 'Original' },
+  } }]);
+  const importedDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: { label: 'Imported', hostname: 'imported.test', group: 'Source' },
+  } }]);
+  const merged = mergePluginImporterDrafts({
+    hosts: existingDrafts.hosts,
+    identities: [],
+    keys: [],
+    snippets: [],
+    customGroups: ['Original'],
+  }, importedDrafts);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    existingDrafts.hosts.length,
+    { mode: 'group', group: 'Chosen' },
+    ['Original'],
+  );
+
+  assert.equal(targeted.hosts[0].group, 'Original');
+  assert.equal(targeted.hosts[1].group, 'Chosen');
+  assert.deepEqual(targeted.customGroups, ['Original', 'Chosen']);
+  assert.equal(targeted.addedCount, 2);
+});
+
+test('plugin importer does not count a host-owned destination group as newly added', () => {
+  const existingDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: { label: 'Existing', hostname: 'existing.test', group: 'Existing Group' },
+  } }]);
+  const importedDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: { label: 'Imported', hostname: 'imported.test', group: 'Source' },
+  } }]);
+  const merged = mergePluginImporterDrafts({
+    hosts: existingDrafts.hosts,
+    identities: [],
+    keys: [],
+    snippets: [],
+    customGroups: [],
+  }, importedDrafts);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    existingDrafts.hosts.length,
+    { mode: 'group', group: 'Existing Group' },
+  );
+
+  assert.equal(targeted.hosts[1].group, 'Existing Group');
+  assert.deepEqual(targeted.customGroups, ['Existing Group']);
+  assert.equal(targeted.addedCount, 1);
 });
 
 test('plugin importer preview is bounded and never exposes secret or command payloads', () => {

@@ -99,7 +99,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
 
   const {
     accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
-    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
+    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme,
@@ -117,7 +117,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
     startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
     toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog,
-    updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
+    readPersistedHosts, readPersistedManagedSources, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
     updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaceRenameValue, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
@@ -354,6 +354,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
             groupConfigs={groupConfigs}
             onUpdateGroupConfigs={updateGroupConfigs}
             onUpdateHosts={updateHosts}
+            onReadPersistedHosts={readPersistedHosts}
             onUpdateKeys={updateKeys}
             onImportOrReuseKey={importOrReuseKey}
             onUpdateIdentities={updateIdentities}
@@ -366,6 +367,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
             onCommitPluginImporterData={commitPluginImporterData}
             onUpdateKnownHosts={updateKnownHosts}
             onUpdateManagedSources={updateManagedSources}
+            onReadPersistedManagedSources={readPersistedManagedSources}
+            onCommitVaultImportTransaction={commitVaultImportTransaction}
             onClearAndRemoveManagedSource={clearAndRemoveSource}
             onClearAndRemoveManagedSources={clearAndRemoveSources}
             onUnmanageSource={unmanageSource}
@@ -556,7 +559,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         />
       </div>
 
-      {/* Global "quick add / edit snippet" dialog, triggered by the
+      {/* Global "quick add / edit snippet" modal, triggered by the
           netcatty:snippets:add and :edit window events (from ScriptsSidePanel
           "+" button and right-click menu). Delete is handled by a sibling
           useEffect above — it does not need a dialog. */}
