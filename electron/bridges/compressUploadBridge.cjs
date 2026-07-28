@@ -246,7 +246,6 @@ function runRemoteExec(sshClient, command, options = {}) {
       finish(new Error(`Remote command timed out after ${timeoutMs / 1000} seconds`));
       if (!stream) invalidateSshTransport(sshClient);
     }, timeoutMs);
-    if (typeof timeout.unref === 'function') timeout.unref();
 
     if (signal?.aborted) {
       onAbort();
@@ -427,7 +426,6 @@ async function checkTarAvailable(signal) {
     };
     const onAbort = () => stop();
     const timeout = setTimeout(stop, LOCAL_TAR_PROBE_TIMEOUT_MS);
-    if (typeof timeout.unref === 'function') timeout.unref();
     if (signal?.aborted) {
       stop();
       return;

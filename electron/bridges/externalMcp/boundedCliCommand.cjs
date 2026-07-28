@@ -148,7 +148,6 @@ function runBoundedCliCommand(deps, command, args = [], options = {}) {
       error.code = "CLI_TIMEOUT";
       rejectAndTerminate(error);
     }, timeoutMs);
-    timeoutTimer.unref?.();
     if (signal?.aborted) onAbort();
   });
 }

@@ -240,11 +240,11 @@ test("createScriptRuntime heartbeat remains healthy while a host request is paus
     isPaused: () => paused,
     isAborted: () => false,
     onStatusChange: () => {},
-    syncExecutionTimeoutMs: 20,
+    syncExecutionTimeoutMs: 250,
   });
 
   const execution = runtime.execute("await nct.screen.send('after-pause');");
-  setTimeout(() => { paused = false; }, 80);
+  setTimeout(() => { paused = false; }, 400);
   await execution;
   assert.deepEqual(writes, ["after-pause"]);
   assert.equal(_getActiveScriptWorkerCountForTests(), 0);

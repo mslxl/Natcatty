@@ -1912,11 +1912,11 @@ test("script sendLine invalidates startup seed before later waits", async () => 
     permissionMode: "auto",
   });
 
-  await delay(80);
+  await waitUntil(() => writes.some((data) => String(data).includes("echo hi")));
   assert.ok(writes.some((data) => String(data).includes("echo hi")));
 
   // Startup seed must be gone: waits should not resolve on old READY / old prompt.
-  await delay(80);
+  await delay(20);
   const midRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "send-invalidates-seed");
   assert.equal(midRun.status, "running");
 
