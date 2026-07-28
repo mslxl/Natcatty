@@ -1135,14 +1135,15 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         );
         // Runtime writer is authority for live walks: panel cannot roll lifecycle
         // back past the process-global control epoch (soft pause/resume).
-        // Terminal panel statuses must stick: processTransfer paints completed
-        // via setTransfers before runWalk unregisters, and a default control
-        // epoch (0) is always > panel undefined (-1). Rejecting completed here
-        // left directory rows at 100% forever as "transferring" (#2568).
+        // Narrow #2568 exception: processTransfer paints completed via setTransfers
+        // before runWalk unregisters, and a default control epoch (0) is always >
+        // panel undefined (-1). Only skip the epoch guard for that unstamped
+        // default-epoch terminal race — older terminal snapshots after soft
+        // pause/resume must still lose to the runtime-owned newer epoch.
         const runtimeOwned = isTransferWalkInFlight(task.id)
           || (task.parentTaskId ? isTransferWalkInFlight(task.parentTaskId) : false)
           || isTransferOrRootPauseLatched(task.parentTaskId ?? task.id, task.id);
-        if (runtimeOwned && !TERMINAL_OWNER_STATUSES.has(replacement.status)) {
+        if (runtimeOwned) {
           const storeEpoch = Number.isFinite(task.lifecycleEpoch)
             ? (task.lifecycleEpoch as number)
             : getTransferControlEpoch(task.parentTaskId ?? task.id);
@@ -1150,14 +1151,21 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             ? (replacement.lifecycleEpoch as number)
             : -1;
           if (storeEpoch > panelEpoch) {
-            merged = {
-              ...merged,
-              status: task.status,
-              lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
-              speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
-              transferredBytes: Math.max(task.transferredBytes ?? 0, merged.transferredBytes ?? 0),
-              checkpointBytes: Math.max(task.checkpointBytes ?? 0, merged.checkpointBytes ?? 0),
-            };
+            const isDefaultEpochTerminalRace =
+              TERMINAL_OWNER_STATUSES.has(replacement.status)
+              && !Number.isFinite(task.lifecycleEpoch)
+              && !Number.isFinite(replacement.lifecycleEpoch)
+              && storeEpoch === 0;
+            if (!isDefaultEpochTerminalRace) {
+              merged = {
+                ...merged,
+                status: task.status,
+                lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
+                speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
+                transferredBytes: Math.max(task.transferredBytes ?? 0, merged.transferredBytes ?? 0),
+                checkpointBytes: Math.max(task.checkpointBytes ?? 0, merged.checkpointBytes ?? 0),
+              };
+            }
           }
         }
         if (areTransferTasksEquivalent(task, merged)) return [task];

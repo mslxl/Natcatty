@@ -2881,3 +2881,49 @@ test("panel completed sticks while directory walk is still in flight (issue #256
   assert.equal(row?.status, "completed");
   assert.equal(store.getSnapshot().activeCount, 0);
 });
+
+test("stale terminal panel snapshot cannot overwrite newer soft-control epoch", async (t) => {
+  const {
+    registerTransferWalk,
+    unregisterTransferWalk,
+    resetTransferWalkRegistryForTests,
+  } = await import("./sftp/transferWalkRegistry");
+  const { resetTransferControlEpochsForTests } = await import("./sftp/transferControlEpoch");
+  resetTransferWalkRegistryForTests();
+  resetTransferControlEpochsForTests();
+  registerTransferWalk("dir-live");
+  t.after(() => {
+    unregisterTransferWalk("dir-live");
+    resetTransferWalkRegistryForTests();
+    resetTransferControlEpochsForTests();
+  });
+
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [{
+    ...makeTask("dir-live", "transferring"),
+    fileName: "folder",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 10,
+    transferredBytes: 4,
+    lifecycleEpoch: 2,
+  }]);
+
+  // Delayed panel completion from before soft pause/resume must not win.
+  store.publishOwner("panel-a", [{
+    ...makeTask("dir-live", "completed"),
+    fileName: "folder",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 10,
+    transferredBytes: 4,
+    endTime: Date.now(),
+    speed: 0,
+    lifecycleEpoch: 1,
+  }]);
+
+  const row = store.getSnapshot().tasks.find((task) => task.id === "dir-live");
+  assert.equal(row?.status, "transferring");
+  assert.equal(row?.lifecycleEpoch, 2);
+  assert.equal(store.getSnapshot().activeCount, 1);
+});
