@@ -68,6 +68,29 @@ function resolveEnvIdleTtlMs(fallback) {
   return n;
 }
 
+function fingerprintProxy(proxy) {
+  if (!proxy || typeof proxy !== "object") return "-";
+  const type = proxy.type || proxy.proxyType || proxy.mode || "";
+  const host = proxy.host || proxy.hostname || proxy.server || "";
+  const port = proxy.port || "";
+  const user = proxy.username || proxy.user || "";
+  if (!type && !host && !port) return "-";
+  return `${type}:${host}:${port}:${user}`;
+}
+
+function fingerprintJumpHosts(jumpHosts) {
+  if (!Array.isArray(jumpHosts) || jumpHosts.length === 0) return "-";
+  return jumpHosts.map((h) => {
+    if (typeof h === "string") return h;
+    // Prefer stable vault ids when present so profile edits change the key.
+    const id = h?.hostId || h?.id || "";
+    const host = h?.hostname || h?.host || "";
+    const port = h?.port || 22;
+    const user = h?.username || "root";
+    return id ? `id:${id}` : `${host}:${port}:${user}`;
+  }).join(">");
+}
+
 function normalizeEndpoint(endpoint) {
   if (!endpoint || typeof endpoint !== "object") return null;
   const hostname = String(endpoint.hostname || "").trim();
@@ -87,13 +110,10 @@ function normalizeEndpoint(endpoint) {
     sftpSudo: Boolean(endpoint.sftpSudo),
     jumpFingerprint: endpoint.jumpFingerprint
       ? String(endpoint.jumpFingerprint)
-      : (Array.isArray(endpoint.jumpHosts)
-        ? endpoint.jumpHosts.map((h) => (
-          typeof h === "string"
-            ? h
-            : `${h?.hostname || ""}:${h?.port || 22}:${h?.username || "root"}`
-        )).join(">")
-        : ""),
+      : fingerprintJumpHosts(endpoint.jumpHosts),
+    proxyFingerprint: endpoint.proxyFingerprint
+      ? String(endpoint.proxyFingerprint)
+      : fingerprintProxy(endpoint.proxy),
   };
 }
 
@@ -102,6 +122,7 @@ function buildEndpointKey(endpoint) {
   if (!ep) return null;
   const sudo = ep.sftpSudo ? "sudo" : "nosudo";
   const jump = ep.jumpFingerprint || "-";
+  const proxy = ep.proxyFingerprint || "-";
   const profile = ep.hostId || "-";
   return [
     profile,
@@ -111,6 +132,7 @@ function buildEndpointKey(endpoint) {
     ep.protocol,
     sudo,
     jump,
+    proxy,
   ].join("|");
 }
 
@@ -120,14 +142,15 @@ function sameEndpoint(a, b) {
   if (!left || !right) return false;
   // When both sides carry a vault hostId they must match so different profiles
   // never cross-reuse. If either omits hostId (legacy / explicit session-id
-  // reuse), fall back to hostname:port:user:jump comparison only.
+  // reuse), fall back to hostname:port:user:jump:proxy comparison only.
   if (left.hostId && right.hostId && left.hostId !== right.hostId) return false;
   return left.hostname === right.hostname
     && left.port === right.port
     && left.username === right.username
     && left.protocol === right.protocol
     && left.sftpSudo === right.sftpSudo
-    && left.jumpFingerprint === right.jumpFingerprint;
+    && left.jumpFingerprint === right.jumpFingerprint
+    && left.proxyFingerprint === right.proxyFingerprint;
 }
 
 function isTransportSocketHealthy(transport) {
@@ -571,6 +594,8 @@ function createConnectionRef(session, conn, chainConnections) {
       sftpSudo: session._reuseEndpoint.sftpSudo,
       jumpFingerprint: session._reuseEndpoint.jumpFingerprint,
       jumpHosts: session._reuseEndpoint.jumpHosts,
+      proxy: session._reuseEndpoint.proxy,
+      proxyFingerprint: session._reuseEndpoint.proxyFingerprint,
     }
     : null;
 

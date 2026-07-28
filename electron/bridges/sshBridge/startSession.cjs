@@ -295,9 +295,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
           hostname: options.hostname || '',
           port: options.port || 22,
           username: options.username || 'root',
-          // Include jump chain so SFTP/port-forward/parked lookup cannot
-          // match a different bastion path to the same final host.
+          // Include jump chain + proxy so SFTP/port-forward/parked lookup cannot
+          // match a different route to the same final host.
           jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
+          proxy: options.proxy || null,
         },
         tcpLatencyDirect:
           !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
@@ -851,6 +852,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         port: options.port || 22,
         username: options.username || "root",
         jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
+        proxy: options.proxy || null,
       };
 
       if (options.sourceSessionId && !options.x11Forwarding) {

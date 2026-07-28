@@ -821,6 +821,7 @@ function createOpenConnectionApi(ctx) {
           port: options.port || 22,
           username: options.username || "root",
           jumpHosts: options.jumpHosts,
+          proxy: options.proxy || null,
         };
         const transport = findTransportByEndpoint(endpoint);
         if (transport?.conn) {
@@ -1321,6 +1322,7 @@ function createOpenConnectionApi(ctx) {
               port: options.port || 22,
               username: options.username || "root",
               jumpHosts: options.jumpHosts,
+              proxy: options.proxy || null,
             };
             const refHolder = {
               id: connId,

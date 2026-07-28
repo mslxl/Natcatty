@@ -35,14 +35,23 @@ const {
 // Active port forwarding tunnels
 const portForwardingTunnels = new Map();
 
-function buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts }) {
+function buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts, proxy }) {
   return {
     hostId: hostId || "",
     hostname,
     port: port || 22,
     username: username || "root",
     jumpHosts: Array.isArray(jumpHosts) ? jumpHosts : [],
+    proxy: proxy || null,
   };
+}
+
+function normalizeRemoteAddress(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  if (raw === "localhost" || raw === "127.0.0.1" || raw === "::1") return "loopback";
+  if (raw === "0.0.0.0" || raw === "::" || raw === "*") return "wildcard";
+  return raw;
 }
 
 /**
@@ -56,6 +65,7 @@ function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus)
     if (!tunnel || tunnel.cancelled || tunnel._sharedLifecycleSettled) return;
     tunnel._sharedLifecycleSettled = true;
     console.log(`[PortForward] Shared transport ${reason} for tunnel ${tunnelId}`);
+    detachSharedTransportLifecycle(tunnel);
     if (tunnel.tcpConnectionHandler && tunnel.conn?.removeListener) {
       try { tunnel.conn.removeListener("tcp connection", tunnel.tcpConnectionHandler); } catch { /* ignore */ }
       tunnel.tcpConnectionHandler = null;
@@ -74,14 +84,42 @@ function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus)
       portForwardingTunnels.delete(tunnelId);
     }
   };
-  // Prefer once so a dead socket does not re-enter cleanup.
-  try { conn.once("close", () => onTransportGone("closed")); } catch { /* ignore */ }
-  try {
-    conn.once("error", (err) => {
-      console.warn(`[PortForward] Shared transport error for ${tunnelId}:`, err?.message || err);
-      onTransportGone("error");
-    });
-  } catch { /* ignore */ }
+  // Prefer once so a dead socket does not re-enter cleanup. Store handlers so
+  // normal cancel can detach them and avoid leaking listeners on long-lived
+  // shared transports.
+  const onClose = () => onTransportGone("closed");
+  const onError = (err) => {
+    console.warn(`[PortForward] Shared transport error for ${tunnelId}:`, err?.message || err);
+    onTransportGone("error");
+  };
+  tunnelState._sharedOnClose = onClose;
+  tunnelState._sharedOnError = onError;
+  try { conn.once("close", onClose); } catch { /* ignore */ }
+  try { conn.once("error", onError); } catch { /* ignore */ }
+}
+
+function detachSharedTransportLifecycle(tunnel) {
+  if (!tunnel?.conn) return;
+  if (tunnel._sharedOnClose && tunnel.conn.removeListener) {
+    try { tunnel.conn.removeListener("close", tunnel._sharedOnClose); } catch { /* ignore */ }
+  }
+  if (tunnel._sharedOnError && tunnel.conn.removeListener) {
+    try { tunnel.conn.removeListener("error", tunnel._sharedOnError); } catch { /* ignore */ }
+  }
+  tunnel._sharedOnClose = null;
+  tunnel._sharedOnError = null;
+}
+
+function isLocalBindFailure(err) {
+  const code = String(err?.code || "").toUpperCase();
+  const message = String(err?.message || "").toLowerCase();
+  return code === "EADDRINUSE"
+    || code === "EACCES"
+    || code === "EADDRNOTAVAIL"
+    || message.includes("eaddrinuse")
+    || message.includes("address already in use")
+    || message.includes("permission denied")
+    || message.includes("listen");
 }
 
 /**
@@ -219,15 +257,11 @@ function bindPortForwardChannels({
         // with the same port but different bind addresses do not steal each other.
         const destPort = Number(info?.destPort);
         if (destPort !== Number(localPort)) return;
-        const destIP = String(info?.destIP || "").trim();
-        const expectedBind = String(bindAddress || "127.0.0.1").trim();
-        // For wildcard listens (0.0.0.0 / ::), ssh2 reports the concrete NIC
-        // address that received the connection — accept any destIP.
-        const wildcardBind = !expectedBind
-          || expectedBind === "0.0.0.0"
-          || expectedBind === "::"
-          || expectedBind === "*";
-        if (!wildcardBind && destIP && destIP !== expectedBind) return;
+        const destNorm = normalizeRemoteAddress(info?.destIP);
+        const bindNorm = normalizeRemoteAddress(bindAddress || "127.0.0.1");
+        // Wildcard binds accept any destIP (ssh2 reports the concrete NIC).
+        // Loopback binds accept localhost / 127.0.0.1 / ::1 interchangeably.
+        if (bindNorm !== "wildcard" && destNorm && destNorm !== bindNorm) return;
         let stream;
         try {
           stream = accept();
@@ -431,7 +465,9 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
   if (tunnel.pendingConn) {
     if (cleanup('pending SSH connection', () => tunnel.pendingConn.end())) tunnel.pendingConn = null;
   }
-  // Detach this tunnel's shared-transport tcp-connection filter first.
+  // Detach shared-transport lifecycle + remote tcp filters first so long-lived
+  // shared connections do not accumulate close/error listeners across restarts.
+  cleanup("shared transport lifecycle", () => detachSharedTransportLifecycle(tunnel));
   if (tunnel.tcpConnectionHandler && tunnel.conn?.removeListener) {
     cleanup("remote tcp handler", () => {
       tunnel.conn.removeListener("tcp connection", tunnel.tcpConnectionHandler);
@@ -598,7 +634,7 @@ async function startPortForward(event, payload) {
   let chainConnections = [];
   let connectionSocket = null;
   const passphraseAbortController = new AbortController();
-  const reuseEndpoint = buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts });
+  const reuseEndpoint = buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts, proxy });
 
   // Prefer an already-authenticated transport (live terminal or idle park).
   const existingTransport = findTransportByEndpoint(reuseEndpoint);
@@ -651,6 +687,23 @@ async function startPortForward(event, payload) {
       attachSharedTransportLifecycle(tunnelId, tunnelState, existingTransport.conn, sendStatus);
       return sharedResult;
     } catch (shareErr) {
+      // Local bind failures (port in use, permission) cannot be fixed by a new
+      // SSH dial — re-auth would only re-prompt MFA. Only retry dedicated when
+      // the shared transport itself looks unusable.
+      if (isLocalBindFailure(shareErr)) {
+        console.warn(
+          `[PortForward] Shared transport bind failed for ${hostname} (local bind); not retrying dedicated:`,
+          shareErr?.message || shareErr,
+        );
+        try { returnTransport(tunnelState); } catch { /* ignore */ }
+        portForwardingTunnels.delete(tunnelId);
+        sendStatus("error", shareErr?.message || String(shareErr));
+        return {
+          tunnelId,
+          success: false,
+          error: shareErr?.message || String(shareErr),
+        };
+      }
       console.warn(
         `[PortForward] Shared transport bind failed for ${hostname}; dialing dedicated:`,
         shareErr?.message || shareErr,
