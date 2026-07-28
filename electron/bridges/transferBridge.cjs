@@ -611,9 +611,11 @@ async function inspectLocalPromotionTarget(targetPath) {
 }
 
 // ── Transfer performance tuning ──────────────────────────────────────────────
-// Progress IPC throttle: sending too many IPC messages bogs down the event loop
-const PROGRESS_THROTTLE_MS = 100;         // Send IPC at most every 100ms
-const PROGRESS_THROTTLE_BYTES = 256 * 1024; // Or every 256KB of progress
+// Progress IPC throttle: each tick fans out to renderer React + global center.
+// 100ms (~10 UI updates/s) was enough to freeze the main window during large
+// file copies; 250ms keeps the bar smooth without saturating the renderer.
+const PROGRESS_THROTTLE_MS = 250;           // Send IPC at most every 250ms
+const PROGRESS_THROTTLE_BYTES = 1024 * 1024; // Or every 1MB of progress
 const ISOLATED_DOWNLOAD_IDLE_TTL_MS = 5000;
 
 // Speed calculation uses strict sliding-window average:

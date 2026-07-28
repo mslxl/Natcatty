@@ -157,6 +157,42 @@ export const useSftpTransfers = ({
     sftpTransferCenterStore.publishOwner(ownerId, next);
     setTransfersState(next);
   }, [ownerId]);
+
+  // Coalesce progress-only patches to one paint per animation frame. Without
+  // this, each stream tick maps the full transfer list + publishOwner + store
+  // emit, and the main-window renderer pegs ~100%+ CPU during large copies.
+  const pendingProgressByIdRef = useRef<Map<string, Partial<TransferTask>>>(new Map());
+  const progressFlushRafRef = useRef<number | null>(null);
+  const flushPendingProgress = useCallback(() => {
+    progressFlushRafRef.current = null;
+    const pending = pendingProgressByIdRef.current;
+    if (pending.size === 0) return;
+    pendingProgressByIdRef.current = new Map();
+    for (const [taskId, updates] of pending) {
+      transferRuntime.patchTask(taskId, updates);
+    }
+    setTransfers((prev) => {
+      let changed = false;
+      const next = prev.map((task) => {
+        const updates = pending.get(task.id);
+        if (!updates) return task;
+        changed = true;
+        return { ...task, ...updates };
+      });
+      return changed ? next : prev;
+    });
+  }, [setTransfers]);
+  const scheduleProgressFlush = useCallback(() => {
+    if (progressFlushRafRef.current != null) return;
+    progressFlushRafRef.current = window.requestAnimationFrame(flushPendingProgress);
+  }, [flushPendingProgress]);
+  useEffect(() => () => {
+    if (progressFlushRafRef.current != null) {
+      window.cancelAnimationFrame(progressFlushRafRef.current);
+      progressFlushRafRef.current = null;
+    }
+  }, []);
+
   const completionHandlersRef = useRef<Map<string, (result: TransferResult) => void | Promise<void>>>(new Map());
   const conflictDefaultsRef = useRef<Map<string, FileConflictAction>>(new Map());
 
@@ -342,7 +378,40 @@ export const useSftpTransfers = ({
 
     // Runtime is the authority writer for live lifecycle. Also mirror into the
     // panel list when mounted (view only — soft control does not depend on it).
+    // Progress-only patches are rAF-coalesced so large-file streams do not
+    // force a full React + global-center re-render on every IPC tick.
     const updateTask = (updates: Partial<TransferTask>) => {
+      const statusChange = updates.status !== undefined && updates.status !== "transferring";
+      const progressOnly = !statusChange
+        && updates.error === undefined
+        && updates.conflict === undefined
+        && updates.ownerId === undefined
+        && (
+          updates.transferredBytes !== undefined
+          || updates.speed !== undefined
+          || updates.checkpointBytes !== undefined
+          || updates.resumeStage !== undefined
+          || updates.downloadCheckpointBytes !== undefined
+          || updates.uploadCheckpointBytes !== undefined
+          || updates.sourceFingerprint !== undefined
+          || updates.totalBytes !== undefined
+          || updates.phase !== undefined
+          || updates.status === "transferring"
+        );
+      if (progressOnly) {
+        const prevPending = pendingProgressByIdRef.current.get(task.id) || {};
+        pendingProgressByIdRef.current.set(task.id, { ...prevPending, ...updates });
+        // Keep ref hot for cancel/pause checks without waiting for paint.
+        transfersRef.current = transfersRef.current.map((row) => (
+          row.id === task.id ? { ...row, ...updates } : row
+        ));
+        scheduleProgressFlush();
+        return;
+      }
+      // Lifecycle transitions: flush any pending progress first, then apply.
+      if (pendingProgressByIdRef.current.size > 0) {
+        flushPendingProgress();
+      }
       transferRuntime.patchTask(task.id, updates);
       setTransfers((prev) =>
         prev.map((t) => (t.id === task.id ? { ...t, ...updates } : t)),
