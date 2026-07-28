@@ -550,7 +550,7 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
     });
   }
   // Remote forwards leave a server-side listen until unforwardIn succeeds.
-  // Await the callback so we do not report inactive while the listen remains.
+  // Await the callback (with a timeout) so half-open sockets cannot hang stop.
   if (
     tunnel.type === "remote"
     && tunnel.conn
@@ -559,20 +559,42 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
   ) {
     const bind = tunnel.bindAddress || "127.0.0.1";
     const port = tunnel.localPort;
+    const UNFORWARD_TIMEOUT_MS = 5_000;
     try {
       await new Promise((resolve, reject) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          reject(new Error(`unforwardIn timed out after ${UNFORWARD_TIMEOUT_MS}ms`));
+        }, UNFORWARD_TIMEOUT_MS);
+        try {
+          timer.unref?.();
+        } catch { /* ignore */ }
         try {
           tunnel.conn.unforwardIn(bind, port, (err) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
             if (err) reject(err);
             else resolve();
           });
         } catch (syncErr) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           reject(syncErr);
         }
       });
     } catch (unfwdErr) {
       const message = unfwdErr instanceof Error ? unfwdErr.message : String(unfwdErr);
-      errors.push(`remote forward listen: ${message}`);
+      // Timeout on a dead shared transport is best-effort: continue releasing
+      // the lease so stop cannot hang forever.
+      if (!/timed out/i.test(message)) {
+        errors.push(`remote forward listen: ${message}`);
+      } else {
+        console.warn(`[PortForward] ${message} for tunnel ${tunnelId}; continuing cleanup`);
+      }
     }
   }
   if (errors.length > 0) {
