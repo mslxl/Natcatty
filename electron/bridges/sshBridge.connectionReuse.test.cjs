@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
 
-const { releaseConnectionRef } = require("./sshConnectionPool.cjs");
+const { createConnectionRef, releaseConnectionRef } = require("./sshConnectionPool.cjs");
 
 // Load sshBridge with a mocked ssh2 module so we can observe whether a *new*
 // SSH client is constructed (a fresh connection) versus an existing connection
@@ -179,14 +179,13 @@ function makeDeferredShellConn() {
 }
 
 // Build a live source session as if it had connected normally, including the
-// reference-counted descriptor and the recorded endpoint used for reuse target
+// registry transport lease and the recorded endpoint used for reuse target
 // matching.
 function makeSourceSession(conn, endpoint) {
-  return {
+  const session = {
     conn,
     stream: makeStream(),
     chainConnections: [],
-    connRef: { count: 1, conn, chainConnections: [] },
     webContentsId: 1,
     zmodemSentry: { cancel() {} },
     hostname: endpoint.hostname,
@@ -197,6 +196,8 @@ function makeSourceSession(conn, endpoint) {
       username: endpoint.username,
     },
   };
+  createConnectionRef(session, conn, []);
+  return session;
 }
 
 function registerStartHandler(bridge, sessions) {

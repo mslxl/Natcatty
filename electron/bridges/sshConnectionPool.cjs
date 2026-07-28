@@ -444,57 +444,9 @@ function createTransport({
 }
 
 /**
- * Upgrade pre-registry `{ count, conn, chainConnections }` descriptors that
- * tests (and any stale in-memory sessions) may still pass to acquire/borrow.
- * Mutates in place so existing session.connRef identity is preserved.
- */
-function ensureTransportShape(transport) {
-  if (!transport || typeof transport !== "object") return transport;
-  const wasLegacy = !(transport.leases instanceof Map);
-  const legacyCount = Number.isFinite(transport.count) ? Math.max(0, transport.count) : 0;
-  if (wasLegacy) {
-    transport.leases = new Map();
-  }
-  if (!transport.id) transport.id = randomUUID();
-  if (!transport.state) {
-    transport.state = legacyCount > 0 || transport.leases.size > 0 ? "live" : "idle";
-  }
-  if (!Array.isArray(transport.chainConnections)) {
-    transport.chainConnections = [];
-  }
-  if (!Number.isFinite(transport.idleTtlMs)) {
-    transport.idleTtlMs = defaultIdleTtlMs;
-  }
-  if (transport.endpoint && !transport.endpointKey) {
-    transport.endpointKey = buildEndpointKey(transport.endpoint);
-  }
-  // Seed placeholder leases for pre-existing owners so the next borrow
-  // increments from the true occupancy (e.g. terminal count=1 + SFTP -> 2).
-  if (wasLegacy && legacyCount > 0 && transport.leases.size === 0) {
-    for (let i = 0; i < legacyCount; i += 1) {
-      const leaseId = allocateLeaseId("legacy");
-      const lease = {
-        id: leaseId,
-        kind: "legacy",
-        holder: null,
-        meta: { source: "legacy-connRef", index: i },
-        borrowedAt: nowFn(),
-      };
-      transport.leases.set(leaseId, lease);
-      leasesById.set(leaseId, { transport, holder: null });
-    }
-  }
-  transport.count = transport.leases.size;
-  // Index legacy descriptors so findTransportByEndpoint can see them.
-  if (transport.id && !transportsById.has(transport.id)) {
-    transportsById.set(transport.id, transport);
-    attachEndpointIndex(transport);
-  }
-  return transport;
-}
-
-/**
  * Borrow a lease on a transport. Wakes idle park if needed.
+ * Requires a registry transport from createTransport / createConnectionRef
+ * (must have a leases Map) — bare { count, conn } objects are not accepted.
  *
  * @param {object} transport
  * @param {{ kind?: string, leaseId?: string, holder?: object|null, meta?: object }} [options]
@@ -503,7 +455,11 @@ function borrowTransport(transport, options = {}) {
   if (!transport || transport.state === "dead" || transport.state === "closing") {
     throw new Error("Cannot borrow a closed SSH transport");
   }
-  ensureTransportShape(transport);
+  if (!(transport.leases instanceof Map)) {
+    throw new Error(
+      "Cannot borrow: not a registry transport (use createConnectionRef / createTransport)",
+    );
+  }
   if (!isTransportSocketHealthy(transport)) {
     endTransport(transport, "unhealthy");
     throw new Error("SSH transport socket is not healthy");

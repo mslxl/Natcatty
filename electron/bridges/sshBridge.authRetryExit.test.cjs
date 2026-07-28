@@ -45,6 +45,7 @@ function nextTick() {
 }
 
 function makeReusableSourceSession(endpoint) {
+  const { createConnectionRef } = require("./sshConnectionPool.cjs");
   const conn = new EventEmitter();
   conn._sock = { destroyed: false };
   conn._remoteVer = "OpenSSH_test";
@@ -52,11 +53,10 @@ function makeReusableSourceSession(endpoint) {
   conn.end = () => {};
   conn.destroy = () => {};
   const stream = createShellStream();
-  return {
+  const session = {
     conn,
     stream,
     chainConnections: [],
-    connRef: { count: 1, conn, chainConnections: [] },
     webContentsId: 1,
     zmodemSentry: { cancel() {} },
     hostname: endpoint.hostname,
@@ -67,6 +67,8 @@ function makeReusableSourceSession(endpoint) {
       username: endpoint.username,
     },
   };
+  createConnectionRef(session, conn, []);
+  return session;
 }
 
 function loadBridgeWithAuthRetryMocks(t, options = {}) {
