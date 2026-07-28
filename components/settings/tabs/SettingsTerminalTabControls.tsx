@@ -6,6 +6,7 @@ import { DEFAULT_KEYWORD_HIGHLIGHT_RULES, type KeywordHighlightRule } from "../.
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { TERMINAL_THEMES } from "../../../infrastructure/config/terminalThemes";
 import { cn } from "../../../lib/utils";
+import { Toggle } from "../settings-ui";
 import { Button } from "../../ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../../ui/dialog";
 import { Input } from "../../ui/input";
@@ -14,6 +15,16 @@ import { Textarea } from "../../ui/textarea";
 
 // Keyword highlight rules editor for global settings
 const DEFAULT_NEW_RULE_COLOR = '#F87171';
+
+/** Temporarily disable/enable one rule without deleting it. */
+export function toggleKeywordHighlightRuleEnabled(
+  rules: KeywordHighlightRule[],
+  ruleId: string,
+): KeywordHighlightRule[] {
+  return rules.map((rule) => (
+    rule.id === ruleId ? { ...rule, enabled: !rule.enabled } : rule
+  ));
+}
 
 export const AddCustomRuleDialog: React.FC<{
   open: boolean;
@@ -147,6 +158,11 @@ export const KeywordHighlightRulesEditor: React.FC<{
         const customized = builtIn && rule.customized;
         return (
           <div key={rule.id} className="flex items-center gap-2 group">
+            <Toggle
+              checked={rule.enabled}
+              onChange={() => onChange(toggleKeywordHighlightRuleEnabled(rules, rule.id))}
+              ariaLabel={rule.enabled ? t('common.enabled') : t('common.disabled')}
+            />
             <div className="flex-1 min-w-0 flex items-center gap-1.5">
               <span className={cn("text-sm truncate", !rule.enabled && "text-muted-foreground line-through")} style={rule.enabled ? { color: rule.color } : undefined}>
                 {rule.label}
