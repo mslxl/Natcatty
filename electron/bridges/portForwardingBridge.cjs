@@ -337,6 +337,10 @@ function bindPortForwardChannels({
         try { tunnelState.server.close(); } catch { /* ignore */ }
         tunnelState.server = null;
       }
+      // Detach shared lifecycle while conn is still on the tunnel — release
+      // clears conn and would make detach a no-op, leaking close/error listeners
+      // on long-lived shared transports after EADDRINUSE etc.
+      try { detachSharedTransportLifecycle(tunnelState); } catch { /* ignore */ }
       // Always release a managed lease (shared reuse or newly registered).
       // Otherwise a dedicated dial that registered into the pool can orphan
       // its transport after a post-bind listener error.
