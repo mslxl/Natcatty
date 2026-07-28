@@ -307,6 +307,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
           requiresMfa: !!options.requiresMfa,
           verifyHostKeys: options.verifyHostKeys,
           useSshAgent: options.useSshAgent,
+          // agentForward is negotiated at connection time; keep it in the
+          // transport fingerprint so reopening with ForwardAgent enabled does
+          // not reuse a parked conn that never enabled it.
+          agentForwarding: !!options.agentForwarding,
         },
         tcpLatencyDirect:
           !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
@@ -867,6 +871,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         requiresMfa: !!options.requiresMfa,
         verifyHostKeys: options.verifyHostKeys,
         useSshAgent: options.useSshAgent,
+        agentForwarding: !!options.agentForwarding,
       };
 
       if (options.sourceSessionId && !options.x11Forwarding) {

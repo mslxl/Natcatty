@@ -135,6 +135,10 @@ function normalizeEndpoint(endpoint) {
       ? String(endpoint.proxyFingerprint)
       : fingerprintProxy(endpoint.proxy),
     authFingerprint: fingerprintAuth(endpoint),
+    // Stored for asymmetric reuse checks (not part of the endpoint key).
+    // A transport opened with ForwardAgent can serve SFTP/PF; a transport
+    // without it cannot satisfy a later shell open that needs agentForwarding.
+    agentForwarding: Boolean(endpoint.agentForwarding),
   };
 }
 
@@ -175,6 +179,21 @@ function sameEndpoint(a, b) {
     && left.jumpFingerprint === right.jumpFingerprint
     && left.proxyFingerprint === right.proxyFingerprint
     && left.authFingerprint === right.authFingerprint;
+}
+
+/**
+ * True when a requested open can reuse an existing transport/session endpoint.
+ * Agent forwarding is asymmetric: needing ForwardAgent rejects a parked conn
+ * that never enabled it, but SFTP/PF (no agentForwarding) may still reuse a
+ * terminal transport that has ForwardAgent on.
+ */
+function endpointAllowsReuse(requested, existing) {
+  if (!sameEndpoint(requested, existing)) return false;
+  const req = normalizeEndpoint(requested);
+  const have = normalizeEndpoint(existing);
+  if (!req || !have) return false;
+  if (req.agentForwarding && !have.agentForwarding) return false;
+  return true;
 }
 
 function isTransportSocketHealthy(transport) {
@@ -506,6 +525,7 @@ function findTransportById(id) {
 /**
  * Find a healthy live or idle transport for an endpoint.
  * Prefers live transports with fewer leases, then idle.
+ * Respects asymmetric agentForwarding compatibility via endpointAllowsReuse.
  */
 function findTransportByEndpoint(endpoint) {
   const key = buildEndpointKey(endpoint);
@@ -528,9 +548,12 @@ function findTransportByEndpoint(endpoint) {
       }
       continue;
     }
-    if (transport.state === "live" || transport.state === "idle") {
-      candidates.push(transport);
+    if (transport.state !== "live" && transport.state !== "idle") continue;
+    // Same route key can still fail agent-forwarding policy (asymmetric).
+    if (endpoint && transport.endpoint && !endpointAllowsReuse(endpoint, transport.endpoint)) {
+      continue;
     }
+    candidates.push(transport);
   }
   if (candidates.length === 0) return null;
 
@@ -631,6 +654,7 @@ function createConnectionRef(session, conn, chainConnections) {
       requiresMfa: session._reuseEndpoint.requiresMfa,
       verifyHostKeys: session._reuseEndpoint.verifyHostKeys,
       useSshAgent: session._reuseEndpoint.useSshAgent,
+      agentForwarding: session._reuseEndpoint.agentForwarding,
       authFingerprint: session._reuseEndpoint.authFingerprint,
     }
     : null;
@@ -735,7 +759,8 @@ function findReusableSession(sessions, sourceSessionId, requestedTarget) {
     const ep = source._reuseEndpoint || source.connRef.endpoint;
     // No recorded endpoint -> can't prove it's the same target, so don't reuse.
     if (!ep) return null;
-    if (!sameEndpoint(ep, requestedTarget)) return null;
+    // requested first: needs agentForwarding => existing must have it.
+    if (!endpointAllowsReuse(requestedTarget, ep)) return null;
   }
 
   return source;
@@ -786,6 +811,7 @@ module.exports = {
   buildEndpointKey,
   normalizeEndpoint,
   sameEndpoint,
+  endpointAllowsReuse,
   resetSshTransportRegistryForTests,
   // Compat API
   createConnectionRef,

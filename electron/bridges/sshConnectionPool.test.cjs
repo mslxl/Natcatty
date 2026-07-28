@@ -18,6 +18,7 @@ const {
   setDefaultTransportIdleTtlMs,
   getDefaultTransportIdleTtlMs,
   buildEndpointKey,
+  endpointAllowsReuse,
   resetSshTransportRegistryForTests,
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
   LEASE_KINDS,
@@ -284,6 +285,52 @@ test("buildEndpointKey scopes vault hostId so different profiles never share", (
     buildEndpointKey({ hostname: "same.example", username: "root" }),
     buildEndpointKey({ hostId: "host-a", hostname: "same.example", username: "root" }),
   );
+});
+
+test("endpointAllowsReuse is asymmetric for agentForwarding", () => {
+  const base = { hostname: "a.example", username: "root", port: 22 };
+  // Same route without ForwardAgent policy either way.
+  assert.equal(endpointAllowsReuse(base, base), true);
+  // Request needs ForwardAgent, existing never enabled it -> reject.
+  assert.equal(
+    endpointAllowsReuse({ ...base, agentForwarding: true }, { ...base, agentForwarding: false }),
+    false,
+  );
+  // Request does not need ForwardAgent; existing with it is fine (SFTP/PF reuse).
+  assert.equal(
+    endpointAllowsReuse({ ...base, agentForwarding: false }, { ...base, agentForwarding: true }),
+    true,
+  );
+  // Both want ForwardAgent.
+  assert.equal(
+    endpointAllowsReuse({ ...base, agentForwarding: true }, { ...base, agentForwarding: true }),
+    true,
+  );
+  // agentForwarding does not change the shared endpoint key (park index stays stable).
+  assert.equal(
+    buildEndpointKey({ ...base, agentForwarding: true }),
+    buildEndpointKey({ ...base, agentForwarding: false }),
+  );
+});
+
+test("findTransportByEndpoint refuses nofwd transport when request needs ForwardAgent", () => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  const holder = { id: "s1" };
+  const nofwd = createTransport({
+    conn: makeConn(),
+    endpoint: { hostname: "fwd.example", username: "root", agentForwarding: false },
+  });
+  borrowTransport(nofwd, { kind: "shell", holder, leaseId: "shell:s1" });
+  returnTransport(holder); // park idle forever
+
+  assert.equal(
+    findTransportByEndpoint({ hostname: "fwd.example", username: "root", agentForwarding: true }),
+    null,
+  );
+  assert.ok(
+    findTransportByEndpoint({ hostname: "fwd.example", username: "root", agentForwarding: false }),
+  );
+  discardTransport(nofwd);
 });
 
 test("last return parks with positive TTL then ends when timer fires", () => {

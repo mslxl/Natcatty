@@ -39,6 +39,7 @@ const portForwardingTunnels = new Map();
 function buildPortForwardEndpoint({
   hostId, hostname, port, username, jumpHosts, proxy,
   authType, authMethod, keyId, identityId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
+  agentForwarding,
 }) {
   return {
     hostId: hostId || "",
@@ -53,6 +54,10 @@ function buildPortForwardEndpoint({
     requiresMfa: !!requiresMfa,
     verifyHostKeys,
     useSshAgent,
+    // Port-forward never enables agent forwarding; record nofwd so a terminal
+    // transport with ForwardAgent enabled does not get cross-matched incorrectly
+    // only when the PF caller later wants a different policy (future-proof).
+    agentForwarding: !!agentForwarding,
   };
 }
 
