@@ -122,6 +122,32 @@ function isLocalBindFailure(err) {
     || message.includes("listen");
 }
 
+function trackTunnelPipe(tunnelState, socket, stream) {
+  if (!tunnelState) return;
+  if (!(tunnelState.activePipes instanceof Set)) tunnelState.activePipes = new Set();
+  const entry = { socket, stream };
+  tunnelState.activePipes.add(entry);
+  const drop = () => {
+    try { tunnelState.activePipes?.delete(entry); } catch { /* ignore */ }
+  };
+  try { socket?.once?.("close", drop); } catch { /* ignore */ }
+  try { stream?.once?.("close", drop); } catch { /* ignore */ }
+  try { socket?.once?.("error", drop); } catch { /* ignore */ }
+  try { stream?.once?.("error", drop); } catch { /* ignore */ }
+}
+
+function destroyTunnelPipes(tunnel) {
+  if (!(tunnel?.activePipes instanceof Set)) return;
+  for (const entry of tunnel.activePipes) {
+    try { entry.socket?.destroy?.(); } catch { /* ignore */ }
+    try { entry.socket?.end?.(); } catch { /* ignore */ }
+    try { entry.stream?.close?.(); } catch { /* ignore */ }
+    try { entry.stream?.end?.(); } catch { /* ignore */ }
+    try { entry.stream?.destroy?.(); } catch { /* ignore */ }
+  }
+  tunnel.activePipes.clear();
+}
+
 /**
  * Release SSH for a tunnel: if the tunnel holds a transport lease, return it
  * (may idle-park). Otherwise end the dedicated Client as before.
@@ -217,6 +243,7 @@ function bindPortForwardChannels({
               socket.end();
               return;
             }
+            trackTunnelPipe(tunnelState, socket, stream);
             socket.pipe(stream).pipe(socket);
             socket.on("error", (e) => console.warn("[PortForward] Socket error:", e.message));
             stream.on("error", (e) => console.warn("[PortForward] Stream error:", e.message));
@@ -278,6 +305,7 @@ function bindPortForwardChannels({
         const socket = net.connect(remotePort, remoteHost || "127.0.0.1", () => {
           stream.pipe(socket).pipe(stream);
         });
+        trackTunnelPipe(tunnelState, socket, stream);
         socket.on("error", (e) => {
           console.warn("[PortForward] Local socket error:", e.message);
           stream.end();
@@ -383,6 +411,7 @@ function bindPortForwardChannels({
                 reply[3] = 0x01;
                 reply.writeUInt16BE(0, 8);
                 socket.write(reply);
+                trackTunnelPipe(tunnelState, socket, stream);
                 socket.pipe(stream).pipe(socket);
                 socket.on("error", () => stream.end());
                 stream.on("error", () => socket.end());
@@ -476,6 +505,9 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
   tunnel.cancelled = true;
   tunnel.cleanupInProgress = true;
   keyboardInteractiveHandler.cancelRequestsForSession(tunnelId, "tunnel-stopped");
+  // Destroy accepted sockets/streams so traffic cannot outlive the tunnel on a
+  // shared transport held by another session or long idle park.
+  cleanup("active forwarded pipes", () => destroyTunnelPipes(tunnel));
   if (tunnel.server) {
     if (cleanup('server', () => tunnel.server.close())) tunnel.server = null;
   }

@@ -74,8 +74,11 @@ function fingerprintProxy(proxy) {
   const host = proxy.host || proxy.hostname || proxy.server || "";
   const port = proxy.port || "";
   const user = proxy.username || proxy.user || "";
-  if (!type && !host && !port) return "-";
-  return `${type}:${host}:${port}:${user}`;
+  // Command/ProxyCommand proxies often have empty host/port — include the
+  // command string so edits invalidate warm-transport reuse.
+  const command = proxy.command || proxy.proxyCommand || proxy.cmd || "";
+  if (!type && !host && !port && !command) return "-";
+  return `${type}:${host}:${port}:${user}:${command}`;
 }
 
 function fingerprintJumpHosts(jumpHosts) {
@@ -228,6 +231,11 @@ function endTransport(transport, reason = "end") {
 
 function scheduleIdleEnd(transport) {
   clearIdleTimer(transport);
+  // Never park a dead socket — last lease release can race the remote close.
+  if (!isTransportSocketHealthy(transport)) {
+    endTransport(transport, "unhealthy-last-lease");
+    return { ended: true, idle: false };
+  }
   const ttl = Number.isFinite(transport.idleTtlMs) ? transport.idleTtlMs : defaultIdleTtlMs;
 
   transport.state = "idle";
