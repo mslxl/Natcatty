@@ -326,15 +326,32 @@ function bindPortForwardChannels({
   registerTransport = false,
 }) {
   return new Promise((resolve, reject) => {
+    let settled = false;
     const fail = (err) => {
-      sendStatus?.("error", err?.message || String(err));
+      const message = err?.message || String(err);
+      sendStatus?.("error", message);
+      // Post-bind listener errors: start promise may already be resolved, so
+      // always demote the tunnel so restart cannot reuse a zombie "active" entry.
+      try { destroyTunnelPipes(tunnelState); } catch { /* ignore */ }
+      if (tunnelState.server) {
+        try { tunnelState.server.close(); } catch { /* ignore */ }
+        tunnelState.server = null;
+      }
       if (releaseOnError) {
         releaseTunnelSsh(tunnelState);
       } else if (!tunnelState.sshTransportManaged) {
         try { conn.end(); } catch { /* ignore */ }
         cleanupChainConnections(chainConnections);
       }
-      reject(err);
+      tunnelState.status = "error";
+      tunnelState.error = message;
+      if (shouldFinalizeTunnelClose(tunnelState)) {
+        portForwardingTunnels.delete(tunnelId);
+      }
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
     };
 
     if (type === "local") {
@@ -371,6 +388,7 @@ function bindPortForwardChannels({
           if (isTunnelCancelled(tunnelState)) {
             try { server.close(); } catch { /* ignore */ }
             try { destroyTunnelPipes(tunnelState); } catch { /* ignore */ }
+            settled = true;
             resolve({ tunnelId, success: false, cancelled: true });
             return;
           }
@@ -386,6 +404,7 @@ function bindPortForwardChannels({
           }
           portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus?.("active");
+          settled = true;
           resolve({ tunnelId, success: true });
         } catch (regErr) {
           try { server.close(); } catch { /* ignore */ }
@@ -458,6 +477,7 @@ function bindPortForwardChannels({
               // Cancel path may already have awaited unforward via cancelTunnel;
               // only unforward again if stop did not clear the pending bind.
               if (tunnelState._remoteUnforwardDone) {
+                settled = true;
                 resolve({ tunnelId, success: false, cancelled: true });
                 return;
               }
@@ -476,6 +496,7 @@ function bindPortForwardChannels({
                 tunnelState.conn = null;
                 tunnelState.connRef = null;
               }
+              settled = true;
               resolve({ tunnelId, success: false, cancelled: true });
               return;
             }
@@ -491,6 +512,7 @@ function bindPortForwardChannels({
             }
             portForwardingTunnels.set(tunnelId, tunnelState);
             sendStatus?.("active");
+            settled = true;
             resolve({ tunnelId, success: true });
           } catch (regErr) {
             try { conn.removeListener("tcp connection", onTcpConnection); } catch { /* ignore */ }
@@ -589,6 +611,7 @@ function bindPortForwardChannels({
           if (isTunnelCancelled(tunnelState)) {
             try { server.close(); } catch { /* ignore */ }
             try { destroyTunnelPipes(tunnelState); } catch { /* ignore */ }
+            settled = true;
             resolve({ tunnelId, success: false, cancelled: true });
             return;
           }
@@ -604,6 +627,7 @@ function bindPortForwardChannels({
           }
           portForwardingTunnels.set(tunnelId, tunnelState);
           sendStatus?.("active");
+          settled = true;
           resolve({ tunnelId, success: true });
         } catch (regErr) {
           try { server.close(); } catch { /* ignore */ }
