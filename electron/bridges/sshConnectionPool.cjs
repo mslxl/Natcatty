@@ -620,8 +620,9 @@ function createConnectionRef(session, conn, chainConnections) {
   borrowTransport(transport, {
     kind: LEASE_KINDS.shell,
     holder: session,
-    leaseId: session?.id ? `shell:${session.id}` : undefined,
-    meta: { source: "createConnectionRef" },
+    // Unique per connection generation: same sessionId can reconnect while an
+    // old lease is still draining (same-session reconnect path).
+    meta: { source: "createConnectionRef", sessionId: session?.id || null },
   });
 
   return transport;
@@ -639,12 +640,6 @@ function acquireConnectionRef(session, connRef) {
   const kind = session?.__sshLeaseKind && LEASE_KINDS[session.__sshLeaseKind]
     ? session.__sshLeaseKind
     : LEASE_KINDS.shell;
-  // Prefer stable lease ids when session/sftp ids exist.
-  let leaseId;
-  if (session?.id && kind === LEASE_KINDS.shell) leaseId = `shell:${session.id}`;
-  else if (session?.id && kind === LEASE_KINDS.sftp) leaseId = `sftp:${session.id}`;
-  else if (session?.id && kind === LEASE_KINDS.transfer) leaseId = `transfer:${session.id}`;
-  else if (session?.id && kind === LEASE_KINDS.forward) leaseId = `forward:${session.id}`;
 
   // If this holder already has a lease on this transport, no-op (idempotent).
   if (session?._sshTransportLeaseId && connRef.leases?.has(session._sshTransportLeaseId)) {
@@ -654,8 +649,9 @@ function acquireConnectionRef(session, connRef) {
   borrowTransport(connRef, {
     kind,
     holder: session,
-    leaseId,
-    meta: { source: "acquireConnectionRef" },
+    // Always allocate a unique lease id — stable session/sftp ids can collide
+    // across reconnect generations while old leases drain.
+    meta: { source: "acquireConnectionRef", holderId: session?.id || null },
   });
 }
 

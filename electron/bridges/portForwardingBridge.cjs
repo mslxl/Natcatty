@@ -28,6 +28,7 @@ const {
   createTransport,
   borrowTransport,
   returnTransport,
+  discardTransport,
   findTransportByEndpoint,
   LEASE_KINDS,
 } = require("./sshConnectionPool.cjs");
@@ -588,12 +589,26 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
       });
     } catch (unfwdErr) {
       const message = unfwdErr instanceof Error ? unfwdErr.message : String(unfwdErr);
-      // Timeout on a dead shared transport is best-effort: continue releasing
-      // the lease so stop cannot hang forever.
-      if (!/timed out/i.test(message)) {
-        errors.push(`remote forward listen: ${message}`);
+      // Unconfirmed unforward on a half-open shared transport is unsafe to park
+      // (listen may still be exposed). Discard the transport instead of only
+      // returning the lease, then continue local cleanup.
+      if (/timed out/i.test(message)) {
+        console.warn(`[PortForward] ${message} for tunnel ${tunnelId}; discarding transport`);
+        try {
+          const transport = tunnel.connRef || null;
+          if (transport && typeof discardTransport === "function") {
+            discardTransport(transport, "unforward-timeout");
+          } else if (tunnel.conn) {
+            try { tunnel.conn.end(); } catch { /* ignore */ }
+          }
+          tunnel.sshTransportManaged = false;
+          tunnel.conn = null;
+          tunnel.connRef = null;
+        } catch {
+          /* ignore discard errors */
+        }
       } else {
-        console.warn(`[PortForward] ${message} for tunnel ${tunnelId}; continuing cleanup`);
+        errors.push(`remote forward listen: ${message}`);
       }
     }
   }
