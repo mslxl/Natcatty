@@ -183,15 +183,23 @@ function sameEndpoint(a, b) {
 
 /**
  * True when a requested open can reuse an existing transport/session endpoint.
- * Agent forwarding is asymmetric: needing ForwardAgent rejects a parked conn
- * that never enabled it, but SFTP/PF (no agentForwarding) may still reuse a
- * terminal transport that has ForwardAgent on.
+ *
+ * @param {object} requested
+ * @param {object} existing
+ * @param {"shell"|"channel"} [kind="channel"]
+ *   - shell: exact agentForwarding match. Disabling ForwardAgent must not reattach
+ *     to a warm conn that still exposes the local agent to the remote host.
+ *   - channel: asymmetric (SFTP/PF). May reuse a ForwardAgent-enabled terminal
+ *     transport; cannot use a nofwd transport when the request needs ForwardAgent.
  */
-function endpointAllowsReuse(requested, existing) {
+function endpointAllowsReuse(requested, existing, kind = "channel") {
   if (!sameEndpoint(requested, existing)) return false;
   const req = normalizeEndpoint(requested);
   const have = normalizeEndpoint(existing);
   if (!req || !have) return false;
+  if (kind === "shell") {
+    return req.agentForwarding === have.agentForwarding;
+  }
   if (req.agentForwarding && !have.agentForwarding) return false;
   return true;
 }
@@ -525,9 +533,14 @@ function findTransportById(id) {
 /**
  * Find a healthy live or idle transport for an endpoint.
  * Prefers live transports with fewer leases, then idle.
- * Respects asymmetric agentForwarding compatibility via endpointAllowsReuse.
+ *
+ * @param {object} endpoint
+ * @param {{ kind?: "shell"|"channel" }} [opts]
+ *   kind defaults to "channel" (SFTP/PF asymmetric agentForwarding). Shell
+ *   open paths must pass kind: "shell" for exact ForwardAgent policy match.
  */
-function findTransportByEndpoint(endpoint) {
+function findTransportByEndpoint(endpoint, opts = {}) {
+  const kind = opts?.kind === "shell" ? "shell" : "channel";
   const key = buildEndpointKey(endpoint);
   if (!key) return null;
   const ids = transportIdsByEndpoint.get(key);
@@ -549,8 +562,8 @@ function findTransportByEndpoint(endpoint) {
       continue;
     }
     if (transport.state !== "live" && transport.state !== "idle") continue;
-    // Same route key can still fail agent-forwarding policy (asymmetric).
-    if (endpoint && transport.endpoint && !endpointAllowsReuse(endpoint, transport.endpoint)) {
+    // Same route key can still fail agent-forwarding policy.
+    if (endpoint && transport.endpoint && !endpointAllowsReuse(endpoint, transport.endpoint, kind)) {
       continue;
     }
     candidates.push(transport);
@@ -759,8 +772,8 @@ function findReusableSession(sessions, sourceSessionId, requestedTarget) {
     const ep = source._reuseEndpoint || source.connRef.endpoint;
     // No recorded endpoint -> can't prove it's the same target, so don't reuse.
     if (!ep) return null;
-    // requested first: needs agentForwarding => existing must have it.
-    if (!endpointAllowsReuse(requestedTarget, ep)) return null;
+    // Shell reuse always requires exact ForwardAgent policy match.
+    if (!endpointAllowsReuse(requestedTarget, ep, "shell")) return null;
   }
 
   return source;
@@ -769,11 +782,13 @@ function findReusableSession(sessions, sourceSessionId, requestedTarget) {
 /**
  * Resolve a transport for channel reuse: prefer an explicit source session,
  * otherwise any healthy transport for the endpoint (including idle park).
+ * @param {{ sessions?: Map, sourceSessionId?: string, endpoint?: object, kind?: "shell"|"channel" }} opts
  */
 function resolveTransportForReuse({
   sessions,
   sourceSessionId,
   endpoint,
+  kind = "channel",
 } = {}) {
   if (sourceSessionId && sessions) {
     const source = findReusableSession(
@@ -782,11 +797,14 @@ function resolveTransportForReuse({
       endpoint || undefined,
     );
     if (source?.connRef && isTransportSocketHealthy(source.connRef)) {
-      return source.connRef;
+      // findReusableSession already enforced shell agent-forwarding policy.
+      if (kind === "shell" || !endpoint || endpointAllowsReuse(endpoint, source._reuseEndpoint || source.connRef.endpoint, kind)) {
+        return source.connRef;
+      }
     }
   }
   if (endpoint) {
-    return findTransportByEndpoint(endpoint);
+    return findTransportByEndpoint(endpoint, { kind });
   }
   return null;
 }

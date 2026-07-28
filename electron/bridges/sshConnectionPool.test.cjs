@@ -287,23 +287,33 @@ test("buildEndpointKey scopes vault hostId so different profiles never share", (
   );
 });
 
-test("endpointAllowsReuse is asymmetric for agentForwarding", () => {
+test("endpointAllowsReuse: shell exact vs channel asymmetric for agentForwarding", () => {
   const base = { hostname: "a.example", username: "root", port: 22 };
-  // Same route without ForwardAgent policy either way.
-  assert.equal(endpointAllowsReuse(base, base), true);
-  // Request needs ForwardAgent, existing never enabled it -> reject.
+  // Channel (default): request needs ForwardAgent, existing never enabled it -> reject.
   assert.equal(
     endpointAllowsReuse({ ...base, agentForwarding: true }, { ...base, agentForwarding: false }),
     false,
   );
-  // Request does not need ForwardAgent; existing with it is fine (SFTP/PF reuse).
+  // Channel: request does not need ForwardAgent; existing with it is fine (SFTP/PF).
   assert.equal(
     endpointAllowsReuse({ ...base, agentForwarding: false }, { ...base, agentForwarding: true }),
     true,
   );
-  // Both want ForwardAgent.
+  // Shell: disabling ForwardAgent must not reattach to a warm agent-forward conn.
   assert.equal(
-    endpointAllowsReuse({ ...base, agentForwarding: true }, { ...base, agentForwarding: true }),
+    endpointAllowsReuse(
+      { ...base, agentForwarding: false },
+      { ...base, agentForwarding: true },
+      "shell",
+    ),
+    false,
+  );
+  assert.equal(
+    endpointAllowsReuse(
+      { ...base, agentForwarding: true },
+      { ...base, agentForwarding: true },
+      "shell",
+    ),
     true,
   );
   // agentForwarding does not change the shared endpoint key (park index stays stable).
@@ -313,24 +323,35 @@ test("endpointAllowsReuse is asymmetric for agentForwarding", () => {
   );
 });
 
-test("findTransportByEndpoint refuses nofwd transport when request needs ForwardAgent", () => {
+test("findTransportByEndpoint shell kind refuses mismatched agentForwarding", () => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   const holder = { id: "s1" };
-  const nofwd = createTransport({
+  const withFwd = createTransport({
     conn: makeConn(),
-    endpoint: { hostname: "fwd.example", username: "root", agentForwarding: false },
+    endpoint: { hostname: "fwd.example", username: "root", agentForwarding: true },
   });
-  borrowTransport(nofwd, { kind: "shell", holder, leaseId: "shell:s1" });
+  borrowTransport(withFwd, { kind: "shell", holder, leaseId: "shell:s1" });
   returnTransport(holder); // park idle forever
 
+  // Shell open after user disables ForwardAgent must not reuse.
   assert.equal(
-    findTransportByEndpoint({ hostname: "fwd.example", username: "root", agentForwarding: true }),
+    findTransportByEndpoint(
+      { hostname: "fwd.example", username: "root", agentForwarding: false },
+      { kind: "shell" },
+    ),
     null,
   );
+  // SFTP/PF channel reuse may still borrow the ForwardAgent transport.
   assert.ok(
     findTransportByEndpoint({ hostname: "fwd.example", username: "root", agentForwarding: false }),
   );
-  discardTransport(nofwd);
+  assert.ok(
+    findTransportByEndpoint(
+      { hostname: "fwd.example", username: "root", agentForwarding: true },
+      { kind: "shell" },
+    ),
+  );
+  discardTransport(withFwd);
 });
 
 test("last return parks with positive TTL then ends when timer fires", () => {

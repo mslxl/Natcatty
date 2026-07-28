@@ -900,7 +900,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // Idle-park / endpoint reuse: after the last tab returns its lease the
       // transport may still be warm. Open a new shell channel without re-auth.
       if (!options.x11Forwarding && typeof findTransportByEndpoint === "function") {
-        const parked = findTransportByEndpoint(reuseEndpoint);
+        // Shell park reuse requires exact agentForwarding match so disabling
+        // ForwardAgent cannot reattach to a warm conn that still exposes the agent.
+        const parked = findTransportByEndpoint(reuseEndpoint, { kind: "shell" });
         if (parked?.conn && (parked.state === "live" || parked.state === "idle")) {
           try {
             log("reusing parked or shared transport for new shell channel", {
