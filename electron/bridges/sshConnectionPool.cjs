@@ -444,6 +444,40 @@ function createTransport({
 }
 
 /**
+ * Upgrade pre-registry `{ count, conn, chainConnections }` descriptors that
+ * tests (and any stale in-memory sessions) may still pass to acquire/borrow.
+ * Mutates in place so existing session.connRef identity is preserved.
+ */
+function ensureTransportShape(transport) {
+  if (!transport || typeof transport !== "object") return transport;
+  if (!(transport.leases instanceof Map)) {
+    transport.leases = new Map();
+  }
+  if (!transport.id) transport.id = randomUUID();
+  if (!transport.state) {
+    transport.state = transport.count > 0 ? "live" : "idle";
+  }
+  if (!Number.isFinite(transport.count)) {
+    transport.count = transport.leases.size;
+  }
+  if (!Array.isArray(transport.chainConnections)) {
+    transport.chainConnections = [];
+  }
+  if (!Number.isFinite(transport.idleTtlMs)) {
+    transport.idleTtlMs = defaultIdleTtlMs;
+  }
+  if (transport.endpoint && !transport.endpointKey) {
+    transport.endpointKey = buildEndpointKey(transport.endpoint);
+  }
+  // Index legacy descriptors so findTransportByEndpoint can see them.
+  if (transport.id && !transportsById.has(transport.id)) {
+    transportsById.set(transport.id, transport);
+    attachEndpointIndex(transport);
+  }
+  return transport;
+}
+
+/**
  * Borrow a lease on a transport. Wakes idle park if needed.
  *
  * @param {object} transport
@@ -453,6 +487,7 @@ function borrowTransport(transport, options = {}) {
   if (!transport || transport.state === "dead" || transport.state === "closing") {
     throw new Error("Cannot borrow a closed SSH transport");
   }
+  ensureTransportShape(transport);
   if (!isTransportSocketHealthy(transport)) {
     endTransport(transport, "unhealthy");
     throw new Error("SSH transport socket is not healthy");

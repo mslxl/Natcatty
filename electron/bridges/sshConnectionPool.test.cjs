@@ -639,6 +639,24 @@ test("createConnectionRef indexes endpoint from session._reuseEndpoint including
   );
 });
 
+test("acquireConnectionRef upgrades legacy connRef descriptors without leases Map", () => {
+  const conn = makeConn();
+  const legacy = {
+    count: 1,
+    conn,
+    chainConnections: [],
+  };
+  const session = { id: "legacy-share", conn: null, stream: {} };
+  // Must not throw on transport.leases.has when leases is missing.
+  acquireConnectionRef(session, legacy);
+  assert.ok(legacy.leases instanceof Map);
+  assert.equal(legacy.leases.size, 1);
+  assert.equal(legacy.count, 1);
+  assert.equal(session.connRef, legacy);
+  assert.ok(session._sshTransportLeaseId);
+  discardTransport(legacy);
+});
+
 test("transferConnectionRef rebinds a lease without changing count", () => {
   const timers = useShortTtlTimers(1);
   const conn = makeConn();
