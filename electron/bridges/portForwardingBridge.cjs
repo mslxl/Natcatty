@@ -75,7 +75,7 @@ function normalizeRemoteAddress(value) {
  */
 function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus) {
   if (!conn || !tunnelState) return;
-  const onTransportGone = (reason) => {
+  const onTransportGone = (reason, { discard = false } = {}) => {
     const tunnel = portForwardingTunnels.get(tunnelId) || tunnelState;
     if (!tunnel || tunnel.cancelled || tunnel._sharedLifecycleSettled) return;
     tunnel._sharedLifecycleSettled = true;
@@ -90,12 +90,21 @@ function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus)
       tunnel.server = null;
     }
     if (tunnel.sshTransportManaged) {
-      try { returnTransport(tunnel); } catch { /* ignore */ }
+      try {
+        // Errors mean the shared conn may be half-dead; discard so later
+        // terminal/SFTP/PF work does not park and reuse a broken socket.
+        if (discard && typeof discardTransport === "function") {
+          discardTransport(tunnel.connRef || tunnel, "shared-transport-error");
+        } else {
+          returnTransport(tunnel);
+        }
+      } catch { /* ignore */ }
       tunnel.sshTransportManaged = false;
     }
     tunnel.conn = null;
+    tunnel.connRef = null;
     if (shouldFinalizeTunnelClose(tunnel)) {
-      sendStatus?.("inactive");
+      sendStatus?.(discard ? "error" : "inactive", discard ? "shared transport error" : null);
       portForwardingTunnels.delete(tunnelId);
     }
   };
@@ -105,7 +114,7 @@ function attachSharedTransportLifecycle(tunnelId, tunnelState, conn, sendStatus)
   const onClose = () => onTransportGone("closed");
   const onError = (err) => {
     console.warn(`[PortForward] Shared transport error for ${tunnelId}:`, err?.message || err);
-    onTransportGone("error");
+    onTransportGone("error", { discard: true });
   };
   tunnelState._sharedOnClose = onClose;
   tunnelState._sharedOnError = onError;
@@ -422,7 +431,18 @@ function bindPortForwardChannels({
         });
       };
 
+      // Record remote bind target *before* forwardIn so cancel-during-listen can
+      // always unforward or discard — localPort is not only set on success.
+      tunnelState.type = "remote";
+      tunnelState.bindAddress = bindAddress;
+      tunnelState.localPort = localPort;
+      tunnelState.remoteHost = remoteHost;
+      tunnelState.remotePort = remotePort;
+      tunnelState.pendingRemoteForward = true;
+      tunnelState.conn = conn;
+
       conn.forwardIn(bindAddress, localPort, (err) => {
+        tunnelState.pendingRemoteForward = false;
         if (err) {
           console.error(`[PortForward] Remote forward error:`, err.message);
           fail(err);
@@ -435,6 +455,12 @@ function bindPortForwardChannels({
         void (async () => {
           try {
             if (isTunnelCancelled(tunnelState)) {
+              // Cancel path may already have awaited unforward via cancelTunnel;
+              // only unforward again if stop did not clear the pending bind.
+              if (tunnelState._remoteUnforwardDone) {
+                resolve({ tunnelId, success: false, cancelled: true });
+                return;
+              }
               const transport = tunnelState.connRef || null;
               const unfwd = await unforwardRemoteListen(
                 conn,
@@ -442,6 +468,7 @@ function bindPortForwardChannels({
                 localPort,
                 transport,
               );
+              tunnelState._remoteUnforwardDone = true;
               if (unfwd.discarded || unfwd.timedOut) {
                 // Transport already discarded; drop local refs so release does
                 // not try to park a dead shared conn.
@@ -452,13 +479,7 @@ function bindPortForwardChannels({
               resolve({ tunnelId, success: false, cancelled: true });
               return;
             }
-            tunnelState.type = "remote";
-            tunnelState.conn = conn;
             tunnelState.server = null;
-            tunnelState.bindAddress = bindAddress;
-            tunnelState.localPort = localPort;
-            tunnelState.remoteHost = remoteHost;
-            tunnelState.remotePort = remotePort;
             tunnelState.tcpConnectionHandler = onTcpConnection;
             tunnelState.chainConnections = chainConnections;
             tunnelState.status = "active";
@@ -480,6 +501,7 @@ function bindPortForwardChannels({
               localPort,
               transport,
             );
+            tunnelState._remoteUnforwardDone = true;
             if (unfwd.discarded || unfwd.timedOut) {
               tunnelState.sshTransportManaged = false;
               tunnelState.conn = null;
@@ -668,12 +690,15 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
     });
   }
   // Remote forwards leave a server-side listen until unforwardIn succeeds.
-  // Await the callback (with a timeout) so half-open sockets cannot hang stop.
+  // Also cover cancel-during-forwardIn: bind target is recorded before the
+  // ssh2 callback so we never skip unforward just because status was still
+  // "connecting".
   if (
-    tunnel.type === "remote"
+    (tunnel.type === "remote" || tunnel.pendingRemoteForward)
     && tunnel.conn
     && typeof tunnel.conn.unforwardIn === "function"
     && Number.isFinite(tunnel.localPort)
+    && !tunnel._remoteUnforwardDone
   ) {
     const bind = tunnel.bindAddress || "127.0.0.1";
     const port = tunnel.localPort;
@@ -683,6 +708,8 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
       port,
       tunnel.connRef || null,
     );
+    tunnel._remoteUnforwardDone = true;
+    tunnel.pendingRemoteForward = false;
     if (unfwd.discarded || unfwd.timedOut) {
       // Transport already discarded inside the helper; clear local refs so
       // releaseTunnelSsh does not try to park a dead shared conn.
@@ -695,6 +722,19 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
       // Still record the failure for the caller; remote listen state is unclean.
       errors.push(`remote forward listen: ${message}`);
     }
+  } else if (tunnel.pendingRemoteForward && tunnel.sshTransportManaged) {
+    // Pending remote bind without a known port (should not happen after the
+    // pre-record above) — discard rather than park an uncertain listen.
+    try {
+      const transport = tunnel.connRef || null;
+      if (transport && typeof discardTransport === "function") {
+        discardTransport(transport, "pending-remote-forward-cancel");
+      }
+      tunnel.sshTransportManaged = false;
+      tunnel.conn = null;
+      tunnel.connRef = null;
+    } catch { /* ignore */ }
+    tunnel.pendingRemoteForward = false;
   }
   if (errors.length > 0) {
     const error = errors.join('; ');

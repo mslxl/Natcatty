@@ -274,7 +274,14 @@ function endTransport(transport, reason = "end") {
   return true;
 }
 
-function scheduleIdleEnd(transport) {
+/**
+ * Park a transport until TTL elapses (or forever when TTL is 0).
+ * @param {object} transport
+ * @param {{ preserveIdleSince?: boolean }} [opts]
+ *   preserveIdleSince: when rescheduling after a settings change, keep the
+ *   original idle start so remaining lifetime is not extended.
+ */
+function scheduleIdleEnd(transport, opts = {}) {
   clearIdleTimer(transport);
   // Never park a dead socket — last lease release can race the remote close.
   if (!isTransportSocketHealthy(transport)) {
@@ -282,9 +289,12 @@ function scheduleIdleEnd(transport) {
     return { ended: true, idle: false };
   }
   const ttl = Number.isFinite(transport.idleTtlMs) ? transport.idleTtlMs : defaultIdleTtlMs;
+  const now = nowFn();
 
   transport.state = "idle";
-  transport.idleSince = nowFn();
+  if (!opts.preserveIdleSince || !Number.isFinite(transport.idleSince)) {
+    transport.idleSince = now;
+  }
 
   // 0 (or negative/non-finite): park until quit/discard — matches settings
   // "Until app quit" and OpenSSH ControlPersist yes.
@@ -293,12 +303,18 @@ function scheduleIdleEnd(transport) {
     return { ended: false, idle: true };
   }
 
+  const elapsed = Math.max(0, now - transport.idleSince);
+  const remaining = Math.max(0, ttl - elapsed);
   transport.idleDeadlineAt = transport.idleSince + ttl;
+  if (remaining === 0) {
+    endTransport(transport, "idle-ttl");
+    return { ended: true, idle: false };
+  }
   transport.idleTimer = timerApi.setTimeout(() => {
     transport.idleTimer = null;
     if (transport.state !== "idle" || transport.leases.size > 0) return;
     endTransport(transport, "idle-ttl");
-  }, ttl);
+  }, remaining);
 
   return { ended: false, idle: true };
 }
@@ -598,13 +614,17 @@ function getTransportStats() {
 
 function setDefaultTransportIdleTtlMs(ms) {
   if (!Number.isFinite(ms) || ms < 0) return defaultIdleTtlMs;
+  // Renderer re-sends the current TTL on every window mount; skip when
+  // unchanged so idle deadlines are not repeatedly extended.
+  if (ms === defaultIdleTtlMs) return defaultIdleTtlMs;
   defaultIdleTtlMs = ms;
   // Reschedule already-idle transports so a settings change takes effect without
-  // waiting for a new borrow/return cycle.
+  // waiting for a new borrow/return cycle. Preserve idleSince so remaining
+  // lifetime is based on when the transport actually became idle.
   for (const transport of transportsById.values()) {
     transport.idleTtlMs = defaultIdleTtlMs;
     if (transport.state === "idle" && transport.leases.size === 0) {
-      scheduleIdleEnd(transport);
+      scheduleIdleEnd(transport, { preserveIdleSince: true });
     }
   }
   return defaultIdleTtlMs;
