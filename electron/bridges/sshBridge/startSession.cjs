@@ -299,6 +299,14 @@ printf '%s\n' '${scanCompleteMarker}'`;
           // match a different route to the same final host.
           jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
           proxy: options.proxy || null,
+          // Auth/security knobs so key rotation / MFA / host-key verify changes
+          // invalidate parked transports for the same hostId.
+          authType: options.authType || options.authMethod || '',
+          keyId: options.keyId || options.identityId || '',
+          certificate: options.certificate || '',
+          requiresMfa: !!options.requiresMfa,
+          verifyHostKeys: options.verifyHostKeys,
+          useSshAgent: options.useSshAgent,
         },
         tcpLatencyDirect:
           !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
@@ -853,6 +861,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
         username: options.username || "root",
         jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
         proxy: options.proxy || null,
+        authType: options.authType || options.authMethod || "",
+        keyId: options.keyId || options.identityId || "",
+        certificate: options.certificate || "",
+        requiresMfa: !!options.requiresMfa,
+        verifyHostKeys: options.verifyHostKeys,
+        useSshAgent: options.useSshAgent,
       };
 
       if (options.sourceSessionId && !options.x11Forwarding) {

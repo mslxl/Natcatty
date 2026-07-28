@@ -97,6 +97,20 @@ function fingerprintJumpHosts(jumpHosts) {
   }).join(">");
 }
 
+function fingerprintAuth(endpoint) {
+  if (!endpoint || typeof endpoint !== "object") return "-";
+  if (endpoint.authFingerprint) return String(endpoint.authFingerprint);
+  // Invalidate parked reuse when auth material or host-key policy changes for
+  // the same hostId/route (key rotation, MFA toggle, verifyHostKeys, etc.).
+  const authType = endpoint.authType || endpoint.authMethod || "";
+  const keyId = endpoint.keyId || endpoint.identityId || "";
+  const cert = endpoint.certificate ? "cert" : "nocert";
+  const mfa = endpoint.requiresMfa ? "mfa" : "nomfa";
+  const verify = endpoint.verifyHostKeys === false ? "noverify" : "verify";
+  const agent = endpoint.useSshAgent === false ? "noagent" : (endpoint.useSshAgent ? "agent" : "agentauto");
+  return [authType, keyId, cert, mfa, verify, agent].join(":");
+}
+
 function normalizeEndpoint(endpoint) {
   if (!endpoint || typeof endpoint !== "object") return null;
   const hostname = String(endpoint.hostname || "").trim();
@@ -120,6 +134,7 @@ function normalizeEndpoint(endpoint) {
     proxyFingerprint: endpoint.proxyFingerprint
       ? String(endpoint.proxyFingerprint)
       : fingerprintProxy(endpoint.proxy),
+    authFingerprint: fingerprintAuth(endpoint),
   };
 }
 
@@ -129,6 +144,7 @@ function buildEndpointKey(endpoint) {
   const sudo = ep.sftpSudo ? "sudo" : "nosudo";
   const jump = ep.jumpFingerprint || "-";
   const proxy = ep.proxyFingerprint || "-";
+  const auth = ep.authFingerprint || "-";
   const profile = ep.hostId || "-";
   return [
     profile,
@@ -139,6 +155,7 @@ function buildEndpointKey(endpoint) {
     sudo,
     jump,
     proxy,
+    auth,
   ].join("|");
 }
 
@@ -148,7 +165,7 @@ function sameEndpoint(a, b) {
   if (!left || !right) return false;
   // When both sides carry a vault hostId they must match so different profiles
   // never cross-reuse. If either omits hostId (legacy / explicit session-id
-  // reuse), fall back to hostname:port:user:jump:proxy comparison only.
+  // reuse), fall back to route comparison only.
   if (left.hostId && right.hostId && left.hostId !== right.hostId) return false;
   return left.hostname === right.hostname
     && left.port === right.port
@@ -156,7 +173,8 @@ function sameEndpoint(a, b) {
     && left.protocol === right.protocol
     && left.sftpSudo === right.sftpSudo
     && left.jumpFingerprint === right.jumpFingerprint
-    && left.proxyFingerprint === right.proxyFingerprint;
+    && left.proxyFingerprint === right.proxyFingerprint
+    && left.authFingerprint === right.authFingerprint;
 }
 
 function isTransportSocketHealthy(transport) {
@@ -607,6 +625,13 @@ function createConnectionRef(session, conn, chainConnections) {
       jumpHosts: session._reuseEndpoint.jumpHosts,
       proxy: session._reuseEndpoint.proxy,
       proxyFingerprint: session._reuseEndpoint.proxyFingerprint,
+      authType: session._reuseEndpoint.authType,
+      keyId: session._reuseEndpoint.keyId,
+      certificate: session._reuseEndpoint.certificate,
+      requiresMfa: session._reuseEndpoint.requiresMfa,
+      verifyHostKeys: session._reuseEndpoint.verifyHostKeys,
+      useSshAgent: session._reuseEndpoint.useSshAgent,
+      authFingerprint: session._reuseEndpoint.authFingerprint,
     }
     : null;
 

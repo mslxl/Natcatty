@@ -36,7 +36,10 @@ const {
 // Active port forwarding tunnels
 const portForwardingTunnels = new Map();
 
-function buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts, proxy }) {
+function buildPortForwardEndpoint({
+  hostId, hostname, port, username, jumpHosts, proxy,
+  authType, authMethod, keyId, identityId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
+}) {
   return {
     hostId: hostId || "",
     hostname,
@@ -44,6 +47,12 @@ function buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts,
     username: username || "root",
     jumpHosts: Array.isArray(jumpHosts) ? jumpHosts : [],
     proxy: proxy || null,
+    authType: authType || authMethod || "",
+    keyId: keyId || identityId || "",
+    certificate: certificate || "",
+    requiresMfa: !!requiresMfa,
+    verifyHostKeys,
+    useSshAgent,
   };
 }
 
@@ -746,7 +755,10 @@ async function startPortForward(event, payload) {
   let chainConnections = [];
   let connectionSocket = null;
   const passphraseAbortController = new AbortController();
-  const reuseEndpoint = buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts, proxy });
+  const reuseEndpoint = buildPortForwardEndpoint({
+    hostId, hostname, port, username, jumpHosts, proxy,
+    authType: authMethod, keyId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
+  });
 
   // Prefer an already-authenticated transport (live terminal or idle park).
   const existingTransport = findTransportByEndpoint(reuseEndpoint);

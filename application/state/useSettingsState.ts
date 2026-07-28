@@ -36,6 +36,7 @@ import {
   STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY,
   STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
+  STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
   STORAGE_KEY_EDITOR_WORD_WRAP,
   STORAGE_KEY_SESSION_LOGS_ENABLED,
@@ -326,9 +327,21 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   // top-level files queue against each other and against folder children.
 
   const [sshTransportIdleTtlMs, setSshTransportIdleTtlMsState] = useState<number>(() => {
-    return resolveSshTransportIdleTtlMs(() =>
-      localStorageAdapter.readNumber(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS),
-    );
+    // Prefer the new SSH transport key; if absent (upgrade), migrate the legacy
+    // transfer-pool keep-alive value so users do not silently fall back to 5m.
+    return resolveSshTransportIdleTtlMs(() => {
+      const next = localStorageAdapter.readNumber(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS);
+      if (next != null) return next;
+      const legacy = localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS);
+      if (legacy != null) {
+        try {
+          localStorageAdapter.writeString(STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS, String(legacy));
+        } catch {
+          // ignore migration write failures
+        }
+      }
+      return legacy;
+    });
   });
 
   // Editor Settings

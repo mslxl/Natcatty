@@ -822,6 +822,12 @@ function createOpenConnectionApi(ctx) {
           username: options.username || "root",
           jumpHosts: options.jumpHosts,
           proxy: options.proxy || null,
+          authType: options.authType || options.authMethod || "",
+          keyId: options.keyId || options.identityId || "",
+          certificate: options.certificate || "",
+          requiresMfa: !!options.requiresMfa,
+          verifyHostKeys: options.verifyHostKeys,
+          useSshAgent: options.useSshAgent,
         };
         const transport = findTransportByEndpoint(endpoint);
         if (transport?.conn) {
@@ -1323,6 +1329,12 @@ function createOpenConnectionApi(ctx) {
               username: options.username || "root",
               jumpHosts: options.jumpHosts,
               proxy: options.proxy || null,
+              authType: options.authType || options.authMethod || "",
+              keyId: options.keyId || options.identityId || "",
+              certificate: options.certificate || "",
+              requiresMfa: !!options.requiresMfa,
+              verifyHostKeys: options.verifyHostKeys,
+              useSshAgent: options.useSshAgent,
             };
             const refHolder = {
               id: connId,
