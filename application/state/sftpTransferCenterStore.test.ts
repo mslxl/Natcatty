@@ -2835,3 +2835,49 @@ test("storage exhaustion cannot escape into the renderer update path", () => {
   });
   assert.equal(store.getSnapshot().tasks[0]?.id, "quota-safe");
 });
+
+test("panel completed sticks while directory walk is still in flight (issue #2568)", async (t) => {
+  const {
+    registerTransferWalk,
+    unregisterTransferWalk,
+    resetTransferWalkRegistryForTests,
+  } = await import("./sftp/transferWalkRegistry");
+  const { resetTransferControlEpochsForTests } = await import("./sftp/transferControlEpoch");
+  resetTransferWalkRegistryForTests();
+  resetTransferControlEpochsForTests();
+  registerTransferWalk("dir-done");
+  t.after(() => {
+    unregisterTransferWalk("dir-done");
+    resetTransferWalkRegistryForTests();
+    resetTransferControlEpochsForTests();
+  });
+
+  const store = createSftpTransferCenterStore();
+  // Directory parent at 100% file-count progress, still transferring in the store
+  // while processTransferBody paints completed before runWalk unregisters.
+  store.publishOwner("panel-a", [{
+    ...makeTask("dir-done", "transferring"),
+    fileName: "folder",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 3,
+    transferredBytes: 3,
+    lifecycleEpoch: undefined,
+  }]);
+
+  store.publishOwner("panel-a", [{
+    ...makeTask("dir-done", "completed"),
+    fileName: "folder",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 3,
+    transferredBytes: 3,
+    endTime: Date.now(),
+    speed: 0,
+    lifecycleEpoch: undefined,
+  }]);
+
+  const row = store.getSnapshot().tasks.find((task) => task.id === "dir-done");
+  assert.equal(row?.status, "completed");
+  assert.equal(store.getSnapshot().activeCount, 0);
+});

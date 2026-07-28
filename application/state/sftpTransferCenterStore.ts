@@ -1135,10 +1135,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         );
         // Runtime writer is authority for live walks: panel cannot roll lifecycle
         // back past the process-global control epoch (soft pause/resume).
+        // Terminal panel statuses must stick: processTransfer paints completed
+        // via setTransfers before runWalk unregisters, and a default control
+        // epoch (0) is always > panel undefined (-1). Rejecting completed here
+        // left directory rows at 100% forever as "transferring" (#2568).
         const runtimeOwned = isTransferWalkInFlight(task.id)
           || (task.parentTaskId ? isTransferWalkInFlight(task.parentTaskId) : false)
           || isTransferOrRootPauseLatched(task.parentTaskId ?? task.id, task.id);
-        if (runtimeOwned) {
+        if (runtimeOwned && !TERMINAL_OWNER_STATUSES.has(replacement.status)) {
           const storeEpoch = Number.isFinite(task.lifecycleEpoch)
             ? (task.lifecycleEpoch as number)
             : getTransferControlEpoch(task.parentTaskId ?? task.id);
