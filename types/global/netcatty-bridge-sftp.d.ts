@@ -65,8 +65,6 @@ declare global {
       error?: string;
     }>;
 
-    onTransferProgress?(transferId: string, cb: (progress: SftpTransferProgress) => void): () => void;
-
     // Streaming transfer with real progress and cancellation
     startStreamTransfer?(
       options: {
@@ -95,17 +93,7 @@ declare global {
         globalConcurrency?: number;
         /** When true, skip main-process admission (renderer already scheduled). */
         skipAdmission?: boolean;
-      },
-      onProgress?: (transferred: number, total: number, speed: number, checkpoint?: {
-        phase?: import('../../domain/models/sftp').TransferPhase;
-        resumeStage?: 'direct' | 'download' | 'upload';
-        checkpointBytes?: number;
-        downloadCheckpointBytes?: number;
-        uploadCheckpointBytes?: number;
-        sourceFingerprint?: string;
-      }) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void
+      }
     ): Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
     pauseTransfer?(transferId: string): Promise<{
       success: boolean;
@@ -154,6 +142,8 @@ declare global {
       targetHostId?: string;
       lifecycleEpoch?: number;
       lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
+      resumable?: boolean;
+      pauseUnavailableReason?: string;
     }) => void): () => void;
 
     // Local filesystem operations

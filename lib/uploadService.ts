@@ -28,7 +28,7 @@ export type {
   UploadResult,
   UploadTaskInfo,
 } from "./uploadService.types";
-import type { UploadBridge, UploadCallbacks, UploadConfig, UploadResult } from "./uploadService.types";
+import type { UploadBridge, UploadCallbacks, UploadConfig, UploadProgress, UploadResult } from "./uploadService.types";
 
 // ============================================================================
 // Helper Functions
@@ -698,14 +698,12 @@ async function uploadEntries(
     };
 
     if (localFilePath && bridge.startStreamTransfer && (!isLocal ? !!sftpId : true)) {
-        const onProgress = makeOnProgress();
         const fileTransferId = standaloneTransferId;
         controller?.addActiveTransfer(fileTransferId);
 
         let streamResult: { transferId: string; totalBytes?: number; error?: string; cancelled?: boolean } | undefined;
         try {
-          streamResult = await bridge.startStreamTransfer(
-            {
+          streamResult = await bridge.startStreamTransfer({
               transferId: fileTransferId,
               sourcePath: localFilePath,
               targetPath: entryTargetPath,
@@ -716,11 +714,7 @@ async function uploadEntries(
               totalBytes: fileTotalBytes,
               resumable: true,
               checkpointBytes: 0,
-            },
-            onProgress,
-            undefined,
-            undefined
-          );
+            });
         } finally {
           controller?.removeActiveTransfer(fileTransferId);
         }

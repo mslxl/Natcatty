@@ -25,10 +25,7 @@ const displayDataListeners = new Map();
 const terminalDataBacklog = createTerminalDataBacklog();
 const closedTerminalDataSessions = new Set();
 const exitListeners = new Map();
-const transferProgressListeners = new Map();
-const transferCompleteListeners = new Map();
-const transferErrorListeners = new Map();
-const transferCancelledListeners = new Map();
+const globalSftpTransferListeners = new Set();
 const chainProgressListeners = new Map();
 const connectionReuseFallbackListeners = new Set();
 const zmodemListeners = new Map();
@@ -62,11 +59,14 @@ const terminalPopupConfigState = {
   listeners: new Set(),
 };
 
-function cleanupTransferListeners(transferId) {
-  transferProgressListeners.delete(transferId);
-  transferCompleteListeners.delete(transferId);
-  transferErrorListeners.delete(transferId);
-  transferCancelledListeners.delete(transferId);
+function dispatchGlobalSftpTransferEvent(payload) {
+  for (const cb of globalSftpTransferListeners) {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Global SFTP transfer callback failed", err);
+    }
+  }
 }
 
 // ── MCP marker filter with per-session line buffering ──
@@ -670,57 +670,8 @@ ipcRenderer.on("netcatty:update:needs-save", () => {
   });
 });
 
-// Transfer progress events
-ipcRenderer.on("netcatty:transfer:progress", (_event, payload) => {
-  const cb = transferProgressListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb(payload.transferred, payload.totalBytes, payload.speed, {
-        phase: payload.phase,
-        resumeStage: payload.resumeStage,
-        checkpointBytes: payload.checkpointBytes,
-        downloadCheckpointBytes: payload.downloadCheckpointBytes,
-        uploadCheckpointBytes: payload.uploadCheckpointBytes,
-        sourceFingerprint: payload.sourceFingerprint,
-        resumable: payload.resumable,
-        pauseUnavailableReason: payload.pauseUnavailableReason,
-      });
-    } catch (err) {
-      console.error("Transfer progress callback failed", err);
-    }
-  }
-});
-
-ipcRenderer.on("netcatty:transfer:complete", (_event, payload) => {
-  const cb = transferCompleteListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb();
-    } catch (err) {
-      console.error("Transfer complete callback failed", err);
-    }
-  }
-  cleanupTransferListeners(payload.transferId);
-});
-
-ipcRenderer.on("netcatty:transfer:error", (_event, payload) => {
-  const cb = transferErrorListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb(payload.error);
-    } catch (err) {
-      console.error("Transfer error callback failed", err);
-    }
-  }
-  cleanupTransferListeners(payload.transferId);
-});
-
-ipcRenderer.on("netcatty:transfer:cancelled", (_event, payload) => {
-  const cb = transferCancelledListeners.get(payload.transferId);
-  if (cb) {
-    try { cb(); } catch { }
-  }
-  cleanupTransferListeners(payload.transferId);
+ipcRenderer.on("netcatty:sftp:global-transfer", (_event, payload) => {
+  dispatchGlobalSftpTransferEvent(payload);
 });
 
 // Upload with progress listeners
@@ -880,10 +831,7 @@ const api = createPreloadApi({
   displayDataListeners,
   exitListeners,
   closedTerminalDataSessions,
-  transferProgressListeners,
-  transferCompleteListeners,
-  transferErrorListeners,
-  transferCancelledListeners,
+  globalSftpTransferListeners,
   chainProgressListeners,
   connectionReuseFallbackListeners,
   zmodemListeners,
@@ -926,7 +874,6 @@ const api = createPreloadApi({
   portForwardStatusListeners,
   fileWatchSyncedListeners,
   fileWatchErrorListeners,
-  cleanupTransferListeners,
   get _lastTrayMenuData() { return _lastTrayMenuData; },
   set _lastTrayMenuData(value) { _lastTrayMenuData = value; },
 });

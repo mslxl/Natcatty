@@ -471,6 +471,37 @@ test("background agent transfers are recorded and retained in history", () => {
   assert.equal(store.getSnapshot().tasks[0]?.endTime, now);
 });
 
+test("unified started event creates a correctly described download and progress preserves pause capability", () => {
+  const store = createSftpTransferCenterStore();
+  store.ingestBackgroundEvent({
+    type: "started",
+    transferId: "download-described",
+    direction: "download",
+    fileName: "report.bin",
+    sourcePath: "/remote/report.bin",
+    targetPath: "/tmp/report.bin",
+    totalBytes: 100,
+    resumable: true,
+  });
+  store.ingestBackgroundEvent({
+    type: "progress",
+    transferId: "download-described",
+    transferred: 10,
+    totalBytes: 100,
+    speed: 5,
+    resumable: false,
+    pauseUnavailableReason: "SCP transfers cannot be paused",
+  });
+
+  const task = store.getTask("download-described");
+  assert.equal(task?.direction, "download");
+  assert.equal(task?.sourcePath, "/remote/report.bin");
+  assert.equal(task?.targetPath, "/tmp/report.bin");
+  assert.equal(task?.fileName, "report.bin");
+  assert.equal(task?.resumable, false);
+  assert.equal(task?.pauseUnavailableReason, "SCP transfers cannot be paused");
+});
+
 test("main-process progress ingest keeps panel-owned transfers moving without React callbacks", () => {
   const store = createSftpTransferCenterStore();
   // Simulate panel publish then unmount: task remains in store, no live controller needed.
@@ -534,7 +565,7 @@ test("duplicate main-process progress does not notify or persist a second render
   assert.equal(writes, 1);
 });
 
-test("owner publish after global progress does not repeat the same renderer update", () => {
+test("owner publish after global progress does not repeat the same renderer update", async () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("panel-a", [{
     ...makeTask("global-first"),
@@ -543,8 +574,10 @@ test("owner publish after global progress does not repeat the same renderer upda
     speed: 0,
     lifecycleEpoch: 0,
   }]);
-  let notifications = 0;
-  store.subscribe(() => { notifications += 1; });
+  let lifecycleNotifications = 0;
+  let progressNotifications = 0;
+  store.subscribe(() => { lifecycleNotifications += 1; });
+  store.subscribeProgress(() => { progressNotifications += 1; });
 
   store.ingestBackgroundEvent({
     type: "progress",
@@ -555,6 +588,8 @@ test("owner publish after global progress does not repeat the same renderer upda
     lifecycleEpoch: 0,
     lifecycleState: "transferring",
   });
+  // Progress paints are coalesced on the progress channel; a matching panel
+  // publish must not force a lifecycle React update.
   store.publishOwner("panel-a", [{
     ...makeTask("global-first"),
     transferredBytes: 5,
@@ -563,7 +598,10 @@ test("owner publish after global progress does not repeat the same renderer upda
     lifecycleEpoch: 0,
   }]);
 
-  assert.equal(notifications, 1);
+  // Progress channel is rAF-coalesced (setTimeout 16ms in Node tests).
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(lifecycleNotifications, 0);
+  assert.equal(progressNotifications, 1);
 });
 
 test("newer backend lifecycle progress reopens a paused row", () => {
@@ -2379,6 +2417,78 @@ test("patchTask freezes transferredBytes while paused or latched (runtime soft-d
   assert.equal(store.getSnapshot().tasks[0]?.status, "transferring");
   assert.equal(store.getSnapshot().tasks[0]?.transferredBytes, 1500);
   resetTransferPauseLatchesForTests();
+});
+
+test("unchanged sourceFingerprint on progress patches coalesces listener notifies", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("panel-a", [{
+    ...makeTask("fp-live", "transferring"),
+    transferredBytes: 0,
+    totalBytes: 100 * 1024 * 1024,
+    sourceFingerprint: "sha256:stable",
+  }]);
+  let progressNotifies = 0;
+  let lifecycleNotifies = 0;
+  store.subscribe(() => {
+    lifecycleNotifies += 1;
+  });
+  store.subscribeProgress(() => {
+    progressNotifies += 1;
+  });
+  for (let i = 1; i <= 80; i += 1) {
+    store.patchTask("fp-live", {
+      transferredBytes: i * 1024 * 1024,
+      speed: 40 * 1024 * 1024,
+      status: "transferring",
+      // Progress IPC always re-sends the current fingerprint once computed.
+      sourceFingerprint: "sha256:stable",
+    });
+  }
+  // All 80 patches are sync; rAF/setTimeout(16) should collapse to one notify.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(lifecycleNotifies, 0, "pure progress must not wake lifecycle subscribers");
+  assert.ok(
+    progressNotifies <= 3,
+    `unchanged fingerprint must not bypass progress coalesce (notifies=${progressNotifies})`,
+  );
+  assert.equal(store.getSnapshot().tasks[0]?.transferredBytes, 80 * 1024 * 1024);
+
+  progressNotifies = 0;
+  lifecycleNotifies = 0;
+  store.patchTask("fp-live", {
+    transferredBytes: 81 * 1024 * 1024,
+    sourceFingerprint: "sha256:rotated",
+  });
+  assert.equal(lifecycleNotifies, 1, "a real fingerprint change still notifies lifecycle immediately");
+  assert.equal(store.getSnapshot().tasks[0]?.sourceFingerprint, "sha256:rotated");
+});
+
+test("pure progress patches do not synchronously persist transfer history", async () => {
+  let writes = 0;
+  const store = createSftpTransferCenterStore({
+    read: () => null,
+    write: () => { writes += 1; },
+  });
+  store.publishOwner("panel-a", [{
+    ...makeTask("no-progress-persist", "transferring"),
+    transferredBytes: 0,
+    totalBytes: 100,
+  }]);
+  const writesAfterPublish = writes;
+  for (let i = 1; i <= 40; i += 1) {
+    store.patchTask("no-progress-persist", {
+      transferredBytes: i,
+      speed: 10,
+      status: "transferring",
+    });
+  }
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  assert.equal(
+    writes,
+    writesAfterPublish,
+    "byte progress must not touch localStorage (spinner hitch / CPU)",
+  );
+  assert.equal(store.getSnapshot().tasks[0]?.transferredBytes, 40);
 });
 
 test("publishOwner while latched does not raise transferredBytes after pause", async () => {

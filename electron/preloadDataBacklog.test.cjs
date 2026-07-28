@@ -95,24 +95,26 @@ function loadPreloadWithFakeElectron() {
   };
 }
 
-test("stream transfer progress preserves the verification phase", async (t) => {
+test("stream transfer progress enters the unified transfer event interface", async (t) => {
   const preload = loadPreloadWithFakeElectron();
   t.after(preload.cleanup);
-  let observedCapability;
+  const observed = [];
+  const unsubscribe = preload.api.onGlobalSftpTransferEvent((event) => observed.push(event));
+  t.after(unsubscribe);
 
-  await preload.api.startStreamTransfer(
-    {
-      transferId: "verify-phase",
-      sourcePath: "/source.bin",
-      targetPath: "/target.bin",
-      sourceType: "local",
-      targetType: "local",
-    },
-    (_transferred, _total, _speed, capability) => {
-      observedCapability = capability;
-    },
-  );
-  preload.handlers.get("netcatty:transfer:progress")?.({}, {
+  await preload.api.startStreamTransfer({
+    transferId: "verify-phase",
+    sourcePath: "/source.bin",
+    targetPath: "/target.bin",
+    sourceType: "local",
+    targetType: "local",
+  });
+  assert.equal(preload.handlers.has("netcatty:transfer:progress"), false);
+  assert.equal(preload.handlers.has("netcatty:transfer:complete"), false);
+  assert.equal(preload.handlers.has("netcatty:transfer:error"), false);
+  assert.equal(preload.handlers.has("netcatty:transfer:cancelled"), false);
+  preload.handlers.get("netcatty:sftp:global-transfer")?.({}, {
+    type: "progress",
     transferId: "verify-phase",
     transferred: 10,
     totalBytes: 20,
@@ -120,7 +122,14 @@ test("stream transfer progress preserves the verification phase", async (t) => {
     phase: "verifying",
   });
 
-  assert.equal(observedCapability?.phase, "verifying");
+  assert.deepEqual(observed, [{
+    type: "progress",
+    transferId: "verify-phase",
+    transferred: 10,
+    totalBytes: 20,
+    speed: 5,
+    phase: "verifying",
+  }]);
 });
 
 test("stores early terminal data until the listener is registered", () => {

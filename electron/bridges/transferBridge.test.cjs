@@ -1760,7 +1760,7 @@ test("local resume verification reports progress and destroys both readers on ca
   });
 
   assert.equal(await waitUntil(() => verificationStreams.length === 2), true);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 220));
   for (const stream of verificationStreams) stream.write(Buffer.alloc(256 * 1024, 31));
   assert.equal(await waitUntil(() => sender.sent.some((entry) => (
     entry.channel === "netcatty:transfer:progress"
@@ -1828,7 +1828,7 @@ test("remote resume verification destroys the SFTP reader on cancellation", asyn
   });
 
   assert.equal(await waitUntil(() => verificationStream !== undefined), true);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 220));
   verificationStream.write(Buffer.alloc(256 * 1024, 47));
   assert.equal(await waitUntil(() => sender.sent.some((entry) => (
     entry.channel === "netcatty:transfer:progress"

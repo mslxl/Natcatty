@@ -160,20 +160,6 @@ export const useSftpBackend = () => {
     return bridge.openPath(path);
   }, []);
 
-  const startStreamTransfer = useCallback(
-    async (
-      options: Parameters<NonNullable<NetcattyBridge["startStreamTransfer"]>>[0],
-      onProgress?: (transferred: number, total: number, speed: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void,
-    ) => {
-      const bridge = netcattyBridge.get();
-      if (!bridge?.startStreamTransfer) return undefined;
-      return bridge.startStreamTransfer(options, onProgress, onComplete, onError);
-    },
-    [],
-  );
-
   const cancelTransfer = useCallback(async (transferId: string) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.cancelTransfer) return undefined;
@@ -196,12 +182,6 @@ export const useSftpBackend = () => {
     const bridge = netcattyBridge.get();
     if (!bridge?.cancelSftpUpload) return undefined;
     return bridge.cancelSftpUpload(transferId);
-  }, []);
-
-  const onTransferProgress = useCallback((transferId: string, cb: Parameters<NonNullable<NetcattyBridge["onTransferProgress"]>>[1]) => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.onTransferProgress) return undefined;
-    return bridge.onTransferProgress(transferId, cb);
   }, []);
 
   const selectApplication = useCallback(async () => {
@@ -293,12 +273,10 @@ export const useSftpBackend = () => {
     listDrives,
     openPath,
 
-    startStreamTransfer,
     cancelTransfer,
     pauseTransfer,
     resumeTransfer,
     cancelSftpUpload,
-    onTransferProgress,
     selectApplication,
     showSaveDialog,
     selectDirectory,

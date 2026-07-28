@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 
 import type { FileConflictAction, TransferTask } from "../../domain/models";
 import {
@@ -77,7 +77,16 @@ export type DedicatedTransferResumeHandler = (task: TransferTask) => Promise<{
 
 export interface SftpTransferCenterStore {
   subscribe(listener: Listener): () => void;
+  /**
+   * Progress-only fanout. Pure byte ticks must not wake lifecycle subscribers
+   * (owner foreign-id sync, badge, closed popover getters).
+   */
+  subscribeProgress(listener: Listener): () => void;
   getSnapshot(): SftpTransferCenterSnapshot;
+  /** Stable identity when badge counts are unchanged (avoids TopTabs thrash). */
+  getBadgeSnapshot(): { count: number; hasAttention: boolean };
+  /** Single task row — same object identity until that row is patched. */
+  getTask(taskId: string): TransferTask | undefined;
   getOwnerTasks(ownerId: string): TransferTask[];
   publishOwner(ownerId: string, tasks: readonly TransferTask[]): void;
   registerOwner(ownerId: string, controls: SftpTransferOwnerControls): () => void;
@@ -121,6 +130,8 @@ export interface SftpTransferCenterStore {
     phase?: TransferTask["phase"];
     lifecycleEpoch?: number;
     lifecycleState?: "queued" | "pausing" | "paused" | "transferring";
+    resumable?: boolean;
+    pauseUnavailableReason?: string;
   }): void;
   resolveConflict(taskId: string, action: FileConflictAction, applyToAll?: boolean): Promise<void>;
 }
@@ -144,6 +155,21 @@ function buildSnapshot(tasks: readonly TransferTask[]): SftpTransferCenterSnapsh
     activeCount: topLevelTasks.filter((task) => task.status === "transferring" || task.status === "pausing").length,
     queuedCount: topLevelTasks.filter((task) => task.status === "pending" || task.status === "queued").length,
     attentionCount: topLevelTasks.filter((task) => task.status === "attention" || task.status === "failed").length,
+  };
+}
+
+function buildBadgeSnapshot(tasks: readonly TransferTask[]): { count: number; hasAttention: boolean } {
+  const topLevelTasks = tasks.filter((task) => !task.parentTaskId);
+  return {
+    count: topLevelTasks.filter((task) =>
+      ["pending", "queued", "transferring", "pausing", "paused", "interrupted"].includes(task.status)
+    ).length,
+    hasAttention: topLevelTasks.some((task) =>
+      task.status === "attention"
+      || task.status === "failed"
+      || task.status === "interrupted"
+      || task.reconnectRequired === true
+    ),
   };
 }
 
@@ -324,10 +350,25 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
   const restored = deserializeSftpTransferCenter(persistence?.read() ?? null);
   let tasks = pruneSftpTransferHistory(restored.tasks);
   let snapshot = tasks.length > 0 ? buildSnapshot(tasks) : EMPTY_SNAPSHOT;
+  let badgeSnapshot = buildBadgeSnapshot(tasks);
+  let snapshotDirty = false;
   const listeners = new Set<Listener>();
+  const progressListeners = new Set<Listener>();
+  const refreshBadgeSnapshot = () => {
+    const next = buildBadgeSnapshot(tasks);
+    if (
+      next.count === badgeSnapshot.count
+      && next.hasAttention === badgeSnapshot.hasAttention
+    ) {
+      return;
+    }
+    badgeSnapshot = next;
+  };
   const controllers = new Map<string, SftpTransferOwnerControls>();
   const lastPublishedByOwner = new Map<string, ReadonlyMap<string, TransferTask>>();
   const PERSIST_INTERVAL_MS = 250;
+  // Progress ticks must not touch localStorage — see emitProgress. Pause/complete
+  // and other lifecycle emits still persist immediately via emit()/persist(true).
   let lastPersistedAt = 0;
   let persistenceDirty = false;
   let persistenceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -449,7 +490,44 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     }
     return false;
   };
+  // Progress ticks used to call every listener synchronously (React transfer
+  // center + any owner sync). Coalesce to one paint per animation frame so we
+  // do not add another 200–500ms of lag on top of the main-process throttle
+  // (stacked delays made the bar jump and feel frozen).
+  let progressNotifyHandle: ReturnType<typeof setTimeout> | number | null = null;
+  const cancelScheduledProgressNotify = () => {
+    if (progressNotifyHandle == null) return;
+    if (typeof globalThis.cancelAnimationFrame === "function" && typeof progressNotifyHandle === "number") {
+      globalThis.cancelAnimationFrame(progressNotifyHandle);
+    } else {
+      clearTimeout(progressNotifyHandle as ReturnType<typeof setTimeout>);
+    }
+    progressNotifyHandle = null;
+  };
+  const scheduleProgressNotify = () => {
+    if (progressNotifyHandle != null) return;
+    const run = () => {
+      progressNotifyHandle = null;
+      for (const listener of progressListeners) listener();
+    };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+      progressNotifyHandle = globalThis.requestAnimationFrame(run);
+    } else {
+      progressNotifyHandle = setTimeout(run, 16);
+    }
+  };
+
+  const ensureSnapshot = () => {
+    if (!snapshotDirty) return snapshot;
+    snapshot = buildSnapshot(tasks);
+    snapshotDirty = false;
+    return snapshot;
+  };
+
   const emit = (persistImmediately = false) => {
+    // Lifecycle / structural changes must paint immediately. Drop any pending
+    // progress coalesce so we do not notify twice with a stale intermediate snapshot.
+    cancelScheduledProgressNotify();
     const shouldPersistImmediately = persistImmediately
       || hasCriticalPersistenceChange(snapshot.tasks, tasks);
     const beforePrune = tasks;
@@ -466,14 +544,38 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         else if (retained.size !== published.size) lastPublishedByOwner.set(ownerId, retained);
       }
     }
+    snapshotDirty = false;
     snapshot = buildSnapshot(tasks);
+    refreshBadgeSnapshot();
     persist(shouldPersistImmediately);
     notifyDedicatedResumeWaiters();
     for (const listener of listeners) listener();
+    for (const listener of progressListeners) listener();
     // Notify only after the store snapshot is final. Owners must remove the
     // whole group atomically; per-row callbacks republish the remaining stale
-    // rows and recursively re-enter pruning for large completed directories.
+    // rows and recursively re-enter pruning for large completed epochs.
     notifyOwnersOfPrunedTasks(removed);
+  };
+
+  /** Progress-only: mutate tasks, defer snapshot rebuild, wake progress UI only. */
+  const emitProgress = (persistImmediately = false) => {
+    snapshotDirty = true;
+    // Never JSON.stringify/localStorage on the pure-progress path. Sync storage
+    // on large directory histories freezes CSS spinners every few seconds.
+    // Pause / complete / fingerprint / lifecycle still force persist below.
+    if (persistImmediately) {
+      snapshotDirty = false;
+      snapshot = buildSnapshot(tasks);
+      refreshBadgeSnapshot();
+      persist(true);
+      notifyDedicatedResumeWaiters();
+      cancelScheduledProgressNotify();
+      for (const listener of listeners) listener();
+      for (const listener of progressListeners) listener();
+      return;
+    }
+    notifyDedicatedResumeWaiters();
+    scheduleProgressNotify();
   };
   const findOwner = (taskId: string) => tasks.find((task) => task.id === taskId)?.ownerId;
   const findAdopter = (task: TransferTask) => [...controllers.entries()].find(([, controls]) => (
@@ -1069,7 +1171,15 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    getSnapshot: () => snapshot,
+    subscribeProgress(listener) {
+      progressListeners.add(listener);
+      return () => progressListeners.delete(listener);
+    },
+    getSnapshot: () => ensureSnapshot(),
+    getBadgeSnapshot: () => badgeSnapshot,
+    getTask(taskId) {
+      return tasks.find((task) => task.id === taskId);
+    },
     getOwnerTasks(ownerId) {
       return tasks.filter((task) => task.ownerId === ownerId).map((task) => ({ ...task }));
     },
@@ -1222,9 +1332,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       notifyDedicatedResumeWaiters();
     },
     patchTask(taskId, updates) {
+      const index = tasks.findIndex((task) => task.id === taskId);
+      if (index < 0) return;
+      const task = tasks[index];
       let changed = false;
-      tasks = tasks.map((task) => {
-        if (task.id !== taskId) return task;
+      const applyOne = () => {
         // Never resurrect a user-stopped row via dedicated-resume progress.
         if (task.status === "cancelled") return task;
         // Dedicated-owned rows may move pending → transferring while a panel
@@ -1314,8 +1426,22 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           merged.checkpointBytes = Math.max(task.checkpointBytes ?? 0, Number(updates.checkpointBytes) || 0);
         }
         return merged;
-      });
-      if (changed) emit(updates.sourceFingerprint !== undefined);
+      };
+      const nextTask = applyOne();
+      if (!changed || nextTask === task) return;
+      const next = tasks.slice();
+      next[index] = nextTask;
+      tasks = next;
+      if (changed) {
+        // Only a *new* fingerprint must flush + persist immediately. Progress
+        // IPC always echoes the current fingerprint once computed; treating
+        // "key present" as critical disabled emitProgress coalesce and re-pegged
+        // the renderer (~1 notify per tick during resumable uploads).
+        const fingerprintChanged = updates.sourceFingerprint !== undefined
+          && updates.sourceFingerprint !== task.sourceFingerprint;
+        if (fingerprintChanged) emit(true);
+        else emitProgress(false);
+      }
     },
     upsertTasks(incoming) {
       if (incoming.length === 0) return;
@@ -1675,6 +1801,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           && sameOptional(event.sourceFingerprint, existing.sourceFingerprint)
           && sameOptional(event.phase, existing.phase)
           && sameOptional(event.lifecycleEpoch, existing.lifecycleEpoch)
+          && sameOptional(event.resumable, existing.resumable)
+          && sameOptional(event.pauseUnavailableReason, existing.pauseUnavailableReason)
         ) {
           return;
         }
@@ -1705,7 +1833,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           isDirectory: event.isDirectory ?? false,
           origin: "agent",
           background: true,
-          resumable: true,
+          resumable: event.resumable ?? true,
+          pauseUnavailableReason: event.pauseUnavailableReason,
           controlKind: event.controlKind,
           phase: event.phase,
           lifecycleEpoch: event.lifecycleEpoch,
@@ -1730,6 +1859,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             isDirectory: event.isDirectory ?? task.isDirectory,
             controlKind: event.controlKind ?? task.controlKind,
             phase: event.phase ?? task.phase,
+            resumable: event.resumable ?? task.resumable,
+            pauseUnavailableReason: event.pauseUnavailableReason ?? task.pauseUnavailableReason,
             lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
               ? event.lifecycleEpoch
               : task.lifecycleEpoch,
@@ -1802,6 +1933,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
               downloadCheckpointBytes: event.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
               uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
               sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
+              resumable: event.resumable ?? task.resumable,
+              pauseUnavailableReason: event.pauseUnavailableReason ?? task.pauseUnavailableReason,
               updatedAt: Date.now(),
               lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
                 ? event.lifecycleEpoch
@@ -1826,6 +1959,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             uploadCheckpointBytes: event.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
             sourceFingerprint: event.sourceFingerprint ?? task.sourceFingerprint,
             phase: event.phase ?? task.phase,
+            resumable: event.resumable ?? task.resumable,
+            pauseUnavailableReason: event.pauseUnavailableReason ?? task.pauseUnavailableReason,
             error: keepPaused ? task.error : undefined,
             endTime: undefined,
             updatedAt: Date.now(),
@@ -1834,6 +1969,13 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
               : task.lifecycleEpoch,
           };
         });
+        if (event.resumable === false && existing.parentTaskId) {
+          tasks = tasks.map((task) => task.id === existing.parentTaskId ? {
+            ...task,
+            resumable: false,
+            pauseUnavailableReason: event.pauseUnavailableReason ?? task.pauseUnavailableReason,
+          } : task);
+        }
       } else if (existing && (event.type === "pausing" || event.type === "paused" || event.type === "resumed")) {
         tasks = tasks.map((task) => {
           if (task.id !== event.transferId) return task;
@@ -1868,7 +2010,13 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           speed: 0,
         } : task);
       }
-      emit(persistImmediately);
+      // Progress-only ticks skip prune + coalesce listener paints; lifecycle
+      // events still take the full emit path so UI never lags on pause/cancel.
+      if (event.type === "progress" && !persistImmediately) {
+        emitProgress(false);
+      } else {
+        emit(persistImmediately);
+      }
     },
   };
 }
@@ -1887,5 +2035,29 @@ export function useSftpTransferCenter(): SftpTransferCenterSnapshot {
     sftpTransferCenterStore.subscribe,
     sftpTransferCenterStore.getSnapshot,
     sftpTransferCenterStore.getSnapshot,
+  );
+}
+
+/** Badge only — stable when counts are unchanged so TopTabs does not re-render every progress byte. */
+export function useSftpTransferCenterBadge(): { count: number; hasAttention: boolean } {
+  return useSyncExternalStore(
+    sftpTransferCenterStore.subscribe,
+    sftpTransferCenterStore.getBadgeSnapshot,
+    sftpTransferCenterStore.getBadgeSnapshot,
+  );
+}
+
+/**
+ * Live row from the transfer center store. Progress ticks patch the store without
+ * re-rendering the whole SFTP panel via setTransfersState — queue rows subscribe
+ * here so bars/spinners still move.
+ */
+export function useSftpTransferTask(taskId: string, fallback: TransferTask): TransferTask {
+  const fallbackRef = useRef(fallback);
+  fallbackRef.current = fallback;
+  return useSyncExternalStore(
+    sftpTransferCenterStore.subscribeProgress,
+    () => sftpTransferCenterStore.getTask(taskId) ?? fallbackRef.current,
+    () => fallbackRef.current,
   );
 }

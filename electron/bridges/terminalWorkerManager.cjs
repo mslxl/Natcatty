@@ -15,6 +15,19 @@ function isTerminalWorkerEnabled(options = {}) {
   return env.NETCATTY_TERMINAL_WORKER !== "0";
 }
 
+const TRANSFER_RENDERER_CHANNELS = new Set([
+  "netcatty:transfer:queued",
+  "netcatty:transfer:started",
+  "netcatty:transfer:progress",
+  "netcatty:transfer:complete",
+  "netcatty:transfer:cancelled",
+  "netcatty:transfer:error",
+]);
+
+function shouldForwardWorkerRendererEvent(channel) {
+  return !TRANSFER_RENDERER_CHANNELS.has(channel);
+}
+
 /**
  * Map worker transfer IPC onto the global transfer-center channel.
  * The utilityProcess cannot call BrowserWindow; main must fan these out.
@@ -38,6 +51,15 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       sourceFingerprint: payload.sourceFingerprint,
       lifecycleEpoch: payload.lifecycleEpoch,
       lifecycleState: payload.lifecycleState,
+      resumable: payload.resumable,
+      pauseUnavailableReason: payload.pauseUnavailableReason,
+    };
+  }
+  if (channel === "netcatty:transfer:queued" || channel === "netcatty:transfer:started") {
+    return {
+      ...payload,
+      type: channel.endsWith(":queued") ? "queued" : "started",
+      transferId,
     };
   }
   if (channel === "netcatty:transfer:complete") {
@@ -1229,6 +1251,10 @@ function createTerminalWorkerManager(options = {}) {
       // progress survives SFTP panel hide/unmount.
       fanoutGlobalTransferFromWorkerEvent(electronModule, message.channel, message.payload);
 
+      // Transfer events have one renderer-facing route: global-transfer. Do not
+      // also forward the worker's internal channel to the origin window.
+      if (!shouldForwardWorkerRendererEvent(message.channel)) return;
+
       // Prefer the currently rebound display target. Worker-captured
       // webContentsId is from session start and goes stale after attach/rebind.
       const sessionId = message.payload?.sessionId;
@@ -1849,4 +1875,5 @@ module.exports = {
   mapWorkerTransferChannelToGlobalEvent,
   fanoutGlobalTransferFromWorkerEvent,
   broadcastGlobalTransferEventOnMain,
+  shouldForwardWorkerRendererEvent,
 };

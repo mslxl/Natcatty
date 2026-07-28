@@ -498,18 +498,6 @@ async function resumeSingleFileWithDedicatedSession(
             uploadCheckpointBytes: task.uploadCheckpointBytes,
             sourceFingerprint: task.sourceFingerprint,
             skipAdmission: true,
-          }, (transferred, total, speed, checkpoint) => {
-            if (shouldAbort?.()) return;
-            onProgress?.({
-              transferred,
-              total,
-              speed,
-              checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
-              resumeStage: checkpoint?.resumeStage,
-              downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes,
-              uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
-              sourceFingerprint: checkpoint?.sourceFingerprint,
-            });
           });
 
           if (streamResult?.error) {
@@ -853,21 +841,6 @@ async function resumeDirectoryWithDedicatedSession(
                 uploadCheckpointBytes: childBase.uploadCheckpointBytes,
                 sourceFingerprint: childBase.sourceFingerprint,
                 skipAdmission: true,
-              }, (transferred, total, speed, checkpoint) => {
-                if (options?.shouldAbort?.()) return;
-                options?.onChildUpdate?.({
-                  ...childBase,
-                  status: "transferring",
-                  transferredBytes: transferred,
-                  totalBytes: total > 0 ? total : childBase.totalBytes,
-                  speed,
-                  checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
-                  resumeStage: checkpoint?.resumeStage ?? childBase.resumeStage,
-                  downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? childBase.downloadCheckpointBytes,
-                  uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? childBase.uploadCheckpointBytes,
-                  sourceFingerprint: checkpoint?.sourceFingerprint ?? childBase.sourceFingerprint,
-                });
-                bumpParentProgress(speed);
               });
 
               if (streamResult?.error || streamResult?.cancelled) {

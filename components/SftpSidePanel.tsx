@@ -198,6 +198,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     ...fileWatchHandlers,
     transferOwnerId,
     canPrepareTransferAdoption: isVisible,
+    // Drive progress React paints: false while retained-but-hidden after close.
+    surfaceVisible: isVisible,
     // A promoted editor still saves through this owner after the side panel
     // becomes hidden, so its browse channel must stay alive until the editor closes.
     interactive: isBrowseSessionInteractive({
@@ -234,7 +236,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const {
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     listSftp,
     mkdirLocal,
     deleteLocalFile,
@@ -836,7 +837,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         deleteLocalFile={deleteLocalFile}
         showSaveDialog={showSaveDialog}
         selectDirectory={selectDirectory}
-        startStreamTransfer={startStreamTransfer}
         listLocalDir={listLocalDir}
         listDrives={listDrives}
         openPath={openPath}
@@ -882,7 +882,6 @@ type SftpSidePanelInteractiveBodyProps = {
   deleteLocalFile: ReturnType<typeof useSftpBackend>["deleteLocalFile"];
   showSaveDialog: ReturnType<typeof useSftpBackend>["showSaveDialog"];
   selectDirectory: ReturnType<typeof useSftpBackend>["selectDirectory"];
-  startStreamTransfer: ReturnType<typeof useSftpBackend>["startStreamTransfer"];
   listLocalDir: ReturnType<typeof useSftpBackend>["listLocalDir"];
   listDrives: ReturnType<typeof useSftpBackend>["listDrives"];
   openPath: ReturnType<typeof useSftpBackend>["openPath"];
@@ -920,7 +919,6 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   deleteLocalFile,
   showSaveDialog,
   selectDirectory,
-  startStreamTransfer,
   listLocalDir,
   listDrives,
   openPath,
@@ -1030,7 +1028,6 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     deleteLocalFile,
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     getSftpIdForConnection: sftp.getSftpIdForConnection,
     listLocalFiles: listLocalDir,
     listDrives,

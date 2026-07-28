@@ -8,6 +8,7 @@ function createPreloadApi(ctx) {
   const terminalDataBacklog = ctx.terminalDataBacklog || null;
   const displayDataListeners = ctx.displayDataListeners || new Map();
   const closedTerminalDataSessions = ctx.closedTerminalDataSessions || null;
+  const globalSftpTransferListeners = ctx.globalSftpTransferListeners || new Set();
   // Lightweight test contexts may omit this map; default so closeSession never throws.
   if (!ctx.moshSessionReadyListeners) {
     ctx.moshSessionReadyListeners = new Map();
@@ -828,18 +829,9 @@ function createPreloadApi(ctx) {
     languageChangeListeners.add(cb);
     return () => languageChangeListeners.delete(cb);
   },
-  // Streaming transfer with real progress
-  startStreamTransfer: async (options, onProgress, onComplete, onError) => {
-    const { transferId } = options;
-    // Register callbacks
-    if (onProgress) transferProgressListeners.set(transferId, onProgress);
-    if (onComplete) transferCompleteListeners.set(transferId, onComplete);
-    if (onError) transferErrorListeners.set(transferId, onError);
-    
-    return ipcRenderer.invoke("netcatty:transfer:start", options);
-  },
+  // Transfer state is delivered only through onGlobalSftpTransferEvent.
+  startStreamTransfer: async (options) => ipcRenderer.invoke("netcatty:transfer:start", options),
   cancelTransfer: async (transferId) => {
-    cleanupTransferListeners(transferId);
     return ipcRenderer.invoke("netcatty:transfer:cancel", { transferId });
   },
   clearPendingTransferCancel: async (transferId) => {
@@ -861,9 +853,8 @@ function createPreloadApi(ctx) {
     return ipcRenderer.invoke("netcatty:transfer:cleanup", payload);
   },
   onGlobalSftpTransferEvent: (callback) => {
-    const handler = (_event, payload) => callback(payload);
-    ipcRenderer.on("netcatty:sftp:global-transfer", handler);
-    return () => ipcRenderer.removeListener("netcatty:sftp:global-transfer", handler);
+    globalSftpTransferListeners.add(callback);
+    return () => globalSftpTransferListeners.delete(callback);
   },
   sameHostCopyDirectory: async (sftpId, sourcePath, targetPath, encoding, transferId) => {
     return ipcRenderer.invoke("netcatty:transfer:same-host-copy-dir", { sftpId, sourcePath, targetPath, encoding, transferId });
@@ -1168,18 +1159,14 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:openWithSystemDefault", { filePath }),
   downloadSftpToTemp: (sftpId, remotePath, fileName, encoding) =>
     ipcRenderer.invoke("netcatty:sftp:downloadToTemp", { sftpId, remotePath, fileName, encoding }),
-  downloadSftpToTempWithProgress: (sftpId, remotePath, fileName, encoding, transferId, onProgress, onComplete, onError, onCancelled) => {
-    if (onProgress) transferProgressListeners.set(transferId, onProgress);
-    if (onComplete) transferCompleteListeners.set(transferId, onComplete);
-    if (onError) transferErrorListeners.set(transferId, onError);
-    if (onCancelled) transferCancelledListeners.set(transferId, onCancelled);
-    return ipcRenderer
-      .invoke("netcatty:sftp:downloadToTempWithProgress", { sftpId, remotePath, fileName, encoding, transferId })
-      .catch((err) => {
-        cleanupTransferListeners(transferId);
-        throw err;
-      });
-  },
+  downloadSftpToTempWithProgress: (sftpId, remotePath, fileName, encoding, transferId) =>
+    ipcRenderer.invoke("netcatty:sftp:downloadToTempWithProgress", {
+      sftpId,
+      remotePath,
+      fileName,
+      encoding,
+      transferId,
+    }),
 
   // Save dialog for file downloads
   showSaveDialog: (defaultPath, filters) =>

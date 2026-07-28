@@ -83,6 +83,8 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       };
       let pendingProgress: ProgressSample | null = null;
       let progressRaf: number | null = null;
+      // One rAF coalesce only — main process already time-throttles IPC.
+      // A second 500ms timer here made dedicated-resume bars jump.
       const applyProgress = (progress: ProgressSample) => {
         const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
         if (!current || current.status === "cancelled") return;
@@ -378,15 +380,6 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
               uploadCheckpointBytes: fromBeginning ? 0 : task.uploadCheckpointBytes,
               sourceFingerprint: fromBeginning ? undefined : task.sourceFingerprint,
               skipAdmission: true,
-            }, (transferred, totalBytes, speed, checkpoint) => {
-              sftpTransferCenterStore.ingestBackgroundEvent({
-                type: "progress",
-                transferId: task.id,
-                transferred,
-                totalBytes,
-                speed,
-                ...checkpoint,
-              });
             });
           },
         );

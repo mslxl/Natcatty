@@ -77,6 +77,11 @@ export interface FileWatchErrorEvent {
 export interface SftpStateOptions {
   transferOwnerId?: string;
   canPrepareTransferAdoption?: boolean;
+  /**
+   * When false the side panel is retained-but-hidden (closed during transfer).
+   * Progress must not force React state paints for the hidden tree.
+   */
+  surfaceVisible?: boolean;
   onFileWatchSynced?: (event: FileWatchSyncedEvent) => void;
   onFileWatchError?: (event: FileWatchErrorEvent) => void;
   useCompressedUpload?: boolean;

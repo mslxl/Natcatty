@@ -445,8 +445,7 @@ function createFileOpsApi(ctx) {
       let lastTransferredBytes = 0;
       let lastProgressSentTime = 0;
       let lastProgressSentBytes = 0;
-      const PROGRESS_THROTTLE_MS = 100;
-      const PROGRESS_THROTTLE_BYTES = 1024 * 1024;
+      const PROGRESS_THROTTLE_MS = 500;
 
       const transferControl = {
         cancelled: false,
@@ -493,12 +492,7 @@ function createFileOpsApi(ctx) {
           const totalSize = Number(total) > 0 ? Number(total) : totalBytes;
           const isComplete = transferred >= totalSize;
           const timeSinceLast = now - lastProgressSentTime;
-          const bytesSinceLast = transferred - lastProgressSentBytes;
-          if (
-            isComplete
-            || timeSinceLast >= PROGRESS_THROTTLE_MS
-            || bytesSinceLast >= PROGRESS_THROTTLE_BYTES
-          ) {
+          if (isComplete || timeSinceLast >= PROGRESS_THROTTLE_MS) {
             emitProgress(transferred, speed);
             lastProgressSentTime = now;
             lastProgressSentBytes = transferred;

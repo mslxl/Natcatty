@@ -37,7 +37,9 @@ const RESUME_RANGE_SETTLE_MS = 1500;
 /**
  * Fan transfer lifecycle to every window so the global transfer center keeps
  * updating after the originating SFTP panel is hidden or unmounted.
- * Panel-local callbacks (netcatty:transfer:progress) alone die with the panel.
+ * This is the sole renderer-facing transfer event channel.
+ *
+ * @param {object} payload
  */
 function broadcastGlobalTransferEvent(payload) {
   if (!payload || !payload.transferId) return;
@@ -65,6 +67,35 @@ function broadcastGlobalTransferEvent(payload) {
   } catch {
     // electron unavailable
   }
+}
+
+function inferTransferDirection(payload) {
+  if (payload?.sourceType === "local" && payload?.targetType === "sftp") return "upload";
+  if (payload?.sourceType === "sftp" && payload?.targetType === "local") return "download";
+  if (payload?.sourceType === "sftp" && payload?.targetType === "sftp") return "remote-to-remote";
+  return "local-copy";
+}
+
+function buildTransferLifecycleEvent(type, payload) {
+  const sourcePath = payload?.sourcePath || "";
+  const targetPath = payload?.targetPath || "";
+  return {
+    type,
+    transferId: payload?.transferId,
+    direction: inferTransferDirection(payload),
+    fileName: (targetPath || sourcePath).split(/[\\/]/).pop() || payload?.transferId,
+    sourcePath,
+    targetPath,
+    sourceHostId: payload?.sourceHostId,
+    targetHostId: payload?.targetHostId,
+    totalBytes: Math.max(0, Number(payload?.totalBytes) || 0),
+    isDirectory: payload?.isDirectory === true,
+    controlKind: "stream",
+    resumable: payload?.resumable === true,
+    lifecycleEpoch: Math.max(0, Number(payload?.lifecycleEpoch) || 0),
+    lifecycleState: type === "queued" ? "queued" : "transferring",
+    startedAt: Date.now(),
+  };
 }
 
 /**
@@ -611,17 +642,87 @@ async function inspectLocalPromotionTarget(targetPath) {
 }
 
 // ── Transfer performance tuning ──────────────────────────────────────────────
-// Progress IPC throttle: each tick fans out to renderer React + global center.
-// 100ms (~10 UI updates/s) was enough to freeze the main window during large
-// file copies; 250ms keeps the bar smooth without saturating the renderer.
-const PROGRESS_THROTTLE_MS = 250;           // Send IPC at most every 250ms
-const PROGRESS_THROTTLE_BYTES = 1024 * 1024; // Or every 1MB of progress
+// Progress IPC throttle: each tick fans out once on the global transfer channel.
+//
+// IMPORTANT: do NOT use (time OR bytes). On LAN, a bytes-OR gate fires at
+// throughput/bytesRate (e.g. 256KB → hundreds of IPC/s) and pegs the renderer
+// even when time throttle looks "reasonable". Time-primary only.
+// ~5 Hz is smooth enough for bars; do not stack another 500ms in the store.
+const PROGRESS_THROTTLE_MS = 200;
 const ISOLATED_DOWNLOAD_IDLE_TTL_MS = 5000;
 
 // Speed calculation uses strict sliding-window average:
 // speed = bytes_delta_in_window / time_delta_in_window
 const SPEED_WINDOW_MS = 3000;             // Keep 3s of samples
 const SPEED_MIN_ELAPSED_MS = 50;          // Minimum elapsed time to avoid divide-by-near-zero spikes
+
+// Throughput diagnostics (main process console). Disable with NETCATTY_TRANSFER_DIAG=0.
+// Compare wall avg MB/s vs UI window speed to tell "slow network" from "UI lie".
+const TRANSFER_DIAG_ENABLED = process.env.NETCATTY_TRANSFER_DIAG !== "0";
+const TRANSFER_DIAG_INTERVAL_MS = 5000;
+
+function formatDiagBytes(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024 * 1024) return `${(v / (1024 * 1024 * 1024)).toFixed(2)}GiB`;
+  if (v >= 1024 * 1024) return `${(v / (1024 * 1024)).toFixed(2)}MiB`;
+  if (v >= 1024) return `${(v / 1024).toFixed(1)}KiB`;
+  return `${Math.round(v)}B`;
+}
+
+function formatDiagRate(bytesPerSec) {
+  const v = Number(bytesPerSec) || 0;
+  if (v <= 0) return "0B/s";
+  if (v >= 1024 * 1024) return `${(v / (1024 * 1024)).toFixed(2)}MiB/s`;
+  if (v >= 1024) return `${(v / 1024).toFixed(1)}KiB/s`;
+  return `${Math.round(v)}B/s`;
+}
+
+function basenameForDiag(p) {
+  if (!p || typeof p !== "string") return "";
+  const parts = p.split(/[/\\]/);
+  return parts[parts.length - 1] || p;
+}
+
+/**
+ * Structured transfer diagnostics. Grep main process logs for `[transferDiag]`.
+ * Fields: event, id, strategy, phase, direction, size, transferred, windowBps, wallBps, checkpoint, resumable.
+ */
+function logTransferDiag(transfer, event, extra = {}) {
+  if (!TRANSFER_DIAG_ENABLED || !transfer) return;
+  try {
+    const startedAt = transfer.diagStartedAt || Date.now();
+    const elapsedMs = Math.max(1, Date.now() - startedAt);
+    const transferred = Number(
+      extra.transferred ?? transfer.diagLastTransferred ?? transfer.checkpointBytes ?? 0,
+    ) || 0;
+    const total = Number(extra.total ?? transfer.diagTotalBytes ?? 0) || 0;
+    const windowBps = Number(extra.windowBps ?? transfer.diagLastWindowBps ?? 0) || 0;
+    const wallBps = (transferred * 1000) / elapsedMs;
+    const payload = {
+      event,
+      id: transfer.transferId,
+      strategy: transfer.uploadStrategy || transfer.downloadStrategy || extra.strategy || null,
+      phase: transfer.phase || null,
+      direction: transfer.diagDirection || null,
+      size: total > 0 ? formatDiagBytes(total) : null,
+      transferred: formatDiagBytes(transferred),
+      pct: total > 0 ? Number(((transferred / total) * 100).toFixed(2)) : null,
+      window: formatDiagRate(windowBps),
+      wallAvg: formatDiagRate(wallBps),
+      checkpoint: formatDiagBytes(transfer.checkpointBytes || 0),
+      resumable: transfer.resumable === true,
+      file: transfer.diagFileName || null,
+      ...extra.fields,
+    };
+    // Drop nullish noise for readability.
+    for (const key of Object.keys(payload)) {
+      if (payload[key] == null) delete payload[key];
+    }
+    console.info("[transferDiag]", JSON.stringify(payload));
+  } catch {
+    // diagnostics must never break transfers
+  }
+}
 
 // Shared references
 let sftpClients = null;
@@ -1171,6 +1272,7 @@ async function uploadFile(
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
     transfer.uploadStrategy = "scp";
+    logTransferDiag(transfer, "strategy", { strategy: "scp" });
     const backend = getScpBackendForClient(client);
     let scpSourcePath = localPath;
     let digestPath = null;
@@ -1323,6 +1425,13 @@ async function uploadFile(
       let concurrentIsolatedOk = false;
       try {
         transfer.uploadStrategy = "concurrent-isolated";
+        logTransferDiag(transfer, "strategy", {
+          strategy: "concurrent-isolated",
+          fields: {
+            chunk: formatDiagBytes(TRANSFER_CHUNK_SIZE),
+            concurrency: UPLOAD_TRANSFER_CONCURRENCY,
+          },
+        });
         await uploadFileConcurrent(
           localPath,
           remotePath,
@@ -1383,6 +1492,7 @@ async function uploadFile(
       let fastPutSnapshotPath = null;
       try {
         transfer.uploadStrategy = "fastPut-isolated";
+        logTransferDiag(transfer, "strategy", { strategy: "fastPut-isolated" });
         transfer.pauseSupported = false;
         transfer.pauseUnavailableReason = "Pause is unavailable during fastPut upload";
         if (!transfer.sourceIsOwnedTemp) {
@@ -1456,6 +1566,13 @@ async function uploadFile(
     let sharedOk = false;
     try {
       transfer.uploadStrategy = "concurrent-shared";
+      logTransferDiag(transfer, "strategy", {
+        strategy: "concurrent-shared",
+        fields: {
+          chunk: formatDiagBytes(TRANSFER_CHUNK_SIZE),
+          concurrency: UPLOAD_TRANSFER_CONCURRENCY,
+        },
+      });
       transfer.pauseSupported = Boolean(transfer.resumable);
       if (transfer.resumable) transfer.pauseUnavailableReason = undefined;
       await uploadFileConcurrent(
@@ -1493,6 +1610,7 @@ async function uploadFile(
   // silently degrade to 1-in-flight put on failure).
   // Main's #2458 pause/unpipe fix still applies to download/local stream paths.
   transfer.uploadStrategy = "failed";
+  logTransferDiag(transfer, "strategy", { strategy: "failed" });
   const cause = lastPipelineError;
   const message = cause?.message
     ? `SFTP pipelined upload failed: ${cause.message}`
@@ -2581,10 +2699,13 @@ async function startTransferNow(event, payload, onProgress) {
   if (transferId && pendingCancelTransferIds.has(transferId)) {
     pendingCancelTransferIds.delete(transferId);
     sender.send?.("netcatty:transfer:cancelled", { transferId });
+    broadcastGlobalTransferEvent({ type: "cancelled", transferId, endedAt: Date.now() });
     return { transferId, error: "Transfer cancelled", cancelled: true };
   }
 
-  sender.send?.("netcatty:transfer:started", { transferId });
+  const startedEvent = buildTransferLifecycleEvent("started", payload);
+  sender.send?.("netcatty:transfer:started", startedEvent);
+  broadcastGlobalTransferEvent(startedEvent);
 
   const transfer = {
     transferId,
@@ -2619,7 +2740,31 @@ async function startTransferNow(event, payload, onProgress) {
     sourceDigestPath: null,
     sourceIsOwnedTemp: payload.sourceIsOwnedTemp === true,
     signal: null,
+    // Throughput diagnostics (see logTransferDiag).
+    diagStartedAt: Date.now(),
+    diagLastLogAt: 0,
+    diagLastTransferred: Math.max(0, Number(payload.checkpointBytes) || 0),
+    diagLastWindowBps: 0,
+    diagTotalBytes: Math.max(0, Number(totalBytes) || 0),
+    diagDirection: sourceType === "local" && targetType === "sftp"
+      ? "upload"
+      : sourceType === "sftp" && targetType === "local"
+        ? "download"
+        : sourceType === "sftp" && targetType === "sftp"
+          ? "remote-to-remote"
+          : `${sourceType}->${targetType}`,
+    diagFileName: basenameForDiag(sourcePath) || basenameForDiag(targetPath) || transferId,
   };
+  logTransferDiag(transfer, "start", {
+    total: transfer.diagTotalBytes,
+    transferred: transfer.checkpointBytes,
+    fields: {
+      sourceType,
+      targetType,
+      resumeStage: transfer.resumeStage,
+      checkpoint: formatDiagBytes(transfer.checkpointBytes),
+    },
+  });
   // Own an AbortController so cancelTransfer always stops cancelable preflight
   // work (destination hashing, probes) even when callers pass no abortSignal.
   const ownedAbort = new AbortController();
@@ -2695,16 +2840,34 @@ async function startTransferNow(event, payload, onProgress) {
     const isComplete = total > 0 && transferred >= total;
     const transferredChanged = transferred !== lastProgressSentBytes;
     const timeSinceLast = now - lastProgressSentTime;
-    const bytesSinceLast = transferred - lastProgressSentBytes;
 
     if (
-      force ||
-      isComplete ||
-      (transferredChanged &&
-        (timeSinceLast >= PROGRESS_THROTTLE_MS || bytesSinceLast >= PROGRESS_THROTTLE_BYTES))
+      force
+      || isComplete
+      || (transferredChanged && timeSinceLast >= PROGRESS_THROTTLE_MS)
     ) {
       lastProgressSentTime = now;
       lastProgressSentBytes = transferred;
+      transfer.diagLastTransferred = transferred;
+      transfer.diagLastWindowBps = speed;
+      if (total > 0) transfer.diagTotalBytes = total;
+      // Periodic wall-clock vs window speed (not every IPC tick).
+      if (
+        TRANSFER_DIAG_ENABLED
+        && (
+          force
+          || isComplete
+          || !transfer.diagLastLogAt
+          || (now - transfer.diagLastLogAt) >= TRANSFER_DIAG_INTERVAL_MS
+        )
+      ) {
+        transfer.diagLastLogAt = now;
+        logTransferDiag(transfer, isComplete ? "complete-progress" : "progress", {
+          transferred,
+          total,
+          windowBps: speed,
+        });
+      }
       const progressPayload = {
         transferId,
         transferred,
@@ -2726,7 +2889,6 @@ async function startTransferNow(event, payload, onProgress) {
           : transfer.pauseUnavailableReason,
       };
       sender.send("netcatty:transfer:progress", progressPayload);
-      // Global center must not depend on the panel still being mounted.
       broadcastGlobalTransferEvent({
         type: "progress",
         transferId,
@@ -2741,6 +2903,8 @@ async function startTransferNow(event, payload, onProgress) {
         lifecycleEpoch: transfer.lifecycleEpoch,
         lifecycleState: transfer.lifecycleState,
         phase: transfer.phase,
+        resumable: progressPayload.resumable,
+        pauseUnavailableReason: progressPayload.pauseUnavailableReason,
         sourceHostId: transfer.sourceHostId || payload?.sourceHostId,
         targetHostId: transfer.targetHostId || payload?.targetHostId,
       });
@@ -2828,7 +2992,8 @@ async function startTransferNow(event, payload, onProgress) {
             const now = Date.now();
             const elapsed = now - lastReportedAt;
             const delta = bytes - lastReportedBytes;
-            if (elapsed < PROGRESS_THROTTLE_MS && delta < PROGRESS_THROTTLE_BYTES) return;
+            // Time-primary: do not let large hash chunks force UI floods.
+            if (elapsed < PROGRESS_THROTTLE_MS) return;
             const speed = elapsed > 0 && delta > 0 ? Math.round((delta * 1000) / elapsed) : 0;
             lastReportedAt = now;
             lastReportedBytes = bytes;
@@ -2899,11 +3064,7 @@ async function startTransferNow(event, payload, onProgress) {
       const verifiedBytes = sourceBytes + stagedBytes;
       const elapsedSinceReport = now - lastReportedAt;
       const bytesSinceReport = verifiedBytes - lastReportedBytes;
-      if (
-        !force
-        && elapsedSinceReport < PROGRESS_THROTTLE_MS
-        && bytesSinceReport < PROGRESS_THROTTLE_BYTES
-      ) {
+      if (!force && elapsedSinceReport < PROGRESS_THROTTLE_MS) {
         return;
       }
       const speed = elapsedSinceReport > 0 && bytesSinceReport > 0
@@ -3552,10 +3713,27 @@ async function startTransferNow(event, payload, onProgress) {
     }
 
     sendProgress(fileSize, fileSize);
+    logTransferDiag(transfer, "done", {
+      transferred: fileSize,
+      total: fileSize,
+      windowBps: transfer.diagLastWindowBps,
+      fields: {
+        elapsedMs: Date.now() - (transfer.diagStartedAt || Date.now()),
+      },
+    });
     sendComplete();
 
     return { transferId, totalBytes: fileSize };
   } catch (err) {
+    logTransferDiag(transfer, transfer.cancelled ? "cancelled" : "error", {
+      transferred: transfer.diagLastTransferred,
+      total: transfer.diagTotalBytes,
+      windowBps: transfer.diagLastWindowBps,
+      fields: {
+        error: err?.message || String(err),
+        elapsedMs: Date.now() - (transfer.diagStartedAt || Date.now()),
+      },
+    });
     if (transfer.sourceDigestPath) {
       try { await fs.promises.rm(transfer.sourceDigestPath, { force: true }); } catch { }
       transfer.sourceDigestPath = null;
@@ -3596,6 +3774,7 @@ async function startTransferNow(event, payload, onProgress) {
       }
       cleanupTransfer();
       sender.send("netcatty:transfer:cancelled", { transferId });
+      broadcastGlobalTransferEvent({ type: "cancelled", transferId, endedAt: Date.now() });
     } else {
       if (transfer.stagedLocalPath && !transfer.resumable) {
         try { await fs.promises.rm(transfer.stagedLocalPath, { force: true }); } catch { }
@@ -3699,6 +3878,7 @@ function cancelQueuedTransfer(transferId) {
   if (queued) admittedTransferQueue.splice(queued.index, 1);
   pausedAdmittedTransfers.delete(transferId);
   job.event?.sender?.send?.("netcatty:transfer:cancelled", { transferId });
+  broadcastGlobalTransferEvent({ type: "cancelled", transferId, endedAt: Date.now() });
   job.resolve({ transferId, error: "Transfer cancelled", cancelled: true });
   return true;
 }
@@ -3710,8 +3890,10 @@ function resumeQueuedTransfer(transferId) {
   const lifecycleEpoch = Math.max(0, Number(job.payload?.lifecycleEpoch) || 0) + 1;
   job.payload.lifecycleEpoch = lifecycleEpoch;
   admittedTransferQueue.push(job);
-  job.event?.sender?.send?.("netcatty:transfer:queued", { transferId });
-  broadcastGlobalTransferEvent({ type: "queued", transferId, lifecycleEpoch, lifecycleState: "queued" });
+  const queuedEvent = buildTransferLifecycleEvent("queued", job.payload);
+  queuedEvent.lifecycleEpoch = lifecycleEpoch;
+  job.event?.sender?.send?.("netcatty:transfer:queued", queuedEvent);
+  broadcastGlobalTransferEvent(queuedEvent);
   pumpAdmittedTransfers();
   return true;
 }
@@ -3739,7 +3921,9 @@ function runAdmittedTransfer(event, payload, onProgress, runner) {
       reject,
       run: runner ?? (() => startTransferNow(event, payload, onProgress)),
     });
-    event?.sender?.send?.("netcatty:transfer:queued", { transferId: payload?.transferId });
+    const queuedEvent = buildTransferLifecycleEvent("queued", payload);
+    event?.sender?.send?.("netcatty:transfer:queued", queuedEvent);
+    broadcastGlobalTransferEvent(queuedEvent);
     pumpAdmittedTransfers();
   });
 }
@@ -4211,6 +4395,16 @@ async function sameHostCopyDirectory(event, payload) {
     }
 
     if (transfer.cancelled) throw new Error("Transfer cancelled");
+    const lifecyclePayload = {
+      ...payload,
+      sourceType: "sftp",
+      targetType: "sftp",
+      isDirectory: true,
+      resumable: false,
+    };
+    const startedEvent = buildTransferLifecycleEvent("started", lifecyclePayload);
+    event?.sender?.send?.("netcatty:transfer:started", startedEvent);
+    broadcastGlobalTransferEvent(startedEvent);
 
     // Ensure target directory itself exists (not just its parent),
     // so cp copies contents into it rather than creating a nested subdirectory.
@@ -4245,7 +4439,17 @@ async function sameHostCopyDirectory(event, payload) {
       return { success: false };
     }
 
+    const completedEvent = { type: "completed", transferId, endedAt: Date.now() };
+    event?.sender?.send?.("netcatty:transfer:complete", completedEvent);
+    broadcastGlobalTransferEvent(completedEvent);
     return { success: true };
+  } catch (error) {
+    if (transfer.cancelled || /cancel/i.test(error?.message || "")) {
+      const cancelledEvent = { type: "cancelled", transferId, endedAt: Date.now() };
+      event?.sender?.send?.("netcatty:transfer:cancelled", cancelledEvent);
+      broadcastGlobalTransferEvent(cancelledEvent);
+    }
+    throw error;
   } finally {
     if (transferId) {
       activeTransfers.delete(transferId);

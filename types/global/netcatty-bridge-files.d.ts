@@ -12,11 +12,7 @@ declare global {
       remotePath: string,
       fileName: string,
       encoding: SftpFilenameEncoding | undefined,
-      transferId: string,
-      onProgress?: (transferred: number, total: number, speed: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void,
-      onCancelled?: () => void
+      transferId: string
     ): Promise<{ localPath: string; cancelled: boolean }>;
 
     // Save dialog for file downloads

@@ -15,12 +15,13 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 
 import { useI18n } from "../application/i18n/I18nProvider";
 import {
   sftpTransferCenterStore,
-  useSftpTransferCenter,
+  useSftpTransferCenterBadge,
+  type SftpTransferCenterSnapshot,
 } from "../application/state/sftpTransferCenterStore";
 import { transferRuntime } from "../application/state/sftp/transferRuntime";
 import { useGlobalSftpTransferActions } from "../application/state/useGlobalSftpTransferActions";
@@ -32,6 +33,44 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+
+/** Stable empty snapshot while the popover is closed — progress ticks must not
+ * re-render TopTabs just to update hidden list rows. */
+const CLOSED_TRANSFER_CENTER_SNAPSHOT: SftpTransferCenterSnapshot = {
+  tasks: [],
+  activeCount: 0,
+  queuedCount: 0,
+  attentionCount: 0,
+};
+
+/**
+ * Full transfer-center list only while the popover is open. When closed, the
+ * getter always returns the same CLOSED snapshot so progress store notifies do
+ * not re-render this TopTabs child (badge uses a separate stable subscription).
+ */
+function useSftpTransferCenterWhenOpen(open: boolean): SftpTransferCenterSnapshot {
+  const openRef = useRef(open);
+  openRef.current = open;
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      // Lifecycle + progress: when the popover is open the list must move with
+      // bytes; when closed getSnapshot returns a stable CLOSED constant so
+      // progress ticks are cheap no-ops for this subscriber.
+      const unsubLifecycle = sftpTransferCenterStore.subscribe(onStoreChange);
+      const unsubProgress = sftpTransferCenterStore.subscribeProgress(onStoreChange);
+      return () => {
+        unsubLifecycle();
+        unsubProgress();
+      };
+    },
+    () => (
+      openRef.current
+        ? sftpTransferCenterStore.getSnapshot()
+        : CLOSED_TRANSFER_CENTER_SNAPSHOT
+    ),
+    () => CLOSED_TRANSFER_CENTER_SNAPSHOT,
+  );
+}
 
 export type GlobalTransferBucket = "all" | "active" | "queued" | "paused" | "attention" | "completed";
 
@@ -486,7 +525,7 @@ function TransferRow({
               // Animate only while actively transferring — soft-drain width
               // freezes still looked like a twitch with transition.
               !isPausing && task.status !== "paused" && task.status !== "interrupted"
-                && "transition-[width] duration-150",
+                && "transition-[width] duration-200 ease-linear",
               progress.indeterminate && "animate-pulse bg-primary/60",
               !progress.indeterminate && (
                 task.status === "failed"
@@ -643,10 +682,14 @@ function TransferRow({
 
 export function GlobalSftpTransferCenter() {
   const { t } = useI18n();
-  const snapshot = useSftpTransferCenter();
+  // Badge is a stable store snapshot (identity unchanged on pure progress).
+  // Full task list is only needed while the popover is open — when closed,
+  // progress ticks used to re-render this TopTabs child on every byte.
+  const badge = useSftpTransferCenterBadge();
+  const [open, setOpen] = useState(false);
+  const snapshot = useSftpTransferCenterWhenOpen(open);
   const [bucket, setBucket] = useState<GlobalTransferBucket>("all");
   const [showBackground, setShowBackground] = useState(false);
-  const badge = getGlobalTransferBadge(snapshot.tasks);
   const childrenByParent = useMemo(() => {
     const map = new Map<string, TransferTask[]>();
     for (const task of snapshot.tasks) {
@@ -671,7 +714,7 @@ export function GlobalSftpTransferCenter() {
   const { batchEligibility, pauseAll, resumeAll } = useGlobalSftpTransferActions(snapshot.tasks);
 
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>

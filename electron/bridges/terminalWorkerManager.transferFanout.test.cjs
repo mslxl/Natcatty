@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   mapWorkerTransferChannelToGlobalEvent,
   fanoutGlobalTransferFromWorkerEvent,
+  shouldForwardWorkerRendererEvent,
 } = require("./terminalWorkerManager.cjs");
 
 test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () => {
@@ -27,6 +28,28 @@ test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () 
   assert.equal(event.phase, "verifying");
   assert.equal(event.lifecycleEpoch, 2);
   assert.equal(event.lifecycleState, "transferring");
+  assert.equal(event.resumable, undefined);
+});
+
+test("worker transfer events are global-only and keep complete task metadata", () => {
+  const started = mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:started", {
+    type: "started",
+    transferId: "download-1",
+    direction: "download",
+    fileName: "report.bin",
+    sourcePath: "/remote/report.bin",
+    targetPath: "/tmp/report.bin",
+    totalBytes: 100,
+    resumable: false,
+    pauseUnavailableReason: "SCP cannot pause",
+  });
+  assert.equal(started.type, "started");
+  assert.equal(started.direction, "download");
+  assert.equal(started.sourcePath, "/remote/report.bin");
+  assert.equal(started.resumable, false);
+  assert.equal(shouldForwardWorkerRendererEvent("netcatty:transfer:progress"), false);
+  assert.equal(shouldForwardWorkerRendererEvent("netcatty:transfer:complete"), false);
+  assert.equal(shouldForwardWorkerRendererEvent("netcatty:data"), true);
 });
 
 test("mapWorkerTransferChannelToGlobalEvent maps complete/error/cancel", () => {

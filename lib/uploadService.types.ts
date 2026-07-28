@@ -91,14 +91,21 @@ export interface UploadBridge {
       sourceHostId?: string;
       targetHostId?: string;
       totalBytes?: number;
-    },
-    onProgress?: (transferred: number, total: number, speed: number, capability?: {
-      phase?: import('../domain/models/sftp').TransferPhase;
+      sourceEncoding?: import('../domain/models/sftp').SftpFilenameEncoding;
+      targetEncoding?: import('../domain/models/sftp').SftpFilenameEncoding;
+      sameHost?: boolean;
       resumable?: boolean;
+      checkpointBytes?: number;
+      resumeStage?: 'direct' | 'download' | 'upload';
+      downloadCheckpointBytes?: number;
+      uploadCheckpointBytes?: number;
+      sourceFingerprint?: string;
+      lifecycleEpoch?: number;
+      lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
       pauseUnavailableReason?: string;
-    }) => void,
-    onComplete?: () => void,
-    onError?: (error: string) => void
+      globalConcurrency?: number;
+      skipAdmission?: boolean;
+    }
   ) => Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
   cancelTransfer?: (transferId: string) => Promise<void>;
 }

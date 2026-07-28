@@ -173,7 +173,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const {
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     listSftp,
     mkdirLocal,
     deleteLocalFile,
@@ -308,7 +307,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     deleteLocalFile,
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     getSftpIdForConnection: sftp.getSftpIdForConnection,
     listLocalFiles: listLocalDir,
     listDrives,

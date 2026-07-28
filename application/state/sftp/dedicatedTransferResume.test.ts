@@ -207,7 +207,7 @@ test("dedicated session open gate limits concurrent dials", async () => {
   resetDedicatedSessionOpenGateForTests();
 });
 
-test("single-file restart resume continues from checkpoint and reports live bytes", async (t) => {
+test("single-file restart resume continues from checkpoint without page callbacks", async (t) => {
   resetDedicatedSessionOpenGateForTests();
   const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   Object.defineProperty(globalThis, "localStorage", {
@@ -219,18 +219,14 @@ test("single-file restart resume continues from checkpoint and reports live byte
     else Reflect.deleteProperty(globalThis, "localStorage");
   });
   const originalGet = netcattyBridge.get;
-  const progress: Array<{ transferred: number; checkpointBytes?: number }> = [];
   let startOptions: Record<string, unknown> | undefined;
   (netcattyBridge as { get: () => unknown }).get = () => ({
     openSftp: async () => "dedicated-sftp",
     closeSftp: async () => {},
     statLocal: async () => ({ size: 100, lastModified: 123 }),
-    startStreamTransfer: async (
-      options: Record<string, unknown>,
-      onProgress: (transferred: number, total: number, speed: number, checkpoint?: { checkpointBytes?: number }) => void,
-    ) => {
+    startStreamTransfer: async function (options: Record<string, unknown>) {
+      assert.equal(arguments.length, 1);
       startOptions = options;
-      onProgress(45, 100, 5, { checkpointBytes: 45 });
       return { transferId: "file-restart" };
     },
   });
@@ -257,21 +253,18 @@ test("single-file restart resume continues from checkpoint and reports live byte
       hosts: [host("h1", "box", "1.2.3.4")],
       keys: [],
       identities: [],
-    }, (value) => progress.push(value));
+    });
 
     assert.equal(result.success, true, result.error);
     assert.equal(startOptions?.checkpointBytes, 20);
     assert.equal(startOptions?.skipAdmission, true);
-    assert.equal(progress.length, 1);
-    assert.equal(progress[0]?.transferred, 45);
-    assert.equal(progress[0]?.checkpointBytes, 45);
   } finally {
     (netcattyBridge as { get: typeof originalGet }).get = originalGet;
     resetDedicatedSessionOpenGateForTests();
   }
 });
 
-test("folder restart resume reports parent and child progress", async (t) => {
+test("folder restart resume reports file-count progress without child page callbacks", async (t) => {
   resetDedicatedSessionOpenGateForTests();
   const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
   Object.defineProperty(globalThis, "localStorage", {
@@ -294,12 +287,8 @@ test("folder restart resume reports parent and child progress", async (t) => {
     ],
     mkdirSftp: async () => {},
     statLocal: async (path: string) => ({ size: path.endsWith("a.bin") ? 10 : 20 }),
-    startStreamTransfer: async (
-      options: { transferId: string; totalBytes?: number },
-      onProgress: (transferred: number, total: number, speed: number, checkpoint?: { checkpointBytes?: number }) => void,
-    ) => {
-      const total = options.totalBytes ?? 0;
-      onProgress(Math.max(1, Math.floor(total / 2)), total, 3, { checkpointBytes: Math.max(1, Math.floor(total / 2)) });
+    startStreamTransfer: async function (options: { transferId: string; totalBytes?: number }) {
+      assert.equal(arguments.length, 1);
       return { transferId: options.transferId };
     },
   });
@@ -334,7 +323,7 @@ test("folder restart resume reports parent and child progress", async (t) => {
 
     assert.equal(result.success, true, result.error);
     assert.equal(parentProgress.at(-1), 2);
-    assert.ok(childUpdates.some((child) => child.status === "transferring" && child.transferredBytes > 0));
+    assert.ok(childUpdates.some((child) => child.status === "transferring"));
     assert.equal(childUpdates.filter((child) => child.status === "completed").length, 2);
   } finally {
     (netcattyBridge as { get: typeof originalGet }).get = originalGet;
