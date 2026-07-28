@@ -21,7 +21,7 @@ import { useSftpState } from "../application/state/useSftpState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
-import { listSftpConnectedHosts, sftpHostEndpointsEqual, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
@@ -116,22 +116,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     },
   }), [t]);
 
-  const connectedHostsForOptions = useMemo(() => {
-    const hostsById = new Map<string, Host>(hosts.map((host) => [host.id, host]));
-    return listSftpConnectedHosts(sessions, hostsById);
-  }, [hosts, sessions]);
-
   const resolveTransferSourceSessionId = useCallback((hostId: string, host?: Host) => {
-    const matches = connectedHostsForOptions.filter((entry) => entry.host.id === hostId);
-    if (matches.length === 0) return undefined;
-    if (host) {
-      // Prefer a live session whose endpoint matches the transfer host (handles
-      // multi-tab same hostId and post-connect hostname/port/user overrides).
-      const endpointMatch = matches.find((entry) => sftpHostEndpointsEqual(entry.host, host));
-      return endpointMatch?.sessionId;
-    }
-    return matches[matches.length - 1]?.sessionId;
-  }, [connectedHostsForOptions]);
+    const hostsById = new Map<string, Host>(hosts.map((h) => [h.id, h]));
+    // Walk all sessions (not the picker one-per-hostId list) so multi-tab
+    // same hostId with different live endpoints can still match.
+    return resolveSftpTransferSourceSessionId(sessions, hostsById, hostId, host);
+  }, [hosts, sessions]);
 
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,

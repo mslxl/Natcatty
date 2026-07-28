@@ -69,7 +69,7 @@ import {
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
-import { listSftpConnectedHosts, sftpHostEndpointsEqual, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import type { TerminalSession } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -169,16 +169,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }, [hosts, sessions]);
 
   const resolveTransferSourceSessionId = useCallback((hostId: string, host?: Host) => {
-    const matches = connectedHosts.filter((entry) => entry.host.id === hostId);
-    if (matches.length === 0) return undefined;
-    if (host) {
-      // Prefer a live session whose endpoint matches the transfer host (handles
-      // multi-tab same hostId and post-connect hostname/port/user overrides).
-      const endpointMatch = matches.find((entry) => sftpHostEndpointsEqual(entry.host, host));
-      return endpointMatch?.sessionId;
-    }
-    return matches[matches.length - 1]?.sessionId;
-  }, [connectedHosts]);
+    const hostsById = new Map<string, Host>(hosts.map((h) => [h.id, h]));
+    // Walk all sessions (not the picker one-per-hostId list) so multi-tab
+    // same hostId with different live endpoints can still match.
+    return resolveSftpTransferSourceSessionId(sessions, hostsById, hostId, host);
+  }, [hosts, sessions]);
 
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
