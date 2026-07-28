@@ -46,12 +46,15 @@ export type TransferPhase = 'scanning' | 'compressing' | 'uploading' | 'transfer
 export type TransferControlKind = 'stream' | 'compressed-upload';
 
 export interface DirectoryResumeCheckpoint {
-  version: 1;
+  /** Version 1 used a full SHA-256 digest for every appended entry. Version 2
+   * keeps the SHA-256 compression state so adding another fixed-width identity
+   * is still cryptographically chained without re-hashing string wrappers. */
+  version: 1 | 2;
   /** Traversal prefix whose source/target metadata is covered by manifestHash. */
   coveredEntries: number;
   /** Covered entries already completed and compacted out of the task array. */
   completedEntries: number;
-  /** Fixed-size chained SHA-256 of the covered traversal prefix. */
+  /** Fixed-size chained SHA-256 value of the covered traversal prefix. */
   manifestHash: string;
 }
 

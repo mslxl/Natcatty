@@ -2971,7 +2971,11 @@ async function startTransferNow(event, payload, onProgress) {
 
   let leasesReleased = false;
   const cleanupTransfer = () => {
-    activeTransfers.delete(transferId);
+    // A stale completion must never unregister a newer transfer that reused the
+    // same id after this one became terminal.
+    if (activeTransfers.get(transferId) === transfer) {
+      activeTransfers.delete(transferId);
+    }
     if (!leasesReleased) {
       leasesReleased = true;
       releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || leasedSftpIds);
@@ -4443,17 +4447,27 @@ async function cleanupTransferArtifacts(_event, payload) {
 async function sameHostCopyDirectory(event, payload) {
   const { sftpId, sourcePath, targetPath, encoding, transferId } = payload;
 
-  // Register in activeTransfers so cancelTransfer can flag it
   const transfer = { cancelled: false, leasedSftpIds: [] };
-  if (transferId) {
-    activeTransfers.set(transferId, transfer);
-    transfer.leasedSftpIds = acquireTransferSessionLeases(transferId, {
-      sourceSftpId: sftpId,
-      targetSftpId: sftpId,
-    });
-  }
 
   try {
+    if (transferId && takePendingCancel(transferId)) {
+      const cancelledEvent = { type: "cancelled", transferId, endedAt: Date.now() };
+      event?.sender?.send?.("netcatty:transfer:cancelled", cancelledEvent);
+      broadcastGlobalTransferEvent(cancelledEvent);
+      return { success: false, cancelled: true };
+    }
+
+    if (transferId) {
+      // Match the regular file path: a transfer becomes cancellable/visible
+      // only after every requested session lease has been acquired. A hard
+      // close rejection therefore cannot leave a ghost active transfer.
+      transfer.leasedSftpIds = acquireTransferSessionLeases(transferId, {
+        sourceSftpId: sftpId,
+        targetSftpId: sftpId,
+      });
+      activeTransfers.set(transferId, transfer);
+    }
+
     const client = sftpClients.get(sftpId);
     if (!client) return { success: false };
     if (cpUnavailableSet.has(client)) return { success: false };
@@ -4521,8 +4535,10 @@ async function sameHostCopyDirectory(event, payload) {
     throw error;
   } finally {
     if (transferId) {
-      activeTransfers.delete(transferId);
-      releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || [sftpId]);
+      if (activeTransfers.get(transferId) === transfer) {
+        activeTransfers.delete(transferId);
+      }
+      releaseTransferSessionLeases(transferId, transfer.leasedSftpIds);
       transfer.leasedSftpIds = [];
     }
   }

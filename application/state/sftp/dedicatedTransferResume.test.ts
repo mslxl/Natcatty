@@ -20,7 +20,9 @@ import {
 } from "./dedicatedTransferResume";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import {
+  appendDirectoryCheckpointIdentity,
   appendDirectoryManifestIdentity,
+  createDirectoryManifestAccumulator,
   createDirectoryEntryIdentity,
   createEmptyDirectoryResumeCheckpoint,
 } from "../../../domain/sftpDirectoryCheckpoint";
@@ -700,19 +702,18 @@ test("folder restart skips 50,000 compacted completions without rebuilding child
     lastModified: index + 10,
   }));
   const checkpoint = createEmptyDirectoryResumeCheckpoint();
+  const manifest = createDirectoryManifestAccumulator(checkpoint);
   for (const entry of entries) {
-    checkpoint.manifestHash = appendDirectoryManifestIdentity(
-      checkpoint.manifestHash,
-      createDirectoryEntryIdentity({
-        sourcePath: entry.localPath,
-        targetPath: `/remote/folder/${entry.relativePath}`,
-        size: entry.size,
-        lastModified: entry.lastModified,
-      }),
-    );
+    manifest.append(createDirectoryEntryIdentity({
+      sourcePath: entry.localPath,
+      targetPath: `/remote/folder/${entry.relativePath}`,
+      size: entry.size,
+      lastModified: entry.lastModified,
+    }));
     checkpoint.coveredEntries += 1;
     checkpoint.completedEntries += 1;
   }
+  checkpoint.manifestHash = manifest.digest();
 
   const originalGet = netcattyBridge.get;
   let starts = 0;
@@ -775,6 +776,89 @@ test("folder restart skips 50,000 compacted completions without rebuilding child
   }
 });
 
+test("a validated version 1 directory checkpoint migrates to the faster manifest", async (t) => {
+  resetDedicatedSessionOpenGateForTests();
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => "2", setItem: () => {}, removeItem: () => {} },
+  });
+  t.after(() => {
+    if (previousLocalStorage) Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  });
+  const entry = {
+    localPath: "/local/folder/a.bin",
+    relativePath: "a.bin",
+    type: "file" as const,
+    size: 10,
+    lastModified: 1,
+  };
+  const identity = createDirectoryEntryIdentity({
+    sourcePath: entry.localPath,
+    targetPath: "/remote/folder/a.bin",
+    size: entry.size,
+    lastModified: entry.lastModified,
+  });
+  const legacyCheckpoint = {
+    version: 1 as const,
+    coveredEntries: 1,
+    completedEntries: 1,
+    manifestHash: appendDirectoryManifestIdentity("0".repeat(64), identity),
+  };
+  const originalGet = netcattyBridge.get;
+  let starts = 0;
+  const checkpointUpdates: Array<TransferTask["directoryResumeCheckpoint"]> = [];
+  (netcattyBridge as { get: () => unknown }).get = () => ({
+    openSftp: async () => "dedicated-sftp",
+    closeSftp: async () => {},
+    listLocalTree: async () => [entry],
+    mkdirSftp: async () => {},
+    startStreamTransfer: async () => {
+      starts += 1;
+      return { transferId: "unexpected" };
+    },
+  });
+  try {
+    const result = await resumeTransferWithDedicatedSession({
+      id: "legacy-folder-restart",
+      fileName: "folder",
+      sourcePath: "/local/folder",
+      targetPath: "/remote/folder",
+      sourceConnectionId: "local",
+      targetConnectionId: "old-sftp",
+      targetHostId: "h1",
+      targetHostLabel: "box",
+      direction: "upload",
+      status: "interrupted",
+      totalBytes: 1,
+      transferredBytes: 1,
+      checkpointBytes: 1,
+      speed: 0,
+      startTime: 1,
+      isDirectory: true,
+      progressMode: "files",
+      reconnectRequired: true,
+      directoryResumeCheckpoint: legacyCheckpoint,
+    }, {
+      hosts: [host("h1", "box", "1.2.3.4")], keys: [], identities: [],
+    }, undefined, {
+      children: [],
+      onDirectoryCheckpointUpdate: (checkpoint) => checkpointUpdates.push(checkpoint),
+    });
+
+    assert.equal(result.success, true, result.error);
+    assert.equal(starts, 0, "a compatible legacy checkpoint must still skip completed data");
+    assert.equal(checkpointUpdates.length, 1);
+    assert.equal(checkpointUpdates[0]?.version, 2);
+    assert.equal(checkpointUpdates[0]?.coveredEntries, 1);
+    assert.equal(checkpointUpdates[0]?.completedEntries, 1);
+  } finally {
+    (netcattyBridge as { get: typeof originalGet }).get = originalGet;
+    resetDedicatedSessionOpenGateForTests();
+  }
+});
+
 test("out-of-order compact resume transfers index 0 and skips completed index 1", async (t) => {
   resetDedicatedSessionOpenGateForTests();
   const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -798,7 +882,7 @@ test("out-of-order compact resume transfers index 0 and skips completed index 1"
   }));
   const checkpoint = createEmptyDirectoryResumeCheckpoint();
   for (const identity of identities) {
-    checkpoint.manifestHash = appendDirectoryManifestIdentity(checkpoint.manifestHash, identity);
+    checkpoint.manifestHash = appendDirectoryCheckpointIdentity(checkpoint, identity);
     checkpoint.coveredEntries += 1;
   }
   checkpoint.completedEntries = 1;
@@ -880,7 +964,7 @@ test("changed directory manifest clears compact completion state and retransfers
   ];
   const checkpoint = createEmptyDirectoryResumeCheckpoint();
   for (const entry of originalEntries) {
-    checkpoint.manifestHash = appendDirectoryManifestIdentity(checkpoint.manifestHash, createDirectoryEntryIdentity({
+    checkpoint.manifestHash = appendDirectoryCheckpointIdentity(checkpoint, createDirectoryEntryIdentity({
       sourcePath: entry.localPath,
       targetPath: `/remote/folder/${entry.relativePath}`,
       size: entry.size,
@@ -1528,7 +1612,7 @@ test("valid file checkpoint still rebuilds a replace stage so deleted empty dire
     lastModified: 2,
   });
   const checkpoint = createEmptyDirectoryResumeCheckpoint();
-  checkpoint.manifestHash = appendDirectoryManifestIdentity(checkpoint.manifestHash, identity);
+  checkpoint.manifestHash = appendDirectoryCheckpointIdentity(checkpoint, identity);
   checkpoint.coveredEntries = 1;
   checkpoint.completedEntries = 1;
   const operations: string[] = [];

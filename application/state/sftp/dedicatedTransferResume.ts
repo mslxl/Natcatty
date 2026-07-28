@@ -14,12 +14,12 @@ import { runSftpTransferWorkers } from "./transferConcurrency";
 import { getParentPath, joinPath, joinTransferTargetPath } from "./utils";
 import {
   accountSftpDirectoryEntries,
-  appendDirectoryManifestIdentity,
   claimSftpDirectoryVisit,
   compareDirectoryTraversalPaths,
+  createDirectoryManifestAccumulator,
   createSftpDirectoryTraversalBudget,
   createDirectoryEntryIdentity,
-  EMPTY_DIRECTORY_MANIFEST_HASH,
+  createEmptyDirectoryResumeCheckpoint,
   isValidDirectoryResumeCheckpoint,
   shouldFollowSftpSymlinkDirectory,
   type SftpDirectoryTraversalBudget,
@@ -287,12 +287,21 @@ export async function validateDirectoryResumeCheckpoint(
   const checkpoint = parent.directoryResumeCheckpoint;
   if (!isValidDirectoryResumeCheckpoint(checkpoint)) return false;
   if (checkpoint.coveredEntries > planned.length) return false;
-  let manifestHash = EMPTY_DIRECTORY_MANIFEST_HASH;
+  const rebuilt = checkpoint.version === 1
+    ? {
+      version: 1 as const,
+      coveredEntries: 0,
+      completedEntries: 0,
+      manifestHash: "0".repeat(64),
+    }
+    : createEmptyDirectoryResumeCheckpoint();
+  const manifest = createDirectoryManifestAccumulator(rebuilt);
   let sliceStartedAt = directoryResumeNow();
   for (let index = 0; index < checkpoint.coveredEntries; index += 1) {
     const identity = planned[index]?.directoryEntryIdentity;
     if (!identity) return false;
-    manifestHash = appendDirectoryManifestIdentity(manifestHash, identity);
+    manifest.append(identity);
+    rebuilt.coveredEntries += 1;
     if (
       index > 0
       && index % DIRECTORY_RESUME_YIELD_CHECK_INTERVAL === 0
@@ -302,7 +311,35 @@ export async function validateDirectoryResumeCheckpoint(
       sliceStartedAt = directoryResumeNow();
     }
   }
-  return manifestHash === checkpoint.manifestHash;
+  rebuilt.manifestHash = manifest.digest();
+  return rebuilt.manifestHash === checkpoint.manifestHash;
+}
+
+async function migrateLegacyDirectoryResumeCheckpoint(
+  checkpoint: NonNullable<TransferTask["directoryResumeCheckpoint"]>,
+  planned: readonly DirectoryResumeFilePlan[],
+): Promise<NonNullable<TransferTask["directoryResumeCheckpoint"]>> {
+  if (checkpoint.version !== 1) return checkpoint;
+  const migrated = createEmptyDirectoryResumeCheckpoint();
+  const manifest = createDirectoryManifestAccumulator(migrated);
+  let sliceStartedAt = directoryResumeNow();
+  for (let index = 0; index < checkpoint.coveredEntries; index += 1) {
+    const identity = planned[index]?.directoryEntryIdentity;
+    if (!identity) throw new Error("Directory resume manifest is incomplete");
+    manifest.append(identity);
+    migrated.coveredEntries += 1;
+    if (
+      index > 0
+      && index % DIRECTORY_RESUME_YIELD_CHECK_INTERVAL === 0
+      && directoryResumeNow() - sliceStartedAt >= DIRECTORY_RESUME_SYNC_BUDGET_MS
+    ) {
+      await yieldDirectoryResumeWork();
+      sliceStartedAt = directoryResumeNow();
+    }
+  }
+  migrated.manifestHash = manifest.digest();
+  migrated.completedEntries = checkpoint.completedEntries;
+  return migrated;
 }
 
 /**
@@ -908,6 +945,18 @@ async function resumeDirectoryWithDedicatedSession(
         const hasCompactCheckpoint = isValidDirectoryResumeCheckpoint(parent.directoryResumeCheckpoint);
         const compactCheckpointValid = hasCompactCheckpoint
           && await validateDirectoryResumeCheckpoint(parent, planned);
+        if (
+          compactCheckpointValid
+          && parent.directoryResumeCheckpoint?.version === 1
+          && !parent.stagedTargetPath
+        ) {
+          const migrated = await migrateLegacyDirectoryResumeCheckpoint(
+            parent.directoryResumeCheckpoint,
+            planned,
+          );
+          parent = { ...parent, directoryResumeCheckpoint: migrated };
+          options?.onDirectoryCheckpointUpdate?.(migrated);
+        }
         // File checkpoints intentionally do not persist an unbounded directory
         // path list. Consequently they cannot prove that an empty directory was
         // not deleted at the source. Rebuild every interrupted replace stage so

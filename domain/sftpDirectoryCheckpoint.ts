@@ -1,6 +1,11 @@
 import type { DirectoryResumeCheckpoint } from "./models";
 
 export const EMPTY_DIRECTORY_MANIFEST_HASH = "0".repeat(64);
+export const DIRECTORY_RESUME_CHECKPOINT_VERSION = 2;
+export const EMPTY_DIRECTORY_MANIFEST_STATE_V2 = [
+  0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+  0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+].map((word) => word.toString(16).padStart(8, "0")).join("");
 export const MAX_SFTP_FOLLOWED_SYMLINK_DEPTH = 32;
 export const MAX_SFTP_DIRECTORY_TRAVERSAL_DIRECTORIES = 50_000;
 export const MAX_SFTP_DIRECTORY_TRAVERSAL_ENTRIES = 200_000;
@@ -67,6 +72,43 @@ const SHA256_ROUND_CONSTANTS = new Uint32Array([
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ]);
 
+const SHA256_WORK_SCHEDULE = new Uint32Array(64);
+const SHA256_INITIAL_STATE = new Uint32Array([
+  0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+  0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+]);
+const HEX_CHARACTER_CODES = new Uint8Array(
+  Array.from("0123456789abcdef", (character) => character.charCodeAt(0)),
+);
+
+function compressSha256Block(state: Uint32Array, block: Uint8Array): void {
+  const W = SHA256_WORK_SCHEDULE;
+  const view = new DataView(block.buffer, block.byteOffset, 64);
+  for (let i = 0; i < 16; i += 1) W[i] = view.getUint32(i * 4, false);
+  for (let i = 16; i < 64; i += 1) {
+    const s0 = ((W[i - 15] >>> 7) | (W[i - 15] << 25))
+      ^ ((W[i - 15] >>> 18) | (W[i - 15] << 14)) ^ (W[i - 15] >>> 3);
+    const s1 = ((W[i - 2] >>> 17) | (W[i - 2] << 15))
+      ^ ((W[i - 2] >>> 19) | (W[i - 2] << 13)) ^ (W[i - 2] >>> 10);
+    W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
+  }
+  let [a, b, c, d, e, f, g, h] = state;
+  for (let i = 0; i < 64; i += 1) {
+    const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
+    const ch = (e & f) ^ (~e & g);
+    const temp1 = (h + s1 + ch + SHA256_ROUND_CONSTANTS[i] + W[i]) >>> 0;
+    const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
+    const majority = (a & b) ^ (a & c) ^ (b & c);
+    const temp2 = (s0 + majority) >>> 0;
+    h = g; g = f; f = e; e = (d + temp1) >>> 0;
+    d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
+  }
+  state[0] = (state[0] + a) >>> 0; state[1] = (state[1] + b) >>> 0;
+  state[2] = (state[2] + c) >>> 0; state[3] = (state[3] + d) >>> 0;
+  state[4] = (state[4] + e) >>> 0; state[5] = (state[5] + f) >>> 0;
+  state[6] = (state[6] + g) >>> 0; state[7] = (state[7] + h) >>> 0;
+}
+
 // Synchronous SHA-256 keeps transfer-history pruning deterministic and avoids
 // making every React/store lifecycle update asynchronous.
 function sha256Hex(value: string): string {
@@ -78,34 +120,10 @@ function sha256Hex(value: string): string {
   const view = new DataView(padded.buffer);
   view.setBigUint64(padded.length - 8, bitLength, false);
   const H = new Uint32Array([
-    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19,
+    ...SHA256_INITIAL_STATE,
   ]);
-  const W = new Uint32Array(64);
   for (let chunk = 0; chunk < padded.length; chunk += 64) {
-    for (let i = 0; i < 16; i += 1) W[i] = view.getUint32(chunk + i * 4, false);
-    for (let i = 16; i < 64; i += 1) {
-      const s0 = ((W[i - 15] >>> 7) | (W[i - 15] << 25))
-        ^ ((W[i - 15] >>> 18) | (W[i - 15] << 14)) ^ (W[i - 15] >>> 3);
-      const s1 = ((W[i - 2] >>> 17) | (W[i - 2] << 15))
-        ^ ((W[i - 2] >>> 19) | (W[i - 2] << 13)) ^ (W[i - 2] >>> 10);
-      W[i] = (W[i - 16] + s0 + W[i - 7] + s1) >>> 0;
-    }
-    let [a, b, c, d, e, f, g, h] = H;
-    for (let i = 0; i < 64; i += 1) {
-      const s1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
-      const ch = (e & f) ^ (~e & g);
-      const temp1 = (h + s1 + ch + SHA256_ROUND_CONSTANTS[i] + W[i]) >>> 0;
-      const s0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
-      const majority = (a & b) ^ (a & c) ^ (b & c);
-      const temp2 = (s0 + majority) >>> 0;
-      h = g; g = f; f = e; e = (d + temp1) >>> 0;
-      d = c; c = b; b = a; a = (temp1 + temp2) >>> 0;
-    }
-    H[0] = (H[0] + a) >>> 0; H[1] = (H[1] + b) >>> 0;
-    H[2] = (H[2] + c) >>> 0; H[3] = (H[3] + d) >>> 0;
-    H[4] = (H[4] + e) >>> 0; H[5] = (H[5] + f) >>> 0;
-    H[6] = (H[6] + g) >>> 0; H[7] = (H[7] + h) >>> 0;
+    compressSha256Block(H, padded.subarray(chunk, chunk + 64));
   }
   return Array.from(H, (word) => word.toString(16).padStart(8, "0")).join("");
 }
@@ -125,7 +143,103 @@ export function createDirectoryEntryIdentity(entry: {
 }
 
 export function appendDirectoryManifestIdentity(manifestHash: string, entryIdentity: string): string {
-  return sha256Hex(`${manifestHash}:${entryIdentity}`);
+  const accumulator = createDirectoryManifestAccumulator({ version: 1, manifestHash });
+  accumulator.append(entryIdentity);
+  return accumulator.digest();
+}
+
+/**
+ * Version 2 consumes one already-hashed, fixed-width identity as exactly one
+ * SHA-256 block. Persisting the compression state makes each append O(1) with
+ * one round set instead of hashing the previous digest and wrapper again.
+ */
+export function appendDirectoryManifestIdentityV2(manifestState: string, entryIdentity: string): string {
+  const accumulator = createDirectoryManifestAccumulator({ version: 2, manifestHash: manifestState });
+  accumulator.append(entryIdentity);
+  return accumulator.digest();
+}
+
+export interface DirectoryManifestAccumulator {
+  append(entryIdentity: string): void;
+  digest(): string;
+}
+
+/** Parse/format the persisted state only once when processing a large prefix. */
+export function createDirectoryManifestAccumulator(
+  checkpoint: Pick<DirectoryResumeCheckpoint, "version" | "manifestHash">,
+): DirectoryManifestAccumulator {
+  if (checkpoint.version === 1) {
+    if (!/^[a-f0-9]{64}$/.test(checkpoint.manifestHash)) {
+      throw new Error("Invalid directory manifest state");
+    }
+    // A legacy chain hashes exactly 129 ASCII bytes each time:
+    // previousHash + ':' + entryIdentity. Reuse its three padded SHA blocks
+    // and carry the digest bytes forward without allocating strings/buffers per
+    // entry. This keeps old persisted checkpoints fast on their first resume.
+    const message = new Uint8Array(192);
+    const state = new Uint32Array(8);
+    for (let index = 0; index < 64; index += 1) {
+      message[index] = checkpoint.manifestHash.charCodeAt(index);
+    }
+    message[64] = 0x3a;
+    message[129] = 0x80;
+    new DataView(message.buffer).setBigUint64(184, 129n * 8n, false);
+    return {
+      append(entryIdentity) {
+        if (!/^[a-f0-9]{64}$/.test(entryIdentity)) {
+          throw new Error("Invalid directory manifest identity");
+        }
+        for (let index = 0; index < 64; index += 1) {
+          message[index + 65] = entryIdentity.charCodeAt(index);
+        }
+        state.set(SHA256_INITIAL_STATE);
+        compressSha256Block(state, message.subarray(0, 64));
+        compressSha256Block(state, message.subarray(64, 128));
+        compressSha256Block(state, message.subarray(128, 192));
+        for (let wordIndex = 0; wordIndex < 8; wordIndex += 1) {
+          const word = state[wordIndex];
+          for (let nibbleIndex = 0; nibbleIndex < 8; nibbleIndex += 1) {
+            const shift = (7 - nibbleIndex) * 4;
+            message[wordIndex * 8 + nibbleIndex] = HEX_CHARACTER_CODES[(word >>> shift) & 0x0f];
+          }
+        }
+      },
+      digest: () => String.fromCharCode(...message.subarray(0, 64)),
+    };
+  }
+  const manifestState = checkpoint.manifestHash;
+  if (!/^[a-f0-9]{64}$/.test(manifestState)) {
+    throw new Error("Invalid directory manifest state");
+  }
+  const state = new Uint32Array(8);
+  const block = new Uint8Array(64);
+  for (let index = 0; index < 8; index += 1) {
+    state[index] = Number.parseInt(manifestState.slice(index * 8, index * 8 + 8), 16) >>> 0;
+  }
+  return {
+    append(entryIdentity) {
+      if (!/^[a-f0-9]{64}$/.test(entryIdentity)) {
+        throw new Error("Invalid directory manifest identity");
+      }
+      for (let index = 0; index < 64; index += 1) {
+        block[index] = entryIdentity.charCodeAt(index);
+      }
+      compressSha256Block(state, block);
+    },
+    digest: () => Array.from(
+      state,
+      (word) => word.toString(16).padStart(8, "0"),
+    ).join(""),
+  };
+}
+
+export function appendDirectoryCheckpointIdentity(
+  checkpoint: Pick<DirectoryResumeCheckpoint, "version" | "manifestHash">,
+  entryIdentity: string,
+): string {
+  const accumulator = createDirectoryManifestAccumulator(checkpoint);
+  accumulator.append(entryIdentity);
+  return accumulator.digest();
 }
 
 /** Directory traversal order: child directories first, then files, names sorted. */
@@ -145,17 +259,17 @@ export function compareDirectoryTraversalPaths(left: string, right: string): num
 
 export function createEmptyDirectoryResumeCheckpoint(): DirectoryResumeCheckpoint {
   return {
-    version: 1,
+    version: DIRECTORY_RESUME_CHECKPOINT_VERSION,
     coveredEntries: 0,
     completedEntries: 0,
-    manifestHash: EMPTY_DIRECTORY_MANIFEST_HASH,
+    manifestHash: EMPTY_DIRECTORY_MANIFEST_STATE_V2,
   };
 }
 
 export function isValidDirectoryResumeCheckpoint(value: unknown): value is DirectoryResumeCheckpoint {
   if (!value || typeof value !== "object") return false;
   const checkpoint = value as Partial<DirectoryResumeCheckpoint>;
-  return checkpoint.version === 1
+  return (checkpoint.version === 1 || checkpoint.version === 2)
     && Number.isSafeInteger(checkpoint.coveredEntries)
     && (checkpoint.coveredEntries ?? -1) >= 0
     && Number.isSafeInteger(checkpoint.completedEntries)

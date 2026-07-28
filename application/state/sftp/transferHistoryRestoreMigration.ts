@@ -1,7 +1,7 @@
 import type { TransferTask } from "../../../domain/models";
 import {
-  appendDirectoryManifestIdentity,
   compareDirectoryTraversalPaths,
+  createDirectoryManifestAccumulator,
   createDirectoryEntryIdentity,
   createEmptyDirectoryResumeCheckpoint,
   isValidDirectoryResumeCheckpoint,
@@ -148,16 +148,15 @@ export async function restoreSftpTransferHistoryCooperatively(
     }
 
     let hashIterations = 0;
+    const manifest = createDirectoryManifestAccumulator(checkpoint);
     while (childrenByIndex.has(checkpoint.coveredEntries)) {
       const child = childrenByIndex.get(checkpoint.coveredEntries)!;
-      checkpoint.manifestHash = appendDirectoryManifestIdentity(
-        checkpoint.manifestHash,
-        child.directoryEntryIdentity!,
-      );
+      manifest.append(child.directoryEntryIdentity!);
       checkpoint.coveredEntries += 1;
       hashIterations += 1;
       await maybeYield(hashIterations);
     }
+    checkpoint.manifestHash = manifest.digest();
 
     let newlyCompacted = 0;
     for (let childIndex = 0; childIndex < parentChildren.length; childIndex += 1) {

@@ -209,6 +209,7 @@ test("prune compacts 50,000 completed directory children into a bounded parent c
   );
   const restored = deserializeSftpTransferCenter(serializeSftpTransferCenter(pruned));
   assert.equal(restored.tasks.length, 1);
+  assert.equal(restored.tasks[0]?.directoryResumeCheckpoint?.version, 2);
   assert.equal(restored.tasks[0]?.directoryResumeCheckpoint?.completedEntries, 50_000);
   assert.ok(Date.now() - pruneStartedAt < 5_000, "50k compaction should finish within 5 seconds");
 });

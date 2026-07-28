@@ -6,6 +6,7 @@ async function stageRendererFileToTemp(file, localPath, fsImpl, signal = null) {
   }
   let handle = null;
   let reader = null;
+  let stagedBytes = 0;
   const cancellationError = () => (
     signal?.reason instanceof Error ? signal.reason : new Error("Upload staging cancelled")
   );
@@ -28,7 +29,25 @@ async function stageRendererFileToTemp(file, localPath, fsImpl, signal = null) {
       if (done) break;
       if (!value) continue;
       const chunk = Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-      await handle.write(chunk);
+      let chunkOffset = 0;
+      while (chunkOffset < chunk.length) {
+        if (signal?.aborted) throw cancellationError();
+        const remaining = chunk.length - chunkOffset;
+        let result;
+        try {
+          result = await handle.write(chunk, chunkOffset, remaining, stagedBytes);
+        } catch (error) {
+          if (signal?.aborted) throw cancellationError();
+          throw error;
+        }
+        if (signal?.aborted) throw cancellationError();
+        const bytesWritten = result?.bytesWritten;
+        if (!Number.isSafeInteger(bytesWritten) || bytesWritten <= 0 || bytesWritten > remaining) {
+          throw new Error("Unable to stage the complete upload file");
+        }
+        chunkOffset += bytesWritten;
+        stagedBytes += bytesWritten;
+      }
     }
     return localPath;
   } catch (error) {

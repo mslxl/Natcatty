@@ -5850,6 +5850,169 @@ test("a transfer rejected by a committed SFTP close leaves no active transfer en
   assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
 });
 
+test("same-host directory copy rejected by a committed close leaves no lease or active transfer", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  const sftpId = "same-host-directory-closing";
+  sftpTransferSessionLeaseStore.resetForTests();
+  const closeToken = sftpTransferSessionLeaseStore.beginHardClose(sftpId);
+  assert.equal(sftpTransferSessionLeaseStore.commitHardClose(sftpId, closeToken), true);
+  transferBridge.init({ sftpClients: new Map([[sftpId, {}]]) });
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  await assert.rejects(
+    transferBridge.sameHostCopyDirectory(
+      { sender: createSender() },
+      {
+        transferId: "same-host-directory-rejected",
+        sftpId,
+        sourcePath: "/source",
+        targetPath: "/target",
+        encoding: "utf-8",
+      },
+    ),
+    /closing|closed/i,
+  );
+
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+});
+
+test("same-host directory copy cancellation aborts cp and releases its lease", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  const sftpId = "same-host-directory-cancel";
+  let markExecOpened;
+  const execOpened = new Promise((resolve) => { markExecOpened = resolve; });
+  const stream = new EventEmitter();
+  stream.stderr = new EventEmitter();
+  stream.close = () => {};
+  stream.end = () => {};
+  stream.destroy = () => {};
+  const client = {
+    client: {
+      exec(_command, callback) {
+        callback(null, stream);
+        markExecOpened();
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([[sftpId, client]]) });
+
+  const running = transferBridge.sameHostCopyDirectory(
+    { sender: createSender() },
+    {
+      transferId: "same-host-directory-cancelled",
+      sftpId,
+      sourcePath: "/source",
+      targetPath: "/target",
+      encoding: "utf-8",
+    },
+  );
+  await execOpened;
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 1);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 1);
+
+  await transferBridge.cancelTransfer(null, { transferId: "same-host-directory-cancelled" });
+  await assert.rejects(running, /cancel/i);
+
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+});
+
+test("a pre-start cancellation prevents same-host directory registration and lease acquisition", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  const sftpId = "same-host-directory-pre-cancel";
+  let execCalls = 0;
+  transferBridge.init({
+    sftpClients: new Map([[sftpId, {
+      client: {
+        exec() { execCalls += 1; },
+      },
+    }]]),
+  });
+  const transferId = "same-host-directory-pre-cancelled";
+  await transferBridge.cancelTransfer(null, { transferId });
+
+  const result = await transferBridge.sameHostCopyDirectory(
+    { sender: createSender() },
+    {
+      transferId,
+      sftpId,
+      sourcePath: "/source",
+      targetPath: "/target",
+      encoding: "utf-8",
+    },
+  );
+
+  assert.equal(result.cancelled, true);
+  assert.equal(execCalls, 0);
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+  assert.equal(transferBridge._getPendingCancelCountForTests(), 0);
+});
+
+test("same-host file cp cancellation releases the shared session lease", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  const sftpId = "same-host-file-cancel";
+  let markExecOpened;
+  const execOpened = new Promise((resolve) => { markExecOpened = resolve; });
+  const stream = new EventEmitter();
+  stream.stderr = new EventEmitter();
+  stream.close = () => {};
+  stream.end = () => {};
+  stream.destroy = () => {};
+  const client = {
+    client: {
+      exec(_command, callback) {
+        callback(null, stream);
+        markExecOpened();
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([[sftpId, client]]) });
+  const transferId = "same-host-file-cancelled";
+  const running = transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/source/file.bin",
+      targetPath: "/target/file.bin",
+      sourceType: "sftp",
+      targetType: "sftp",
+      sourceSftpId: sftpId,
+      targetSftpId: sftpId,
+      totalBytes: 1,
+      sameHost: true,
+      skipAdmission: true,
+    },
+  );
+  await execOpened;
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 1);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 1);
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await running;
+  assert.equal(result.error, "Transfer cancelled");
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+});
+
 test("local promotion restores concurrent replacement moved into the backup", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-local-promo-backup-"));
   t.after(async () => {

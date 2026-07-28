@@ -1,7 +1,7 @@
 import type { TransferTask } from "./models";
 import {
-  appendDirectoryManifestIdentity,
   compareDirectoryTraversalPaths,
+  createDirectoryManifestAccumulator,
   createDirectoryEntryIdentity,
   createEmptyDirectoryResumeCheckpoint,
   isValidDirectoryResumeCheckpoint,
@@ -71,7 +71,7 @@ export function sanitizeSftpTransferTask(value: unknown): TransferTask | null {
     // Rebuild the fixed schema so unknown/legacy payload fields cannot smuggle
     // an unbounded path list back into localStorage.
     task.directoryResumeCheckpoint = {
-      version: 1,
+      version: checkpoint.version,
       coveredEntries: checkpoint.coveredEntries,
       completedEntries: checkpoint.completedEntries,
       manifestHash: checkpoint.manifestHash,
@@ -188,14 +188,13 @@ export function pruneSftpTransferHistory(
         childrenByIndex.set(child.directoryEntryIndex!, child);
       }
     }
+    const manifest = createDirectoryManifestAccumulator(checkpoint);
     while (childrenByIndex.has(checkpoint.coveredEntries)) {
       const child = childrenByIndex.get(checkpoint.coveredEntries)!;
-      checkpoint.manifestHash = appendDirectoryManifestIdentity(
-        checkpoint.manifestHash,
-        child.directoryEntryIdentity!,
-      );
+      manifest.append(child.directoryEntryIdentity!);
       checkpoint.coveredEntries += 1;
     }
+    checkpoint.manifestHash = manifest.digest();
     let newlyCompacted = 0;
     for (const child of parentChildren) {
       if (
