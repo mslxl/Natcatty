@@ -368,6 +368,9 @@ function createTerminalWorkerRuntime(options = {}) {
   const maxSessionLifecycleTombstones = Number.isFinite(options.maxSessionLifecycleTombstones)
     ? Math.max(1, Math.floor(Number(options.maxSessionLifecycleTombstones)))
     : DEFAULT_MAX_SESSION_LIFECYCLE_TOMBSTONES;
+  const setDefaultTransportIdleTtlMs = typeof options.setDefaultTransportIdleTtlMs === "function"
+    ? options.setDefaultTransportIdleTtlMs
+    : (value) => require("../bridges/sshConnectionPool.cjs").setDefaultTransportIdleTtlMs(value);
 
   function canPruneSessionLifecycleTombstone(sessionId) {
     return !sessionOperationTails.has(sessionId)
@@ -681,6 +684,10 @@ function createTerminalWorkerRuntime(options = {}) {
 
   function handleMessage(eventOrMessage) {
     const { message, ports } = normalizeMessageEvent(eventOrMessage);
+    if (message?.kind === "set-ssh-transport-idle-ttl") {
+      setDefaultTransportIdleTtlMs(message.value);
+      return;
+    }
     if (message?.kind === "urgent-input-port") {
       urgentInputPorts?.open(message.webContentsId, ports?.[0]);
       return;

@@ -61,16 +61,17 @@ function openBoundedSftpChannel(sshClient, options = {}) {
       return;
     }
     signal?.addEventListener?.("abort", onAbort, { once: true });
+    // Keep the correctness deadline referenced until the open settles. An
+    // unreferenced timer can let Node exit with this promise still pending.
     timer = setTimeoutFn(() => {
       const error = new Error(`SFTP channel open timed out after ${timeoutMs}ms`);
       error.code = "SFTP_CHANNEL_OPEN_TIMEOUT";
       finish(error, null, { invalidateTransport: true });
     }, timeoutMs);
-    timer.unref?.();
 
     try {
       sshClient.sftp((error, channel) => {
-        if (error) finish(error);
+        if (error) finish(error, channel || null);
         else finish(null, channel || null);
       });
     } catch (error) {

@@ -354,6 +354,7 @@ function createBridgeRegistrar(context) {
     const {
       createTerminalWorkerManager,
       isTerminalWorkerEnabled,
+      registerTransportIdleTtlSettingsSync,
     } = require("../bridges/terminalWorkerManager.cjs");
     const terminalOutputChannel = createTerminalOutputChannel({
       MessageChannelMain: electronModule.MessageChannelMain,
@@ -366,6 +367,7 @@ function createBridgeRegistrar(context) {
           MessageChannelMain: electronModule.MessageChannelMain,
         })
       : null;
+    registerTransportIdleTtlSettingsSync(ipcMain, terminalWorkerManager);
     if (terminalWorkerManager) {
       const { registerPluginShutdown } = require("../plugins/shutdownCoordinator.cjs");
       registerPluginShutdown(async () => {

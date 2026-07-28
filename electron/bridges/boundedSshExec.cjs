@@ -53,7 +53,7 @@ function openBoundedSshExecStream(
     };
     const finish = (error, stream, { invalidateTransport = false } = {}) => {
       if (settled) {
-        if (!error) terminateSshExecStream(stream);
+        if (stream) terminateSshExecStream(stream);
         return false;
       }
       settled = true;
@@ -74,12 +74,13 @@ function openBoundedSshExecStream(
       return;
     }
     signal?.addEventListener?.("abort", onAbort, { once: true });
+    // Correctness deadlines must stay referenced until settlement. Otherwise
+    // Node may exit while the SSH callback and this promise are still pending.
     openingTimer = setTimeoutFn(() => {
       const error = new Error(`SSH exec channel open timed out after ${openingTimeoutMs} ms`);
       error.code = "SSH_EXEC_OPEN_TIMEOUT";
       finish(error, null, { invalidateTransport: true });
     }, openingTimeoutMs);
-    openingTimer.unref?.();
 
     try {
       sshClient.exec(command, execOptions, (error, stream) => finish(error, stream));
@@ -185,7 +186,6 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
       error.code = "SSH_EXEC_OPEN_TIMEOUT";
       finish(error, null, { terminate: true, invalidateTransport: true });
     }, openingTimeoutMs);
-    openingTimer.unref?.();
 
     try {
       sshClient.exec(command, (error, stream) => {
@@ -226,7 +226,6 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
           timeoutError.code = "SSH_EXEC_RUN_TIMEOUT";
           finish(timeoutError, null, { terminate: true });
         }, runTimeoutMs);
-        runTimer.unref?.();
         try { options.onStream?.(stream); } catch (streamError) {
           finish(streamError, null, { terminate: true });
           return;

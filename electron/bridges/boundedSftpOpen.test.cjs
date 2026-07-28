@@ -5,6 +5,26 @@ const assert = require("node:assert/strict");
 const { EventEmitter, getEventListeners } = require("node:events");
 const { openBoundedSftpChannel } = require("./boundedSftpOpen.cjs");
 
+function trackedTimerApi() {
+  const active = new Set();
+  return {
+    active,
+    setTimeoutFn(callback, delay) {
+      let timer;
+      timer = setTimeout(() => {
+        active.delete(timer);
+        callback();
+      }, delay);
+      active.add(timer);
+      return timer;
+    },
+    clearTimeoutFn(timer) {
+      clearTimeout(timer);
+      active.delete(timer);
+    },
+  };
+}
+
 function createChannel() {
   const channel = new EventEmitter();
   channel.endCalls = 0;
@@ -17,35 +37,49 @@ function createChannel() {
 test("bounded SFTP open times out and closes a late channel", async () => {
   let callback;
   let invalidations = 0;
+  const timers = trackedTimerApi();
   const sshClient = {
     sftp(next) { callback = next; },
     destroy() { invalidations += 1; },
   };
-  const result = openBoundedSftpChannel(sshClient, { timeoutMs: 5 });
+  const result = openBoundedSftpChannel(sshClient, { timeoutMs: 5, ...timers });
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   await assert.rejects(result, (error) => error.code === "SFTP_CHANNEL_OPEN_TIMEOUT");
   assert.equal(invalidations, 1);
+  assert.equal(timers.active.size, 0);
 
   const channel = createChannel();
   callback(null, channel);
   assert.ok(channel.endCalls > 0 || channel.closeCalls > 0);
+  assert.equal(timers.active.size, 0);
 });
 
 test("bounded SFTP open cancellation settles immediately and closes a late channel", async () => {
   let callback;
   let invalidations = 0;
+  const timers = trackedTimerApi();
   const controller = new AbortController();
   const sshClient = {
     sftp(next) { callback = next; },
     destroy() { invalidations += 1; },
   };
-  const result = openBoundedSftpChannel(sshClient, { signal: controller.signal });
+  const result = openBoundedSftpChannel(sshClient, {
+    signal: controller.signal,
+    ...timers,
+  });
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   controller.abort(new Error("cancelled"));
   await assert.rejects(result, /cancelled/);
   assert.equal(invalidations, 1);
+  assert.equal(timers.active.size, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 
   const channel = createChannel();
-  callback(null, channel);
+  callback(new Error("late open failure"), channel);
   assert.ok(channel.endCalls > 0 || channel.closeCalls > 0);
+  assert.equal(timers.active.size, 0);
 });
 
 test("repeated unresponsive SFTP opens cannot retain channel callbacks", async () => {
@@ -75,13 +109,20 @@ test("repeated unresponsive SFTP opens cannot retain channel callbacks", async (
 test("bounded SFTP open removes cancellation listeners after success and failure", async () => {
   for (const outcome of ["success", "error"]) {
     const controller = new AbortController();
+    const timers = trackedTimerApi();
     let callback;
     const sshClient = { sftp(next) { callback = next; } };
-    const result = openBoundedSftpChannel(sshClient, { signal: controller.signal });
+    const result = openBoundedSftpChannel(sshClient, {
+      signal: controller.signal,
+      ...timers,
+    });
+    assert.equal(timers.active.size, 1);
+    assert.equal([...timers.active][0].hasRef(), true);
     if (outcome === "success") callback(null, createChannel());
     else callback(new Error("open failed"));
     if (outcome === "success") assert.ok(await result);
     else await assert.rejects(result, /open failed/);
+    assert.equal(timers.active.size, 0);
     assert.equal(getEventListeners(controller.signal, "abort").length, 0);
   }
 });

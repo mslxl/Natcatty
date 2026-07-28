@@ -17,6 +17,33 @@ const {
 
 const DEFAULT_CLOSED_SESSION_TOMBSTONE_TTL_MS = 60_000;
 const DEFAULT_MAX_CLOSED_SESSION_TOMBSTONES = 2_048;
+const SSH_TRANSPORT_IDLE_TTL_ENV = "NETCATTY_SSH_TRANSPORT_IDLE_TTL_MS";
+
+function resolveInitialTransportIdleTtlMs(options = {}) {
+  if (Number.isFinite(options.initialTransportIdleTtlMs)
+    && options.initialTransportIdleTtlMs >= 0) {
+    return Number(options.initialTransportIdleTtlMs);
+  }
+  try {
+    const { getDefaultTransportIdleTtlMs } = require("./sshConnectionPool.cjs");
+    return getDefaultTransportIdleTtlMs();
+  } catch {
+    return 5 * 60_000;
+  }
+}
+
+function registerTransportIdleTtlSettingsSync(ipcMain, terminalWorkerManager) {
+  if (!ipcMain?.on || !terminalWorkerManager?.setDefaultTransportIdleTtlMs) {
+    return () => {};
+  }
+  const { STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS } = require("./sshConnectionPool.cjs");
+  const listener = (_event, payload) => {
+    if (payload?.key !== STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS) return;
+    terminalWorkerManager.setDefaultTransportIdleTtlMs(payload.value);
+  };
+  ipcMain.on("netcatty:settings:changed", listener);
+  return () => ipcMain.removeListener?.("netcatty:settings:changed", listener);
+}
 
 function isTerminalWorkerEnabled(options = {}) {
   const env = options.env || process.env;
@@ -376,6 +403,7 @@ function createTerminalWorkerManager(options = {}) {
   const maxClosedSessionTombstones = Number.isFinite(options.maxClosedSessionTombstones)
     ? Math.max(1, Math.floor(Number(options.maxClosedSessionTombstones)))
     : DEFAULT_MAX_CLOSED_SESSION_TOMBSTONES;
+  let transportIdleTtlMs = resolveInitialTransportIdleTtlMs(options);
 
   function rejectAllPending(error) {
     for (const { reject } of pending.values()) {
@@ -1604,7 +1632,15 @@ function createTerminalWorkerManager(options = {}) {
     if (!utilityProcess?.fork) {
       throw new Error("Electron utilityProcess is unavailable");
     }
-    const worker = utilityProcess.fork(workerScriptPath);
+    // The worker loads the SSH pool before it can receive IPC. Seed the latest
+    // value through its environment so a first request (and every replacement
+    // worker) can never briefly use the product default instead of the setting.
+    const worker = utilityProcess.fork(workerScriptPath, [], {
+      env: {
+        ...process.env,
+        [SSH_TRANSPORT_IDLE_TTL_ENV]: String(transportIdleTtlMs),
+      },
+    });
     child = worker;
     worker.on?.("message", (message) => {
       if (child === worker) handleMessage(message);
@@ -1613,6 +1649,24 @@ function createTerminalWorkerManager(options = {}) {
       if (child === worker) handleExit(code);
     });
     return worker;
+  }
+
+  function setDefaultTransportIdleTtlMs(value) {
+    if (!Number.isFinite(value) || value < 0) return transportIdleTtlMs;
+    const normalized = Number(value);
+    if (normalized === transportIdleTtlMs) return transportIdleTtlMs;
+    transportIdleTtlMs = normalized;
+    const worker = child;
+    if (!worker) return transportIdleTtlMs;
+    try {
+      worker.postMessage({
+        kind: "set-ssh-transport-idle-ttl",
+        value: transportIdleTtlMs,
+      });
+    } catch (error) {
+      retireWorkerAfterIpcFailure(worker, error);
+    }
+    return transportIdleTtlMs;
   }
 
   function request(channel, payload, optionsForRequest = {}) {
@@ -1959,6 +2013,10 @@ function createTerminalWorkerManager(options = {}) {
       outputTaps.add(listener);
       return () => outputTaps.delete(listener);
     },
+    setDefaultTransportIdleTtlMs,
+    getDefaultTransportIdleTtlMs() {
+      return transportIdleTtlMs;
+    },
     _getClosedSessionTombstoneCountsForTests() {
       pruneClosedSessionTombstones();
       return {
@@ -1978,4 +2036,5 @@ module.exports = {
   fanoutGlobalTransferFromWorkerEvent,
   broadcastGlobalTransferEventOnMain,
   shouldForwardWorkerRendererEvent,
+  registerTransportIdleTtlSettingsSync,
 };

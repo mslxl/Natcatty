@@ -2,12 +2,32 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { EventEmitter } = require("node:events");
+const { EventEmitter, getEventListeners } = require("node:events");
 const {
   openBoundedForwardIn,
   openBoundedForwardOut,
   openBoundedSshShell,
 } = require("./boundedSshChannelOpen.cjs");
+
+function trackedTimerApi() {
+  const active = new Set();
+  return {
+    active,
+    setTimeoutFn(callback, delay) {
+      let timer;
+      timer = setTimeout(() => {
+        active.delete(timer);
+        callback();
+      }, delay);
+      active.add(timer);
+      return timer;
+    },
+    clearTimeoutFn(timer) {
+      clearTimeout(timer);
+      active.delete(timer);
+    },
+  };
+}
 
 function pendingClient(method) {
   const client = new EventEmitter();
@@ -38,19 +58,50 @@ test("unresponsive shell and forward opens invalidate transport and release pend
 test("cancelled channel open invalidates transport and a late stream is closed", async () => {
   let callback;
   let invalidations = 0;
+  const timers = trackedTimerApi();
   const client = {
     shell(_window, _options, next) { callback = next; },
     destroy() { invalidations += 1; },
   };
   const controller = new AbortController();
-  const pending = openBoundedSshShell(client, {}, {}, { signal: controller.signal });
+  const pending = openBoundedSshShell(client, {}, {}, {
+    signal: controller.signal,
+    ...timers,
+  });
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   controller.abort(new Error("cancelled"));
   await assert.rejects(pending, /cancelled/);
   assert.equal(invalidations, 1);
+  assert.equal(timers.active.size, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 
   const stream = new EventEmitter();
   stream.closed = 0;
   stream.close = () => { stream.closed += 1; };
-  callback(null, stream);
+  callback(new Error("late open failure"), stream);
   assert.equal(stream.closed, 1);
+  assert.equal(timers.active.size, 0);
+});
+
+test("channel open keeps its deadline referenced and clears it after success", async () => {
+  let callback;
+  const timers = trackedTimerApi();
+  const controller = new AbortController();
+  const client = {
+    shell(_window, _options, next) { callback = next; },
+  };
+  const pending = openBoundedSshShell(client, {}, {}, {
+    signal: controller.signal,
+    timeoutMs: 1_000,
+    ...timers,
+  });
+
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
+  const stream = new EventEmitter();
+  callback(null, stream);
+  assert.equal(await pending, stream);
+  assert.equal(timers.active.size, 0);
+  assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });

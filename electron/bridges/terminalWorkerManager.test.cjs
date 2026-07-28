@@ -5,6 +5,7 @@ const test = require("node:test");
 const {
   createTerminalWorkerManager,
   isTerminalWorkerEnabled,
+  registerTransportIdleTtlSettingsSync,
   shouldForwardWorkerRendererEvent,
 } = require("./terminalWorkerManager.cjs");
 const { createTerminalWorkerRuntime } = require("../terminalWorker/runtime.cjs");
@@ -106,6 +107,154 @@ class FakeMessageChannelMain {
 test("isTerminalWorkerEnabled defaults on and honors NETCATTY_TERMINAL_WORKER=0", () => {
   assert.equal(isTerminalWorkerEnabled({ env: {} }), true);
   assert.equal(isTerminalWorkerEnabled({ env: { NETCATTY_TERMINAL_WORKER: "0" } }), false);
+});
+
+test("settings sync forwards all SSH idle TTL presets and supports disabled worker mode", () => {
+  const ipcMain = new EventEmitter();
+  const values = [];
+  const dispose = registerTransportIdleTtlSettingsSync(ipcMain, {
+    setDefaultTransportIdleTtlMs(value) {
+      values.push(value);
+    },
+  });
+  const key = "netcatty_ssh_transport_idle_ttl_ms_v1";
+  for (const value of [60_000, 15 * 60_000, 30 * 60_000, 0]) {
+    ipcMain.emit("netcatty:settings:changed", {}, { key, value });
+  }
+  ipcMain.emit("netcatty:settings:changed", {}, { key: "unrelated", value: 1 });
+  assert.deepEqual(values, [60_000, 15 * 60_000, 30 * 60_000, 0]);
+
+  dispose();
+  ipcMain.emit("netcatty:settings:changed", {}, { key, value: 60_000 });
+  assert.equal(values.length, 4);
+
+  const disabledIpcMain = new EventEmitter();
+  const disposeDisabled = registerTransportIdleTtlSettingsSync(disabledIpcMain, null);
+  assert.equal(disabledIpcMain.listenerCount("netcatty:settings:changed"), 0);
+  disposeDisabled();
+});
+
+test("worker started after a settings change inherits the latest SSH idle TTL", async () => {
+  const child = new FakeChild();
+  const forks = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork(...args) {
+        forks.push(args);
+        return child;
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+    initialTransportIdleTtlMs: 5 * 60_000,
+  });
+
+  manager.setDefaultTransportIdleTtlMs(60_000);
+  manager.setDefaultTransportIdleTtlMs(15 * 60_000);
+  manager.setDefaultTransportIdleTtlMs(30 * 60_000);
+  manager.setDefaultTransportIdleTtlMs(0);
+  assert.equal(child.messages.length, 0, "changing an idle manager must not start its worker");
+
+  const request = manager.request("netcatty:test", {});
+  assert.equal(forks.length, 1);
+  assert.equal(forks[0][2].env.NETCATTY_SSH_TRANSPORT_IDLE_TTL_MS, "0");
+  assert.equal(child.messages[0].kind, "request");
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { ok: true },
+  });
+  await request;
+});
+
+test("active worker receives every SSH idle TTL change without restarting", async () => {
+  const child = new FakeChild();
+  let forks = 0;
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork() {
+        forks += 1;
+        return child;
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+    initialTransportIdleTtlMs: 5 * 60_000,
+  });
+  const request = manager.request("netcatty:test", {});
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { ok: true },
+  });
+  await request;
+
+  for (const value of [60_000, 15 * 60_000, 30 * 60_000, 0]) {
+    assert.equal(manager.setDefaultTransportIdleTtlMs(value), value);
+  }
+  assert.equal(forks, 1);
+  assert.deepEqual(
+    child.messages.filter((message) => message.kind === "set-ssh-transport-idle-ttl"),
+    [60_000, 15 * 60_000, 30 * 60_000, 0].map((value) => ({
+      kind: "set-ssh-transport-idle-ttl",
+      value,
+    })),
+  );
+  assert.equal(manager.getDefaultTransportIdleTtlMs(), 0);
+  assert.equal(manager.setDefaultTransportIdleTtlMs(-1), 0);
+  assert.equal(manager.setDefaultTransportIdleTtlMs(Number.NaN), 0);
+  assert.equal(forks, 1);
+});
+
+test("replacement worker inherits the last SSH idle TTL after a crash", async () => {
+  const children = [new FakeChild(), new FakeChild()];
+  const forkOptions = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: {
+      fork(_script, _args, options) {
+        forkOptions.push(options);
+        return children[forkOptions.length - 1];
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+    initialTransportIdleTtlMs: 60_000,
+  });
+
+  const first = manager.request("netcatty:test", {});
+  children[0].emit("message", {
+    kind: "response",
+    requestId: children[0].messages[0].requestId,
+    result: { ok: true },
+  });
+  await first;
+  manager.setDefaultTransportIdleTtlMs(30 * 60_000);
+  children[0].emit("exit", 1);
+
+  const second = manager.request("netcatty:test", {});
+  assert.equal(forkOptions[1].env.NETCATTY_SSH_TRANSPORT_IDLE_TTL_MS, String(30 * 60_000));
+  assert.equal(children[1].messages[0].kind, "request");
+  children[1].emit("message", {
+    kind: "response",
+    requestId: children[1].messages[0].requestId,
+    result: { ok: true },
+  });
+  await second;
+});
+
+test("terminal worker runtime applies live SSH idle TTL controls", () => {
+  const parentPort = new EventEmitter();
+  parentPort.postMessage = () => {};
+  const values = [];
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    registerBridges() {},
+    setDefaultTransportIdleTtlMs(value) {
+      values.push(value);
+    },
+  });
+  runtime.start();
+  for (const value of [60_000, 15 * 60_000, 30 * 60_000, 0]) {
+    parentPort.emit("message", { kind: "set-ssh-transport-idle-ttl", value });
+  }
+  assert.deepEqual(values, [60_000, 15 * 60_000, 30 * 60_000, 0]);
 });
 
 test("request sends a worker command and resolves matching response", async () => {

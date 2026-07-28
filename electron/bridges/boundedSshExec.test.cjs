@@ -18,28 +18,57 @@ function createStream() {
   return stream;
 }
 
+function trackedTimerApi() {
+  const active = new Set();
+  return {
+    active,
+    setTimeoutFn(callback, delay) {
+      let timer;
+      timer = setTimeout(() => {
+        active.delete(timer);
+        callback();
+      }, delay);
+      active.add(timer);
+      return timer;
+    },
+    clearTimeoutFn(timer) {
+      clearTimeout(timer);
+      active.delete(timer);
+    },
+  };
+}
+
 test("bounded SSH exec times out while opening and terminates a late stream", async () => {
   let callback;
   let endCalls = 0;
   let destroyCalls = 0;
+  const timers = trackedTimerApi();
   const sshClient = {
     exec(_command, next) { callback = next; },
     end() { endCalls += 1; },
     destroy() { destroyCalls += 1; },
   };
-  const result = executeBoundedSshCommand(sshClient, "true", { openingTimeoutMs: 5 });
+  const result = executeBoundedSshCommand(sshClient, "true", {
+    openingTimeoutMs: 5,
+    ...timers,
+  });
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   await assert.rejects(result, (error) => error.code === "SSH_EXEC_OPEN_TIMEOUT");
+  assert.equal(timers.active.size, 0);
   assert.ok(endCalls > 0 || destroyCalls > 0, "open timeout must invalidate the physical transport");
 
   const stream = createStream();
-  callback(null, stream);
+  callback(new Error("late open failure"), stream);
   assert.ok(stream.closed > 0 || stream.destroyed > 0);
+  assert.equal(timers.active.size, 0);
 });
 
 test("bounded raw exec stream preserves options and invalidates a hung open", async () => {
   let callback;
   let receivedOptions;
   let invalidations = 0;
+  const timers = trackedTimerApi();
   const sshClient = {
     exec(_command, options, next) {
       receivedOptions = options;
@@ -52,24 +81,36 @@ test("bounded raw exec stream preserves options and invalidates a hung open", as
     sshClient,
     "sudo sftp-server",
     { pty: false },
-    { openingTimeoutMs: 2 },
+    { openingTimeoutMs: 2, ...timers },
   );
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   await assert.rejects(pending, (error) => error.code === "SSH_EXEC_OPEN_TIMEOUT");
   assert.deepEqual(receivedOptions, { pty: false });
   assert.equal(invalidations, 1);
+  assert.equal(timers.active.size, 0);
 
   const lateStream = createStream();
   callback(null, lateStream);
   assert.ok(lateStream.closed > 0 || lateStream.destroyed > 0);
+  assert.equal(timers.active.size, 0);
 });
 
 test("bounded SSH exec times out a live command and removes data listeners", async () => {
   const stream = createStream();
+  const timers = trackedTimerApi();
   const sshClient = { exec(_command, next) { next(null, stream); } };
+  const result = executeBoundedSshCommand(sshClient, "sleep", {
+    runTimeoutMs: 5,
+    ...timers,
+  });
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   await assert.rejects(
-    executeBoundedSshCommand(sshClient, "sleep", { runTimeoutMs: 5 }),
+    result,
     (error) => error.code === "SSH_EXEC_RUN_TIMEOUT",
   );
+  assert.equal(timers.active.size, 0);
   assert.equal(stream.listenerCount("data"), 0);
   assert.equal(stream.stderr.listenerCount("data"), 0);
   assert.ok(stream.closed > 0 || stream.destroyed > 0);
@@ -104,19 +145,43 @@ test("bounded SSH exec settles on stdout and stderr stream errors", async () => 
 test("bounded SSH exec aborts before callback and terminates a late stream", async () => {
   let callback;
   let invalidations = 0;
+  const timers = trackedTimerApi();
   const controller = new AbortController();
   const sshClient = {
     exec(_command, next) { callback = next; },
     destroy() { invalidations += 1; },
   };
-  const result = executeBoundedSshCommand(sshClient, "pending", { signal: controller.signal });
+  const result = executeBoundedSshCommand(sshClient, "pending", {
+    signal: controller.signal,
+    ...timers,
+  });
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
   controller.abort(new Error("cancelled"));
   await assert.rejects(result, /cancelled/);
   assert.equal(invalidations, 1);
+  assert.equal(timers.active.size, 0);
 
   const stream = createStream();
   callback(null, stream);
   assert.ok(stream.closed > 0 || stream.destroyed > 0);
+  assert.equal(timers.active.size, 0);
+});
+
+test("bounded SSH exec clears its run deadline after normal completion", async () => {
+  const stream = createStream();
+  const timers = trackedTimerApi();
+  const sshClient = { exec(_command, next) { next(null, stream); } };
+  const result = executeBoundedSshCommand(sshClient, "true", {
+    runTimeoutMs: 1_000,
+    ...timers,
+  });
+
+  assert.equal(timers.active.size, 1);
+  assert.equal([...timers.active][0].hasRef(), true);
+  stream.emit("close", 0);
+  assert.deepEqual(await result, { stdout: "", stderr: "", code: 0 });
+  assert.equal(timers.active.size, 0);
 });
 
 test("repeated unresponsive exec opens release channel callbacks and evict the shared transport", async () => {

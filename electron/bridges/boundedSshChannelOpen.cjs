@@ -28,18 +28,20 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
   const signal = options.signal || null;
   const closeLateResult = options.closeLateResult || closeLateChannel;
   const timeoutCode = options.timeoutCode || "SSH_CHANNEL_OPEN_TIMEOUT";
+  const setTimeoutFn = options.setTimeoutFn || setTimeout;
+  const clearTimeoutFn = options.clearTimeoutFn || clearTimeout;
 
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
     const cleanup = () => {
-      if (timer) clearTimeout(timer);
+      if (timer) clearTimeoutFn(timer);
       timer = null;
       signal?.removeEventListener?.("abort", onAbort);
     };
     const finish = (error, result, { invalidate = false } = {}) => {
       if (settled) {
-        if (!error) closeLateResult(result);
+        if (result) closeLateResult(result);
         return false;
       }
       settled = true;
@@ -57,12 +59,14 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
       return;
     }
     signal?.addEventListener?.("abort", onAbort, { once: true });
-    timer = setTimeout(() => {
+    // This is a correctness deadline, not background housekeeping. It must
+    // remain referenced until the channel open settles; cleanup clears it on
+    // every success, error, abort, and synchronous-throw path.
+    timer = setTimeoutFn(() => {
       const error = new Error(`${label} timed out after ${timeoutMs} ms`);
       error.code = timeoutCode;
       finish(error, null, { invalidate: true });
     }, timeoutMs);
-    timer.unref?.();
 
     try {
       invoke((error, result) => finish(error, result));
