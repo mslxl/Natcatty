@@ -161,7 +161,7 @@ export const KeywordHighlightRulesEditor: React.FC<{
             <Toggle
               checked={rule.enabled}
               onChange={() => onChange(toggleKeywordHighlightRuleEnabled(rules, rule.id))}
-              ariaLabel={rule.enabled ? t('common.enabled') : t('common.disabled')}
+              ariaLabel={`${rule.label}, ${rule.enabled ? t('common.enabled') : t('common.disabled')}`}
             />
             <div className="flex-1 min-w-0 flex items-center gap-1.5">
               <span className={cn("text-sm truncate", !rule.enabled && "text-muted-foreground line-through")} style={rule.enabled ? { color: rule.color } : undefined}>

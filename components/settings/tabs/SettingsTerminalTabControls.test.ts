@@ -54,7 +54,7 @@ test("keyword highlight rules editor exposes a per-rule enable switch", () => {
     ),
   );
 
-  assert.match(markup, /role="switch" aria-checked="true" aria-label="Enabled"/);
-  assert.match(markup, /role="switch" aria-checked="false" aria-label="Disabled"/);
+  assert.match(markup, /role="switch" aria-checked="true" aria-label="Error, Enabled"/);
+  assert.match(markup, /role="switch" aria-checked="false" aria-label="Warning, Disabled"/);
   assert.match(markup, /line-through/);
 });
