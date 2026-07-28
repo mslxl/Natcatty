@@ -49,3 +49,20 @@ test("sftp host picker uses single-line quick switcher row layout", () => {
   assert.doesNotMatch(source, /bg-primary\/10 border border-primary\/30/);
   assert.doesNotMatch(source, /text-xs text-muted-foreground truncate/);
 });
+
+test("sftp host picker virtualizes the host list", () => {
+  assert.match(source, /VariableSizeVirtualList/);
+  assert.match(source, /data-host-picker-virtual="sftp"/);
+  assert.match(source, /itemIndexToVisualIndex/);
+  assert.doesNotMatch(source, /filteredHosts\.map\(\(host\) =>/);
+  // Connected-only results must not leave a dangling empty Hosts header.
+  assert.match(source, /if \(filteredHosts\.length > 0\) \{\s*pushHeader\('header:hosts'/);
+  assert.match(
+    source,
+    /else if \(filteredConnectedHosts\.length === 0\) \{\s*pushHeader\('header:hosts'/,
+  );
+  // Short lists shrink; long lists cap at 360px (not a forced blank 360px dialog).
+  assert.match(source, /Math\.min\(360, Math\.max\(total, 1\)\)/);
+  assert.match(source, /listViewportHeight/);
+  assert.doesNotMatch(source, /className="h-\[360px\]"/);
+});
