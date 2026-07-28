@@ -259,6 +259,14 @@ function bindPortForwardChannels({
       server.listen(localPort, bindAddress, () => {
         console.log(`[PortForward] Local forwarding active: ${bindAddress}:${localPort} -> ${remoteHost}:${remotePort}`);
         try {
+          // User may have cancelled while listen was pending (shared transport
+          // path). Do not resurrect a stopped tunnel or leave the port open.
+          if (isTunnelCancelled(tunnelState)) {
+            try { server.close(); } catch { /* ignore */ }
+            try { destroyTunnelPipes(tunnelState); } catch { /* ignore */ }
+            resolve({ tunnelId, success: false, cancelled: true });
+            return;
+          }
           tunnelState.type = "local";
           tunnelState.conn = conn;
           tunnelState.server = server;
@@ -325,6 +333,15 @@ function bindPortForwardChannels({
 
         console.log(`[PortForward] Remote forwarding active: remote ${bindAddress}:${localPort} -> local ${remoteHost}:${remotePort}`);
         try {
+          if (isTunnelCancelled(tunnelState)) {
+            try {
+              if (typeof conn.unforwardIn === "function") {
+                conn.unforwardIn(bindAddress, localPort, () => {});
+              }
+            } catch { /* ignore */ }
+            resolve({ tunnelId, success: false, cancelled: true });
+            return;
+          }
           tunnelState.type = "remote";
           tunnelState.conn = conn;
           tunnelState.server = null;
@@ -429,6 +446,12 @@ function bindPortForwardChannels({
       server.listen(localPort, bindAddress, () => {
         console.log(`[PortForward] Dynamic SOCKS5 proxy active on ${bindAddress}:${localPort}`);
         try {
+          if (isTunnelCancelled(tunnelState)) {
+            try { server.close(); } catch { /* ignore */ }
+            try { destroyTunnelPipes(tunnelState); } catch { /* ignore */ }
+            resolve({ tunnelId, success: false, cancelled: true });
+            return;
+          }
           tunnelState.type = "dynamic";
           tunnelState.conn = conn;
           tunnelState.server = server;
