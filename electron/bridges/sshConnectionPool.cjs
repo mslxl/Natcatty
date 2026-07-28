@@ -367,9 +367,13 @@ function fingerprintKnownHostTrust(endpoint) {
 
 /**
  * Non-secret digest of credential material for reuse invalidation.
- * Digests only the credential class for the selected auth method so key-first
- * / password-retry open attempts still match a parked transport that was
- * created with multi-material options. Raw secrets are never stored.
+ * Digests every credential that can authenticate the selected policy. For
+ * automatic authentication we cannot know, while coordinating a pending dial,
+ * whether a key will succeed or ssh2 will fall back to the saved password.
+ * Including both is deliberately conservative: an irrelevant password change
+ * may cause one extra connection after key authentication, but a password that
+ * actually authenticated can never keep reusing a TTL-zero transport after it
+ * was rotated. Raw secrets are never stored.
  */
 function digestAuthMaterial(endpoint) {
   if (!endpoint || typeof endpoint !== "object") return "none";
@@ -402,9 +406,9 @@ function digestAuthMaterial(endpoint) {
     h.update("\0");
     h.update(identityFileContentFingerprint);
   } else {
-    // auto / agent: prefer publicKey / identity paths as rotation signals.
-    // Do not always fold password + privateKey together — transfer key-first
-    // strips password and would miss a multi-material parked transport.
+    // auto / agent: include every configured key source plus the fallback
+    // password. The pool coordinates before authentication completes, so it
+    // must not assume that the first key source is the one that succeeded.
     h.update(String(endpoint.publicKey || ""));
     h.update("\0");
     if (endpoint.privateKey) {
@@ -417,13 +421,8 @@ function digestAuthMaterial(endpoint) {
     h.update(String(identityPaths));
     h.update("\0");
     h.update(identityFileContentFingerprint);
-    // Password-only auto (no key material): include password so vault password
-    // rotation invalidates parked reuse. When any key material is present,
-    // omit password so key-first opens still match.
-    if (!endpoint.privateKey && !endpoint.publicKey && !identityPaths) {
-      h.update("\0pw:");
-      h.update(String(endpoint.password || ""));
-    }
+    h.update("\0pw:");
+    h.update(String(endpoint.password || ""));
   }
   return h.digest("hex").slice(0, 16);
 }

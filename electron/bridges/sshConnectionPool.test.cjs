@@ -168,6 +168,29 @@ test("in-flight dials isolate endpoint, profile, credentials, and ForwardAgent p
   );
 });
 
+test("automatic key/password dials coalesce only when every possible credential matches", () => {
+  const base = {
+    hostId: "host-auto",
+    hostname: "auto.example",
+    username: "alice",
+    authType: "auto",
+    privateKey: "configured-private-key",
+    password: "fallback-password-v1",
+  };
+  const leader = beginTransportDial(base, { kind: "shell" });
+  assert.equal(leader.role, "leader");
+  assert.equal(
+    beginTransportDial({ ...base }, { kind: "channel" }).role,
+    "join",
+    "identical automatic opens should still share one pending physical dial",
+  );
+  assert.equal(
+    beginTransportDial({ ...base, password: "fallback-password-v2" }, { kind: "channel" }).role,
+    "leader",
+    "a rotated fallback password must not join a dial whose final auth method is not known yet",
+  );
+});
+
 test("channel opens can join a ForwardAgent leader but not the reverse", () => {
   const base = {
     hostId: "host-1",
@@ -587,7 +610,9 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
     fingerprintAuth({ ...keyBase, privateKey: "same" }),
     fingerprintAuth({ ...keyBase, privateKey: "same" }),
   );
-  // auto + publicKey: key-first (password stripped) still matches.
+  // Automatic auth fingerprints every credential that may be selected. This
+  // remains stable for an unchanged key/password policy and invalidates when
+  // either the key or its fallback password rotates.
   const autoWithPub = {
     authType: "auto",
     keyId: "k1",
@@ -597,13 +622,67 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
   };
   assert.equal(
     fingerprintAuth(autoWithPub),
-    fingerprintAuth({ ...autoWithPub, password: undefined }),
+    fingerprintAuth({ ...autoWithPub }),
+  );
+  assert.notEqual(
+    fingerprintAuth(autoWithPub),
+    fingerprintAuth({ ...autoWithPub, password: "rotated-password" }),
   );
   // password-only auto: password rotation invalidates.
   assert.notEqual(
     fingerprintAuth({ authType: "auto", password: "old" }),
     fingerprintAuth({ authType: "auto", password: "new" }),
   );
+});
+
+test("automatic key success reuses an unchanged endpoint without exposing credentials", () => {
+  const endpoint = buildConnectionReuseEndpoint({
+    hostId: "auto-key-profile",
+    hostname: "auto-key.example",
+    username: "alice",
+    authMethod: "auto",
+    privateKey: "private-key-secret",
+    publicKey: "ssh-ed25519 public-key-material",
+    password: "unused-fallback-secret",
+  });
+  const endpointKey = buildEndpointKey(endpoint);
+  const transport = createTransport({ conn: makeConn(), endpoint });
+
+  assert.equal(findTransportByEndpoint({ ...endpoint }), transport);
+  assert.equal(beginTransportDial({ ...endpoint }, { kind: "shell" }).role, "reuse");
+  for (const secret of ["private-key-secret", "public-key-material", "unused-fallback-secret"]) {
+    assert.equal(endpointKey.includes(secret), false);
+  }
+});
+
+test("TTL-zero automatic password fallback is not reused after password rotation", () => {
+  const firstEndpoint = buildConnectionReuseEndpoint({
+    hostId: "auto-fallback-profile",
+    hostname: "auto-fallback.example",
+    username: "alice",
+    authMethod: "auto",
+    privateKey: "rejected-private-key",
+    password: "accepted-password-v1",
+  });
+  const rotatedEndpoint = buildConnectionReuseEndpoint({
+    hostId: "auto-fallback-profile",
+    hostname: "auto-fallback.example",
+    username: "alice",
+    authMethod: "auto",
+    privateKey: "rejected-private-key",
+    password: "accepted-password-v2",
+  });
+  const conn = makeConn();
+  const holder = {};
+  const transport = createTransport({ conn, endpoint: firstEndpoint });
+  borrowTransport(transport, { kind: "shell", holder });
+  returnTransport(holder);
+
+  assert.equal(transport.state, "idle");
+  assert.equal(conn.ended, 0, "TTL zero intentionally keeps the old transport parked");
+  assert.equal(findTransportByEndpoint(firstEndpoint), transport);
+  assert.equal(findTransportByEndpoint(rotatedEndpoint), null);
+  assert.equal(beginTransportDial(rotatedEndpoint, { kind: "shell" }).role, "leader");
 });
 
 test("endpoint key securely covers jump, proxy, agent, and SSH security policy", () => {
