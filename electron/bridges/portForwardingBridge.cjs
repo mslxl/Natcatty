@@ -337,9 +337,12 @@ function bindPortForwardChannels({
         try { tunnelState.server.close(); } catch { /* ignore */ }
         tunnelState.server = null;
       }
-      if (releaseOnError) {
+      // Always release a managed lease (shared reuse or newly registered).
+      // Otherwise a dedicated dial that registered into the pool can orphan
+      // its transport after a post-bind listener error.
+      if (tunnelState.sshTransportManaged || releaseOnError) {
         releaseTunnelSsh(tunnelState);
-      } else if (!tunnelState.sshTransportManaged) {
+      } else {
         try { conn.end(); } catch { /* ignore */ }
         cleanupChainConnections(chainConnections);
       }
