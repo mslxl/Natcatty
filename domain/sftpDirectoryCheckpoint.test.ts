@@ -13,6 +13,7 @@ import {
   EMPTY_DIRECTORY_MANIFEST_HASH,
   isValidDirectoryResumeCheckpoint,
   MAX_SFTP_FOLLOWED_SYMLINK_DEPTH,
+  releaseSftpDirectoryVisit,
   shouldFollowSftpSymlinkDirectory,
 } from "./sftpDirectoryCheckpoint";
 
@@ -76,12 +77,30 @@ test("remote directory traversal rejects ancestor cycles but allows sibling alia
   assert.ok(root);
   accountSftpDirectoryEntries(budget, 2);
   // Re-entering the same canonical path on the current branch is a cycle.
-  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root", root), null);
+  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root"), null);
   // Distinct symlink aliases to one target must both be traversed.
-  const aliasA = claimSftpDirectoryVisit(budget, "/srv/shared", root);
+  const aliasA = claimSftpDirectoryVisit(budget, "/srv/shared");
   assert.ok(aliasA);
-  const aliasB = claimSftpDirectoryVisit(budget, "/srv/shared", root);
+  releaseSftpDirectoryVisit(budget, aliasA);
+  const aliasB = claimSftpDirectoryVisit(budget, "/srv/shared");
   assert.ok(aliasB);
+  releaseSftpDirectoryVisit(budget, aliasB);
   assert.throws(() => accountSftpDirectoryEntries(budget, 2), /entry limit/i);
-  assert.throws(() => claimSftpDirectoryVisit(budget, "/srv/third", root), /directory limit/i);
+  assert.throws(() => claimSftpDirectoryVisit(budget, "/srv/third"), /directory limit/i);
+  releaseSftpDirectoryVisit(budget, root);
+  assert.equal(budget.activeCanonicalDirectories.size, 0);
+});
+
+test("remote directory traversal releases sibling visits without retaining history", () => {
+  const budget = createSftpDirectoryTraversalBudget({ maxDirectories: 50_000 });
+  const root = claimSftpDirectoryVisit(budget, "/srv/root");
+  assert.ok(root);
+  for (let index = 1; index < 50_000; index += 1) {
+    const sibling = claimSftpDirectoryVisit(budget, `/srv/root/alias-${index}`);
+    assert.ok(sibling);
+    releaseSftpDirectoryVisit(budget, sibling);
+  }
+  assert.equal(budget.activeCanonicalDirectories.size, 1);
+  releaseSftpDirectoryVisit(budget, root);
+  assert.equal(budget.activeCanonicalDirectories.size, 0);
 });

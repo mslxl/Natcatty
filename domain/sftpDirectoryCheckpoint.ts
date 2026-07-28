@@ -11,6 +11,7 @@ export const MAX_SFTP_DIRECTORY_TRAVERSAL_DIRECTORIES = 50_000;
 export const MAX_SFTP_DIRECTORY_TRAVERSAL_ENTRIES = 200_000;
 
 export interface SftpDirectoryTraversalBudget {
+  activeCanonicalDirectories: Set<string>;
   visitedDirectories: number;
   visitedEntries: number;
   maxDirectories: number;
@@ -22,6 +23,7 @@ export function createSftpDirectoryTraversalBudget(limits: {
   maxEntries?: number;
 } = {}): SftpDirectoryTraversalBudget {
   return {
+    activeCanonicalDirectories: new Set(),
     visitedDirectories: 0,
     visitedEntries: 0,
     maxDirectories: limits.maxDirectories ?? MAX_SFTP_DIRECTORY_TRAVERSAL_DIRECTORIES,
@@ -34,24 +36,29 @@ export function normalizeSftpCanonicalDirectoryPath(canonicalPath: string): stri
 }
 
 /**
- * Claims one directory against the global work budget. Cycles are detected only
- * on the current ancestor chain so distinct symlink aliases to the same target
- * are still traversed. Returns the next ancestor set, or null on a cycle.
+ * Claims one directory against the global work budget. Active directories are
+ * shared by one sequential traversal and released when each recursive frame
+ * exits, so sibling aliases remain valid without copying the ancestor set.
  */
 export function claimSftpDirectoryVisit(
   budget: SftpDirectoryTraversalBudget,
   canonicalPath: string,
-  ancestorCanonicalPaths: ReadonlySet<string> = new Set(),
-): Set<string> | null {
+): string | null {
   const normalized = normalizeSftpCanonicalDirectoryPath(canonicalPath);
-  if (ancestorCanonicalPaths.has(normalized)) return null;
+  if (budget.activeCanonicalDirectories.has(normalized)) return null;
   if (budget.visitedDirectories >= budget.maxDirectories) {
     throw new Error(`Remote directory traversal directory limit exceeded (${budget.maxDirectories})`);
   }
   budget.visitedDirectories += 1;
-  const nextAncestors = new Set(ancestorCanonicalPaths);
-  nextAncestors.add(normalized);
-  return nextAncestors;
+  budget.activeCanonicalDirectories.add(normalized);
+  return normalized;
+}
+
+export function releaseSftpDirectoryVisit(
+  budget: SftpDirectoryTraversalBudget,
+  claimedCanonicalPath: string,
+): void {
+  budget.activeCanonicalDirectories.delete(claimedCanonicalPath);
 }
 
 export function accountSftpDirectoryEntries(

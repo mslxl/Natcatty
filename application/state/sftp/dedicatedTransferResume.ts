@@ -21,6 +21,7 @@ import {
   createDirectoryEntryIdentity,
   createEmptyDirectoryResumeCheckpoint,
   isValidDirectoryResumeCheckpoint,
+  releaseSftpDirectoryVisit,
   shouldFollowSftpSymlinkDirectory,
   type SftpDirectoryTraversalBudget,
 } from "../../../domain/sftpDirectoryCheckpoint";
@@ -658,7 +659,6 @@ async function listRemoteFilesRecursive(
   symlinkDepth = 0,
   shouldAbort?: () => boolean,
   traversalBudget?: SftpDirectoryTraversalBudget,
-  ancestorCanonicalPaths: ReadonlySet<string> = new Set(),
 ): Promise<DirectoryResumeTraversal> {
   if (shouldAbort?.()) throw new Error("Transfer cancelled");
   const bridge = netcattyBridge.get();
@@ -666,61 +666,64 @@ async function listRemoteFilesRecursive(
   const traversal = traversalBudget ?? createSftpDirectoryTraversalBudget();
   const canonicalPath = await bridge.realpathSftp?.(sftpId, rootPath, "auto")
     .catch(() => rootPath) ?? rootPath;
-  const nextAncestors = claimSftpDirectoryVisit(traversal, canonicalPath, ancestorCanonicalPaths);
-  if (!nextAncestors) {
+  const claimedCanonicalPath = claimSftpDirectoryVisit(traversal, canonicalPath);
+  if (!claimedCanonicalPath) {
     return { files: [], directoryRelativePaths: [] };
   }
-  const entries = await bridge.listSftp(sftpId, rootPath, "auto");
-  accountSftpDirectoryEntries(traversal, entries.length);
-  if (shouldAbort?.()) throw new Error("Transfer cancelled");
-  const files: DirectoryResumeFilePlan[] = [];
-  const directoryRelativePaths: string[] = [];
-  for (const entry of entries) {
+  try {
+    const entries = (await bridge.listSftp(sftpId, rootPath, "auto"))
+      .filter((entry) => entry?.name && entry.name !== "." && entry.name !== "..");
+    accountSftpDirectoryEntries(traversal, entries.length);
     if (shouldAbort?.()) throw new Error("Transfer cancelled");
-    if (!entry?.name || entry.name === "." || entry.name === "..") continue;
-    const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
-    const fullPath = joinPath(rootPath, entry.name);
-    const isDirectory = entry.type === "directory";
-    const isFollowedSymlinkDirectory = followSymlinkDirectories
-      && entry.type === "symlink"
-      && entry.linkTarget === "directory"
-      && shouldFollowSftpSymlinkDirectory(symlinkDepth);
-    if (isDirectory || isFollowedSymlinkDirectory) {
-      directoryRelativePaths.push(relativePath);
-      const nested = await listRemoteFilesRecursive(
-        sftpId,
-        fullPath,
-        relativePath,
-        followSymlinkDirectories,
-        isFollowedSymlinkDirectory ? symlinkDepth + 1 : symlinkDepth,
-        shouldAbort,
-        traversal,
-        nextAncestors,
-      );
-      for (const nestedFile of nested.files) files.push(nestedFile);
-      for (const nestedDirectory of nested.directoryRelativePaths) {
-        directoryRelativePaths.push(nestedDirectory);
+    const files: DirectoryResumeFilePlan[] = [];
+    const directoryRelativePaths: string[] = [];
+    for (const entry of entries) {
+      if (shouldAbort?.()) throw new Error("Transfer cancelled");
+      const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+      const fullPath = joinPath(rootPath, entry.name);
+      const isDirectory = entry.type === "directory";
+      const isFollowedSymlinkDirectory = followSymlinkDirectories
+        && entry.type === "symlink"
+        && entry.linkTarget === "directory"
+        && shouldFollowSftpSymlinkDirectory(symlinkDepth);
+      if (isDirectory || isFollowedSymlinkDirectory) {
+        directoryRelativePaths.push(relativePath);
+        const nested = await listRemoteFilesRecursive(
+          sftpId,
+          fullPath,
+          relativePath,
+          followSymlinkDirectories,
+          isFollowedSymlinkDirectory ? symlinkDepth + 1 : symlinkDepth,
+          shouldAbort,
+          traversal,
+        );
+        for (const nestedFile of nested.files) files.push(nestedFile);
+        for (const nestedDirectory of nested.directoryRelativePaths) {
+          directoryRelativePaths.push(nestedDirectory);
+        }
+        continue;
       }
-      continue;
+      if (entry.type === "directory") continue;
+      const sizeRaw = entry.size as unknown;
+      const size = typeof sizeRaw === "number"
+        ? sizeRaw
+        : Number.parseInt(String(sizeRaw ?? "0"), 10) || 0;
+      const mtimeRaw = entry.lastModified as unknown;
+      const lastModified = typeof mtimeRaw === "number"
+        ? mtimeRaw
+        : (Number.parseInt(String(mtimeRaw ?? ""), 10) || undefined);
+      files.push({
+        relativePath,
+        sourcePath: fullPath,
+        targetPath: "",
+        size,
+        lastModified,
+      });
     }
-    if (entry.type === "directory") continue;
-    const sizeRaw = entry.size as unknown;
-    const size = typeof sizeRaw === "number"
-      ? sizeRaw
-      : Number.parseInt(String(sizeRaw ?? "0"), 10) || 0;
-    const mtimeRaw = entry.lastModified as unknown;
-    const lastModified = typeof mtimeRaw === "number"
-      ? mtimeRaw
-      : (Number.parseInt(String(mtimeRaw ?? ""), 10) || undefined);
-    files.push({
-      relativePath,
-      sourcePath: fullPath,
-      targetPath: "",
-      size,
-      lastModified,
-    });
+    return { files, directoryRelativePaths };
+  } finally {
+    releaseSftpDirectoryVisit(traversal, claimedCanonicalPath);
   }
-  return { files, directoryRelativePaths };
 }
 
 function normalizeLocalTreeRelativePath(sourceRoot: string, relativePath: string): string {
