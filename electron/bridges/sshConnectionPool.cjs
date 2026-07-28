@@ -99,27 +99,46 @@ function fingerprintJumpHosts(jumpHosts) {
 
 /**
  * Non-secret digest of credential material for reuse invalidation.
- * Key/password/certificate rotation must change the fingerprint even when
- * keyId is unchanged; raw secrets are never stored on the transport.
+ * Digests only the credential class for the selected auth method so key-first
+ * / password-retry open attempts still match a parked transport that was
+ * created with multi-material options. Raw secrets are never stored.
  */
 function digestAuthMaterial(endpoint) {
   if (!endpoint || typeof endpoint !== "object") return "none";
   if (endpoint.authMaterialFingerprint) return String(endpoint.authMaterialFingerprint);
+  const method = String(endpoint.authType || endpoint.authMethod || "auto").toLowerCase();
   const h = createHash("sha256");
+  h.update(method);
+  h.update("\0");
+  h.update(String(endpoint.keyId || endpoint.identityId || ""));
+  h.update("\0");
   const identityPaths = Array.isArray(endpoint.identityFilePaths)
     ? endpoint.identityFilePaths.join("\n")
     : (endpoint.identityFilePaths || "");
-  const parts = [
-    endpoint.password || "",
-    endpoint.privateKey || "",
-    endpoint.publicKey || "",
-    endpoint.certificate || "",
-    endpoint.passphrase || "",
-    identityPaths,
-  ];
-  for (const part of parts) {
-    h.update(String(part));
+
+  if (method === "password") {
+    h.update(String(endpoint.password || ""));
+  } else if (method === "certificate") {
+    h.update(String(endpoint.certificate || ""));
     h.update("\0");
+    h.update(String(endpoint.privateKey || endpoint.publicKey || ""));
+    h.update("\0");
+    h.update(String(endpoint.passphrase || ""));
+  } else if (method === "key") {
+    h.update(String(endpoint.privateKey || endpoint.publicKey || ""));
+    h.update("\0");
+    h.update(String(endpoint.passphrase || ""));
+    h.update("\0");
+    h.update(String(identityPaths));
+  } else {
+    // auto / agent: use publicKey (stable rotation signal) and cert presence.
+    // Do not fold password + privateKey together — transfer fallback attempts
+    // strip one or the other and would miss the parked transport.
+    h.update(String(endpoint.publicKey || ""));
+    h.update("\0");
+    h.update(endpoint.certificate ? "cert" : "nocert");
+    h.update("\0");
+    h.update(String(identityPaths));
   }
   return h.digest("hex").slice(0, 16);
 }

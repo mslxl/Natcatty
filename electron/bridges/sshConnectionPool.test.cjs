@@ -289,28 +289,45 @@ test("buildEndpointKey scopes vault hostId so different profiles never share", (
 });
 
 test("fingerprintAuth changes when credential material rotates under same keyId", () => {
-  const base = {
+  const keyBase = {
     hostname: "h.example",
     username: "alice",
     authType: "key",
     keyId: "key-1",
   };
   assert.notEqual(
-    fingerprintAuth({ ...base, privateKey: "-----BEGIN OLD-----" }),
-    fingerprintAuth({ ...base, privateKey: "-----BEGIN NEW-----" }),
+    fingerprintAuth({ ...keyBase, privateKey: "-----BEGIN OLD-----" }),
+    fingerprintAuth({ ...keyBase, privateKey: "-----BEGIN NEW-----" }),
   );
   assert.notEqual(
-    fingerprintAuth({ ...base, password: "secret-a" }),
-    fingerprintAuth({ ...base, password: "secret-b" }),
+    fingerprintAuth({ authType: "password", password: "secret-a" }),
+    fingerprintAuth({ authType: "password", password: "secret-b" }),
   );
   assert.notEqual(
-    fingerprintAuth({ ...base, certificate: "old-cert" }),
-    fingerprintAuth({ ...base, certificate: "new-cert" }),
+    fingerprintAuth({ authType: "certificate", certificate: "old-cert", privateKey: "k" }),
+    fingerprintAuth({ authType: "certificate", certificate: "new-cert", privateKey: "k" }),
   );
   // Same material is stable.
   assert.equal(
-    fingerprintAuth({ ...base, privateKey: "same" }),
-    fingerprintAuth({ ...base, privateKey: "same" }),
+    fingerprintAuth({ ...keyBase, privateKey: "same" }),
+    fingerprintAuth({ ...keyBase, privateKey: "same" }),
+  );
+  // auto must not fold password+key so transfer key-first / password-retry
+  // still match a multi-material parked transport.
+  const autoBoth = {
+    authType: "auto",
+    keyId: "k1",
+    publicKey: "ssh-ed25519 AAAA",
+    privateKey: "-----BEGIN-----",
+    password: "pw",
+  };
+  assert.equal(
+    fingerprintAuth(autoBoth),
+    fingerprintAuth({ ...autoBoth, password: undefined }),
+  );
+  assert.equal(
+    fingerprintAuth(autoBoth),
+    fingerprintAuth({ ...autoBoth, privateKey: undefined }),
   );
 });
 
