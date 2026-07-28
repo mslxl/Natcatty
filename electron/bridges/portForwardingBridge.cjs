@@ -208,6 +208,73 @@ function attachForwardTransportLease(tunnel, conn, chainConnections, endpoint) {
   tunnel.chainConnections = [];
 }
 
+/** Max wait for remote-side unforwardIn before treating the listen as stuck. */
+const UNFORWARD_TIMEOUT_MS = 5_000;
+
+/**
+ * Cancel a remote forward listen and wait for the ssh2 callback.
+ * On timeout (or missing callback), discard the shared transport so a half-open
+ * remote listen cannot be idle-parked for another session to reuse.
+ *
+ * @param {object|null} conn
+ * @param {string} bindAddress
+ * @param {number} port
+ * @param {object|null} [transport] transport registry entry (connRef) when known
+ * @returns {Promise<{ ok: boolean, timedOut?: boolean, error?: Error }>}
+ */
+function unforwardRemoteListen(conn, bindAddress, port, transport = null) {
+  return new Promise((resolve) => {
+    if (!conn || typeof conn.unforwardIn !== "function") {
+      resolve({ ok: true });
+      return;
+    }
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      console.warn(
+        `[PortForward] unforwardIn timed out after ${UNFORWARD_TIMEOUT_MS}ms`
+        + ` for ${bindAddress}:${port}; discarding transport`,
+      );
+      try {
+        if (transport && typeof discardTransport === "function") {
+          discardTransport(transport, "unforward-timeout");
+        } else {
+          try { conn.end(); } catch { /* ignore */ }
+        }
+      } catch { /* ignore discard errors */ }
+      finish({
+        ok: false,
+        timedOut: true,
+        error: new Error(`unforwardIn timed out after ${UNFORWARD_TIMEOUT_MS}ms`),
+      });
+    }, UNFORWARD_TIMEOUT_MS);
+    try { timer.unref?.(); } catch { /* ignore */ }
+    try {
+      conn.unforwardIn(bindAddress, port, (err) => {
+        clearTimeout(timer);
+        if (err) {
+          finish({
+            ok: false,
+            error: err instanceof Error ? err : new Error(String(err)),
+          });
+          return;
+        }
+        finish({ ok: true });
+      });
+    } catch (syncErr) {
+      clearTimeout(timer);
+      finish({
+        ok: false,
+        error: syncErr instanceof Error ? syncErr : new Error(String(syncErr)),
+      });
+    }
+  });
+}
+
 /**
  * Bind local/remote/dynamic forwarding onto an already-authenticated conn.
  * Used for both shared-transport and post-dial paths.
@@ -342,44 +409,64 @@ function bindPortForwardChannels({
         }
 
         console.log(`[PortForward] Remote forwarding active: remote ${bindAddress}:${localPort} -> local ${remoteHost}:${remotePort}`);
-        try {
-          if (isTunnelCancelled(tunnelState)) {
-            try {
-              if (typeof conn.unforwardIn === "function") {
-                conn.unforwardIn(bindAddress, localPort, () => {});
-              }
-            } catch { /* ignore */ }
-            resolve({ tunnelId, success: false, cancelled: true });
-            return;
-          }
-          tunnelState.type = "remote";
-          tunnelState.conn = conn;
-          tunnelState.server = null;
-          tunnelState.bindAddress = bindAddress;
-          tunnelState.localPort = localPort;
-          tunnelState.remoteHost = remoteHost;
-          tunnelState.remotePort = remotePort;
-          tunnelState.tcpConnectionHandler = onTcpConnection;
-          tunnelState.chainConnections = chainConnections;
-          tunnelState.status = "active";
-          tunnelState.webContentsId = sender.id;
-          tunnelState.pendingConn = null;
-          conn.on("tcp connection", onTcpConnection);
-          if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
-            attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
-          }
-          portForwardingTunnels.set(tunnelId, tunnelState);
-          sendStatus?.("active");
-          resolve({ tunnelId, success: true });
-        } catch (regErr) {
-          try { conn.removeListener("tcp connection", onTcpConnection); } catch { /* ignore */ }
+        // Async cleanup paths must not leave remote listens fire-and-forget when
+        // cancel races forwardIn on a shared transport.
+        void (async () => {
           try {
-            if (typeof conn.unforwardIn === "function") {
-              conn.unforwardIn(bindAddress, localPort, () => {});
+            if (isTunnelCancelled(tunnelState)) {
+              const transport = tunnelState.connRef || null;
+              const unfwd = await unforwardRemoteListen(
+                conn,
+                bindAddress,
+                localPort,
+                transport,
+              );
+              if (unfwd.timedOut) {
+                // Transport already discarded; drop local refs so release does
+                // not try to park a dead shared conn.
+                tunnelState.sshTransportManaged = false;
+                tunnelState.conn = null;
+                tunnelState.connRef = null;
+              }
+              resolve({ tunnelId, success: false, cancelled: true });
+              return;
             }
-          } catch { /* ignore */ }
-          fail(regErr);
-        }
+            tunnelState.type = "remote";
+            tunnelState.conn = conn;
+            tunnelState.server = null;
+            tunnelState.bindAddress = bindAddress;
+            tunnelState.localPort = localPort;
+            tunnelState.remoteHost = remoteHost;
+            tunnelState.remotePort = remotePort;
+            tunnelState.tcpConnectionHandler = onTcpConnection;
+            tunnelState.chainConnections = chainConnections;
+            tunnelState.status = "active";
+            tunnelState.webContentsId = sender.id;
+            tunnelState.pendingConn = null;
+            conn.on("tcp connection", onTcpConnection);
+            if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
+              attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
+            }
+            portForwardingTunnels.set(tunnelId, tunnelState);
+            sendStatus?.("active");
+            resolve({ tunnelId, success: true });
+          } catch (regErr) {
+            try { conn.removeListener("tcp connection", onTcpConnection); } catch { /* ignore */ }
+            const transport = tunnelState.connRef || null;
+            const unfwd = await unforwardRemoteListen(
+              conn,
+              bindAddress,
+              localPort,
+              transport,
+            );
+            if (unfwd.timedOut) {
+              tunnelState.sshTransportManaged = false;
+              tunnelState.conn = null;
+              tunnelState.connRef = null;
+            }
+            fail(regErr);
+          }
+        })();
       });
       return;
     }
@@ -569,56 +656,21 @@ async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false 
   ) {
     const bind = tunnel.bindAddress || "127.0.0.1";
     const port = tunnel.localPort;
-    const UNFORWARD_TIMEOUT_MS = 5_000;
-    try {
-      await new Promise((resolve, reject) => {
-        let settled = false;
-        const timer = setTimeout(() => {
-          if (settled) return;
-          settled = true;
-          reject(new Error(`unforwardIn timed out after ${UNFORWARD_TIMEOUT_MS}ms`));
-        }, UNFORWARD_TIMEOUT_MS);
-        try {
-          timer.unref?.();
-        } catch { /* ignore */ }
-        try {
-          tunnel.conn.unforwardIn(bind, port, (err) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            if (err) reject(err);
-            else resolve();
-          });
-        } catch (syncErr) {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          reject(syncErr);
-        }
-      });
-    } catch (unfwdErr) {
-      const message = unfwdErr instanceof Error ? unfwdErr.message : String(unfwdErr);
-      // Unconfirmed unforward on a half-open shared transport is unsafe to park
-      // (listen may still be exposed). Discard the transport instead of only
-      // returning the lease, then continue local cleanup.
-      if (/timed out/i.test(message)) {
-        console.warn(`[PortForward] ${message} for tunnel ${tunnelId}; discarding transport`);
-        try {
-          const transport = tunnel.connRef || null;
-          if (transport && typeof discardTransport === "function") {
-            discardTransport(transport, "unforward-timeout");
-          } else if (tunnel.conn) {
-            try { tunnel.conn.end(); } catch { /* ignore */ }
-          }
-          tunnel.sshTransportManaged = false;
-          tunnel.conn = null;
-          tunnel.connRef = null;
-        } catch {
-          /* ignore discard errors */
-        }
-      } else {
-        errors.push(`remote forward listen: ${message}`);
-      }
+    const unfwd = await unforwardRemoteListen(
+      tunnel.conn,
+      bind,
+      port,
+      tunnel.connRef || null,
+    );
+    if (unfwd.timedOut) {
+      // Transport already discarded inside the helper; clear local refs so
+      // releaseTunnelSsh does not try to park a dead shared conn.
+      tunnel.sshTransportManaged = false;
+      tunnel.conn = null;
+      tunnel.connRef = null;
+    } else if (!unfwd.ok) {
+      const message = unfwd.error?.message || String(unfwd.error || "unforward failed");
+      errors.push(`remote forward listen: ${message}`);
     }
   }
   if (errors.length > 0) {

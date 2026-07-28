@@ -1,4 +1,4 @@
-import { KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
+import { Host, KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 
 export interface SftpPane {
   id: string;
@@ -98,8 +98,9 @@ export interface SftpStateOptions {
   /**
    * Resolve a live terminal session id for a vault host so transfer-pool opens
    * can reuse that SSH transport (openSftpForSession) instead of a cold connect.
+   * When `host` is provided, only return a session whose live endpoint matches.
    */
-  resolveTransferSourceSessionId?: (hostId: string) => string | undefined;
+  resolveTransferSourceSessionId?: (hostId: string, host?: Host) => string | undefined;
   /**
    * @deprecated Transfer channels no longer park independently. SSH keep-alive
    * is controlled by sshTransportIdleTtlMs in settings.

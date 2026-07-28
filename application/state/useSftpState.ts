@@ -257,7 +257,7 @@ export const useSftpState = (
       // not repeated. Transport leases keep the shared conn alive after the
       // terminal tab closes until the transfer SFTP lease is returned.
       const sourceSessionId = !host.sftpSudo
-        ? options?.resolveTransferSourceSessionId?.(host.id)
+        ? options?.resolveTransferSourceSessionId?.(host.id, host)
         : undefined;
       if (sourceSessionId) {
         try {

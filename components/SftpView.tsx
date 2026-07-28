@@ -21,7 +21,7 @@ import { useSftpState } from "../application/state/useSftpState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
-import { listSftpConnectedHosts, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import { listSftpConnectedHosts, sftpHostEndpointsEqual, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
@@ -121,8 +121,16 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     return listSftpConnectedHosts(sessions, hostsById);
   }, [hosts, sessions]);
 
-  const resolveTransferSourceSessionId = useCallback((hostId: string) => {
-    return connectedHostsForOptions.find((entry) => entry.host.id === hostId)?.sessionId;
+  const resolveTransferSourceSessionId = useCallback((hostId: string, host?: Host) => {
+    const matches = connectedHostsForOptions.filter((entry) => entry.host.id === hostId);
+    if (matches.length === 0) return undefined;
+    if (host) {
+      // Prefer a live session whose endpoint matches the transfer host (handles
+      // multi-tab same hostId and post-connect hostname/port/user overrides).
+      const endpointMatch = matches.find((entry) => sftpHostEndpointsEqual(entry.host, host));
+      return endpointMatch?.sessionId;
+    }
+    return matches[matches.length - 1]?.sessionId;
   }, [connectedHostsForOptions]);
 
   const sftpOptions = useMemo(() => ({
