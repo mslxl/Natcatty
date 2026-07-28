@@ -11,7 +11,6 @@ export const MAX_SFTP_DIRECTORY_TRAVERSAL_DIRECTORIES = 50_000;
 export const MAX_SFTP_DIRECTORY_TRAVERSAL_ENTRIES = 200_000;
 
 export interface SftpDirectoryTraversalBudget {
-  canonicalDirectories: Set<string>;
   visitedDirectories: number;
   visitedEntries: number;
   maxDirectories: number;
@@ -23,7 +22,6 @@ export function createSftpDirectoryTraversalBudget(limits: {
   maxEntries?: number;
 } = {}): SftpDirectoryTraversalBudget {
   return {
-    canonicalDirectories: new Set(),
     visitedDirectories: 0,
     visitedEntries: 0,
     maxDirectories: limits.maxDirectories ?? MAX_SFTP_DIRECTORY_TRAVERSAL_DIRECTORIES,
@@ -31,18 +29,29 @@ export function createSftpDirectoryTraversalBudget(limits: {
   };
 }
 
+export function normalizeSftpCanonicalDirectoryPath(canonicalPath: string): string {
+  return canonicalPath.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+}
+
+/**
+ * Claims one directory against the global work budget. Cycles are detected only
+ * on the current ancestor chain so distinct symlink aliases to the same target
+ * are still traversed. Returns the next ancestor set, or null on a cycle.
+ */
 export function claimSftpDirectoryVisit(
   budget: SftpDirectoryTraversalBudget,
   canonicalPath: string,
-): boolean {
-  const normalized = canonicalPath.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
-  if (budget.canonicalDirectories.has(normalized)) return false;
+  ancestorCanonicalPaths: ReadonlySet<string> = new Set(),
+): Set<string> | null {
+  const normalized = normalizeSftpCanonicalDirectoryPath(canonicalPath);
+  if (ancestorCanonicalPaths.has(normalized)) return null;
   if (budget.visitedDirectories >= budget.maxDirectories) {
     throw new Error(`Remote directory traversal directory limit exceeded (${budget.maxDirectories})`);
   }
-  budget.canonicalDirectories.add(normalized);
   budget.visitedDirectories += 1;
-  return true;
+  const nextAncestors = new Set(ancestorCanonicalPaths);
+  nextAncestors.add(normalized);
+  return nextAncestors;
 }
 
 export function accountSftpDirectoryEntries(

@@ -420,6 +420,7 @@ export function useSftpDirectoryTransferOps({
     followSymlinks = false, // Only true for downloadToLocal — uploads/copies treat symlinks as files
     discoveryProgress?: { discoveredFiles: number; nextEntryIndex: number },
     traversalBudget?: SftpDirectoryTraversalBudget,
+    ancestorCanonicalPaths: ReadonlySet<string> = new Set(),
   ) => {
     // Check if task or root task was cancelled before starting
     if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
@@ -429,11 +430,14 @@ export function useSftpDirectoryTransferOps({
     let totalErrors = 0;
     const progress = discoveryProgress ?? { discoveredFiles: 0, nextEntryIndex: 0 };
     const traversal = traversalBudget ?? createSftpDirectoryTraversalBudget();
+    let nextAncestors = ancestorCanonicalPaths;
     if (!sourceIsLocal && sourceSftpId) {
       const bridge = netcattyBridge.get();
       const canonicalPath = await bridge?.realpathSftp?.(sourceSftpId, task.sourcePath, sourceEncoding)
         .catch(() => task.sourcePath) ?? task.sourcePath;
-      if (!claimSftpDirectoryVisit(traversal, canonicalPath)) return totalErrors;
+      const claimed = claimSftpDirectoryVisit(traversal, canonicalPath, ancestorCanonicalPaths);
+      if (!claimed) return totalErrors;
+      nextAncestors = claimed;
     }
     if (!discoveryProgress) {
       // A resumed directory may already have completed children. Keep the
@@ -549,6 +553,7 @@ export function useSftpDirectoryTransferOps({
         followSymlinks,
         progress,
         traversal,
+        nextAncestors,
       );
       totalErrors += subdirErrors;
     }

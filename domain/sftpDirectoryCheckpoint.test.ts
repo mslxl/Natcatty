@@ -70,12 +70,18 @@ test("live and resumed directory transfers share the same symlink depth policy",
   assert.equal(shouldFollowSftpSymlinkDirectory(32), false);
 });
 
-test("remote directory traversal skips canonical cycles and enforces total work budgets", () => {
-  const budget = createSftpDirectoryTraversalBudget({ maxDirectories: 2, maxEntries: 3 });
-  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root"), true);
+test("remote directory traversal rejects ancestor cycles but allows sibling aliases", () => {
+  const budget = createSftpDirectoryTraversalBudget({ maxDirectories: 3, maxEntries: 3 });
+  const root = claimSftpDirectoryVisit(budget, "/srv/root");
+  assert.ok(root);
   accountSftpDirectoryEntries(budget, 2);
-  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root"), false);
-  assert.equal(claimSftpDirectoryVisit(budget, "/srv/other"), true);
+  // Re-entering the same canonical path on the current branch is a cycle.
+  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root", root), null);
+  // Distinct symlink aliases to one target must both be traversed.
+  const aliasA = claimSftpDirectoryVisit(budget, "/srv/shared", root);
+  assert.ok(aliasA);
+  const aliasB = claimSftpDirectoryVisit(budget, "/srv/shared", root);
+  assert.ok(aliasB);
   assert.throws(() => accountSftpDirectoryEntries(budget, 2), /entry limit/i);
-  assert.throws(() => claimSftpDirectoryVisit(budget, "/srv/third"), /directory limit/i);
+  assert.throws(() => claimSftpDirectoryVisit(budget, "/srv/third", root), /directory limit/i);
 });

@@ -658,6 +658,7 @@ async function listRemoteFilesRecursive(
   symlinkDepth = 0,
   shouldAbort?: () => boolean,
   traversalBudget?: SftpDirectoryTraversalBudget,
+  ancestorCanonicalPaths: ReadonlySet<string> = new Set(),
 ): Promise<DirectoryResumeTraversal> {
   if (shouldAbort?.()) throw new Error("Transfer cancelled");
   const bridge = netcattyBridge.get();
@@ -665,7 +666,8 @@ async function listRemoteFilesRecursive(
   const traversal = traversalBudget ?? createSftpDirectoryTraversalBudget();
   const canonicalPath = await bridge.realpathSftp?.(sftpId, rootPath, "auto")
     .catch(() => rootPath) ?? rootPath;
-  if (!claimSftpDirectoryVisit(traversal, canonicalPath)) {
+  const nextAncestors = claimSftpDirectoryVisit(traversal, canonicalPath, ancestorCanonicalPaths);
+  if (!nextAncestors) {
     return { files: [], directoryRelativePaths: [] };
   }
   const entries = await bridge.listSftp(sftpId, rootPath, "auto");
@@ -693,6 +695,7 @@ async function listRemoteFilesRecursive(
         isFollowedSymlinkDirectory ? symlinkDepth + 1 : symlinkDepth,
         shouldAbort,
         traversal,
+        nextAncestors,
       );
       for (const nestedFile of nested.files) files.push(nestedFile);
       for (const nestedDirectory of nested.directoryRelativePaths) {
