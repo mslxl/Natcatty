@@ -1340,14 +1340,17 @@ function createPreloadApi(ctx) {
     uploadStageControllers.get(transferId)?.abort(new Error("Upload staging superseded"));
     const controller = new AbortController();
     uploadStageControllers.set(transferId, controller);
-    const localPath = await ipcRenderer.invoke("netcatty:tempdir:createUploadPath", {
-      transferId,
-      fileName: file?.name || "upload.bin",
-    });
+    let localPath = null;
     try {
+      localPath = await ipcRenderer.invoke("netcatty:tempdir:createUploadPath", {
+        transferId: `${transferId}-${randomUUID()}`,
+        fileName: file?.name || "upload.bin",
+      });
       return await stageRendererFileToTemp(file, localPath, fs, controller.signal);
     } catch (error) {
-      await ipcRenderer.invoke("netcatty:deleteTempFile", { filePath: localPath }).catch(() => {});
+      if (localPath) {
+        await ipcRenderer.invoke("netcatty:deleteTempFile", { filePath: localPath }).catch(() => {});
+      }
       throw error;
     } finally {
       if (uploadStageControllers.get(transferId) === controller) {
