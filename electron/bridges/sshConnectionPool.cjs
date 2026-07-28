@@ -26,7 +26,7 @@
  * tunnels borrow the same transports via this registry.
  */
 
-const { randomUUID } = require("node:crypto");
+const { randomUUID, createHash } = require("node:crypto");
 
 /**
  * Default idle park after last lease returns (5 minutes).
@@ -97,6 +97,33 @@ function fingerprintJumpHosts(jumpHosts) {
   }).join(">");
 }
 
+/**
+ * Non-secret digest of credential material for reuse invalidation.
+ * Key/password/certificate rotation must change the fingerprint even when
+ * keyId is unchanged; raw secrets are never stored on the transport.
+ */
+function digestAuthMaterial(endpoint) {
+  if (!endpoint || typeof endpoint !== "object") return "none";
+  if (endpoint.authMaterialFingerprint) return String(endpoint.authMaterialFingerprint);
+  const h = createHash("sha256");
+  const identityPaths = Array.isArray(endpoint.identityFilePaths)
+    ? endpoint.identityFilePaths.join("\n")
+    : (endpoint.identityFilePaths || "");
+  const parts = [
+    endpoint.password || "",
+    endpoint.privateKey || "",
+    endpoint.publicKey || "",
+    endpoint.certificate || "",
+    endpoint.passphrase || "",
+    identityPaths,
+  ];
+  for (const part of parts) {
+    h.update(String(part));
+    h.update("\0");
+  }
+  return h.digest("hex").slice(0, 16);
+}
+
 function fingerprintAuth(endpoint) {
   if (!endpoint || typeof endpoint !== "object") return "-";
   if (endpoint.authFingerprint) return String(endpoint.authFingerprint);
@@ -108,7 +135,8 @@ function fingerprintAuth(endpoint) {
   const mfa = endpoint.requiresMfa ? "mfa" : "nomfa";
   const verify = endpoint.verifyHostKeys === false ? "noverify" : "verify";
   const agent = endpoint.useSshAgent === false ? "noagent" : (endpoint.useSshAgent ? "agent" : "agentauto");
-  return [authType, keyId, cert, mfa, verify, agent].join(":");
+  const material = digestAuthMaterial(endpoint);
+  return [authType, keyId, cert, mfa, verify, agent, material].join(":");
 }
 
 function normalizeEndpoint(endpoint) {
@@ -850,6 +878,8 @@ module.exports = {
   normalizeEndpoint,
   sameEndpoint,
   endpointAllowsReuse,
+  fingerprintAuth,
+  digestAuthMaterial,
   resetSshTransportRegistryForTests,
   // Compat API
   createConnectionRef,

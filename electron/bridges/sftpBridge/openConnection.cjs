@@ -828,6 +828,11 @@ function createOpenConnectionApi(ctx) {
           requiresMfa: !!options.requiresMfa,
           verifyHostKeys: options.verifyHostKeys,
           useSshAgent: options.useSshAgent,
+          password: options.password,
+          privateKey: options.privateKey,
+          publicKey: options.publicKey,
+          passphrase: options.passphrase,
+          identityFilePaths: options.identityFilePaths,
         };
         const transport = findTransportByEndpoint(endpoint);
         if (transport?.conn) {
@@ -1335,6 +1340,11 @@ function createOpenConnectionApi(ctx) {
               requiresMfa: !!options.requiresMfa,
               verifyHostKeys: options.verifyHostKeys,
               useSshAgent: options.useSshAgent,
+              password: options.password,
+              privateKey: options.privateKey,
+              publicKey: options.publicKey,
+              passphrase: options.passphrase,
+              identityFilePaths: options.identityFilePaths,
             };
             const refHolder = {
               id: connId,

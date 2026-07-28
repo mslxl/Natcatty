@@ -40,6 +40,7 @@ function buildPortForwardEndpoint({
   hostId, hostname, port, username, jumpHosts, proxy,
   authType, authMethod, keyId, identityId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
   agentForwarding,
+  password, privateKey, publicKey, passphrase, identityFilePaths,
 }) {
   return {
     hostId: hostId || "",
@@ -58,6 +59,12 @@ function buildPortForwardEndpoint({
     // transport with ForwardAgent enabled does not get cross-matched incorrectly
     // only when the PF caller later wants a different policy (future-proof).
     agentForwarding: !!agentForwarding,
+    // Credential material for digest fingerprint (not retained on transport).
+    password,
+    privateKey,
+    publicKey,
+    passphrase,
+    identityFilePaths,
   };
 }
 
@@ -904,6 +911,7 @@ async function startPortForward(event, payload) {
   const reuseEndpoint = buildPortForwardEndpoint({
     hostId, hostname, port, username, jumpHosts, proxy,
     authType: authMethod, keyId, certificate, requiresMfa, verifyHostKeys, useSshAgent,
+    password, privateKey, passphrase, identityFilePaths,
   });
 
   // Prefer an already-authenticated transport (live terminal or idle park).

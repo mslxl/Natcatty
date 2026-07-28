@@ -288,30 +288,50 @@ printf '%s\n' '${scanCompleteMarker}'`;
         // sure a "Copy Tab" reuse opens its channel on a connection going to the
         // *same* host — a saved host edited after the source connected must not
         // silently run commands on the old machine (issue #1204 review).
-        _reuseEndpoint: {
-          // Profile identity first: vault hostId prevents cross-profile reuse
-          // when two hosts share hostname:port:user but differ in auth policy.
-          hostId: options.hostId || '',
-          hostname: options.hostname || '',
-          port: options.port || 22,
-          username: options.username || 'root',
-          // Include jump chain + proxy so SFTP/port-forward/parked lookup cannot
-          // match a different route to the same final host.
-          jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
-          proxy: options.proxy || null,
-          // Auth/security knobs so key rotation / MFA / host-key verify changes
-          // invalidate parked transports for the same hostId.
-          authType: options.authType || options.authMethod || '',
-          keyId: options.keyId || options.identityId || '',
-          certificate: options.certificate || '',
-          requiresMfa: !!options.requiresMfa,
-          verifyHostKeys: options.verifyHostKeys,
-          useSshAgent: options.useSshAgent,
-          // agentForward is negotiated at connection time; keep it in the
-          // transport fingerprint so reopening with ForwardAgent enabled does
-          // not reuse a parked conn that never enabled it.
-          agentForwarding: !!options.agentForwarding,
-        },
+        _reuseEndpoint: (() => {
+          // Build fingerprint with credential digests at connect time; do not
+          // retain password/privateKey on the session after normalize.
+          const { fingerprintAuth } = require("../sshConnectionPool.cjs");
+          const authFields = {
+            authType: options.authType || options.authMethod || '',
+            keyId: options.keyId || options.identityId || '',
+            certificate: options.certificate || '',
+            requiresMfa: !!options.requiresMfa,
+            verifyHostKeys: options.verifyHostKeys,
+            useSshAgent: options.useSshAgent,
+            password: options.password,
+            privateKey: options.privateKey,
+            publicKey: options.publicKey,
+            passphrase: options.passphrase,
+            identityFilePaths: options.identityFilePaths,
+          };
+          return {
+            // Profile identity first: vault hostId prevents cross-profile reuse
+            // when two hosts share hostname:port:user but differ in auth policy.
+            hostId: options.hostId || '',
+            hostname: options.hostname || '',
+            port: options.port || 22,
+            username: options.username || 'root',
+            // Include jump chain + proxy so SFTP/port-forward/parked lookup cannot
+            // match a different route to the same final host.
+            jumpHosts: Array.isArray(options.jumpHosts) ? options.jumpHosts : [],
+            proxy: options.proxy || null,
+            // Auth/security knobs so key rotation / MFA / host-key verify changes
+            // invalidate parked transports for the same hostId.
+            authType: authFields.authType,
+            keyId: authFields.keyId,
+            // Presence flag only — full cert material is digested into authFingerprint.
+            certificate: authFields.certificate ? 'cert' : '',
+            requiresMfa: authFields.requiresMfa,
+            verifyHostKeys: authFields.verifyHostKeys,
+            useSshAgent: authFields.useSshAgent,
+            // agentForward is negotiated at connection time; keep it in the
+            // transport fingerprint so reopening with ForwardAgent enabled does
+            // not reuse a parked conn that never enabled it.
+            agentForwarding: !!options.agentForwarding,
+            authFingerprint: fingerprintAuth(authFields),
+          };
+        })(),
         tcpLatencyDirect:
           !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
             ? !options.proxy
@@ -872,6 +892,13 @@ printf '%s\n' '${scanCompleteMarker}'`;
         verifyHostKeys: options.verifyHostKeys,
         useSshAgent: options.useSshAgent,
         agentForwarding: !!options.agentForwarding,
+        // Credential material for digest-based auth fingerprint (not retained
+        // on the parked transport — only the digest is indexed).
+        password: options.password,
+        privateKey: options.privateKey,
+        publicKey: options.publicKey,
+        passphrase: options.passphrase,
+        identityFilePaths: options.identityFilePaths,
       };
 
       if (options.sourceSessionId && !options.x11Forwarding) {

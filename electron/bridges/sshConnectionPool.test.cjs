@@ -19,6 +19,7 @@ const {
   getDefaultTransportIdleTtlMs,
   buildEndpointKey,
   endpointAllowsReuse,
+  fingerprintAuth,
   resetSshTransportRegistryForTests,
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
   LEASE_KINDS,
@@ -284,6 +285,32 @@ test("buildEndpointKey scopes vault hostId so different profiles never share", (
   assert.notEqual(
     buildEndpointKey({ hostname: "same.example", username: "root" }),
     buildEndpointKey({ hostId: "host-a", hostname: "same.example", username: "root" }),
+  );
+});
+
+test("fingerprintAuth changes when credential material rotates under same keyId", () => {
+  const base = {
+    hostname: "h.example",
+    username: "alice",
+    authType: "key",
+    keyId: "key-1",
+  };
+  assert.notEqual(
+    fingerprintAuth({ ...base, privateKey: "-----BEGIN OLD-----" }),
+    fingerprintAuth({ ...base, privateKey: "-----BEGIN NEW-----" }),
+  );
+  assert.notEqual(
+    fingerprintAuth({ ...base, password: "secret-a" }),
+    fingerprintAuth({ ...base, password: "secret-b" }),
+  );
+  assert.notEqual(
+    fingerprintAuth({ ...base, certificate: "old-cert" }),
+    fingerprintAuth({ ...base, certificate: "new-cert" }),
+  );
+  // Same material is stable.
+  assert.equal(
+    fingerprintAuth({ ...base, privateKey: "same" }),
+    fingerprintAuth({ ...base, privateKey: "same" }),
   );
 });
 
