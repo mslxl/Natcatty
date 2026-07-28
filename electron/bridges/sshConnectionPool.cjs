@@ -72,7 +72,14 @@ function normalizeEndpoint(endpoint) {
   if (!endpoint || typeof endpoint !== "object") return null;
   const hostname = String(endpoint.hostname || "").trim();
   if (!hostname) return null;
+  // hostId scopes reuse to a vault profile so two saved hosts that share
+  // hostname:port:user but differ in credentials/proxy/host-key policy never
+  // silently share an authenticated transport.
+  const hostId = endpoint.hostId != null && String(endpoint.hostId).trim()
+    ? String(endpoint.hostId).trim()
+    : "";
   return {
+    hostId,
     hostname,
     port: endpoint.port || 22,
     username: endpoint.username || "root",
@@ -95,7 +102,9 @@ function buildEndpointKey(endpoint) {
   if (!ep) return null;
   const sudo = ep.sftpSudo ? "sudo" : "nosudo";
   const jump = ep.jumpFingerprint || "-";
+  const profile = ep.hostId || "-";
   return [
+    profile,
     ep.hostname,
     ep.port,
     ep.username,
@@ -109,7 +118,16 @@ function sameEndpoint(a, b) {
   const left = normalizeEndpoint(a);
   const right = normalizeEndpoint(b);
   if (!left || !right) return false;
-  return buildEndpointKey(left) === buildEndpointKey(right);
+  // When both sides carry a vault hostId they must match so different profiles
+  // never cross-reuse. If either omits hostId (legacy / explicit session-id
+  // reuse), fall back to hostname:port:user:jump comparison only.
+  if (left.hostId && right.hostId && left.hostId !== right.hostId) return false;
+  return left.hostname === right.hostname
+    && left.port === right.port
+    && left.username === right.username
+    && left.protocol === right.protocol
+    && left.sftpSudo === right.sftpSudo
+    && left.jumpFingerprint === right.jumpFingerprint;
 }
 
 function isTransportSocketHealthy(transport) {
@@ -540,6 +558,7 @@ function resetSshTransportRegistryForTests(options = {}) {
 function createConnectionRef(session, conn, chainConnections) {
   const endpoint = session?._reuseEndpoint
     ? {
+      hostId: session._reuseEndpoint.hostId,
       hostname: session._reuseEndpoint.hostname,
       port: session._reuseEndpoint.port,
       username: session._reuseEndpoint.username,

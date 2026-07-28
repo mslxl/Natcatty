@@ -35,8 +35,9 @@ const {
 // Active port forwarding tunnels
 const portForwardingTunnels = new Map();
 
-function buildPortForwardEndpoint({ hostname, port, username, jumpHosts }) {
+function buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts }) {
   return {
+    hostId: hostId || "",
     hostname,
     port: port || 22,
     username: username || "root",
@@ -171,6 +172,41 @@ function bindPortForwardChannels({
     }
 
     if (type === "remote") {
+      // Filter by destPort so multiple remote forwards on a shared transport
+      // do not accept each other's connections. Attach only after forwardIn
+      // succeeds; remove on cancel.
+      const onTcpConnection = (info, accept, rejectConn) => {
+        // Match listen bind + port so two remote forwards on the same transport
+        // with the same port but different bind addresses do not steal each other.
+        const destPort = Number(info?.destPort);
+        if (destPort !== Number(localPort)) return;
+        const destIP = String(info?.destIP || "").trim();
+        const expectedBind = String(bindAddress || "127.0.0.1").trim();
+        // ssh2 may report 0.0.0.0 / :: for wildcard listens; accept those as a
+        // match for the configured bind when the port matches.
+        const wildcard = !destIP || destIP === "0.0.0.0" || destIP === "::" || destIP === "*";
+        if (!wildcard && destIP !== expectedBind) return;
+        let stream;
+        try {
+          stream = accept();
+        } catch (acceptErr) {
+          console.warn("[PortForward] accept failed:", acceptErr?.message || acceptErr);
+          try { rejectConn?.(); } catch { /* ignore */ }
+          return;
+        }
+        const socket = net.connect(remotePort, remoteHost || "127.0.0.1", () => {
+          stream.pipe(socket).pipe(stream);
+        });
+        socket.on("error", (e) => {
+          console.warn("[PortForward] Local socket error:", e.message);
+          stream.end();
+        });
+        stream.on("error", (e) => {
+          console.warn("[PortForward] Remote stream error:", e.message);
+          socket.end();
+        });
+      };
+
       conn.forwardIn(bindAddress, localPort, (err) => {
         if (err) {
           console.error(`[PortForward] Remote forward error:`, err.message);
@@ -184,31 +220,20 @@ function bindPortForwardChannels({
         tunnelState.server = null;
         tunnelState.bindAddress = bindAddress;
         tunnelState.localPort = localPort;
+        tunnelState.remoteHost = remoteHost;
+        tunnelState.remotePort = remotePort;
+        tunnelState.tcpConnectionHandler = onTcpConnection;
         tunnelState.chainConnections = chainConnections;
         tunnelState.status = "active";
         tunnelState.webContentsId = sender.id;
         tunnelState.pendingConn = null;
+        conn.on("tcp connection", onTcpConnection);
         if (registerTransport && endpoint && !tunnelState.sshTransportManaged) {
           attachForwardTransportLease(tunnelState, conn, chainConnections, endpoint);
         }
         portForwardingTunnels.set(tunnelId, tunnelState);
         sendStatus?.("active");
         resolve({ tunnelId, success: true });
-      });
-
-      conn.on("tcp connection", (info, accept) => {
-        const stream = accept();
-        const socket = net.connect(remotePort, remoteHost || "127.0.0.1", () => {
-          stream.pipe(socket).pipe(stream);
-        });
-        socket.on("error", (e) => {
-          console.warn("[PortForward] Local socket error:", e.message);
-          stream.end();
-        });
-        stream.on("error", (e) => {
-          console.warn("[PortForward] Remote stream error:", e.message);
-          socket.end();
-        });
       });
       return;
     }
@@ -339,7 +364,7 @@ function shouldFinalizeTunnelClose(tunnel) {
   return !tunnel?.cleanupFailed && !tunnel?.cleanupInProgress;
 }
 
-function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}) {
+async function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}) {
   if (!tunnel) return;
   const errors = [];
   const cleanup = (label, action) => {
@@ -364,9 +389,15 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
   if (tunnel.pendingConn) {
     if (cleanup('pending SSH connection', () => tunnel.pendingConn.end())) tunnel.pendingConn = null;
   }
-  // Remote forwards leave a server-side listen until unforwardIn; do this
-  // before returning a shared-transport lease so the listen does not outlive
-  // the stopped tunnel.
+  // Detach this tunnel's shared-transport tcp-connection filter first.
+  if (tunnel.tcpConnectionHandler && tunnel.conn?.removeListener) {
+    cleanup("remote tcp handler", () => {
+      tunnel.conn.removeListener("tcp connection", tunnel.tcpConnectionHandler);
+      tunnel.tcpConnectionHandler = null;
+    });
+  }
+  // Remote forwards leave a server-side listen until unforwardIn succeeds.
+  // Await the callback so we do not report inactive while the listen remains.
   if (
     tunnel.type === "remote"
     && tunnel.conn
@@ -375,13 +406,30 @@ function cancelTunnel(tunnelId, tunnel, sendStatus, { deleteEntry = false } = {}
   ) {
     const bind = tunnel.bindAddress || "127.0.0.1";
     const port = tunnel.localPort;
-    cleanup("remote forward listen", () => {
-      try {
-        tunnel.conn.unforwardIn(bind, port, () => {});
-      } catch {
-        /* ignore */
-      }
-    });
+    try {
+      await new Promise((resolve, reject) => {
+        try {
+          tunnel.conn.unforwardIn(bind, port, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        } catch (syncErr) {
+          reject(syncErr);
+        }
+      });
+    } catch (unfwdErr) {
+      const message = unfwdErr instanceof Error ? unfwdErr.message : String(unfwdErr);
+      errors.push(`remote forward listen: ${message}`);
+    }
+  }
+  if (errors.length > 0) {
+    const error = errors.join('; ');
+    tunnel.status = 'error';
+    tunnel.error = error;
+    tunnel.cleanupFailed = true;
+    tunnel.cleanupInProgress = false;
+    sendStatus?.('error', error);
+    throw new Error(error);
   }
   if (tunnel.sshTransportManaged) {
     if (cleanup('SSH transport lease', () => releaseTunnelSsh(tunnel))) {
@@ -508,7 +556,7 @@ async function startPortForward(event, payload) {
   let chainConnections = [];
   let connectionSocket = null;
   const passphraseAbortController = new AbortController();
-  const reuseEndpoint = buildPortForwardEndpoint({ hostname, port, username, jumpHosts });
+  const reuseEndpoint = buildPortForwardEndpoint({ hostId, hostname, port, username, jumpHosts });
 
   // Prefer an already-authenticated transport (live terminal or idle park).
   const existingTransport = findTransportByEndpoint(reuseEndpoint);
@@ -816,7 +864,11 @@ async function startPortForward(event, payload) {
       return { tunnelId, success: false, cancelled: true };
     }
     if (isPassphraseCancelledError(err)) {
-      cancelTunnel(tunnelId, tunnelState, sendStatus, { deleteEntry: true });
+      try {
+        await cancelTunnel(tunnelId, tunnelState, sendStatus, { deleteEntry: true });
+      } catch {
+        /* best-effort cancel on passphrase cancel */
+      }
       return { tunnelId, success: false, cancelled: true };
     }
     tunnelState.cancelled = true;
@@ -977,7 +1029,7 @@ async function stopPortForward(event, payload) {
   }
 
   try {
-    cancelTunnel(
+    await cancelTunnel(
       tunnelId,
       tunnel,
       (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
@@ -1052,21 +1104,23 @@ async function listPortForwards() {
 /**
  * Stop all active port forwards (cleanup on app quit)
  */
-function stopAllPortForwards() {
+async function stopAllPortForwards() {
   console.log(`[PortForward] Stopping all ${portForwardingTunnels.size} active tunnels...`);
+  const jobs = [];
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
-      try {
-        cancelTunnel(
-          tunnelId,
-          tunnel,
-          (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
-          { deleteEntry: true },
-        );
-        console.log(`[PortForward] Stopped tunnel ${tunnelId}`);
-    } catch (err) {
-      console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message);
-    }
+    jobs.push(
+      cancelTunnel(
+        tunnelId,
+        tunnel,
+        (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),
+        { deleteEntry: true },
+      ).then(
+        () => console.log(`[PortForward] Stopped tunnel ${tunnelId}`),
+        (err) => console.warn(`[PortForward] Failed to stop tunnel ${tunnelId}:`, err.message),
+      ),
+    );
   }
+  await Promise.all(jobs);
   console.log('[PortForward] All tunnels stopped');
 }
 
@@ -1075,14 +1129,14 @@ function stopAllPortForwards() {
  * This catches tunnels in ANY state (connecting, active) because it
  * operates on the main-process portForwardingTunnels map directly.
  */
-function stopPortForwardByRuleId(_event, { ruleId }) {
+async function stopPortForwardByRuleId(_event, { ruleId }) {
   let stopped = 0;
   let failed = 0;
   const errors = [];
   for (const [tunnelId, tunnel] of portForwardingTunnels) {
     if (tunnel.ruleId === ruleId) {
       try {
-        cancelTunnel(
+        await cancelTunnel(
           tunnelId,
           tunnel,
           (status, error) => publishTunnelStatus(tunnelId, tunnel, status, error),

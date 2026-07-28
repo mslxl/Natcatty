@@ -90,7 +90,7 @@ test("status publication removes destroyed renderer subscribers", () => {
   assert.equal(received[0]?.payload.status, "active");
 });
 
-test("failed active tunnel cleanup publishes an error instead of a false inactive state", () => {
+test("failed active tunnel cleanup publishes an error instead of a false inactive state", async () => {
   let wouldPublishDuringCleanup;
   const statuses = [];
   const tunnel = {
@@ -107,7 +107,7 @@ test("failed active tunnel cleanup publishes an error instead of a false inactiv
     },
   };
 
-  assert.throws(
+  await assert.rejects(
     () => cancelTunnel("pf-active-cleanup-failure", tunnel, (status, error) => {
       statuses.push({ status, error });
     }),
@@ -119,7 +119,7 @@ test("failed active tunnel cleanup publishes an error instead of a false inactiv
   assert.deepEqual(statuses, [{ status: "error", error: "server: server close failed" }]);
 });
 
-test("cancelling a tunnel clears its pending keyboard-interactive request", () => {
+test("cancelling a tunnel clears its pending keyboard-interactive request", async () => {
   const tunnelId = "pf-keyboard-interactive-cancel";
   const requestId = keyboardInteractiveHandler.generateRequestId("port-forward");
   const finishCalls = [];
@@ -130,7 +130,7 @@ test("cancelling a tunnel clears its pending keyboard-interactive request", () =
     tunnelId,
   );
 
-  cancelTunnel(tunnelId, {}, () => {});
+  await cancelTunnel(tunnelId, {}, () => {});
 
   assert.deepEqual(finishCalls, [[]]);
   assert.equal(keyboardInteractiveHandler.getRequests().has(requestId), false);
@@ -336,7 +336,7 @@ test("concurrent starts reuse the existing tunnel for the same rule", async (t) 
     status: "connecting",
   }]);
 
-  assert.equal(stopPortForwardByRuleId(event, { ruleId: "shared-rule" }).stopped, 1);
+  assert.equal((await stopPortForwardByRuleId(event, { ruleId: "shared-rule" })).stopped, 1);
   assert.ok(thirdWindowEvents.some(({ channel, payload }) => (
     channel === "netcatty:portforward:status" &&
     payload.tunnelId === "pf-shared-rule-first" &&
@@ -403,7 +403,7 @@ test("stop by rule id only cancels the matching passphrase prompt", async (t) =>
   assert.ok(firstRequest);
   assert.ok(secondRequest);
 
-  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "rule" }), {
+  assert.deepEqual(await stopPortForwardByRuleId(event, { ruleId: "rule" }), {
     stopped: 1,
     failed: 0,
     errors: [],
@@ -475,7 +475,7 @@ test("stop by rule id reports cleanup failures and keeps the tunnel retryable", 
     AbortController.prototype.abort = originalAbort;
   });
 
-  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {
+  assert.deepEqual(await stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {
     stopped: 0,
     failed: 1,
     errors: ["passphrase prompt: abort failed"],
@@ -507,7 +507,7 @@ test("stop by rule id reports cleanup failures and keeps the tunnel retryable", 
   });
 
   AbortController.prototype.abort = originalAbort;
-  assert.deepEqual(stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {
+  assert.deepEqual(await stopPortForwardByRuleId(event, { ruleId: "cleanup-failure-rule" }), {
     stopped: 1,
     failed: 0,
     errors: [],

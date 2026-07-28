@@ -274,6 +274,18 @@ test("buildEndpointKey distinguishes jump host chains", () => {
   );
 });
 
+test("buildEndpointKey scopes vault hostId so different profiles never share", () => {
+  assert.notEqual(
+    buildEndpointKey({ hostId: "host-a", hostname: "same.example", username: "root" }),
+    buildEndpointKey({ hostId: "host-b", hostname: "same.example", username: "root" }),
+  );
+  // Missing hostId still indexes under a distinct profile slot ("-").
+  assert.notEqual(
+    buildEndpointKey({ hostname: "same.example", username: "root" }),
+    buildEndpointKey({ hostId: "host-a", hostname: "same.example", username: "root" }),
+  );
+});
+
 test("last return parks with positive TTL then ends when timer fires", () => {
   const timers = useShortTtlTimers(60_000);
 
@@ -454,12 +466,13 @@ test("setDefaultTransportIdleTtlMs updates default and reschedules idle transpor
   assert.equal(transport.idleTtlMs, 5_000);
 });
 
-test("createConnectionRef indexes endpoint from session._reuseEndpoint including jumpHosts", () => {
+test("createConnectionRef indexes endpoint from session._reuseEndpoint including jumpHosts and hostId", () => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 60_000 });
   const conn = makeConn();
   const session = {
     id: "s1",
     _reuseEndpoint: {
+      hostId: "vault-host-1",
       hostname: "indexed.example",
       port: 2222,
       username: "deploy",
@@ -468,6 +481,7 @@ test("createConnectionRef indexes endpoint from session._reuseEndpoint including
   };
   createConnectionRef(session, conn, []);
   const found = findTransportByEndpoint({
+    hostId: "vault-host-1",
     hostname: "indexed.example",
     port: 2222,
     username: "deploy",
@@ -477,12 +491,24 @@ test("createConnectionRef indexes endpoint from session._reuseEndpoint including
   assert.equal(found.conn, conn);
   assert.equal(
     findTransportByEndpoint({
+      hostId: "vault-host-1",
       hostname: "indexed.example",
       port: 2222,
       username: "deploy",
     }),
     null,
     "missing jump chain must not match",
+  );
+  assert.equal(
+    findTransportByEndpoint({
+      hostId: "other-host",
+      hostname: "indexed.example",
+      port: 2222,
+      username: "deploy",
+      jumpHosts: [{ hostname: "bastion", port: 22, username: "jump" }],
+    }),
+    null,
+    "different vault hostId must not match",
   );
 });
 

@@ -289,6 +289,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
         // *same* host — a saved host edited after the source connected must not
         // silently run commands on the old machine (issue #1204 review).
         _reuseEndpoint: {
+          // Profile identity first: vault hostId prevents cross-profile reuse
+          // when two hosts share hostname:port:user but differ in auth policy.
+          hostId: options.hostId || '',
           hostname: options.hostname || '',
           port: options.port || 22,
           username: options.username || 'root',
@@ -843,6 +846,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // X11. For X11 hosts we deliberately skip reuse and make a fresh
       // connection so the duplicate keeps working X11 forwarding.
       const reuseEndpoint = {
+        hostId: options.hostId || "",
         hostname: options.hostname,
         port: options.port || 22,
         username: options.username || "root",

@@ -816,6 +816,7 @@ function createOpenConnectionApi(ctx) {
         && typeof createSessionBackedSftpClient === "function"
       ) {
         const endpoint = {
+          hostId: options.hostId || "",
           hostname: options.hostname,
           port: options.port || 22,
           username: options.username || "root",
@@ -1315,6 +1316,7 @@ function createOpenConnectionApi(ctx) {
         ) {
           try {
             const endpoint = {
+              hostId: options.hostId || "",
               hostname: options.hostname,
               port: options.port || 22,
               username: options.username || "root",
