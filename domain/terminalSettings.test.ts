@@ -26,6 +26,28 @@ test("normalizeTerminalSettings falls back for unsupported password prompt assis
   );
 });
 
+test("normalizeTerminalSettings defaults autocomplete history scope to host", () => {
+  assert.equal(normalizeTerminalSettings().autocompleteHistoryScope, "host");
+});
+
+test("normalizeTerminalSettings preserves autocomplete history scope", () => {
+  assert.equal(
+    normalizeTerminalSettings({ autocompleteHistoryScope: "global" }).autocompleteHistoryScope,
+    "global",
+  );
+  assert.equal(
+    normalizeTerminalSettings({ autocompleteHistoryScope: "host" }).autocompleteHistoryScope,
+    "host",
+  );
+});
+
+test("normalizeTerminalSettings falls back for unsupported autocomplete history scope", () => {
+  assert.equal(
+    normalizeTerminalSettings({ autocompleteHistoryScope: "legacy" as never }).autocompleteHistoryScope,
+    "host",
+  );
+});
+
 test("normalizeTerminalSettings enables Shift+Enter newline by default", () => {
   const settings = normalizeTerminalSettings();
 

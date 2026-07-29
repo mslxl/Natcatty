@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { AlertCircle, Import, Minus, Palette, Pencil, Plus, Trash2 } from "lucide-react";
 import type {
+  AutocompleteHistoryScope,
   CursorShape,
   PasswordPromptAssistMode,
   TerminalEmulationType,
@@ -1314,6 +1315,32 @@ function SettingsTerminalTab(props: {
           <Toggle
             checked={terminalSettings.autocompletePopupMenu}
             onChange={handleAutocompletePopupMenuChange}
+            disabled={!terminalSettings.autocompleteEnabled}
+          />
+        </SettingRow>
+        <SettingRow
+          label={t("settings.terminal.autocomplete.historyScope")}
+          description={t("settings.terminal.autocomplete.historyScope.desc")}
+        >
+          <Select
+            value={terminalSettings.autocompleteHistoryScope ?? "host"}
+            onChange={(v) =>
+              updateTerminalSetting(
+                "autocompleteHistoryScope",
+                v as AutocompleteHistoryScope,
+              )
+            }
+            options={[
+              {
+                value: "host",
+                label: t("settings.terminal.autocomplete.historyScope.host"),
+              },
+              {
+                value: "global",
+                label: t("settings.terminal.autocomplete.historyScope.global"),
+              },
+            ]}
+            className="w-48"
             disabled={!terminalSettings.autocompleteEnabled}
           />
         </SettingRow>

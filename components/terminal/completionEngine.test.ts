@@ -238,3 +238,31 @@ test("getCompletions does not reuse cached remote relative listings after cwd ch
   assert.equal(bridgeState.remoteCalls.length, 2);
   assert.equal(completions[0]?.text, "cat worktree.txt");
 });
+
+test("getCompletions includes other hosts' history when historyScope is global", async () => {
+  recordCommand("systemctl restart nginx", "host-a");
+  recordCommand("systemctl status nginx", "host-b");
+
+  const hostScoped = await getCompletions("systemctl", {
+    hostId: "host-a",
+    historyScope: "host",
+  });
+  assert.ok(
+    hostScoped.some((entry) => entry.source === "history" && entry.text === "systemctl restart nginx"),
+  );
+  assert.equal(
+    hostScoped.some((entry) => entry.source === "history" && entry.text === "systemctl status nginx"),
+    false,
+  );
+
+  const globalScoped = await getCompletions("systemctl", {
+    hostId: "host-a",
+    historyScope: "global",
+  });
+  assert.ok(
+    globalScoped.some((entry) => entry.source === "history" && entry.text === "systemctl restart nginx"),
+  );
+  assert.ok(
+    globalScoped.some((entry) => entry.source === "history" && entry.text === "systemctl status nginx"),
+  );
+});

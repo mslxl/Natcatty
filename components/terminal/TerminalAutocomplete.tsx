@@ -116,9 +116,10 @@ export function TerminalAutocomplete({
       cwdSource: options.cwdSource,
       snippets: options.snippets,
       maximum: options.maxResults ?? 15,
+      historyScope: options.historyScope ?? settings?.historyScope,
       signal: options.signal,
     });
-  }, [allowHostStyleGreaterThanPrompt, hostId, hostOs, isPluginCompletionProviderAvailable, protocol, sensitiveInputActiveRef, sessionId, status, workspaceId]);
+  }, [allowHostStyleGreaterThanPrompt, hostId, hostOs, isPluginCompletionProviderAvailable, protocol, sensitiveInputActiveRef, sessionId, settings?.historyScope, status, workspaceId]);
   const autocomplete = useTerminalAutocomplete({
     termRef,
     containerRef,

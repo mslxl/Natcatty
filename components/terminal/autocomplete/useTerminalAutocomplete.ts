@@ -54,6 +54,8 @@ export interface AutocompleteSettings {
   fastTypingThresholdMs: number;
   /** Whether Shift+Enter is reserved for the terminal's configured send text. */
   shiftEnterNewlineEnabled: boolean;
+  /** Which history pool suggestions draw from (current host vs all hosts). */
+  historyScope: "host" | "global";
 }
 
 export const DEFAULT_AUTOCOMPLETE_SETTINGS: AutocompleteSettings = {
@@ -67,6 +69,7 @@ export const DEFAULT_AUTOCOMPLETE_SETTINGS: AutocompleteSettings = {
   maxSuggestions: 8,
   fastTypingThresholdMs: 40,
   shiftEnterNewlineEnabled: true,
+  historyScope: "host",
 };
 
 /**
@@ -706,6 +709,7 @@ export function useTerminalAutocomplete(
         hostId: hostIdRef.current,
         os: hostOsRef.current,
         maxResults: settingsRef.current.maxSuggestions,
+        historyScope: settingsRef.current.historyScope,
         sessionId: sessionIdRef.current,
         protocol: protocolRef.current,
         cwd: cwdResolution.cwd,
