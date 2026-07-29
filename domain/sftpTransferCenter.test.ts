@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { TransferTask } from "./models";
+import { createEmptyDirectoryResumeCheckpoint } from "./sftpDirectoryCheckpoint";
 import {
   createSftpTransferCenter,
   deserializeSftpTransferCenter,
   pruneSftpTransferHistory,
+  serializeSftpTransferCenter,
   validateTransferResumeSource,
 } from "./sftpTransferCenter";
 
@@ -150,7 +152,7 @@ test("resume rejects changed or shortened source files", () => {
   assert.match(validateTransferResumeSource(resumable, { size: 40, lastModified: 50 }) ?? "", /checkpoint/);
 });
 
-test("prune keeps completed children of unfinished directory parents", () => {
+test("prune upgrades legacy completed children into the parent checkpoint", () => {
   const now = Date.now();
   const parent: TransferTask = {
     ...task("dir", "interrupted", now - 1000),
@@ -168,11 +170,127 @@ test("prune keeps completed children of unfinished directory parents", () => {
     endTime: now - 1000 + i,
   }));
   const pruned = pruneSftpTransferHistory([parent, ...children, ...noise], now);
-  assert.ok(pruned.some((item) => item.id === "dir"));
-  for (const child of children) {
-    assert.ok(
-      pruned.some((item) => item.id === child.id),
-      `expected checkpoint child ${child.id} to survive prune`,
-    );
+  assert.deepEqual(pruned.filter((item) => item.id === "dir").map((item) => item.id), ["dir"]);
+  assert.equal(pruned.some((item) => item.parentTaskId === "dir"), false);
+  assert.equal(pruned.find((item) => item.id === "dir")?.directoryResumeCheckpoint?.completedEntries, 5);
+});
+
+test("prune compacts 50,000 completed directory children into a bounded parent checkpoint", () => {
+  const pruneStartedAt = Date.now();
+  const now = Date.now();
+  const parent: TransferTask = {
+    ...task("huge-dir", "interrupted", now - 1000),
+    isDirectory: true,
+    fileName: "huge-folder",
+    totalBytes: 50_000,
+    transferredBytes: 50_000,
+  };
+  const children = Array.from({ length: 50_000 }, (_, index) => ({
+    ...task(`huge-child-${index}`, "completed", now - 500 + index),
+    parentTaskId: parent.id,
+    sourcePath: `/source/file-${index}`,
+    targetPath: `/target/file-${index}`,
+    endTime: now,
+    directoryEntryIndex: index,
+    directoryEntryIdentity: index.toString(16).padStart(64, "0"),
+  } as TransferTask));
+
+  const pruned = pruneSftpTransferHistory([parent, ...children], now);
+  const compactedParent = pruned.find((item) => item.id === parent.id) as TransferTask & {
+    directoryResumeCheckpoint?: { coveredEntries: number; completedEntries: number };
+  };
+
+  assert.equal(pruned.length, 1, "completed children must leave the full task array");
+  assert.equal(compactedParent.directoryResumeCheckpoint?.coveredEntries, 50_000);
+  assert.equal(compactedParent.directoryResumeCheckpoint?.completedEntries, 50_000);
+  assert.ok(
+    serializeSftpTransferCenter(pruned).length < 10_000,
+    "persisted history must stay bounded instead of serializing every completed child",
+  );
+  const restored = deserializeSftpTransferCenter(serializeSftpTransferCenter(pruned));
+  assert.equal(restored.tasks.length, 1);
+  assert.equal(restored.tasks[0]?.directoryResumeCheckpoint?.version, 2);
+  assert.equal(restored.tasks[0]?.directoryResumeCheckpoint?.completedEntries, 50_000);
+  assert.ok(Date.now() - pruneStartedAt < 5_000, "50k compaction should finish within 5 seconds");
+});
+
+test("history pruning groups many directory parents without quadratic rescans", () => {
+  const now = Date.now();
+  const tasks: TransferTask[] = [];
+  for (let index = 0; index < 20_000; index += 1) {
+    const parent: TransferTask = {
+      ...task(`many-parent-${index}`, "paused", index),
+      isDirectory: true,
+      directoryResumeCheckpoint: createEmptyDirectoryResumeCheckpoint(),
+    };
+    tasks.push(parent, {
+      ...task(`many-child-${index}`, "paused", index),
+      parentTaskId: parent.id,
+      directoryEntryIndex: 0,
+      directoryEntryIdentity: "a".repeat(64),
+    });
   }
+
+  const startedAt = Date.now();
+  const pruned = pruneSftpTransferHistory(tasks, now);
+  assert.equal(pruned.length, tasks.length);
+  assert.ok(Date.now() - startedAt < 2_000, "parent grouping should stay linear");
+});
+
+test("out-of-order completion keeps the unfinished hole while compacting the later child", () => {
+  const now = Date.now();
+  const parent: TransferTask = {
+    ...task("out-of-order-dir", "paused", now - 1000),
+    isDirectory: true,
+    totalBytes: 2,
+    transferredBytes: 1,
+  };
+  const unfinished = {
+    ...task("index-0", "paused", now),
+    parentTaskId: parent.id,
+    directoryEntryIndex: 0,
+    directoryEntryIdentity: "a".repeat(64),
+  } as TransferTask;
+  const completed = {
+    ...task("index-1", "completed", now),
+    parentTaskId: parent.id,
+    directoryEntryIndex: 1,
+    directoryEntryIdentity: "b".repeat(64),
+  } as TransferTask;
+
+  const pruned = pruneSftpTransferHistory([parent, unfinished, completed], now);
+  const compactedParent = pruned.find((item) => item.id === parent.id)!;
+
+  assert.deepEqual(pruned.map((item) => item.id).sort(), [parent.id, unfinished.id].sort());
+  assert.equal(compactedParent.directoryResumeCheckpoint?.coveredEntries, 2);
+  assert.equal(compactedParent.directoryResumeCheckpoint?.completedEntries, 1);
+  assert.equal(pruned.find((item) => item.id === unfinished.id)?.status, "paused");
+});
+
+test("failed directory history drops an ambiguous compact checkpoint before child history is capped", () => {
+  const now = Date.now();
+  const parent: TransferTask = {
+    ...task("failed-dir", "failed", now - 1000),
+    isDirectory: true,
+    checkpointBytes: 500,
+    endTime: now,
+    directoryResumeCheckpoint: {
+      version: 1,
+      coveredEntries: 500,
+      completedEntries: 0,
+      manifestHash: "a".repeat(64),
+    },
+  };
+  const failedChildren = Array.from({ length: 500 }, (_, index) => ({
+    ...task(`failed-child-${index}`, "failed", now - 900 + index),
+    parentTaskId: parent.id,
+    directoryEntryIndex: index,
+    directoryEntryIdentity: index.toString(16).padStart(64, "0"),
+    endTime: now - 1 - index,
+  } as TransferTask));
+
+  const pruned = pruneSftpTransferHistory([parent, ...failedChildren], now);
+  const retainedParent = pruned.find((item) => item.id === parent.id);
+  assert.equal(retainedParent?.directoryResumeCheckpoint, undefined);
+  assert.ok(pruned.length <= 200);
 });

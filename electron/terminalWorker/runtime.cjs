@@ -4,6 +4,12 @@ const {
   logTerminalInterruptDebug,
   normalizeTrace,
 } = require("../bridges/terminalInterruptDiagnostics.cjs");
+const {
+  clearTerminalSessionPerformanceState,
+} = require("../bridges/emitTerminalSessionData.cjs");
+
+const DEFAULT_SESSION_LIFECYCLE_TOMBSTONE_TTL_MS = 60_000;
+const DEFAULT_MAX_SESSION_LIFECYCLE_TOMBSTONES = 2_048;
 
 const SESSION_START_CHANNELS = new Set([
   "netcatty:start",
@@ -162,6 +168,7 @@ function createSender(
   sessionOutputGenerations = new Map(),
   sessionRequestIds = new Map(),
   fixedOriginRequestId = null,
+  onCurrentSessionExit = null,
 ) {
   const ownedSessionGenerations = new Map();
   const getOwnedSessionGeneration = (sessionId) => {
@@ -201,6 +208,7 @@ function createSender(
         pendingOutputBySession.delete(payload.sessionId);
         outputPorts?.closeSession?.(payload.sessionId);
         terminalDataPipeline?.detach?.(payload.sessionId, undefined, "session-closed");
+        onCurrentSessionExit?.(payload.sessionId, sessionGeneration);
       }
     }
     parentPort.postMessage({
@@ -350,8 +358,61 @@ function createTerminalWorkerRuntime(options = {}) {
   const sessionOperationTails = new Map();
   const sessionOperationKinds = new Map();
   const sessionCloseEpochs = new Map();
+  const sessionLifecycleTombstoneTimes = new Map();
   const sessionStartMarkers = new Set();
   let urgentInputPorts = null;
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  const sessionLifecycleTombstoneTtlMs = Number.isFinite(options.sessionLifecycleTombstoneTtlMs)
+    ? Math.max(0, Number(options.sessionLifecycleTombstoneTtlMs))
+    : DEFAULT_SESSION_LIFECYCLE_TOMBSTONE_TTL_MS;
+  const maxSessionLifecycleTombstones = Number.isFinite(options.maxSessionLifecycleTombstones)
+    ? Math.max(1, Math.floor(Number(options.maxSessionLifecycleTombstones)))
+    : DEFAULT_MAX_SESSION_LIFECYCLE_TOMBSTONES;
+  const setDefaultTransportIdleTtlMs = typeof options.setDefaultTransportIdleTtlMs === "function"
+    ? options.setDefaultTransportIdleTtlMs
+    : (value) => require("../bridges/sshConnectionPool.cjs").setDefaultTransportIdleTtlMs(value);
+
+  function canPruneSessionLifecycleTombstone(sessionId) {
+    return !sessionOperationTails.has(sessionId)
+      && !sessionStartMarkers.has(sessionId)
+      && !pendingOutputBySession.has(sessionId);
+  }
+
+  function deleteSessionLifecycleTombstone(sessionId) {
+    sessionLifecycleTombstoneTimes.delete(sessionId);
+    sessionOutputGenerations.delete(sessionId);
+    sessionCloseEpochs.delete(sessionId);
+  }
+
+  function pruneSessionLifecycleTombstones() {
+    const currentTime = now();
+    for (const [sessionId, closedAt] of sessionLifecycleTombstoneTimes) {
+      if (currentTime - closedAt < sessionLifecycleTombstoneTtlMs) continue;
+      if (!canPruneSessionLifecycleTombstone(sessionId)) continue;
+      deleteSessionLifecycleTombstone(sessionId);
+    }
+    if (sessionLifecycleTombstoneTimes.size <= maxSessionLifecycleTombstones) return;
+    for (const sessionId of [...sessionLifecycleTombstoneTimes.keys()]) {
+      if (sessionLifecycleTombstoneTimes.size <= maxSessionLifecycleTombstones) break;
+      if (!canPruneSessionLifecycleTombstone(sessionId)) continue;
+      deleteSessionLifecycleTombstone(sessionId);
+    }
+  }
+
+  function touchSessionLifecycleTombstone(sessionId) {
+    if (!sessionId) return;
+    sessionLifecycleTombstoneTimes.delete(sessionId);
+    sessionLifecycleTombstoneTimes.set(sessionId, now());
+  }
+
+  function finalizeNaturalSessionExit(sessionId) {
+    if (!sessionId) return;
+    sessionStartMarkers.delete(sessionId);
+    sessionRequestIds.delete(sessionId);
+    clearTerminalSessionPerformanceState(sessionId);
+    touchSessionLifecycleTombstone(sessionId);
+    pruneSessionLifecycleTombstones();
+  }
 
   const createWorkerOutputSender = () => createSender(
     parentPort,
@@ -361,6 +422,8 @@ function createTerminalWorkerRuntime(options = {}) {
     pendingOutputBySession,
     sessionOutputGenerations,
     sessionRequestIds,
+    null,
+    finalizeNaturalSessionExit,
   );
 
   function replayWorkerOutput(sessionId, chunks) {
@@ -389,6 +452,9 @@ function createTerminalWorkerRuntime(options = {}) {
     outputPorts.closeSession(sessionId);
     terminalDataPipeline?.detach?.(sessionId, undefined, "session-closed");
     sessionRequestIds.delete(sessionId);
+    clearTerminalSessionPerformanceState(sessionId);
+    touchSessionLifecycleTombstone(sessionId);
+    pruneSessionLifecycleTombstones();
   }
 
   async function handleRequest(message) {
@@ -404,7 +470,14 @@ function createTerminalWorkerRuntime(options = {}) {
     try {
       const isSessionStart = SESSION_START_CHANNELS.has(message.channel);
       const requestedSessionId = isSessionStart ? message.payload?.sessionId : null;
-      if (requestedSessionId) sessionRequestIds.set(requestedSessionId, message.requestId);
+      const naturalExitGenerations = new Map();
+      const requestedSessionGeneration = requestedSessionId
+        ? (sessionOutputGenerations.get(requestedSessionId) ?? 0)
+        : null;
+      if (requestedSessionId) {
+        sessionRequestIds.set(requestedSessionId, message.requestId);
+        sessionLifecycleTombstoneTimes.delete(requestedSessionId);
+      }
       const result = await handler({
         sender: createSender(
           parentPort,
@@ -415,12 +488,28 @@ function createTerminalWorkerRuntime(options = {}) {
           sessionOutputGenerations,
           sessionRequestIds,
           isSessionStart ? message.requestId : null,
+          (sessionId, generation) => {
+            naturalExitGenerations.set(sessionId, generation);
+            finalizeNaturalSessionExit(sessionId);
+          },
         ),
       }, message.payload);
       const sessionId = result?.sessionId;
       if (isSessionStart && sessionId) {
-        sessionRequestIds.set(sessionId, message.requestId);
-        sessionStartMarkers.add(sessionId);
+        const currentGeneration = sessionOutputGenerations.get(sessionId) ?? 0;
+        const exitedGeneration = naturalExitGenerations.get(sessionId);
+        const exitedDuringRequest = exitedGeneration !== undefined
+          && currentGeneration > exitedGeneration;
+        const requestedGenerationStillCurrent = requestedSessionGeneration === null
+          || currentGeneration === requestedSessionGeneration;
+        if (!exitedDuringRequest && requestedGenerationStillCurrent) {
+          sessionRequestIds.set(sessionId, message.requestId);
+          sessionStartMarkers.add(sessionId);
+          sessionLifecycleTombstoneTimes.delete(sessionId);
+        } else {
+          sessionRequestIds.delete(sessionId);
+          sessionStartMarkers.delete(sessionId);
+        }
       }
       parentPort.postMessage({
         kind: "response",
@@ -460,6 +549,8 @@ function createTerminalWorkerRuntime(options = {}) {
           pendingOutputBySession,
           sessionOutputGenerations,
           sessionRequestIds,
+          null,
+          finalizeNaturalSessionExit,
         ),
       }, { sessionId });
     }
@@ -480,11 +571,13 @@ function createTerminalWorkerRuntime(options = {}) {
       if (sessionOperationTails.get(sessionId) === operation) {
         sessionOperationTails.delete(sessionId);
         sessionOperationKinds.delete(sessionId);
+        pruneSessionLifecycleTombstones();
       }
     });
   }
 
   function dispatchRequest(message) {
+    pruneSessionLifecycleTombstones();
     const sessionId = SESSION_START_CHANNELS.has(message.channel)
       ? message.payload?.sessionId
       : null;
@@ -528,6 +621,7 @@ function createTerminalWorkerRuntime(options = {}) {
       return;
     }
     sessionCloseEpochs.set(sessionId, (sessionCloseEpochs.get(sessionId) ?? 0) + 1);
+    touchSessionLifecycleTombstone(sessionId);
     const previous = sessionOperationTails.get(sessionId);
     const current = (previous || Promise.resolve()).catch(() => {}).then(async () => {
       try {
@@ -543,6 +637,7 @@ function createTerminalWorkerRuntime(options = {}) {
       }
     });
     trackSessionOperation(sessionId, current, "close");
+    pruneSessionLifecycleTombstones();
   }
 
   function handleSend(message) {
@@ -567,6 +662,9 @@ function createTerminalWorkerRuntime(options = {}) {
         terminalDataPipeline,
         pendingOutputBySession,
         sessionOutputGenerations,
+        sessionRequestIds,
+        null,
+        finalizeNaturalSessionExit,
       ),
     }, message.payload);
   }
@@ -586,6 +684,10 @@ function createTerminalWorkerRuntime(options = {}) {
 
   function handleMessage(eventOrMessage) {
     const { message, ports } = normalizeMessageEvent(eventOrMessage);
+    if (message?.kind === "set-ssh-transport-idle-ttl") {
+      setDefaultTransportIdleTtlMs(message.value);
+      return;
+    }
     if (message?.kind === "urgent-input-port") {
       urgentInputPorts?.open(message.webContentsId, ports?.[0]);
       return;
@@ -678,10 +780,19 @@ function createTerminalWorkerRuntime(options = {}) {
         pendingOutputBySession,
         sessionOutputGenerations,
         sessionRequestIds,
+        null,
+        finalizeNaturalSessionExit,
       );
     },
     closeUrgentInputPortsForTest() {
       urgentInputPorts?.closeAll();
+    },
+    _getSessionLifecycleStateCountsForTests() {
+      pruneSessionLifecycleTombstones();
+      return {
+        outputGenerations: sessionOutputGenerations.size,
+        closeEpochs: sessionCloseEpochs.size,
+      };
     },
   };
 }

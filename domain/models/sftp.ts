@@ -45,6 +45,19 @@ export type TransferOrigin = 'manual' | 'drag-drop' | 'editor-sync' | 'agent' | 
 export type TransferPhase = 'scanning' | 'compressing' | 'uploading' | 'transferring' | 'extracting' | 'verifying';
 export type TransferControlKind = 'stream' | 'compressed-upload';
 
+export interface DirectoryResumeCheckpoint {
+  /** Version 1 used a full SHA-256 digest for every appended entry. Version 2
+   * keeps the SHA-256 compression state so adding another fixed-width identity
+   * is still cryptographically chained without re-hashing string wrappers. */
+  version: 1 | 2;
+  /** Traversal prefix whose source/target metadata is covered by manifestHash. */
+  coveredEntries: number;
+  /** Covered entries already completed and compacted out of the task array. */
+  completedEntries: number;
+  /** Fixed-size chained SHA-256 value of the covered traversal prefix. */
+  manifestHash: string;
+}
+
 export interface TransferTask {
   id: string;
   batchId?: string;
@@ -97,6 +110,11 @@ export interface TransferTask {
   stagedTargetPath?: string;
   sourceFingerprint?: string;
   reconnectRequired?: boolean;
+  /** Stable position and identity used to compact completed directory children. */
+  directoryEntryIndex?: number;
+  directoryEntryIdentity?: string;
+  /** Fixed-size resume record stored only on a top-level directory task. */
+  directoryResumeCheckpoint?: DirectoryResumeCheckpoint;
 }
 
 export type FileConflictAction = 'stop' | 'skip' | 'replace' | 'duplicate' | 'merge';

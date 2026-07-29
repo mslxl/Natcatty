@@ -1180,6 +1180,22 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   // Broadcast settings changed to all windows (for cross-window sync)
   ipcMain.on("netcatty:settings:changed", (event, payload) => {
     const senderId = event?.sender?.id;
+    // Apply SSH transport idle park TTL in the main process (shared shell/SFTP/
+    // transfer/port-forward connections). Renderer owns persistence; main owns
+    // the registry timers.
+    try {
+      if (typeof payload?.value === "number" && Number.isFinite(payload.value) && payload.value >= 0) {
+        const {
+          setDefaultTransportIdleTtlMs,
+          STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
+        } = require("./sshConnectionPool.cjs");
+        if (payload?.key === STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS) {
+          setDefaultTransportIdleTtlMs(payload.value);
+        }
+      }
+    } catch {
+      // ignore — pool may be unavailable in tests
+    }
     // Notify all windows except the sender
     // Check both isDestroyed() and webContents.isDestroyed() to handle HMR refresh
     try {

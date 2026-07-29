@@ -1,30 +1,34 @@
-/** 0 keeps the connection warm until its host is torn down or the app exits. */
-export const DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS = 5 * 60_000;
-export const SFTP_TRANSFER_POOL_IDLE_TTL_PRESETS_MS = [
-  60_000,
-  5 * 60_000,
-  15 * 60_000,
-  30 * 60_000,
-  0,
-] as const;
+/**
+ * @deprecated Transfer channel pool no longer parks SSH connections.
+ * Keep-alive is owned by the main-process SSH transport registry
+ * (`sshTransportIdleTtl.ts` / settings "SSH connection keep-alive").
+ *
+ * These symbols remain for import stability in older tests/call sites.
+ */
 
+import {
+  DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
+  SSH_TRANSPORT_IDLE_TTL_PRESETS_MS,
+  resolveSshTransportIdleTtlMs,
+} from "./sshTransportIdleTtl.ts";
+
+/** @deprecated Use DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS */
+export const DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS = DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS;
+
+/** @deprecated Use SSH_TRANSPORT_IDLE_TTL_PRESETS_MS */
+export const SFTP_TRANSFER_POOL_IDLE_TTL_PRESETS_MS = SSH_TRANSPORT_IDLE_TTL_PRESETS_MS;
+
+/** @deprecated */
 export type SftpTransferPoolIdleTtlMs = (typeof SFTP_TRANSFER_POOL_IDLE_TTL_PRESETS_MS)[number];
 
+/** @deprecated Use resolveSshTransportIdleTtlMs */
 export function resolveSftpTransferPoolIdleTtlMs(
   readStoredValue: () => number | null | undefined,
 ): number {
-  const stored = readStoredValue();
-  if (stored === 0) return 0;
-  if (
-    typeof stored === "number"
-    && Number.isFinite(stored)
-    && (SFTP_TRANSFER_POOL_IDLE_TTL_PRESETS_MS as readonly number[]).includes(stored)
-  ) {
-    return stored;
-  }
-  return DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS;
+  return resolveSshTransportIdleTtlMs(readStoredValue);
 }
 
-export function isTransferPoolIdleReclaimDisabled(idleTtlMs: number): boolean {
-  return !Number.isFinite(idleTtlMs) || idleTtlMs <= 0;
+/** @deprecated Transfer channels close when idle; always treated as reclaim-enabled. */
+export function isTransferPoolIdleReclaimDisabled(_idleTtlMs: number): boolean {
+  return false;
 }

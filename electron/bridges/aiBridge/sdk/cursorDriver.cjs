@@ -449,15 +449,32 @@ function mapCursorModels(models) {
   return out;
 }
 
-async function listCursorModels({ apiKey, env, sdkModule } = {}) {
+async function listCursorModels({ apiKey, env, sdkModule, abortController, signal } = {}) {
+  const externalSignal = signal || abortController?.signal;
+  if (externalSignal?.aborted) return [];
   let resolvedModule = sdkModule;
   if (!resolvedModule) {
     try { resolvedModule = await import("@cursor/sdk"); } catch { return []; }
   }
   const effectiveApiKey = apiKey || env?.CURSOR_API_KEY || process.env.CURSOR_API_KEY;
   if (!effectiveApiKey) return [];
-  const models = await resolvedModule.Cursor.models.list({ apiKey: effectiveApiKey });
-  return mapCursorModels(models);
+  let abortHandler;
+  try {
+    const result = await Promise.race([
+      Promise.resolve(resolvedModule.Cursor.models.list({
+        apiKey: effectiveApiKey,
+        signal: externalSignal,
+      })).then((models) => ({ type: "models", models })),
+      new Promise((resolve) => {
+        if (externalSignal?.aborted) return resolve({ type: "aborted" });
+        abortHandler = () => resolve({ type: "aborted" });
+        externalSignal?.addEventListener("abort", abortHandler, { once: true });
+      }),
+    ]);
+    return result.type === "models" ? mapCursorModels(result.models) : [];
+  } finally {
+    if (abortHandler) externalSignal?.removeEventListener("abort", abortHandler);
+  }
 }
 
 module.exports = {

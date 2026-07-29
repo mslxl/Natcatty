@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   mapWorkerTransferChannelToGlobalEvent,
   fanoutGlobalTransferFromWorkerEvent,
+  shouldForwardWorkerRendererEvent,
 } = require("./terminalWorkerManager.cjs");
 
 test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () => {
@@ -16,6 +17,9 @@ test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () 
     speed: 7,
     phase: "verifying",
     checkpointBytes: 40,
+    parentTaskId: "folder-1",
+    directoryEntryIndex: 3,
+    directoryEntryIdentity: "entry-hash",
     lifecycleEpoch: 2,
     lifecycleState: "transferring",
   });
@@ -27,6 +31,33 @@ test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () 
   assert.equal(event.phase, "verifying");
   assert.equal(event.lifecycleEpoch, 2);
   assert.equal(event.lifecycleState, "transferring");
+  assert.equal(event.parentTaskId, "folder-1");
+  assert.equal(event.directoryEntryIndex, 3);
+  assert.equal(event.directoryEntryIdentity, "entry-hash");
+  assert.equal(event.resumable, undefined);
+});
+
+test("worker transfer events are global-only and keep complete task metadata", () => {
+  const started = mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:started", {
+    type: "started",
+    transferId: "download-1",
+    direction: "download",
+    fileName: "report.bin",
+    sourcePath: "/remote/report.bin",
+    targetPath: "/tmp/report.bin",
+    totalBytes: 100,
+    resumable: false,
+    pauseUnavailableReason: "SCP cannot pause",
+    parentTaskId: "folder-1",
+  });
+  assert.equal(started.type, "started");
+  assert.equal(started.direction, "download");
+  assert.equal(started.sourcePath, "/remote/report.bin");
+  assert.equal(started.resumable, false);
+  assert.equal(started.parentTaskId, "folder-1");
+  assert.equal(shouldForwardWorkerRendererEvent("netcatty:transfer:progress"), false);
+  assert.equal(shouldForwardWorkerRendererEvent("netcatty:transfer:complete"), false);
+  assert.equal(shouldForwardWorkerRendererEvent("netcatty:data"), true);
 });
 
 test("mapWorkerTransferChannelToGlobalEvent maps complete/error/cancel", () => {

@@ -1,5 +1,8 @@
 /* eslint-disable no-undef */
 const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
+const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+
+const SSH_EXEC_COMMAND_MAX_OUTPUT_BYTES = 1024 * 1024;
 
 function createExecCommandApi(ctx) {
   with (ctx) {
@@ -62,29 +65,20 @@ function createExecCommandApi(ctx) {
     
       return new Promise((resolve, reject) => {
         const conn = new SSHClient();
-        let stdout = "";
-        let stderr = "";
         let settled = false;
-        let commandTimer = null;
         let authReadyTimer = null;
+        let commandController = null;
         const clearTimers = () => {
-          if (commandTimer) clearTimeout(commandTimer);
           if (authReadyTimer) clearTimeout(authReadyTimer);
-          commandTimer = null;
           authReadyTimer = null;
         };
         const rejectConnection = (err) => {
           if (settled) return;
           settled = true;
           clearTimers();
+          commandController?.abort?.(err);
           conn.end();
           reject(err);
-        };
-        const startCommandTimer = () => {
-          commandTimer = setTimeout(() => {
-            rejectConnection(new Error("SSH exec timeout"));
-          }, commandTimeoutMs);
-          commandTimer.unref?.();
         };
     
         conn
@@ -100,29 +94,23 @@ function createExecCommandApi(ctx) {
           .once("ready", () => {
             if (authReadyTimer) clearTimeout(authReadyTimer);
             authReadyTimer = null;
-            startCommandTimer();
-            conn.exec(payload.command, (err, stream) => {
-              if (err) {
-                clearTimers();
-                settled = true;
-                conn.end();
-                return reject(err);
-              }
-              stream
-                .on("data", (data) => {
-                  stdout += data.toString();
-                })
-                .stderr.on("data", (data) => {
-                  stderr += data.toString();
-                })
-                .on("close", (code) => {
-                  if (settled) return;
-                  clearTimers();
-                  settled = true;
-                  conn.end();
-                  resolve({ stdout, stderr, code: code ?? (stderr ? 1 : 0) });
-                });
-            });
+            commandController = new AbortController();
+            void executeBoundedSshCommand(conn, payload.command, {
+              signal: commandController.signal,
+              openingTimeoutMs: commandTimeoutMs,
+              runTimeoutMs: commandTimeoutMs,
+              maxOutputBytes: SSH_EXEC_COMMAND_MAX_OUTPUT_BYTES,
+            }).then((result) => {
+              if (settled) return;
+              settled = true;
+              clearTimers();
+              conn.end();
+              resolve({
+                stdout: result.stdout,
+                stderr: result.stderr,
+                code: result.code ?? (result.stderr ? 1 : 0),
+              });
+            }, rejectConnection);
           })
           .on("error", (err) => {
             rejectConnection(err);
@@ -132,13 +120,7 @@ function createExecCommandApi(ctx) {
           })
           .once("end", () => {
             if (settled) return;
-            clearTimers();
-            settled = true;
-            if (stderr || stdout) {
-              resolve({ stdout, stderr, code: 0 });
-            } else {
-              reject(new Error("SSH connection closed unexpectedly"));
-            }
+            rejectConnection(new Error("SSH connection closed unexpectedly"));
           });
     
         const connectOpts = {
@@ -234,4 +216,4 @@ function createExecCommandApi(ctx) {
   }
 }
 
-module.exports = { createExecCommandApi };
+module.exports = { createExecCommandApi, SSH_EXEC_COMMAND_MAX_OUTPUT_BYTES };

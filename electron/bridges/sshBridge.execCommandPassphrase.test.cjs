@@ -73,7 +73,7 @@ class SuccessfulSshClient extends EventEmitter {
     const stream = new EventEmitter();
     stream.stderr = new EventEmitter();
     callback(null, stream);
-    queueMicrotask(() => stream.stderr.emit("close", 0));
+    queueMicrotask(() => stream.emit("close", 0));
   }
 
   end() {}

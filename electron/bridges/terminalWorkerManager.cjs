@@ -1,5 +1,7 @@
 "use strict";
 
+const { releaseAttachedSessionState } = require("./terminalAttachRestore.cjs");
+
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const {
@@ -9,10 +11,60 @@ const {
 const {
   TERMINAL_URGENT_INPUT_PORT_CHANNEL,
 } = require("./terminalUrgentInputChannel.cjs");
+const {
+  clearTerminalSessionPerformanceState,
+} = require("./emitTerminalSessionData.cjs");
+
+const DEFAULT_CLOSED_SESSION_TOMBSTONE_TTL_MS = 60_000;
+const DEFAULT_MAX_CLOSED_SESSION_TOMBSTONES = 2_048;
+const SSH_TRANSPORT_IDLE_TTL_ENV = "NETCATTY_SSH_TRANSPORT_IDLE_TTL_MS";
+
+function resolveInitialTransportIdleTtlMs(options = {}) {
+  if (Number.isFinite(options.initialTransportIdleTtlMs)
+    && options.initialTransportIdleTtlMs >= 0) {
+    return Number(options.initialTransportIdleTtlMs);
+  }
+  try {
+    const { getDefaultTransportIdleTtlMs } = require("./sshConnectionPool.cjs");
+    return getDefaultTransportIdleTtlMs();
+  } catch {
+    return 5 * 60_000;
+  }
+}
+
+function registerTransportIdleTtlSettingsSync(ipcMain, terminalWorkerManager) {
+  if (!ipcMain?.on || !terminalWorkerManager?.setDefaultTransportIdleTtlMs) {
+    return () => {};
+  }
+  const { STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS } = require("./sshConnectionPool.cjs");
+  const listener = (_event, payload) => {
+    if (payload?.key !== STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS) return;
+    terminalWorkerManager.setDefaultTransportIdleTtlMs(payload.value);
+  };
+  ipcMain.on("netcatty:settings:changed", listener);
+  return () => ipcMain.removeListener?.("netcatty:settings:changed", listener);
+}
 
 function isTerminalWorkerEnabled(options = {}) {
   const env = options.env || process.env;
   return env.NETCATTY_TERMINAL_WORKER !== "0";
+}
+
+const TRANSFER_RENDERER_CHANNELS = new Set([
+  "netcatty:transfer:queued",
+  "netcatty:transfer:started",
+  "netcatty:transfer:progress",
+  "netcatty:transfer:complete",
+  "netcatty:transfer:cancelled",
+  "netcatty:transfer:error",
+  "netcatty:compress:progress",
+  "netcatty:compress:complete",
+  "netcatty:compress:cancelled",
+  "netcatty:compress:error",
+]);
+
+function shouldForwardWorkerRendererEvent(channel) {
+  return !TRANSFER_RENDERER_CHANNELS.has(channel);
 }
 
 /**
@@ -38,6 +90,18 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       sourceFingerprint: payload.sourceFingerprint,
       lifecycleEpoch: payload.lifecycleEpoch,
       lifecycleState: payload.lifecycleState,
+      resumable: payload.resumable,
+      pauseUnavailableReason: payload.pauseUnavailableReason,
+      parentTaskId: payload.parentTaskId,
+      directoryEntryIndex: payload.directoryEntryIndex,
+      directoryEntryIdentity: payload.directoryEntryIdentity,
+    };
+  }
+  if (channel === "netcatty:transfer:queued" || channel === "netcatty:transfer:started") {
+    return {
+      ...payload,
+      type: channel.endsWith(":queued") ? "queued" : "started",
+      transferId,
     };
   }
   if (channel === "netcatty:transfer:complete") {
@@ -47,6 +111,9 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       endedAt: Date.now(),
       transferred: payload.transferred,
       totalBytes: payload.totalBytes,
+      parentTaskId: payload.parentTaskId,
+      directoryEntryIndex: payload.directoryEntryIndex,
+      directoryEntryIdentity: payload.directoryEntryIdentity,
     };
   }
   if (channel === "netcatty:transfer:cancelled") {
@@ -54,6 +121,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       type: "cancelled",
       transferId,
       endedAt: Date.now(),
+      parentTaskId: payload.parentTaskId,
     };
   }
   if (channel === "netcatty:transfer:error") {
@@ -64,6 +132,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       transferId,
       endedAt: Date.now(),
       error: message,
+      parentTaskId: payload.parentTaskId,
     };
   }
   if (channel === "netcatty:compress:progress") {
@@ -306,6 +375,7 @@ function createTerminalWorkerManager(options = {}) {
   const pendingOutputBytes = new Map();
   const closedSessions = new Set();
   const closedSessionSequences = new Map();
+  const closedSessionTombstoneTimes = new Map();
   let sessionLifecycleSequence = 0;
   const outputPortPending = new Map();
   const outputPortReady = new Set();
@@ -324,6 +394,8 @@ function createTerminalWorkerManager(options = {}) {
   const terminalInterceptorWarningListeners = new Set();
   const sessionOwnedListeners = new Set();
   const sessionClosedListeners = new Set();
+  const workerExitListeners = new Set();
+  const workerRendererEventListeners = new Set();
   const externalSessions = new Map();
   const maxPendingOutputChunks = Number.isFinite(options.maxPendingOutputChunks)
     ? Math.max(0, Math.trunc(options.maxPendingOutputChunks))
@@ -332,6 +404,14 @@ function createTerminalWorkerManager(options = {}) {
     ? Math.max(0, Math.trunc(options.maxPendingOutputBytes))
     : 2 * 1024 * 1024;
   const maxDroppedStateScanBytes = Math.max(256, options.maxDroppedStateScanBytes ?? 2048);
+  const now = typeof options.now === "function" ? options.now : Date.now;
+  const closedSessionTombstoneTtlMs = Number.isFinite(options.closedSessionTombstoneTtlMs)
+    ? Math.max(0, Number(options.closedSessionTombstoneTtlMs))
+    : DEFAULT_CLOSED_SESSION_TOMBSTONE_TTL_MS;
+  const maxClosedSessionTombstones = Number.isFinite(options.maxClosedSessionTombstones)
+    ? Math.max(1, Math.floor(Number(options.maxClosedSessionTombstones)))
+    : DEFAULT_MAX_CLOSED_SESSION_TOMBSTONES;
+  let transportIdleTtlMs = resolveInitialTransportIdleTtlMs(options);
 
   function rejectAllPending(error) {
     for (const { reject } of pending.values()) {
@@ -795,16 +875,57 @@ function createTerminalWorkerManager(options = {}) {
     if (sessionId) attachHomeWebContentsIds.delete(sessionId);
   }
 
+  function deleteClosedSessionTombstone(sessionId) {
+    closedSessionTombstoneTimes.delete(sessionId);
+    closedSessions.delete(sessionId);
+    closedSessionSequences.delete(sessionId);
+    closedSessionGenerations.delete(sessionId);
+  }
+
+  function canPruneClosedSessionTombstone(sessionId) {
+    return !pendingSessionStartSequences.has(sessionId)
+      && !sessionGenerations.has(sessionId)
+      && !workerSessionIds.has(sessionId)
+      && !sessionWebContentsIds.has(sessionId)
+      && !outputRoutePending.has(sessionId);
+  }
+
+  function pruneClosedSessionTombstones() {
+    const currentTime = now();
+    for (const [sessionId, closedAt] of closedSessionTombstoneTimes) {
+      if (currentTime - closedAt < closedSessionTombstoneTtlMs) continue;
+      if (!canPruneClosedSessionTombstone(sessionId)) continue;
+      deleteClosedSessionTombstone(sessionId);
+    }
+    if (closedSessionTombstoneTimes.size <= maxClosedSessionTombstones) return;
+    for (const sessionId of [...closedSessionTombstoneTimes.keys()]) {
+      if (closedSessionTombstoneTimes.size <= maxClosedSessionTombstones) break;
+      if (!canPruneClosedSessionTombstone(sessionId)) continue;
+      deleteClosedSessionTombstone(sessionId);
+    }
+  }
+
+  function touchClosedSessionTombstone(sessionId) {
+    if (!sessionId) return;
+    closedSessionTombstoneTimes.delete(sessionId);
+    closedSessionTombstoneTimes.set(sessionId, now());
+  }
+
+  function updateClosedSessionSequence(sessionId) {
+    closedSessionSequences.set(sessionId, ++sessionLifecycleSequence);
+    touchClosedSessionTombstone(sessionId);
+  }
+
   function markSessionClosed(sessionId) {
     if (!sessionId || closedSessions.has(sessionId)) return;
     closedSessions.add(sessionId);
-    closedSessionSequences.set(sessionId, ++sessionLifecycleSequence);
+    updateClosedSessionSequence(sessionId);
   }
 
   function cancelPendingSessionStart(sessionId) {
     if (!pendingSessionStartSequences.delete(sessionId)) return;
     if (closedSessions.has(sessionId)) {
-      closedSessionSequences.set(sessionId, ++sessionLifecycleSequence);
+      updateClosedSessionSequence(sessionId);
     }
   }
 
@@ -827,6 +948,7 @@ function createTerminalWorkerManager(options = {}) {
     const previous = closedSessionGenerations.get(sessionId);
     if (previous == null || generation > previous) {
       closedSessionGenerations.set(sessionId, generation);
+      touchClosedSessionTombstone(sessionId);
     }
   }
 
@@ -903,6 +1025,9 @@ function createTerminalWorkerManager(options = {}) {
     sessionGenerations.delete(sessionId);
     supersedingSessionGenerations.delete(sessionId);
     clearAttachHome(sessionId);
+    clearTerminalSessionPerformanceState(sessionId);
+    releaseAttachedSessionState(sessionId);
+    pruneClosedSessionTombstones();
     const worker = child;
     try {
       worker?.postMessage?.({ kind: "close-output-port", sessionId });
@@ -1121,6 +1246,7 @@ function createTerminalWorkerManager(options = {}) {
         closedSessionGenerations.delete(sessionId);
         closedSessions.delete(sessionId);
         closedSessionSequences.delete(sessionId);
+        closedSessionTombstoneTimes.delete(sessionId);
         workerSessionIds.add(sessionId);
         if (Number.isSafeInteger(message.sessionGeneration)) {
           sessionGenerations.set(sessionId, message.sessionGeneration);
@@ -1224,10 +1350,17 @@ function createTerminalWorkerManager(options = {}) {
       return;
     }
     if (message.kind === "renderer-event") {
+      for (const listener of [...workerRendererEventListeners]) {
+        try { listener(message); } catch {}
+      }
       // Transfer lifecycle from the utilityProcess cannot use BrowserWindow
       // inside the worker. Fan global-center events from the main process so
       // progress survives SFTP panel hide/unmount.
       fanoutGlobalTransferFromWorkerEvent(electronModule, message.channel, message.payload);
+
+      // Transfer events have one renderer-facing route: global-transfer. Do not
+      // also forward the worker's internal channel to the origin window.
+      if (!shouldForwardWorkerRendererEvent(message.channel)) return;
 
       // Prefer the currently rebound display target. Worker-captured
       // webContentsId is from session start and goes stale after attach/rebind.
@@ -1425,6 +1558,9 @@ function createTerminalWorkerManager(options = {}) {
       ? cause
       : new Error(`Terminal worker exited${Number.isFinite(code) ? ` with code ${code}` : ""}`);
     const exitCode = Number.isFinite(code) ? code : 1;
+    for (const listener of [...workerExitListeners]) {
+      try { listener(error); } catch {}
+    }
     const affectedSessionIds = new Set([
       ...sessionWebContentsIds.keys(),
       ...outputRoutePending.keys(),
@@ -1437,7 +1573,7 @@ function createTerminalWorkerManager(options = {}) {
       const hasNewPendingLifecycle = hasPendingSessionLifecycle(sessionId);
       if (closedSessions.has(sessionId) && !hasNewPendingLifecycle) continue;
       if (closedSessions.has(sessionId)) {
-        closedSessionSequences.set(sessionId, ++sessionLifecycleSequence);
+        updateClosedSessionSequence(sessionId);
       } else {
         markSessionClosed(sessionId);
       }
@@ -1466,6 +1602,7 @@ function createTerminalWorkerManager(options = {}) {
     closedSessionGenerations.clear();
     supersedingSessionGenerations.clear();
     attachHomeWebContentsIds.clear();
+    pruneClosedSessionTombstones();
     closeAllUrgentInputPorts();
     rejectAllPending(error);
     terminalOutputChannel?.closeAll?.();
@@ -1503,7 +1640,15 @@ function createTerminalWorkerManager(options = {}) {
     if (!utilityProcess?.fork) {
       throw new Error("Electron utilityProcess is unavailable");
     }
-    const worker = utilityProcess.fork(workerScriptPath);
+    // The worker loads the SSH pool before it can receive IPC. Seed the latest
+    // value through its environment so a first request (and every replacement
+    // worker) can never briefly use the product default instead of the setting.
+    const worker = utilityProcess.fork(workerScriptPath, [], {
+      env: {
+        ...process.env,
+        [SSH_TRANSPORT_IDLE_TTL_ENV]: String(transportIdleTtlMs),
+      },
+    });
     child = worker;
     worker.on?.("message", (message) => {
       if (child === worker) handleMessage(message);
@@ -1514,7 +1659,26 @@ function createTerminalWorkerManager(options = {}) {
     return worker;
   }
 
+  function setDefaultTransportIdleTtlMs(value) {
+    if (!Number.isFinite(value) || value < 0) return transportIdleTtlMs;
+    const normalized = Number(value);
+    if (normalized === transportIdleTtlMs) return transportIdleTtlMs;
+    transportIdleTtlMs = normalized;
+    const worker = child;
+    if (!worker) return transportIdleTtlMs;
+    try {
+      worker.postMessage({
+        kind: "set-ssh-transport-idle-ttl",
+        value: transportIdleTtlMs,
+      });
+    } catch (error) {
+      retireWorkerAfterIpcFailure(worker, error);
+    }
+    return transportIdleTtlMs;
+  }
+
   function request(channel, payload, optionsForRequest = {}) {
+    pruneClosedSessionTombstones();
     if (channel === "netcatty:close:await"
       && payload?.sessionId
       && closedSessions.has(payload.sessionId)
@@ -1650,6 +1814,7 @@ function createTerminalWorkerManager(options = {}) {
   }
 
   function send(channel, payload, optionsForSend = {}) {
+    pruneClosedSessionTombstones();
     if (channel === "netcatty:close"
       && payload?.sessionId
       && closedSessions.has(payload.sessionId)
@@ -1744,6 +1909,18 @@ function createTerminalWorkerManager(options = {}) {
     return Object.freeze({ dispose: () => sessionClosedListeners.delete(listener) });
   }
 
+  function onWorkerExit(listener) {
+    if (typeof listener !== "function") throw new TypeError("Worker exit listener is required");
+    workerExitListeners.add(listener);
+    return Object.freeze({ dispose: () => workerExitListeners.delete(listener) });
+  }
+
+  function onWorkerRendererEvent(listener) {
+    if (typeof listener !== "function") throw new TypeError("Worker renderer event listener is required");
+    workerRendererEventListeners.add(listener);
+    return Object.freeze({ dispose: () => workerRendererEventListeners.delete(listener) });
+  }
+
   function stop() {
     if (!child) return;
     const current = child;
@@ -1755,6 +1932,7 @@ function createTerminalWorkerManager(options = {}) {
       pendingOutputBytes.clear();
       closedSessions.clear();
       closedSessionSequences.clear();
+      closedSessionTombstoneTimes.clear();
       outputPortPending.clear();
       outputPortReady.clear();
       outputRoutePending.clear();
@@ -1771,6 +1949,8 @@ function createTerminalWorkerManager(options = {}) {
       terminalInterceptorWarningListeners.clear();
       sessionOwnedListeners.clear();
       sessionClosedListeners.clear();
+      workerExitListeners.clear();
+      workerRendererEventListeners.clear();
       for (const external of externalSessions.values()) {
         for (const resolve of external.resumeWaiters.splice(0)) resolve();
       }
@@ -1798,6 +1978,8 @@ function createTerminalWorkerManager(options = {}) {
     onTerminalInterceptorWarning,
     onSessionOwned,
     onSessionClosed,
+    onWorkerExit,
+    onWorkerRendererEvent,
     hasOpenSession(sessionId) {
       return Boolean(
         sessionId
@@ -1839,6 +2021,18 @@ function createTerminalWorkerManager(options = {}) {
       outputTaps.add(listener);
       return () => outputTaps.delete(listener);
     },
+    setDefaultTransportIdleTtlMs,
+    getDefaultTransportIdleTtlMs() {
+      return transportIdleTtlMs;
+    },
+    _getClosedSessionTombstoneCountsForTests() {
+      pruneClosedSessionTombstones();
+      return {
+        sessions: closedSessions.size,
+        sequences: closedSessionSequences.size,
+        generations: closedSessionGenerations.size,
+      };
+    },
     stop,
   };
 }
@@ -1849,4 +2043,6 @@ module.exports = {
   mapWorkerTransferChannelToGlobalEvent,
   fanoutGlobalTransferFromWorkerEvent,
   broadcastGlobalTransferEventOnMain,
+  shouldForwardWorkerRendererEvent,
+  registerTransportIdleTtlSettingsSync,
 };

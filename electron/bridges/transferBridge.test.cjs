@@ -559,7 +559,13 @@ test("in-place upload ignores cancellation during final size verification", asyn
   let markFinalStatStarted;
   const finalStatStarted = new Promise((resolve) => { markFinalStatStarted = resolve; });
   const fastSftp = createFastSftp({
-    lstat(_remotePath, callback) {
+    lstat(remotePath, callback) {
+      if (String(remotePath).includes(".netcatty-backup-")) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
       callback(null, {
         size: remote.length,
         mode: 0o120777,
@@ -582,7 +588,12 @@ test("in-place upload ignores cancellation during final size verification", asyn
   const client = {
     __netcattySudoMode: true,
     sftp: fastSftp,
-    async stat() {
+    async stat(remotePath) {
+      if (String(remotePath).includes(".netcatty-backup-")) {
+        const error = new Error("ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
       statCalls += 1;
       if (statCalls === 1) {
         markFinalStatStarted();
@@ -632,7 +643,13 @@ test("in-place concurrent upload ignores cancellation while the remote handle cl
   let markCloseStarted;
   const closeStarted = new Promise((resolve) => { markCloseStarted = resolve; });
   const fastSftp = createFastSftp({
-    lstat(_remotePath, callback) {
+    lstat(remotePath, callback) {
+      if (String(remotePath).includes(".netcatty-backup-")) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
       callback(null, {
         size: remote.length,
         mode: 0o120777,
@@ -656,7 +673,14 @@ test("in-place concurrent upload ignores cancellation while the remote handle cl
   const client = {
     __netcattySudoMode: true,
     sftp: fastSftp,
-    stat: async () => ({ size: remote.length }),
+    stat: async (remotePath) => {
+      if (String(remotePath).includes(".netcatty-backup-")) {
+        const error = new Error("ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
+      return { size: remote.length };
+    },
   };
   transferBridge.init({ sftpClients: new Map([["target", client]]) });
   const sender = createSender();
@@ -1760,7 +1784,7 @@ test("local resume verification reports progress and destroys both readers on ca
   });
 
   assert.equal(await waitUntil(() => verificationStreams.length === 2), true);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 220));
   for (const stream of verificationStreams) stream.write(Buffer.alloc(256 * 1024, 31));
   assert.equal(await waitUntil(() => sender.sent.some((entry) => (
     entry.channel === "netcatty:transfer:progress"
@@ -1828,7 +1852,7 @@ test("remote resume verification destroys the SFTP reader on cancellation", asyn
   });
 
   assert.equal(await waitUntil(() => verificationStream !== undefined), true);
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  await new Promise((resolve) => setTimeout(resolve, 220));
   verificationStream.write(Buffer.alloc(256 * 1024, 47));
   assert.equal(await waitUntil(() => sender.sent.some((entry) => (
     entry.channel === "netcatty:transfer:progress"
@@ -5556,6 +5580,21 @@ test("cancel before skipAdmission start rejects the transfer without writing", a
   assert.equal(source.listenerCount("data"), 0);
 });
 
+test("pre-start cancel latches stay hard bounded when cancelled work never starts", async (t) => {
+  t.after(() => {
+    for (let index = 0; index < 5_000; index += 1) {
+      transferBridge.clearPendingCancel(`orphan-cancel-${index}`);
+    }
+  });
+  for (let index = 0; index < 5_000; index += 1) {
+    await transferBridge.cancelTransfer(null, { transferId: `orphan-cancel-${index}` });
+  }
+  assert.ok(
+    transferBridge._getPendingCancelCountForTests() <= 4_096,
+    `pending cancel latches grew to ${transferBridge._getPendingCancelCountForTests()}`,
+  );
+});
+
 test("pausing a queued admission job preserves the payload checkpoint", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-queued-checkpoint-"));
   t.after(async () => { await fs.promises.rm(tempDir, { recursive: true, force: true }); });
@@ -5688,6 +5727,376 @@ test("transfer session leases hold SFTP ids across soft-close until release", as
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(hardCloseCalls, 1);
   assert.equal(sftpTransferSessionLeaseStore.isHeld("s1"), false);
+});
+
+test("a directory pool lease survives terminal close between child files", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  let hardCloseCalls = 0;
+  const sftpBridge = require("./sftpBridge.cjs");
+  const originalClose = sftpBridge.closeSftp;
+  sftpBridge.closeSftp = async (_event, payload) => {
+    if (payload?.force) {
+      hardCloseCalls += 1;
+      sftpTransferSessionLeaseStore.clear(payload.sftpId);
+      return { success: true, deferred: false };
+    }
+    if (sftpTransferSessionLeaseStore.markSoftClosed(payload.sftpId)) {
+      return {
+        success: true,
+        deferred: true,
+        leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(payload.sftpId),
+      };
+    }
+    return { success: true, deferred: false };
+  };
+  t.after(() => {
+    sftpBridge.closeSftp = originalClose;
+  });
+
+  transferBridge.init({ sftpClients: new Map([["folder-sftp", {}]]) });
+  assert.deepEqual(
+    transferBridge.retainSftpTransferSession(null, {
+      sftpId: "folder-sftp",
+      leaseId: "pool:folder-sftp",
+    }),
+    { success: true },
+  );
+  transferBridge.acquireTransferSessionLeases("child-1", { targetSftpId: "folder-sftp" });
+
+  const soft = await sftpBridge.closeSftp(null, { sftpId: "folder-sftp" });
+  assert.equal(soft.deferred, true);
+  transferBridge.releaseTransferSessionLeases("child-1", ["folder-sftp"]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hardCloseCalls, 0, "the directory pool must keep the session alive between files");
+
+  assert.doesNotThrow(() => {
+    transferBridge.acquireTransferSessionLeases("child-2", { targetSftpId: "folder-sftp" });
+  });
+  transferBridge.releaseTransferSessionLeases("child-2", ["folder-sftp"]);
+  assert.deepEqual(
+    transferBridge.releaseSftpTransferSession(null, {
+      sftpId: "folder-sftp",
+      leaseId: "pool:folder-sftp",
+    }),
+    { success: true },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hardCloseCalls, 1, "the deferred close should run only after the pool releases");
+});
+
+test("directory child lifecycle events preserve their parent id", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-child-event-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const sourcePath = path.join(tempDir, "child.txt");
+  const targetPath = path.join(tempDir, "copied.txt");
+  await fs.promises.writeFile(sourcePath, "child");
+  transferBridge.init({ sftpClients: new Map() });
+  const sender = createSender();
+
+  const result = await transferBridge.startTransfer({ sender }, {
+    transferId: "folder-child-event",
+    parentTaskId: "folder-root-event",
+    sourcePath,
+    targetPath,
+    sourceType: "local",
+    targetType: "local",
+    totalBytes: 5,
+    resumable: false,
+    skipAdmission: true,
+  });
+
+  assert.equal(result.error, undefined);
+  const started = sender.sent.find((entry) => entry.channel === "netcatty:transfer:started");
+  assert.equal(started?.payload?.parentTaskId, "folder-root-event");
+});
+
+test("a committed soft-close never lends the SFTP client again while client.end is pending", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  const sftpBridge = require("./sftpBridge.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  let releaseEnd;
+  const endGate = new Promise((resolve) => { releaseEnd = resolve; });
+  let markEndStarted;
+  const endStarted = new Promise((resolve) => { markEndStarted = resolve; });
+  let endCalls = 0;
+  const client = {
+    async end() {
+      endCalls += 1;
+      markEndStarted();
+      await endGate;
+    },
+  };
+  const sftpClients = new Map([["sftp-soft-close-race", client]]);
+  transferBridge.init({ sftpClients });
+  sftpBridge.init({ sftpClients, sessions: new Map(), electronModule: {} });
+  t.after(() => {
+    releaseEnd();
+    sftpTransferSessionLeaseStore.resetForTests();
+    sftpClients.clear();
+  });
+
+  transferBridge.acquireTransferSessionLeases("directory-child-1", {
+    sourceSftpId: "sftp-soft-close-race",
+  });
+  const softClose = await sftpBridge.closeSftp(null, { sftpId: "sftp-soft-close-race" });
+  assert.equal(softClose.deferred, true);
+
+  transferBridge.releaseTransferSessionLeases("directory-child-1", ["sftp-soft-close-race"]);
+  await endStarted;
+
+  assert.throws(
+    () => transferBridge.acquireTransferSessionLeases("directory-child-2", {
+      sourceSftpId: "sftp-soft-close-race",
+    }),
+    /closing|closed/i,
+  );
+  assert.equal(sftpTransferSessionLeaseStore.isHeld("sftp-soft-close-race"), false);
+
+  releaseEnd();
+  const deadline = Date.now() + 1_000;
+  while (sftpClients.has("sftp-soft-close-race")) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for committed SFTP close");
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(endCalls, 1);
+});
+
+test("a direct panel close never lends the SFTP client while client.end is pending", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  const sftpBridge = require("./sftpBridge.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  let releaseEnd;
+  const endGate = new Promise((resolve) => { releaseEnd = resolve; });
+  let markEndStarted;
+  const endStarted = new Promise((resolve) => { markEndStarted = resolve; });
+  const client = {
+    async end() {
+      markEndStarted();
+      await endGate;
+    },
+  };
+  const sftpClients = new Map([["sftp-direct-close-race", client]]);
+  transferBridge.init({ sftpClients });
+  sftpBridge.init({ sftpClients, sessions: new Map(), electronModule: {} });
+  t.after(() => {
+    releaseEnd();
+    sftpTransferSessionLeaseStore.resetForTests();
+    sftpClients.clear();
+  });
+
+  const closePromise = sftpBridge.closeSftp(null, { sftpId: "sftp-direct-close-race" });
+  await endStarted;
+
+  assert.throws(
+    () => transferBridge.acquireTransferSessionLeases("new-transfer", {
+      sourceSftpId: "sftp-direct-close-race",
+    }),
+    /closing|closed/i,
+  );
+
+  releaseEnd();
+  const closeResult = await closePromise;
+  assert.equal(closeResult.deferred, false);
+  assert.equal(sftpClients.has("sftp-direct-close-race"), false);
+  assert.equal(sftpTransferSessionLeaseStore.isHeld("sftp-direct-close-race"), false);
+});
+
+test("a transfer rejected by a committed SFTP close leaves no active transfer entry", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  const sftpId = "sftp-rejected-before-lease";
+  const closeToken = sftpTransferSessionLeaseStore.beginHardClose(sftpId);
+  assert.equal(sftpTransferSessionLeaseStore.commitHardClose(sftpId, closeToken), true);
+  transferBridge.init({ sftpClients: new Map([[sftpId, {}]]) });
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  await assert.rejects(
+    transferBridge.startTransfer({ sender: createSender() }, {
+      transferId: "rejected-before-lease",
+      sourcePath: "/remote/file.bin",
+      targetPath: "/tmp/rejected-before-lease.bin",
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: sftpId,
+      totalBytes: 1,
+      skipAdmission: true,
+    }),
+    /closing|closed/i,
+  );
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+});
+
+test("same-host directory copy rejected by a committed close leaves no lease or active transfer", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  const sftpId = "same-host-directory-closing";
+  sftpTransferSessionLeaseStore.resetForTests();
+  const closeToken = sftpTransferSessionLeaseStore.beginHardClose(sftpId);
+  assert.equal(sftpTransferSessionLeaseStore.commitHardClose(sftpId, closeToken), true);
+  transferBridge.init({ sftpClients: new Map([[sftpId, {}]]) });
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  await assert.rejects(
+    transferBridge.sameHostCopyDirectory(
+      { sender: createSender() },
+      {
+        transferId: "same-host-directory-rejected",
+        sftpId,
+        sourcePath: "/source",
+        targetPath: "/target",
+        encoding: "utf-8",
+      },
+    ),
+    /closing|closed/i,
+  );
+
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+});
+
+test("same-host directory copy cancellation aborts cp and releases its lease", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  const sftpId = "same-host-directory-cancel";
+  let markExecOpened;
+  const execOpened = new Promise((resolve) => { markExecOpened = resolve; });
+  const stream = new EventEmitter();
+  stream.stderr = new EventEmitter();
+  stream.close = () => {};
+  stream.end = () => {};
+  stream.destroy = () => {};
+  const client = {
+    client: {
+      exec(_command, callback) {
+        callback(null, stream);
+        markExecOpened();
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([[sftpId, client]]) });
+
+  const running = transferBridge.sameHostCopyDirectory(
+    { sender: createSender() },
+    {
+      transferId: "same-host-directory-cancelled",
+      sftpId,
+      sourcePath: "/source",
+      targetPath: "/target",
+      encoding: "utf-8",
+    },
+  );
+  await execOpened;
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 1);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 1);
+
+  await transferBridge.cancelTransfer(null, { transferId: "same-host-directory-cancelled" });
+  await assert.rejects(running, /cancel/i);
+
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+});
+
+test("a pre-start cancellation prevents same-host directory registration and lease acquisition", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  const sftpId = "same-host-directory-pre-cancel";
+  let execCalls = 0;
+  transferBridge.init({
+    sftpClients: new Map([[sftpId, {
+      client: {
+        exec() { execCalls += 1; },
+      },
+    }]]),
+  });
+  const transferId = "same-host-directory-pre-cancelled";
+  await transferBridge.cancelTransfer(null, { transferId });
+
+  const result = await transferBridge.sameHostCopyDirectory(
+    { sender: createSender() },
+    {
+      transferId,
+      sftpId,
+      sourcePath: "/source",
+      targetPath: "/target",
+      encoding: "utf-8",
+    },
+  );
+
+  assert.equal(result.cancelled, true);
+  assert.equal(execCalls, 0);
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
+  assert.equal(transferBridge._getPendingCancelCountForTests(), 0);
+});
+
+test("same-host file cp cancellation releases the shared session lease", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  const sftpId = "same-host-file-cancel";
+  let markExecOpened;
+  const execOpened = new Promise((resolve) => { markExecOpened = resolve; });
+  const stream = new EventEmitter();
+  stream.stderr = new EventEmitter();
+  stream.close = () => {};
+  stream.end = () => {};
+  stream.destroy = () => {};
+  const client = {
+    client: {
+      exec(_command, callback) {
+        callback(null, stream);
+        markExecOpened();
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([[sftpId, client]]) });
+  const transferId = "same-host-file-cancelled";
+  const running = transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/source/file.bin",
+      targetPath: "/target/file.bin",
+      sourceType: "sftp",
+      targetType: "sftp",
+      sourceSftpId: sftpId,
+      targetSftpId: sftpId,
+      totalBytes: 1,
+      sameHost: true,
+      skipAdmission: true,
+    },
+  );
+  await execOpened;
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 1);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 1);
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await running;
+  assert.equal(result.error, "Transfer cancelled");
+  assert.equal(transferBridge._getActiveTransferCountForTests(), 0);
+  assert.equal(sftpTransferSessionLeaseStore.getLeaseCount(sftpId), 0);
 });
 
 test("local promotion restores concurrent replacement moved into the backup", async (t) => {

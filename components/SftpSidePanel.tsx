@@ -15,7 +15,6 @@ import { SftpSidePanelDeferredMount } from "./SftpSidePanelDeferredMount";
 import { formatHostPort } from "../domain/host";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpState } from "../application/state/useSftpState";
-import { useSettingsState } from "../application/state/useSettingsState";
 import {
   useReportSftpTransferOwnerActivity,
   useWarmSftpTransferPool,
@@ -70,7 +69,12 @@ import {
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
-import { listSftpConnectedHosts, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import {
+  pruneSftpSidePanelTabConnectionKeys,
+  recallSftpSidePanelPath,
+  rememberSftpSidePanelPath,
+} from "./sftp/sftpSidePanelConnectionMemory";
+import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import type { TerminalSession } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -160,7 +164,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
-  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
+
   const hostWriteSource = writableHosts ?? hosts;
   const connectedHosts = useMemo(() => {
     const hostsById = new Map<string, Host>(
@@ -169,9 +173,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return listSftpConnectedHosts(sessions, hostsById);
   }, [hosts, sessions]);
 
-  const resolveTransferSourceSessionId = useCallback((hostId: string) => {
-    return connectedHosts.find((entry) => entry.host.id === hostId)?.sessionId;
-  }, [connectedHosts]);
+  const resolveTransferSourceSessionId = useCallback((hostId: string, host?: Host) => {
+    const hostsById = new Map<string, Host>(hosts.map((h) => [h.id, h]));
+    // Walk all sessions (not the picker one-per-hostId list) so multi-tab
+    // same hostId with different live endpoints can still match.
+    return resolveSftpTransferSourceSessionId(sessions, hostsById, hostId, host);
+  }, [hosts, sessions]);
 
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
@@ -196,6 +203,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     ...fileWatchHandlers,
     transferOwnerId,
     canPrepareTransferAdoption: isVisible,
+    // Drive progress React paints: false while retained-but-hidden after close.
+    surfaceVisible: isVisible,
     // A promoted editor still saves through this owner after the side panel
     // becomes hidden, so its browse channel must stay alive until the editor closes.
     interactive: isBrowseSessionInteractive({
@@ -209,7 +218,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
   }), [
     fileWatchHandlers,
     hasOwnedEditorTab,
@@ -221,7 +229,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    sftpTransferPoolIdleTtlMs,
   ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
@@ -234,7 +241,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const {
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     listSftp,
     mkdirLocal,
     deleteLocalFile,
@@ -421,6 +427,16 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const [interactiveWorkActive, setInteractiveWorkActive] = useState(false);
   const [sftpUiReady, setSftpUiReady] = useState(false);
 
+  useEffect(() => {
+    pruneSftpSidePanelTabConnectionKeys(
+      tabConnectionKeyMapRef.current,
+      [
+        ...sftp.leftTabs.tabs.map((tab) => tab.id),
+        ...sftp.rightTabs.tabs.map((tab) => tab.id),
+      ],
+    );
+  }, [sftp.leftTabs.tabs, sftp.rightTabs.tabs]);
+
   const runAutoConnect = useCallback(() => {
     if (!activeHost) return;
 
@@ -568,7 +584,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       && activeTab.connection.currentPath
       && activeTabConnectionKey === connectionKey
     ) {
-      lastBrowsedPathByConnectionKeyRef.current.set(
+      rememberSftpSidePanelPath(
+        lastBrowsedPathByConnectionKeyRef.current,
         connectionKey,
         activeTab.connection.currentPath,
       );
@@ -623,7 +640,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         )
       )
     );
-    const rememberedPath = lastBrowsedPathByConnectionKeyRef.current.get(connectionKey);
+    const rememberedPath = recallSftpSidePanelPath(
+      lastBrowsedPathByConnectionKeyRef.current,
+      connectionKey,
+    );
     const initialPath = resolveSftpAutoConnectPath({
       explicitPath:
         initialLocation?.hostId === activeHost.id ? initialLocation.path : null,
@@ -659,11 +679,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     const connection = sftp.leftPane.connection;
     if (!connection || connection.status === "error" || connection.status === "disconnected") {
       connectedKeyRef.current = null;
-      if (sftp.activeFileWatchCountRef) {
-        sftp.activeFileWatchCountRef.current = 0;
-      }
     }
-  }, [sftp.leftPane.connection, sftp.leftPane.connection?.status, sftp.activeFileWatchCountRef]);
+  }, [sftp.leftPane.connection, sftp.leftPane.connection?.status]);
 
   useEffect(() => {
     if (!activeHost || !initialLocation) return;
@@ -724,7 +741,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     }
     tabConnectionKeyMapRef.current.set(sftp.leftPane.id, connectionKey);
 
-    lastBrowsedPathByConnectionKeyRef.current.set(connectionKey, connection.currentPath);
+    rememberSftpSidePanelPath(
+      lastBrowsedPathByConnectionKeyRef.current,
+      connectionKey,
+      connection.currentPath,
+    );
     onCurrentPathChangeRef.current?.({
       hostId: connection.hostId,
       connectionKey,
@@ -836,7 +857,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         deleteLocalFile={deleteLocalFile}
         showSaveDialog={showSaveDialog}
         selectDirectory={selectDirectory}
-        startStreamTransfer={startStreamTransfer}
         listLocalDir={listLocalDir}
         listDrives={listDrives}
         openPath={openPath}
@@ -882,7 +902,6 @@ type SftpSidePanelInteractiveBodyProps = {
   deleteLocalFile: ReturnType<typeof useSftpBackend>["deleteLocalFile"];
   showSaveDialog: ReturnType<typeof useSftpBackend>["showSaveDialog"];
   selectDirectory: ReturnType<typeof useSftpBackend>["selectDirectory"];
-  startStreamTransfer: ReturnType<typeof useSftpBackend>["startStreamTransfer"];
   listLocalDir: ReturnType<typeof useSftpBackend>["listLocalDir"];
   listDrives: ReturnType<typeof useSftpBackend>["listDrives"];
   openPath: ReturnType<typeof useSftpBackend>["openPath"];
@@ -920,7 +939,6 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   deleteLocalFile,
   showSaveDialog,
   selectDirectory,
-  startStreamTransfer,
   listLocalDir,
   listDrives,
   openPath,
@@ -1030,7 +1048,6 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
     deleteLocalFile,
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     getSftpIdForConnection: sftp.getSftpIdForConnection,
     listLocalFiles: listLocalDir,
     listDrives,

@@ -21,6 +21,8 @@ export interface EnsureRemoteSftpSessionParams {
   /** Resolve vault host by id when per-tab connect-time host is unavailable. */
   resolveHostById?: (hostId: string) => Host | null | undefined;
   probeSession?: (sftpId: string) => Promise<boolean>;
+  /** Remove connection metadata and close the mapped backend session. */
+  releaseConnection: (connectionId: string) => Promise<void>;
   forceReconnect?: boolean;
   /** Stable tab identity — reconnect replaces connection ids, not tab ids. */
   tabId?: string;
@@ -42,6 +44,7 @@ export async function ensureRemoteSftpSession(
     resolveConnectedHost,
     resolveHostById,
     probeSession,
+    releaseConnection,
     forceReconnect = false,
     tabId,
   } = params;
@@ -98,11 +101,15 @@ export async function ensureRemoteSftpSession(
         if (!isSessionError(error)) throw error;
       }
       const pane = getActivePane(side);
-      if (pane?.connection) sftpSessionsRef.current.delete(pane.connection.id);
+      if (pane?.connection) {
+        await releaseConnection(pane.connection.id);
+      }
     }
   } else {
     const pane = getActivePane(side);
-    if (pane?.connection) sftpSessionsRef.current.delete(pane.connection.id);
+    if (pane?.connection) {
+      await releaseConnection(pane.connection.id);
+    }
   }
 
   const paneBefore = getActivePane(side);

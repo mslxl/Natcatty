@@ -29,13 +29,11 @@ export class UploadController {
     const activeIds = Array.from(this.activeFileTransferIds);
     for (const transferId of activeIds) {
       try {
-        // Try cancelTransfer first (for stream transfers)
+        if (this.bridge?.cancelStagedUploadFile) {
+          await this.bridge.cancelStagedUploadFile(transferId);
+        }
         if (this.bridge?.cancelTransfer) {
           await this.bridge.cancelTransfer(transferId);
-        }
-        // Also try cancelSftpUpload (for legacy uploads)
-        if (this.bridge?.cancelSftpUpload) {
-          await this.bridge.cancelSftpUpload(transferId);
         }
       } catch {
         // Ignore cancel errors
@@ -47,9 +45,6 @@ export class UploadController {
       try {
         if (this.bridge?.cancelTransfer) {
           await this.bridge.cancelTransfer(this.currentTransferId);
-        }
-        if (this.bridge?.cancelSftpUpload) {
-          await this.bridge.cancelSftpUpload(this.currentTransferId);
         }
       } catch {
         // Ignore cancel errors

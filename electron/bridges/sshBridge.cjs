@@ -406,7 +406,8 @@ let selectZmodemDownloadDirectory = null;
 // Key format: "username@hostname:port"
 // Value: { method: "password" | "publickey" | "publickey-default" }
 // Cache persists until auth failure, then cleared to retry all methods
-const authMethodCache = new Map();
+const { createSshAuthMethodCache } = require("./sshAuthMethodCache.cjs");
+const authMethodCache = createSshAuthMethodCache();
 
 // Per-session terminal encoding (default: utf-8)
 const sessionEncodings = new Map();
@@ -461,11 +462,23 @@ function clearCachedAuthMethod(username, hostname, port) {
 }
 
 const { safeSend } = require("./ipcUtils.cjs");
+const { openBoundedForwardOutCallback } = require("./boundedSshChannelOpen.cjs");
 const {
   createConnectionRef,
   acquireConnectionRef,
   releaseConnectionRef,
+  transferConnectionRef,
   findReusableSession,
+  findTransportByEndpoint,
+  resolveTransportForReuse,
+  beginTransportDial,
+  waitForTransportDial,
+  completeTransportDial,
+  failTransportDial,
+  buildConnectionReuseEndpoint,
+  resolveConnectionKeepalivePolicy,
+  normalizeEndpoint,
+  discardAllTransports,
 } = require("./sshConnectionPool.cjs");
 
 const zmodemOverwritePending = new Map(); // requestId -> (decision) => void
@@ -895,7 +908,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           reject(new Error(errMsg));
         }, forwardTimeoutMs);
         if (!options?._forwardTimeoutMs) timeout.unref?.();
-        conn.forwardOut('127.0.0.1', 0, nextHost, nextPort, (err, stream) => {
+        openBoundedForwardOutCallback(conn, '127.0.0.1', 0, nextHost, nextPort, (err, stream) => {
           if (settled) {
             try { stream?.destroy?.(); } catch { }
             return;
@@ -953,7 +966,12 @@ const startSessionApi = createStartSessionApi({
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler, createOrderedStringAuthHandler, createAuthPhase, markAuthPhasePartialSuccess, canRepeatKeyboardInteractive, shouldSkipKiPasswordAutoFill,
-  createConnectionRef, acquireConnectionRef, releaseConnectionRef, findReusableSession,
+  createConnectionRef, acquireConnectionRef, releaseConnectionRef, transferConnectionRef,
+  findReusableSession, findTransportByEndpoint, resolveTransportForReuse, discardAllTransports,
+  beginTransportDial, waitForTransportDial, completeTransportDial, failTransportDial,
+  buildConnectionReuseEndpoint,
+  resolveConnectionKeepalivePolicy,
+  normalizeEndpoint,
   get probeReceiveConflicts() { return probeReceiveConflicts; },
   get removeRemoteFiles() { return removeRemoteFiles; },
   get restoreRemoteModes() { return restoreRemoteModes; },
@@ -1107,7 +1125,7 @@ function sendFinalStartFailureExit(event, options, err) {
   });
 }
 
-async function startSSHSessionWrapper(event, options) {
+async function startSSHSessionWithRetries(event, options, pendingDialState) {
   let retryableEncryptedKeys = [];
   let loadedRetryableEncryptedKeys = false;
   let shouldSuppressInitialAuthExit = false;
@@ -1137,6 +1155,8 @@ async function startSSHSessionWrapper(event, options) {
     return await startSSHSession(event, {
       ...options,
       _suppressPreShellAuthExit: shouldSuppressInitialAuthExit,
+      _pendingDialState: pendingDialState,
+      _deferPendingDialFailure: true,
     });
   } catch (err) {
     const isAuthError = isStartAuthError(err);
@@ -1151,6 +1171,8 @@ async function startSSHSessionWrapper(event, options) {
             ...options,
             _skipPasswordMethod: true,
             _suppressPreShellAuthExit: shouldSuppressInitialAuthExit,
+            _pendingDialState: pendingDialState,
+            _deferPendingDialFailure: true,
           });
         } catch (retryErr) {
           const isRetryAuthError = isStartAuthError(retryErr);
@@ -1201,6 +1223,8 @@ async function startSSHSessionWrapper(event, options) {
               return await startSSHSession(event, {
                 ...options,
                 _unlockedEncryptedKeys: passphraseResult.keys,
+                _pendingDialState: pendingDialState,
+                _deferPendingDialFailure: true,
               });
             } catch (retryErr) {
               // Only purge cached passphrases if the error is specifically
@@ -1269,6 +1293,18 @@ async function startSSHSessionWrapper(event, options) {
     connError.level = err.level || 'client-socket';
     connError.code = err.code;
     throw connError;
+  }
+}
+
+async function startSSHSessionWrapper(event, options) {
+  const pendingDialState = { coordination: null };
+  try {
+    return await startSSHSessionWithRetries(event, options, pendingDialState);
+  } catch (err) {
+    if (pendingDialState.coordination) {
+      failTransportDial(pendingDialState.coordination, err);
+    }
+    throw err;
   }
 }
 

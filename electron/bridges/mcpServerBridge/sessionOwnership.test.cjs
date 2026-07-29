@@ -44,3 +44,19 @@ test("a host open that finishes after scope cleanup cannot restore ownership", (
   const nextGeneration = ownership.captureGeneration("chat-a");
   assert.equal(ownership.register("chat-a", "session-2", nextGeneration), true);
 });
+
+test("cleared scope generations are released without allowing a late host open", () => {
+  const ownership = createSessionOwnershipRegistry();
+  const staleGenerations = [];
+
+  for (let index = 0; index < 100; index += 1) {
+    const scopeId = `chat-${index}`;
+    staleGenerations.push([scopeId, ownership.captureGeneration(scopeId)]);
+    ownership.clearScope(scopeId);
+  }
+
+  assert.equal(ownership.getTrackedGenerationCountForTests(), 0);
+  for (const [scopeId, generation] of staleGenerations) {
+    assert.equal(ownership.register(scopeId, `late-${scopeId}`, generation), false);
+  }
+});

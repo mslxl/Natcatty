@@ -241,6 +241,22 @@ function registerPluginBridge(ipcMain, options) {
       return callback(activeManager, payload, event);
     });
   };
+  // These channels are called by ordinary host/terminal lifecycles even when
+  // the experimental plugin runtime is disabled. Treat the disabled runtime as
+  // an empty provider set instead of throwing (and making Electron print a
+  // stack trace) on every terminal mount, Vault refresh, and scope update.
+  const handlePassive = (channel, fallback, callback) => {
+    ipcMain.handle(channel, async (event, payload) => {
+      if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+      let activeManager;
+      try {
+        activeManager = await resolveManager();
+      } catch {
+        return typeof fallback === "function" ? fallback(payload, event) : fallback;
+      }
+      return callback(activeManager, payload, event);
+    });
+  };
   const terminalRequestMap = (sender) => {
     if (!sender || typeof sender !== "object") throw new Error("Plugin terminal request sender is unavailable");
     let requests = terminalRequestsBySender.get(sender);
@@ -570,7 +586,7 @@ function registerPluginBridge(ipcMain, options) {
     viewHost?.setEnvironment?.(payload ?? {});
     return null;
   });
-  handle(CHANNELS.terminalProviders, async (_activeManager, payload) => {
+  handlePassive(CHANNELS.terminalProviders, [], async (_activeManager, payload) => {
     if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
     return terminalProviderService.listProviders(payload ?? {});
   });
@@ -607,7 +623,7 @@ function registerPluginBridge(ipcMain, options) {
     controller?.abort();
     return controller != null;
   });
-  handle(CHANNELS.terminalSessionEvent, async (_activeManager, payload, event) => {
+  handlePassive(CHANNELS.terminalSessionEvent, [], async (_activeManager, payload, event) => {
     if (!terminalProviderService) throw new Error("Plugin Terminal Providers are unavailable");
     if (terminalDataPipelineService?.acceptsSessionEvent
       && !terminalDataPipelineService.acceptsSessionEvent(payload, event?.sender?.id)) {
@@ -621,11 +637,11 @@ function registerPluginBridge(ipcMain, options) {
     ]);
     return providers;
   });
-  handle(CHANNELS.extensionProviders, async (_activeManager, payload) => {
+  handlePassive(CHANNELS.extensionProviders, [], async (_activeManager, payload) => {
     if (!extensionProviderService) throw new Error("Plugin extension Providers are unavailable");
     return extensionProviderService.listProviders(payload ?? {});
   });
-  handle(CHANNELS.credentialCatalogUpdate, async (_activeManager, payload) => {
+  handlePassive(CHANNELS.credentialCatalogUpdate, 0, async (_activeManager, payload) => {
     if (!credentialResolver || typeof credentialResolver.update !== "function") {
       throw new Error("Plugin Vault credential catalog is unavailable");
     }
@@ -991,8 +1007,8 @@ function registerPluginBridge(ipcMain, options) {
     await viewHost.postMessage(payload?.instanceId, payload?.message, event.sender);
     return null;
   });
-  handle(CHANNELS.getScopeCatalog, async () => currentScopeCatalog());
-  handle(CHANNELS.setScopeCatalog, async (_activeManager, payload, event) => {
+  handlePassive(CHANNELS.getScopeCatalog, () => currentScopeCatalog(), async () => currentScopeCatalog());
+  handlePassive(CHANNELS.setScopeCatalog, null, async (_activeManager, payload, event) => {
     const key = scopeCatalogSenderKey(event);
     const scopeCatalog = normalizePluginScopeCatalog(payload);
     scopeCatalogs.set(key, scopeCatalog);

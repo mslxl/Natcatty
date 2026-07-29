@@ -148,12 +148,12 @@ export async function uploadFromDataTransfer(
   config: UploadConfig,
   controller?: UploadController
 ): Promise<UploadResult[]> {
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload, resolveConflict } = config;
+  const { callbacks } = config;
 
   // Reset controller if provided
   if (controller) {
     controller.reset();
-    controller.setBridge(bridge);
+    controller.setBridge(config.bridge);
   }
 
   // Create scanning placeholder
@@ -174,55 +174,7 @@ export async function uploadFromDataTransfer(
     return [];
   }
 
-  // Check if this is a folder upload and compressed upload is enabled
-  if (useCompressedUpload && !resolveConflict && !isLocal && sftpId) {
-    const rootFolders = detectRootFolders(entries);
-    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
-    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
-
-    if (folderEntries.length > 0) {
-      try {
-        const compressedResults = await uploadFoldersCompressed(folderEntries, targetPath, sftpId, callbacks, controller);
-
-        // Check if any folders failed due to lack of compression support
-        const failedFolders = compressedResults.filter(result =>
-          !result.success && result.error === "Compressed upload not supported - fallback needed"
-        );
-        const successfulFolders = compressedResults.filter(result =>
-          result.success || result.error !== "Compressed upload not supported - fallback needed"
-        );
-
-        let fallbackResults: UploadResult[] = [];
-        if (failedFolders.length > 0) {
-          // Get entries only for failed folders, not already successful ones
-          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
-          const failedFolderEntries = entries.filter(entry => {
-            const topFolder = entry.relativePath.split('/')[0];
-            return failedFolderNames.has(topFolder);
-          });
-
-          if (failedFolderEntries.length > 0) {
-            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-          }
-        }
-
-        // Upload standalone files using regular upload if any exist
-        let standaloneResults: UploadResult[] = [];
-        if (standaloneFileEntries.length > 0) {
-          const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
-          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-        }
-
-        // Combine results: successful compressed + fallback results + standalone files
-        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
-      } catch {
-        // Fall back to regular upload
-        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-      }
-    }
-  }
-
-  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
+  return uploadEntriesWithOptionalCompression(entries, config, controller);
 }
 
 /**
@@ -233,11 +185,9 @@ export async function uploadFromFileList(
   config: UploadConfig,
   controller?: UploadController
 ): Promise<UploadResult[]> {
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload, resolveConflict } = config;
-
   if (controller) {
     controller.reset();
-    controller.setBridge(bridge);
+    controller.setBridge(config.bridge);
   }
 
   // Convert FileList to DropEntry array
@@ -261,55 +211,195 @@ export async function uploadFromFileList(
     return [];
   }
 
-  // Check if this is a folder upload and compressed upload is enabled
-  if (useCompressedUpload && !resolveConflict && !isLocal && sftpId) {
-    const rootFolders = detectRootFolders(entries);
-    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
-    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
+  return uploadEntriesWithOptionalCompression(entries, config, controller);
+}
 
-    if (folderEntries.length > 0) {
-      try {
-        const compressedResults = await uploadFoldersCompressed(folderEntries, targetPath, sftpId, callbacks, controller);
+type UploadConflictAction = Awaited<ReturnType<NonNullable<UploadConfig["resolveConflict"]>>>;
 
-        // Check if any folders failed due to lack of compression support
-        const failedFolders = compressedResults.filter(result =>
-          !result.success && result.error === "Compressed upload not supported - fallback needed"
-        );
-        const successfulFolders = compressedResults.filter(result =>
-          result.success || result.error !== "Compressed upload not supported - fallback needed"
-        );
+const compressionFallbackError = "Compressed upload not supported - fallback needed";
 
-        let fallbackResults: UploadResult[] = [];
-        if (failedFolders.length > 0) {
-          // Get entries only for failed folders, not already successful ones
-          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
-          const failedFolderEntries = entries.filter(entry => {
-            const topFolder = entry.relativePath.split('/')[0];
-            return failedFolderNames.has(topFolder);
-          });
+const uploadConflictGroupKey = (fileName: string, isDirectory: boolean) => (
+  `${isDirectory ? "directory" : "file"}:${fileName}`
+);
 
-          if (failedFolderEntries.length > 0) {
-            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-          }
-        }
+/**
+ * Resolve root conflicts once before selecting compressed vs regular transfer.
+ * New folders and directory merges can use the atomic compressed path. Replace,
+ * duplicate, and invalid merge cases stay on the regular path so their existing
+ * semantics are preserved exactly and the user is never prompted twice.
+ */
+async function uploadEntriesWithOptionalCompression(
+  entries: DropEntry[],
+  config: UploadConfig,
+  controller?: UploadController,
+): Promise<UploadResult[]> {
+  const {
+    targetPath,
+    sftpId,
+    isLocal,
+    bridge,
+    joinPath,
+    callbacks,
+    useCompressedUpload,
+    resolveConflict,
+  } = config;
 
-        // Upload standalone files using regular upload if any exist
-        let standaloneResults: UploadResult[] = [];
-        if (standaloneFileEntries.length > 0) {
-          const standaloneEntries = standaloneFileEntries.flatMap(([, entries]) => entries);
-          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-        }
+  if (!useCompressedUpload || isLocal || !sftpId) {
+    return uploadEntries(
+      entries,
+      targetPath,
+      sftpId,
+      isLocal,
+      bridge,
+      joinPath,
+      callbacks,
+      controller,
+      resolveConflict,
+      config.targetHostId,
+    );
+  }
 
-        // Combine results: successful compressed + fallback results + standalone files
-        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
-      } catch {
-        // Fall back to regular upload
-        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-      }
+  const rootGroups = Array.from(detectRootFolders(entries).entries());
+  if (!rootGroups.some(([key]) => !key.startsWith("__file__"))) {
+    return uploadEntries(
+      entries,
+      targetPath,
+      sftpId,
+      isLocal,
+      bridge,
+      joinPath,
+      callbacks,
+      controller,
+      resolveConflict,
+      config.targetHostId,
+    );
+  }
+
+  const statTarget = async (path: string) => {
+    try {
+      return await bridge.statSftp?.(sftpId, path) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const groupInfos = await Promise.all(rootGroups.map(async ([key, groupEntries]) => {
+    const isStandaloneFile = key.startsWith("__file__");
+    const rootName = isStandaloneFile ? key.slice("__file__".length) : key;
+    const isDirectory = !isStandaloneFile;
+    const rootTargetPath = joinPath(targetPath, rootName);
+    return {
+      groupEntries,
+      rootName,
+      isDirectory,
+      rootTargetPath,
+      existing: resolveConflict ? await statTarget(rootTargetPath) : null,
+    };
+  }));
+
+  const conflictCounts = new Map<string, number>();
+  for (const info of groupInfos) {
+    if (!info.existing) continue;
+    const key = getSftpConflictTypeKey(info.isDirectory, info.existing.type);
+    conflictCounts.set(key, (conflictCounts.get(key) ?? 0) + 1);
+  }
+
+  const compressedGroups: Array<[string, DropEntry[]]> = [];
+  const regularEntries: DropEntry[] = [];
+  const resolvedResults: UploadResult[] = [];
+  const selectedActions = new Map<string, UploadConflictAction>();
+
+  for (const info of groupInfos) {
+    if (controller?.isCancelled()) break;
+    if (!info.existing || !resolveConflict) {
+      if (info.isDirectory) compressedGroups.push([info.rootName, info.groupEntries]);
+      else regularEntries.push(...info.groupEntries);
+      continue;
+    }
+
+    const conflictKey = getSftpConflictTypeKey(info.isDirectory, info.existing.type);
+    const action = await resolveConflict({
+      fileName: info.rootName,
+      targetPath: info.rootTargetPath,
+      isDirectory: info.isDirectory,
+      existingType: info.existing.type,
+      existingSize: info.existing.size,
+      newSize: info.groupEntries.reduce((sum, entry) => sum + getDropEntrySize(entry), 0),
+      existingModified: info.existing.lastModified,
+      newModified: Date.now(),
+      applyToAllCount: conflictCounts.get(conflictKey) ?? 1,
+    });
+
+    if (action === "stop") {
+      await controller?.cancel();
+      return [{ fileName: info.rootName, success: false, cancelled: true }];
+    }
+    if (action === "skip") {
+      resolvedResults.push({ fileName: info.rootName, success: false, cancelled: true });
+      continue;
+    }
+
+    selectedActions.set(uploadConflictGroupKey(info.rootName, info.isDirectory), action);
+    if (info.isDirectory && action === "merge" && info.existing.type === "directory") {
+      compressedGroups.push([info.rootName, info.groupEntries]);
+    } else {
+      regularEntries.push(...info.groupEntries);
     }
   }
 
-  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
+  let compressedResults: UploadResult[] = [];
+  if (compressedGroups.length > 0 && !controller?.isCancelled()) {
+    try {
+      compressedResults = await uploadFoldersCompressed(
+        compressedGroups,
+        targetPath,
+        sftpId,
+        callbacks,
+        controller,
+      );
+    } catch {
+      compressedResults = compressedGroups.map(([fileName]) => ({
+        fileName,
+        success: false,
+        error: compressionFallbackError,
+      }));
+    }
+  }
+
+  const fallbackFolderNames = new Set(
+    compressedResults
+      .filter((result) => !result.success && result.error === compressionFallbackError)
+      .map((result) => result.fileName),
+  );
+  for (const [fileName, groupEntries] of compressedGroups) {
+    if (fallbackFolderNames.has(fileName)) regularEntries.push(...groupEntries);
+  }
+
+  const terminalCompressedResults = compressedResults.filter((result) => (
+    result.success || result.error !== compressionFallbackError
+  ));
+  if (regularEntries.length === 0) {
+    return [...resolvedResults, ...terminalCompressedResults];
+  }
+
+  const replayResolvedConflict: UploadConfig["resolveConflict"] = resolveConflict
+    ? async (conflict) => (
+        selectedActions.get(uploadConflictGroupKey(conflict.fileName, conflict.isDirectory))
+        ?? resolveConflict(conflict)
+      )
+    : undefined;
+  const regularResults = await uploadEntries(
+    regularEntries,
+    targetPath,
+    sftpId,
+    isLocal,
+    bridge,
+    joinPath,
+    callbacks,
+    controller,
+    replayResolvedConflict,
+    config.targetHostId,
+  );
+  return [...resolvedResults, ...terminalCompressedResults, ...regularResults];
 }
 
 /**
@@ -644,68 +734,41 @@ async function uploadEntries(
     standaloneTransferId: string,
     fileTotalBytes: number,
   ): Promise<{ cancelled?: boolean; error?: string }> => {
-    const localFilePath = getDropEntryLocalPath(entry);
+    let localFilePath = getDropEntryLocalPath(entry);
+    let ownedTempPath: string | undefined;
 
-    // Progress callback factory for both stream and memory paths
-    const makeOnProgress = () => {
-      let pendingProgressUpdate: {
-        transferred: number;
-        total: number;
-        speed: number;
-        phase?: UploadProgress['phase'];
-        checkpointBytes?: number;
-        sourceFingerprint?: string;
-        resumable?: boolean;
-        pauseUnavailableReason?: string;
-      } | null = null;
-      let rafScheduled = false;
-
-      return (transferred: number, total: number, speed: number, capability?: {
-        phase?: UploadProgress['phase'];
-        checkpointBytes?: number;
-        sourceFingerprint?: string;
-        resumable?: boolean;
-        pauseUnavailableReason?: string;
-      }) => {
-        if (controller?.isCancelled()) return;
-        pendingProgressUpdate = { transferred, total, speed, ...capability };
-
-        if (!rafScheduled) {
-          rafScheduled = true;
-          requestAnimationFrame(() => {
-            rafScheduled = false;
-            const update = pendingProgressUpdate;
-            pendingProgressUpdate = null;
-            if (!update || controller?.isCancelled() || !callbacks?.onTaskProgress) return;
-
-            if (standaloneTransferId) {
-              callbacks.onTaskProgress(standaloneTransferId, {
-                transferred: update.transferred,
-                total: update.total,
-                speed: update.speed,
-                phase: update.phase,
-                percent: update.total > 0 ? (update.transferred / update.total) * 100 : 0,
-                // Forward contiguous offset + fingerprint for soft-drain pause safety.
-                checkpointBytes: update.checkpointBytes,
-                sourceFingerprint: update.sourceFingerprint,
-                resumable: update.resumable,
-                pauseUnavailableReason: update.pauseUnavailableReason,
-              });
-            }
-          });
+    if (
+      !localFilePath
+      && !isLocal
+      && entry.file
+      && bridge.stageUploadFile
+      && bridge.deleteTempFile
+    ) {
+      controller?.addActiveTransfer(standaloneTransferId);
+      try {
+        ownedTempPath = await bridge.stageUploadFile(entry.file, standaloneTransferId);
+      } catch (error) {
+        controller?.removeActiveTransfer(standaloneTransferId);
+        if (controller?.isCancelled() || /cancel/i.test(error instanceof Error ? error.message : String(error))) {
+          return { cancelled: true };
         }
-      };
-    };
+        throw error;
+      }
+      localFilePath = ownedTempPath;
+      if (controller?.isCancelled()) {
+        await bridge.deleteTempFile(ownedTempPath).catch(() => {});
+        return { cancelled: true };
+      }
+    }
 
-    if (localFilePath && bridge.startStreamTransfer && (!isLocal ? !!sftpId : true)) {
-        const onProgress = makeOnProgress();
+    try {
+      if (localFilePath && bridge.startStreamTransfer && (!isLocal ? !!sftpId : true)) {
         const fileTransferId = standaloneTransferId;
         controller?.addActiveTransfer(fileTransferId);
 
         let streamResult: { transferId: string; totalBytes?: number; error?: string; cancelled?: boolean } | undefined;
         try {
-          streamResult = await bridge.startStreamTransfer(
-            {
+          streamResult = await bridge.startStreamTransfer({
               transferId: fileTransferId,
               sourcePath: localFilePath,
               targetPath: entryTargetPath,
@@ -716,11 +779,7 @@ async function uploadEntries(
               totalBytes: fileTotalBytes,
               resumable: true,
               checkpointBytes: 0,
-            },
-            onProgress,
-            undefined,
-            undefined
-          );
+            });
         } finally {
           controller?.removeActiveTransfer(fileTransferId);
         }
@@ -731,54 +790,28 @@ async function uploadEntries(
         if (streamResult?.error) {
           return { error: streamResult.error };
         }
-    } else {
+      } else {
         if (!entry.file) {
           return { error: "No local file data available" };
         }
-        const arrayBuffer = await entry.file.arrayBuffer();
-
         if (isLocal) {
+          const arrayBuffer = await entry.file.arrayBuffer();
           if (!bridge.writeLocalFile) throw new Error("writeLocalFile not available");
           await bridge.writeLocalFile(entryTargetPath, arrayBuffer);
         } else if (sftpId) {
-          if (bridge.writeSftpBinaryWithProgress) {
-            const onProgress = makeOnProgress();
-            const fileTransferId = standaloneTransferId;
-            controller?.addActiveTransfer(fileTransferId);
-
-            let result;
-            try {
-              result = await bridge.writeSftpBinaryWithProgress(
-                sftpId,
-                entryTargetPath,
-                arrayBuffer,
-                fileTransferId,
-                onProgress,
-                () => {},
-                () => {}
-              );
-            } finally {
-              controller?.removeActiveTransfer(fileTransferId);
-            }
-
-            if (result?.cancelled) {
-              return { cancelled: true };
-            }
-            if (!result || result.success === false) {
-              if (bridge.writeSftpBinary) {
-                await bridge.writeSftpBinary(sftpId, entryTargetPath, arrayBuffer);
-              } else {
-                return { error: "Upload failed and no fallback method available" };
-              }
-            }
-          } else if (bridge.writeSftpBinary) {
-            await bridge.writeSftpBinary(sftpId, entryTargetPath, arrayBuffer);
-          } else {
-            return { error: "No SFTP write method available" };
-          }
+          // Electron-backed files must expose a real local path so the unified
+          // transfer runtime can stream them. Falling back to File.arrayBuffer()
+          // duplicates the entire payload in renderer + IPC memory.
+          return { error: "A local file path is required for streaming SFTP upload" };
         }
+      }
+      return {};
+    } finally {
+      if (ownedTempPath) {
+        controller?.removeActiveTransfer(standaloneTransferId);
+        await bridge.deleteTempFile?.(ownedTempPath).catch(() => {});
+      }
     }
-    return {};
   };
 
   // Filter to only file entries (directories are pre-created above)
@@ -843,6 +876,19 @@ async function uploadEntries(
     settle(taskId);
   };
 
+  const settleFileTask = (
+    taskId: string,
+    lifecycleManaged: boolean,
+    settle: (taskId: string) => void,
+  ) => {
+    if (!taskId) return;
+    if (lifecycleManaged) {
+      pendingTaskIds.delete(taskId);
+      return;
+    }
+    settleTask(taskId, settle);
+  };
+
   // Keep external multi-file uploads conservative: each file may open an
   // isolated fastPut channel with its own in-flight WRITE fanout.
   const UPLOAD_CONCURRENCY = 2;
@@ -861,6 +907,10 @@ async function uploadEntries(
         const bundledChildTaskId = bundleTaskId ? createBundledChildTask(entry, bundleTaskId) : "";
         const standaloneTransferId = standaloneTaskIds.get(entry.relativePath) || "";
         const fileTotalBytes = getDropEntrySize(entry);
+        const localFilePath = getDropEntryLocalPath(entry);
+        const lifecycleManaged = bridge.managesTransferLifecycle === true && Boolean(
+          localFilePath && bridge.startStreamTransfer,
+        );
 
         try {
           const uploadResult = await uploadSingleFile(
@@ -872,9 +922,9 @@ async function uploadEntries(
 
           if (uploadResult.cancelled) {
             wasCancelled = true;
-            settleTask(bundledChildTaskId, (taskId) => callbacks?.onTaskCancelled?.(taskId));
+            settleFileTask(bundledChildTaskId, lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
             settleTask(bundleTaskId ?? "", (taskId) => callbacks?.onTaskCancelled?.(taskId));
-            settleTask(!bundleTaskId ? standaloneTransferId : "", (taskId) => callbacks?.onTaskCancelled?.(taskId));
+            settleFileTask(!bundleTaskId ? standaloneTransferId : "", lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
             break;
           }
 
@@ -888,7 +938,7 @@ async function uploadEntries(
           if (bundleTaskId) {
             const progress = bundleProgress.get(bundleTaskId);
             if (bundledChildTaskId) {
-              settleTask(bundledChildTaskId, (taskId) => callbacks?.onTaskCompleted?.(taskId, fileTotalBytes));
+              settleFileTask(bundledChildTaskId, lifecycleManaged, (taskId) => callbacks?.onTaskCompleted?.(taskId, fileTotalBytes));
             }
             if (progress) {
               progress.completedCount++;
@@ -913,14 +963,14 @@ async function uploadEntries(
               }
             }
           } else if (standaloneTransferId) {
-            settleTask(standaloneTransferId, (taskId) => callbacks?.onTaskCompleted?.(taskId, fileTotalBytes));
+            settleFileTask(standaloneTransferId, lifecycleManaged, (taskId) => callbacks?.onTaskCompleted?.(taskId, fileTotalBytes));
           }
         } catch (error) {
           if (controller?.isCancelled()) {
             wasCancelled = true;
-            settleTask(bundledChildTaskId, (taskId) => callbacks?.onTaskCancelled?.(taskId));
+            settleFileTask(bundledChildTaskId, lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
             settleTask(bundleTaskId ?? "", (taskId) => callbacks?.onTaskCancelled?.(taskId));
-            settleTask(!bundleTaskId ? standaloneTransferId : "", (taskId) => callbacks?.onTaskCancelled?.(taskId));
+            settleFileTask(!bundleTaskId ? standaloneTransferId : "", lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
             break;
           }
 
@@ -934,8 +984,8 @@ async function uploadEntries(
             }
           }
 
-          settleTask(bundledChildTaskId, (taskId) => callbacks?.onTaskFailed?.(taskId, errorMessage));
-          settleTask(!bundleTaskId ? standaloneTransferId : "", (taskId) => callbacks?.onTaskFailed?.(taskId, errorMessage));
+          settleFileTask(bundledChildTaskId, lifecycleManaged, (taskId) => callbacks?.onTaskFailed?.(taskId, errorMessage));
+          settleFileTask(!bundleTaskId ? standaloneTransferId : "", lifecycleManaged, (taskId) => callbacks?.onTaskFailed?.(taskId, errorMessage));
         }
       }
     };
@@ -986,62 +1036,18 @@ export async function uploadEntriesDirect(
   config: UploadConfig,
   controller?: UploadController
 ): Promise<UploadResult[]> {
-  const { targetPath, sftpId, isLocal, bridge, joinPath, callbacks, useCompressedUpload, resolveConflict } = config;
-
   if (controller?.isCancelled()) {
     return [{ fileName: "", success: false, cancelled: true }];
   }
 
   if (controller) {
     controller.reset();
-    controller.setBridge(bridge);
+    controller.setBridge(config.bridge);
   }
 
   if (entries.length === 0) {
     return [];
   }
 
-  // Support compressed folder uploads (same logic as uploadFromDataTransfer)
-  if (useCompressedUpload && !resolveConflict && !isLocal && sftpId) {
-    const rootFolders = detectRootFolders(entries);
-    const folderEntries = Array.from(rootFolders.entries()).filter(([key]) => !key.startsWith("__file__"));
-    const standaloneFileEntries = Array.from(rootFolders.entries()).filter(([key]) => key.startsWith("__file__"));
-
-    if (folderEntries.length > 0) {
-      try {
-        const compressedResults = await uploadFoldersCompressed(folderEntries, targetPath, sftpId, callbacks, controller);
-
-        const failedFolders = compressedResults.filter(result =>
-          !result.success && result.error === "Compressed upload not supported - fallback needed"
-        );
-        const successfulFolders = compressedResults.filter(result =>
-          result.success || result.error !== "Compressed upload not supported - fallback needed"
-        );
-
-        let fallbackResults: UploadResult[] = [];
-        if (failedFolders.length > 0) {
-          const failedFolderNames = new Set(failedFolders.map(f => f.fileName));
-          const failedFolderEntries = entries.filter(entry => {
-            const topFolder = entry.relativePath.split('/')[0];
-            return failedFolderNames.has(topFolder);
-          });
-          if (failedFolderEntries.length > 0) {
-            fallbackResults = await uploadEntries(failedFolderEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-          }
-        }
-
-        let standaloneResults: UploadResult[] = [];
-        if (standaloneFileEntries.length > 0) {
-          const standaloneEntries = standaloneFileEntries.flatMap(([, e]) => e);
-          standaloneResults = await uploadEntries(standaloneEntries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-        }
-
-        return [...successfulFolders, ...fallbackResults, ...standaloneResults];
-      } catch {
-        return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
-      }
-    }
-  }
-
-  return uploadEntries(entries, targetPath, sftpId, isLocal, bridge, joinPath, callbacks, controller, resolveConflict, config.targetHostId);
+  return uploadEntriesWithOptionalCompression(entries, config, controller);
 }

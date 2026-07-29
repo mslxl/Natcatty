@@ -339,6 +339,19 @@ function init(deps) {
   }
 }
 
+async function listActivePortForwards() {
+  if (terminalWorkerManager?.request) {
+    const tunnels = await terminalWorkerManager.request(
+      "netcatty:portforward:list",
+      {},
+      {},
+    );
+    return Array.isArray(tunnels) ? tunnels : [];
+  }
+  const tunnels = await portForwardingBridge.listPortForwards();
+  return Array.isArray(tunnels) ? tunnels : [];
+}
+
 function writeCliDiscoveryFile() {
   if (!tcpPort || !authToken || !cliDiscoveryFilePath) return;
   const payload = {
@@ -978,15 +991,20 @@ function handleConnection(socket) {
       socket.destroy();
       return;
     }
+    const previousBufferLength = buffer.length;
     buffer += chunk;
+    let consumedUntil = 0;
+    let searchFrom = previousBufferLength;
     let newlineIdx;
-    while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-      const line = buffer.slice(0, newlineIdx);
-      buffer = buffer.slice(newlineIdx + 1);
+    while ((newlineIdx = buffer.indexOf("\n", searchFrom)) !== -1) {
+      const line = buffer.slice(consumedUntil, newlineIdx);
+      consumedUntil = newlineIdx + 1;
+      searchFrom = consumedUntil;
       if (!line.trim()) continue;
       debugLog("Incoming line", line);
       handleMessage(socket, line);
     }
+    if (consumedUntil > 0) buffer = buffer.slice(consumedUntil);
   });
 
   socket.on("error", () => {
@@ -1206,6 +1224,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
   isChatSessionCancelled,
   requestApprovalFromRenderer,
   USER_DENIED_MESSAGE,
+  listPortForwards: () => listActivePortForwards(),
   sessionService,
   captureHostOpenScope: (chatSessionId) => openedSessionOwnership.captureGeneration(chatSessionId),
   onHostOpened: (chatSessionId, sessionId, generation) => {
@@ -1790,7 +1809,7 @@ async function handleGetContext(params) {
 
   let activePortForwardTunnels = [];
   try {
-    activePortForwardTunnels = await portForwardingBridge.listPortForwards() || [];
+    activePortForwardTunnels = await listActivePortForwards();
   } catch {
     activePortForwardTunnels = [];
   }

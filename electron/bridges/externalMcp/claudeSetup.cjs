@@ -1,5 +1,7 @@
 "use strict";
 
+const { runBoundedCliCommand } = require("./boundedCliCommand.cjs");
+
 const EXTERNAL_MCP_CLAUDE_NAME = "netcatty-external";
 const {
   formatDiscoveryEnvCliFlags,
@@ -304,33 +306,7 @@ function createExternalMcpClaudeSetup(options = {}) {
   }
 
   async function runClaude(claudePath, shellEnv, args) {
-    return await new Promise((resolve, reject) => {
-      const spawnSpec = deps.prepareCommandForSpawn(claudePath, args);
-      const child = deps.spawn(spawnSpec.command, spawnSpec.args || [], {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: shellEnv,
-        shell: spawnSpec.shell,
-        windowsHide: true,
-      });
-
-      let stdout = "";
-      let stderr = "";
-
-      child.stdout.on("data", (chunk) => {
-        stdout += chunk.toString("utf8");
-      });
-      child.stderr.on("data", (chunk) => {
-        stderr += chunk.toString("utf8");
-      });
-      child.once("error", reject);
-      child.once("close", (exitCode) => {
-        resolve({
-          exitCode,
-          stdout: deps.stripAnsi(stdout),
-          stderr: deps.stripAnsi(stderr),
-        });
-      });
-    });
+    return await runBoundedCliCommand(deps, claudePath, args, { env: shellEnv });
   }
 
   async function getStatus() {

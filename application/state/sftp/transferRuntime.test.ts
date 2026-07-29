@@ -13,6 +13,16 @@ import {
   resetTransferRuntimeRunsForTests,
 } from "./transferRuntime";
 import {
+  isTransferCancelledFlag,
+  markTransferCancelledTree,
+  resetTransferCancelLatchesForTests,
+} from "./transferCancelLatch";
+import {
+  bumpTransferControlEpoch,
+  isTransferControlEpochCurrent,
+  resetTransferControlEpochsForTests,
+} from "./transferControlEpoch";
+import {
   isTransferPauseLatched,
   resetTransferPauseLatchesForTests,
 } from "./transferPauseLatch";
@@ -22,7 +32,6 @@ import {
   resetTransferWalkRegistryForTests,
   unregisterTransferWalk,
 } from "./transferWalkRegistry";
-import { resetTransferControlEpochsForTests } from "./transferControlEpoch";
 
 function makeTask(
   id: string,
@@ -67,6 +76,7 @@ function installBridge(t: test.TestContext, handlers: {
 }
 
 function resetGlobals() {
+  resetTransferCancelLatchesForTests();
   resetTransferPauseLatchesForTests();
   resetTransferWalkRegistryForTests();
   resetTransferControlEpochsForTests();
@@ -218,6 +228,48 @@ test("runWalk registers process-global walk and survives without a panel owner",
   assert.equal(sawInFlight, true);
   assert.equal(steps, 2);
   assert.equal(runtime.isWalkInFlight("walk-1"), false);
+
+  resetGlobals();
+});
+
+test("runWalk keeps tree controls live until settle and then releases parent and children", async () => {
+  resetGlobals();
+  const store = createSftpTransferCenterStore();
+  const runtime = createTransferRuntime(store);
+  runtime.enqueue([
+    makeTask("settling-root", "transferring", { isDirectory: true, progressMode: "files" }),
+    makeTask("settling-child", "transferring", { parentTaskId: "settling-root" }),
+  ]);
+  let markEntered!: () => void;
+  let finishRun!: () => void;
+  const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+  const finish = new Promise<void>((resolve) => { finishRun = resolve; });
+  let rootEpoch = 0;
+  let childEpoch = 0;
+
+  const run = runtime.runWalk("settling-root", async () => {
+    markTransferCancelledTree("settling-root", ["settling-child"]);
+    rootEpoch = bumpTransferControlEpoch("settling-root");
+    childEpoch = bumpTransferControlEpoch("settling-child");
+    // Renderer lifecycle paint can become terminal before final callbacks and
+    // resource release finish. Store cleanup must wait for runWalk settlement.
+    store.patchTask("settling-root", { status: "completed", endTime: Date.now() });
+    markEntered();
+    await finish;
+  });
+
+  await entered;
+  assert.equal(isTransferCancelledFlag("settling-root"), true);
+  assert.equal(isTransferCancelledFlag("settling-child"), true);
+  assert.equal(isTransferControlEpochCurrent("settling-root", rootEpoch), true);
+  assert.equal(isTransferControlEpochCurrent("settling-child", childEpoch), true);
+
+  finishRun();
+  await run;
+  assert.equal(isTransferCancelledFlag("settling-root"), false);
+  assert.equal(isTransferCancelledFlag("settling-child"), false);
+  assert.equal(isTransferControlEpochCurrent("settling-root", rootEpoch), false);
+  assert.equal(isTransferControlEpochCurrent("settling-child", childEpoch), false);
 
   resetGlobals();
 });

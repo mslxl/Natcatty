@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Host, TerminalSession } from "./models";
 import {
   listSftpConnectedHosts,
+  resolveSftpTransferSourceSessionId,
   sftpHostEndpointsEqual,
   sftpPickerSessionsEqual,
 } from "./sftpConnectedHosts";
@@ -240,6 +241,52 @@ test("sftpHostEndpointsEqual compares hostname, username, and port", () => {
     sftpHostEndpointsEqual(base, { hostname: "other.example.test", username: "alice", port: 22 }),
     false,
   );
+});
+
+test("resolveSftpTransferSourceSessionId matches among multi-tab same hostId endpoints", () => {
+  const vault = host({ id: "h1", label: "Prod", hostname: "vault.example.test", username: "vault", port: 22 });
+  const hostsById = new Map([["h1", vault]]);
+  const sessions = [
+    session({
+      id: "s-old",
+      hostId: "h1",
+      status: "connected",
+      hostname: "old.example.test",
+      username: "alice",
+      port: 22,
+    }),
+    session({
+      id: "s-new",
+      hostId: "h1",
+      status: "connected",
+      hostname: "new.example.test",
+      username: "bob",
+      port: 2222,
+    }),
+  ];
+  // Picker collapses to one entry; transfer source must still find the older endpoint.
+  assert.equal(
+    listSftpConnectedHosts(sessions, hostsById).length,
+    1,
+  );
+  assert.equal(
+    resolveSftpTransferSourceSessionId(sessions, hostsById, "h1", {
+      hostname: "old.example.test",
+      username: "alice",
+      port: 22,
+    }),
+    "s-old",
+  );
+  assert.equal(
+    resolveSftpTransferSourceSessionId(sessions, hostsById, "h1", {
+      hostname: "new.example.test",
+      username: "bob",
+      port: 2222,
+    }),
+    "s-new",
+  );
+  // Without endpoint preference, last reusable session for hostId wins.
+  assert.equal(resolveSftpTransferSourceSessionId(sessions, hostsById, "h1"), "s-new");
 });
 
 test("sftpPickerSessionsEqual ignores title-only changes", () => {

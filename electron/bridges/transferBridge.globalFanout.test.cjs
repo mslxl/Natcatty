@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 const test = require("node:test");
 const Module = require("node:module");
 const path = require("node:path");
@@ -99,6 +100,113 @@ test("broadcastGlobalTransferEvent no-ops without transferId", () => {
   assert.doesNotThrow(() => bridge.broadcastGlobalTransferEvent(null));
 });
 
+test("same-host cp capability cache follows the live SFTP client, not a recycled session id", async () => {
+  const bridge = require("./transferBridge.cjs");
+  const sftpClients = new Map();
+  bridge.init({ sftpClients });
+
+  const makeClient = (exitCode, calls) => ({
+    client: {
+      exec(_command, callback) {
+        calls.count += 1;
+        const stream = new EventEmitter();
+        stream.stderr = new EventEmitter();
+        stream.close = () => {};
+        callback(null, stream);
+        queueMicrotask(() => stream.emit("close", exitCode));
+      },
+    },
+  });
+  const firstCalls = { count: 0 };
+  const secondCalls = { count: 0 };
+  const event = { sender: { send() {} } };
+  const payload = {
+    sftpId: "recycled-sftp-id",
+    sourcePath: "/source",
+    targetPath: "/target",
+    encoding: "utf-8",
+  };
+
+  sftpClients.set(payload.sftpId, makeClient(127, firstCalls));
+  assert.equal((await bridge.sameHostCopyDirectory(event, payload)).success, false);
+  assert.equal(firstCalls.count, 1);
+
+  sftpClients.set(payload.sftpId, makeClient(0, secondCalls));
+  assert.equal((await bridge.sameHostCopyDirectory(event, payload)).success, true);
+  assert.equal(secondCalls.count, 1, "a replacement connection must probe cp again");
+});
+
+test("worker transfer lifecycle epochs survive a reused id and clear after the latest start settles", async () => {
+  const bridgePath = path.join(__dirname, "transferBridge.cjs");
+  delete require.cache[require.resolve(bridgePath)];
+  const bridge = require(bridgePath);
+  const handlers = new Map();
+  let finishFirst;
+  let finishSecond;
+  const firstGate = new Promise((resolve) => { finishFirst = resolve; });
+  const secondGate = new Promise((resolve) => { finishSecond = resolve; });
+  let startCalls = 0;
+
+  bridge.registerHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  }, {
+    terminalWorkerManager: {
+      request(channel) {
+        if (channel === "netcatty:transfer:start") {
+          startCalls += 1;
+          return startCalls === 1 ? firstGate : secondGate;
+        }
+        return Promise.resolve({ success: true });
+      },
+    },
+  });
+
+  const firstStarting = handlers.get("netcatty:transfer:start")(
+    { sender: { id: 1 } },
+    { transferId: "worker-cache-lifetime", skipAdmission: true },
+  );
+  const secondStarting = handlers.get("netcatty:transfer:start")(
+    { sender: { id: 1 } },
+    { transferId: "worker-cache-lifetime", skipAdmission: true },
+  );
+  assert.equal(bridge._getWorkerTransferLifecycleEpochCountForTests(), 1);
+
+  finishFirst({ transferId: "worker-cache-lifetime" });
+  await firstStarting;
+  assert.equal(
+    bridge._getWorkerTransferLifecycleEpochCountForTests(),
+    1,
+    "an older completion must not clear the newer start's lifecycle state",
+  );
+
+  finishSecond({ transferId: "worker-cache-lifetime" });
+  await secondStarting;
+  assert.equal(bridge._getWorkerTransferLifecycleEpochCountForTests(), 0);
+});
+
+test("worker transfer lifecycle epoch clears after a synchronous start failure", () => {
+  const bridgePath = path.join(__dirname, "transferBridge.cjs");
+  delete require.cache[require.resolve(bridgePath)];
+  const bridge = require(bridgePath);
+  const handlers = new Map();
+  bridge.registerHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  }, {
+    terminalWorkerManager: {
+      request(channel) {
+        if (channel === "netcatty:transfer:start") throw new Error("worker unavailable");
+        return Promise.resolve({ success: true });
+      },
+    },
+  });
+
+  assert.throws(() => handlers.get("netcatty:transfer:start")(
+    { sender: { id: 1 } },
+    { transferId: "worker-cache-sync-failure", skipAdmission: true },
+  ), /worker unavailable/);
+  assert.equal(bridge._getWorkerTransferLifecycleEpochCountForTests(), 0);
+});
+
 test("worker-backed pause and resume fan authoritative lifecycle to every window", async () => {
   const sent = [];
   const restoreElectronVersion = withElectronVersionStub();
@@ -125,11 +233,14 @@ test("worker-backed pause and resume fan authoritative lifecycle to every window
     delete require.cache[require.resolve(bridgePath)];
     const bridge = require(bridgePath);
     const handlers = new Map();
+    let finishStart;
+    const startGate = new Promise((resolve) => { finishStart = resolve; });
     bridge.registerHandlers({
       handle(channel, handler) { handlers.set(channel, handler); },
     }, {
       terminalWorkerManager: {
         async request(channel) {
+          if (channel === "netcatty:transfer:start") return startGate;
           if (channel === "netcatty:transfer:pause") {
             return { success: true, checkpointBytes: 50, resumeStage: "upload" };
           }
@@ -138,6 +249,10 @@ test("worker-backed pause and resume fan authoritative lifecycle to every window
       },
     });
 
+    const starting = handlers.get("netcatty:transfer:start")(
+      { sender: { id: 1 } },
+      { transferId: "worker-transfer", skipAdmission: true },
+    );
     await handlers.get("netcatty:transfer:pause")(
       { sender: { id: 1 } },
       { transferId: "worker-transfer" },
@@ -175,6 +290,9 @@ test("worker-backed pause and resume fan authoritative lifecycle to every window
         lifecycleState: "transferring",
       },
     ]);
+    finishStart({ transferId: "worker-transfer" });
+    await starting;
+    assert.equal(bridge._getWorkerTransferLifecycleEpochCountForTests(), 0);
   } finally {
     Module._load = originalLoad;
     restoreElectronVersion();

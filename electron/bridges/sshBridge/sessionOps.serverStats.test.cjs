@@ -4,6 +4,13 @@ const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const { createSessionOpsApi } = require("./sessionOps.cjs");
+const {
+  borrowTransport,
+  createTransport,
+  findTransportByEndpoint,
+  getTransportStats,
+  resetSshTransportRegistryForTests,
+} = require("../sshConnectionPool.cjs");
 
 // A fake ssh2 exec stream that emits the canned stdout then closes.
 function fakeStream(stdout) {
@@ -335,6 +342,60 @@ test("getServerStats closes a stats stream delivered after timeout", async () =>
 
   assert.equal(result.success, false);
   assert.equal(closeCalls, 1);
+});
+
+test("three stats retries on an unresponsive exec open leave no pooled transport or channel callbacks", async () => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  const endpoint = { hostId: "stats-host", hostname: "wedged.example", username: "root" };
+  const conn = new EventEmitter();
+  conn._sock = { destroyed: false };
+  conn.pendingChannelCallbacks = [];
+  conn.exec = (_command, callback) => {
+    if (conn._sock.destroyed) throw new Error("Not connected");
+    conn.pendingChannelCallbacks.push(callback);
+  };
+  conn.end = () => {};
+  conn.destroy = () => {
+    if (conn._sock.destroyed) return;
+    conn._sock.destroyed = true;
+    conn.pendingChannelCallbacks.length = 0;
+    conn.emit("close");
+  };
+  const transport = createTransport({ conn, endpoint });
+  borrowTransport(transport, { kind: "shell", holder: {} });
+
+  const timers = [];
+  const api = createSessionOpsApi({
+    sessions: new Map([["sid", { type: "ssh", conn }]]),
+    Date,
+    setTimeout: (callback) => {
+      const timer = { callback, cleared: false, unref() {} };
+      timers.push(timer);
+      return timer;
+    },
+    clearTimeout: (timer) => { if (timer) timer.cleared = true; },
+    Buffer,
+  });
+
+  const first = api.getServerStats({ sender: {} }, { sessionId: "sid" });
+  const openingTimer = timers.find((timer) => !timer.cleared);
+  assert.ok(openingTimer);
+  openingTimer.callback();
+  const results = [await first];
+  results.push(await api.getServerStats({ sender: {} }, { sessionId: "sid" }));
+  results.push(await api.getServerStats({ sender: {} }, { sessionId: "sid" }));
+
+  assert.ok(results.every((result) => result.success === false));
+  assert.equal(conn.pendingChannelCallbacks.length, 0);
+  assert.equal(getTransportStats().transports, 0);
+  assert.equal(findTransportByEndpoint(endpoint), null);
+
+  const replacement = new EventEmitter();
+  replacement._sock = { destroyed: false };
+  replacement.end = () => {};
+  const replacementTransport = createTransport({ conn: replacement, endpoint });
+  assert.equal(findTransportByEndpoint(endpoint), replacementTransport);
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
 });
 
 test("getServerStats includes host identity, load average, and uptime", async () => {

@@ -1,5 +1,14 @@
 import { useCallback, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { Host, SftpFileEntry, SftpFilenameEncoding, TransferStatus, TransferTask } from "../../../domain/models";
+import {
+  accountSftpDirectoryEntries,
+  claimSftpDirectoryVisit,
+  createSftpDirectoryTraversalBudget,
+  createDirectoryEntryIdentity,
+  releaseSftpDirectoryVisit,
+  type SftpDirectoryTraversalBudget,
+  shouldFollowSftpSymlinkDirectory,
+} from "../../../domain/sftpDirectoryCheckpoint";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
@@ -10,14 +19,9 @@ import { resolveDedicatedStreamEndpointIds } from "../../../domain/sftpDedicated
 import { isSessionError } from "./errors";
 import { isTransferCancelledError, runWithTransferRetry } from "./transferRetry";
 import type { TransferConnectionLease } from "./transferConnectionPool";
-import {
-  hasNewSourceFingerprint,
-  resolveDurableCheckpointBytes,
-  shouldApplyTransferProgress,
-} from "./transferProgressMetadata";
+import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
 import {
   isTransferOrRootPauseLatched,
-  isTransferPauseLatched,
   waitWhileTransferOrRootPaused,
 } from "./transferPauseLatch";
 import {
@@ -25,7 +29,7 @@ import {
   isTransferControlEpochCurrent,
 } from "./transferControlEpoch";
 import { isTransferOrRootCancelled } from "./transferCancelLatch";
-import { joinPath } from "./utils";
+import { joinPath, joinTransferTargetPath } from "./utils";
 
 function isCancelledLocalOrGlobal(
   cancelledTasksRef: { current: Set<string> },
@@ -162,78 +166,6 @@ export function useSftpDirectoryTransferOps({
     }
   }, [isPauseLatched, setTransfers, waitWhileTransferPaused]);
 
-  const MAX_SYMLINK_DEPTH = 32;
-
-  const estimateDirectoryBytes = useCallback(
-    async (
-      sourcePath: string,
-      sourceSftpId: string | null,
-      sourceIsLocal: boolean,
-      sourceEncoding: SftpFilenameEncoding,
-      rootTaskId: string,
-      symlinkDepth = 0,
-      followSymlinks = false,
-    ): Promise<number> => {
-      const estT0 = performance.now();
-      if (cancelledTasksRef.current.has(rootTaskId)) {
-        throw new Error("Transfer cancelled");
-      }
-
-      const files = sourceIsLocal
-        ? await listLocalFiles(sourcePath)
-        : sourceSftpId
-          ? await listRemoteFiles(sourceSftpId, sourcePath, sourceEncoding)
-          : null;
-
-      if (!files) {
-        throw new Error("No source connection");
-      }
-
-      let totalBytes = 0;
-      const subdirs: { entry: SftpFileEntry; nextDepth: number }[] = [];
-
-      for (const file of files) {
-        if (file.name === ".." || file.name === ".") continue;
-
-        if (file.type === "directory") {
-          subdirs.push({ entry: file, nextDepth: symlinkDepth });
-        } else if (followSymlinks && file.type === "symlink" && file.linkTarget === "directory") {
-          if (symlinkDepth < MAX_SYMLINK_DEPTH) {
-            subdirs.push({ entry: file, nextDepth: symlinkDepth + 1 });
-          }
-          // Skip at max depth — consistent with transferDirectory
-        } else {
-          totalBytes += getEntrySize(file);
-        }
-      }
-
-      if (subdirs.length > 0) {
-        if (cancelledTasksRef.current.has(rootTaskId)) {
-          throw new Error("Transfer cancelled");
-        }
-
-        const subResults = await Promise.all(
-          subdirs.map(({ entry: subdir, nextDepth }) =>
-            estimateDirectoryBytes(
-              joinPath(sourcePath, subdir.name),
-              sourceSftpId,
-              sourceIsLocal,
-              sourceEncoding,
-              rootTaskId,
-              nextDepth,
-              followSymlinks,
-            ),
-          ),
-        );
-        totalBytes += subResults.reduce((sum, size) => sum + size, 0);
-      }
-
-      logger.debug(`[SFTP:perf] estimateDirectoryBytes ${sourcePath} = ${totalBytes} — ${(performance.now() - estT0).toFixed(0)}ms`);
-      return totalBytes;
-    },
-    [cancelledTasksRef, getEntrySize, listLocalFiles, listRemoteFiles],
-  );
-
   const transferFile = async (
     task: TransferTask,
     sourceSftpId: string | null,
@@ -244,7 +176,6 @@ export function useSftpDirectoryTransferOps({
     targetEncoding: SftpFilenameEncoding,
     rootTaskId: string, // The original top-level task ID for cancellation checking
     sameHost?: boolean,
-    onStreamProgress?: (transferred: number, total: number, speed: number) => void,
   ): Promise<void> => {
     // Check if task or root task was cancelled before starting
     if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
@@ -352,7 +283,9 @@ export function useSftpDirectoryTransferOps({
             const effectiveTargetSftpId = resolved.targetSftpId;
 
             // On retry, prefer latest checkpoint so we do not restart from zero.
-            const latest = transfersRef.current.find((candidate) => candidate.id === task.id) ?? task;
+            const latest = sftpTransferCenterStore.getTask(task.id)
+              ?? transfersRef.current.find((candidate) => candidate.id === task.id)
+              ?? task;
             const options = {
               transferId: task.id,
               sourcePath: task.sourcePath,
@@ -373,109 +306,12 @@ export function useSftpDirectoryTransferOps({
               downloadCheckpointBytes: latest.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
               uploadCheckpointBytes: latest.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
               sourceFingerprint: latest.sourceFingerprint ?? task.sourceFingerprint,
+              parentTaskId: task.parentTaskId,
+              directoryEntryIndex: task.directoryEntryIndex,
+              directoryEntryIdentity: task.directoryEntryIdentity,
               // Renderer already admitted this file via globalSftpTransferScheduler
               // (unlimited host slots). Folder concurrency is only in runSftpTransferWorkers.
               skipAdmission: true,
-            };
-
-            let lastProgressUpdate = 0;
-            let lastSourceFingerprint = options.sourceFingerprint;
-            const onProgress = (
-              transferred: number,
-              total: number,
-              speed: number,
-              checkpoint?: {
-                phase?: TransferTask["phase"];
-                resumeStage?: TransferTask["resumeStage"];
-                checkpointBytes?: number;
-                downloadCheckpointBytes?: number;
-                uploadCheckpointBytes?: number;
-                sourceFingerprint?: string;
-                resumable?: boolean;
-                pauseUnavailableReason?: string;
-              },
-            ) => {
-              onStreamProgress?.(transferred, total, speed);
-              const now = Date.now();
-              const sourceFingerprintChanged = hasNewSourceFingerprint(
-                lastSourceFingerprint,
-                checkpoint?.sourceFingerprint,
-              );
-              // Always apply progress while the folder is latched so we can
-              // force status back to paused even when the throttle would skip.
-              const parentLatched = !!task.parentTaskId
-                && (isTransferPauseLatched(task.parentTaskId) || pausedTasksRef.current.has(task.parentTaskId));
-              const selfLatched = isTransferOrRootPauseLatched(rootTaskId, task.id)
-                || pausedTasksRef.current.has(task.id)
-                || pausedTasksRef.current.has(rootTaskId);
-              const forcePaused = parentLatched || selfLatched;
-              if (!forcePaused && !shouldApplyTransferProgress({
-                elapsedMs: now - lastProgressUpdate,
-                transferred,
-                total,
-                currentSourceFingerprint: lastSourceFingerprint,
-                incomingSourceFingerprint: checkpoint?.sourceFingerprint,
-              })) return;
-              lastProgressUpdate = now;
-              if (sourceFingerprintChanged) lastSourceFingerprint = checkpoint?.sourceFingerprint;
-              setTransfers((prev) =>
-                prev.map((t) => {
-                  if (t.id !== task.id) return t;
-                  if (t.status === "cancelled") return t;
-                  // Re-read latch inside updater — pause may have just won.
-                  const latchedNow = isTransferOrRootPauseLatched(rootTaskId, t.id)
-                    || pausedTasksRef.current.has(rootTaskId)
-                    || (!!t.parentTaskId && (
-                      isTransferPauseLatched(t.parentTaskId)
-                      || pausedTasksRef.current.has(t.parentTaskId)
-                    ))
-                    || pausedTasksRef.current.has(t.id);
-                  // Latch-primary only. Sticky local status "paused"/"pausing" after
-                  // intentional Resume must not re-freeze the bar (soft-drain race).
-                  const pauseRequested = latchedNow;
-                  const normalizedTotal = total > 0 ? total : t.totalBytes;
-                  const normalizedTransferred = Math.max(
-                    t.transferredBytes,
-                    Math.min(transferred, normalizedTotal > 0 ? normalizedTotal : transferred),
-                  );
-                  // Prefer bridge contiguous checkpoint — soft-drain can report
-                  // high-water transferred past sparse holes. Keep updating the
-                  // durable checkpoint under the hood, but freeze the visible
-                  // bar as soon as pause is requested (soft-drain still writes).
-                  const durableCheckpoint = resolveDurableCheckpointBytes({
-                    transferred: normalizedTransferred,
-                    previousCheckpoint: t.checkpointBytes,
-                    incomingCheckpoint: checkpoint?.checkpointBytes,
-                    status: pauseRequested ? "paused" : t.status,
-                  });
-                  return {
-                    ...t,
-                    // Latched folder pause always wins over mid-flight "transferring"
-                    // paints from scheduler re-entry races.
-                    status: pauseRequested
-                      && !["completed", "cancelled", "failed"].includes(t.status)
-                      ? (t.status === "pausing" ? "pausing" as TransferStatus : "paused" as TransferStatus)
-                      : t.status,
-                    transferredBytes: pauseRequested ? t.transferredBytes : normalizedTransferred,
-                    checkpointBytes: durableCheckpoint,
-                    resumeStage: checkpoint?.resumeStage ?? t.resumeStage,
-                    downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? t.downloadCheckpointBytes,
-                    uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? t.uploadCheckpointBytes,
-                    sourceFingerprint: checkpoint?.sourceFingerprint ?? t.sourceFingerprint,
-                    phase: checkpoint?.phase ?? t.phase,
-                    // Keep pause affordance while paused even if a progress event
-                    // briefly reports pauseSupported=false mid soft-drain.
-                    resumable: pauseRequested ? true : (checkpoint?.resumable ?? t.resumable),
-                    pauseUnavailableReason: pauseRequested
-                      ? undefined
-                      : (checkpoint && "pauseUnavailableReason" in checkpoint
-                        ? checkpoint.pauseUnavailableReason
-                        : t.pauseUnavailableReason),
-                    totalBytes: normalizedTotal,
-                    speed: pauseRequested ? 0 : (Number.isFinite(speed) && speed > 0 ? speed : 0),
-                  };
-                }),
-              );
             };
 
             try {
@@ -490,12 +326,7 @@ export function useSftpDirectoryTransferOps({
                 }
                 // Await the invoke result — cancel resolves with { error } and may
                 // not fire onComplete/onError after preload clears listeners.
-                const transferPromise = netcattyBridge.require().startStreamTransfer!(
-                  options,
-                  onProgress,
-                  undefined,
-                  undefined,
-                );
+                const transferPromise = netcattyBridge.require().startStreamTransfer!(options);
                 // Streams that arm after the parent pause round never receive the
                 // initial pauseTransfer. Keep pausing while the folder is latched.
                 // Capture epoch per attempt so Resume (epoch bump) undoes a late pause.
@@ -578,52 +409,6 @@ export function useSftpDirectoryTransferOps({
     );
   };
 
-  /** Recursively count all files under a directory (for progress display). */
-  const countDirectoryFiles = async (
-    sourcePath: string,
-    sourceSftpId: string | null,
-    sourceIsLocal: boolean,
-    sourceEncoding: SftpFilenameEncoding,
-    rootTaskId: string,
-    symlinkDepth = 0,
-    followSymlinks = false,
-  ): Promise<number> => {
-    if (cancelledTasksRef.current.has(rootTaskId)) return 0;
-
-    const files = sourceIsLocal
-      ? await listLocalFiles(sourcePath)
-      : sourceSftpId
-        ? await listRemoteFiles(sourceSftpId, sourcePath, sourceEncoding)
-        : null;
-    if (!files) return 0;
-
-    let count = 0;
-    const subdirPromises: Promise<number>[] = [];
-    for (const file of files) {
-      if (file.name === ".." || file.name === ".") continue;
-      if (file.type === "directory") {
-        subdirPromises.push(
-          countDirectoryFiles(joinPath(sourcePath, file.name), sourceSftpId, sourceIsLocal, sourceEncoding, rootTaskId, symlinkDepth, followSymlinks),
-        );
-      } else if (followSymlinks && file.type === "symlink" && file.linkTarget === "directory") {
-        // Only recurse if within depth limit; skip entirely at max depth
-        // (consistent with transferDirectory which also skips these)
-        if (symlinkDepth < MAX_SYMLINK_DEPTH) {
-          subdirPromises.push(
-            countDirectoryFiles(joinPath(sourcePath, file.name), sourceSftpId, sourceIsLocal, sourceEncoding, rootTaskId, symlinkDepth + 1, followSymlinks),
-          );
-        }
-      } else {
-        count++;
-      }
-    }
-    if (subdirPromises.length > 0) {
-      const subCounts = await Promise.all(subdirPromises);
-      count += subCounts.reduce((a, b) => a + b, 0);
-    }
-    return count;
-  };
-
   /** Returns number of failed child file transfers */
   const transferDirectory = async (
     task: TransferTask,
@@ -637,6 +422,8 @@ export function useSftpDirectoryTransferOps({
     sameHost?: boolean,
     symlinkDepth = 0,
     followSymlinks = false, // Only true for downloadToLocal — uploads/copies treat symlinks as files
+    discoveryProgress?: { discoveredFiles: number; nextEntryIndex: number },
+    traversalBudget?: SftpDirectoryTraversalBudget,
   ) => {
     // Check if task or root task was cancelled before starting
     if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
@@ -644,95 +431,141 @@ export function useSftpDirectoryTransferOps({
     }
 
     let totalErrors = 0;
-
-    if (targetIsLocal) {
-      try {
-        await netcattyBridge.get()?.mkdirLocal?.(task.targetPath);
-      } catch (mkdirErr: unknown) {
-        const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes("EEXIST");
-        if (!isEEXIST) throw mkdirErr;
-        // EEXIST: verify the existing path is actually a directory, not a file
-        const stat = await netcattyBridge.get()?.statLocal?.(task.targetPath);
-        if (stat && stat.type !== 'directory') {
-          throw new Error(`Target path exists as a file: ${task.targetPath}`);
-        }
+    const progress = discoveryProgress ?? { discoveredFiles: 0, nextEntryIndex: 0 };
+    const traversal = traversalBudget ?? createSftpDirectoryTraversalBudget();
+    let claimedCanonicalPath: string | null = null;
+    let regularFiles: SftpFileEntry[] = [];
+    // Keep the current remote ancestor active through child discovery.
+    try {
+      if (!sourceIsLocal && sourceSftpId) {
+        const bridge = netcattyBridge.get();
+        const canonicalPath = await bridge?.realpathSftp?.(sourceSftpId, task.sourcePath, sourceEncoding)
+          .catch(() => task.sourcePath) ?? task.sourcePath;
+        claimedCanonicalPath = claimSftpDirectoryVisit(traversal, canonicalPath);
+        if (!claimedCanonicalPath) return totalErrors;
       }
-    } else if (targetSftpId) {
-      await netcattyBridge.get()?.mkdirSftp(targetSftpId, task.targetPath, targetEncoding);
-    }
+      if (!discoveryProgress) {
+        // A resumed directory may already have completed children. Keep the
+        // denominator at least as large as the completed count while this
+        // single traversal rediscovers the full tree.
+        setTransfers((prev) => prev.map((candidate) => candidate.id === rootTaskId
+          ? {
+              ...candidate,
+              totalBytes: candidate.transferredBytes,
+            }
+          : candidate));
+      }
 
-    let files: SftpFileEntry[];
-    if (sourceIsLocal) {
-      files = await listLocalFiles(task.sourcePath);
-    } else if (sourceSftpId) {
-      files = await listRemoteFiles(sourceSftpId, task.sourcePath, sourceEncoding);
-    } else {
-      throw new Error("No source connection");
-    }
-
-    // Filter both "." and ".." — some SFTP servers include "." in readdir
-    const filtered = files.filter((f) => f.name !== ".." && f.name !== ".");
-    // Separate directories from files.
-    // Symlink directories are only followed when followSymlinks is true
-    // (downloadToLocal). Uploads/copies treat symlinks as regular entries
-    // to preserve existing behavior and avoid expanding symlinked trees.
-    const dirs: SftpFileEntry[] = [];
-    const regularFiles: SftpFileEntry[] = [];
-    for (const f of filtered) {
-      if (f.type === "directory") {
-        dirs.push(f);
-      } else if (followSymlinks && f.type === "symlink" && f.linkTarget === "directory") {
-        if (symlinkDepth < MAX_SYMLINK_DEPTH) {
-          dirs.push(f);
-        } else {
-          // Count as an error so the parent task is marked failed
-          totalErrors++;
-          logger.warn(`[SFTP] Skipping symlink directory at max depth: ${joinPath(task.sourcePath, f.name)}`);
+      if (targetIsLocal) {
+        try {
+          await netcattyBridge.get()?.mkdirLocal?.(task.targetPath);
+        } catch (mkdirErr: unknown) {
+          const isEEXIST = mkdirErr instanceof Error && mkdirErr.message.includes("EEXIST");
+          if (!isEEXIST) throw mkdirErr;
+          // EEXIST: verify the existing path is actually a directory, not a file
+          const stat = await netcattyBridge.get()?.statLocal?.(task.targetPath);
+          if (stat && stat.type !== 'directory') {
+            throw new Error(`Target path exists as a file: ${task.targetPath}`);
+          }
         }
+      } else if (targetSftpId) {
+        await netcattyBridge.get()?.mkdirSftp(targetSftpId, task.targetPath, targetEncoding);
+      }
+
+      let files: SftpFileEntry[];
+      if (sourceIsLocal) {
+        files = await listLocalFiles(task.sourcePath);
+      } else if (sourceSftpId) {
+        files = await listRemoteFiles(sourceSftpId, task.sourcePath, sourceEncoding);
       } else {
-        regularFiles.push(f);
+        throw new Error("No source connection");
       }
-    }
 
-    // Process subdirectories sequentially to avoid unbounded concurrent SFTP
-    // requests from nested Promise.all + worker pools across the tree.
-    // File-level concurrency within each directory is still governed by the
-    // shared SFTP transfer worker scheduler below.
-    for (const dir of dirs) {
-      if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
-        throw new Error("Transfer cancelled");
+      // Filter both "." and ".." — some SFTP servers include "." in readdir
+      const filtered = files.filter((f) => f.name !== ".." && f.name !== ".");
+      if (!sourceIsLocal) accountSftpDirectoryEntries(traversal, filtered.length);
+      // Separate directories from files.
+      // Symlink directories are only followed when followSymlinks is true
+      // (downloadToLocal). Uploads/copies treat symlinks as regular entries
+      // to preserve existing behavior and avoid expanding symlinked trees.
+      const dirs: SftpFileEntry[] = [];
+      regularFiles = [];
+      for (const f of filtered) {
+        if (f.type === "directory") {
+          dirs.push(f);
+        } else if (followSymlinks && f.type === "symlink" && f.linkTarget === "directory") {
+          if (shouldFollowSftpSymlinkDirectory(symlinkDepth)) {
+            dirs.push(f);
+          } else {
+            // Count as an error so the parent task is marked failed
+            totalErrors++;
+            logger.warn(`[SFTP] Skipping symlink directory at max depth: ${joinPath(task.sourcePath, f.name)}`);
+          }
+        } else {
+          regularFiles.push(f);
+        }
       }
-      // Pause between subfolders — otherwise the walk enters the next tree while
-      // the user thinks the whole folder transfer is paused.
-      await waitWhileTransferPaused(rootTaskId);
+      dirs.sort((left, right) => left.name.localeCompare(right.name));
+      regularFiles.sort((left, right) => left.name.localeCompare(right.name));
 
-      const childTask: TransferTask = {
-        ...task,
-        id: crypto.randomUUID(),
-        fileName: dir.name,
-        originalFileName: dir.name,
-        sourcePath: joinPath(task.sourcePath, dir.name),
-        targetPath: joinPath(task.targetPath, dir.name),
-        isDirectory: true,
-        progressMode: "files",
-        parentTaskId: task.id,
-      };
+      // Directory progress is discovered by the same traversal that performs
+      // the transfer. This avoids a second full-tree list pass and lets the UI
+      // grow the total incrementally without flooding the server at startup.
+      progress.discoveredFiles += regularFiles.length;
+      setTransfers((prev) => prev.map((candidate) => candidate.id === rootTaskId
+        ? {
+            ...candidate,
+            totalBytes: Math.max(progress.discoveredFiles, candidate.transferredBytes),
+          }
+        : candidate));
 
-      const isSymlink = dir.type === "symlink";
-      const subdirErrors = await transferDirectory(
-        childTask,
-        sourceSftpId,
-        targetSftpId,
-        sourceIsLocal,
-        targetIsLocal,
-        sourceEncoding,
-        targetEncoding,
-        rootTaskId,
-        sameHost,
-        isSymlink ? symlinkDepth + 1 : symlinkDepth,
-        followSymlinks,
-      );
-      totalErrors += subdirErrors;
+      // Process subdirectories sequentially to avoid unbounded concurrent SFTP
+      // requests from nested Promise.all + worker pools across the tree.
+      // File-level concurrency within each directory is still governed by the
+      // shared SFTP transfer worker scheduler below.
+      for (const dir of dirs) {
+        if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
+          throw new Error("Transfer cancelled");
+        }
+        // Pause between subfolders — otherwise the walk enters the next tree while
+        // the user thinks the whole folder transfer is paused.
+        await waitWhileTransferPaused(rootTaskId);
+
+        const childTask: TransferTask = {
+          ...task,
+          id: crypto.randomUUID(),
+          fileName: dir.name,
+          originalFileName: dir.name,
+          sourcePath: joinPath(task.sourcePath, dir.name),
+          targetPath: joinTransferTargetPath(task.targetPath, dir.name),
+          isDirectory: true,
+          progressMode: "files",
+          parentTaskId: task.id,
+        };
+
+        const isSymlink = dir.type === "symlink";
+        const subdirErrors = await transferDirectory(
+          childTask,
+          sourceSftpId,
+          targetSftpId,
+          sourceIsLocal,
+          targetIsLocal,
+          sourceEncoding,
+          targetEncoding,
+          rootTaskId,
+          sameHost,
+          isSymlink ? symlinkDepth + 1 : symlinkDepth,
+          followSymlinks,
+          progress,
+          traversal,
+        );
+        totalErrors += subdirErrors;
+      }
+    } finally {
+      // Release on success, cancellation, and traversal errors.
+      if (claimedCanonicalPath) {
+        releaseSftpDirectoryVisit(traversal, claimedCanonicalPath);
+      }
     }
 
     // Transfer files in parallel with concurrency limit
@@ -741,11 +574,13 @@ export function useSftpDirectoryTransferOps({
       // If the SFTP session dies mid-directory, stop queueing more files
       // (remaining workers will still finish their current item).
       let sessionLostError: Error | null = null;
+      const directoryEntryBase = progress.nextEntryIndex;
+      progress.nextEntryIndex += regularFiles.length;
 
       await runSftpTransferWorkers(
         regularFiles,
         () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
-        async (file) => {
+        async (file, fileIndex) => {
           if (sessionLostError) throw sessionLostError;
           if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
             throw new Error("Transfer cancelled");
@@ -753,7 +588,14 @@ export function useSftpDirectoryTransferOps({
 
           const fileSize = getEntrySize(file);
           const sourcePath = joinPath(task.sourcePath, file.name);
-          const targetPath = joinPath(task.targetPath, file.name);
+          const targetPath = joinTransferTargetPath(task.targetPath, file.name);
+          const directoryEntryIndex = directoryEntryBase + fileIndex;
+          const directoryEntryIdentity = createDirectoryEntryIdentity({
+            sourcePath,
+            targetPath,
+            size: fileSize,
+            lastModified: file.lastModified,
+          });
           const persistedChild = transfersRef.current.find((candidate) => (
             candidate.parentTaskId === rootTaskId
             && candidate.sourcePath === sourcePath
@@ -793,6 +635,9 @@ export function useSftpDirectoryTransferOps({
             progressMode: "bytes",
             parentTaskId: rootTaskId,
             totalBytes: fileSize,
+            sourceLastModified: file.lastModified,
+            directoryEntryIndex,
+            directoryEntryIdentity,
             // Inherit retryable from parent — downloadToLocal sets retryable: false
             // because "local" targetConnectionId can't be resolved by retryTransfer
             retryable: task.retryable,
@@ -943,5 +788,5 @@ export function useSftpDirectoryTransferOps({
   };
 
 
-  return { estimateDirectoryBytes, transferFile, countDirectoryFiles, transferDirectory };
+  return { transferFile, transferDirectory };
 }

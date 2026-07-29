@@ -10,6 +10,7 @@ import { editorTabStore } from "../../../application/state/editorTabStore";
 import { toEditorTabId, activeTabStore } from "../../../application/state/activeTabStore";
 import type { TextEditorModalSnapshot } from "../../TextEditorModal";
 import type { UseSftpViewFileOpsParams, UseSftpViewFileOpsResult } from "./useSftpViewFileOps.types";
+import { assertSftpFileFitsBuiltinEditor } from "../sftpEditorFileLimits";
 
 export const useSftpViewFileOps = ({
   sftpRef,
@@ -87,6 +88,7 @@ export const useSftpViewFileOps = ({
       const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
 
       try {
+        assertSftpFileFitsBuiltinEditor(file.size);
         setLoadingTextContent(true);
         setTextEditorTarget({ file, side, fullPath: resolvedFullPath, hostId: pane.connection.hostId });
 

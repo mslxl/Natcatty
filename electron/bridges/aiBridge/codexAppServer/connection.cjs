@@ -1,13 +1,66 @@
 "use strict";
 
 const path = require("node:path");
-const readline = require("node:readline");
 const { spawn } = require("node:child_process");
 const { createHash } = require("node:crypto");
+const { StringDecoder } = require("node:string_decoder");
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const INITIALIZE_TIMEOUT_MS = 10_000;
 const MAX_STDERR_CHARS = 32_000;
+const MAX_JSONL_LINE_BYTES = 16 * 1024 * 1024;
+const CLOSE_KILL_GRACE_MS = 750;
+
+function createBoundedLineReader(stream, onLine, onError, maxLineBytes) {
+  const decoder = new StringDecoder("utf8");
+  let buffer = "";
+  let bufferedBytes = 0;
+  let closed = false;
+
+  const fail = () => {
+    buffer = "";
+    bufferedBytes = 0;
+    onError(new Error(`Codex App Server message exceeded ${maxLineBytes} bytes`));
+  };
+  const onData = (chunk) => {
+    if (closed) return;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || ""));
+    bufferedBytes += bytes.length;
+    buffer += decoder.write(bytes);
+    let index;
+    let consumedLine = false;
+    while ((index = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, index).trim();
+      buffer = buffer.slice(index + 1);
+      consumedLine = true;
+      if (line) onLine(line);
+      if (closed) return;
+    }
+    if (consumedLine) bufferedBytes = Buffer.byteLength(buffer, "utf8") + decoder.lastNeed;
+    if (bufferedBytes > maxLineBytes) fail();
+  };
+  const onEnd = () => {
+    if (closed) return;
+    buffer += decoder.end();
+    const line = buffer.trim();
+    buffer = "";
+    bufferedBytes = 0;
+    if (line) onLine(line);
+  };
+
+  stream?.on?.("data", onData);
+  stream?.once?.("end", onEnd);
+  return {
+    close() {
+      if (closed) return;
+      closed = true;
+      buffer = "";
+      bufferedBytes = 0;
+      stream?.removeListener?.("data", onData);
+      stream?.removeListener?.("end", onEnd);
+    },
+  };
+}
 
 function buildCodexAppServerLaunch(binPath, args = ["app-server", "--stdio"], {
   nodePath = process.execPath,
@@ -53,6 +106,8 @@ class CodexAppServerConnection {
     onNotification,
     onServerRequest,
     onFatal,
+    closeKillGraceMs = CLOSE_KILL_GRACE_MS,
+    maxJsonlLineBytes = MAX_JSONL_LINE_BYTES,
   }) {
     this.binPath = binPath;
     this.env = env || {};
@@ -61,7 +116,10 @@ class CodexAppServerConnection {
     this.onNotification = onNotification;
     this.onServerRequest = onServerRequest;
     this.onFatal = onFatal;
+    this.closeKillGraceMs = closeKillGraceMs;
+    this.maxJsonlLineBytes = maxJsonlLineBytes;
     this.process = null;
+    this.closingProcesses = new Map();
     this.readline = null;
     this.nextRequestId = 1;
     this.pending = new Map();
@@ -98,12 +156,21 @@ class CodexAppServerConnection {
       this.stderr = `${this.stderr}${String(chunk || "")}`.slice(-MAX_STDERR_CHARS);
     });
 
-    this.readline = readline.createInterface({ input: child.stdout });
-    this.readline.on("line", (line) => this.#handleLine(line));
+    this.readline = createBoundedLineReader(
+      child.stdout,
+      (line) => this.#handleLine(line),
+      (error) => this.#handleFatal(error),
+      this.maxJsonlLineBytes,
+    );
 
-    child.once("error", (error) => this.#handleFatal(error));
+    child.once("error", (error) => {
+      if (this.closingProcesses.has(child) || this.process !== child) return;
+      this.#handleFatal(error);
+    });
     child.once("exit", (code, signal) => {
-      if (this.closing) return;
+      const wasClosing = this.closingProcesses.has(child);
+      if (wasClosing) this.#releaseClosingProcess(child);
+      if (wasClosing || this.process !== child) return;
       const detail = this.stderr.trim();
       const suffix = detail ? `\n${detail}` : "";
       this.#handleFatal(new Error(
@@ -236,6 +303,16 @@ class CodexAppServerConnection {
     this.close();
   }
 
+  #releaseClosingProcess(child) {
+    if (!this.closingProcesses.has(child)) return;
+    clearTimeout(this.closingProcesses.get(child));
+    this.closingProcesses.delete(child);
+  }
+
+  getClosingProcessCountForTests() {
+    return this.closingProcesses.size;
+  }
+
   close() {
     this.closing = true;
     this.initialized = false;
@@ -246,9 +323,19 @@ class CodexAppServerConnection {
       entry.reject(new Error("Codex App Server connection closed"));
     }
     this.pending.clear();
-    try { this.process?.stdin?.end?.(); } catch {}
-    try { this.process?.kill?.("SIGTERM"); } catch {}
+    const child = this.process;
     this.process = null;
+    if (!child) return;
+    try { child.stdin?.end?.(); } catch {}
+    this.closingProcesses.set(child, null);
+    const killTimer = setTimeout(() => {
+      if (!this.closingProcesses.has(child)) return;
+      try { child.kill?.("SIGKILL"); } catch {}
+      this.#releaseClosingProcess(child);
+    }, this.closeKillGraceMs);
+    killTimer.unref?.();
+    this.closingProcesses.set(child, killTimer);
+    try { child.kill?.("SIGTERM"); } catch {}
   }
 }
 
@@ -258,4 +345,6 @@ module.exports = {
   buildCodexAppServerLaunch,
   DEFAULT_REQUEST_TIMEOUT_MS,
   INITIALIZE_TIMEOUT_MS,
+  CLOSE_KILL_GRACE_MS,
+  MAX_JSONL_LINE_BYTES,
 };

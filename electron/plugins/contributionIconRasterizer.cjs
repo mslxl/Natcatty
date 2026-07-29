@@ -10,7 +10,6 @@ function withTimeout(promise, timeoutMs, message) {
     promise,
     new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error(message)), timeoutMs);
-      timer.unref?.();
     }),
   ]).finally(() => clearTimeout(timer));
 }

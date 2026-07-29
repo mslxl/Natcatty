@@ -6,6 +6,8 @@ import type { AcquireTransferSessionFn } from "./transferDirectoryOps";
 export interface UseSftpTransfersParams {
   ownerId: string;
   canPrepareAdoption?: boolean;
+  /** False when SFTP side panel is retained-but-hidden after close. */
+  surfaceVisible?: boolean;
   getActivePane: (side: "left" | "right") => SftpPane | null;
   getPaneByConnectionId: (connectionId: string) => SftpPane | null;
   getTabByConnectionId: (connectionId: string) => { side: "left" | "right"; tabId: string; pane: SftpPane } | null;
@@ -49,8 +51,6 @@ export interface UseSftpTransfersResult {
     isDirectory: boolean;
     totalBytes?: number;
   }) => Promise<TransferStatus>;
-  addExternalUpload: (task: TransferTask) => void;
-  updateExternalUpload: (taskId: string, updates: Partial<TransferTask>) => void;
   cancelTransfer: (transferId: string) => Promise<void>;
   pauseTransfer: (transferId: string) => Promise<void>;
   resumeTransfer: (transferId: string) => Promise<void>;

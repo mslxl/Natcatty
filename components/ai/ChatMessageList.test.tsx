@@ -8,6 +8,7 @@ import type { ChatMessage } from "../../infrastructure/ai/types.ts";
 import type { ApprovalRequest } from "../../infrastructure/ai/shared/approvalGate.ts";
 import ChatMessageList, {
   buildCodexApprovalRenderPlan,
+  pruneResolvedApprovals,
   shouldProvideVaultArtifactNavigation,
 } from "./ChatMessageList.tsx";
 import { TooltipProvider } from "../ui/tooltip.tsx";
@@ -17,6 +18,22 @@ const makeMessage = (index: number): ChatMessage => ({
   role: index % 2 === 0 ? "user" : "assistant",
   content: `message-${index}`,
   timestamp: index,
+});
+
+test("resolved approval state retains only tool calls still present in messages", () => {
+  const previous = new Map<string, boolean>();
+  for (let index = 0; index < 1_000; index += 1) previous.set(`old-${index}`, true);
+  previous.set("live-call", false);
+  const messages: ChatMessage[] = [{
+    id: "assistant-live",
+    role: "assistant",
+    content: "",
+    timestamp: 1,
+    toolCalls: [{ id: "live-call", name: "terminal_execute", arguments: {} }],
+  }];
+
+  const next = pruneResolvedApprovals(previous, messages);
+  assert.deepEqual([...next], [["live-call", false]]);
 });
 
 test("ChatMessageList only renders the recent message batch by default", () => {
