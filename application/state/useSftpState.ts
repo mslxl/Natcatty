@@ -179,6 +179,22 @@ export const useSftpState = (
     return null;
   }, [leftTabsRef, rightTabsRef]);
 
+  const getTabByHostId = useCallback((hostId: string) => {
+    for (const tab of leftTabsRef.current.tabs) {
+      const connection = tab.connection;
+      if (connection && !connection.isLocal && connection.hostId === hostId) {
+        return { side: "left" as const, tabId: tab.id, pane: tab };
+      }
+    }
+    for (const tab of rightTabsRef.current.tabs) {
+      const connection = tab.connection;
+      if (connection && !connection.isLocal && connection.hostId === hostId) {
+        return { side: "right" as const, tabId: tab.id, pane: tab };
+      }
+    }
+    return null;
+  }, [leftTabsRef, rightTabsRef]);
+
   // Ref to track pending reconnections to avoid multiple reconnect attempts
   const reconnectingRef = useRef<{ left: boolean; right: boolean }>({
     left: false,
@@ -574,6 +590,8 @@ export const useSftpState = (
     getActivePane,
     getPaneByConnectionId,
     getPaneByTabId,
+    getTabByConnectionId,
+    getTabByHostId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,

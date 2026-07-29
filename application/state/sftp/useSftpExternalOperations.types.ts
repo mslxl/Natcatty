@@ -10,6 +10,16 @@ export interface UseSftpExternalOperationsParams {
   getActivePane: (side: "left" | "right") => SftpPane | null;
   getPaneByConnectionId: (connectionId: string) => SftpPane | null;
   getPaneByTabId: (tabId: string) => SftpPane | null;
+  getTabByConnectionId?: (connectionId: string) => {
+    side: "left" | "right";
+    tabId: string;
+    pane: SftpPane;
+  } | null;
+  getTabByHostId?: (hostId: string) => {
+    side: "left" | "right";
+    tabId: string;
+    pane: SftpPane;
+  } | null;
   getSideByTabId?: (tabId: string) => "left" | "right" | null;
   refresh: (side: "left" | "right", options?: { tabId?: string }) => Promise<void>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;

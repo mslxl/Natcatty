@@ -22,7 +22,7 @@ import {
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import {
   editorTabStore,
-  useHasEditorTabForSessions,
+  useEditorTabs,
 } from "../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator } from "../application/state/editorTabSave";
 import { useSftpBackend } from "../application/state/useSftpBackend";
@@ -193,11 +193,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }), [t]);
 
   const ownedEditorSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
-  const getOwnedEditorSessionIds = useCallback(
-    () => ownedEditorSessionIdsRef.current,
-    [],
+  // Subscribe for tab open/close, but read the store synchronously on each
+  // render. useSyncExternalStore defers promote notifications to a microtask,
+  // which can park browse sessions before hasOwnedEditorTab flips true.
+  useEditorTabs();
+  const hasOwnedEditorTab = editorTabStore.hasTabForSessions(
+    ownedEditorSessionIdsRef.current,
   );
-  const hasOwnedEditorTab = useHasEditorTabForSessions(getOwnedEditorSessionIds);
 
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,

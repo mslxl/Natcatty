@@ -76,6 +76,8 @@ export const useSftpExternalOperations = (
     getActivePane,
     getPaneByConnectionId,
     getPaneByTabId,
+    getTabByConnectionId,
+    getTabByHostId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,
@@ -284,7 +286,16 @@ export const useSftpExternalOperations = (
       content: string,
       filenameEncoding?: SftpFilenameEncoding,
     ): Promise<void> => {
-      const pane = getPaneByConnectionId(connectionId);
+      let tabRef = getTabByConnectionId?.(connectionId) ?? null;
+      let pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
+
+      // Promoted editors keep the connection id from promote time; browse
+      // restore/reconnect may regenerate it while the host stays the same.
+      if (!pane?.connection && getTabByHostId) {
+        tabRef = getTabByHostId(expectedHostId);
+        pane = tabRef?.pane ?? null;
+      }
+
       if (!pane?.connection) {
         throw new Error("SFTP connection is no longer available");
       }
@@ -300,7 +311,17 @@ export const useSftpExternalOperations = (
         return;
       }
 
-      const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+      const liveConnectionId = pane.connection.id;
+      const tabId = tabRef?.tabId ?? pane.id;
+      const side = tabRef?.side ?? getSideByTabId?.(tabId) ?? null;
+
+      let sftpId = sftpSessionsRef.current.get(liveConnectionId);
+      if (!sftpId && ensureRemoteSftpId && side) {
+        sftpId = await ensureRemoteSftpId(side, {
+          connectionId: liveConnectionId,
+          tabId,
+        });
+      }
       if (!sftpId) throw new Error("SFTP session not found");
 
       const bridge = netcattyBridge.get();
@@ -308,7 +329,14 @@ export const useSftpExternalOperations = (
 
       await bridge.writeSftp(sftpId, filePath, content, filenameEncoding ?? pane.filenameEncoding);
     },
-    [getPaneByConnectionId, sftpSessionsRef],
+    [
+      ensureRemoteSftpId,
+      getPaneByConnectionId,
+      getSideByTabId,
+      getTabByConnectionId,
+      getTabByHostId,
+      sftpSessionsRef,
+    ],
   );
 
   const downloadToTemp = useCallback(

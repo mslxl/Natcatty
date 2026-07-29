@@ -154,6 +154,7 @@ test("terminal side panel reports transfer activity and uses store-backed retain
   assert.doesNotMatch(panelSource, /useEffect\(\(\) => \(\) => \{\s*onActiveTransfersChange\?\.\(0\);\s*\}, \[onActiveTransfersChange\]\)/);
   assert.match(panelSource, /interactive:\s*isBrowseSessionInteractive\(\{/);
   assert.match(panelSource, /surfaceVisible:\s*isVisible/);
+  assert.match(panelSource, /useEditorTabs\(\)/);
   assert.match(panelSource, /hasOwnedEditorTab/);
   assert.match(slotsSource, /onActiveTransfersChange=\{handleActiveTransfersChange\}/);
   assert.match(layerSource, /resolveTabActiveTransfersCount/);
