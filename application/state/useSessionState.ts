@@ -115,10 +115,14 @@ export function insertCopiedTabOrderIdOnce(
     return next;
   }
 
-  const allTabIdSet = new Set(allTabIds);
+  // allTabIds should only ever list pre-existing tabs; defensively strip the
+  // copied id in case a caller's list includes it, so it isn't reconciled in
+  // twice (once via newIds, once via the explicit splice below).
+  const existingTabIds = allTabIds.filter(id => id !== copiedTabId);
+  const allTabIdSet = new Set(existingTabIds);
   const orderedIds = prevTabOrder.filter(id => allTabIdSet.has(id));
   const orderedIdSet = new Set(orderedIds);
-  const newIds = allTabIds.filter(id => !orderedIdSet.has(id));
+  const newIds = existingTabIds.filter(id => !orderedIdSet.has(id));
   const currentOrder = [...orderedIds, ...newIds];
   const sourceIdx = currentOrder.indexOf(sourceTabId);
   if (sourceIdx === -1) return [...prevTabOrder, copiedTabId];
@@ -1036,6 +1040,48 @@ export const useSessionState = ({
     });
   }, [orphanSessions, workspaces, logViews, setActiveTabId]);
 
+  // Copy a whole workspace (split/focus tab): clone every pane's session and
+  // reproduce the layout tree in a new tab.
+  const copyWorkspace = useCallback((workspaceId: string, options?: {
+    localShellType?: TerminalSession['shellType'];
+    perPaneCwd?: Record<string, string | undefined>;
+  }) => {
+    const sourceWorkspace = workspaces.find(w => w.id === workspaceId);
+    if (!sourceWorkspace) return;
+
+    // Pre-mint the new workspace id and the old->new session-id map OUTSIDE the
+    // updater so StrictMode's double-invocation does not mint two sets of ids.
+    const newWorkspaceId = `ws-${crypto.randomUUID()}`;
+    const sessionIdMap = new Map<string, string>(
+      collectSessionIds(sourceWorkspace.root).map(id => [id, crypto.randomUUID()]),
+    );
+
+    setSessions(prevSessions => {
+      const built = buildCopiedWorkspace(sourceWorkspace, prevSessions, {
+        newWorkspaceId,
+        sessionIdMap,
+        localShellType: options?.localShellType,
+        perPaneCwd: options?.perPaneCwd,
+      });
+      // Every source pane was closed between click and update — skip cleanly.
+      if (!built) return prevSessions;
+
+      // Nested idempotent setStates (mirrors copySession's pattern).
+      setWorkspaces(prev => addWorkspaceIfMissing(prev, built.newWorkspace));
+      setActiveTabId(newWorkspaceId);
+      setTabOrder(prevTabOrder => {
+        const allTabIds = [
+          ...orphanSessions.map(s => s.id),
+          ...workspaces.map(w => w.id),
+          ...logViews.map(lv => lv.id),
+        ];
+        return insertCopiedTabOrderIdOnce(prevTabOrder, workspaceId, newWorkspaceId, allTabIds);
+      });
+
+      return [...prevSessions, ...built.newSessions];
+    });
+  }, [workspaces, orphanSessions, logViews, setActiveTabId]);
+
   const createSessionFromCloneSource = useCallback((sourceSession: TerminalSession, options?: {
     localShellType?: TerminalSession['shellType'];
   }) => {
@@ -1208,6 +1254,7 @@ export const useSessionState = ({
     closeLogView,
     // Copy session
     copySession,
+    copyWorkspace,
     createSessionFromCloneSource,
     updateSessionRestoreCwd,
     getSessionRestoreCwd,
