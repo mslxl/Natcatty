@@ -2,8 +2,6 @@
 import React from "react";
 import { HostNotesIndicator } from "../host/HostNotesIndicator";
 import {
-  getNextVirtualHostIndex,
-  getVaultHostColumnCount,
   VirtualizedGroupedHostCollection,
   VirtualizedHostCollection,
 } from "./VirtualizedHostCollection";
@@ -52,7 +50,7 @@ const isRelatedTargetInside = (
 };
 
 export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext }) {
-  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, splitViewGridStyle, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
+  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
   const hostClickBehavior: HostClickBehavior = hostClickBehaviorProp === 'select' ? 'select' : 'connect';
   const multiSelectedGroupPaths: Set<string> = selectedGroupPaths ?? new Set();
   const [draggingHostId, setDraggingHostId] = React.useState<string | null>(null);
@@ -576,15 +574,17 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                         <Clock size={14} className="shrink-0 -translate-y-[1px]" />
                         {t("vault.hosts.recentlyConnected")}
                       </h3>
-                      <div className={cn(
-                        viewMode === "grid"
-                          ? cn(
-                            "grid gap-3",
-                          )
-                          : "flex flex-col gap-0",
-                      )}
-                      style={viewMode === "grid" ? splitViewGridStyle : undefined}>
-                        {recentHosts.map((host) => {
+                      <VirtualizedHostCollection<Host>
+                        items={recentHosts}
+                        itemKey={(host) => host.id}
+                        scrollRef={hostListScrollRef}
+                        viewMode={viewMode}
+                        layoutKey={`recent:${hostCollectionLayoutKey}`}
+                        ariaLabel={t("vault.hosts.recentlyConnected")}
+                        onActiveItemChange={focusHost}
+                        activeItemKey={focusedHostId}
+                        onBoundaryNavigation={(direction) => navigateHostSection("recent", direction)}
+                        renderItem={(host) => {
                           const safeHost = sanitizeHost(host);
                           const effectiveDistro = getEffectiveHostDistro(safeHost);
                           const distroBadge = {
@@ -623,35 +623,9 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     activateHost(safeHost);
                                   }}
                                   onKeyDown={(event) => {
-                                    if (event.key === "Enter" || event.key === " ") {
-                                      event.preventDefault();
-                                      activateHost(safeHost);
-                                      return;
-                                    }
-                                    const index = recentHosts.findIndex((item) => item.id === host.id);
-                                    const nextIndex = getNextVirtualHostIndex({
-                                      currentIndex: index,
-                                      itemCount: recentHosts.length,
-                                      columns: getVaultHostColumnCount(
-                                        hostListScrollRef.current?.clientWidth ?? 0,
-                                        viewMode,
-                                      ),
-                                      viewMode,
-                                      key: event.key,
-                                    });
-                                    if (nextIndex === null) return;
+                                    if (event.key !== "Enter" && event.key !== " ") return;
                                     event.preventDefault();
-                                    const nextHost = recentHosts[nextIndex];
-                                    if (nextIndex !== index && nextHost) {
-                                      focusHostAndElement(nextHost);
-                                      return;
-                                    }
-                                    const direction = event.key === "ArrowUp" || event.key === "ArrowLeft"
-                                      ? "previous"
-                                      : event.key === "ArrowDown" || event.key === "ArrowRight"
-                                        ? "next"
-                                        : null;
-                                    if (direction) navigateHostSection("recent", direction);
+                                    activateHost(safeHost);
                                   }}
                                 >
                                   <div className="flex items-center gap-3 h-full">
@@ -703,8 +677,8 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                               </ContextMenuContent>
                             </ContextMenu>
                           );
-                        })}
-                      </div>
+                        }}
+                      />
                     </section>
                   )}
                   {viewMode !== "tree" && displayedGroups.length > 0 && (
