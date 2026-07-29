@@ -8,6 +8,7 @@ import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
 import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
+import { captureInheritedCwd } from "../state/inheritedCwd";
 
 type AppContextGetter = () => Record<string, any>;
 const TERMINAL_PASSTHROUGH_ACTIONS = getTerminalPassthroughActions();
@@ -460,24 +461,36 @@ export function createLocalTerminalWithCurrentShellImpl(getCtx: AppContextGetter
   }
 }
 
-export function splitSessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string, direction: 'horizontal' | 'vertical') {
-  const { classifyLocalShellType, discoveredShells, resolveShellSetting, splitSession, terminalSettings } = getCtx();
-{
-    const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
-    return splitSession(sessionId, direction, {
-      localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, navigator.userAgent),
-    });
-  }
+async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: string): Promise<string | undefined> {
+  const { sessions, netcattyBridge } = getCtx();
+  const source = sessions?.find((s: { id: string }) => s.id === sessionId);
+  if (!source) return undefined;
+  const bridge = netcattyBridge?.get?.();
+  const probe = async (id: string, options?: { allowHomeFallback?: boolean }) =>
+    (await bridge?.getSessionPwd?.(id, options)) ?? { success: false };
+  return captureInheritedCwd(source, probe);
 }
 
-export function copySessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
+export async function splitSessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string, direction: 'horizontal' | 'vertical') {
+  const { classifyLocalShellType, discoveredShells, resolveShellSetting, splitSession, terminalSettings } = getCtx();
+  const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+  const inheritedCwd = await captureCtxInheritedCwd(getCtx, sessionId);
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return splitSession(sessionId, direction, {
+    localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+    inheritedCwd,
+  });
+}
+
+export async function copySessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
   const { classifyLocalShellType, copySession, discoveredShells, resolveShellSetting, terminalSettings } = getCtx();
-{
-    const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
-    return copySession(sessionId, {
-      localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, navigator.userAgent),
-    });
-  }
+  const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+  const inheritedCwd = await captureCtxInheritedCwd(getCtx, sessionId);
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return copySession(sessionId, {
+    localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+    inheritedCwd,
+  });
 }
 
 export async function copySessionToNewWindowWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
