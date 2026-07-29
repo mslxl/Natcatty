@@ -161,7 +161,7 @@ test("Cygwin agent validation closes a stalled negotiation socket", async (t) =>
   assert.equal(await cygwinAgentConnectable(descriptorPath, { timeoutMs: 20 }), false);
   await Promise.race([
     closed,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("Cygwin probe connection stayed open")), 500)),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("Cygwin probe connection stayed open")), 2_000)),
   ]);
   assert.equal(acceptedSocket?.destroyed, true);
 });

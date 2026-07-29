@@ -18,11 +18,10 @@ import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef }
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { useSftpState } from "../application/state/useSftpState";
-import { useSettingsState } from "../application/state/useSettingsState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
-import { listSftpConnectedHosts, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
@@ -100,7 +99,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
-  const { sftpTransferPoolIdleTtlMs } = useSettingsState();
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogActionScopeIdRef = useRef("sftp-main-view");
@@ -118,14 +116,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     },
   }), [t]);
 
-  const connectedHostsForOptions = useMemo(() => {
-    const hostsById = new Map<string, Host>(hosts.map((host) => [host.id, host]));
-    return listSftpConnectedHosts(sessions, hostsById);
+  const resolveTransferSourceSessionId = useCallback((hostId: string, host?: Host) => {
+    const hostsById = new Map<string, Host>(hosts.map((h) => [h.id, h]));
+    // Walk all sessions (not the picker one-per-hostId list) so multi-tab
+    // same hostId with different live endpoints can still match.
+    return resolveSftpTransferSourceSessionId(sessions, hostsById, hostId, host);
   }, [hosts, sessions]);
-
-  const resolveTransferSourceSessionId = useCallback((hostId: string) => {
-    return connectedHostsForOptions.find((entry) => entry.host.id === hostId)?.sessionId;
-  }, [connectedHostsForOptions]);
 
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
@@ -141,7 +137,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    transferPoolIdleTtlMs: sftpTransferPoolIdleTtlMs,
   }), [
     fileWatchHandlers,
     sftpUseCompressedUpload,
@@ -150,7 +145,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
-    sftpTransferPoolIdleTtlMs,
   ]);
 
   // Pre-resolve group defaults so SFTP connections inherit group config
@@ -179,7 +173,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const {
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     listSftp,
     mkdirLocal,
     deleteLocalFile,
@@ -314,7 +307,6 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     deleteLocalFile,
     showSaveDialog,
     selectDirectory,
-    startStreamTransfer,
     getSftpIdForConnection: sftp.getSftpIdForConnection,
     listLocalFiles: listLocalDir,
     listDrives,

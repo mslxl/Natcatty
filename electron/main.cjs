@@ -1295,6 +1295,13 @@ if (!gotLock) {
       console.warn("Error during terminal cleanup:", err);
     }
     try {
+      // End parked SSH transports that outlived their last tab/tunnel lease.
+      const { discardAllTransports } = require("./bridges/sshConnectionPool.cjs");
+      discardAllTransports("app-quit");
+    } catch (err) {
+      console.warn("Error during SSH transport cleanup:", err);
+    }
+    try {
       portForwardingBridge.stopAllPortForwards();
     } catch (err) {
       console.warn("Error during port forwarding cleanup:", err);

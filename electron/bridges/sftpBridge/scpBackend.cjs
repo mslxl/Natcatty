@@ -11,6 +11,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { executeBoundedSshCommand, terminateSshExecStream } = require("../boundedSshExec.cjs");
+const { invalidateSshTransport } = require("../sshTransportInvalidation.cjs");
 const {
   buildFileControlLine,
   buildAck,
@@ -327,6 +329,7 @@ function createScpBackend(deps = {}) {
       onProgress: null,
       encoding: options.encoding || "utf-8",
       signal: options.signal || null,
+      maxBytes: options.maxBytes,
     });
     return Buffer.concat(chunks);
   }
@@ -610,6 +613,7 @@ function createScpBackend(deps = {}) {
     onProgress,
     encoding = "utf-8",
     signal = null,
+    maxBytes = null,
   } = {}) {
     assertSafeRemotePath(remotePath);
     const command = buildScpSourceCommand(remotePath, encoding);
@@ -635,6 +639,17 @@ function createScpBackend(deps = {}) {
     let transferred = 0;
     let expectedSize = fileSize;
     let gotFile = false;
+    const readLimit = Number.isSafeInteger(maxBytes) && maxBytes >= 0 ? maxBytes : null;
+    const createReadLimitError = (actualBytes) => {
+      const error = new Error(
+        `Remote file is too large to read into memory (${actualBytes} bytes; maximum ${readLimit} bytes). `
+        + "Use SFTP download for large files.",
+      );
+      error.code = "SFTP_READ_TOO_LARGE";
+      error.maxBytes = readLimit;
+      error.actualBytes = actualBytes;
+      return error;
+    };
 
     await new Promise((resolve, reject) => {
       let settled = false;
@@ -670,8 +685,18 @@ function createScpBackend(deps = {}) {
                 if (ev.type === "file-start") {
                   gotFile = true;
                   expectedSize = ev.size;
+                  if (readLimit != null && ev.size > readLimit) {
+                    finish(createReadLimitError(ev.size));
+                    abort();
+                    return;
+                  }
                   stream.write(buildAck());
                 } else if (ev.type === "file-data") {
+                  if (readLimit != null && transferred + ev.data.length > readLimit) {
+                    finish(createReadLimitError(transferred + ev.data.length));
+                    abort();
+                    return;
+                  }
                   const canContinue = writable.write(ev.data);
                   transferred += ev.data.length;
                   if (typeof onProgress === "function") {
@@ -972,54 +997,11 @@ function createScpBackend(deps = {}) {
  */
 function createSshExecAdapters(sshClient) {
   function exec(command, options = {}) {
-    const signal = options.signal || null;
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) {
-        reject(new Error("Transfer cancelled"));
-        return;
-      }
-      let settled = false;
-      let streamRef = null;
-      const cleanup = () => {
-        if (signal) {
-          try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
-        }
-      };
-      const finish = (fn, value) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        fn(value);
-      };
-      const onAbort = () => {
-        try { streamRef?.close?.(); } catch { /* ignore */ }
-        try { streamRef?.destroy?.(); } catch { /* ignore */ }
-        finish(reject, new Error("Transfer cancelled"));
-      };
-      if (signal) {
-        signal.addEventListener("abort", onAbort, { once: true });
-      }
-      try {
-        sshClient.exec(command, (err, stream) => {
-          if (err) {
-            finish(reject, err);
-            return;
-          }
-          if (settled) {
-            try { stream.close?.(); } catch { /* ignore */ }
-            return;
-          }
-          streamRef = stream;
-          let stdout = "";
-          let stderr = "";
-          stream.on("data", (d) => { stdout += d.toString(); });
-          stream.stderr?.on("data", (d) => { stderr += d.toString(); });
-          stream.on("close", (code) => finish(resolve, { stdout, stderr, code }));
-          stream.on("error", (streamErr) => finish(reject, streamErr));
-        });
-      } catch (err) {
-        finish(reject, err);
-      }
+    return executeBoundedSshCommand(sshClient, command, {
+      signal: options.signal || null,
+      openingTimeoutMs: options.openingTimeoutMs,
+      runTimeoutMs: options.runTimeoutMs,
+      maxOutputBytes: options.maxOutputBytes,
     });
   }
 
@@ -1032,6 +1014,7 @@ function createSshExecAdapters(sshClient) {
       }
       let settled = false;
       let streamRef = null;
+      let openingTimer = null;
       let abortCleaned = false;
       const cleanupAbort = () => {
         if (abortCleaned || !signal) return;
@@ -1040,6 +1023,8 @@ function createSshExecAdapters(sshClient) {
         if (streamRef?.__netcattyCleanupAbort === cleanupAbort) {
           delete streamRef.__netcattyCleanupAbort;
         }
+        if (openingTimer) clearTimeout(openingTimer);
+        openingTimer = null;
       };
       const onAbort = () => {
         try { streamRef?.close?.(); } catch { /* ignore */ }
@@ -1048,6 +1033,7 @@ function createSshExecAdapters(sshClient) {
         if (!settled) {
           settled = true;
           reject(new Error("Transfer cancelled"));
+          if (!streamRef) invalidateSshTransport(sshClient);
         }
       };
       if (signal) {
@@ -1057,8 +1043,19 @@ function createSshExecAdapters(sshClient) {
           return;
         }
       }
+      openingTimer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanupAbort();
+        terminateSshExecStream(streamRef);
+        reject(new Error("SSH exec channel open timed out after 15000 ms"));
+        invalidateSshTransport(sshClient);
+      }, 15_000);
+      openingTimer.unref?.();
       try {
         sshClient.exec(command, (err, stream) => {
+          if (openingTimer) clearTimeout(openingTimer);
+          openingTimer = null;
           if (settled) {
             try { stream?.close?.(); } catch { /* ignore */ }
             try { stream?.destroy?.(); } catch { /* ignore */ }
@@ -1139,51 +1136,13 @@ function getScpBackendForClient(client) {
   };
   // Wrap base.exec so shell list/stat/mkdir streams are also abortable on closeSftp.
   const trackedExec = (command, options = {}) => new Promise((resolve, reject) => {
-    const signal = options.signal || null;
-    if (signal?.aborted) {
-      reject(new Error("Transfer cancelled"));
-      return;
-    }
-    let settled = false;
-    let streamRef = null;
-    const cleanup = () => {
-      if (streamRef) {
-        try { client.__netcattyScpActiveStreams.delete(streamRef); } catch { /* ignore */ }
-      }
-      if (signal) {
-        try { signal.removeEventListener("abort", onAbort); } catch { /* ignore */ }
-      }
-    };
-    const finish = (fn, value) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      fn(value);
-    };
-    const onAbort = () => {
-      try { streamRef?.close?.(); } catch { /* ignore */ }
-      try { streamRef?.destroy?.(); } catch { /* ignore */ }
-      finish(reject, new Error("Transfer cancelled"));
-    };
-    if (signal) signal.addEventListener("abort", onAbort, { once: true });
-    sshClient.exec(command, (err, stream) => {
-      if (err) {
-        finish(reject, err);
-        return;
-      }
-      if (settled) {
-        try { stream.close?.(); } catch { /* ignore */ }
-        return;
-      }
-      streamRef = stream;
-      track(stream);
-      let stdout = "";
-      let stderr = "";
-      stream.on("data", (d) => { stdout += d.toString(); });
-      stream.stderr?.on("data", (d) => { stderr += d.toString(); });
-      stream.on("close", (code) => finish(resolve, { stdout, stderr, code }));
-      stream.on("error", (streamErr) => finish(reject, streamErr));
-    });
+    executeBoundedSshCommand(sshClient, command, {
+      signal: options.signal || null,
+      openingTimeoutMs: options.openingTimeoutMs,
+      runTimeoutMs: options.runTimeoutMs,
+      maxOutputBytes: options.maxOutputBytes,
+      onStream: track,
+    }).then(resolve, reject);
   });
   const adapters = {
     exec: trackedExec,

@@ -297,7 +297,6 @@ class CompanionRpcPeer {
         this.#retireResponseId(key);
         reject(new PluginRpcError(RPC_ERRORS.deadlineExceeded, `Companion request timed out: ${method}`));
       }, timeoutMs);
-      timer.unref?.();
       this.pending.set(key, { resolve, reject, timer });
       try {
         this.#send({ jsonrpc: "2.0", id, method, ...(params === undefined ? {} : { params }) });

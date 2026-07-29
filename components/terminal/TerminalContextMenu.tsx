@@ -168,6 +168,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   onDetach,
 }) => {
   const { t } = useI18n();
+  const [menuOpen, setMenuOpen] = useState(false);
   const terminalContext = buildTerminalPluginContributionContext({
     surface: 'terminal/context',
     sessionId,
@@ -179,7 +180,10 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
     alternateScreen: isAlternateScreen,
     reconnectable: Boolean(isReconnectable),
   });
-  const pluginContributions = usePluginContributions({ context: terminalContext });
+  const pluginContributions = usePluginContributions(
+    { context: terminalContext },
+    { enabled: menuOpen },
+  );
   const pluginMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
     .filter((menu) => menu.location === 'terminal/context' && menu.visible)
     .sort(comparePluginMenus);
@@ -191,6 +195,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   const [allowSuppressedMenuContent, setAllowSuppressedMenuContent] = useState(false);
 
   const handleOpenChange = useCallback((open: boolean) => {
+    setMenuOpen(open);
     if (!open) {
       markedPaneRef.current?.removeAttribute('data-menu-open');
       markedPaneRef.current = null;

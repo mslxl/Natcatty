@@ -97,7 +97,7 @@ export const useSftpViewTabs = ({ sftp, sftpRef, hosts = [] }: UseSftpViewTabsPa
       const ok = await confirmCloseEditorTabsByConnection(connectionId);
       if (!ok) return;
     }
-    sftpRef.current.closeTab(side, tabId);
+    await sftpRef.current.closeTab(side, tabId);
   }, [confirmCloseEditorTabsByConnection, sftpRef]);
 
   const handleCloseTabLeft = useCallback((tabId: string) => (

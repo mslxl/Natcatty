@@ -6,21 +6,21 @@ const {
   PLUGIN_UTILITY_TERMINATION_GRACE_MS,
 } = require("./constants.cjs");
 
-let shutdownHandler = null;
+const shutdownHandlers = new Set();
 let shutdownPromise = null;
 
 function registerPluginShutdown(handler) {
   if (typeof handler !== "function") throw new TypeError("Plugin shutdown handler must be a function");
-  shutdownHandler = handler;
+  shutdownHandlers.add(handler);
   shutdownPromise = null;
   return () => {
-    if (shutdownHandler === handler) shutdownHandler = null;
+    shutdownHandlers.delete(handler);
   };
 }
 
 function runPluginShutdown(options = {}) {
   if (shutdownPromise) return shutdownPromise;
-  if (!shutdownHandler) return Promise.resolve({ timedOut: false });
+  if (shutdownHandlers.size === 0) return Promise.resolve({ timedOut: false });
   const timeoutMs = options.timeoutMs
     ?? PLUGIN_DEACTIVATION_TIMEOUT_MS
       + PLUGIN_UTILITY_TERMINATION_GRACE_MS
@@ -31,14 +31,19 @@ function runPluginShutdown(options = {}) {
     timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
   });
   shutdownPromise = Promise.race([
-    Promise.resolve().then(shutdownHandler).then(() => ({ timedOut: false })),
+    Promise.allSettled([...shutdownHandlers].map((handler) => Promise.resolve().then(handler)))
+      .then((results) => {
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
+        return { timedOut: false };
+      }),
     timeout,
   ]).finally(() => clearTimeout(timer));
   return shutdownPromise;
 }
 
 function resetPluginShutdownForTests() {
-  shutdownHandler = null;
+  shutdownHandlers.clear();
   shutdownPromise = null;
 }
 

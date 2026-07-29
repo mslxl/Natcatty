@@ -1,5 +1,5 @@
 import type React from "react";
-import type { FileConflict, FileConflictAction, Host, TransferTask, SftpFilenameEncoding } from "../../../domain/models";
+import type { FileConflict, FileConflictAction, Host, SftpFilenameEncoding } from "../../../domain/models";
 import type { UploadResult } from "../../../lib/uploadService";
 import type { DropEntry } from "../../../lib/sftpFileUtils";
 import type { SftpPane } from "./types";
@@ -39,10 +39,7 @@ export interface UseSftpExternalOperationsParams {
   ) => Promise<{ sftpId: string; release: () => void; discard: () => void }>;
   clearDirCacheEntry?: (connectionId: string, path: string) => void;
   useCompressedUpload?: boolean;
-  addExternalUpload?: (task: TransferTask) => void;
-  updateExternalUpload?: (taskId: string, updates: Partial<TransferTask>) => void;
   isTransferCancelled?: (taskId: string) => boolean;
-  dismissExternalUpload?: (taskId: string) => void;
 }
 
 export interface SftpExternalOperationsResult {
@@ -65,6 +62,7 @@ export interface SftpExternalOperationsResult {
   ) => Promise<{ localTempPath: string; watchId?: string }>;
   openWithSystemDefault: (side: "left" | "right", remotePath: string, fileName: string, options?: { enableWatch?: boolean }) => Promise<void>;
   activeFileWatchCountRef: React.MutableRefObject<number>;
+  releaseExternalFileWatches: (cleanupTempFiles?: boolean) => Promise<void>;
   uploadExternalFiles: (
     side: "left" | "right",
     dataTransfer: DataTransfer,

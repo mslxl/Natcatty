@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 
 import {
   buildSftpHostCredentials,
-  buildSftpReuseCredentials,
 } from "./useSftpHostCredentials.ts";
 import type { Host, Identity, KnownHost, SSHKey } from "../../../domain/models.ts";
 
@@ -15,31 +14,6 @@ const host = (overrides: Partial<Host> = {}): Host => ({
   tags: [],
   os: "linux",
   ...overrides,
-});
-
-test("buildSftpReuseCredentials only needs the live endpoint and sourceSessionId", () => {
-  const credentials = buildSftpReuseCredentials(
-    host({ hostname: "live.example.com", username: "alice", port: 2222 }),
-    "session-live",
-  );
-
-  assert.deepEqual(credentials, {
-    hostname: "live.example.com",
-    username: "alice",
-    port: 2222,
-    sourceSessionId: "session-live",
-    reuseOnly: true,
-    sudo: false,
-    fileProtocol: "auto",
-  });
-});
-
-test("buildSftpReuseCredentials forwards host file protocol preference", () => {
-  const credentials = buildSftpReuseCredentials(
-    host({ hostname: "nas.example.com", username: "root", port: 22, sftpFileProtocol: "scp" }),
-    "session-nas",
-  );
-  assert.equal(credentials.fileProtocol, "scp");
 });
 
 test("buildSftpHostCredentials forwards system agent settings for target and jump hosts", () => {

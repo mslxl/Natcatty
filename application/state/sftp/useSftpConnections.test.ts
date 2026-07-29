@@ -5,11 +5,21 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  createSftpConnectionId,
   createPinnedReconnectSideResolver,
+  openSftpConnectionOnce,
   openSftpWithSessionPreference,
   rejectHostKeyVerificationRequest,
+  takeSftpConnectionMetadataForClose,
+  releaseSftpConnectionMetadata,
   resolvePinnedReconnectSide,
 } from "./useSftpConnections.ts";
+
+test("connection ids stay unique even when connects start in the same millisecond", () => {
+  const ids = ["uuid-a", "uuid-b"];
+  assert.equal(createSftpConnectionId("left", () => ids.shift()!), "left-uuid-a");
+  assert.equal(createSftpConnectionId("left", () => ids.shift()!), "left-uuid-b");
+});
 
 const openOptions = {
   sessionId: "sftp-request-1",
@@ -20,10 +30,12 @@ const openOptions = {
 
 test("openSftpWithSessionPreference opens session-backed SFTP before authing again", async () => {
   const calls: string[] = [];
+  let expectedEndpoint: NetcattySSHOptions | undefined;
   const sftpId = await openSftpWithSessionPreference({
     bridge: {
-      openSftpForSession: async (sessionId: string) => {
+      openSftpForSession: async (sessionId: string, endpoint?: NetcattySSHOptions) => {
         calls.push(`openForSession:${sessionId}`);
+        expectedEndpoint = endpoint;
         return "session-backed-sftp";
       },
       openSftp: async () => {
@@ -37,6 +49,7 @@ test("openSftpWithSessionPreference opens session-backed SFTP before authing aga
 
   assert.equal(sftpId, "session-backed-sftp");
   assert.deepEqual(calls, ["openForSession:ssh-session-1"]);
+  assert.equal(expectedEndpoint, openOptions);
 });
 
 test("openSftpWithSessionPreference falls back to normal SFTP when session reuse fails", async () => {
@@ -79,6 +92,69 @@ test("openSftpWithSessionPreference opens normal SFTP without a source session",
 
   assert.equal(sftpId, "fresh-sftp");
   assert.deepEqual(calls, ["openSftp:sftp-request-1"]);
+});
+
+test("one connect attempt never repeats a failed fresh SFTP dial after reuse fails", async () => {
+  const calls: string[] = [];
+  await assert.rejects(
+    openSftpConnectionOnce({
+      bridge: {
+        openSftpForSession: async () => {
+          calls.push("openForSession");
+          throw new Error("shared channel unavailable");
+        },
+        openSftp: async () => {
+          calls.push("openSftp");
+          throw new Error("authentication failed");
+        },
+      },
+      sourceSessionId: "ssh-session-1",
+      openOptions,
+    }),
+    /authentication failed/,
+  );
+
+  assert.deepEqual(calls, ["openForSession", "openSftp"]);
+});
+
+test("closing connections releases their session and cache-key metadata", () => {
+  const sessions = new Map<string, string>();
+  const cacheKeys = new Map<string, string>();
+  const cleared: string[] = [];
+  for (let index = 0; index < 1_000; index += 1) {
+    const connectionId = `connection-${index}`;
+    sessions.set(connectionId, `sftp-${index}`);
+    cacheKeys.set(connectionId, `endpoint-${index}`);
+    assert.equal(takeSftpConnectionMetadataForClose({
+      connectionId,
+      sftpSessions: sessions,
+      connectionCacheKeys: cacheKeys,
+      clearCacheForConnection: (id) => { cleared.push(id); },
+    }), `sftp-${index}`);
+  }
+  assert.equal(sessions.size, 0);
+  assert.equal(cacheKeys.size, 0);
+  assert.equal(cleared.length, 1_000);
+});
+
+test("release metadata closes the backend before a failed connection is retained as an error", async () => {
+  const sessions = new Map([["connection-1", "sftp-1"]]);
+  const cacheKeys = new Map([["connection-1", "endpoint-1"]]);
+  const closed: string[] = [];
+  const cleared: string[] = [];
+
+  await releaseSftpConnectionMetadata({
+    connectionId: "connection-1",
+    sftpSessions: sessions,
+    connectionCacheKeys: cacheKeys,
+    clearCacheForConnection: (id) => { cleared.push(id); },
+    closeSftp: async (id) => { closed.push(id); },
+  });
+
+  assert.deepEqual(closed, ["sftp-1"]);
+  assert.deepEqual(cleared, ["connection-1"]);
+  assert.equal(sessions.size, 0);
+  assert.equal(cacheKeys.size, 0);
 });
 
 test("resolvePinnedReconnectSide follows a tab moved to the other side", () => {

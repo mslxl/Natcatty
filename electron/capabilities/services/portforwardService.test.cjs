@@ -5,13 +5,19 @@ const assert = require("node:assert/strict");
 
 const { createPortForwardService } = require("./portforwardService.cjs");
 
-test("portforward service lists active tunnels from main bridge", async () => {
+test("portforward service lists active tunnels through the configured runtime", async () => {
+  const calls = [];
   const service = createPortForwardService({
     invokeVaultAgent: async () => ({ ok: true, rules: [] }),
+    listPortForwards: async () => {
+      calls.push("list");
+      return [{ tunnelId: "worker-tunnel", status: "active" }];
+    },
   });
   const result = await service.listTunnels();
   assert.equal(result.ok, true);
-  assert.ok(Array.isArray(result.tunnels));
+  assert.deepEqual(result.tunnels, [{ tunnelId: "worker-tunnel", status: "active" }]);
+  assert.deepEqual(calls, ["list"]);
 });
 
 test("portforward start delegates to vault agent bridge after approval path", async () => {

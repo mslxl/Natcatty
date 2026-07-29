@@ -22,6 +22,22 @@ class MockTurnDriver implements TurnDriver {
   abort(): void {}
 }
 
+test('AgentRuntime clearChatSession releases its trace history', () => {
+  const traceStore = new TraceStore();
+  const runtime = new AgentRuntime({ drivers: [new MockTurnDriver()], traceStore });
+  traceStore.append({
+    id: 'trace-clear-1',
+    type: 'turn_start',
+    sessionId: 'chat-clear',
+    turnId: 'turn-clear',
+    startedAt: Date.now(),
+  } as import('./types').AgentEvent);
+
+  runtime.clearChatSession('chat-clear');
+  assert.equal(traceStore.getEvents('chat-clear').length, 0);
+  assert.equal(traceStore.getCompactions('chat-clear').length, 0);
+});
+
 test('AgentRuntime runTurn emits turn lifecycle and records trace', async () => {
   const traceStore = new TraceStore();
   const driver = new MockTurnDriver();

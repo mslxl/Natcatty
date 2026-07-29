@@ -918,3 +918,16 @@ test("contribution changes do not clear a failed interceptor quarantine", async 
   assert.equal(h.authorized.length, 2);
   assert.equal(h.attached.length, 2);
 });
+
+test("disposed terminal sessions do not retain lifecycle generations", async () => {
+  const h = harness({ providers: [] });
+  for (let index = 0; index < 2_000; index += 1) {
+    const nextSession = {
+      ...session,
+      sessionId: `disposed-session-${index}`,
+    };
+    await h.service.handleSessionEvent({ type: "created", session: nextSession });
+    await h.service.handleSessionEvent({ type: "disposed", session: nextSession });
+  }
+  assert.equal(h.service._getSessionEpochCountForTests(), 0);
+});

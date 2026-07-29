@@ -116,7 +116,6 @@ describe("SCP-mode session ops via fileOps entry points (AI/UI shared path)", ()
           webContents: { fromId: () => ({ send: () => {} }) },
         };
       },
-      activeSftpUploads: new Map(),
       fileWatcherBridge: { stopWatchersForSession: () => {} },
       fs,
       path,

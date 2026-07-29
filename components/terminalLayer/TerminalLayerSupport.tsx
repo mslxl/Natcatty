@@ -230,40 +230,7 @@ export const filterTabsMap = <T,>(source: Map<string, T>, validIds: Set<string>)
   return changed ? next : source;
 };
 
-// eslint-disable-next-line no-control-regex
-const TERMINAL_OSC_SEQUENCE_REGEX = new RegExp('\\u001B\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\)', 'g');
-// eslint-disable-next-line no-control-regex
-const TERMINAL_ESCAPE_SEQUENCE_REGEX = new RegExp('\\u001B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])', 'g');
-// eslint-disable-next-line no-control-regex
-const TERMINAL_CONTROL_CHAR_REGEX = new RegExp('[\\u0000-\\u0008\\u000B-\\u001F\\u007F]', 'g');
-// eslint-disable-next-line no-control-regex
-const INCOMPLETE_ESCAPE_TAIL_REGEX = new RegExp('\\u001B(?:\\][^\\u0007\\u001B]*(?:\\u001B)?|\\[[0-?]*[ -/]*)?$');
-
-const stripTerminalControlSequences = (data: string): string => {
-  return data
-    .replace(TERMINAL_OSC_SEQUENCE_REGEX, '')
-    .replace(TERMINAL_ESCAPE_SEQUENCE_REGEX, '')
-    .replace(TERMINAL_CONTROL_CHAR_REGEX, '');
-};
-
-export class ChunkedEscapeFilter {
-  private pending = '';
-
-  feed(chunk: string): string {
-    const data = this.pending + chunk;
-    const tailMatch = INCOMPLETE_ESCAPE_TAIL_REGEX.exec(data);
-    if (tailMatch) {
-      this.pending = tailMatch[0];
-      return stripTerminalControlSequences(data.slice(0, tailMatch.index));
-    }
-    this.pending = '';
-    return stripTerminalControlSequences(data);
-  }
-}
-
-export const hasNotifiableTerminalOutput = (filter: ChunkedEscapeFilter, chunk: string): boolean => {
-  return filter.feed(chunk).trim().length > 0;
-};
+export { ChunkedEscapeFilter, hasNotifiableTerminalOutput } from './activityEscapeFilter';
 
 export type AIPanelContext = {
   scopeType: 'terminal' | 'workspace';
@@ -834,6 +801,226 @@ const terminalPanePropsAreEqual = (
   prev.onEndSessionDrag === next.onEndSessionDrag
 );
 
+type WorkspaceDetachPointerDragOptions = {
+  inActiveWorkspace: boolean;
+  session: TerminalSession;
+  terminalSettings?: TerminalSettings;
+  workspaceById: Map<string, Workspace>;
+  onStartSessionDrag?: (sessionId: string) => void;
+  onEndSessionDrag?: () => void;
+  onRemoveSessionFromWorkspace?: TerminalPaneProps['onRemoveSessionFromWorkspace'];
+  onReorderTabs?: TerminalPaneProps['onReorderTabs'];
+};
+
+export function useWorkspaceDetachPointerDrag({
+  inActiveWorkspace,
+  session,
+  terminalSettings,
+  workspaceById,
+  onStartSessionDrag,
+  onEndSessionDrag,
+  onRemoveSessionFromWorkspace,
+  onReorderTabs,
+}: WorkspaceDetachPointerDragOptions): (event: React.PointerEvent<HTMLElement>) => void {
+  const activeDragCleanupRef = useRef<(() => void) | null>(null);
+  const cleanupActiveDrag = useCallback(() => {
+    const cleanup = activeDragCleanupRef.current;
+    activeDragCleanupRef.current = null;
+    cleanup?.();
+  }, []);
+
+  useEffect(() => cleanupActiveDrag, [cleanupActiveDrag, session.id]);
+
+  return useCallback((event: React.PointerEvent<HTMLElement>) => {
+    if (!inActiveWorkspace || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    cleanupActiveDrag();
+
+    const ownerDocument = event.currentTarget.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView;
+    const startPoint = { clientX: event.clientX, clientY: event.clientY };
+    const dragLabel = resolveSessionTabTitle(session, terminalSettings?.dynamicTabTitleMode);
+    let dragStarted = false;
+    let cleanupFinished = false;
+    let ghostEl: HTMLDivElement | null = null;
+    let insertEl: HTMLDivElement | null = null;
+
+    const ensureDragElements = () => {
+      if (!ghostEl) {
+        ghostEl = ownerDocument.createElement('div');
+        ghostEl.textContent = dragLabel;
+        ghostEl.style.position = 'fixed';
+        ghostEl.style.left = '0';
+        ghostEl.style.top = '0';
+        ghostEl.style.zIndex = '2147483647';
+        ghostEl.style.pointerEvents = 'none';
+        ghostEl.style.maxWidth = '220px';
+        ghostEl.style.padding = '5px 10px';
+        ghostEl.style.borderRadius = '7px';
+        ghostEl.style.border = '1px solid color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 60%, transparent)';
+        ghostEl.style.background = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 90%, transparent)';
+        ghostEl.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
+        ghostEl.style.boxShadow = '0 12px 28px rgba(0, 0, 0, 0.28)';
+        ghostEl.style.fontSize = '12px';
+        ghostEl.style.fontWeight = '600';
+        ghostEl.style.whiteSpace = 'nowrap';
+        ghostEl.style.overflow = 'hidden';
+        ghostEl.style.textOverflow = 'ellipsis';
+        ownerDocument.body.appendChild(ghostEl);
+      }
+
+      if (!insertEl) {
+        insertEl = ownerDocument.createElement('div');
+        insertEl.style.position = 'fixed';
+        insertEl.style.zIndex = '2147483646';
+        insertEl.style.pointerEvents = 'none';
+        insertEl.style.width = '2px';
+        insertEl.style.borderRadius = '999px';
+        insertEl.style.background = 'var(--top-tabs-accent, hsl(var(--accent)))';
+        insertEl.style.boxShadow = '0 0 10px color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 70%, transparent)';
+        insertEl.style.display = 'none';
+        ownerDocument.body.appendChild(insertEl);
+      }
+    };
+
+    const removeDragElements = () => {
+      ghostEl?.remove();
+      insertEl?.remove();
+      ghostEl = null;
+      insertEl = null;
+    };
+
+    const updateDragElements = (pointerEvent: PointerEvent) => {
+      ensureDragElements();
+      if (ghostEl) {
+        ghostEl.style.transform = `translate(${pointerEvent.clientX + 12}px, ${pointerEvent.clientY + 10}px)`;
+      }
+
+      const topTabsRoot = ownerDocument.querySelector<HTMLElement>('[data-top-tabs-root]');
+      const insertionTarget = getTopTabInsertionTarget(pointerEvent, topTabsRoot);
+      if (!topTabsRoot || !insertionTarget || !insertEl) {
+        if (insertEl) insertEl.style.display = 'none';
+        return insertionTarget;
+      }
+
+      const targetTab = Array.from(topTabsRoot.querySelectorAll<HTMLElement>('[data-tab-id]'))
+        .find((tab) => tab.dataset.tabId === insertionTarget.tabId);
+      if (!targetTab) {
+        insertEl.style.display = 'none';
+        return insertionTarget;
+      }
+
+      const targetRect = targetTab.getBoundingClientRect();
+      const rootRect = topTabsRoot.getBoundingClientRect();
+      const lineX = insertionTarget.position === 'before' ? targetRect.left : targetRect.right;
+      insertEl.style.display = 'block';
+      insertEl.style.left = `${lineX - 1}px`;
+      insertEl.style.top = `${Math.max(rootRect.top + 5, targetRect.top + 3)}px`;
+      insertEl.style.height = `${Math.max(18, Math.min(rootRect.bottom - rootRect.top - 8, targetRect.height - 4))}px`;
+      return insertionTarget;
+    };
+
+    const resolveStableInsertionTarget = (insertionTarget: ReturnType<typeof getTopTabInsertionTarget>) => {
+      if (!insertionTarget || insertionTarget.tabId !== session.workspaceId) return insertionTarget;
+      const sourceWorkspace = session.workspaceId ? workspaceById.get(session.workspaceId) : undefined;
+      if (!sourceWorkspace) return insertionTarget;
+      const remainingSessionIds = collectSessionIds(sourceWorkspace.root)
+        .filter((candidateId) => candidateId !== session.id);
+      if (remainingSessionIds.length !== 1) return insertionTarget;
+      return {
+        tabId: remainingSessionIds[0],
+        position: insertionTarget.position,
+      };
+    };
+
+    const startDragIfNeeded = (pointerEvent: PointerEvent) => {
+      if (cleanupFinished || dragStarted) return;
+      const dx = pointerEvent.clientX - startPoint.clientX;
+      const dy = pointerEvent.clientY - startPoint.clientY;
+      if (Math.hypot(dx, dy) < 4) return;
+      dragStarted = true;
+      onStartSessionDrag?.(session.id);
+      updateDragElements(pointerEvent);
+    };
+
+    const cleanup = () => {
+      if (cleanupFinished) return;
+      cleanupFinished = true;
+      ownerDocument.removeEventListener('pointermove', handlePointerMove, true);
+      ownerDocument.removeEventListener('pointerup', handlePointerUp, true);
+      ownerDocument.removeEventListener('pointercancel', handlePointerCancel, true);
+      ownerWindow?.removeEventListener('blur', handleWindowBlur);
+      removeDragElements();
+      const shouldEndDrag = dragStarted;
+      dragStarted = false;
+      if (activeDragCleanupRef.current === cleanup) {
+        activeDragCleanupRef.current = null;
+      }
+      if (shouldEndDrag) onEndSessionDrag?.();
+    };
+
+    const handlePointerMove = (pointerEvent: PointerEvent) => {
+      startDragIfNeeded(pointerEvent);
+      if (dragStarted) updateDragElements(pointerEvent);
+    };
+
+    const handlePointerCancel = () => {
+      cleanup();
+    };
+
+    const handleWindowBlur = () => {
+      cleanup();
+    };
+
+    const handlePointerUp = (pointerEvent: PointerEvent) => {
+      startDragIfNeeded(pointerEvent);
+      const topTabsRoot = ownerDocument.querySelector<HTMLElement>('[data-top-tabs-root]');
+      const insertionTarget = dragStarted ? updateDragElements(pointerEvent) : null;
+      const shouldDetach = dragStarted
+        && !!topTabsRoot
+        && isPointInsideRect(pointerEvent, topTabsRoot.getBoundingClientRect());
+      cleanup();
+      if (shouldDetach) {
+        const stableInsertionTarget = resolveStableInsertionTarget(insertionTarget);
+        if (onRemoveSessionFromWorkspace) {
+          onRemoveSessionFromWorkspace(
+            session.id,
+            stableInsertionTarget
+              ? {
+                  tabId: stableInsertionTarget.tabId,
+                  position: stableInsertionTarget.position,
+                  additionalTabIds: [session.id, stableInsertionTarget.tabId],
+                }
+              : undefined,
+          );
+        } else if (stableInsertionTarget) {
+          onReorderTabs?.(session.id, stableInsertionTarget.tabId, stableInsertionTarget.position, [
+            session.id,
+            stableInsertionTarget.tabId,
+          ]);
+        }
+      }
+    };
+
+    activeDragCleanupRef.current = cleanup;
+    ownerDocument.addEventListener('pointermove', handlePointerMove, true);
+    ownerDocument.addEventListener('pointerup', handlePointerUp, true);
+    ownerDocument.addEventListener('pointercancel', handlePointerCancel, true);
+    ownerWindow?.addEventListener('blur', handleWindowBlur);
+  }, [
+    cleanupActiveDrag,
+    inActiveWorkspace,
+    onEndSessionDrag,
+    onRemoveSessionFromWorkspace,
+    onReorderTabs,
+    onStartSessionDrag,
+    session,
+    terminalSettings?.dynamicTabTitleMode,
+    workspaceById,
+  ]);
+}
+
 const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   session,
   host,
@@ -1096,173 +1283,16 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const handleDetachDragEnd = useCallback(() => {
     onEndSessionDrag?.();
   }, [onEndSessionDrag]);
-  const handleDetachPointerDown = useCallback((e: React.PointerEvent<HTMLElement>) => {
-    if (!inActiveWorkspace || e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    const startPoint = { clientX: e.clientX, clientY: e.clientY };
-    const dragLabel = resolveSessionTabTitle(session, terminalSettings?.dynamicTabTitleMode);
-    let dragStarted = false;
-    let ghostEl: HTMLDivElement | null = null;
-    let insertEl: HTMLDivElement | null = null;
-
-    const ensureDragElements = () => {
-      if (!ghostEl) {
-        ghostEl = document.createElement('div');
-        ghostEl.textContent = dragLabel;
-        ghostEl.style.position = 'fixed';
-        ghostEl.style.left = '0';
-        ghostEl.style.top = '0';
-        ghostEl.style.zIndex = '2147483647';
-        ghostEl.style.pointerEvents = 'none';
-        ghostEl.style.maxWidth = '220px';
-        ghostEl.style.padding = '5px 10px';
-        ghostEl.style.borderRadius = '7px';
-        ghostEl.style.border = '1px solid color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 60%, transparent)';
-        ghostEl.style.background = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 90%, transparent)';
-        ghostEl.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
-        ghostEl.style.boxShadow = '0 12px 28px rgba(0, 0, 0, 0.28)';
-        ghostEl.style.fontSize = '12px';
-        ghostEl.style.fontWeight = '600';
-        ghostEl.style.whiteSpace = 'nowrap';
-        ghostEl.style.overflow = 'hidden';
-        ghostEl.style.textOverflow = 'ellipsis';
-        document.body.appendChild(ghostEl);
-      }
-
-      if (!insertEl) {
-        insertEl = document.createElement('div');
-        insertEl.style.position = 'fixed';
-        insertEl.style.zIndex = '2147483646';
-        insertEl.style.pointerEvents = 'none';
-        insertEl.style.width = '2px';
-        insertEl.style.borderRadius = '999px';
-        insertEl.style.background = 'var(--top-tabs-accent, hsl(var(--accent)))';
-        insertEl.style.boxShadow = '0 0 10px color-mix(in srgb, var(--top-tabs-accent, hsl(var(--accent))) 70%, transparent)';
-        insertEl.style.display = 'none';
-        document.body.appendChild(insertEl);
-      }
-    };
-
-    const removeDragElements = () => {
-      ghostEl?.remove();
-      insertEl?.remove();
-      ghostEl = null;
-      insertEl = null;
-    };
-
-    const updateDragElements = (event: PointerEvent) => {
-      ensureDragElements();
-      if (ghostEl) {
-        ghostEl.style.transform = `translate(${event.clientX + 12}px, ${event.clientY + 10}px)`;
-      }
-
-      const topTabsRoot = document.querySelector<HTMLElement>('[data-top-tabs-root]');
-      const insertionTarget = getTopTabInsertionTarget(event, topTabsRoot);
-      if (!topTabsRoot || !insertionTarget || !insertEl) {
-        if (insertEl) insertEl.style.display = 'none';
-        return insertionTarget;
-      }
-
-      const targetTab = Array.from(topTabsRoot.querySelectorAll<HTMLElement>('[data-tab-id]'))
-        .find((tab) => tab.dataset.tabId === insertionTarget.tabId);
-      if (!targetTab) {
-        insertEl.style.display = 'none';
-        return insertionTarget;
-      }
-
-      const targetRect = targetTab.getBoundingClientRect();
-      const rootRect = topTabsRoot.getBoundingClientRect();
-      const lineX = insertionTarget.position === 'before' ? targetRect.left : targetRect.right;
-      insertEl.style.display = 'block';
-      insertEl.style.left = `${lineX - 1}px`;
-      insertEl.style.top = `${Math.max(rootRect.top + 5, targetRect.top + 3)}px`;
-      insertEl.style.height = `${Math.max(18, Math.min(rootRect.bottom - rootRect.top - 8, targetRect.height - 4))}px`;
-      return insertionTarget;
-    };
-
-    const resolveStableInsertionTarget = (insertionTarget: ReturnType<typeof getTopTabInsertionTarget>) => {
-      if (!insertionTarget || insertionTarget.tabId !== session.workspaceId) return insertionTarget;
-      const sourceWorkspace = session.workspaceId ? workspaceById.get(session.workspaceId) : undefined;
-      if (!sourceWorkspace) return insertionTarget;
-      const remainingSessionIds = collectSessionIds(sourceWorkspace.root)
-        .filter((candidateId) => candidateId !== session.id);
-      if (remainingSessionIds.length !== 1) return insertionTarget;
-      return {
-        tabId: remainingSessionIds[0],
-        position: insertionTarget.position,
-      };
-    };
-
-    const startDragIfNeeded = (event: PointerEvent) => {
-      if (dragStarted) return;
-      const dx = event.clientX - startPoint.clientX;
-      const dy = event.clientY - startPoint.clientY;
-      if (Math.hypot(dx, dy) < 4) return;
-      dragStarted = true;
-      onStartSessionDrag?.(session.id);
-      updateDragElements(event);
-    };
-
-    const cleanup = () => {
-      document.removeEventListener('pointermove', handlePointerMove, true);
-      document.removeEventListener('pointerup', handlePointerUp, true);
-      document.removeEventListener('pointercancel', handlePointerCancel, true);
-      removeDragElements();
-      if (dragStarted) onEndSessionDrag?.();
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      startDragIfNeeded(event);
-      if (dragStarted) updateDragElements(event);
-    };
-
-    const handlePointerCancel = () => {
-      cleanup();
-    };
-
-    const handlePointerUp = (event: PointerEvent) => {
-      startDragIfNeeded(event);
-      const topTabsRoot = document.querySelector<HTMLElement>('[data-top-tabs-root]');
-      const insertionTarget = dragStarted ? updateDragElements(event) : null;
-      const shouldDetach = dragStarted && !!topTabsRoot && isPointInsideRect(event, topTabsRoot.getBoundingClientRect());
-      cleanup();
-      if (shouldDetach) {
-        const stableInsertionTarget = resolveStableInsertionTarget(insertionTarget);
-        if (onRemoveSessionFromWorkspace) {
-          onRemoveSessionFromWorkspace(
-            session.id,
-            stableInsertionTarget
-              ? {
-                  tabId: stableInsertionTarget.tabId,
-                  position: stableInsertionTarget.position,
-                  additionalTabIds: [session.id, stableInsertionTarget.tabId],
-                }
-              : undefined,
-          );
-        } else if (stableInsertionTarget) {
-          onReorderTabs?.(session.id, stableInsertionTarget.tabId, stableInsertionTarget.position, [
-            session.id,
-            stableInsertionTarget.tabId,
-          ]);
-        }
-      }
-    };
-
-    document.addEventListener('pointermove', handlePointerMove, true);
-    document.addEventListener('pointerup', handlePointerUp, true);
-    document.addEventListener('pointercancel', handlePointerCancel, true);
-  }, [
+  const handleDetachPointerDown = useWorkspaceDetachPointerDrag({
     inActiveWorkspace,
+    session,
+    terminalSettings,
+    workspaceById,
+    onStartSessionDrag,
     onEndSessionDrag,
     onRemoveSessionFromWorkspace,
     onReorderTabs,
-    onStartSessionDrag,
-    session,
-    terminalSettings?.dynamicTabTitleMode,
-    workspaceById,
-  ]);
+  });
   const handleTerminalFontSizeChange = useCallback((nextFontSize: number) => {
     onTerminalFontSizeChange?.(session.id, nextFontSize);
   }, [onTerminalFontSizeChange, session.id]);

@@ -1,4 +1,11 @@
 import type { TransferTask } from "./models";
+import {
+  compareDirectoryTraversalPaths,
+  createDirectoryManifestAccumulator,
+  createDirectoryEntryIdentity,
+  createEmptyDirectoryResumeCheckpoint,
+  isValidDirectoryResumeCheckpoint,
+} from "./sftpDirectoryCheckpoint";
 
 export const SFTP_TRANSFER_CENTER_VERSION = 1;
 export const SFTP_TRANSFER_HISTORY_MAX = 200;
@@ -36,9 +43,12 @@ const SAFE_TASK_KEYS: ReadonlySet<keyof TransferTask> = new Set([
   "sourceFingerprint",
   "reconnectRequired",
   "lifecycleEpoch",
+  "directoryEntryIndex",
+  "directoryEntryIdentity",
+  "directoryResumeCheckpoint",
 ]);
 
-function sanitizeTask(value: unknown): TransferTask | null {
+export function sanitizeSftpTransferTask(value: unknown): TransferTask | null {
   if (!value || typeof value !== "object") return null;
   const source = value as Record<string, unknown>;
   if (typeof source.id !== "string" || typeof source.fileName !== "string") return null;
@@ -48,6 +58,25 @@ function sanitizeTask(value: unknown): TransferTask | null {
     if (source[key] !== undefined) sanitized[key] = source[key];
   }
   const task = sanitized as unknown as TransferTask;
+  if (!Number.isSafeInteger(task.directoryEntryIndex) || (task.directoryEntryIndex ?? -1) < 0) {
+    task.directoryEntryIndex = undefined;
+  }
+  if (!/^[a-f0-9]{64}$/.test(task.directoryEntryIdentity ?? "")) {
+    task.directoryEntryIdentity = undefined;
+  }
+  if (!isValidDirectoryResumeCheckpoint(task.directoryResumeCheckpoint)) {
+    task.directoryResumeCheckpoint = undefined;
+  } else {
+    const checkpoint = task.directoryResumeCheckpoint;
+    // Rebuild the fixed schema so unknown/legacy payload fields cannot smuggle
+    // an unbounded path list back into localStorage.
+    task.directoryResumeCheckpoint = {
+      version: checkpoint.version,
+      coveredEntries: checkpoint.coveredEntries,
+      completedEntries: checkpoint.completedEntries,
+      manifestHash: checkpoint.manifestHash,
+    };
+  }
   // After force-quit / restart no backend stream remains. Every unfinished row
   // (including a previously interrupted row that was already persisted) needs a
   // dedicated reconnect — do not leave reconnectRequired false.
@@ -69,7 +98,7 @@ function sanitizeTask(value: unknown): TransferTask | null {
 export function serializeSftpTransferCenter(tasks: readonly TransferTask[]): string {
   return JSON.stringify({
     version: SFTP_TRANSFER_CENTER_VERSION,
-    tasks: tasks.map((task) => sanitizeTask(task)).filter((task): task is TransferTask => task !== null),
+    tasks: tasks.map((task) => sanitizeSftpTransferTask(task)).filter((task): task is TransferTask => task !== null),
   } satisfies PersistedSftpTransferCenter);
 }
 
@@ -82,7 +111,7 @@ export function deserializeSftpTransferCenter(raw: string | null | undefined): P
     }
     return {
       version: SFTP_TRANSFER_CENTER_VERSION,
-      tasks: parsed.tasks.map(sanitizeTask).filter((task): task is TransferTask => task !== null),
+      tasks: parsed.tasks.map(sanitizeSftpTransferTask).filter((task): task is TransferTask => task !== null),
     };
   } catch {
     return { version: SFTP_TRANSFER_CENTER_VERSION, tasks: [] };
@@ -93,17 +122,121 @@ export function pruneSftpTransferHistory(
   tasks: readonly TransferTask[],
   now = Date.now(),
 ): TransferTask[] {
-  const unfinished = tasks.filter((task) => !TERMINAL_STATUSES.has(task.status));
+  // A failed terminal directory can have more retained failed children than
+  // the global history cap. Once those rows are evicted, a compact checkpoint
+  // cannot distinguish them from completed children. Drop the ambiguous skip
+  // state so Retry/Resume safely walks every source entry again.
+  let compacted = tasks.map((task) => (
+    task.isDirectory
+    && !task.parentTaskId
+    && task.status === "failed"
+    && task.directoryResumeCheckpoint
+      ? { ...task, directoryResumeCheckpoint: undefined }
+      : task
+  ));
+  const unfinishedDirectoryParents = compacted.filter((task) => (
+    task.isDirectory
+    && !task.parentTaskId
+    && !TERMINAL_STATUSES.has(task.status)
+  ));
+  const childrenByParent = new Map<string, TransferTask[]>();
+  for (const task of compacted) {
+    if (!task.parentTaskId) continue;
+    const children = childrenByParent.get(task.parentTaskId) ?? [];
+    children.push(task);
+    childrenByParent.set(task.parentTaskId, children);
+  }
+  const compactedChildIds = new Set<string>();
+  const parentUpdates = new Map<string, TransferTask>();
+  const normalizedChildUpdates = new Map<string, TransferTask>();
+  for (const parent of unfinishedDirectoryParents) {
+    let parentChildren = childrenByParent.get(parent.id) ?? [];
+    // Upgrade pre-checkpoint history safely. The sorted known set becomes a
+    // candidate prefix; dedicated resume validates it against a fresh walk.
+    // Any added/reordered/modified source entry invalidates the hash and causes
+    // a conservative restart instead of an incorrect skip.
+    if (
+      !isValidDirectoryResumeCheckpoint(parent.directoryResumeCheckpoint)
+      && parentChildren.some((child) => (
+        !Number.isSafeInteger(child.directoryEntryIndex)
+        || !/^[a-f0-9]{64}$/.test(child.directoryEntryIdentity ?? "")
+      ))
+    ) {
+      parentChildren = [...parentChildren]
+        .sort((left, right) => compareDirectoryTraversalPaths(left.sourcePath, right.sourcePath))
+        .map((child, directoryEntryIndex) => ({
+          ...child,
+          directoryEntryIndex,
+          directoryEntryIdentity: createDirectoryEntryIdentity({
+            sourcePath: child.sourcePath,
+            targetPath: child.targetPath,
+            size: child.totalBytes,
+            lastModified: child.sourceLastModified,
+          }),
+        }));
+      for (const child of parentChildren) normalizedChildUpdates.set(child.id, child);
+    }
+    const checkpoint = isValidDirectoryResumeCheckpoint(parent.directoryResumeCheckpoint)
+      ? { ...parent.directoryResumeCheckpoint }
+      : createEmptyDirectoryResumeCheckpoint();
+    const initialCoveredEntries = checkpoint.coveredEntries;
+    const childrenByIndex = new Map<number, TransferTask>();
+    for (const child of parentChildren) {
+      if (!Number.isSafeInteger(child.directoryEntryIndex) || (child.directoryEntryIndex ?? -1) < 0) continue;
+      if (!/^[a-f0-9]{64}$/.test(child.directoryEntryIdentity ?? "")) continue;
+      if (!childrenByIndex.has(child.directoryEntryIndex!)) {
+        childrenByIndex.set(child.directoryEntryIndex!, child);
+      }
+    }
+    const manifest = createDirectoryManifestAccumulator(checkpoint);
+    while (childrenByIndex.has(checkpoint.coveredEntries)) {
+      const child = childrenByIndex.get(checkpoint.coveredEntries)!;
+      manifest.append(child.directoryEntryIdentity!);
+      checkpoint.coveredEntries += 1;
+    }
+    checkpoint.manifestHash = manifest.digest();
+    let newlyCompacted = 0;
+    for (const child of parentChildren) {
+      if (
+        child.parentTaskId === parent.id
+        && child.status === "completed"
+        && Number.isSafeInteger(child.directoryEntryIndex)
+        && (child.directoryEntryIndex ?? checkpoint.coveredEntries) < checkpoint.coveredEntries
+        && /^[a-f0-9]{64}$/.test(child.directoryEntryIdentity ?? "")
+      ) {
+        compactedChildIds.add(child.id);
+        newlyCompacted += 1;
+      }
+    }
+    if (checkpoint.coveredEntries !== initialCoveredEntries || newlyCompacted > 0) {
+      checkpoint.completedEntries = Math.min(
+        checkpoint.coveredEntries,
+        checkpoint.completedEntries + newlyCompacted,
+      );
+      parentUpdates.set(parent.id, {
+        ...parent,
+        directoryResumeCheckpoint: checkpoint,
+        transferredBytes: Math.max(parent.transferredBytes, checkpoint.completedEntries),
+      });
+    }
+  }
+  if (compactedChildIds.size > 0 || parentUpdates.size > 0 || normalizedChildUpdates.size > 0) {
+    compacted = compacted
+      .filter((task) => !compactedChildIds.has(task.id))
+      .map((task) => parentUpdates.get(task.id) ?? normalizedChildUpdates.get(task.id) ?? task);
+  }
+
+  const unfinished = compacted.filter((task) => !TERMINAL_STATUSES.has(task.status));
   const unfinishedIds = new Set(unfinished.map((task) => task.id));
-  // Keep terminal children of unfinished parents forever (until the parent
-  // finishes) so directory resume can skip already-completed files.
-  const checkpointChildren = tasks.filter((task) =>
+  // Keep terminal exceptions that cannot be compacted (failed/cancelled or a
+  // legacy gap). Completed indexed children normally live in the parent hash.
+  const checkpointChildren = compacted.filter((task) =>
     TERMINAL_STATUSES.has(task.status)
     && !!task.parentTaskId
     && unfinishedIds.has(task.parentTaskId),
   );
   const checkpointIds = new Set(checkpointChildren.map((task) => task.id));
-  const terminal = tasks
+  const terminal = compacted
     .filter((task) => TERMINAL_STATUSES.has(task.status) && !checkpointIds.has(task.id))
     .filter((task) => now - (task.endTime ?? task.updatedAt ?? task.startTime) <= SFTP_TRANSFER_HISTORY_MAX_AGE_MS)
     .sort((a, b) => (b.endTime ?? b.updatedAt ?? b.startTime) - (a.endTime ?? a.updatedAt ?? a.startTime))

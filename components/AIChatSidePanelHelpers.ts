@@ -12,6 +12,7 @@ export type SdkRuntimeModelCacheEntry = SdkRuntimeModelCatalog & {
 
 type SdkRuntimeModelCacheOptions = {
   ttlMs?: number;
+  maxEntries?: number;
   now?: () => number;
 };
 
@@ -20,6 +21,7 @@ type SdkRuntimeModelRefreshOptions = {
 };
 
 const SDK_RUNTIME_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const SDK_RUNTIME_MODEL_CACHE_MAX_ENTRIES = 64;
 // Keep in sync with main-process SDK_MODEL_CACHE_ENV_KEYS: profile-affecting
 // env must bust the renderer cache so we re-query after OpenCode config switches.
 const MODEL_CACHE_ENV_HINTS = [
@@ -95,22 +97,50 @@ export function buildSdkRuntimeModelCacheKey(agent: {
 
 export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions = {}) {
   const ttlMs = options.ttlMs ?? SDK_RUNTIME_MODEL_CACHE_TTL_MS;
+  const maxEntries = Math.max(1, options.maxEntries ?? SDK_RUNTIME_MODEL_CACHE_MAX_ENTRIES);
   const now = options.now ?? (() => Date.now());
   const entries = new Map<string, SdkRuntimeModelCacheEntry>();
   const inFlight = new Map<string, Promise<SdkRuntimeModelCatalog>>();
 
+  const pruneEntries = () => {
+    const currentTime = now();
+    for (const [key, entry] of entries) {
+      if (currentTime - entry.updatedAt >= ttlMs) {
+        entries.delete(key);
+      }
+    }
+    while (entries.size > maxEntries) {
+      const oldestKey = entries.keys().next().value;
+      if (oldestKey === undefined) break;
+      entries.delete(oldestKey);
+    }
+  };
+
+  const touchEntry = (key: string, entry: SdkRuntimeModelCacheEntry) => {
+    entries.delete(key);
+    entries.set(key, entry);
+  };
+
   return {
     read(key: string): SdkRuntimeModelCacheEntry | null {
+      pruneEntries();
       const entry = entries.get(key);
+      if (entry) touchEntry(key, entry);
       return entry ? { ...cloneCatalog(entry), updatedAt: entry.updatedAt } : null;
+    },
+    size(): number {
+      pruneEntries();
+      return entries.size;
     },
     refresh(
       key: string,
       load: () => Promise<SdkRuntimeModelCatalog>,
       refreshOptions: SdkRuntimeModelRefreshOptions = {},
     ): Promise<SdkRuntimeModelCatalog> {
+      pruneEntries();
       const cached = entries.get(key);
       if (!refreshOptions.force && cached && now() - cached.updatedAt < ttlMs) {
+        touchEntry(key, cached);
         return Promise.resolve(cloneCatalog(cached));
       }
 
@@ -123,7 +153,8 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
           if (normalized.models.length === 0 && !normalized.currentModelId) {
             return cached ? cloneCatalog(cached) : cloneCatalog(normalized);
           }
-          entries.set(key, { ...cloneCatalog(normalized), updatedAt: now() });
+          touchEntry(key, { ...cloneCatalog(normalized), updatedAt: now() });
+          pruneEntries();
           return cloneCatalog(normalized);
         })
         .finally(() => {

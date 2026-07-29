@@ -21,6 +21,23 @@ test("source fingerprint metadata changes bypass ordinary progress throttling", 
     transferred: 20,
     total: 100,
   }), false);
+  // Below the UI floor (400ms) ordinary ticks stay suppressed.
+  assert.equal(shouldApplyTransferProgress({
+    elapsedMs: 250,
+    transferred: 20,
+    total: 100,
+  }), false);
+  assert.equal(shouldApplyTransferProgress({
+    elapsedMs: 400,
+    transferred: 20,
+    total: 100,
+  }), true);
+  // Completion always paints even inside the throttle window.
+  assert.equal(shouldApplyTransferProgress({
+    elapsedMs: 10,
+    transferred: 100,
+    total: 100,
+  }), true);
 });
 
 test("durable checkpoint prefers contiguous bridge offset over high-water transferred", () => {

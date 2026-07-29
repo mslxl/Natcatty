@@ -149,7 +149,14 @@ declare global {
     scriptScreenSnapshotResponse(requestId: string, snapshot: ScriptScreenSnapshot): Promise<{ ok: boolean }>;
     scriptRecordingStart(sessionId: string): Promise<{ ok: boolean }>;
     scriptRecordingStop(sessionId: string): Promise<{ steps: ScriptRecordingStep[]; code: string }>;
-    scriptRecordingAppendStep(sessionId: string, step: ScriptRecordingStep): Promise<{ ok: boolean }>;
+    scriptRecordingAppendStep(sessionId: string, step: ScriptRecordingStep): Promise<{
+      ok: boolean;
+      stopped?: boolean;
+      reason?: 'limit';
+      error?: string;
+      steps?: ScriptRecordingStep[];
+      code?: string;
+    }>;
     onScriptRunsUpdated(cb: (payload: { runs: ScriptRun[] }) => void): () => void;
     onScriptDialogRequest(cb: (payload: ScriptDialogRequest) => void): () => void;
     onScriptScreenSnapshotRequest(cb: (payload: { requestId: string; sessionId: string }) => void): () => void;

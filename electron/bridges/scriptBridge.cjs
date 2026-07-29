@@ -10,8 +10,16 @@ const {
   removeSessionBuffer,
 } = require("../scripts/sessionOutputBuffer.cjs");
 const { shellPromptPatterns } = require("../scripts/shellPromptPatterns.cjs");
+const {
+  appendRetainedRunLog,
+  pruneCompletedRuns,
+} = require("../scripts/scriptRunRetention.cjs");
 const { addTerminalDataTap } = require("../bridges/emitTerminalSessionData.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+
+const MAX_SCRIPT_RECORDING_STEPS = 10_000;
+const MAX_SCRIPT_RECORDING_BYTES = 2 * 1024 * 1024;
+const SCRIPT_RECORDING_LIMIT_ERROR = "Recording stopped because it reached the safety limit";
 
 let sessions = null;
 let electronModule = null;
@@ -35,6 +43,24 @@ const sessionRunChains = new Map();
 const runAbortControls = new Map();
 /** @type {Map<string, { connected?: boolean, hostname?: string, username?: string }>} */
 const rendererSessionMetaById = new Map();
+let disposeTerminalDataTap = null;
+let disposeWorkerOutputTap = null;
+let disposeWorkerSessionClosed = null;
+
+function disposeSubscription(subscription) {
+  if (typeof subscription === "function") {
+    subscription();
+  } else {
+    subscription?.dispose?.();
+  }
+}
+
+function releaseSessionResources(sessionId) {
+  if (!sessionId) return;
+  removeSessionBuffer(sessionId);
+  rendererSessionMetaById.delete(sessionId);
+  recordings.delete(sessionId);
+}
 
 function enqueueSessionRun(sessionId, task) {
   const previous = sessionRunChains.get(sessionId) || Promise.resolve();
@@ -52,18 +78,41 @@ function enqueueSessionRun(sessionId, task) {
 }
 
 function init(deps) {
+  for (const [runId, control] of runAbortControls.entries()) {
+    const run = runs.get(runId);
+    if (run && !run.endedAt) {
+      run.aborted = true;
+      run.paused = false;
+      run.status = "failed";
+      run.error = "Script runtime reinitialized";
+      run.endedAt = Date.now();
+      getOrCreateBuffer(run.sessionId).abortWaiters(run.error);
+      settlePendingRunRequests(runId, { reject: false, reason: new Error(run.error) });
+    }
+    control.abort(new Error("Script runtime reinitialized"));
+  }
+  disposeSubscription(disposeTerminalDataTap);
+  disposeSubscription(disposeWorkerOutputTap);
+  disposeSubscription(disposeWorkerSessionClosed);
+  disposeTerminalDataTap = null;
+  disposeWorkerOutputTap = null;
+  disposeWorkerSessionClosed = null;
+
   sessions = deps.sessions;
   electronModule = deps.electronModule;
   terminalBridge = deps.terminalBridge;
   terminalWorkerManager = deps.terminalWorkerManager || null;
   getMainWindow = deps.getMainWindow;
 
-  addTerminalDataTap((sessionId, data) => {
+  disposeTerminalDataTap = addTerminalDataTap((sessionId, data) => {
     appendSessionOutput(sessionId, data);
   });
-  terminalWorkerManager?.addOutputTap?.((sessionId, data) => {
+  disposeWorkerOutputTap = terminalWorkerManager?.addOutputTap?.((sessionId, data) => {
     appendSessionOutput(sessionId, data);
-  });
+  }) ?? null;
+  disposeWorkerSessionClosed = terminalWorkerManager?.onSessionClosed?.(({ sessionId }) => {
+    releaseSessionResources(sessionId);
+  }) ?? null;
 }
 
 function broadcastRuns() {
@@ -438,7 +487,7 @@ async function runScriptOnSession({
     appendLog: (id, message) => {
       const entry = runs.get(id);
       if (!entry || entry.aborted || entry.endedAt) return;
-      entry.logs.push({ at: Date.now(), message });
+      appendRetainedRunLog(entry, { at: Date.now(), message });
       broadcastRuns();
     },
     writeToSession: (sid, data, options) => {
@@ -491,6 +540,12 @@ async function runScriptOnSession({
       broadcastRuns();
     },
   });
+  runAbortControls.set(runId, {
+    abort: (reason) => {
+      runtime.stop(reason || new Error("Script stopped"));
+      abortRun(reason);
+    },
+  });
 
   try {
     const operationPromise = (async () => {
@@ -521,7 +576,7 @@ async function runScriptOnSession({
     run.progressCurrent = undefined;
     run.progressTotal = undefined;
     run.error = err?.message || String(err);
-    run.logs.push({ at: Date.now(), message: run.error });
+    appendRetainedRunLog(run, { at: Date.now(), message: run.error });
   } finally {
     settlePendingRunRequests(runId, {
       reject: run.aborted,
@@ -529,6 +584,7 @@ async function runScriptOnSession({
     });
     await stopScriptSessionLog(sessionId, runId);
     runAbortControls.delete(runId);
+    pruneCompletedRuns(runs);
     broadcastRuns();
   }
 }
@@ -663,6 +719,7 @@ function handleRecordingStart(_event, payload = {}) {
     sessionId,
     startedAt: Date.now(),
     steps: [],
+    totalBytes: 0,
     lastTimestamp: Date.now(),
   });
   return { ok: true };
@@ -682,14 +739,50 @@ function handleRecordingStop(_event, payload = {}) {
 function handleRecordingAppendStep(_event, payload = {}) {
   const { sessionId, step } = payload;
   const recording = recordings.get(sessionId);
-  if (!recording || !step) return { ok: false };
+  if (!recording) return { ok: false, error: "Recording not started" };
+  if (!step) return { ok: false, error: "Recording step is required" };
   const now = Date.now();
   const gap = now - recording.lastTimestamp;
+  const additions = [];
   if (gap > 1000 && step.type === "send") {
-    recording.steps.push({ type: "sleep", value: gap });
+    additions.push({ type: "sleep", value: gap });
   }
-  recording.steps.push(step);
-  recording.lastTimestamp = now;
+  additions.push(step);
+  let additionBytes = 0;
+  try {
+    for (const addition of additions) {
+      additionBytes += Buffer.byteLength(JSON.stringify(addition), "utf8");
+    }
+  } catch {
+    return { ok: false, error: "Invalid recording step" };
+  }
+  const nextStepCount = recording.steps.length + additions.length;
+  const nextTotalBytes = recording.totalBytes + additionBytes;
+  const exceedsLimit = nextStepCount > MAX_SCRIPT_RECORDING_STEPS
+    || nextTotalBytes > MAX_SCRIPT_RECORDING_BYTES;
+  if (!exceedsLimit) {
+    recording.steps.push(...additions);
+    recording.totalBytes = nextTotalBytes;
+    recording.lastTimestamp = now;
+  }
+  if (
+    exceedsLimit
+    || recording.steps.length >= MAX_SCRIPT_RECORDING_STEPS
+    || recording.totalBytes >= MAX_SCRIPT_RECORDING_BYTES
+  ) {
+    recordings.delete(sessionId);
+    const retainedSteps = recording.steps;
+    return {
+      ok: false,
+      stopped: true,
+      reason: "limit",
+      error: SCRIPT_RECORDING_LIMIT_ERROR,
+      steps: retainedSteps,
+      code: retainedSteps.length > 0
+        ? stepsToJavaScript(retainedSteps, new Date(recording.startedAt).toISOString())
+        : "",
+    };
+  }
   return { ok: true };
 }
 
@@ -707,9 +800,12 @@ function registerHandlers(ipcMain) {
 }
 
 module.exports = {
+  MAX_SCRIPT_RECORDING_STEPS,
+  MAX_SCRIPT_RECORDING_BYTES,
   init,
   registerHandlers,
   appendSessionOutput,
   removeSessionBuffer,
+  releaseSessionResources,
   resolveStartupSeedText,
 };

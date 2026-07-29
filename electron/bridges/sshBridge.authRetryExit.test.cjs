@@ -7,6 +7,21 @@ const os = require("node:os");
 const path = require("node:path");
 const keyboardInteractiveHandler = require("./keyboardInteractiveHandler.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+const {
+  beginTransportDial,
+  buildConnectionReuseEndpoint,
+  getTransportStats,
+  resetSshTransportRegistryForTests,
+  waitForTransportDial,
+} = require("./sshConnectionPool.cjs");
+
+test.beforeEach(() => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+});
+
+test.afterEach(() => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+});
 
 function makeSender(events = null) {
   return {
@@ -45,6 +60,7 @@ function nextTick() {
 }
 
 function makeReusableSourceSession(endpoint) {
+  const { createConnectionRef } = require("./sshConnectionPool.cjs");
   const conn = new EventEmitter();
   conn._sock = { destroyed: false };
   conn._remoteVer = "OpenSSH_test";
@@ -52,11 +68,10 @@ function makeReusableSourceSession(endpoint) {
   conn.end = () => {};
   conn.destroy = () => {};
   const stream = createShellStream();
-  return {
+  const session = {
     conn,
     stream,
     chainConnections: [],
-    connRef: { count: 1, conn, chainConnections: [] },
     webContentsId: 1,
     zmodemSentry: { cancel() {} },
     hostname: endpoint.hostname,
@@ -67,6 +82,8 @@ function makeReusableSourceSession(endpoint) {
       username: endpoint.username,
     },
   };
+  createConnectionRef(session, conn, []);
+  return session;
 }
 
 function loadBridgeWithAuthRetryMocks(t, options = {}) {
@@ -76,6 +93,10 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
   const originalLoad = Module._load;
   const originalAuthHelper = require(authHelperPath);
   const connectEvents = options.connectEvents || ["auth-error", "ready"];
+  const originalHome = process.env.HOME;
+  const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-auth-retry-home-"));
+  fs.mkdirSync(path.join(isolatedHome, ".ssh"));
+  process.env.HOME = isolatedHome;
 
   class MockSSHClient extends EventEmitter {
     constructor() {
@@ -445,6 +466,30 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
           this.emit("error", err);
           return;
         }
+        if (eventName === "encrypted-key-ready") {
+          this.authMethodsOffered = [];
+          this.emit("connect");
+          this.emit("handshake");
+          const offerNext = (methodsLeft, partialSuccess) => {
+            let offered;
+            opts.authHandler(methodsLeft, partialSuccess, (method) => {
+              offered = method;
+              this.authMethodsOffered.push(method);
+            });
+            return offered;
+          };
+          offerNext(null, null);
+          const password = offerNext(["publickey", "password", "keyboard-interactive"], false);
+          const unlockedKey = offerNext(["publickey"], false);
+          if (password?.type !== "password" || unlockedKey?.key !== "UNLOCKED_PRIVATE_KEY") {
+            const err = new Error("Unlocked encrypted key was not offered after password rejection");
+            err.level = "client-authentication";
+            this.emit("error", err);
+            return;
+          }
+          this.emit("ready");
+          return;
+        }
         if (eventName === "socket-error") {
           const err = new Error("Connection reset by auth-bastion.example.com");
           err.level = "client-socket";
@@ -526,6 +571,9 @@ function loadBridgeWithAuthRetryMocks(t, options = {}) {
     delete require.cache[bridgePath];
     delete require.cache[startSessionPath];
     Module._load = originalLoad;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    fs.rmSync(isolatedHome, { recursive: true, force: true });
   });
 
   return { bridge, MockSSHClient };
@@ -651,6 +699,62 @@ test("terminal SSH retries keyboard-interactive first when password rejection re
   );
 });
 
+test("terminal recoverable auth retry keeps SFTP and port-forward waiters on the same dial", async (t) => {
+  const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
+    connectEvents: ["mfa-keyboard-interactive-before-password", "mfa-keyboard-interactive-before-password"],
+  });
+  const ipcMain = makeIpcMain();
+  bridge.init({ sessions: new Map(), electronModule: {} });
+  bridge.registerHandlers(ipcMain);
+  const sender = makeSender();
+  const send = sender.send.bind(sender);
+  sender.send = (channel, payload) => {
+    send(channel, payload);
+    if (channel === "netcatty:keyboard-interactive") {
+      keyboardInteractiveHandler.handleResponse(
+        { sender },
+        {
+          requestId: payload.requestId,
+          responses: ["secondary-password"],
+          cancelled: false,
+        },
+      );
+    }
+  };
+  const options = {
+    sessionId: "mfa-shared-dial-leader",
+    hostId: "mfa-shared-host",
+    hostname: "corp-edr.example.com",
+    username: "alice",
+    authMethod: "password",
+    password: "login-password",
+    useSshAgent: false,
+    port: 22,
+    knownHosts: [],
+  };
+
+  const terminalOpen = ipcMain.handlers.get("netcatty:start")({ sender }, options);
+  while (getTransportStats().pendingDials === 0) {
+    await nextTick();
+  }
+  const endpoint = buildConnectionReuseEndpoint(options);
+  const sftpWaiter = beginTransportDial(endpoint, { kind: "channel" });
+  const forwardWaiter = beginTransportDial(endpoint, { kind: "channel" });
+  assert.equal(sftpWaiter.role, "join");
+  assert.equal(forwardWaiter.role, "join");
+
+  const [terminalResult, sftpTransport, forwardTransport] = await Promise.all([
+    terminalOpen,
+    waitForTransportDial(sftpWaiter),
+    waitForTransportDial(forwardWaiter),
+  ]);
+
+  assert.deepEqual(terminalResult, { sessionId: options.sessionId });
+  assert.equal(sftpTransport, forwardTransport);
+  assert.equal(sftpTransport.conn, MockSSHClient.instances[1]);
+  assert.equal(MockSSHClient.instances.length, 2);
+});
+
 test("terminal SSH requiresMfa prefers keyboard-interactive before password", async (t) => {
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
     connectEvents: ["mfa-keyboard-interactive-before-password"],
@@ -754,7 +858,7 @@ test("terminal SSH requiresMfa prefers keyboard-interactive before automatic key
 test("failed keyboard-interactive retry still offers encrypted default key fallback", async (t) => {
   const events = [];
   const { bridge, MockSSHClient } = loadBridgeWithAuthRetryMocks(t, {
-    connectEvents: ["mfa-keyboard-interactive-before-password", "auth-error", "ready"],
+    connectEvents: ["mfa-keyboard-interactive-before-password", "auth-error", "encrypted-key-ready"],
     encryptedKeys: [
       {
         keyPath: "/Users/test/.ssh/id_ed25519",
@@ -805,6 +909,13 @@ test("failed keyboard-interactive retry still offers encrypted default key fallb
     ],
   );
   assert.equal(events.includes("passphrase-request"), true);
+  assert.deepEqual(
+    MockSSHClient.instances[2].authMethodsOffered.map((method) => (
+      method && typeof method === "object" ? method.type : method
+    )),
+    ["none", "password", "publickey"],
+  );
+  assert.equal(MockSSHClient.instances[2].authMethodsOffered[2].key, "UNLOCKED_PRIVATE_KEY");
   assert.equal(
     sender.sent.some((message) => (
       message.channel === "netcatty:exit"

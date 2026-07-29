@@ -199,6 +199,34 @@ describe("scpBackend browse/manage with fake exec", () => {
   });
 });
 
+it("SCP in-memory reads reject a grown file from its protocol header", async () => {
+  const stream = createMockStream();
+  let ackCount = 0;
+  stream.on("_write", (buf) => {
+    if (!(buf.length === 1 && buf[0] === SCP_OK)) return;
+    ackCount += 1;
+    if (ackCount === 1) {
+      setImmediate(() => stream.pushFromRemote(
+        buildFileControlLine({ mode: 0o644, size: 5, name: "grown.bin" }),
+      ));
+    } else if (ackCount === 2) {
+      setImmediate(() => stream.pushFromRemote(
+        Buffer.concat([Buffer.from("ABCDE"), Buffer.from([0x00])]),
+      ));
+    }
+  });
+  const backend = createScpBackend({
+    exec: async () => ({ stdout: "", stderr: "", code: 0 }),
+    execStream: async () => stream,
+  });
+
+  await assert.rejects(
+    backend.readFile("/remote/grown.bin", { maxBytes: 4 }),
+    /too large.*4 bytes.*download/i,
+  );
+  assert.equal(ackCount, 1, "oversized content must not be acknowledged for transfer");
+});
+
 describe("scpBackend upload/download with fake scp streams", () => {
   let tmpDir;
 
@@ -507,11 +535,13 @@ describe("scpBackend upload/download with fake scp streams", () => {
 
   it("rejects signal-only upload cancellation when exec never calls back", async () => {
     const controller = new AbortController();
+    let invalidations = 0;
     const sshClient = {
       exec() {
         // Deliberately never calls back: cancellation must settle the pending
         // execStream promise without waiting for an SSH channel.
       },
+      destroy() { invalidations += 1; },
     };
     const backend = createScpBackend(createSshExecAdapters(sshClient));
     const upload = backend.uploadBuffer(Buffer.from("payload"), "file.bin", {
@@ -526,6 +556,7 @@ describe("scpBackend upload/download with fake scp streams", () => {
       ]),
       /cancel|abort/i,
     );
+    assert.equal(invalidations, 1);
   });
 
   it("rejects upload streams that close or error before ACK listeners attach", async () => {

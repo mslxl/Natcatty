@@ -787,6 +787,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
   ipcMain.handle("netcatty:tempdir:getPath", () => {
     return getTempDir();
   });
+
+  ipcMain.handle("netcatty:tempdir:createUploadPath", (_event, payload = {}) => (
+    getTransferTempFilePath(payload.transferId, payload.fileName)
+  ));
   
   ipcMain.handle("netcatty:tempdir:open", async () => {
     const tempDir = getTempDir();

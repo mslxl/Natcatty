@@ -1,6 +1,7 @@
 const { ipcRenderer, contextBridge, webUtils } = require("electron");
 const os = require("node:os");
 const { randomUUID } = require("node:crypto");
+const { SessionTombstones } = require("./preload/sessionTombstones.cjs");
 const { createPreloadApi } = require("./preload/api.cjs");
 const {
   clearTerminalDataBacklog,
@@ -23,12 +24,10 @@ const {
 const dataListeners = new Map();
 const displayDataListeners = new Map();
 const terminalDataBacklog = createTerminalDataBacklog();
-const closedTerminalDataSessions = new Set();
+const closedTerminalDataSessions = new SessionTombstones();
 const exitListeners = new Map();
-const transferProgressListeners = new Map();
-const transferCompleteListeners = new Map();
-const transferErrorListeners = new Map();
-const transferCancelledListeners = new Map();
+const globalSftpTransferListeners = new Set();
+const pluginContributionsChangedListeners = new Set();
 const chainProgressListeners = new Map();
 const connectionReuseFallbackListeners = new Set();
 const zmodemListeners = new Map();
@@ -62,11 +61,24 @@ const terminalPopupConfigState = {
   listeners: new Set(),
 };
 
-function cleanupTransferListeners(transferId) {
-  transferProgressListeners.delete(transferId);
-  transferCompleteListeners.delete(transferId);
-  transferErrorListeners.delete(transferId);
-  transferCancelledListeners.delete(transferId);
+function dispatchGlobalSftpTransferEvent(payload) {
+  for (const cb of globalSftpTransferListeners) {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Global SFTP transfer callback failed", err);
+    }
+  }
+}
+
+function dispatchPluginContributionsChanged(payload) {
+  for (const cb of pluginContributionsChangedListeners) {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("Plugin contributions callback failed", err);
+    }
+  }
 }
 
 // ── MCP marker filter with per-session line buffering ──
@@ -80,6 +92,18 @@ const _mcpLineMetas = new Map(); // sessionId -> trailing fragment metadata
 const _mcpPendingMetas = new Map(); // sessionId -> metadata from filtered-empty chunks
 const _mcpFlushTimers = new Map(); // sessionId -> delayed-flush timer
 const _mcpDroppingWrappedLine = new Set(); // sessionIds with a split marker echo line in progress
+const MAX_MCP_BUFFERED_LINE_CHARS = 64 * 1024;
+
+function clearMcpSessionState(sessionId) {
+  if (!sessionId) return;
+  const pendingTimer = _mcpFlushTimers.get(sessionId);
+  if (pendingTimer) clearTimeout(pendingTimer);
+  _mcpFlushTimers.delete(sessionId);
+  _mcpLineBufs.delete(sessionId);
+  _mcpLineMetas.delete(sessionId);
+  _mcpPendingMetas.delete(sessionId);
+  _mcpDroppingWrappedLine.delete(sessionId);
+}
 
 // Returns true if `s` ends with a non-empty prefix of "__NCMCP_"
 // (i.e. the next chunk might complete it into a marker-containing line).
@@ -143,12 +167,22 @@ function filterMcpChunk(sessionId, chunk, meta) {
       // contain __NCMCP_ would otherwise leak through as garbage.
       const tail = data.slice(pos);
       if (droppedAny || tail.includes("__NCMCP_") || _endsWithMarkerPrefix(tail)) {
-        _mcpLineBufs.set(sessionId, tail);
         let tailMeta = !held && tail === chunk ? sameChunkMeta : stateMeta;
         if (heldIngressAlreadyAcknowledged && !hasPluginPipelineIngress(tailMeta)) {
           tailMeta = { ...(tailMeta || {}), pluginPipelineIngressBytes: 0 };
         }
-        if (tailMeta) _mcpLineMetas.set(sessionId, tailMeta);
+        if (tail.length <= MAX_MCP_BUFFERED_LINE_CHARS) {
+          _mcpLineBufs.set(sessionId, tail);
+          if (tailMeta) _mcpLineMetas.set(sessionId, tailMeta);
+        } else {
+          // A malformed/wrapped marker line can otherwise grow forever while
+          // high-rate output keeps postponing the delayed flush. Its visible
+          // content is already being suppressed, so discard the oversized
+          // prefix and retain only the drop-until-newline state.
+          _mcpLineBufs.delete(sessionId);
+          _mcpLineMetas.delete(sessionId);
+          _mcpDroppingWrappedLine.add(sessionId);
+        }
         if (droppedAny) _mcpDroppingWrappedLine.add(sessionId);
       } else {
         result += tail; // safe to display immediately
@@ -374,15 +408,8 @@ ipcRenderer.on("netcatty:exit", (_event, payload) => {
   telnetAutoLoginCancelledListeners.delete(sessionId);
   telnetEchoModeListeners.delete(sessionId);
   moshSessionReadyListeners.delete(sessionId);
-  const pendingTimer = _mcpFlushTimers.get(sessionId);
-  if (pendingTimer) {
-    clearTimeout(pendingTimer);
-    _mcpFlushTimers.delete(sessionId);
-  }
-  _mcpLineBufs.delete(sessionId); // clean up any held fragment
-  _mcpLineMetas.delete(sessionId);
-  _mcpPendingMetas.delete(sessionId);
-  _mcpDroppingWrappedLine.delete(sessionId);
+  authFailedListeners.delete(sessionId);
+  clearMcpSessionState(sessionId);
 });
 
 // Chain progress events (for jump host connections)
@@ -670,157 +697,12 @@ ipcRenderer.on("netcatty:update:needs-save", () => {
   });
 });
 
-// Transfer progress events
-ipcRenderer.on("netcatty:transfer:progress", (_event, payload) => {
-  const cb = transferProgressListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb(payload.transferred, payload.totalBytes, payload.speed, {
-        phase: payload.phase,
-        resumeStage: payload.resumeStage,
-        checkpointBytes: payload.checkpointBytes,
-        downloadCheckpointBytes: payload.downloadCheckpointBytes,
-        uploadCheckpointBytes: payload.uploadCheckpointBytes,
-        sourceFingerprint: payload.sourceFingerprint,
-        resumable: payload.resumable,
-        pauseUnavailableReason: payload.pauseUnavailableReason,
-      });
-    } catch (err) {
-      console.error("Transfer progress callback failed", err);
-    }
-  }
+ipcRenderer.on("netcatty:sftp:global-transfer", (_event, payload) => {
+  dispatchGlobalSftpTransferEvent(payload);
 });
 
-ipcRenderer.on("netcatty:transfer:complete", (_event, payload) => {
-  const cb = transferCompleteListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb();
-    } catch (err) {
-      console.error("Transfer complete callback failed", err);
-    }
-  }
-  cleanupTransferListeners(payload.transferId);
-});
-
-ipcRenderer.on("netcatty:transfer:error", (_event, payload) => {
-  const cb = transferErrorListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb(payload.error);
-    } catch (err) {
-      console.error("Transfer error callback failed", err);
-    }
-  }
-  cleanupTransferListeners(payload.transferId);
-});
-
-ipcRenderer.on("netcatty:transfer:cancelled", (_event, payload) => {
-  const cb = transferCancelledListeners.get(payload.transferId);
-  if (cb) {
-    try { cb(); } catch { }
-  }
-  cleanupTransferListeners(payload.transferId);
-});
-
-// Upload with progress listeners
-const uploadProgressListeners = new Map();
-const uploadCompleteListeners = new Map();
-const uploadErrorListeners = new Map();
-
-// Compress upload listeners
-const compressProgressListeners = new Map();
-const compressCompleteListeners = new Map();
-const compressErrorListeners = new Map();
-
-ipcRenderer.on("netcatty:upload:progress", (_event, payload) => {
-  const cb = uploadProgressListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb(payload.transferred, payload.totalBytes, payload.speed);
-    } catch (err) {
-      console.error("Upload progress callback failed", err);
-    }
-  }
-});
-
-ipcRenderer.on("netcatty:upload:complete", (_event, payload) => {
-  const cb = uploadCompleteListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb();
-    } catch (err) {
-      console.error("Upload complete callback failed", err);
-    }
-  }
-  // Cleanup listeners
-  uploadProgressListeners.delete(payload.transferId);
-  uploadCompleteListeners.delete(payload.transferId);
-  uploadErrorListeners.delete(payload.transferId);
-});
-
-ipcRenderer.on("netcatty:upload:error", (_event, payload) => {
-  const cb = uploadErrorListeners.get(payload.transferId);
-  if (cb) {
-    try {
-      cb(payload.error);
-    } catch (err) {
-      console.error("Upload error callback failed", err);
-    }
-  }
-  // Cleanup listeners
-  uploadProgressListeners.delete(payload.transferId);
-  uploadCompleteListeners.delete(payload.transferId);
-  uploadErrorListeners.delete(payload.transferId);
-});
-
-// Compress upload events
-ipcRenderer.on("netcatty:compress:progress", (_event, payload) => {
-  const cb = compressProgressListeners.get(payload.compressionId);
-  if (cb) {
-    try {
-      cb(payload.phase, payload.transferred, payload.total);
-    } catch (err) {
-      console.error("Compress progress callback failed", err);
-    }
-  }
-});
-
-ipcRenderer.on("netcatty:compress:complete", (_event, payload) => {
-  const cb = compressCompleteListeners.get(payload.compressionId);
-  if (cb) {
-    try {
-      cb();
-    } catch (err) {
-      console.error("Compress complete callback failed", err);
-    }
-  }
-  // Cleanup listeners
-  compressProgressListeners.delete(payload.compressionId);
-  compressCompleteListeners.delete(payload.compressionId);
-  compressErrorListeners.delete(payload.compressionId);
-});
-
-ipcRenderer.on("netcatty:compress:error", (_event, payload) => {
-  const cb = compressErrorListeners.get(payload.compressionId);
-  if (cb) {
-    try {
-      cb(payload.error);
-    } catch (err) {
-      console.error("Compress error callback failed", err);
-    }
-  }
-  // Cleanup listeners
-  compressProgressListeners.delete(payload.compressionId);
-  compressCompleteListeners.delete(payload.compressionId);
-  compressErrorListeners.delete(payload.compressionId);
-});
-
-ipcRenderer.on("netcatty:compress:cancelled", (_event, payload) => {
-  // Just cleanup listeners, the UI already knows it's cancelled
-  compressProgressListeners.delete(payload.compressionId);
-  compressCompleteListeners.delete(payload.compressionId);
-  compressErrorListeners.delete(payload.compressionId);
+ipcRenderer.on("netcatty:plugins:contributions-changed", (_event, payload) => {
+  dispatchPluginContributionsChanged(payload);
 });
 
 // Port forwarding status listeners
@@ -843,6 +725,7 @@ ipcRenderer.on("netcatty:portforward:status", (_event, payload) => {
 // File watcher listeners (for auto-sync feature)
 const fileWatchSyncedListeners = new Set();
 const fileWatchErrorListeners = new Set();
+const fileWatchStoppedListeners = new Set();
 
 ipcRenderer.on("netcatty:filewatch:synced", (_event, payload) => {
   fileWatchSyncedListeners.forEach((cb) => {
@@ -864,6 +747,16 @@ ipcRenderer.on("netcatty:filewatch:error", (_event, payload) => {
   });
 });
 
+ipcRenderer.on("netcatty:filewatch:stopped", (_event, payload) => {
+  fileWatchStoppedListeners.forEach((cb) => {
+    try {
+      cb(payload);
+    } catch (err) {
+      console.error("File watch stopped callback failed", err);
+    }
+  });
+});
+
 // Buffer the latest tray menu data so it can be replayed when the React
 // component subscribes after lazy-mount (avoiding the first-open race).
 let _lastTrayMenuData = null;
@@ -880,10 +773,8 @@ const api = createPreloadApi({
   displayDataListeners,
   exitListeners,
   closedTerminalDataSessions,
-  transferProgressListeners,
-  transferCompleteListeners,
-  transferErrorListeners,
-  transferCancelledListeners,
+  globalSftpTransferListeners,
+  pluginContributionsChangedListeners,
   chainProgressListeners,
   connectionReuseFallbackListeners,
   zmodemListeners,
@@ -896,6 +787,7 @@ const api = createPreloadApi({
   moshSessionReadyListeners,
   terminalDataBacklog,
   terminalOutputPorts,
+  clearTerminalOutputSessionState: clearMcpSessionState,
   terminalOutputDrainListeners,
   terminalUrgentInputPorts,
   languageChangeListeners,
@@ -917,16 +809,10 @@ const api = createPreloadApi({
   updateErrorListeners,
   updateNeedsSaveListeners,
   terminalPopupConfigState,
-  uploadProgressListeners,
-  uploadCompleteListeners,
-  uploadErrorListeners,
-  compressProgressListeners,
-  compressCompleteListeners,
-  compressErrorListeners,
   portForwardStatusListeners,
   fileWatchSyncedListeners,
   fileWatchErrorListeners,
-  cleanupTransferListeners,
+  fileWatchStoppedListeners,
   get _lastTrayMenuData() { return _lastTrayMenuData; },
   set _lastTrayMenuData(value) { _lastTrayMenuData = value; },
 });

@@ -5,7 +5,7 @@ import {
   DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS,
   isTransferPoolIdleReclaimDisabled,
   resolveSftpTransferPoolIdleTtlMs,
-} from "../../../infrastructure/config/sftpTransferPool";
+} from "../../../infrastructure/config/sftpTransferPool.ts";
 
 test("default pool idle TTL is five minutes", () => {
   assert.equal(DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS, 5 * 60_000);
@@ -18,7 +18,8 @@ test("accepts preset values including never-reclaim zero", () => {
   assert.equal(resolveSftpTransferPoolIdleTtlMs(() => 123), DEFAULT_SFTP_TRANSFER_POOL_IDLE_TTL_MS);
 });
 
-test("zero disables idle reclaim", () => {
-  assert.equal(isTransferPoolIdleReclaimDisabled(0), true);
+test("transfer pool idle reclaim helper is deprecated and always reclaim-enabled", () => {
+  // Channels close when idle; SSH park is separate. The helper always returns false.
+  assert.equal(isTransferPoolIdleReclaimDisabled(0), false);
   assert.equal(isTransferPoolIdleReclaimDisabled(300_000), false);
 });

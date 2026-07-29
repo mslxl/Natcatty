@@ -5,6 +5,10 @@ export function hasNewSourceFingerprint(
   return typeof incoming === "string" && incoming.length > 0 && incoming !== current;
 }
 
+/** UI progress floor: match/stay above main-process IPC throttle so we do not
+ * re-render React + transfer-center faster than the bridge fans out events. */
+export const TRANSFER_PROGRESS_UI_MIN_MS = 400;
+
 export function shouldApplyTransferProgress({
   elapsedMs,
   transferred,
@@ -18,8 +22,8 @@ export function shouldApplyTransferProgress({
   currentSourceFingerprint?: string;
   incomingSourceFingerprint?: string;
 }): boolean {
-  return elapsedMs >= 100
-    || transferred >= total
+  return elapsedMs >= TRANSFER_PROGRESS_UI_MIN_MS
+    || (total > 0 && transferred >= total)
     || hasNewSourceFingerprint(currentSourceFingerprint, incomingSourceFingerprint);
 }
 

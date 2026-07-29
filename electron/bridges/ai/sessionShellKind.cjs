@@ -16,6 +16,8 @@
  */
 "use strict";
 
+const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+
 const crypto = require("node:crypto");
 const { classifyLocalShellType } = require("../../../lib/localShell.cjs");
 
@@ -90,60 +92,17 @@ function parseRemoteLoginShellProbeOutput(stdout) {
  */
 function createSshConnExecProbe(conn) {
   if (!conn || typeof conn.exec !== "function") return null;
-  return function execProbe(command, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS) {
-    return new Promise((resolve) => {
-      let settled = false;
-      let activeStream = null;
-      const settle = (value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      };
-      const timer = setTimeout(() => {
-        try {
-          activeStream?.close?.();
-        } catch {
-          // ignore
-        }
-        settle(null);
-      }, timeoutMs);
-
-      try {
-        conn.exec(command, (err, stream) => {
-          if (err || !stream) {
-            settle(null);
-            return;
-          }
-          if (settled) {
-            try {
-              stream.close?.();
-            } catch {
-              // ignore
-            }
-            return;
-          }
-          activeStream = stream;
-          let stdout = "";
-          stream.on("data", (chunk) => {
-            stdout += chunk.toString("utf8");
-          });
-          if (stream.stderr && typeof stream.stderr.on === "function") {
-            stream.stderr.on("data", () => {
-              // swallow — probe only needs stdout
-            });
-          }
-          stream.on("close", () => {
-            settle(stdout);
-          });
-          stream.on("error", () => {
-            settle(null);
-          });
-        });
-      } catch {
-        settle(null);
-      }
-    });
+  return async function execProbe(command, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS) {
+    try {
+      const result = await executeBoundedSshCommand(conn, command, {
+        openingTimeoutMs: timeoutMs,
+        runTimeoutMs: timeoutMs,
+        maxOutputBytes: 64 * 1024,
+      });
+      return result.stdout;
+    } catch {
+      return null;
+    }
   };
 }
 

@@ -197,8 +197,13 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';
-/** Dedicated transfer-pool idle TTL in ms (0 = never reclaim while app runs). */
+/**
+ * @deprecated Legacy transfer-pool idle TTL. No longer read; SSH keep-alive uses
+ * STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS. Kept so old localStorage entries are ignored safely.
+ */
 export const STORAGE_KEY_SFTP_TRANSFER_POOL_IDLE_TTL_MS = 'netcatty_sftp_transfer_pool_idle_ttl_ms_v1';
+/** Shared SSH transport idle park TTL in ms (0 = keep until app quit). */
+export const STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS = 'netcatty_ssh_transport_idle_ttl_ms_v1';
 
 // Workspace Focus Indicator Style
 export const STORAGE_KEY_WORKSPACE_FOCUS_STYLE = 'netcatty_workspace_focus_style_v1';

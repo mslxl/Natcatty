@@ -37,6 +37,7 @@ import {
 } from "./transferPauseLatch";
 import {
   bumpTransferControlEpoch,
+  settleTransferControlEpochTree,
 } from "./transferControlEpoch";
 import { transferRuntime } from "./transferRuntime";
 import {
@@ -45,10 +46,20 @@ import {
   isTransferCancelledFlag,
   markTransferCancelled,
   markTransferCancelledTree,
+  settleTransferCancelTree,
 } from "./transferCancelLatch";
 import type { TransferResult, UseSftpTransfersParams, UseSftpTransfersResult } from "./useSftpTransfers.types";
 import type { TransferConnectionLease } from "./transferConnectionPool";
+import {
+  captureDeferredTransferAttempt,
+  createDeferredTransferAttemptQueue,
+  isDeferredTransferAttemptCurrent,
+  pruneTransferConflictDefaults,
+  type DeferredTransferAttemptQueue,
+  type TransferConflictDefaults,
+} from "./transferConflictLifecycle";
 import { getParentPath, joinPath } from "./utils";
+import { promoteDirectoryReplaceStage as promoteDirectoryReplacePaths } from "./directoryReplacePromotion";
 
 /** Keep the MutableRefObject mirror in sync with the process-global latch set. */
 function syncPausedTasksRef(ref: { current: Set<string> }, taskId: string, latched: boolean) {
@@ -77,6 +88,22 @@ function createPanelCancelSet(): Set<string> {
   return new PanelCancelSet();
 }
 
+export async function runTrackedTransferAttempt<T>(
+  inFlightTransferIds: Set<string>,
+  taskId: string,
+  runner: () => Promise<T>,
+): Promise<T> {
+  inFlightTransferIds.add(taskId);
+  try {
+    return await runner();
+  } finally {
+    // Completion callbacks are caller-owned and may throw. The process-global
+    // runtime already releases its walk in finally; keep the panel mirror just
+    // as strict so one callback failure cannot permanently block a retry.
+    inFlightTransferIds.delete(taskId);
+  }
+}
+
 /** User-facing path exclusivity notice (toast + logs). */
 function notifyPathConflict(
   existing: Pick<TransferTask, "fileName" | "status">,
@@ -93,6 +120,7 @@ function notifyPathConflict(
 export const useSftpTransfers = ({
   ownerId,
   canPrepareAdoption,
+  surfaceVisible = true,
   getActivePane,
   getPaneByConnectionId,
   getTabByConnectionId,
@@ -109,6 +137,9 @@ export const useSftpTransfers = ({
   const { t } = useI18n();
   const tRef = useRef(t);
   tRef.current = t;
+  // Ref so progress flushes always see the latest visibility without rebinding.
+  const surfaceVisibleRef = useRef(surfaceVisible);
+  surfaceVisibleRef.current = surfaceVisible;
   const [transfers, setTransfersState] = useState<TransferTask[]>(() => sftpTransferCenterStore.getOwnerTasks(ownerId));
   const [conflicts, setConflicts] = useState<FileConflict[]>(() => sftpTransferCenterStore
     .getOwnerTasks(ownerId)
@@ -136,29 +167,94 @@ export const useSftpTransfers = ({
   const conflictsRef = useRef(conflicts);
   conflictsRef.current = conflicts;
 
-  // Keep transfersRef + global center in lockstep with every update so progress
-  // survives panel hide/unmount. Preload transfer:progress callbacks outlive
-  // React — they still call this setTransfers after the owner unmounts.
+  // When the retained panel is re-opened, catch up React state from the ref that
+  // kept receiving progress while the surface was hidden.
+  useEffect(() => {
+    if (!surfaceVisible) return;
+    setTransfersState(transfersRef.current);
+  }, [surfaceVisible]);
+
+  // Keep owner lifecycle changes in the global transfer store. Byte progress
+  // arrives independently through the unified process-wide event stream.
   //
-  // CRITICAL: publishOwner must NOT live only inside setState's updater. After
-  // unmount React discards setState and never runs the updater, which froze the
-  // global transfer center bar while the stream kept running. Apply against
-  // transfersRef first so progress IPC keeps publishing even when React is gone.
-  //
-  // Do not pre-assign transfersRef before calling setTransfers with the same
-  // array reference — identity equality skips publish (avoids store↔listener loops).
+  // Do not pre-assign transfersRef before publishing the same array reference —
+  // identity equality skips the store merge (avoids store↔listener loops).
   const setTransfers = useCallback((update: SetStateAction<TransferTask[]>) => {
     const prev = transfersRef.current;
     const next = typeof update === "function"
       ? (update as (value: TransferTask[]) => TransferTask[])(prev)
       : update;
     if (next === prev) return;
-    transfersRef.current = next;
     sftpTransferCenterStore.publishOwner(ownerId, next);
-    setTransfersState(next);
+    const canonical = sftpTransferCenterStore.getOwnerTasks(ownerId);
+    transfersRef.current = canonical;
+    setTransfersState(canonical);
   }, [ownerId]);
+
+  // Coalesce progress-only patches to one paint per animation frame. Without
+  // this, each stream tick maps the full transfer list + publishOwner + store
+  // emit, and the main-window renderer pegs ~100%+ CPU during large copies.
+  //
+  // Progress flushes intentionally skip publishOwner: the store is updated via
+  // transferRuntime.patchTask (cheap single-row merge). Re-publishing the full
+  // owner snapshot on every tick was the freeze path for directory copies.
+  const pendingProgressByIdRef = useRef<Map<string, Partial<TransferTask>>>(new Map());
+  const progressFlushRafRef = useRef<number | null>(null);
+  // Progress coalesce: store is the live authority (SftpTransferItem uses
+  // useSftpTransferTask). Batch patchTask to one rAF — do not add another 500ms
+  // timer on top of main-process IPC (stacked lag made the bar jump).
+  // Do not setTransfersState here — that re-reconciled the retained SFTP tree.
+  const flushPendingProgress = useCallback(() => {
+    progressFlushRafRef.current = null;
+    const pending = pendingProgressByIdRef.current;
+    if (pending.size === 0) return;
+    pendingProgressByIdRef.current = new Map();
+    for (const [taskId, updates] of pending) {
+      transferRuntime.patchTask(taskId, updates);
+    }
+  }, []);
+  const scheduleProgressFlush = useCallback(() => {
+    if (progressFlushRafRef.current != null) return;
+    progressFlushRafRef.current = window.requestAnimationFrame(flushPendingProgress);
+  }, [flushPendingProgress]);
+  const applyProgress = useCallback((taskId: string, updates: Partial<TransferTask>) => {
+    const prevPending = pendingProgressByIdRef.current.get(taskId) || {};
+    pendingProgressByIdRef.current.set(taskId, { ...prevPending, ...updates });
+    // Keep ref hot for cancel/pause checks without waiting for paint.
+    transfersRef.current = transfersRef.current.map((row) => (
+      row.id === taskId ? { ...row, ...updates } : row
+    ));
+    scheduleProgressFlush();
+  }, [scheduleProgressFlush]);
+  useEffect(() => () => {
+    if (progressFlushRafRef.current != null) {
+      window.cancelAnimationFrame(progressFlushRafRef.current);
+      progressFlushRafRef.current = null;
+    }
+  }, []);
+
   const completionHandlersRef = useRef<Map<string, (result: TransferResult) => void | Promise<void>>>(new Map());
-  const conflictDefaultsRef = useRef<Map<string, FileConflictAction>>(new Map());
+  const conflictDefaultsRef = useRef<TransferConflictDefaults>(new Map());
+  const deferredConflictAttemptsRef = useRef<DeferredTransferAttemptQueue | null>(null);
+
+  useEffect(() => {
+    const conflictDefaults = conflictDefaultsRef.current;
+    const queue = createDeferredTransferAttemptQueue({
+      onError: (error) => logger.warn("[SFTP] Deferred conflict transfer failed", error),
+    });
+    deferredConflictAttemptsRef.current = queue;
+    return () => {
+      queue.dispose();
+      if (deferredConflictAttemptsRef.current === queue) {
+        deferredConflictAttemptsRef.current = null;
+      }
+      conflictDefaults.clear();
+    };
+  }, [ownerId]);
+
+  useEffect(() => {
+    pruneTransferConflictDefaults(conflictDefaultsRef.current, transfers);
+  }, [transfers]);
 
   const clearCancelledTask = useCallback((taskId: string) => {
     cancelledTasksRef.current.delete(taskId);
@@ -307,7 +403,7 @@ export const useSftpTransfers = ({
 
   const { statTargetPath, getDuplicateTarget } = useSftpTransferConflictOps();
 
-  const { estimateDirectoryBytes, transferFile, countDirectoryFiles, transferDirectory } = useSftpDirectoryTransferOps({
+  const { transferFile, transferDirectory } = useSftpDirectoryTransferOps({
     ownerId,
     cancelledTasksRef,
     pausedTasksRef,
@@ -338,23 +434,55 @@ export const useSftpTransfers = ({
         ?? transferRuntime.getTask(task.id)?.status
         ?? "transferring";
     }
-    inFlightTransferIdsRef.current.add(task.id);
+    return runTrackedTransferAttempt(inFlightTransferIdsRef.current, task.id, async () => {
+      // Runtime is the authority writer for live lifecycle. Also mirror into the
+      // panel list when mounted (view only — soft control does not depend on it).
+      // Progress-only patches are rAF-coalesced so large-file streams do not
+      // force a full React + global-center re-render on every IPC tick.
+      const updateTask = (updates: Partial<TransferTask>) => {
+        const statusChange = updates.status !== undefined
+          && updates.status !== "transferring"
+          && updates.status !== "paused"
+          && updates.status !== "pausing";
+        // Pause-latched progress still counts as progress-only (no publishOwner).
+        const progressOnly = !statusChange
+          && updates.error === undefined
+          && updates.conflict === undefined
+          && updates.ownerId === undefined
+          && (
+            updates.transferredBytes !== undefined
+            || updates.speed !== undefined
+            || updates.checkpointBytes !== undefined
+            || updates.resumeStage !== undefined
+            || updates.downloadCheckpointBytes !== undefined
+            || updates.uploadCheckpointBytes !== undefined
+            || updates.sourceFingerprint !== undefined
+            || updates.totalBytes !== undefined
+            || updates.phase !== undefined
+            || updates.status === "transferring"
+            || updates.status === "paused"
+            || updates.status === "pausing"
+          );
+        if (progressOnly) {
+          applyProgress(task.id, updates);
+          return;
+        }
+        // Lifecycle transitions: flush any pending progress first, then apply.
+        if (pendingProgressByIdRef.current.size > 0) {
+          flushPendingProgress();
+        }
+        transferRuntime.patchTask(task.id, updates);
+        setTransfers((prev) =>
+          prev.map((t) => (t.id === task.id ? { ...t, ...updates } : t)),
+        );
+      };
 
-    // Runtime is the authority writer for live lifecycle. Also mirror into the
-    // panel list when mounted (view only — soft control does not depend on it).
-    const updateTask = (updates: Partial<TransferTask>) => {
-      transferRuntime.patchTask(task.id, updates);
-      setTransfers((prev) =>
-        prev.map((t) => (t.id === task.id ? { ...t, ...updates } : t)),
-      );
-    };
-
-    let walkStatus: TransferStatus = "transferring";
-    await transferRuntime.runWalk(task.id, async () => {
-      walkStatus = await processTransferBody(task, sourcePane, targetPane, targetSide, updateTask);
+      let walkStatus: TransferStatus = "transferring";
+      await transferRuntime.runWalk(task.id, async () => {
+        walkStatus = await processTransferBody(task, sourcePane, targetPane, targetSide, updateTask);
+      });
+      return walkStatus;
     });
-    inFlightTransferIdsRef.current.delete(task.id);
-    return walkStatus;
   };
 
   const processTransferBody = async (
@@ -446,21 +574,6 @@ export const useSftpTransfers = ({
 
     const discoverTransferSize = async () => {
       try {
-        if (task.isDirectory) {
-          const discoveredSize = await estimateDirectoryBytes(
-            task.sourcePath,
-            sourceSftpId,
-            sourcePane.connection!.isLocal,
-            sourceEncoding,
-            task.id,
-          );
-          if (cancelledTasksRef.current.has(task.id)) return;
-          updateTask({
-            totalBytes: Math.max(discoveredSize, 0),
-          });
-          return;
-        }
-
         if (task.totalBytes > 0 || !!task.sourceLastModified) return;
 
         if (sourcePane.connection?.isLocal) {
@@ -510,13 +623,15 @@ export const useSftpTransfers = ({
       // seed from byte checkpointBytes (pause clears those, which would show 0/N
       // while completed children are skipped without re-counting).
       const directoryCompletedCount = task.isDirectory
-        ? transfersRef.current.filter(
-          (candidate) => candidate.parentTaskId === task.id && candidate.status === "completed",
-        ).length
+        ? (task.directoryResumeCheckpoint?.completedEntries ?? 0) + transfersRef.current.filter(
+            (candidate) => candidate.parentTaskId === task.id && candidate.status === "completed",
+          ).length
         : 0;
       updateTask({
         status: "transferring",
-        totalBytes: Math.max(task.totalBytes, 0),
+        totalBytes: task.isDirectory
+          ? directoryCompletedCount
+          : Math.max(task.totalBytes, 0),
         transferredBytes: task.isDirectory
           ? Math.max(task.transferredBytes, directoryCompletedCount)
           : (task.checkpointBytes ?? task.transferredBytes ?? 0),
@@ -599,9 +714,9 @@ export const useSftpTransfers = ({
       if (cancelledTasksRef.current.has(task.id)) return "cancelled";
 
       if (conflict) {
-        const defaultAction = conflictDefaultsRef.current.get(
-          conflictDefaultKey(task.batchId, task.isDirectory, conflict.existingType),
-        );
+        const defaultAction = conflictDefaultsRef.current
+          .get(task.batchId ?? "global")
+          ?.get(getSftpConflictTypeKey(task.isDirectory, conflict.existingType));
         if (defaultAction) {
           if (defaultAction === "stop") {
             await markBatchStopped(task);
@@ -699,19 +814,6 @@ export const useSftpTransfers = ({
         //   transferredBytes = completed file count (incremented by child completions)
         // Child file tasks are registered in transfers array with their own byte progress.
 
-        // Fire-and-forget: count total files for parent progress display
-        void countDirectoryFiles(
-          task.sourcePath,
-          sourceSftpId,
-          sourcePane.connection!.isLocal,
-          sourceEncoding,
-          task.id,
-        ).then((fileCount) => {
-          if (!cancelledTasksRef.current.has(task.id)) {
-            updateTask({ totalBytes: fileCount });
-          }
-        }).catch(() => {});
-
         const stagedTargetPath = task.replaceExistingTarget
           ? `${task.targetPath}.netcatty-${task.id.replace(/[^A-Za-z0-9_-]/g, "_")}.part`
           : undefined;
@@ -735,37 +837,34 @@ export const useSftpTransfers = ({
         } else if (stagedTargetPath) {
           const bridge = netcattyBridge.require();
           const backupPath = `${task.targetPath}.netcatty-${task.id.replace(/[^A-Za-z0-9_-]/g, "_")}.backup`;
-          let backedUp = false;
-          try {
-            if (targetPane.connection!.isLocal) {
-              if (!bridge.renameLocalFile || !bridge.deleteLocalFile) throw new Error("Local directory replacement is unavailable");
-              try {
-                await bridge.renameLocalFile(task.targetPath, backupPath);
-                backedUp = true;
-              } catch { /* target may not exist */ }
-              await bridge.renameLocalFile(stagedTargetPath, task.targetPath);
-              if (backedUp) await bridge.deleteLocalFile(backupPath);
-            } else if (targetSftpId) {
-              if (!bridge.renameSftp || !bridge.deleteSftp) throw new Error("Remote directory replacement is unavailable");
-              try {
-                await bridge.renameSftp(targetSftpId, task.targetPath, backupPath, targetEncoding);
-                backedUp = true;
-              } catch { /* target may not exist */ }
-              try {
-                await bridge.renameSftp(targetSftpId, stagedTargetPath, task.targetPath, targetEncoding);
-              } catch (error) {
-                if (backedUp) await bridge.renameSftp(targetSftpId, backupPath, task.targetPath, targetEncoding).catch(() => {});
-                throw error;
-              }
-              if (backedUp) await bridge.deleteSftp(targetSftpId, backupPath, targetEncoding);
+          if (targetPane.connection!.isLocal) {
+            if (!bridge.statLocal || !bridge.renameLocalFile || !bridge.deleteLocalFile) {
+              throw new Error("Local directory replacement is unavailable");
             }
-            updateTask({ stagedTargetPath: undefined });
-          } catch (error) {
-            if (backedUp && targetPane.connection!.isLocal) {
-              await bridge.renameLocalFile?.(backupPath, task.targetPath).catch(() => {});
+            await promoteDirectoryReplacePaths({
+              targetPath: task.targetPath,
+              stagedPath: stagedTargetPath,
+              backupPath,
+              statPath: bridge.statLocal,
+              renamePath: bridge.renameLocalFile,
+              deletePath: bridge.deleteLocalFile,
+            });
+          } else if (targetSftpId) {
+            if (!bridge.statSftp || !bridge.renameSftp || !bridge.deleteSftp) {
+              throw new Error("Remote directory replacement is unavailable");
             }
-            throw error;
+            await promoteDirectoryReplacePaths({
+              targetPath: task.targetPath,
+              stagedPath: stagedTargetPath,
+              backupPath,
+              statPath: (candidate) => bridge.statSftp!(targetSftpId, candidate, targetEncoding),
+              renamePath: (source, target) => bridge.renameSftp!(targetSftpId, source, target, targetEncoding),
+              deletePath: (candidate) => bridge.deleteSftp!(targetSftpId, candidate, targetEncoding),
+            });
+          } else {
+            throw new Error("Target SFTP session missing for directory promote");
           }
+          updateTask({ stagedTargetPath: undefined });
         }
       } else if (!task.isDirectory) {
         await transferFile(
@@ -1173,6 +1272,7 @@ export const useSftpTransfers = ({
         resumeStage: undefined,
         downloadCheckpointBytes: undefined,
         uploadCheckpointBytes: undefined,
+        directoryResumeCheckpoint: undefined,
         speed: 0,
         startTime: Date.now(),
         endTime: undefined,
@@ -1207,8 +1307,8 @@ export const useSftpTransfers = ({
       const unfinishedParents = new Set(
         prev.filter((t) => !["completed", "cancelled", "failed"].includes(t.status)).map((t) => t.id),
       );
-      // Keep completed/cancelled children of unfinished directory parents —
-      // they are resume checkpoints, not disposable history.
+      // Keep non-compacted terminal exceptions of unfinished directory parents;
+      // compacted completions already live in the bounded parent checkpoint.
       return prev.filter((t) => {
         if (t.parentTaskId && unfinishedParents.has(t.parentTaskId)) return true;
         return t.status !== "completed" && t.status !== "cancelled";
@@ -1251,75 +1351,6 @@ export const useSftpTransfers = ({
     return cancelledTasksRef.current.has(transferId) || isTransferCancelledFlag(transferId);
   }, []);
 
-  const addExternalUpload = useCallback((task: TransferTask) => {
-    // Filter out any pending scanning tasks before adding the new task.
-    // This ensures that even if dismissExternalUpload's state update hasn't been applied yet
-    // (due to React state batching), the scanning placeholder will still be removed.
-    if (task.parentTaskId) {
-      const childIds = activeChildIdsRef.current.get(task.parentTaskId) ?? new Set<string>();
-      childIds.add(task.id);
-      activeChildIdsRef.current.set(task.parentTaskId, childIds);
-    }
-    setTransfers((prev) => [
-      ...prev.filter(t => !(t.status === "pending" && t.fileName === "Scanning files...")),
-      task
-    ]);
-  }, [setTransfers]);
-
-  const updateExternalUpload = useCallback((taskId: string, updates: Partial<TransferTask>) => {
-    const currentTask = transfersRef.current.find((task) => task.id === taskId);
-    if (currentTask?.parentTaskId && updates.status && ["completed", "failed", "cancelled"].includes(updates.status)) {
-      activeChildIdsRef.current.get(currentTask.parentTaskId)?.delete(taskId);
-    }
-    setTransfers((prev) =>
-      prev.map((t) => {
-        if (
-          currentTask?.parentTaskId
-          && t.id === currentTask.parentTaskId
-          && updates.resumable === false
-        ) {
-          return {
-            ...t,
-            resumable: false,
-            pauseUnavailableReason: updates.pauseUnavailableReason,
-          };
-        }
-        if (t.id !== taskId) return t;
-
-        const merged: TransferTask = { ...t, ...updates };
-        const effectiveStatus = merged.status ?? t.status;
-        const isPausedUi = effectiveStatus === "paused" || effectiveStatus === "pausing";
-
-        // Keep progress monotonic and bounded for stable progress UI.
-        // While paused, freeze visible transferred/speed so soft-drain tail
-        // progress does not make Pause look ignored.
-        if (isPausedUi) {
-          merged.transferredBytes = t.transferredBytes;
-          merged.speed = 0;
-          if (Number.isFinite(Number(updates.checkpointBytes))) {
-            merged.checkpointBytes = Math.max(
-              t.checkpointBytes ?? 0,
-              Math.trunc(Number(updates.checkpointBytes)),
-            );
-          }
-        } else if (typeof merged.totalBytes === "number" && merged.totalBytes > 0) {
-          merged.transferredBytes = Math.max(
-            t.transferredBytes,
-            Math.min(merged.transferredBytes, merged.totalBytes),
-          );
-        } else {
-          merged.transferredBytes = Math.max(t.transferredBytes, merged.transferredBytes);
-        }
-
-        if (!Number.isFinite(merged.speed) || merged.speed < 0) {
-          merged.speed = 0;
-        }
-
-        return merged;
-      }),
-    );
-  }, [setTransfers]);
-
   const resolveConflict = useCallback(
     async (conflictId: string, action: FileConflictAction, applyToAll = false) => {
       if (cancelledTasksRef.current.has(conflictId)) return;
@@ -1348,7 +1379,10 @@ export const useSftpTransfers = ({
       );
 
       if (applyToAll) {
-        conflictDefaultsRef.current.set(selectedConflictKey, action);
+        const batchId = conflict.batchId ?? "global";
+        const batchDefaults = conflictDefaultsRef.current.get(batchId) ?? new Map<string, FileConflictAction>();
+        batchDefaults.set(getSftpConflictTypeKey(conflict.isDirectory, conflict.existingType), action);
+        conflictDefaultsRef.current.set(batchId, batchDefaults);
       }
 
       // Eagerly clear refs so a double-click cannot schedule two processTransfer calls.
@@ -1465,20 +1499,53 @@ export const useSftpTransfers = ({
       );
 
       for (const updatedTask of liveUpdatedTasks) {
-        setTimeout(async () => {
-          if (cancelledTasksRef.current.has(updatedTask.id)) return;
-          const endpoints = resolveTaskEndpoints(updatedTask);
-          if (!endpoints) return;
-          await processTransfer(updatedTask, endpoints.sourcePane, endpoints.targetPane, endpoints.targetSide);
-        }, 100);
+        const identity = captureDeferredTransferAttempt(
+          updatedTask,
+          ownerId,
+          connectionCacheKeyMapRef.current,
+        );
+        const resolveCurrentAttempt = () => {
+          const current = transfersRef.current.find((candidate) => candidate.id === updatedTask.id);
+          if (
+            cancelledTasksRef.current.has(updatedTask.id)
+            || !isDeferredTransferAttemptCurrent(current, identity, connectionCacheKeyMapRef.current)
+          ) return null;
+          const endpoints = resolveTaskEndpoints(current!);
+          if (!endpoints?.sourcePane.connection || !endpoints.targetPane.connection) return null;
+          const sourceMatches = current!.sourceConnectionId === "local"
+            ? endpoints.sourcePane.connection.isLocal
+            : endpoints.sourcePane.connection.id === current!.sourceConnectionId;
+          const targetMatches = current!.targetConnectionId === "local"
+            ? endpoints.targetPane.connection.isLocal
+            : endpoints.targetPane.connection.id === current!.targetConnectionId;
+          if (!sourceMatches || !targetMatches) return null;
+          return { current: current!, endpoints };
+        };
+        deferredConflictAttemptsRef.current?.schedule(
+          updatedTask.id,
+          100,
+          () => resolveCurrentAttempt() !== null,
+          async () => {
+            const attempt = resolveCurrentAttempt();
+            if (!attempt) return;
+            await processTransfer(
+              attempt.current,
+              attempt.endpoints.sourcePane,
+              attempt.endpoints.targetPane,
+              attempt.endpoints.targetSide,
+            );
+          },
+        );
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- processTransfer is defined inline; transfers/conflicts accessed via refs
     [
       completeCancelledTask,
+      connectionCacheKeyMapRef,
       conflictDefaultKey,
       getDuplicateTarget,
       markBatchStopped,
+      ownerId,
       resolveTaskEndpoints,
       sftpSessionsRef,
     ],
@@ -1575,23 +1642,6 @@ export const useSftpTransfers = ({
 
       try {
         if (params.isDirectory) {
-          // Count files for progress display
-          void countDirectoryFiles(
-            params.sourcePath,
-            workingSourceSftpId,
-            false,
-            sourceEncoding,
-            task.id,
-            0,     // symlinkDepth
-            true,  // followSymlinks
-          ).then((fileCount) => {
-            if (!cancelledTasksRef.current.has(task.id)) {
-              setTransfers((prev) =>
-                prev.map((t) => (t.id === task.id ? { ...t, totalBytes: fileCount } : t)),
-              );
-            }
-          }).catch(() => {});
-
           childFailureCount = await transferDirectory(
             task,
             workingSourceSftpId,
@@ -1627,7 +1677,8 @@ export const useSftpTransfers = ({
         // transferDirectory returns cannot be overwritten by completed/failed.
         let appliedStatus: TransferStatus = "completed";
         setTransfers((prev) => {
-          const completedCount = prev.filter(
+          const liveParent = prev.find((candidate) => candidate.id === task.id);
+          const completedCount = (liveParent?.directoryResumeCheckpoint?.completedEntries ?? 0) + prev.filter(
             (t) => t.parentTaskId === task.id && t.status === "completed",
           ).length;
           return prev.map((t) => {
@@ -1687,32 +1738,41 @@ export const useSftpTransfers = ({
       } finally {
         sourceWorkLease?.release();
         sourceWorkLease = null;
+        const childIds = sftpTransferCenterStore.getSnapshot().tasks
+          .filter((candidate) => candidate.parentTaskId === task.id)
+          .map((candidate) => candidate.id);
+        const relatedChildIds = settleTransferCancelTree(task.id, childIds);
+        settleTransferControlEpochTree(task.id, relatedChildIds);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sftpSessionsRef, acquireTransferSession],
   );
 
+  // Publish only on owner change / mount. Do NOT re-publish on every `transfers`
+  // React state change: progress flushes use setTransfersState without
+  // publishOwner, and a transfers→publishOwner effect reintroduced the full
+  // store merge + emit on every tick (hidden retained SFTP panels still
+  // remount useSftpTransfers after close).
+  // Lifecycle writers already call setTransfers → publishOwner.
   useEffect(() => {
-    sftpTransferCenterStore.publishOwner(ownerId, transfers);
-  }, [ownerId, transfers]);
+    sftpTransferCenterStore.publishOwner(ownerId, transfersRef.current);
+  }, [ownerId]);
 
-  // Drop local rows the global store reassigned to dedicated-resume (or another
-  // owner) so the panel cannot start a second stream with the same transferId.
+  // The store is the only transfer-task authority. Lifecycle changes update the
+  // panel list; byte-only ticks update refs without repainting the whole panel.
   useEffect(() => {
     return sftpTransferCenterStore.subscribe(() => {
-      const foreignIds = new Set(
-        sftpTransferCenterStore.getSnapshot().tasks
-          .filter((task) => task.ownerId !== ownerId)
-          .map((task) => task.id),
-      );
-      if (foreignIds.size === 0) return;
-      setTransfers((prev) => {
-        const next = prev.filter((task) => !foreignIds.has(task.id));
-        return next.length === prev.length ? prev : next;
-      });
+      const ownerRows = sftpTransferCenterStore.getSnapshot().tasks.filter((task) => task.ownerId === ownerId);
+      transfersRef.current = ownerRows;
+      setTransfersState(ownerRows);
     });
-  }, [ownerId, setTransfers]);
+  }, [ownerId]);
+
+  useEffect(() => sftpTransferCenterStore.subscribeProgress(() => {
+    const liveById = new Map(sftpTransferCenterStore.getSnapshot().tasks.map((task) => [task.id, task]));
+    transfersRef.current = transfersRef.current.map((task) => liveById.get(task.id) ?? task);
+  }), []);
 
   const resolveAdoptionPanes = useCallback((task: TransferTask) => {
     const panes = [getActivePane("left"), getActivePane("right")].filter((pane): pane is SftpPane => !!pane?.connection);
@@ -1877,8 +1937,6 @@ export const useSftpTransfers = ({
     activeTransfersCount,
     startTransfer,
     downloadToLocal,
-    addExternalUpload,
-    updateExternalUpload,
     cancelTransfer,
     // Single process-level control surface (TransferRuntime).
     pauseTransfer: async (transferId: string) => {

@@ -132,6 +132,19 @@ test('TraceStore records compaction events for export', async () => {
   assert.equal(exported.compactions[0]?.trigger, 'force');
 });
 
+test('TraceStore bounds compaction history independently from events', () => {
+  const store = new TraceStore(20, 3);
+  for (let index = 0; index < 10; index += 1) {
+    store.append({
+      id: `compaction-${index}`,
+      type: 'compaction',
+      sessionId: 'chat-bounded-compactions',
+      trace: { trigger: 'force' },
+    } as import('./types').AgentEvent);
+  }
+  assert.equal(store.getCompactions('chat-bounded-compactions').length, 3);
+});
+
 test('prepareStepContext replaces prior step handle notices under v7 carry-forward semantics', async () => {
   const store = new ToolOutputStore();
   store.store({

@@ -4,13 +4,16 @@ declare global {
   interface NetcattyBridge {
     // SFTP operations
     openSftp(options: NetcattySSHOptions): Promise<string>;
-    openSftpForSession?(sessionId: string): Promise<string>;
+    openSftpForSession?(sessionId: string, expectedEndpoint?: NetcattySSHOptions): Promise<string>;
     listSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<RemoteFile[]>;
+    realpathSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
     readSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<string>;
     readSftpBinary?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<ArrayBuffer>;
     writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding): Promise<void>;
     writeSftpBinary?(sftpId: string, path: string, content: ArrayBuffer, encoding?: SftpFilenameEncoding): Promise<void>;
     closeSftp(sftpId: string): Promise<void | { success?: boolean; deferred?: boolean; leaseCount?: number }>;
+    retainSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;
+    releaseSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;
     mkdirSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     deleteSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
@@ -18,24 +21,7 @@ declare global {
     chmodSftp?(sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding): Promise<void>;
     getSftpHomeDir?(sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ success: boolean; homeDir?: string; error?: string }>;
 
-    // Write binary with real-time progress callback
-    writeSftpBinaryWithProgress?(
-      sftpId: string,
-      path: string,
-      content: ArrayBuffer,
-      transferId: string,
-      encoding?: SftpFilenameEncoding,
-      onProgress?: (transferred: number, total: number, speed: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void
-    ): Promise<{ success: boolean; transferId: string; cancelled?: boolean }>;
-
-    // Cancel an in-progress SFTP upload
-    cancelSftpUpload?(transferId: string): Promise<{ success: boolean }>;
-
     // Transfer with progress
-    uploadFile?(sftpId: string, localPath: string, remotePath: string, transferId: string): Promise<void>;
-    downloadFile?(sftpId: string, remotePath: string, localPath: string, transferId: string): Promise<void>;
     cancelTransfer?(transferId: string): Promise<void>;
     /** Clear a pre-start cancel latch so intentional same-id resume/retry can run. */
     clearPendingTransferCancel?(transferId: string): Promise<{ success: boolean } | void>;
@@ -50,10 +36,7 @@ declare global {
         sftpId: string;
         folderName: string;
         totalBytes: number;
-      },
-      onProgress?: (phase: string, transferred: number, total: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void
+      }
     ): Promise<{ compressionId: string; success?: boolean; error?: string }>;
     cancelCompressedUpload?(compressionId: string): Promise<{ success: boolean }>;
     pauseCompressedUpload?(compressionId: string): Promise<{ success: boolean; deferred?: boolean; lifecycleEpoch?: number; reason?: string }>;
@@ -64,8 +47,6 @@ declare global {
       remoteTar: boolean;
       error?: string;
     }>;
-
-    onTransferProgress?(transferId: string, cb: (progress: SftpTransferProgress) => void): () => void;
 
     // Streaming transfer with real progress and cancellation
     startStreamTransfer?(
@@ -79,6 +60,9 @@ declare global {
         targetSftpId?: string;
         sourceHostId?: string;
         targetHostId?: string;
+        parentTaskId?: string;
+        directoryEntryIndex?: number;
+        directoryEntryIdentity?: string;
         totalBytes?: number;
         sourceEncoding?: SftpFilenameEncoding;
         targetEncoding?: SftpFilenameEncoding;
@@ -95,17 +79,7 @@ declare global {
         globalConcurrency?: number;
         /** When true, skip main-process admission (renderer already scheduled). */
         skipAdmission?: boolean;
-      },
-      onProgress?: (transferred: number, total: number, speed: number, checkpoint?: {
-        phase?: import('../../domain/models/sftp').TransferPhase;
-        resumeStage?: 'direct' | 'download' | 'upload';
-        checkpointBytes?: number;
-        downloadCheckpointBytes?: number;
-        uploadCheckpointBytes?: number;
-        sourceFingerprint?: string;
-      }) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void
+      }
     ): Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
     pauseTransfer?(transferId: string): Promise<{
       success: boolean;
@@ -152,8 +126,13 @@ declare global {
       sessionId?: string;
       sourceHostId?: string;
       targetHostId?: string;
+      parentTaskId?: string;
+      directoryEntryIndex?: number;
+      directoryEntryIdentity?: string;
       lifecycleEpoch?: number;
       lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
+      resumable?: boolean;
+      pauseUnavailableReason?: string;
     }) => void): () => void;
 
     // Local filesystem operations

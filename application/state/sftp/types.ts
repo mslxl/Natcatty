@@ -1,4 +1,4 @@
-import { KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
+import { Host, KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 
 export interface SftpPane {
   id: string;
@@ -77,6 +77,11 @@ export interface FileWatchErrorEvent {
 export interface SftpStateOptions {
   transferOwnerId?: string;
   canPrepareTransferAdoption?: boolean;
+  /**
+   * When false the side panel is retained-but-hidden (closed during transfer).
+   * Progress must not force React state paints for the hidden tree.
+   */
+  surfaceVisible?: boolean;
   onFileWatchSynced?: (event: FileWatchSyncedEvent) => void;
   onFileWatchError?: (event: FileWatchErrorEvent) => void;
   useCompressedUpload?: boolean;
@@ -98,8 +103,12 @@ export interface SftpStateOptions {
   /**
    * Resolve a live terminal session id for a vault host so transfer-pool opens
    * can reuse that SSH transport (openSftpForSession) instead of a cold connect.
+   * When `host` is provided, only return a session whose live endpoint matches.
    */
-  resolveTransferSourceSessionId?: (hostId: string) => string | undefined;
-  /** Idle TTL for dedicated transfer-pool sessions (0 = never reclaim idle). */
+  resolveTransferSourceSessionId?: (hostId: string, host?: Host) => string | undefined;
+  /**
+   * @deprecated Transfer channels no longer park independently. SSH keep-alive
+   * is controlled by sshTransportIdleTtlMs in settings.
+   */
   transferPoolIdleTtlMs?: number;
 }

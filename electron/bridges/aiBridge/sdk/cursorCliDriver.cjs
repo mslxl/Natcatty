@@ -7,12 +7,48 @@
  * CLI login quota without CURSOR_API_KEY.
  */
 const { spawn } = require("node:child_process");
+const { StringDecoder } = require("node:string_decoder");
 const fs = require("node:fs");
 const path = require("node:path");
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 
 const DEFAULT_CURSOR_CLI_MODEL = "auto";
 const NETCATTY_MCP_NAME = "netcatty-remote-hosts";
+const CURSOR_CLI_ABORT_GRACE_MS = 1_500;
+const MAX_CURSOR_CLI_STDERR_CHARS = 64 * 1024;
+const MAX_CURSOR_CLI_MODEL_STDOUT_CHARS = 1024 * 1024;
+const MAX_CURSOR_CLI_LINE_BYTES = 10 * 1024 * 1024;
+
+function signalCursorCliProcessTree(child, signal, forceKillImpl) {
+  if (!child) return;
+  if (typeof forceKillImpl === "function") {
+    try { forceKillImpl(child, signal); } catch {}
+    return;
+  }
+  if (process.platform === "win32" && signal === "SIGKILL" && child.pid) {
+    try {
+      const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      killer.on("error", () => {});
+      killer.unref?.();
+      return;
+    } catch {
+      // Fall through to ChildProcess.kill below.
+    }
+  }
+  if (process.platform !== "win32" && child.pid) {
+    try {
+      process.kill(-child.pid, signal);
+      return;
+    } catch {
+      // The child may not be a process-group leader (for injected tests or an
+      // older runtime). Fall back to killing the direct child.
+    }
+  }
+  try { child.kill(signal); } catch { /* ignore */ }
+}
 
 function stripCursorApiKeyFromEnv(env) {
   const out = { ...(env || {}) };
@@ -374,19 +410,37 @@ function formatCursorCliErrorForUser(message) {
   return text || "Cursor CLI turn failed";
 }
 
-function createLineBuffer(onLine) {
+function createLineBuffer(onLine, maxBufferBytes = MAX_CURSOR_CLI_LINE_BYTES) {
   let buffer = "";
+  let bufferedBytes = 0;
+  let overflowed = false;
+  const decoder = new StringDecoder("utf8");
   return {
     push(chunk) {
-      buffer += String(chunk || "");
+      if (overflowed) return;
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || ""));
+      bufferedBytes += bytes.length;
+      buffer += decoder.write(bytes);
       let idx;
+      let consumedLine = false;
       while ((idx = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, idx).trim();
         buffer = buffer.slice(idx + 1);
+        consumedLine = true;
         if (line) onLine(line);
+      }
+      if (consumedLine) bufferedBytes = Buffer.byteLength(buffer, "utf8") + decoder.lastNeed;
+      if (bufferedBytes > maxBufferBytes) {
+        overflowed = true;
+        buffer = "";
+        const error = new Error(`Cursor CLI message exceeded ${maxBufferBytes} bytes`);
+        error.code = "CURSOR_CLI_LINE_LIMIT";
+        throw error;
       }
     },
     flush() {
+      if (overflowed) return;
+      buffer += decoder.end();
       const line = buffer.trim();
       buffer = "";
       if (line) onLine(line);
@@ -410,6 +464,8 @@ async function runCursorCliTurn({
   spawnImpl,
   mergeMcp,
   workspaceCwd,
+  abortGraceMs = CURSOR_CLI_ABORT_GRACE_MS,
+  forceKillImpl,
 }) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) {
@@ -478,6 +534,7 @@ async function runCursorCliTurn({
       env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
+      detached: process.platform !== "win32",
     });
   } catch (err) {
     cleanup();
@@ -499,29 +556,41 @@ async function runCursorCliTurn({
   };
 
   const stdoutBuffer = createLineBuffer(handleLine);
-  const stderrChunks = [];
+  let stderrText = "";
+  let stderrBytes = 0;
+  let stderrTruncated = false;
+  let stderrEnded = false;
+  const stderrDecoder = new StringDecoder("utf8");
 
   child.stdout?.on("data", (chunk) => {
     if (signal?.aborted) return;
-    stdoutBuffer.push(chunk);
+    try {
+      stdoutBuffer.push(chunk);
+    } catch (error) {
+      if (!state.failed) {
+        state.failed = true;
+        emitter.emitError(formatCursorCliErrorForUser(error?.message || String(error)));
+      }
+      signalCursorCliProcessTree(child, "SIGKILL", forceKillImpl);
+    }
   });
   child.stderr?.on("data", (chunk) => {
-    stderrChunks.push(String(chunk));
+    if (signal?.aborted) return;
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    const remaining = Math.max(0, MAX_CURSOR_CLI_STDERR_CHARS - stderrBytes);
+    const accepted = buffer.length <= remaining ? buffer : buffer.subarray(0, remaining);
+    if (accepted.length > 0) stderrText += stderrDecoder.write(accepted);
+    stderrBytes += accepted.length;
+    if (accepted.length < buffer.length) stderrTruncated = true;
   });
 
-  const abortHandler = () => {
-    if (!child || child.killed) return;
-    try { child.kill("SIGTERM"); } catch { /* ignore */ }
-  };
-  if (signal) {
-    if (signal.aborted) abortHandler();
-    else signal.addEventListener("abort", abortHandler, { once: true });
-  }
-
+  let abortHandler = null;
+  let forceKillTimer = null;
   await new Promise((resolve) => {
     const finish = () => {
       if (settled) return;
       settled = true;
+      clearTimeout(forceKillTimer);
       // Only flush remaining lines if not aborted — late error/result after
       // Stop must not surface as a failed turn.
       if (!signal?.aborted) stdoutBuffer.flush();
@@ -536,15 +605,39 @@ async function runCursorCliTurn({
       finish();
     });
     child.on("close", (code) => {
+      if (!stderrEnded) {
+        stderrEnded = true;
+        if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
+      }
       // Soft-cancel: SIGTERM/kill after abort is not a turn failure.
       if (!state.failed && !signal?.aborted && code && code !== 0 && !state.streamedAssistantText) {
-        const stderr = stderrChunks.join("").trim();
+        const stderr = stderrText.trim();
         const message = stderr || `Cursor CLI exited with code ${code}`;
         state.failed = true;
         emitter.emitError(formatCursorCliErrorForUser(message));
       }
       finish();
     });
+
+    let terminationStarted = false;
+    abortHandler = () => {
+      if (settled || terminationStarted) return;
+      terminationStarted = true;
+      forceKillTimer = setTimeout(() => {
+        if (settled) return;
+        signalCursorCliProcessTree(child, "SIGKILL", forceKillImpl);
+        // Process APIs do not guarantee a close event when process-tree
+        // termination itself fails. Stop must still release MCP config and the
+        // renderer request within a fixed deadline.
+        finish();
+      }, Math.max(0, abortGraceMs));
+      forceKillTimer.unref?.();
+      signalCursorCliProcessTree(child, "SIGTERM");
+    };
+    if (signal) {
+      if (signal.aborted) abortHandler();
+      else signal.addEventListener("abort", abortHandler, { once: true });
+    }
   });
 
   if (signal) signal.removeEventListener("abort", abortHandler);
@@ -559,19 +652,39 @@ async function runCursorCliTurn({
   return { sessionId: state.sessionId };
 }
 
-async function listCursorCliModels({ binPath, env, spawnImpl } = {}) {
+async function listCursorCliModels({
+  binPath,
+  env,
+  spawnImpl,
+  abortController,
+  signal,
+  abortGraceMs = CURSOR_CLI_ABORT_GRACE_MS,
+  forceKillImpl,
+} = {}) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) return { currentModelId: null, models: [] };
+  const abortSignal = signal || abortController?.signal;
+  if (abortSignal?.aborted) return { currentModelId: null, models: [] };
 
   const childEnv = stripCursorApiKeyFromEnv(env || process.env);
   const spawnFn = spawnImpl || spawn;
 
   return await new Promise((resolve) => {
     let stdout = "";
+    let stdoutBytes = 0;
+    let stdoutTruncated = false;
+    let stdoutEnded = false;
+    const stdoutDecoder = new StringDecoder("utf8");
     let settled = false;
+    let abortHandler = null;
+    let forceKillTimer = null;
     const finish = (value) => {
       if (settled) return;
       settled = true;
+      clearTimeout(forceKillTimer);
+      if (abortSignal && abortHandler) {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
       resolve(value);
     };
 
@@ -581,15 +694,28 @@ async function listCursorCliModels({ binPath, env, spawnImpl } = {}) {
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        detached: process.platform !== "win32",
       });
     } catch {
       finish({ currentModelId: null, models: [] });
       return;
     }
 
-    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.stdout?.on("data", (chunk) => {
+      if (abortSignal?.aborted) return;
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+      const remaining = Math.max(0, MAX_CURSOR_CLI_MODEL_STDOUT_CHARS - stdoutBytes);
+      const accepted = buffer.length <= remaining ? buffer : buffer.subarray(0, remaining);
+      if (accepted.length > 0) stdout += stdoutDecoder.write(accepted);
+      stdoutBytes += accepted.length;
+      if (accepted.length < buffer.length) stdoutTruncated = true;
+    });
     child.on("error", () => finish({ currentModelId: null, models: [] }));
     child.on("close", () => {
+      if (!stdoutEnded) {
+        stdoutEnded = true;
+        if (!stdoutTruncated || stdoutDecoder.lastNeed === 0) stdout += stdoutDecoder.end();
+      }
       const models = [];
       const seen = new Set();
       let currentModelId = null;
@@ -615,13 +741,30 @@ async function listCursorCliModels({ binPath, env, spawnImpl } = {}) {
       }
       finish({ currentModelId, models });
     });
+
+    abortHandler = () => {
+      if (settled) return;
+      forceKillTimer = setTimeout(() => {
+        if (settled) return;
+        signalCursorCliProcessTree(child, "SIGKILL", forceKillImpl);
+        finish({ currentModelId: null, models: [] });
+      }, Math.max(0, abortGraceMs));
+      forceKillTimer.unref?.();
+      signalCursorCliProcessTree(child, "SIGTERM", forceKillImpl);
+    };
+    if (abortSignal) {
+      if (abortSignal.aborted) abortHandler();
+      else abortSignal.addEventListener("abort", abortHandler, { once: true });
+    }
   });
 }
 
 module.exports = {
   DEFAULT_CURSOR_CLI_MODEL,
+  MAX_CURSOR_CLI_LINE_BYTES,
   NETCATTY_MCP_NAME,
   buildCursorCliArgs,
+  createLineBuffer,
   formatCursorCliErrorForUser,
   listCursorCliModels,
   mergeWorkspaceMcpJson,

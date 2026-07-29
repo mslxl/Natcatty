@@ -8,6 +8,7 @@ const { buildNetcattySkillsOpenCodePathAllowlist } = require("./netcattySkillsOp
 const { getToolCliStateDir } = require("../../../cli/discoveryPath.cjs");
 const tempDirBridge = require("../../tempDirBridge.cjs");
 const { realpathSync } = require("node:fs");
+const { createHash } = require("node:crypto");
 const { CodexAppServerRuntime } = require("../codexAppServer/runtime.cjs");
 const { probeCodexAppServer } = require("../codexAppServer/probe.cjs");
 
@@ -20,6 +21,7 @@ const VALID_BACKENDS = new Set(listBackends());
 // is far cheaper than spawning a new opencode process on every panel render
 // (issue #2184).
 const MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const MODEL_CACHE_MAX_ENTRIES = 32;
 const MODEL_LIST_TIMEOUT_MS = 10000;
 const sdkModelCache = new Map();
 const sdkModelInFlight = new Map();
@@ -77,7 +79,40 @@ function buildSdkModelCacheKey(backendKey, binPath, env, runtime = "sdk") {
   const envFingerprint = SDK_MODEL_CACHE_ENV_KEYS
     .map((key) => `${key}=${env?.[key] == null ? "" : String(env[key])}`)
     .join("\u0000");
-  return [String(backendKey || ""), String(binPath || ""), String(runtime || "sdk"), envFingerprint].join("\u0000");
+  const envHash = createHash("sha256").update(envFingerprint).digest("hex");
+  return [String(backendKey || ""), String(binPath || ""), String(runtime || "sdk"), envHash].join("\u0000");
+}
+
+function pruneSdkModelCache(cache, {
+  now = Date.now(),
+  ttlMs = MODEL_CACHE_TTL_MS,
+  maxEntries = MODEL_CACHE_MAX_ENTRIES,
+} = {}) {
+  for (const [key, entry] of cache) {
+    if (!entry || now - Number(entry.at || 0) >= ttlMs) cache.delete(key);
+  }
+  while (cache.size > maxEntries) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey === undefined) break;
+    cache.delete(oldestKey);
+  }
+}
+
+function getSdkModelCacheEntry(cache, key, options) {
+  pruneSdkModelCache(cache, options);
+  const entry = cache.get(key);
+  if (!entry) return null;
+  // Map insertion order doubles as the LRU list.
+  cache.delete(key);
+  cache.set(key, entry);
+  return entry;
+}
+
+function setSdkModelCacheEntry(cache, key, entry, options) {
+  pruneSdkModelCache(cache, options);
+  cache.delete(key);
+  cache.set(key, entry);
+  pruneSdkModelCache(cache, options);
 }
 
 function shouldCacheSdkRuntimeModels(_backendKey) {
@@ -708,8 +743,8 @@ function registerSdkStreamHandlers(ctx) {
           `${codexRuntime}:${cursorAuthMode}`,
         );
         const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
-        const cached = shouldCacheModels ? sdkModelCache.get(cacheKey) : null;
-        if (cached && Date.now() - cached.at < MODEL_CACHE_TTL_MS) {
+        const cached = shouldCacheModels ? getSdkModelCacheEntry(sdkModelCache, cacheKey) : null;
+        if (cached) {
           return { ok: true, currentModelId: cached.currentModelId || null, models: cached.models };
         }
 
@@ -738,7 +773,7 @@ function registerSdkStreamHandlers(ctx) {
             // pinning that for TTL would block recovery (matches renderer
             // sdkRuntimeModelCache behavior).
             if (shouldCacheModels && (models.length > 0 || currentModelId)) {
-              sdkModelCache.set(cacheKey, { at: Date.now(), currentModelId, models });
+              setSdkModelCacheEntry(sdkModelCache, cacheKey, { at: Date.now(), currentModelId, models });
             }
             return { ok: true, currentModelId, models };
           } catch (err) {
@@ -888,6 +923,8 @@ module.exports = {
   resolveSdkBackendBinPath,
   buildSdkSessionKey,
   buildSdkModelCacheKey,
+  getSdkModelCacheEntry,
+  setSdkModelCacheEntry,
   normalizeSdkListModelsResult,
   resolveSdkResumeSessionId,
   expireSiblingCursorCliModeSessions,

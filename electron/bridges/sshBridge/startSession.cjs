@@ -15,6 +15,8 @@ const {
 } = require("../terminalInterruptDiagnostics.cjs");
 const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
+const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
 
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
@@ -135,7 +137,7 @@ function shouldPromoteCachedAuthMethod(authMethod, cachedMethod) {
 
 function createStartSessionApi(ctx) {
   with (ctx) {
-    const listInteractiveShellPids = (conn) => {
+    const listInteractiveShellPids = async (conn) => {
       if (!conn || typeof conn.exec !== "function") {
         return Promise.resolve({ available: false, pids: [] });
       }
@@ -170,49 +172,26 @@ ps_output=$(ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null) || exit 69
 } | awk '/^[0-9]+$/ && !seen[$1]++ { print $1 }'
 printf '%s\n' '${scanCompleteMarker}'`;
 
-      return new Promise((resolve) => {
-        let settled = false;
-        let activeStream = null;
-        const settle = (result) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(result);
+      try {
+        const result = await executeBoundedSshCommand(
+          conn,
+          `exec sh -c ${quoteShellArg(script)}`,
+          {
+            openingTimeoutMs: 1500,
+            runTimeoutMs: 1500,
+            maxOutputBytes: 1024 * 1024,
+          },
+        );
+        const lines = result.stdout.split(/\r?\n/);
+        const completed = lines.includes(scanCompleteMarker);
+        const available = completed && (result.code === null || result.code === 0);
+        return {
+          available,
+          pids: available ? lines.filter((value) => /^\d+$/.test(value)) : [],
         };
-        const timer = setTimeout(() => {
-          try { activeStream?.close?.(); } catch { /* ignore */ }
-          settle({ available: false, pids: [] });
-        }, 1500);
-
-        try {
-          conn.exec(`exec sh -c ${quoteShellArg(script)}`, (err, stream) => {
-            if (err || !stream) {
-              settle({ available: false, pids: [] });
-              return;
-            }
-            activeStream = stream;
-            let stdout = "";
-            let exitStatus = null;
-            stream.on("data", (chunk) => { stdout += chunk.toString(); });
-            stream.stderr?.on("data", () => {});
-            stream.on("exit", (code) => {
-              if (typeof code === "number") exitStatus = code;
-            });
-            stream.on("close", (code) => {
-              const effectiveExitStatus = typeof code === "number" ? code : exitStatus;
-              const lines = stdout.split(/\r?\n/);
-              const completed = lines.includes(scanCompleteMarker);
-              const available = completed && (effectiveExitStatus === null || effectiveExitStatus === 0);
-              settle({
-                available,
-                pids: available ? lines.filter((value) => /^\d+$/.test(value)) : [],
-              });
-            });
-          });
-        } catch {
-          settle({ available: false, pids: [] });
-        }
-      });
+      } catch {
+        return { available: false, pids: [] };
+      }
     };
 
     const waitForNewInteractiveShellPid = async (conn, previousPids) => {
@@ -288,11 +267,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
         // sure a "Copy Tab" reuse opens its channel on a connection going to the
         // *same* host — a saved host edited after the source connected must not
         // silently run commands on the old machine (issue #1204 review).
-        _reuseEndpoint: {
-          hostname: options.hostname || '',
-          port: options.port || 22,
-          username: options.username || 'root',
-        },
+        _reuseEndpoint: normalizeEndpoint(buildConnectionReuseEndpoint(options, {
+          agentForwarding: options._actualAgentForwarding ?? options.agentForwarding,
+        })),
         tcpLatencyDirect:
           !Array.isArray(options.jumpHosts) || options.jumpHosts.length === 0
             ? !options.proxy
@@ -708,7 +685,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
         conn.once("error", onConnError);
 
         try {
-          conn.shell(
+          openBoundedSshShellCallback(
+            conn,
             {
               term: "xterm-256color",
               cols,
@@ -733,10 +711,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
               sendProgress('connected');
 
-              // Hand the up-front ref hold over to the real session: detach it from
-              // the temporary holder (without ending the transport) and attach the
-              // descriptor to the session. The count already includes this channel.
-              refHolder.connRef = null;
+              // Hand the up-front lease over to the real session without changing
+              // the lease count (transferConnectionRef). setupShellSession still
+              // records connRef; transfer rebinds _sshTransportLeaseId so a later
+              // releaseConnectionRef(session) returns the right lease.
               setupShellSession({
                 conn,
                 stream,
@@ -748,13 +726,24 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 chainConnections: [],
                 isReused: true,
               });
+              const copiedSession = sessions.get(sessionId);
+              if (copiedSession) {
+                if (typeof transferConnectionRef === "function") {
+                  transferConnectionRef(refHolder, copiedSession);
+                } else {
+                  // Legacy count model: detach holder without decrement.
+                  refHolder.connRef = null;
+                }
+              } else {
+                refHolder.connRef = null;
+              }
               const newShellPidPromise = shellDiscoveryBeforeOpen.available
                 ? waitForNewInteractiveShellPid(conn, shellPidsBeforeOpen)
                 : Promise.resolve(null);
               void newShellPidPromise.then((newShellPid) => {
-                const copiedSession = sessions.get(sessionId);
-                if (copiedSession && newShellPid) {
-                  copiedSession.shellPid = newShellPid;
+                const liveSession = sessions.get(sessionId);
+                if (liveSession && newShellPid) {
+                  liveSession.shellPid = newShellPid;
                 }
                 settled = true;
                 resolve({ sessionId });
@@ -828,12 +817,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // cookie wired up at connection time, so a reused channel would not carry
       // X11. For X11 hosts we deliberately skip reuse and make a fresh
       // connection so the duplicate keeps working X11 forwarding.
+      const reuseEndpoint = buildConnectionReuseEndpoint(options);
+
       if (options.sourceSessionId && !options.x11Forwarding) {
-        const sourceSession = findReusableSession(sessions, options.sourceSessionId, {
-          hostname: options.hostname,
-          port: options.port || 22,
-          username: options.username || "root",
-        });
+        const sourceSession = findReusableSession(sessions, options.sourceSessionId, reuseEndpoint);
         if (sourceSession) {
           try {
             return await reuseShellSession(event, options, sourceSession, sessionId, log);
@@ -852,6 +839,82 @@ printf '%s\n' '${scanCompleteMarker}'`;
             sourceSessionId: options.sourceSessionId,
           });
           sendConnectionReuseFallback();
+        }
+      }
+
+      // Idle-park / endpoint reuse: after the last tab returns its lease the
+      // transport may still be warm. Open a new shell channel without re-auth.
+      if (!options.x11Forwarding && typeof findTransportByEndpoint === "function") {
+        // Shell park reuse requires exact agentForwarding match so disabling
+        // ForwardAgent cannot reattach to a warm conn that still exposes the agent.
+        const parked = findTransportByEndpoint(reuseEndpoint, { kind: "shell" });
+        if (parked?.conn && (parked.state === "live" || parked.state === "idle")) {
+          try {
+            log("reusing parked or shared transport for new shell channel", {
+              sessionId,
+              hostname: options.hostname,
+              transportId: parked.id,
+              transportState: parked.state,
+            });
+            return await reuseShellSession(
+              event,
+              options,
+              {
+                conn: parked.conn,
+                connRef: parked,
+                // openReusedShellSerialized only needs conn + connRef; stream is
+                // required by findReusableSession but we bypass that path here.
+                stream: {},
+              },
+              sessionId,
+              log,
+            );
+          } catch (parkErr) {
+            log("parked transport reuse failed, falling back to fresh connection", {
+              sessionId,
+              hostname: options.hostname,
+              error: parkErr?.message,
+            });
+            // Fall through to a normal dial.
+          }
+        }
+      }
+
+      // Atomically reserve the physical dial before any asynchronous key,
+      // proxy, or jump-host preparation. A second terminal/SFTP/forward open
+      // for the same compatible endpoint can wait for this leader and then
+      // open its own channel on the authenticated transport.
+      let pendingDialCoordination = options._pendingDialState?.coordination || null;
+      if (!pendingDialCoordination && !options.x11Forwarding && typeof beginTransportDial === "function") {
+        const coordination = beginTransportDial(reuseEndpoint, { kind: "shell" });
+        if (coordination.role === "reuse" || coordination.role === "join") {
+          try {
+            const transport = coordination.role === "reuse"
+              ? coordination.transport
+              : await waitForTransportDial(coordination);
+            return await reuseShellSession(
+              event,
+              options,
+              { conn: transport.conn, connRef: transport, stream: {} },
+              sessionId,
+              log,
+            );
+          } catch (coordinationErr) {
+            // A waiter must observe the leader's real failure instead of
+            // immediately starting a second authentication prompt. Existing
+            // transport reuse keeps its historical fresh-dial fallback.
+            if (coordination.role === "join") throw coordinationErr;
+            log("coordinated transport reuse failed, connecting fresh", {
+              sessionId,
+              hostname: options.hostname,
+              error: coordinationErr?.message,
+            });
+          }
+        } else {
+          pendingDialCoordination = coordination;
+          if (options._pendingDialState) {
+            options._pendingDialState.coordination = coordination;
+          }
         }
       }
 
@@ -888,6 +951,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         const totalHops = jumpHosts.length + 1; // +1 for final target
 
         // Build base connection options for final target
+        const keepalivePolicy = resolveConnectionKeepalivePolicy(options);
         const connectOpts = {
           host: options.hostname,
           port: options.port || 22,
@@ -901,8 +965,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
           // Resolved keepalive (caller decides whether host override or global
           // applies). interval is in seconds; 0 means truly disabled, so
           // countMax also goes to 0 to skip ssh2's dead-connection check.
-          keepaliveInterval: options.keepaliveInterval > 0 ? options.keepaliveInterval * 1000 : 0,
-          keepaliveCountMax: options.keepaliveInterval > 0 ? (options.keepaliveCountMax ?? 10) : 0,
+          keepaliveInterval: keepalivePolicy.keepaliveIntervalMs,
+          keepaliveCountMax: keepalivePolicy.keepaliveCountMax,
           // Enable keyboard-interactive authentication (required for 2FA/MFA)
           tryKeyboard: true,
           algorithms: buildAlgorithms(options.legacyAlgorithms, {
@@ -1693,7 +1757,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
               };
             }
 
-            conn.shell(
+            openBoundedSshShellCallback(
+              conn,
               {
                 term: "xterm-256color",
                 cols,
@@ -1725,7 +1790,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 const ownerSession = setupShellSession({
                   conn,
                   stream,
-                  options,
+                  options: {
+                    ...options,
+                    _actualAgentForwarding: Boolean(connectOpts.agentForward),
+                  },
                   sessionId,
                   event,
                   log,
@@ -1735,6 +1803,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 });
                 establishedOwnerSession = ownerSession;
                 connRef = createConnectionRef(ownerSession, conn, chainConnections);
+                if (pendingDialCoordination) {
+                  completeTransportDial(pendingDialCoordination, connRef);
+                }
                 // Capture this connection's log stream token in the closure so
                 // the connection-level handlers below stop the right stream even
                 // after a same-sessionId reconnect (#916).
@@ -2024,8 +2095,16 @@ printf '%s\n' '${scanCompleteMarker}'`;
               : undefined,
           });
           conn.connect(connectOpts);
+        }).catch((err) => {
+          if (pendingDialCoordination && !options._deferPendingDialFailure) {
+            failTransportDial(pendingDialCoordination, err);
+          }
+          throw err;
         });
       } catch (err) {
+        if (pendingDialCoordination && !options._deferPendingDialFailure) {
+          failTransportDial(pendingDialCoordination, err);
+        }
         console.error("[Chain] SSH chain connection error:", err.message);
         const isAuthError = isSshAuthFailure(err);
         const suppressPreShellAuthExit = Boolean(options._suppressPreShellAuthExit && isAuthError);

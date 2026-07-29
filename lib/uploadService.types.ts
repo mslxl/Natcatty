@@ -57,27 +57,18 @@ export interface UploadCallbacks {
 }
 
 export interface UploadBridge {
+  /** Main-process transfer events own file progress and terminal lifecycle. */
+  managesTransferLifecycle?: boolean;
   writeLocalFile?: (path: string, data: ArrayBuffer) => Promise<void>;
   mkdirLocal?: (path: string) => Promise<void>;
   statLocal?: (path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
   deleteLocalFile?: (path: string) => Promise<void>;
+  stageUploadFile?: (file: File, taskId: string) => Promise<string>;
+  cancelStagedUploadFile?: (taskId: string) => Promise<unknown>;
+  deleteTempFile?: (path: string) => Promise<unknown>;
   mkdirSftp: (sftpId: string, path: string) => Promise<void>;
   statSftp?: (sftpId: string, path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
   deleteSftp?: (sftpId: string, path: string) => Promise<void>;
-  writeSftpBinary?: (sftpId: string, path: string, data: ArrayBuffer) => Promise<void>;
-  writeSftpBinaryWithProgress?: (
-    sftpId: string,
-    path: string,
-    data: ArrayBuffer,
-    taskId: string,
-    onProgress: (transferred: number, total: number, speed: number, capability?: {
-      resumable?: boolean;
-      pauseUnavailableReason?: string;
-    }) => void,
-    onComplete?: () => void,
-    onError?: (error: string) => void
-  ) => Promise<{ success: boolean; cancelled?: boolean } | undefined>;
-  cancelSftpUpload?: (taskId: string) => Promise<unknown>;
   /** Stream transfer using local file path (avoids loading file into memory) */
   startStreamTransfer?: (
     options: {
@@ -91,14 +82,21 @@ export interface UploadBridge {
       sourceHostId?: string;
       targetHostId?: string;
       totalBytes?: number;
-    },
-    onProgress?: (transferred: number, total: number, speed: number, capability?: {
-      phase?: import('../domain/models/sftp').TransferPhase;
+      sourceEncoding?: import('../domain/models/sftp').SftpFilenameEncoding;
+      targetEncoding?: import('../domain/models/sftp').SftpFilenameEncoding;
+      sameHost?: boolean;
       resumable?: boolean;
+      checkpointBytes?: number;
+      resumeStage?: 'direct' | 'download' | 'upload';
+      downloadCheckpointBytes?: number;
+      uploadCheckpointBytes?: number;
+      sourceFingerprint?: string;
+      lifecycleEpoch?: number;
+      lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
       pauseUnavailableReason?: string;
-    }) => void,
-    onComplete?: () => void,
-    onError?: (error: string) => void
+      globalConcurrency?: number;
+      skipAdmission?: boolean;
+    }
   ) => Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
   cancelTransfer?: (transferId: string) => Promise<void>;
 }

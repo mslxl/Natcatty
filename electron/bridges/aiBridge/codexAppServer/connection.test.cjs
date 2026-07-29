@@ -72,6 +72,48 @@ test("App Server connection initializes once and correlates JSONL requests", asy
   connection.close();
 });
 
+test("App Server connection preserves a Chinese response split across UTF-8 chunks", async () => {
+  const child = createFakeChild();
+  const connection = new CodexAppServerConnection({
+    binPath: "/usr/bin/codex",
+    env: {},
+    spawnImpl: () => child,
+  });
+
+  const startPromise = connection.start();
+  const initialize = await readJsonLine(child.stdin);
+  const response = Buffer.from(`${JSON.stringify({
+    id: initialize.id,
+    result: { message: "中文" },
+  })}\n`, "utf8");
+  const split = response.indexOf(Buffer.from("中", "utf8")) + 1;
+  child.stdout.write(response.subarray(0, split));
+  child.stdout.write(response.subarray(split));
+  await startPromise;
+  await readJsonLine(child.stdin);
+  connection.close();
+});
+
+test("App Server connection rejects an unterminated oversized JSONL message", async () => {
+  const child = createFakeChild();
+  let fatal;
+  const connection = new CodexAppServerConnection({
+    binPath: "/usr/bin/codex",
+    env: {},
+    maxJsonlLineBytes: 8,
+    spawnImpl: () => child,
+    onFatal: (error) => { fatal = error; },
+  });
+
+  const startPromise = connection.start();
+  await readJsonLine(child.stdin);
+  child.stdout.write("123456789");
+
+  await assert.rejects(startPromise, /message exceeded 8 bytes/);
+  assert.match(fatal.message, /message exceeded 8 bytes/);
+  assert.equal(child.killed, true);
+});
+
 test("App Server connection rejects pending RPCs when the process exits", async () => {
   const child = createFakeChild();
   let fatal;
@@ -92,6 +134,58 @@ test("App Server connection rejects pending RPCs when the process exits", async 
   child.emit("exit", 1, null);
   await assert.rejects(request, /exited unexpectedly/);
   assert.match(fatal.message, /code 1/);
+});
+
+test("App Server close force-kills a child that ignores SIGTERM", async () => {
+  const child = createFakeChild();
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    return true;
+  };
+  const connection = new CodexAppServerConnection({
+    binPath: "/usr/bin/codex",
+    env: {},
+    closeKillGraceMs: 5,
+    spawnImpl: () => child,
+  });
+  const startPromise = connection.start();
+  const initialize = await readJsonLine(child.stdin);
+  child.stdout.write(`${JSON.stringify({ id: initialize.id, result: {} })}\n`);
+  await startPromise;
+  await readJsonLine(child.stdin);
+
+  connection.close();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("App Server close does not retain or re-kill a child that exits synchronously on SIGTERM", async () => {
+  const child = createFakeChild();
+  const signals = [];
+  child.kill = (signal) => {
+    signals.push(signal);
+    if (signal === "SIGTERM") child.emit("exit", 0, "SIGTERM");
+    return true;
+  };
+  const connection = new CodexAppServerConnection({
+    binPath: "/usr/bin/codex",
+    env: {},
+    closeKillGraceMs: 5,
+    spawnImpl: () => child,
+  });
+  const startPromise = connection.start();
+  const initialize = await readJsonLine(child.stdin);
+  child.stdout.write(`${JSON.stringify({ id: initialize.id, result: {} })}\n`);
+  await startPromise;
+  await readJsonLine(child.stdin);
+
+  connection.close();
+  assert.equal(connection.getClosingProcessCountForTests(), 0);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(signals, ["SIGTERM"]);
 });
 
 test("App Server process keys include executable and environment identity", () => {

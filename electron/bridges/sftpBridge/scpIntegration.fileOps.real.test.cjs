@@ -75,7 +75,6 @@ suite("real SCP via fileOps IPC surface", () => {
       get electronModule() {
         return { webContents: { fromId: () => ({ send: () => {} }) } };
       },
-      activeSftpUploads: new Map(),
       fileWatcherBridge: { stopWatchersForSession: () => {} },
       fs,
       path,
@@ -155,28 +154,6 @@ suite("real SCP via fileOps IPC surface", () => {
     console.log("[scp-fileops-it] ops ok", { names, afterDel });
   });
 
-  it("writeSftpBinaryWithProgress completes on real SCP session", async () => {
-    const buf = crypto.randomBytes(4096);
-    const remote = `${remotePrefix}/prog.bin`;
-    const progress = [];
-    const result = await api.writeSftpBinaryWithProgress(null, {
-      sftpId,
-      path: remote,
-      content: buf,
-      transferId: "it-transfer-1",
-      onProgress: (t, total) => progress.push([t, total]),
-      onComplete: () => progress.push(["done"]),
-    });
-    assert.equal(result.success, true);
-    const read = await api.readSftpBinary(null, { sftpId, path: remote });
-    const got = Buffer.from(read);
-    assert.equal(got.length, buf.length);
-    assert.equal(
-      crypto.createHash("sha256").update(got).digest("hex"),
-      crypto.createHash("sha256").update(buf).digest("hex"),
-    );
-    console.log("[scp-fileops-it] binary progress events", progress.length);
-  });
 });
 
 if (!ENABLED) {
