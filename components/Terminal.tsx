@@ -3075,6 +3075,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (mode === "manual") {
       clearAutoReconnect();
       prepareRestoredReconnect();
+      // A clone's first connection can fail (auth/host-key/transport) before the
+      // inherited `cd` is consumed. prepareRestoredReconnect() just cleared the
+      // intent for non-restored sessions, so re-arm it here; the callback no-ops
+      // once the cwd was consumed or when there is no pending inherited cwd.
+      prepareInitialCwdIntent();
     } else {
       restoreCwdIntentRef.current = null;
       suppressHostStartupCommandRef.current = shouldSuppressHostStartupCommandOnReconnect("automatic");
