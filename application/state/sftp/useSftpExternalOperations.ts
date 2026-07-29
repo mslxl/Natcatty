@@ -77,7 +77,6 @@ export const useSftpExternalOperations = (
     getPaneByConnectionId,
     getPaneByTabId,
     getTabByConnectionId,
-    getTabByHostId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,
@@ -286,15 +285,8 @@ export const useSftpExternalOperations = (
       content: string,
       filenameEncoding?: SftpFilenameEncoding,
     ): Promise<void> => {
-      let tabRef = getTabByConnectionId?.(connectionId) ?? null;
-      let pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
-
-      // Promoted editors keep the connection id from promote time; browse
-      // restore/reconnect may regenerate it while the host stays the same.
-      if (!pane?.connection && getTabByHostId) {
-        tabRef = getTabByHostId(expectedHostId);
-        pane = tabRef?.pane ?? null;
-      }
+      const tabRef = getTabByConnectionId?.(connectionId) ?? null;
+      const pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
 
       if (!pane?.connection) {
         throw new Error("SFTP connection is no longer available");
@@ -334,7 +326,6 @@ export const useSftpExternalOperations = (
       getPaneByConnectionId,
       getSideByTabId,
       getTabByConnectionId,
-      getTabByHostId,
       sftpSessionsRef,
     ],
   );
