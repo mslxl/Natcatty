@@ -143,6 +143,14 @@ test("reconnect preparation cancels an in-flight disconnected hibernate", () => 
     source,
     'const startReconnect = async (mode: "manual" | "auto" = "manual") =>',
   );
+  const startNewSessionBody = readFunctionBody(
+    source,
+    "const startNewSession = () =>",
+  );
+  const updateStatusBody = readFunctionBody(
+    source,
+    'const updateStatus = useCallback((next: TerminalSession["status"]) =>',
+  );
 
   assert.match(
     fullHibernateBody,
@@ -153,15 +161,25 @@ test("reconnect preparation cancels an in-flight disconnected hibernate", () => 
     "reconnectPreparationTokenRef.current = retryToken",
   );
   const cleanupIndex = reconnectBody.indexOf("await cleanupSession()");
-  const releaseIndex = reconnectBody.indexOf(
-    "reconnectPreparationTokenRef.current = null",
-    cleanupIndex,
-  );
-  const connectingIndex = reconnectBody.indexOf('updateStatus("connecting")', cleanupIndex);
+  const startNewSessionIndex = reconnectBody.indexOf("const startNewSession = () =>");
 
   assert.ok(claimIndex >= 0 && claimIndex < cleanupIndex);
-  assert.ok(cleanupIndex < releaseIndex);
-  assert.ok(releaseIndex < connectingIndex);
+  assert.doesNotMatch(
+    reconnectBody.slice(cleanupIndex, startNewSessionIndex),
+    /reconnectPreparationTokenRef\.current = null/,
+  );
+  assert.match(
+    startNewSessionBody,
+    /if \(!retryStillActive\(\)\) \{\s*finishReconnectPreparation\(\);\s*return;\s*\}\s*finishReconnectPreparation\(\);/,
+  );
+  assert.match(
+    reconnectBody,
+    /term\.write\('\\x1b\[\?1049l', \(\) => \{\s*if \(!retryStillActive\(\)\) \{\s*finishReconnectPreparation\(\);\s*return;/,
+  );
+  assert.match(
+    updateStatusBody,
+    /statusRef\.current = next;\s*setStatus\(next\);/,
+  );
 });
 
 test("a cancelled soft-hidden upgrade resumes its renderer", () => {

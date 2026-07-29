@@ -1226,6 +1226,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, []);
 
   const updateStatus = useCallback((next: TerminalSession["status"]) => {
+    statusRef.current = next;
     setStatus(next);
     hasConnectedRef.current = next === "connected";
     if (next === "connected") {
@@ -1995,6 +1996,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const teardown = () => {
     isBootActiveRef.current = false;
     retryTokenRef.current = null;
+    reconnectPreparationTokenRef.current = null;
     restoreCwdIntentRef.current = null;
     suppressHostStartupCommandRef.current = false;
     clearHibernateRetry();
@@ -2950,6 +2952,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     clearAutoReconnect();
     retryTokenRef.current = null;
+    reconnectPreparationTokenRef.current = null;
     restoreCwdIntentRef.current = null;
     setIsCancelling(true);
     auth.setNeedsAuth(false);
@@ -2974,6 +2977,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleCloseDisconnectedSession = () => {
     clearAutoReconnect();
     retryTokenRef.current = null;
+    reconnectPreparationTokenRef.current = null;
     restoreCwdIntentRef.current = null;
     onCloseSession?.(sessionId);
   };
@@ -3064,17 +3068,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     retryTokenRef.current = retryToken;
     reconnectPreparationTokenRef.current = retryToken;
     const retryTokenStillCurrent = () => retryTokenRef.current === retryToken;
-
-    try {
-      await cleanupSession();
-    } finally {
+    const finishReconnectPreparation = () => {
       if (reconnectPreparationTokenRef.current === retryToken) {
         reconnectPreparationTokenRef.current = null;
       }
+    };
+
+    try {
+      await cleanupSession();
+    } catch (error) {
+      finishReconnectPreparation();
+      throw error;
     }
-    if (!retryTokenStillCurrent()) return;
+    if (!retryTokenStillCurrent()) {
+      finishReconnectPreparation();
+      return;
+    }
     const term = termRef.current;
-    if (!term) return;
+    if (!term) {
+      finishReconnectPreparation();
+      return;
+    }
     // closeSession wiped preload ready listeners; re-arm before startMosh so a
     // fast handshake cannot emit netcatty:mosh:ready into an empty map.
     prepareMoshReadySubscription();
@@ -3102,7 +3116,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setShowLogs(true);
 
     const startNewSession = () => {
-      if (!retryStillActive()) return;
+      if (!retryStillActive()) {
+        finishReconnectPreparation();
+        return;
+      }
+      finishReconnectPreparation();
       xtermRuntimeRef.current?.resetKittyConnectionInputState();
       resetKittyKeyboardModeStateForSession(terminalSettingsRef);
       if (effectiveTerminalProtocol.startsWith("plugin:")) {
@@ -3134,7 +3152,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     //    is a no-op on the alt buffer (disconnect while in vim/less/top), so
     //    we must be on the normal buffer before preserving.
     term.write('\x1b[?1049l', () => {
-      if (!retryStillActive()) return;
+      if (!retryStillActive()) {
+        finishReconnectPreparation();
+        return;
+      }
       // 2. Push the previous session's viewport into scrollback so the user
       //    can still read it after reconnect.
       preserveTerminalViewportInScrollback(term);
