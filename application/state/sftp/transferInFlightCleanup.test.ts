@@ -2,6 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { TransferTask } from "../../../domain/models";
+import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
+import {
+  isTransferWalkInFlight,
+  registerTransferWalk,
+  resetTransferWalkRegistryForTests,
+  unregisterTransferWalk,
+} from "./transferWalkRegistry";
 import { finishTransferTask, runTrackedTransferAttempt } from "./useSftpTransfers.ts";
 
 const makeTask = (status: TransferTask["status"] = "transferring"): TransferTask => ({
@@ -48,24 +55,30 @@ test("a throwing completion handler does not leave the transfer marked in flight
   assert.equal(inFlight.has("transfer-1"), false);
 });
 
-test("directory completion is published through the lifecycle writer", () => {
-  let published: Partial<TransferTask> | undefined;
+test("directory completion reaches the global store while its walk is still active", (t) => {
+  const ownerId = "completion-test";
+  const task = { ...makeTask(), id: "directory-complete" };
+  resetTransferWalkRegistryForTests();
+  sftpTransferCenterStore.publishOwner(ownerId, [task]);
+  registerTransferWalk(task.id);
+  t.after(() => {
+    unregisterTransferWalk(task.id);
+    resetTransferWalkRegistryForTests();
+    sftpTransferCenterStore.dismiss(task.id);
+  });
 
   const status = finishTransferTask(
-    makeTask(),
-    { partialFailure: false, cancelled: false, endTime: 123 },
-    (updates) => { published = updates; },
+    task,
+    { partialFailure: false, cancelled: false, endTime: Date.now() },
+    (updates) => {
+      sftpTransferCenterStore.publishOwner(ownerId, [{ ...task, ...updates }]);
+    },
   );
 
   assert.equal(status, "completed");
-  assert.deepEqual(published, {
-    status: "completed",
-    error: undefined,
-    retryable: true,
-    endTime: 123,
-    transferredBytes: 3,
-    speed: 0,
-  });
+  assert.equal(isTransferWalkInFlight(task.id), true);
+  assert.equal(sftpTransferCenterStore.getTask(task.id)?.status, "completed");
+  assert.equal(sftpTransferCenterStore.getSnapshot().activeCount, 0);
 });
 
 test("partial failure and late cancellation keep their existing terminal behavior", () => {

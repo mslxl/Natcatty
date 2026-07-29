@@ -111,28 +111,32 @@ export function finishTransferTask(
     cancelled: boolean;
     endTime?: number;
   },
-  publishLifecycle: (updates: Partial<TransferTask>) => void,
+  publishPanelLifecycle: (updates: Partial<TransferTask>) => void,
 ): TransferStatus {
   const endTime = outcome.endTime ?? Date.now();
   if (outcome.cancelled || task.status === "cancelled") {
-    publishLifecycle({
+    const updates: Partial<TransferTask> = {
       status: "cancelled",
       error: undefined,
       endTime,
       speed: 0,
-    });
+    };
+    transferRuntime.patchTask(task.id, updates);
+    publishPanelLifecycle(updates);
     return "cancelled";
   }
 
   const status: TransferStatus = outcome.partialFailure ? "failed" : "completed";
-  publishLifecycle({
+  const updates: Partial<TransferTask> = {
     status,
     error: outcome.partialFailure ? "Some files failed to transfer" : undefined,
     retryable: outcome.partialFailure ? false : task.retryable,
     endTime,
     transferredBytes: outcome.partialFailure ? task.transferredBytes : task.totalBytes,
     speed: 0,
-  });
+  };
+  transferRuntime.patchTask(task.id, updates);
+  publishPanelLifecycle(updates);
   return status;
 }
 
@@ -922,13 +926,20 @@ export const useSftpTransfers = ({
       // Publish terminal lifecycle through the runtime-aware writer while the
       // directory walk is still registered. A panel-only setState could be
       // rejected as stale by the global transfer center and remain active at 100%.
+      if (pendingProgressByIdRef.current.size > 0) {
+        flushPendingProgress();
+      }
       const finalStatus = finishTransferTask(
         latestTask,
         {
           partialFailure: dirPartialFailure,
           cancelled: cancelledTasksRef.current.has(task.id),
         },
-        updateTask,
+        (updates) => {
+          setTransfers((prev) => prev.map((candidate) => (
+            candidate.id === task.id ? { ...candidate, ...updates } : candidate
+          )));
+        },
       );
 
       // Target contents may have been cached before this transfer started,
