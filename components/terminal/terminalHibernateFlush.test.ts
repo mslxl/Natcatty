@@ -133,6 +133,37 @@ test("ended hidden sessions release xterm without reopening dead backend listene
   );
 });
 
+test("reconnect preparation cancels an in-flight disconnected hibernate", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const fullHibernateBody = readFunctionBody(
+    source,
+    "const fullHibernateRuntime = useCallback(async (): Promise<boolean> =>",
+  );
+  const reconnectBody = readFunctionBody(
+    source,
+    'const startReconnect = async (mode: "manual" | "auto" = "manual") =>',
+  );
+
+  assert.match(
+    fullHibernateBody,
+    /reconnectPreparationTokenRef\.current === null/,
+  );
+
+  const claimIndex = reconnectBody.indexOf(
+    "reconnectPreparationTokenRef.current = retryToken",
+  );
+  const cleanupIndex = reconnectBody.indexOf("await cleanupSession()");
+  const releaseIndex = reconnectBody.indexOf(
+    "reconnectPreparationTokenRef.current = null",
+    cleanupIndex,
+  );
+  const connectingIndex = reconnectBody.indexOf('updateStatus("connecting")', cleanupIndex);
+
+  assert.ok(claimIndex >= 0 && claimIndex < cleanupIndex);
+  assert.ok(cleanupIndex < releaseIndex);
+  assert.ok(releaseIndex < connectingIndex);
+});
+
 test("a cancelled soft-hidden upgrade resumes its renderer", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const subscribeIndex = source.indexOf("terminalHiddenRendererStore.subscribe");

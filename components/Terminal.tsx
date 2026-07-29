@@ -453,6 +453,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   // chained xterm.write callbacks verify the token before proceeding so a
   // cancelled retry can't fire a startNewSession after the fact.
   const retryTokenRef = useRef<symbol | null>(null);
+  const reconnectPreparationTokenRef = useRef<symbol | null>(null);
   const autoReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoReconnectLoopActiveRef = useRef(false);
   const autoReconnectAttemptRef = useRef(0);
@@ -1840,6 +1841,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const fullHibernateRuntime = useCallback(async (): Promise<boolean> => {
     if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return false;
     clearHibernateRetry();
+    if (reconnectPreparationTokenRef.current !== null) return false;
     const backendId = sessionRef.current;
     if (!canHibernateTerminalRuntimeSession(statusRef.current, backendId)) return false;
     const term = termRef.current;
@@ -1857,6 +1859,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       && termRef.current === term
       && (statusRef.current === "disconnected" || sessionRef.current === backendId)
       && serializeAddonRef.current === serializeAddon
+      && reconnectPreparationTokenRef.current === null
     );
 
     if (!canFinishHibernate()) return false;
@@ -3059,9 +3062,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // awaited backend cleanup invalidates this token and stops the continuation.
     const retryToken = Symbol("retry");
     retryTokenRef.current = retryToken;
+    reconnectPreparationTokenRef.current = retryToken;
     const retryTokenStillCurrent = () => retryTokenRef.current === retryToken;
 
-    await cleanupSession();
+    try {
+      await cleanupSession();
+    } finally {
+      if (reconnectPreparationTokenRef.current === retryToken) {
+        reconnectPreparationTokenRef.current = null;
+      }
+    }
     if (!retryTokenStillCurrent()) return;
     const term = termRef.current;
     if (!term) return;
