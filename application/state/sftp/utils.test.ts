@@ -50,6 +50,27 @@ test("directory targets cannot escape the selected local root", () => {
     joinTransferTargetPath(uncRoot, "nested/report.txt"),
     "\\\\server\\share\\Downloads\\folder\\nested\\report.txt",
   );
+
+  // Forward-slash UNC destinations stay POSIX-shaped for remote panes, but
+  // transfer joins must still apply Windows relative-path guards so a
+  // server-controlled `\` / ADS name cannot escape the selected folder.
+  const forwardSlashUncRoot = "//server/share/Downloads/folder";
+  for (const relativePath of [
+    "..\\outside.txt",
+    "safe.txt:alternate-stream",
+    "nested\\escape.txt",
+    "trailing. ",
+  ]) {
+    assert.throws(
+      () => joinTransferTargetPath(forwardSlashUncRoot, relativePath),
+      /unsafe transfer path/i,
+      relativePath,
+    );
+  }
+  assert.equal(
+    joinTransferTargetPath(forwardSlashUncRoot, "nested/report.txt"),
+    "//server/share/Downloads/folder/nested/report.txt",
+  );
   assert.equal(
     getParentPath("\\\\server\\share\\Downloads\\folder"),
     "\\\\server\\share\\Downloads",

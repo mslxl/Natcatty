@@ -192,10 +192,15 @@ export const joinPath = (base: string, name: string): string => {
  * server-controlled filename to escape the user-selected destination root.
  * Forward slashes are the traversal's internal separators; a backslash is a
  * literal POSIX filename character but becomes a separator on Windows targets.
+ *
+ * Navigation treats pure //host/share as POSIX unless acceptForwardSlashUnc is
+ * set, but transfer joins still apply Windows relative-path guards to
+ * UNC-shaped bases so //server/share download roots cannot be escaped.
  */
 export function joinTransferTargetPath(
   base: string,
   relativePath: string,
+  options?: SftpWindowsPathOptions,
 ): string {
   const unsafe = () => {
     throw new Error(`Unsafe transfer path outside the selected destination: ${relativePath}`);
@@ -210,13 +215,22 @@ export function joinTransferTargetPath(
   const parts = relativePath.split("/");
   if (parts.some((part) => !part || part === "." || part === "..")) return unsafe();
 
-  if (isWindowsPath(base)) {
+  const windowsBase = isWindowsPath(base, options);
+  // Ambiguous //host/share stays POSIX for joining, but still needs Windows
+  // segment guards when it matches a UNC share shape.
+  const uncShapedBase = getWindowsUncRoot(base, { acceptForwardSlashUnc: true }) !== null;
+  if (windowsBase || uncShapedBase) {
     if (parts.some((part) => (
       part.includes("\\")
       || part.includes(":")
       || /[. ]$/.test(part)
     ))) return unsafe();
-    return joinPath(base, parts.join("\\"));
+  }
+  if (windowsBase) {
+    // joinPath only recognizes drive / \\UNC without opt-in; normalize
+    // forward-slash UNC when the caller explicitly opted into Windows UNC.
+    const joinBase = isWindowsPath(base) ? base : base.replace(/\//g, "\\");
+    return joinPath(joinBase, parts.join("\\"));
   }
   return joinPath(base, parts.join("/"));
 }
