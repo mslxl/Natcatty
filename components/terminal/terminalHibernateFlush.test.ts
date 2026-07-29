@@ -91,16 +91,20 @@ test("full hibernate rechecks live state after every asynchronous step", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const body = readFunctionBody(source, "const fullHibernateRuntime = useCallback(async (): Promise<boolean> =>");
 
+  const statusCaptureIndex = body.indexOf("const hibernateStatus = statusRef.current");
   const flushIndex = body.indexOf("await flushPendingTerminalWritesBeforeHibernate(term)");
   const afterFlushGuardIndex = body.indexOf("if (!canFinishHibernate()) return false;", flushIndex);
   const serializeIndex = body.indexOf("await serializeTerminalForHibernate(");
   const afterSerializeGuardIndex = body.indexOf("if (!canFinishHibernate()) return false;", serializeIndex);
   const releaseIndex = body.indexOf("releaseTerminalFlowBeforeHibernate(");
 
+  assert.notEqual(statusCaptureIndex, -1, "hibernate must capture its starting lifecycle state");
   assert.match(body, /!isVisibleRef\.current/);
   assert.match(body, /hibernateEnabledRef\.current/);
   assert.match(body, /termRef\.current === term/);
+  assert.match(body, /statusRef\.current === hibernateStatus/);
   assert.match(body, /sessionRef\.current === backendId/);
+  assert.ok(statusCaptureIndex < flushIndex, "capture lifecycle state before the first await");
   assert.ok(flushIndex < afterFlushGuardIndex, "visibility and settings must be rechecked after draining output");
   assert.ok(afterFlushGuardIndex < serializeIndex, "the post-drain guard must run before serialization");
   assert.ok(serializeIndex < afterSerializeGuardIndex, "visibility and settings must be rechecked after serialization");
@@ -117,15 +121,15 @@ test("ended hidden sessions release xterm without reopening dead backend listene
 
   assert.match(
     fullHibernateBody,
-    /canHibernateTerminalRuntimeSession\(statusRef\.current, backendId\)/,
+    /canHibernateTerminalRuntimeSession\(hibernateStatus, backendId\)/,
   );
   assert.match(
     fullHibernateBody,
-    /statusRef\.current === "disconnected" \|\| sessionRef\.current === backendId/,
+    /statusRef\.current === hibernateStatus\s*&& sessionRef\.current === backendId/,
   );
   assert.match(
     fullHibernateBody,
-    /const connectedBackendId = statusRef\.current === "connected" \? backendId : null;\s*if \(connectedBackendId\) \{\s*releaseTerminalFlowBeforeHibernate\([\s\S]*?connectedBackendId\);\s*\}\s*disposeDataRef\.current\?\.\(\);[\s\S]*?disposeRuntimeOnly\(\);\s*if \(connectedBackendId\) \{\s*beginHibernatedSessionListeners\(connectedBackendId\);\s*\}/,
+    /const connectedBackendId = hibernateStatus === "connected" \? backendId : null;\s*if \(connectedBackendId\) \{\s*releaseTerminalFlowBeforeHibernate\([\s\S]*?connectedBackendId\);\s*\}\s*disposeDataRef\.current\?\.\(\);[\s\S]*?disposeRuntimeOnly\(\);\s*if \(connectedBackendId\) \{\s*beginHibernatedSessionListeners\(connectedBackendId\);\s*\}/,
   );
   assert.match(
     hibernateBody,
@@ -203,11 +207,11 @@ test("ended soft-hidden and alternate-screen sessions can fully hibernate", () =
   );
   assert.match(
     fullHibernateBody,
-    /!softHiddenRef\.current \|\| statusRef\.current === "disconnected"/,
+    /!softHiddenRef\.current \|\| hibernateStatus === "disconnected"/,
   );
   assert.match(
     hibernateBody,
-    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*void fullHibernateRuntime\(\);\s*\}\s*return;/,
+    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);\s*\}\s*return;/,
   );
   assert.match(
     alternateSkipBody,
@@ -217,16 +221,21 @@ test("ended soft-hidden and alternate-screen sessions can fully hibernate", () =
 
 test("a cancelled soft-hidden upgrade resumes its renderer", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
-  const subscribeIndex = source.indexOf("terminalHiddenRendererStore.subscribe");
-  const wakeIndex = source.indexOf("wakeSoftHiddenRuntime()", subscribeIndex);
-  const upgradeIndex = source.indexOf("fullHibernateRuntime().then(", subscribeIndex);
-  const cancelResumeIndex = source.indexOf("resumeRendererAfterCancelledHibernateUpgrade()", upgradeIndex);
+  const hibernateBody = readFunctionBody(source, "const hibernateRuntime = useCallback(() =>");
+  const upgradeBody = readFunctionBody(source, "const upgradeSoftHiddenRuntimeToHibernate = useCallback(() =>");
   const helperBody = readFunctionBody(source, "const resumeRendererAfterCancelledHibernateUpgrade = useCallback(() =>");
 
-  assert.notEqual(wakeIndex, -1, "soft-hidden eviction must resume the renderer before upgrading");
-  assert.notEqual(upgradeIndex, -1, "soft-hidden eviction must await the full hibernate result");
+  assert.match(
+    hibernateBody,
+    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);/,
+  );
+  const wakeIndex = upgradeBody.indexOf("wakeSoftHiddenRuntimeRef.current?.()");
+  const upgradeIndex = upgradeBody.indexOf("fullHibernateRuntime().then(");
+  const cancelResumeIndex = upgradeBody.indexOf("resumeRendererAfterCancelledHibernateUpgradeRef.current?.()", upgradeIndex);
+  assert.notEqual(wakeIndex, -1, "every soft-hidden upgrade must resume the renderer before upgrading");
+  assert.notEqual(upgradeIndex, -1, "soft-hidden upgrades must await the full hibernate result");
   assert.ok(wakeIndex < upgradeIndex, "the renderer must be live throughout the asynchronous upgrade");
-  assert.notEqual(cancelResumeIndex, -1, "a cancelled upgrade must resume the suspended renderer");
+  assert.notEqual(cancelResumeIndex, -1, "a cancelled upgrade must resume the renderer again");
   assert.match(helperBody, /ensureWebglRenderer\(\)/);
   assert.match(helperBody, /clearTextureAtlas\(\)/);
   assert.match(helperBody, /safeFitRef\.current\(\{ force: true \}\)/);

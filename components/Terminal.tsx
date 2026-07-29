@@ -439,6 +439,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const hibernateAlternateScreenRef = useRef(false);
   const hibernateRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullHibernateRuntimeRef = useRef<(() => Promise<boolean>) | null>(null);
+  const wakeSoftHiddenRuntimeRef = useRef<(() => void) | null>(null);
+  const resumeRendererAfterCancelledHibernateUpgradeRef = useRef<(() => void) | null>(null);
   const wakeInProgressRef = useRef(false);
   const wakePromiseRef = useRef<Promise<boolean> | null>(null);
   const sessionRef = useRef<string | null>(null);
@@ -1849,22 +1851,24 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     ) return false;
     clearHibernateRetry();
     if (reconnectPreparationTokenRef.current !== null) return false;
+    const hibernateStatus = statusRef.current;
     const backendId = sessionRef.current;
-    if (!canHibernateTerminalRuntimeSession(statusRef.current, backendId)) return false;
+    if (!canHibernateTerminalRuntimeSession(hibernateStatus, backendId)) return false;
     const term = termRef.current;
     const serializeAddon = serializeAddonRef.current;
     const canFinishHibernate = () => (
       !isVisibleRef.current
       && !hibernatedRef.current
-      && (!softHiddenRef.current || statusRef.current === "disconnected")
+      && (!softHiddenRef.current || hibernateStatus === "disconnected")
       && hasRuntimeRef.current
-      && canHibernateTerminalRuntimeSession(statusRef.current, sessionRef.current)
+      && canHibernateTerminalRuntimeSession(hibernateStatus, backendId)
       && !isSearchOpenRef.current
       && !hibernateFileTransferActiveRef.current
       && !runtimeHasInlineImages()
       && hibernateEnabledRef.current
       && termRef.current === term
-      && (statusRef.current === "disconnected" || sessionRef.current === backendId)
+      && statusRef.current === hibernateStatus
+      && sessionRef.current === backendId
       && serializeAddonRef.current === serializeAddon
       && reconnectPreparationTokenRef.current === null
     );
@@ -1899,7 +1903,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     applyHibernateSnapshot(snapshot);
     isBootActiveRef.current = false;
-    const connectedBackendId = statusRef.current === "connected" ? backendId : null;
+    const connectedBackendId = hibernateStatus === "connected" ? backendId : null;
     if (connectedBackendId) {
       releaseTerminalFlowBeforeHibernate(terminalBackend, term, connectedBackendId);
     }
@@ -1935,6 +1939,20 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   ]);
   fullHibernateRuntimeRef.current = fullHibernateRuntime;
 
+  const upgradeSoftHiddenRuntimeToHibernate = useCallback(() => {
+    if (!wakeSoftHiddenRuntimeRef.current) return;
+    wakeSoftHiddenRuntimeRef.current?.();
+    void fullHibernateRuntime().then(
+      (completed) => {
+        if (!completed) resumeRendererAfterCancelledHibernateUpgradeRef.current?.();
+      },
+      (error) => {
+        logger.error("[Terminal] Failed to upgrade soft-hidden runtime to hibernate", { sessionId, error });
+        resumeRendererAfterCancelledHibernateUpgradeRef.current?.();
+      },
+    );
+  }, [fullHibernateRuntime, sessionId]);
+
   const hideRuntimeOnly = useCallback(() => {
     if (hibernatedRef.current || softHiddenRef.current || !hasRuntimeRef.current) return;
     xtermRuntimeRef.current?.suspendWebglRenderer();
@@ -1959,7 +1977,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     if (softHiddenRef.current) {
       if (statusRef.current === "disconnected") {
-        void fullHibernateRuntime();
+        upgradeSoftHiddenRuntimeToHibernate();
       }
       return;
     }
@@ -1987,6 +2005,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionId,
     shouldSkipHibernateForActiveAlternateScreen,
     terminalSettings,
+    upgradeSoftHiddenRuntimeToHibernate,
   ]);
 
   const terminalRuntimeRefs = useMemo<TerminalRuntimeRefs>(() => ({
@@ -3504,6 +3523,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     xtermRuntimeRef.current?.clearTextureAtlas();
     safeFitRef.current({ force: true });
   }, [sessionId]);
+  wakeSoftHiddenRuntimeRef.current = wakeSoftHiddenRuntime;
 
   const resumeRendererAfterCancelledHibernateUpgrade = useCallback(() => {
     if (hibernatedRef.current || softHiddenRef.current || !hasRuntimeRef.current) return;
@@ -3511,6 +3531,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     xtermRuntimeRef.current?.clearTextureAtlas();
     safeFitRef.current({ force: true });
   }, []);
+  resumeRendererAfterCancelledHibernateUpgradeRef.current = resumeRendererAfterCancelledHibernateUpgrade;
 
   useEffect(() => {
     return terminalHiddenRendererStore.subscribe(() => {
@@ -3520,27 +3541,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       // but a session holding inline images stays soft-hidden: full hibernate would
       // drop bitmaps the text snapshot cannot restore.
       if (runtimeHasInlineImages()) return;
-      // Resume the soft-hidden renderer before the asynchronous full-hibernate
-      // upgrade. If the pane is revealed while the upgrade is draining output
-      // or serializing, it then already has a live renderer instead of waiting
-      // on the upgrade promise to settle.
-      wakeSoftHiddenRuntime();
-      void fullHibernateRuntime().then(
-        (completed) => {
-          if (!completed) resumeRendererAfterCancelledHibernateUpgrade();
-        },
-        (error) => {
-          logger.error("[Terminal] Failed to upgrade soft-hidden runtime to hibernate", { sessionId, error });
-          resumeRendererAfterCancelledHibernateUpgrade();
-        },
-      );
+      upgradeSoftHiddenRuntimeToHibernate();
     });
   }, [
-    fullHibernateRuntime,
-    resumeRendererAfterCancelledHibernateUpgrade,
     runtimeHasInlineImages,
     sessionId,
-    wakeSoftHiddenRuntime,
+    upgradeSoftHiddenRuntimeToHibernate,
   ]);
 
   const wakeFromHibernateRuntime = useCallback((
