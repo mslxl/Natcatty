@@ -127,6 +127,7 @@ export interface ScriptRunParams {
   /** Renderer-provided session state (worker SSH sessions are not in main-process map). */
   sessionMeta?: {
     connected?: boolean;
+    name?: string;
     hostname?: string;
     username?: string;
   };

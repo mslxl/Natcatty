@@ -108,6 +108,7 @@ function readRuntimeSnapshot(nct) {
   return {
     session: {
       connected: Boolean(nct.session.connected),
+      name: String(nct.session.name || ""),
       hostname: String(nct.session.hostname || ""),
       username: String(nct.session.username || ""),
     },
@@ -1007,6 +1008,9 @@ function createScriptRuntime(deps) {
     get connected() {
       const meta = getSessionMeta?.(sessionId);
       return Boolean(meta?.connected);
+    },
+    get name() {
+      return getSessionMeta?.(sessionId)?.name || "";
     },
     get hostname() {
       return getSessionMeta?.(sessionId)?.hostname || "";

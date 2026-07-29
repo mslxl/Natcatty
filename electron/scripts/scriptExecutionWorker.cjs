@@ -81,6 +81,7 @@ function notifyHost(method, args = []) {
 
 const sessionApi = {
   get connected() { return runtimeSnapshot.session.connected; },
+  get name() { return runtimeSnapshot.session.name; },
   get hostname() { return runtimeSnapshot.session.hostname; },
   get username() { return runtimeSnapshot.session.username; },
   sleep: (ms) => callHost("session.sleep", [ms]),
@@ -163,6 +164,7 @@ async function run(config) {
   runtimeSnapshot = {
     session: {
       connected: Boolean(config.snapshot?.session?.connected),
+      name: String(config.snapshot?.session?.name || ""),
       hostname: String(config.snapshot?.session?.hostname || ""),
       username: String(config.snapshot?.session?.username || ""),
     },

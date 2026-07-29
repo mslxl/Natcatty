@@ -2363,6 +2363,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         sessionId,
         sessionMeta: {
           connected: true,
+          name: host.label,
           hostname: host.hostname,
           username: host.username,
         },
@@ -2407,6 +2408,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
               sessionId,
               sessionMeta: {
                 connected: true,
+                name: host.label,
                 hostname: host.hostname,
                 username: host.username,
               },
