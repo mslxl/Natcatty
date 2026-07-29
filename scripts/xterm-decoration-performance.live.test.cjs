@@ -10,13 +10,13 @@ if (!process.versions.electron) {
 } else {
   const assert = require("node:assert/strict");
   const fs = require("node:fs");
-  const os = require("node:os");
   const path = require("node:path");
   const electron = require("electron");
   const esbuild = require("esbuild");
+  const tempDirBridge = require("../electron/bridges/tempDirBridge.cjs");
 
   const appRoot = path.resolve(__dirname, "..");
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-xterm-decoration-perf-"));
+  const userData = fs.mkdtempSync(`${tempDirBridge.getTempFilePath("xterm-decoration-perf")}-`);
   electron.app.setPath("userData", userData);
   electron.app.on("window-all-closed", () => {});
   let window = null;
