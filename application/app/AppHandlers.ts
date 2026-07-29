@@ -462,7 +462,7 @@ export function createLocalTerminalWithCurrentShellImpl(getCtx: AppContextGetter
 }
 
 async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: string): Promise<string | undefined> {
-  const { sessions, netcattyBridge, hostById, getSessionRestoreCwd } = getCtx();
+  const { sessions, netcattyBridge, hostById, terminalHosts, getSessionRestoreCwd } = getCtx();
   const source = sessions?.find((s: { id: string }) => s.id === sessionId);
   if (!source) return undefined;
 
@@ -472,9 +472,14 @@ async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: strin
   const liveCwd: string | undefined = getSessionRestoreCwd?.(sessionId);
 
   const bridge = netcattyBridge?.get?.();
-  const host = hostById?.(source.hostId);
+  // hostById is a Map of SAVED hosts; ephemeral terminal hosts only appear in
+  // terminalHosts. Classify the DETECTED distro (host.distro), not the
+  // effective/override value, so a cosmetic Linux icon can't re-enable the
+  // probe on a network device (matches the terminal cwd-probe gate).
+  const host = hostById?.get?.(source.hostId)
+    ?? terminalHosts?.find?.((h: { id: string }) => h.id === source.hostId);
   const isNetworkDevice = !!host
-    && (host.deviceType === 'network' || classifyDistroId(getEffectiveHostDistro(host)) === 'network-device');
+    && (host.deviceType === 'network' || classifyDistroId(host.distro) === 'network-device');
 
   // Only probe when the app's own cwd-probe gate would: never for network
   // devices (the extra exec channel can close a Huawei VRP-style session), and

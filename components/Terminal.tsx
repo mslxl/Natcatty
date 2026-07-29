@@ -2179,6 +2179,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       // The inherited `cd` was actually sent — now mark it consumed so retries
       // don't re-arm it (see prepareInitialCwdIntent).
       initialCwdConsumedRef.current = true;
+      // Report the new cwd to app state so `pendingInitialCwd` is cleared even
+      // for shells that never emit OSC 7 (where the post-connect fallback probe
+      // is skipped because knownCwdRef is now set). Without this the transient
+      // seed would survive and re-inject a stale dir on a later remount.
+      if (pendingInitialCwd) {
+        onTerminalCwdChange?.(sessionId, cwd);
+      }
     },
     onSessionExit: (closedSessionId, evt) => {
       clearTerminalCwd();

@@ -6,17 +6,28 @@ type CloneOpts = { localShellType?: string; inheritedCwd?: string };
 type Calls = {
   copy?: { id: string; opts: CloneOpts };
   split?: { id: string; dir: string; opts: CloneOpts };
+  probed: boolean;
 };
 
 function ctxFactory(overrides: Record<string, unknown>) {
-  const calls: Calls = {};
+  const calls: Calls = { probed: false };
   const base = {
     classifyLocalShellType: () => "posix",
     discoveredShells: [],
     resolveShellSetting: () => ({ command: "/bin/bash", args: [] }),
     terminalSettings: { localShell: "bash" },
     sessions: [{ id: "src", protocol: "ssh", status: "connected", lastCwd: "/var/log" }],
-    netcattyBridge: { get: () => ({ getSessionPwd: async () => ({ success: false }) }) },
+    // hostById is a Map of saved hosts in the real App — the impl must use
+    // .get(), not call it as a function.
+    hostById: new Map<string, { id: string; distro?: string; deviceType?: string }>(),
+    terminalHosts: [] as Array<{ id: string; distro?: string; deviceType?: string }>,
+    getSessionRestoreCwd: () => undefined,
+    netcattyBridge: {
+      get: () => ({
+        getSessionPwd: async () => { calls.probed = true; return { success: true, cwd: "/live/probed" }; },
+        getSessionRemoteInfo: async () => ({ success: true, remoteSshVersion: "OpenSSH_9.6" }),
+      }),
+    },
     copySession: (id: string, opts: CloneOpts) => { calls.copy = { id, opts }; },
     splitSession: (id: string, dir: string, opts: CloneOpts) => { calls.split = { id, dir, opts }; },
     ...overrides,
@@ -24,14 +35,53 @@ function ctxFactory(overrides: Record<string, unknown>) {
   return { getCtx: () => base, calls };
 }
 
-test("copySessionWithCurrentShell passes inheritedCwd from lastCwd", async () => {
+test("copySessionWithCurrentShell does not throw when hostById is a Map and probes live cwd", async () => {
   const { getCtx, calls } = ctxFactory({});
   await copySessionWithCurrentShellImpl(getCtx, "src");
-  assert.equal(calls.copy?.opts.inheritedCwd, "/var/log");
+  assert.equal(calls.copy?.opts.inheritedCwd, "/live/probed");
+  assert.equal(calls.probed, true);
 });
 
-test("splitSessionWithCurrentShell passes inheritedCwd from lastCwd", async () => {
+test("splitSessionWithCurrentShell passes inheritedCwd", async () => {
   const { getCtx, calls } = ctxFactory({});
   await splitSessionWithCurrentShellImpl(getCtx, "src", "horizontal");
-  assert.equal(calls.split?.opts.inheritedCwd, "/var/log");
+  assert.equal(calls.split?.opts.inheritedCwd, "/live/probed");
+});
+
+test("live tracked cwd is preferred over the probe", async () => {
+  const { getCtx, calls } = ctxFactory({ getSessionRestoreCwd: () => "/live/tracked" });
+  await copySessionWithCurrentShellImpl(getCtx, "src");
+  assert.equal(calls.copy?.opts.inheritedCwd, "/live/tracked");
+  assert.equal(calls.probed, false, "must not probe when live cwd is known");
+});
+
+test("network device (by deviceType) is never probed", async () => {
+  const { getCtx, calls } = ctxFactory({
+    hostById: new Map([["h1", { id: "h1", deviceType: "network" }]]),
+    sessions: [{ id: "src", hostId: "h1", protocol: "ssh", status: "connected", lastCwd: "/vrp" }],
+  });
+  await copySessionWithCurrentShellImpl(getCtx, "src");
+  assert.equal(calls.probed, false, "must not open a probe channel on a network device");
+  assert.equal(calls.copy?.opts.inheritedCwd, "/vrp");
+});
+
+test("network device detected via distro (ignores cosmetic override) is never probed", async () => {
+  const { getCtx, calls } = ctxFactory({
+    hostById: new Map([["h1", { id: "h1", distro: "huawei" }]]),
+    sessions: [{ id: "src", hostId: "h1", protocol: "ssh", status: "connected", lastCwd: "/vrp" }],
+  });
+  await copySessionWithCurrentShellImpl(getCtx, "src");
+  assert.equal(calls.probed, false);
+  assert.equal(calls.copy?.opts.inheritedCwd, "/vrp");
+});
+
+test("ephemeral network host (only in terminalHosts) is never probed", async () => {
+  const { getCtx, calls } = ctxFactory({
+    hostById: new Map(),
+    terminalHosts: [{ id: "eph", deviceType: "network" }],
+    sessions: [{ id: "src", hostId: "eph", protocol: "ssh", status: "connected", lastCwd: "/vrp" }],
+  });
+  await copySessionWithCurrentShellImpl(getCtx, "src");
+  assert.equal(calls.probed, false);
+  assert.equal(calls.copy?.opts.inheritedCwd, "/vrp");
 });
