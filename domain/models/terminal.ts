@@ -569,4 +569,12 @@ export interface TerminalSession {
   autoOpenSidePanel?: 'sftp';
   /** Latest known working directory captured from terminal cwd tracking. */
   lastCwd?: string;
+  /**
+   * Transient one-shot: a directory a freshly-cloned/split REMOTE session
+   * should `cd` into on its first connect. Set by the clone factory when a
+   * copy/split inherits the source pane's cwd; consumed once by the terminal's
+   * restore-cwd injection path. Not persisted across relaunch. Local clones use
+   * `localStartDir` instead of this field.
+   */
+  pendingInitialCwd?: string;
 }
