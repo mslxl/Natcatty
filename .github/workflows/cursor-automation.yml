@@ -5,19 +5,14 @@ on:
     types: [opened, reopened]
   issue_comment:
     types: [created]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  # Fork PRs get a read-only GITHUB_TOKEN on pull_request. pull_request_target
-  # (default-branch only checkout + comment) can re-@codex after contributor pushes.
+  # Route all PR lifecycle events through the default-branch workflow. This avoids
+  # approval-blocked pull_request / pull_request_review runs from fork authors.
   pull_request_target:
-    types: [synchronize]
-  # Codex often finishes as a submitted PR review (plus optional issue summary).
-  pull_request_review:
-    types: [submitted]
+    types: [opened, synchronize, reopened, ready_for_review]
   # Reaction-only clean (👍 on @codex request) does not emit review events;
   # poll open automation PRs so the loop can observe and mark ready.
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/5 * * * *'
     # Exercise the real Cursor sandbox/config/auth path once per day so a
     # provider behavior change cannot hide behind green Codex polling runs.
     - cron: '17 3 * * *'
@@ -253,49 +248,7 @@ jobs:
               return set('skip', { reason: decision.reason });
             }
 
-            if (event === 'pull_request_review') {
-              const login = context.payload.review?.user?.login || '';
-              const pr = context.payload.pull_request;
-              if (!auto.isCodexBotLogin(login)) {
-                return set('skip', { reason: 'non-codex review' });
-              }
-              if (
-                !auto.isFixEligiblePr(pr, {
-                  ownActors,
-                  repository: `${context.repo.owner}/${context.repo.repo}`,
-                })
-              ) {
-                return set('skip', {
-                  reason: 'codex review on non-fix-eligible pr',
-                });
-              }
-              return set('codex_loop', {
-                pull_number: String(pr.number),
-                reason: 'codex pull_request_review submitted',
-              });
-            }
-
             if (event === 'pull_request_target') {
-              // Privileged path for fork comment-only re-@codex. Never implement/fix.
-              const pr = context.payload.pull_request;
-              const sameRepo =
-                pr.head?.repo?.full_name ===
-                `${context.repo.owner}/${context.repo.repo}`;
-              if (sameRepo) {
-                return set('skip', {
-                  reason: 'same-repo uses pull_request event',
-                });
-              }
-              if (context.payload.action === 'synchronize') {
-                return set('external_rerequest_codex', {
-                  pull_number: String(pr.number),
-                  reason: 'fork pr push via pull_request_target — re-@codex',
-                });
-              }
-              return set('skip', { reason: 'pull_request_target non-synchronize' });
-            }
-
-            if (event === 'pull_request') {
               const pr = context.payload.pull_request;
               const sameRepo =
                 pr.head?.repo?.full_name ===
@@ -304,48 +257,47 @@ jobs:
                 ownActors,
                 repository: `${context.repo.owner}/${context.repo.repo}`,
               });
-              // Own/bot PRs: ensure Codex on open/ready; human synchronize re-requests.
-              if (eligible) {
-                if (['opened', 'ready_for_review', 'reopened'].includes(context.payload.action)) {
-                  return set('codex_loop', {
-                    pull_number: String(pr.number),
-                    reason: 'own pr opened — ensure codex review',
-                  });
-                }
-                if (context.payload.action === 'synchronize') {
-                  const sender = String(context.payload.sender?.login || '');
-                  // Only this workflow's publish jobs re-@codex after push.
-                  // Other bots (dependabot, pre-commit, etc.) still need a request.
-                  if (sender === 'github-actions[bot]') {
-                    return set('skip', {
-                      reason: 'own pr github-actions push already requested codex',
+              if (sameRepo) {
+                if (eligible) {
+                  if (['opened', 'ready_for_review', 'reopened'].includes(context.payload.action)) {
+                    return set('codex_loop', {
+                      pull_number: String(pr.number),
+                      reason: 'own pr opened — ensure codex review',
                     });
                   }
-                  return set('own_rerequest_codex', {
+                  if (context.payload.action === 'synchronize') {
+                    const sender = String(context.payload.sender?.login || '');
+                    if (sender === 'github-actions[bot]') {
+                      return set('skip', {
+                        reason: 'own pr github-actions push already requested codex',
+                      });
+                    }
+                    return set('own_rerequest_codex', {
+                      pull_number: String(pr.number),
+                      reason: 'own pr non-automation push — re-@codex',
+                    });
+                  }
+                  return set('skip', { reason: 'own pr non-open non-synchronize' });
+                }
+                if (context.payload.action === 'synchronize') {
+                  return set('external_rerequest_codex', {
                     pull_number: String(pr.number),
-                    reason: 'own pr non-automation push — re-@codex',
+                    reason: 'external same-repo push — re-@codex review',
                   });
                 }
                 return set('skip', {
-                  reason: 'own pr non-open non-synchronize',
+                  reason: 'external pr non-synchronize (Codex auto handles open)',
                 });
               }
-              // Forks: only pull_request_target may comment (write token).
-              if (!sameRepo) {
-                return set('skip', {
-                  reason: 'fork uses pull_request_target for re-@codex',
-                });
-              }
-              // Same-repo non-eligible (rare) can comment on pull_request.
+              // Fork PRs only receive a comment-only re-request. No fork code is
+              // checked out or executed by this privileged event.
               if (context.payload.action === 'synchronize') {
                 return set('external_rerequest_codex', {
                   pull_number: String(pr.number),
-                  reason: 'external same-repo push — re-@codex review',
+                  reason: 'fork pr push via pull_request_target — re-@codex',
                 });
               }
-              return set('skip', {
-                reason: 'external pr non-synchronize (Codex auto handles open)',
-              });
+              return set('skip', { reason: 'pull_request_target non-synchronize' });
             }
 
             return set('skip', { reason: `unhandled ${event}` });
@@ -1498,11 +1450,23 @@ jobs:
               --workspace "$GITHUB_WORKSPACE" "$prompt" \
               > .cursor-runtime/followup-raw.txt
           else
+            # No PR means there is no trusted source tree the agent needs to
+            # modify. Give it only the decision inputs and recover its two
+            # required outputs, so untrusted issue content cannot alter this
+            # workflow's checkout.
+            decision_dir="$(mktemp -d /tmp/cursor-followup-decision.XXXXXX)"
+            mkdir -p "$decision_dir/.cursor-runtime"
+            cp .cursor-runtime/followup.json "$decision_dir/.cursor-runtime/followup.json"
+            cp .cursor-runtime/followup-research.md "$decision_dir/.cursor-runtime/followup-research.md"
             sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE \
               "$RUNNER_TEMP/cursor-agent-authenticated" \
-              -p --mode=ask --trust --sandbox enabled --model auto --output-format text \
-              --workspace "$GITHUB_WORKSPACE" "$prompt" \
+              -p --trust --sandbox enabled --model auto --output-format text \
+              --workspace "$decision_dir" "$prompt" \
               > .cursor-runtime/followup-raw.txt
+            cp "$decision_dir/.cursor-runtime/followup-status.txt" \
+              .cursor-runtime/followup-status.txt
+            cp "$decision_dir/.cursor-runtime/followup-reply.md" \
+              .cursor-runtime/followup-reply.md
           fi
           cat .cursor-runtime/followup-raw.txt
           test -s .cursor-runtime/followup-status.txt

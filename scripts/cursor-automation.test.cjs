@@ -55,6 +55,36 @@ test('prepareCursorCliConfig preserves preferences and adds web denials once', (
   });
 });
 
+test('workflow routes PR lifecycle events through pull_request_target', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const triggers = workflow.match(/^on:\n[\s\S]*?^concurrency:/m)?.[0] || '';
+
+  assert.match(triggers, /pull_request_target:\n\s+types: \[opened, synchronize, reopened, ready_for_review\]/);
+  assert.doesNotMatch(triggers, /^  pull_request:/m);
+  assert.doesNotMatch(triggers, /^  pull_request_review:/m);
+});
+
+test('no-PR follow-ups use a writable Cursor agent mode', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const reviewStep = workflow.match(
+    /- name: Review follow-up with Cursor CLI[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+
+  assert.match(reviewStep, /if \[\[ "\$HAS_PULL" == "true" \]\]; then/);
+  assert.match(reviewStep, /decision_dir="\$\(mktemp -d \/tmp\/cursor-followup-decision\.XXXXXX\)"/);
+  assert.match(reviewStep, /cp \.cursor-runtime\/followup\.json "\$decision_dir\/\.cursor-runtime\/followup\.json"/);
+  assert.match(reviewStep, /else[\s\S]*?sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE \\\n\s+"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --trust --sandbox enabled/);
+  assert.match(reviewStep, /--workspace "\$decision_dir" "\$prompt"/);
+  assert.match(reviewStep, /cp "\$decision_dir\/\.cursor-runtime\/followup-status\.txt"/);
+  assert.doesNotMatch(reviewStep, /--mode=ask/);
+});
+
 test('isValidIssueFormat accepts modern bug template', () => {
   assert.equal(
     auto.isValidIssueFormat({
