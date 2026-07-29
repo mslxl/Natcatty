@@ -496,6 +496,7 @@ export const zhTWAiMessages: Messages = {
   'topTabs.openQuickSwitcher': '開啟快速切換',
   'topTabs.moreTabs': '更多標籤頁',
   'topTabs.aiAssistant': 'AI 助手',
+  'topTabs.newLocalTerminal': '新增本機終端',
   'topTabs.controlPanel': '快捷控制',
   'topTabs.controlPanel.externalMcp': '對外 MCP',
   'topTabs.controlPanel.theme': '主題',
