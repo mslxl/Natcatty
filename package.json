@@ -62,7 +62,8 @@
     "bench:sync-crdt": "tsx scripts/bench-sync-crdt.ts",
     "test:ssh-mfa-models": "node --test electron/bridges/sshMfaModels.live.test.cjs",
     "test:ssh-mfa-models:live": "SSH_MFA_LIVE=1 node --test electron/bridges/sshMfaModels.live.test.cjs",
-    "test:xterm-webgl-overflow": "electron scripts/xterm-webgl-atlas-overflow.live.test.cjs"
+    "test:xterm-webgl-overflow": "electron scripts/xterm-webgl-atlas-overflow.live.test.cjs",
+    "test:xterm-decoration-performance": "electron scripts/xterm-decoration-performance.live.test.cjs"
   },
   "dependencies": {
     "@eslint-community/regexpp": "4.12.2",
@@ -105,7 +106,7 @@
     "@xterm/addon-unicode-graphemes": "0.5.0-beta.220",
     "@xterm/addon-web-links": "0.13.0-beta.220",
     "@xterm/addon-webgl": "0.20.0-beta.219",
-    "@xterm/xterm": "6.1.0-beta.220",
+    "@xterm/xterm": "6.1.0-beta.221",
     "ai": "^7.0.2",
     "clsx": "2.1.1",
     "electron-updater": "^6.8.3",
@@ -142,6 +143,7 @@
     "cross-env": "^10.1.0",
     "electron": "^42.3.3",
     "electron-builder": "^26.15.2",
+    "esbuild": "0.27.2",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-unused-imports": "^4.3.0",
