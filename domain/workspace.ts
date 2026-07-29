@@ -275,6 +275,32 @@ export const createWorkspaceFromSessionIds = (
 };
 
 /**
+ * Deep-clone a workspace layout tree, minting fresh node ids and remapping
+ * every pane's sessionId via `sessionIdMap` (old id -> new id). Split
+ * `direction` and `sizes` are preserved. A sessionId absent from the map is
+ * kept as-is. Pure; does not mutate `node`.
+ */
+export const cloneWorkspaceTree = (
+  node: WorkspaceNode,
+  sessionIdMap: ReadonlyMap<string, string>,
+): WorkspaceNode => {
+  if (node.type === 'pane') {
+    return {
+      id: crypto.randomUUID(),
+      type: 'pane',
+      sessionId: sessionIdMap.get(node.sessionId) ?? node.sessionId,
+    };
+  }
+  return {
+    id: crypto.randomUUID(),
+    type: 'split',
+    direction: node.direction,
+    children: node.children.map(child => cloneWorkspaceTree(child, sessionIdMap)),
+    ...(node.sizes ? { sizes: [...node.sizes] } : {}),
+  };
+};
+
+/**
  * Collect all session IDs from a workspace node tree.
  */
 export const collectSessionIds = (node: WorkspaceNode): string[] => {
