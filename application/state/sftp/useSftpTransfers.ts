@@ -104,6 +104,43 @@ export async function runTrackedTransferAttempt<T>(
   }
 }
 
+export function finishTransferTask(
+  task: TransferTask,
+  outcome: {
+    partialFailure: boolean;
+    cancelled: boolean;
+    endTime?: number;
+  },
+  flushPendingProgress: () => void,
+  mirrorPanelTask: (task: TransferTask) => void,
+): TransferStatus {
+  flushPendingProgress();
+  const latestTask = transferRuntime.getTask(task.id) ?? task;
+  const endTime = outcome.endTime ?? Date.now();
+  const cancelled = outcome.cancelled || latestTask.status === "cancelled";
+  const status: TransferStatus = cancelled
+    ? "cancelled"
+    : outcome.partialFailure ? "failed" : "completed";
+  const updates: Partial<TransferTask> = cancelled
+    ? {
+      status: "cancelled",
+      error: undefined,
+      endTime,
+      speed: 0,
+    }
+    : {
+      status,
+      error: outcome.partialFailure ? "Some files failed to transfer" : undefined,
+      retryable: outcome.partialFailure ? false : latestTask.retryable,
+      endTime,
+      transferredBytes: outcome.partialFailure ? latestTask.transferredBytes : latestTask.totalBytes,
+      speed: 0,
+    };
+  transferRuntime.patchTask(latestTask.id, updates);
+  mirrorPanelTask(transferRuntime.getTask(latestTask.id) ?? { ...latestTask, ...updates });
+  return status;
+}
+
 /** User-facing path exclusivity notice (toast + logs). */
 function notifyPathConflict(
   existing: Pick<TransferTask, "fileName" | "status">,
@@ -884,33 +921,30 @@ export const useSftpTransfers = ({
         throw new Error("Transfer cancelled");
       }
 
-      const finalStatus: TransferStatus = dirPartialFailure ? "failed" : "completed";
-      setTransfers((prev) => {
-        return prev.map((t) => {
-          if (t.id !== task.id) return t;
-          // Late cancel must not be overwritten by completed/failed.
-          if (t.status === "cancelled" || cancelledTasksRef.current.has(task.id)) {
-            return {
-              ...t,
-              status: "cancelled" as TransferStatus,
-              error: undefined,
-              endTime: Date.now(),
-              speed: 0,
-            };
+      const fallbackTask = transfersRef.current.find((candidate) => candidate.id === task.id)
+        ?? task;
+      // Publish terminal lifecycle through the runtime-aware writer while the
+      // directory walk is still registered. A panel-only setState could be
+      // rejected as stale by the global transfer center and remain active at 100%.
+      const finalStatus = finishTransferTask(
+        fallbackTask,
+        {
+          partialFailure: dirPartialFailure,
+          cancelled: cancelledTasksRef.current.has(task.id),
+        },
+        () => {
+          if (pendingProgressByIdRef.current.size > 0) {
+            flushPendingProgress();
           }
-          return {
-            ...t,
-            status: finalStatus,
-            error: dirPartialFailure ? "Some files failed to transfer" : undefined,
-            // Disable retry for partial failures — retrying replays the entire
-            // directory without conflict checks, overwriting already-copied files
-            retryable: dirPartialFailure ? false : t.retryable,
-            endTime: Date.now(),
-            transferredBytes: dirPartialFailure ? t.transferredBytes : t.totalBytes,
-            speed: 0,
-          };
-        });
-      });
+        },
+        (canonicalTask) => {
+          const next = transfersRef.current.map((candidate) => (
+            candidate.id === task.id ? canonicalTask : candidate
+          ));
+          transfersRef.current = next;
+          setTransfersState(next);
+        },
+      );
 
       // Target contents may have been cached before this transfer started,
       // especially when dropping into a subdirectory like "/tmp" from its parent.
