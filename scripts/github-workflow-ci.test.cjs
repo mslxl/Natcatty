@@ -76,7 +76,7 @@ test("PR validation runs once per commit and includes a production build", () =>
   assert.match(testWorkflow, /sudo apt-get install -y fish xvfb/);
   assert.match(
     testWorkflow,
-    /- name: Test terminal decoration performance\s*\n\s*run: xvfb-run -a npm run test:xterm-decoration-performance/,
+    /- name: Test terminal decoration performance\s*\n\s*env:\s*\n\s*ELECTRON_DISABLE_SANDBOX: "1"\s*\n\s*NETCATTY_TERMINAL_PERF_SHOW_WINDOW: "1"\s*\n\s*run: xvfb-run -a npm run test:xterm-decoration-performance/,
   );
   assert.match(testWorkflow, /- name: Build\s*\n\s*run: npm run build/);
   assert.doesNotMatch(testWorkflow, /\n  mosh-windows-conpty:/);
