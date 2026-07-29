@@ -158,11 +158,6 @@ export const KeywordHighlightRulesEditor: React.FC<{
         const customized = builtIn && rule.customized;
         return (
           <div key={rule.id} className="flex items-center gap-2 group">
-            <Toggle
-              checked={rule.enabled}
-              onChange={() => onChange(toggleKeywordHighlightRuleEnabled(rules, rule.id))}
-              ariaLabel={`${rule.label}, ${rule.enabled ? t('common.enabled') : t('common.disabled')}`}
-            />
             <div className="flex-1 min-w-0 flex items-center gap-1.5">
               <span className={cn("text-sm truncate", !rule.enabled && "text-muted-foreground line-through")} style={rule.enabled ? { color: rule.color } : undefined}>
                 {rule.label}
@@ -210,6 +205,11 @@ export const KeywordHighlightRulesEditor: React.FC<{
                 style={{ backgroundColor: rule.color }}
               />
             </label>
+            <Toggle
+              checked={rule.enabled}
+              onChange={() => onChange(toggleKeywordHighlightRuleEnabled(rules, rule.id))}
+              ariaLabel={`${rule.label}, ${rule.enabled ? t('common.enabled') : t('common.disabled')}`}
+            />
           </div>
         );
       })}

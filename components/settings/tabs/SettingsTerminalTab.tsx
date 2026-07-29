@@ -518,17 +518,12 @@ function SettingsTerminalTab(props: {
           />
         </SettingRow>
 
-        <SettingRow
+        <TerminalCjkFontSelect
           label={t("settings.terminal.font.cjk")}
           description={t("settings.terminal.font.cjk.desc")}
-          align="start"
-        >
-          <TerminalCjkFontSelect
-            value={terminalSettings.fallbackFont ?? ""}
-            onChange={(next) => updateTerminalSetting("fallbackFont", next)}
-            className="w-72"
-          />
-        </SettingRow>
+          value={terminalSettings.fallbackFont ?? ""}
+          onChange={(next) => updateTerminalSetting("fallbackFont", next)}
+        />
 
         <SettingRow
           label={t("settings.terminal.font.size")}

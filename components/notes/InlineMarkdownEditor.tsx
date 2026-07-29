@@ -40,6 +40,7 @@ import { buildSshNoteLinkOpenHost } from "../../domain/sshDeepLink";
 import { copyToClipboard } from "../keychain/utils";
 import { toast } from "../ui/toast";
 import { cn } from "../../lib/utils";
+import { FixedSizeVirtualList, type FixedSizeVirtualListHandle } from "../ui/FixedSizeVirtualList";
 import type { Host } from "../../types";
 
 export interface InlineMarkdownEditorProps {
@@ -462,6 +463,7 @@ export function InlineMarkdownEditor({
   const [linkAction, setLinkAction] = useState<LinkActionState | null>(null);
   const editorMode = controlledEditorMode ?? "edit";
   const hostPickerRangeRef = useRef<Range | null>(null);
+  const hostPickerListRef = useRef<FixedSizeVirtualListHandle>(null);
   const plugins = useMemo(() => [
     headingsPlugin(),
     listsPlugin(),
@@ -504,6 +506,11 @@ export function InlineMarkdownEditor({
       ...current,
       selectedIndex: Math.max(0, filteredHosts.length - 1),
     }));
+  }, [filteredHosts.length, hostPicker.open, hostPicker.selectedIndex]);
+
+  useEffect(() => {
+    if (!hostPicker.open || filteredHosts.length === 0) return;
+    hostPickerListRef.current?.scrollToIndex(hostPicker.selectedIndex);
   }, [filteredHosts.length, hostPicker.open, hostPicker.selectedIndex]);
 
   useEffect(() => {
@@ -890,27 +897,46 @@ export function InlineMarkdownEditor({
           <div className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
             {hostPicker.query ? `${hostPicker.trigger}${hostPicker.query}` : "选择主机"}
           </div>
-          <div className="max-h-64 overflow-auto p-1">
-            {filteredHosts.length === 0 ? (
-              <div className="px-3 py-2 text-sm text-muted-foreground">没有匹配的主机</div>
-            ) : filteredHosts.map((host, index) => (
-              <button
-                key={host.id}
-                type="button"
-                className={cn(
-                  "flex w-full min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
-                  index === hostPicker.selectedIndex ? "bg-secondary text-foreground" : "hover:bg-secondary/70",
-                )}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => insertHostLink(host)}
-              >
-                <span className="min-w-0 flex-1 truncate">{getHostLinkLabel(host)}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {host.username ? `${host.username}@` : ""}{host.hostname}
-                </span>
-              </button>
-            ))}
-          </div>
+            <div
+              className="max-h-64"
+              style={{
+                height: Math.min(
+                  HOST_PICKER_LIST_MAX_HEIGHT,
+                  filteredHosts.length === 0
+                    ? HOST_PICKER_EMPTY_HEIGHT
+                    : HOST_PICKER_LIST_VERTICAL_PADDING + filteredHosts.length * HOST_PICKER_ROW_HEIGHT,
+                ),
+              }}
+            >
+              {filteredHosts.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-muted-foreground">没有匹配的主机</div>
+              ) : (
+                <FixedSizeVirtualList
+                  ref={hostPickerListRef}
+                  items={filteredHosts}
+                  itemHeight={HOST_PICKER_ROW_HEIGHT}
+                  getItemKey={(host) => host.id}
+                  className="h-full"
+                  contentClassName="p-1"
+                  renderItem={(host, index) => (
+                    <button
+                      type="button"
+                      className={cn(
+                        "flex h-full w-full min-w-0 items-center gap-2 rounded px-2 py-1.5 text-left text-sm",
+                        index === hostPicker.selectedIndex ? "bg-secondary text-foreground" : "hover:bg-secondary/70",
+                      )}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => insertHostLink(host)}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{getHostLinkLabel(host)}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {host.username ? `${host.username}@` : ""}{host.hostname}
+                      </span>
+                    </button>
+                  )}
+                />
+              )}
+            </div>
         </div>
       )}
       {editorMode === "preview" && !value.trim() ? (
