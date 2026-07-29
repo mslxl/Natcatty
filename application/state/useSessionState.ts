@@ -726,6 +726,7 @@ export const useSessionState = ({
     direction: SplitDirection,
     options?: {
       localShellType?: TerminalSession['shellType'];
+      inheritedCwd?: string;
     },
   ) => {
     const newSessionId = crypto.randomUUID();
@@ -745,6 +746,7 @@ export const useSessionState = ({
         const newSession = createSplitTerminalSessionClone(session, {
           id: newSessionId,
           localShellType: options?.localShellType,
+          inheritedCwd: options?.inheritedCwd,
           workspaceId: session.workspaceId,
         });
 
@@ -766,6 +768,7 @@ export const useSessionState = ({
       const newSession = createSplitTerminalSessionClone(session, {
         id: newSessionId,
         localShellType: options?.localShellType,
+        inheritedCwd: options?.inheritedCwd,
       });
 
       setWorkspaces(prev => addWorkspaceIfMissing(prev, standaloneWorkspace));
@@ -921,6 +924,7 @@ export const useSessionState = ({
   // Copy a session - creates a new session with the same host connection
   const copySession = useCallback((sessionId: string, options?: {
     localShellType?: TerminalSession['shellType'];
+    inheritedCwd?: string;
   }) => {
     // Pre-allocate the new id outside the updater so StrictMode's
     // double-invocation of the functional updater doesn't mint two ids.
@@ -935,6 +939,7 @@ export const useSessionState = ({
       const newSession = createCopiedTerminalSessionClone(session, {
         id: newSessionId,
         localShellType: options?.localShellType,
+        inheritedCwd: options?.inheritedCwd,
       });
 
       // Schedule the activeTab + tabOrder updates only when creation
