@@ -1316,6 +1316,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     shellType,
   ]);
 
+  // Set only once the inherited `cd` is actually written to the shell (from the
+  // restore-cwd consumption callback), NOT when the intent is merely prepared —
+  // otherwise a first connect that fails before consumption would block the
+  // intent from being re-armed on retry, landing the clone in the login dir.
   const initialCwdConsumedRef = useRef(false);
   const prepareInitialCwdIntent = useCallback(() => {
     if (initialCwdConsumedRef.current) return;
@@ -1332,7 +1336,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     });
     if (!intent) return;
     restoreCwdIntentRef.current = intent;
-    initialCwdConsumedRef.current = true;
   }, [pendingInitialCwd, host.protocol, host.moshEnabled, host.etEnabled, shellType, isNetworkDevice]);
 
   const handleTerminalDataCaptureOnce = useCallback((
@@ -2173,6 +2176,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     },
     onRestoreCwdIntentConsumed: (cwd: string) => {
       knownCwdRef.current = cwd;
+      // The inherited `cd` was actually sent — now mark it consumed so retries
+      // don't re-arm it (see prepareInitialCwdIntent).
+      initialCwdConsumedRef.current = true;
     },
     onSessionExit: (closedSessionId, evt) => {
       clearTerminalCwd();

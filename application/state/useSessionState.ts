@@ -313,6 +313,14 @@ export const useSessionState = ({
     scheduleSessionRestorePersistRef.current();
   }, []);
 
+  // The live tracked cwd (OSC 7) is kept in a ref, not on the session object,
+  // so expose a reader for callers (clone/split cwd inheritance) that need the
+  // current directory of a running session without forcing a re-render.
+  const getSessionRestoreCwd = useCallback(
+    (sessionId: string): string | undefined => sessionRestoreCwdByIdRef.current.get(sessionId) ?? undefined,
+    [],
+  );
+
   const updateSessionDynamicTitle = useCallback((sessionId: string, title: string | null) => {
     const normalizedTitle = title ? normalizeCodingCliDynamicTitleForStorage(title) : '';
     const nextTitle = normalizedTitle.length > 0 ? normalizedTitle : null;
@@ -1146,6 +1154,7 @@ export const useSessionState = ({
     copySession,
     createSessionFromCloneSource,
     updateSessionRestoreCwd,
+    getSessionRestoreCwd,
     updateSessionDynamicTitle,
     updateSessionCodingCliProvider,
   };

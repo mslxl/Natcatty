@@ -3,7 +3,7 @@ import type React from 'react';
 import type { Host, HostProtocol, TerminalSession } from '../../types';
 import type { PassphraseRequest } from '../../components/PassphraseModal';
 import type { TerminalPopupPayload } from '../../domain/systemManager/types';
-import { getEffectiveHostDistro } from '../../domain/host';
+import { getEffectiveHostDistro, classifyDistroId, shouldProbeSessionCwd } from '../../domain/host';
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
@@ -462,13 +462,36 @@ export function createLocalTerminalWithCurrentShellImpl(getCtx: AppContextGetter
 }
 
 async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: string): Promise<string | undefined> {
-  const { sessions, netcattyBridge } = getCtx();
+  const { sessions, netcattyBridge, hostById, getSessionRestoreCwd } = getCtx();
   const source = sessions?.find((s: { id: string }) => s.id === sessionId);
   if (!source) return undefined;
+
+  // Freshest cwd: the live OSC 7 value tracked in terminal state (the only
+  // source that reflects `cd`s in a running local terminal — lastCwd is a
+  // startup snapshot). Falls through to the SSH probe / lastCwd when absent.
+  const liveCwd: string | undefined = getSessionRestoreCwd?.(sessionId);
+
   const bridge = netcattyBridge?.get?.();
+  const host = hostById?.(source.hostId);
+  const isNetworkDevice = !!host
+    && (host.deviceType === 'network' || classifyDistroId(getEffectiveHostDistro(host)) === 'network-device');
+
+  // Only probe when the app's own cwd-probe gate would: never for network
+  // devices (the extra exec channel can close a Huawei VRP-style session), and
+  // for not-yet-classified hosts consult the SSH banner (issue #1043).
+  let allowSshProbe = false;
+  if (!liveCwd && !isNetworkDevice) {
+    try {
+      const info = await bridge?.getSessionRemoteInfo?.(sessionId);
+      allowSshProbe = shouldProbeSessionCwd({ isNetworkDevice: false, remoteSshVersion: info?.remoteSshVersion });
+    } catch {
+      allowSshProbe = false;
+    }
+  }
+
   const probe = async (id: string, options?: { allowHomeFallback?: boolean }) =>
     (await bridge?.getSessionPwd?.(id, options)) ?? { success: false };
-  return captureInheritedCwd(source, probe);
+  return captureInheritedCwd(source, probe, { liveCwd, allowSshProbe });
 }
 
 export async function splitSessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string, direction: 'horizontal' | 'vertical') {
