@@ -295,9 +295,14 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                       Anchor (not Trigger): wrapping the username Input in
                       PopoverTrigger races focus→open with the same click's
                       toggle→close, which flashes saved identities then closes.
+                      Anchor is not exempt from Radix outside dismissal (only
+                      Trigger is), so tag it and ignore those events below.
                     */}
                     <PopoverAnchor asChild>
-                      <div className="relative">
+                      <div
+                        className="relative"
+                        data-identity-suggestions-anchor=""
+                      >
                         <Input
                           placeholder={groupDefaults?.username || t("hostDetails.username.placeholder")}
                           value={form.username}
@@ -361,6 +366,12 @@ export const HostDetailsConnectionSections: React.FC<HostDetailsConnectionSectio
                       align="start"
                       sideOffset={4}
                       onOpenAutoFocus={(e) => e.preventDefault()}
+                      onInteractOutside={(e) => {
+                        const target = e.target as Element | null;
+                        if (target?.closest("[data-identity-suggestions-anchor]")) {
+                          e.preventDefault();
+                        }
+                      }}
                       style={{ width: "var(--radix-popover-trigger-width)" }}
                     >
                       <ScrollArea className="max-h-[280px]">

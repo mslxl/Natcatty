@@ -167,6 +167,12 @@ test("username identity suggestions use PopoverAnchor so focus click does not fl
     source,
     /identitySuggestionsOpen[\s\S]*?<PopoverTrigger asChild>[\s\S]*?hostDetails\.username\.placeholder/,
   );
+  // Anchor clicks are outside interactions in Radix 1.1.x; ignore them so
+  // caret reposition / chevron toggle do not dismiss-then-reopen.
+  assert.match(
+    source,
+    /data-identity-suggestions-anchor[\s\S]*?onInteractOutside=\{\(e\) => \{[\s\S]*?closest\("\[data-identity-suggestions-anchor\]"\)/,
+  );
 });
 
 test("reselecting the current key or certificate method still forces the chooser path", () => {
