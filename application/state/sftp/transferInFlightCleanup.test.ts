@@ -67,6 +67,7 @@ test("directory completion reaches the global store while its walk is still acti
   resetTransferWalkRegistryForTests();
   sftpTransferCenterStore.publishOwner(ownerId, [task]);
   registerTransferWalk(task.id);
+  let mirroredTask: TransferTask | undefined;
   t.after(() => {
     unregisterTransferWalk(task.id);
     resetTransferWalkRegistryForTests();
@@ -79,15 +80,15 @@ test("directory completion reaches the global store while its walk is still acti
     () => {
       transferRuntime.patchTask(task.id, { totalBytes: 3, transferredBytes: 3 });
     },
-    (updates) => {
-      sftpTransferCenterStore.publishOwner(ownerId, [{ ...task, ...updates }]);
-    },
+    (canonicalTask) => { mirroredTask = canonicalTask; },
   );
 
   assert.equal(status, "completed");
   assert.equal(isTransferWalkInFlight(task.id), true);
   assert.equal(sftpTransferCenterStore.getTask(task.id)?.status, "completed");
   assert.equal(sftpTransferCenterStore.getTask(task.id)?.transferredBytes, 3);
+  assert.equal(sftpTransferCenterStore.getTask(task.id)?.totalBytes, 3);
+  assert.equal(mirroredTask?.totalBytes, 3);
   assert.equal(sftpTransferCenterStore.getSnapshot().activeCount, 0);
 });
 
@@ -97,7 +98,16 @@ test("partial failure and late cancellation keep their existing terminal behavio
     { ...makeTask(), transferredBytes: 2 },
     { partialFailure: true, cancelled: false, endTime: 456 },
     () => {},
-    (updates) => { failedUpdates.push(updates); },
+    (task) => {
+      failedUpdates.push({
+        status: task.status,
+        error: task.error,
+        retryable: task.retryable,
+        endTime: task.endTime,
+        transferredBytes: task.transferredBytes,
+        speed: task.speed,
+      });
+    },
   );
   assert.equal(failedStatus, "failed");
   assert.deepEqual(failedUpdates, [{
@@ -114,7 +124,14 @@ test("partial failure and late cancellation keep their existing terminal behavio
     makeTask("cancelled"),
     { partialFailure: false, cancelled: false, endTime: 789 },
     () => {},
-    (updates) => { cancelledUpdates = updates; },
+    (task) => {
+      cancelledUpdates = {
+        status: task.status,
+        error: task.error,
+        endTime: task.endTime,
+        speed: task.speed,
+      };
+    },
   );
   assert.equal(cancelledStatus, "cancelled");
   assert.deepEqual(cancelledUpdates, {

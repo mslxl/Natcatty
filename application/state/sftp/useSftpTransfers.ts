@@ -112,34 +112,32 @@ export function finishTransferTask(
     endTime?: number;
   },
   flushPendingProgress: () => void,
-  publishPanelLifecycle: (updates: Partial<TransferTask>) => void,
+  mirrorPanelTask: (task: TransferTask) => void,
 ): TransferStatus {
   flushPendingProgress();
   const latestTask = transferRuntime.getTask(task.id) ?? task;
   const endTime = outcome.endTime ?? Date.now();
-  if (outcome.cancelled || latestTask.status === "cancelled") {
-    const updates: Partial<TransferTask> = {
+  const cancelled = outcome.cancelled || latestTask.status === "cancelled";
+  const status: TransferStatus = cancelled
+    ? "cancelled"
+    : outcome.partialFailure ? "failed" : "completed";
+  const updates: Partial<TransferTask> = cancelled
+    ? {
       status: "cancelled",
       error: undefined,
       endTime,
       speed: 0,
+    }
+    : {
+      status,
+      error: outcome.partialFailure ? "Some files failed to transfer" : undefined,
+      retryable: outcome.partialFailure ? false : latestTask.retryable,
+      endTime,
+      transferredBytes: outcome.partialFailure ? latestTask.transferredBytes : latestTask.totalBytes,
+      speed: 0,
     };
-    transferRuntime.patchTask(latestTask.id, updates);
-    publishPanelLifecycle(updates);
-    return "cancelled";
-  }
-
-  const status: TransferStatus = outcome.partialFailure ? "failed" : "completed";
-  const updates: Partial<TransferTask> = {
-    status,
-    error: outcome.partialFailure ? "Some files failed to transfer" : undefined,
-    retryable: outcome.partialFailure ? false : latestTask.retryable,
-    endTime,
-    transferredBytes: outcome.partialFailure ? latestTask.transferredBytes : latestTask.totalBytes,
-    speed: 0,
-  };
   transferRuntime.patchTask(latestTask.id, updates);
-  publishPanelLifecycle(updates);
+  mirrorPanelTask(transferRuntime.getTask(latestTask.id) ?? { ...latestTask, ...updates });
   return status;
 }
 
@@ -939,10 +937,12 @@ export const useSftpTransfers = ({
             flushPendingProgress();
           }
         },
-        (updates) => {
-          setTransfers((prev) => prev.map((candidate) => (
-            candidate.id === task.id ? { ...candidate, ...updates } : candidate
-          )));
+        (canonicalTask) => {
+          const next = transfersRef.current.map((candidate) => (
+            candidate.id === task.id ? canonicalTask : candidate
+          ));
+          transfersRef.current = next;
+          setTransfersState(next);
         },
       );
 
