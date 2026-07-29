@@ -1354,12 +1354,6 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         );
         // Runtime writer is authority for live walks: panel cannot roll lifecycle
         // back past the process-global control epoch (soft pause/resume).
-        // #2568 exception: processTransfer paints completed via setTransfers
-        // before runWalk unregisters. Both sides are often unstamped
-        // (lifecycleEpoch undefined); storeEpoch then falls back to the control
-        // epoch, which softResume bumps even when it clears task.lifecycleEpoch
-        // and continues the live walk. Accept that unstamped terminal publish —
-        // stamped older terminal snapshots after soft pause/resume still lose.
         const runtimeOwned = isTransferWalkInFlight(task.id)
           || (task.parentTaskId ? isTransferWalkInFlight(task.parentTaskId) : false)
           || isTransferOrRootPauseLatched(task.parentTaskId ?? task.id, task.id);
@@ -1371,24 +1365,11 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             ? (replacement.lifecycleEpoch as number)
             : -1;
           if (storeEpoch > panelEpoch) {
-            const isUnstampedTerminalRace =
-              TERMINAL_OWNER_STATUSES.has(replacement.status)
-              && !Number.isFinite(task.lifecycleEpoch)
-              && !Number.isFinite(replacement.lifecycleEpoch);
-            // Always keep newer progress/checkpoint watermarks. mergeOwnerPublishedTask
-            // returns terminal snapshots wholesale, so a stale failed/cancelled panel
-            // paint would otherwise roll bytes back past main-process progress.
-            // For the #2568 unstamped terminal race, accept the terminal status;
-            // otherwise keep the store's live status/epoch (soft pause/resume).
             merged = {
               ...merged,
-              ...(isUnstampedTerminalRace
-                ? {}
-                : {
-                  status: task.status,
-                  lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
-                  speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
-                }),
+              status: task.status,
+              lifecycleEpoch: task.lifecycleEpoch ?? merged.lifecycleEpoch,
+              speed: (task.status === "paused" || task.status === "pausing") ? 0 : merged.speed,
               transferredBytes: Math.max(task.transferredBytes ?? 0, merged.transferredBytes ?? 0),
               checkpointBytes: Math.max(task.checkpointBytes ?? 0, merged.checkpointBytes ?? 0),
             };
