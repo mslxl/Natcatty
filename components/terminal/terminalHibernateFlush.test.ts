@@ -34,7 +34,7 @@ test("full hibernate flushes pending hidden output before taking the snapshot", 
   const retryIndex = body.indexOf("scheduleHibernateRetry()");
   const alternateScreenSkipIndex = body.indexOf("shouldSkipHibernateForActiveAlternateScreen(term)");
   const snapshotIndex = body.indexOf("serializeTerminalForHibernate(");
-  const releaseIndex = body.indexOf("releaseTerminalFlowBeforeHibernate(terminalBackend, term, backendId)");
+  const releaseIndex = body.indexOf("releaseTerminalFlowBeforeHibernate(");
 
   assert.notEqual(termCaptureIndex, -1, "hibernate must capture the active terminal once");
   assert.notEqual(clearHiddenIndex, -1, "hibernate must clear hidden renderer state");
@@ -95,7 +95,7 @@ test("full hibernate rechecks live state after every asynchronous step", () => {
   const afterFlushGuardIndex = body.indexOf("if (!canFinishHibernate()) return false;", flushIndex);
   const serializeIndex = body.indexOf("await serializeTerminalForHibernate(");
   const afterSerializeGuardIndex = body.indexOf("if (!canFinishHibernate()) return false;", serializeIndex);
-  const releaseIndex = body.indexOf("releaseTerminalFlowBeforeHibernate(terminalBackend, term, backendId)");
+  const releaseIndex = body.indexOf("releaseTerminalFlowBeforeHibernate(");
 
   assert.match(body, /!isVisibleRef\.current/);
   assert.match(body, /hibernateEnabledRef\.current/);
@@ -115,10 +115,17 @@ test("ended hidden sessions release xterm without reopening dead backend listene
   );
   const hibernateBody = readFunctionBody(source, "const hibernateRuntime = useCallback(() =>");
 
-  assert.match(fullHibernateBody, /canHibernateTerminalRuntimeStatus\(statusRef\.current\)/);
   assert.match(
     fullHibernateBody,
-    /const sessionConnected = statusRef\.current === "connected";\s*if \(sessionConnected\) \{\s*releaseTerminalFlowBeforeHibernate\([\s\S]*?\}\s*disposeDataRef\.current\?\.\(\);[\s\S]*?disposeRuntimeOnly\(\);\s*if \(sessionConnected\) \{\s*beginHibernatedSessionListeners\(backendId\);\s*\}/,
+    /canHibernateTerminalRuntimeSession\(statusRef\.current, backendId\)/,
+  );
+  assert.match(
+    fullHibernateBody,
+    /statusRef\.current === "disconnected" \|\| sessionRef\.current === backendId/,
+  );
+  assert.match(
+    fullHibernateBody,
+    /const connectedBackendId = statusRef\.current === "connected" \? backendId : null;\s*if \(connectedBackendId\) \{\s*releaseTerminalFlowBeforeHibernate\([\s\S]*?connectedBackendId\);\s*\}\s*disposeDataRef\.current\?\.\(\);[\s\S]*?disposeRuntimeOnly\(\);\s*if \(connectedBackendId\) \{\s*beginHibernatedSessionListeners\(connectedBackendId\);\s*\}/,
   );
   assert.match(
     hibernateBody,

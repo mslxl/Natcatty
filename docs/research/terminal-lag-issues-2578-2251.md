@@ -40,6 +40,8 @@
 
 因此远程会话一旦进入 `disconnected`，即使标签已经隐藏且用户开启了休眠，也不会执行运行资源释放。只要标签仍然保留，终端历史、渲染对象和附加组件就仍由 renderer 持有。[调度门禁](https://github.com/binaricat/Netcatty/blob/c3067c8dc2aebf7817f1b7c918a6f26dda53414d/components/terminal/useTerminalHibernateEffect.ts#L96-L111)、[最终门禁](https://github.com/binaricat/Netcatty/blob/c3067c8dc2aebf7817f1b7c918a6f26dda53414d/components/Terminal.tsx#L1775-L1858)
 
+大部分远程连接在结束回调中还会先清空 backend session ID，再把状态改成 `disconnected`。所以正确修复不能只放宽状态门禁，还必须允许已结束路径在没有存活 backend ID 时生成快照并释放 xterm；只有仍连接的路径才要求 ID 并做流控、listener 切换。[连接结束处理](https://github.com/binaricat/Netcatty/blob/c3067c8dc2aebf7817f1b7c918a6f26dda53414d/components/terminal/runtime/terminalSessionAttachment.ts#L946-L952)
+
 本地新增的 hook 回归用例以“隐藏、已断开、休眠开启、运行资源仍存在”为输入。修正前连续 3 次都得到 `onHibernate = 0`；允许结束状态进入休眠后稳定通过。对应修复保持以下边界：
 
 - 仍连接的会话保持原有流控和后台 listener 切换；
@@ -91,7 +93,7 @@
 - 通过 GitHub API 读取 #2578 正文和全部评论，并读取附图原始像素内容。
 - 核对 #2581 合并提交、当前 `main`、xterm.js #5902 和 beta.221 npm 元数据。
 - 隐藏结束会话的回归测试在修正前连续 3 次稳定失败，修正后通过。
-- 休眠状态、hook 调度、最终释放与流水线结构的 39 项专项测试全部通过。
+- 休眠状态、无 backend ID 的结束路径、hook 调度、最终释放与流水线结构的 40 项专项测试全部通过。
 - 在 `ELECTRON_DISABLE_SANDBOX=1` 下，真实 Electron 密集装饰测试通过；本次测得实际关键词高亮装饰 712 个、20,000 个装饰的最慢刷新约 50 ms。
 - 生产构建通过。
-- 全量测试最终共 8,225 项，其中 8,215 通过、10 跳过、0 失败。此前一次运行里有一个与本次终端改动无关的 AI 网络超时用例偶发失败；该用例随后单独连续运行 5 次通过，完整测试再跑一次也全部通过。
+- 全量测试最终共 8,226 项，其中 8,216 通过、10 跳过、0 失败。此前一次运行里有一个与本次终端改动无关的 AI 网络超时用例偶发失败；该用例随后单独连续运行 5 次通过，完整测试再跑两次也全部通过。

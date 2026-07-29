@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canHibernateTerminalRuntimeSession,
   canHibernateTerminalRuntimeStatus,
   capHibernateBuffer,
   capHibernateBufferByLines,
@@ -21,6 +22,13 @@ test("connected and ended terminals can release hidden runtimes", () => {
   assert.equal(canHibernateTerminalRuntimeStatus("connected"), true);
   assert.equal(canHibernateTerminalRuntimeStatus("disconnected"), true);
   assert.equal(canHibernateTerminalRuntimeStatus("connecting"), false);
+});
+
+test("ended terminals do not need a live backend session to release their runtime", () => {
+  assert.equal(canHibernateTerminalRuntimeSession("disconnected", null), true);
+  assert.equal(canHibernateTerminalRuntimeSession("connected", "backend-1"), true);
+  assert.equal(canHibernateTerminalRuntimeSession("connected", null), false);
+  assert.equal(canHibernateTerminalRuntimeSession("connecting", "backend-1"), false);
 });
 
 test("capHibernateBuffer trims from the front when over the char limit", () => {

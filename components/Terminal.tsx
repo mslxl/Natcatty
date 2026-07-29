@@ -195,6 +195,7 @@ import {
   writeLocalTerminalDataInOrder,
 } from "./terminal/runtime/terminalUnfocusedRepaint";
 import {
+  canHibernateTerminalRuntimeSession,
   canHibernateTerminalRuntimeStatus,
   isTerminalFileTransferActive,
   resolveHibernateKeepRendererCount,
@@ -1840,7 +1841,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return false;
     clearHibernateRetry();
     const backendId = sessionRef.current;
-    if (!backendId) return false;
+    if (!canHibernateTerminalRuntimeSession(statusRef.current, backendId)) return false;
     const term = termRef.current;
     const serializeAddon = serializeAddonRef.current;
     const canFinishHibernate = () => (
@@ -1848,13 +1849,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       && !hibernatedRef.current
       && !softHiddenRef.current
       && hasRuntimeRef.current
-      && canHibernateTerminalRuntimeStatus(statusRef.current)
+      && canHibernateTerminalRuntimeSession(statusRef.current, sessionRef.current)
       && !isSearchOpenRef.current
       && !hibernateFileTransferActiveRef.current
       && !runtimeHasInlineImages()
       && hibernateEnabledRef.current
       && termRef.current === term
-      && sessionRef.current === backendId
+      && (statusRef.current === "disconnected" || sessionRef.current === backendId)
       && serializeAddonRef.current === serializeAddon
     );
 
@@ -1888,17 +1889,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     applyHibernateSnapshot(snapshot);
     isBootActiveRef.current = false;
-    const sessionConnected = statusRef.current === "connected";
-    if (sessionConnected) {
-      releaseTerminalFlowBeforeHibernate(terminalBackend, term, backendId);
+    const connectedBackendId = statusRef.current === "connected" ? backendId : null;
+    if (connectedBackendId) {
+      releaseTerminalFlowBeforeHibernate(terminalBackend, term, connectedBackendId);
     }
     disposeDataRef.current?.();
     disposeDataRef.current = null;
     disposeExitRef.current?.();
     disposeExitRef.current = null;
     disposeRuntimeOnly();
-    if (sessionConnected) {
-      beginHibernatedSessionListeners(backendId);
+    if (connectedBackendId) {
+      beginHibernatedSessionListeners(connectedBackendId);
     }
     hibernatedRef.current = true;
     // Hibernation rebuilds the autofill controller on wake; drop any open

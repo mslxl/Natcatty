@@ -50,6 +50,14 @@ export function canHibernateTerminalRuntimeStatus(
   return status === "connected" || status === "disconnected";
 }
 
+export function canHibernateTerminalRuntimeSession(
+  status: TerminalSession["status"],
+  backendSessionId: string | null | undefined,
+): boolean {
+  if (!canHibernateTerminalRuntimeStatus(status)) return false;
+  return status === "disconnected" || Boolean(backendSessionId);
+}
+
 export function shouldKeepTerminalBackgroundWorkActive(
   settings: Pick<TerminalSettings, "hibernateHiddenTabs"> | null | undefined,
   protocol: string | null | undefined,
