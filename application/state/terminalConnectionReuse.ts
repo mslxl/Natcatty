@@ -28,6 +28,13 @@ function createTerminalSessionClone(
   options: CloneSessionOptions,
 ): TerminalSession {
   const isLocal = session.protocol === "local";
+  // Only ssh/undefined (non-mosh/et) sessions inject an inherited `cd`; setting
+  // pendingInitialCwd for telnet/serial/mosh/et would be dead, never-cleared
+  // state (those protocols don't track cwd, so it's never consumed or cleared).
+  const injectsInheritedCwd =
+    (session.protocol === "ssh" || session.protocol === undefined)
+    && !session.moshEnabled
+    && !session.etEnabled;
   const clonedSession: TerminalSession = {
     id: options.id,
     hostId: session.hostId,
@@ -52,7 +59,7 @@ function createTerminalSessionClone(
     fontSize: session.fontSize,
     fontSizeOverride: session.fontSizeOverride,
     ...(session.ephemeralHost ? { ephemeralHost: true } : {}),
-    ...(!isLocal && options.inheritedCwd ? { pendingInitialCwd: options.inheritedCwd } : {}),
+    ...(injectsInheritedCwd && options.inheritedCwd ? { pendingInitialCwd: options.inheritedCwd } : {}),
     reuseConnectionFromSessionId: canReuseTerminalConnection(session) ? session.id : undefined,
   };
 

@@ -36,6 +36,15 @@ test("connected ssh with no lastCwd and failed probe -> undefined", async () => 
   assert.equal(cwd, undefined);
 });
 
+test("connected ssh falls back to lastCwd when probe exceeds the timeout", async () => {
+  const cwd = await captureInheritedCwd(
+    { id: "s", protocol: "ssh", status: "connected", lastCwd: "/a" },
+    () => new Promise(() => { /* never resolves */ }),
+    10,
+  );
+  assert.equal(cwd, "/a");
+});
+
 test("disconnected ssh uses lastCwd without probing", async () => {
   const cwd = await captureInheritedCwd(
     { id: "s", protocol: "ssh", status: "disconnected", lastCwd: "/a" },

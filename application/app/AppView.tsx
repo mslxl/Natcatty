@@ -122,6 +122,13 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
 
+  // Stable no-arg wrapper: the top-bar terminal icon passes an onClick event we
+  // must not forward as handleCreateLocalTerminal's `shell` arg, and an inline
+  // arrow here would defeat the memoized TopTabs onCreateLocalTerminal check.
+  const handleCreateLocalTerminalNoArg = useCallback(() => {
+    handleCreateLocalTerminal();
+  }, [handleCreateLocalTerminal]);
+
   const appThemeStyle = useMemo(() => {
     const tokens = getUiThemeById(
       resolvedTheme,
@@ -258,7 +265,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onCloseLogView={closeLogView}
         onCloseTabsBatch={closeTabsBatch}
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
-        onCreateLocalTerminal={() => handleCreateLocalTerminal()}
+        onCreateLocalTerminal={handleCreateLocalTerminalNoArg}
         onThemeChange={settings.setTheme}
         onOpenSettings={handleOpenSettings}
         externalMcpEnabled={externalMcpToggle.enabled}

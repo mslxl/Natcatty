@@ -112,6 +112,21 @@ test("split clone applies local inheritedCwd as localStartDir without pendingIni
   assert.equal(clone.pendingInitialCwd, undefined);
 });
 
+test("clone does not set pendingInitialCwd for protocols that never inject a cd", () => {
+  for (const overrides of [
+    { protocol: "telnet" as const },
+    { protocol: "serial" as const },
+    { protocol: "ssh" as const, moshEnabled: true },
+    { protocol: "ssh" as const, etEnabled: true },
+  ]) {
+    const clone = createSplitTerminalSessionClone(session(overrides), {
+      id: "split-no-inject",
+      inheritedCwd: "/var/log",
+    });
+    assert.equal(clone.pendingInitialCwd, undefined, `${JSON.stringify(overrides)} should not set pendingInitialCwd`);
+  }
+});
+
 test("copy clone without inheritedCwd keeps localStartDir and sets no pendingInitialCwd", () => {
   const clone = createCopiedTerminalSessionClone(
     session({ protocol: "local", localStartDir: "/home/u", status: "connecting" }),
