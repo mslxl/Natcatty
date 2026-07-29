@@ -25,6 +25,7 @@ loader.config({ paths: { vs: monacoBasePath } });
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useClipboardBackend } from '../../application/state/useClipboardBackend';
 import { HotkeyScheme, KeyBinding, matchesKeyBinding } from '../../domain/models';
+import { buildNetcattyMonacoThemeColors } from '../../infrastructure/monaco/netcattyMonacoTheme';
 import { getLanguageName, getSupportedLanguages } from '../../lib/sftpFileUtils';
 import { Button } from '../ui/button';
 import { Combobox } from '../ui/combobox';
@@ -258,23 +259,7 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
     if (!monaco) return;
 
     const colors = getEditorColors(isDarkTheme);
-
-    const themeColors: Record<string, string> = {
-      'editor.background': colors.bg,
-      'editor.foreground': colors.fg,
-      'editorCursor.foreground': colors.primary,
-      'editor.selectionBackground': colors.primary + '40',
-      'editor.inactiveSelectionBackground': colors.primary + '25',
-      'editorLineNumber.foreground': colors.mutedFg,
-      'editorLineNumber.activeForeground': colors.fg,
-      'editor.lineHighlightBackground': colors.fg + '08',
-      'editorWidget.background': colors.card,
-      'editorWidget.foreground': colors.fg,
-      'editorWidget.border': colors.border,
-      'input.background': colors.card,
-      'input.foreground': colors.fg,
-      'input.border': colors.border,
-    };
+    const themeColors = buildNetcattyMonacoThemeColors(colors);
 
     monaco.editor.defineTheme('netcatty-dark', {
       base: 'vs-dark',
