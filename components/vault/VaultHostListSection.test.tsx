@@ -425,6 +425,25 @@ test("VaultHostListSection virtualizes large pinned collections", () => {
   assert.match(markup, /data-vault-virtual-collection="grid"/);
 });
 
+test("VaultHostListSection virtualizes large recently connected collections", () => {
+  const hosts = Array.from({ length: 300 }, (_, index) => (
+    makeHost(`recent-${index}`, `Recent ${index}`)
+  ));
+  const markup = renderHostList({
+    viewMode: "grid",
+    displayedGroups: [],
+    displayedHosts: [],
+    visibleDisplayedHosts: [],
+    recentHosts: hosts,
+    showRecentHosts: true,
+  });
+
+  const renderedHosts = (markup.match(/data-vault-grid-item="recent:/g) ?? []).length;
+  assert.ok(renderedHosts > 0);
+  assert.ok(renderedHosts < 100);
+  assert.match(markup, /data-vault-virtual-collection="grid"/);
+});
+
 test("VaultHostListSection virtualizes large group collections", () => {
   const groups = Array.from({ length: 300 }, (_, index): GroupNode => ({
     name: `Group ${index}`,

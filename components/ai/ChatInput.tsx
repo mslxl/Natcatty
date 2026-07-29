@@ -24,7 +24,7 @@ import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import { formatThinkingLabel } from '../../infrastructure/ai/types';
 import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile } from '../../infrastructure/ai/types';
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
-import { ScrollArea } from '../ui/scroll-area';
+import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 // Keep in sync with the popover's Tailwind max-width below.
@@ -173,6 +173,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const permBtnRef = useRef<HTMLButtonElement>(null);
   const attachBtnRef = useRef<HTMLButtonElement>(null);
   const slashPickerListRef = useRef<HTMLDivElement>(null);
+  const atMentionListRef = useRef<VariableSizeVirtualListHandle>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
@@ -365,6 +366,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   useEffect(() => {
     if (showAtMention) setActiveMenuIndex(0);
   }, [showAtMention, atMentionKey]);
+  useEffect(() => {
+    if (!showAtMention || hosts.length === 0) return;
+    atMentionListRef.current?.scrollToIndex(activeMenuIndex);
+  }, [activeMenuIndex, atMentionKey, hosts.length, showAtMention]);
   useEffect(() => {
     if (showSlashCommandPicker) setActiveMenuIndex(0);
   }, [showSlashCommandPicker, slashCommandKey]);
@@ -681,38 +686,47 @@ const ChatInput: React.FC<ChatInputProps> = ({
               className="fixed z-[1000] overflow-hidden rounded-lg border border-border/50 bg-popover shadow-lg"
               style={{ left: inputPanelPos.left, bottom: inputPanelPos.bottom, width: 'auto', minWidth: Math.min(200, inputPanelPos.width), maxWidth: inputPanelPos.width }}
             >
-              <ScrollArea className="max-h-[280px]">
-                <div className="p-1">
-                  {hosts.map((host, idx) => {
-                    const isActive = idx === activeMenuIndex;
-                    const showHostnameLine = host.label
-                      && host.hostname !== host.label
-                      && !host.label.includes(host.hostname);
-                    return (
-                      <button
-                        id={`at-mention-${host.sessionId}`}
-                        key={host.sessionId}
-                        type="button"
-                        role="option"
-                        aria-selected={isActive}
-                        onMouseEnter={() => setActiveMenuIndex(idx)}
-                        onClick={() => handleSelectAtMention(host)}
-                        className={`w-full rounded-md px-2 py-1 text-left transition-colors cursor-pointer ${isActive ? 'bg-muted/40' : 'hover:bg-muted/30'}`}
-                      >
-                        <div className="flex items-center gap-2 text-[12px] text-foreground/90">
-                          <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
-                          <span className="truncate">{host.label || host.hostname}</span>
+              <div className="max-h-[280px]" style={{ height: Math.min(280, 8 + hosts.reduce((total, host) => total + (host.label
+                && host.hostname !== host.label
+                && !host.label.includes(host.hostname) ? 52 : 36), 0)) }}>
+                <VariableSizeVirtualList
+                  ref={atMentionListRef}
+                  items={hosts}
+                  getItemHeight={(host) => host.label
+                    && host.hostname !== host.label
+                    && !host.label.includes(host.hostname) ? 52 : 36}
+                  getItemKey={(host) => host.sessionId}
+                  className="h-full"
+                  contentClassName="p-1"
+                  renderItem={(host, idx) => {
+                  const isActive = idx === activeMenuIndex;
+                  const showHostnameLine = host.label
+                    && host.hostname !== host.label
+                    && !host.label.includes(host.hostname);
+                  return (
+                    <button
+                      id={`at-mention-${host.sessionId}`}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      onMouseEnter={() => setActiveMenuIndex(idx)}
+                      onClick={() => handleSelectAtMention(host)}
+                      className={`h-full w-full rounded-md px-2 py-1 text-left transition-colors cursor-pointer ${isActive ? 'bg-muted/40' : 'hover:bg-muted/30'}`}
+                    >
+                      <div className="flex items-center gap-2 text-[12px] text-foreground/90">
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${host.connected ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
+                        <span className="truncate">{host.label || host.hostname}</span>
+                      </div>
+                      {showHostnameLine ? (
+                        <div className="pl-3.5 text-[10px] text-muted-foreground/60 truncate">
+                          {host.hostname}
                         </div>
-                        {showHostnameLine ? (
-                          <div className="pl-3.5 text-[10px] text-muted-foreground/60 truncate">
-                            {host.hostname}
-                          </div>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </ScrollArea>
+                      ) : null}
+                    </button>
+                  );
+                  }}
+                />
+              </div>
             </div>
           </>,
           document.body,
