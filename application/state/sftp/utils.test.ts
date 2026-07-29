@@ -169,6 +169,22 @@ test("pane context normalizes bookmark and initialPath forward-slash UNC ingress
   );
 });
 
+test("pane navigation preserves trailing whitespace; path bar still trims", () => {
+  assert.equal(
+    normalizeSftpPaneNavigationPath("/home/alice/dir ", "/home/alice"),
+    "/home/alice/dir ",
+  );
+  assert.equal(
+    normalizeSftpPaneNavigationPath("//server/share/logs ", "C:\\Users\\alice"),
+    "\\\\server\\share\\logs ",
+  );
+  assert.equal(normalizeSftpNavigationPath("/home/alice/dir "), "/home/alice/dir");
+  assert.equal(
+    normalizeSftpNavigationPath("/home/alice/dir ", { trimWhitespace: false }),
+    "/home/alice/dir ",
+  );
+});
+
 test("breadcrumb segments keep WSL UNC roots intact", () => {
   assert.deepEqual(
     getSftpBreadcrumbSegments("\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa"),

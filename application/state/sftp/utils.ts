@@ -90,6 +90,15 @@ export const isWindowsPath = (
   /^[A-Za-z]:/.test(path) || getWindowsUncRoot(path, options) !== null
 );
 
+export type NormalizeSftpNavigationPathOptions = SftpWindowsPathOptions & {
+  /**
+   * Strip leading/trailing whitespace from the whole path string.
+   * Default true for path-bar typing/paste; set false for programmatic
+   * navigate/openEntry so directory names ending in whitespace stay intact.
+   */
+  trimWhitespace?: boolean;
+};
+
 /**
  * Normalize a path typed/pasted into the SFTP path bar before navigation.
  * Preserves Windows drive letters and UNC roots (e.g. \\wsl.localhost\Ubuntu-22.04\...).
@@ -98,9 +107,10 @@ export const isWindowsPath = (
  */
 export const normalizeSftpNavigationPath = (
   rawPath: string,
-  options?: SftpWindowsPathOptions,
+  options?: NormalizeSftpNavigationPathOptions,
 ): string => {
-  const newPath = rawPath.trim() || "/";
+  const prepared = options?.trimWhitespace === false ? rawPath : rawPath.trim();
+  const newPath = prepared || "/";
   if (isWindowsPath(newPath, options)) {
     if (/^[A-Za-z]:[\\/]?$/.test(newPath)) {
       return `${newPath.charAt(0).toUpperCase()}:\\`;
@@ -128,13 +138,18 @@ export const resolveSftpWindowsPathOptions = (
 /**
  * Normalize bookmark / initialPath / navigate ingress using pane Windows context
  * so //host/share becomes UNC on Windows panes and stays POSIX elsewhere.
+ * Does not trim: openEntry / joinPath may produce paths with meaningful trailing
+ * whitespace in directory names.
  */
 export const normalizeSftpPaneNavigationPath = (
   rawPath: string,
   ...contextPaths: Array<string | null | undefined>
 ): string => normalizeSftpNavigationPath(
   rawPath,
-  resolveSftpWindowsPathOptions(...contextPaths),
+  {
+    ...resolveSftpWindowsPathOptions(...contextPaths),
+    trimWhitespace: false,
+  },
 );
 
 export type SftpBreadcrumbSegment = { label: string; path: string };
