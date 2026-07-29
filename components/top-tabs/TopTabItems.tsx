@@ -233,7 +233,7 @@ export const formatSessionTopTabLabel = (
   return resolveSessionTabTitle(session, dynamicTabTitleMode);
 };
 
-export const createSessionTopTabDoubleClickHandler = (
+export const createTopTabCopyDoubleClickHandler = (
   onCopySession: (sessionId: string) => void,
   sessionId: string,
 ): React.MouseEventHandler<HTMLDivElement> => () => onCopySession(sessionId);
@@ -709,7 +709,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
     activeTabStore.setActiveTabId(session.id);
   }, [session.id]);
   const handleDoubleClick = useMemo(
-    () => createSessionTopTabDoubleClickHandler(onCopySession, session.id),
+    () => createTopTabCopyDoubleClickHandler(onCopySession, session.id),
     [onCopySession, session.id],
   );
   const addressTooltip = formatSessionTopTabTooltip(session);
@@ -845,6 +845,7 @@ interface WorkspaceTopTabProps {
   onTabDragLeave: (e: React.DragEvent) => void;
   onTabDrop: (e: React.DragEvent, targetTabId: string) => void;
   onRenameWorkspace: (workspaceId: string) => void;
+  onCopyWorkspace: (workspaceId: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onDetachSessionFromWorkspace?: (workspaceId: string, sessionId: string) => void;
   workspaceSessionLabels?: Record<string, string>;
@@ -868,6 +869,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   onTabDragLeave,
   onTabDrop,
   onRenameWorkspace,
+  onCopyWorkspace,
   onCloseWorkspace,
   onDetachSessionFromWorkspace,
   workspaceSessionLabels,
@@ -879,6 +881,10 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   const handleClick = useCallback(() => {
     activeTabStore.setActiveTabId(workspace.id);
   }, [workspace.id]);
+  const handleDoubleClick = useMemo(
+    () => createTopTabCopyDoubleClickHandler(onCopyWorkspace, workspace.id),
+    [onCopyWorkspace, workspace.id],
+  );
 
   return (
     <ContextMenu>
@@ -888,6 +894,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
           data-tab-type="workspace"
           data-state={isActive ? 'active' : 'inactive'}
           onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
           onMouseDown={handleTabMiddleMouseDown}
           onAuxClick={(e) => handleTabMiddleClickClose(e, () => onCloseWorkspace(workspace.id))}
           draggable
@@ -961,6 +968,9 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
       <ContextMenuContent>
         <ContextMenuItem onClick={() => onRenameWorkspace(workspace.id)}>
           {t('common.rename')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCopyWorkspace(workspace.id)}>
+          {t('tabs.copyTab')}
         </ContextMenuItem>
         {onDetachSessionFromWorkspace && workspaceSessionLabels && Object.entries(workspaceSessionLabels).map(([sessionId, label]) => (
           <ContextMenuItem

@@ -133,6 +133,7 @@ interface TopTabsProps {
   onCopySession: (sessionId: string) => void;
   onCopySessionToNewWindow: (sessionId: string) => void;
   onRenameWorkspace: (workspaceId: string) => void;
+  onCopyWorkspace: (workspaceId: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onCloseLogView: (logViewId: string) => void;
   onCloseTabsBatch: (targetIds: string[]) => void;
@@ -179,6 +180,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onCopySession,
   onCopySessionToNewWindow,
   onRenameWorkspace,
+  onCopyWorkspace,
   onCloseWorkspace,
   onCloseLogView,
   onCloseTabsBatch,
@@ -850,6 +852,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onTabDragLeave={handleTabDragLeave}
             onTabDrop={handleTabDrop}
             onRenameWorkspace={onRenameWorkspace}
+            onCopyWorkspace={onCopyWorkspace}
             onCloseWorkspace={onCloseWorkspace}
             onDetachSessionFromWorkspace={(_workspaceId, sessionId) => onRemoveSessionFromWorkspace(sessionId)}
             workspaceSessionLabels={workspaceSessionLabels}
@@ -1183,6 +1186,7 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.onCopySession === next.onCopySession &&
     prev.onCreateLocalTerminal === next.onCreateLocalTerminal &&
     prev.onCopySessionToNewWindow === next.onCopySessionToNewWindow &&
+    prev.onCopyWorkspace === next.onCopyWorkspace &&
     prev.onOpenSettings === next.onOpenSettings &&
     prev.externalMcpEnabled === next.externalMcpEnabled &&
     prev.onToggleExternalMcp === next.onToggleExternalMcp &&
