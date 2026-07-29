@@ -52,9 +52,9 @@ jobs:
 
       - name: Test terminal decoration performance
         env:
-          ELECTRON_DISABLE_SANDBOX: "1"
           NETCATTY_TERMINAL_PERF_SHOW_WINDOW: "1"
-        run: xvfb-run -a npm run test:xterm-decoration-performance
+        # GitHub-hosted runners do not configure Electron's SUID sandbox helper.
+        run: xvfb-run -a ./node_modules/.bin/electron --no-sandbox scripts/xterm-decoration-performance.live.test.cjs
 
       - name: Build
         run: npm run build
