@@ -228,15 +228,9 @@ export function shouldAttemptRestoreCwd({
   session: RestoreCwdSession;
   isNetworkDevice: boolean;
 }): boolean {
-  if (!enabled || isNetworkDevice) return false;
+  if (!enabled) return false;
   if (!isRestoredDisconnectedSession(session)) return false;
-  if (!isRestoreCwdPathEligible(session.lastCwd)) return false;
-  if (session.moshEnabled || session.etEnabled) return false;
-  const protocol = session.protocol ?? "ssh";
-  if (protocol === "local" && (session.shellType === "powershell" || session.shellType === "cmd")) {
-    return false;
-  }
-  return protocol === "ssh" || protocol === "local" || protocol === undefined;
+  return isCwdInjectionEligible({ session: { ...session, cwd: session.lastCwd }, isNetworkDevice });
 }
 
 export function quoteRestoreCwdForShell(cwd: string): string {
@@ -263,6 +257,44 @@ export function resolveRestoreCwdIntent(options: {
     cwd,
     command: `cd -- ${quoteRestoreCwdArgument(cwd)}`,
   };
+}
+
+export function isCwdInjectionEligible({
+  session,
+  isNetworkDevice,
+}: {
+  session: RestoreCwdSession & { cwd?: string };
+  isNetworkDevice: boolean;
+}): boolean {
+  if (isNetworkDevice) return false;
+  if (!isRestoreCwdPathEligible(session.cwd)) return false;
+  if (session.moshEnabled || session.etEnabled) return false;
+  const protocol = session.protocol ?? "ssh";
+  if (protocol === "local" && (session.shellType === "powershell" || session.shellType === "cmd")) {
+    return false;
+  }
+  return protocol === "ssh" || protocol === "local" || protocol === undefined;
+}
+
+export function resolveInheritedCwdIntent(options: {
+  session: Pick<TerminalSession, "protocol" | "shellType" | "moshEnabled" | "etEnabled"> & { cwd?: string };
+  isNetworkDevice: boolean;
+}): { cwd: string; command: string } | null {
+  if (!isCwdInjectionEligible({
+    session: {
+      status: "connecting",
+      protocol: options.session.protocol,
+      shellType: options.session.shellType,
+      moshEnabled: options.session.moshEnabled,
+      etEnabled: options.session.etEnabled,
+      cwd: options.session.cwd,
+    },
+    isNetworkDevice: options.isNetworkDevice,
+  })) {
+    return null;
+  }
+  const cwd = options.session.cwd!.trim();
+  return { cwd, command: `cd -- ${quoteRestoreCwdArgument(cwd)}` };
 }
 
 const pruneNode = (node: unknown, validSessionIds: ReadonlySet<string>): WorkspaceNode | null => {
