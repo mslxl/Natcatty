@@ -7,6 +7,7 @@ import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
 import { useSftpHostCredentials } from "./useSftpHostCredentials";
 import { buildCacheKey, getSharedRemoteHostCache, setSharedRemoteHostCache } from "./sharedRemoteHostCache";
 import { resolveRemoteSftpStartState } from "./sftpConnectStartPath";
+import { normalizeSftpPaneNavigationPath } from "./utils";
 import {
   setDirectoryCacheEntry,
   type DirectoryListingCache,
@@ -501,7 +502,10 @@ export const useSftpConnections = ({
           homeDir = isWindows ? "C:\\Users\\damao" : "/Users/damao";
         }
 
-        const startPath = effectiveInitialPath || homeDir;
+        const startPath = normalizeSftpPaneNavigationPath(
+          effectiveInitialPath || homeDir,
+          homeDir,
+        );
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -558,6 +562,11 @@ export const useSftpConnections = ({
           initialPath: effectiveInitialPath,
           sharedHostCacheCandidate,
         });
+        const normalizedCachedStartPath = normalizeSftpPaneNavigationPath(
+          cachedStartPath,
+          sharedHostCache?.homeDir,
+          sharedHostCache?.path,
+        );
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -565,7 +574,7 @@ export const useSftpConnections = ({
           hostLabel: host.label,
           isLocal: false,
           status: "connecting",
-          currentPath: cachedStartPath,
+          currentPath: normalizedCachedStartPath,
           // Suppress loading animation when connection reuse is requested.
           // If the backend falls back to a fresh connection, the pane stays
           // non-interactive (loading=true) with stale cached files visible —
@@ -724,6 +733,7 @@ export const useSftpConnections = ({
           if (initialPath) {
             startPath = initialPath;
           }
+          startPath = normalizeSftpPaneNavigationPath(startPath, homeDir);
 
           const provisionalCacheKey = sharedHostCache
             ? makeCacheKey(connectionId, startPath, filenameEncoding)

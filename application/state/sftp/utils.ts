@@ -110,6 +110,33 @@ export const normalizeSftpNavigationPath = (
   return newPath.startsWith("/") ? newPath : `/${newPath}`;
 };
 
+/**
+ * Derive Windows UNC opt-in from pane context (current/home paths that are
+ * already unambiguously Windows: drive letter or backslash UNC).
+ */
+export const resolveSftpWindowsPathOptions = (
+  ...hints: Array<string | null | undefined>
+): SftpWindowsPathOptions => {
+  for (const hint of hints) {
+    if (hint && isWindowsPath(hint)) {
+      return { acceptForwardSlashUnc: true };
+    }
+  }
+  return {};
+};
+
+/**
+ * Normalize bookmark / initialPath / navigate ingress using pane Windows context
+ * so //host/share becomes UNC on Windows panes and stays POSIX elsewhere.
+ */
+export const normalizeSftpPaneNavigationPath = (
+  rawPath: string,
+  ...contextPaths: Array<string | null | undefined>
+): string => normalizeSftpNavigationPath(
+  rawPath,
+  resolveSftpWindowsPathOptions(...contextPaths),
+);
+
 export type SftpBreadcrumbSegment = { label: string; path: string };
 
 /**
@@ -170,11 +197,14 @@ const normalizeWindowsRoot = (path: string): string => {
   return normalized;
 };
 
-export const isWindowsRoot = (path: string): boolean => {
-  if (!isWindowsPath(path)) return false;
+export const isWindowsRoot = (
+  path: string,
+  options?: SftpWindowsPathOptions,
+): boolean => {
+  if (!isWindowsPath(path, options)) return false;
   const normalized = path.replace(/\//g, "\\");
   if (/^[A-Za-z]:\\?$/.test(normalized)) return true;
-  const uncRoot = getWindowsUncRoot(normalized);
+  const uncRoot = getWindowsUncRoot(normalized, options);
   return uncRoot !== null && normalized.replace(/[\\]+$/, "") === uncRoot;
 };
 
@@ -235,10 +265,13 @@ export function joinTransferTargetPath(
   return joinPath(base, parts.join("/"));
 }
 
-export const getParentPath = (path: string): string => {
-  if (isWindowsPath(path)) {
+export const getParentPath = (
+  path: string,
+  options?: SftpWindowsPathOptions,
+): string => {
+  if (isWindowsPath(path, options)) {
     const normalized = normalizeWindowsRoot(path).replace(/[\\]+$/, "");
-    const uncRoot = getWindowsUncRoot(normalized);
+    const uncRoot = getWindowsUncRoot(normalized, options);
     if (uncRoot) {
       const rest = normalized.slice(uncRoot.length).replace(/^[\\]+/, "");
       const parts = rest ? rest.split(/[\\]+/).filter(Boolean) : [];

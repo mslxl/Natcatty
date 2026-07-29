@@ -10,6 +10,8 @@ import {
   isWindowsRoot,
   joinTransferTargetPath,
   normalizeSftpNavigationPath,
+  normalizeSftpPaneNavigationPath,
+  resolveSftpWindowsPathOptions,
   shouldClearSftpFilterForPathChange,
 } from "./utils";
 
@@ -128,6 +130,43 @@ test("Windows UNC share roots are treated as path roots", () => {
   assert.equal(isWindowsRoot("\\\\wsl.localhost\\Ubuntu-22.04\\home"), false);
   assert.equal(isWindowsRoot("C:\\"), true);
   assert.equal(isWindowsRoot("C:\\Users"), false);
+});
+
+test("Windows panes treat forward-slash UNC share roots as roots for Up navigation", () => {
+  const windowsPane = { acceptForwardSlashUnc: true } as const;
+  assert.equal(isWindowsRoot("//server/share"), false);
+  assert.equal(isWindowsRoot("//server/share", windowsPane), true);
+  assert.equal(isWindowsRoot("//server/share/", windowsPane), true);
+  assert.equal(isWindowsRoot("//server/share/logs", windowsPane), false);
+  assert.equal(getParentPath("//server/share"), "//server");
+  assert.equal(getParentPath("//server/share", windowsPane), "\\\\server\\share");
+  assert.equal(
+    getParentPath("//server/share/logs/app", windowsPane),
+    "\\\\server\\share\\logs",
+  );
+});
+
+test("pane context normalizes bookmark and initialPath forward-slash UNC ingress", () => {
+  assert.deepEqual(resolveSftpWindowsPathOptions("C:\\Users\\alice"), {
+    acceptForwardSlashUnc: true,
+  });
+  assert.deepEqual(resolveSftpWindowsPathOptions("/home/alice"), {});
+  assert.deepEqual(
+    resolveSftpWindowsPathOptions("//server/share", "C:\\Users\\alice"),
+    { acceptForwardSlashUnc: true },
+  );
+  assert.equal(
+    normalizeSftpPaneNavigationPath("//server/share", "C:\\Users\\alice"),
+    "\\\\server\\share",
+  );
+  assert.equal(
+    normalizeSftpPaneNavigationPath("//server/share", "/home/alice"),
+    "//server/share",
+  );
+  assert.equal(
+    normalizeSftpPaneNavigationPath("//wsl.localhost/Ubuntu-22.04/home", "\\\\wsl.localhost\\Ubuntu-22.04"),
+    "\\\\wsl.localhost\\Ubuntu-22.04\\home",
+  );
 });
 
 test("breadcrumb segments keep WSL UNC roots intact", () => {
