@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import {
+  canHibernateTerminalRuntimeStatus,
   type TerminalHibernateWakePayload,
 } from "../../domain/terminalHibernate";
 import { logger } from "../../lib/logger";
@@ -100,7 +101,7 @@ export function useTerminalHibernateEffect({
       if (!hibernateEnabled) return;
       clearHibernateTimer();
       if (hibernatedRef.current || !hasRuntimeRef.current) return;
-      if (status !== "connected") return;
+      if (!canHibernateTerminalRuntimeStatus(status)) return;
       if (isSearchOpen) return;
       if (fileTransferActive) return;
 

@@ -1,4 +1,4 @@
-import type { TerminalSettings } from "./models/terminal";
+import type { TerminalSession, TerminalSettings } from "./models/terminal";
 
 /** Compile-time kill switch for terminal hibernate (Settings > Terminal still controls user default). */
 export const TERMINAL_HIBERNATE_ENABLED = true;
@@ -41,6 +41,13 @@ export function resolveTerminalHibernateEnabledForProtocol(
   protocol: string | null | undefined,
 ): boolean {
   return protocol !== "local" && resolveTerminalHibernateEnabled(settings);
+}
+
+/** Hidden connected and ended remote terminals can both release their xterm runtime. */
+export function canHibernateTerminalRuntimeStatus(
+  status: TerminalSession["status"],
+): boolean {
+  return status === "connected" || status === "disconnected";
 }
 
 export function shouldKeepTerminalBackgroundWorkActive(

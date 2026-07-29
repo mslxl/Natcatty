@@ -195,6 +195,7 @@ import {
   writeLocalTerminalDataInOrder,
 } from "./terminal/runtime/terminalUnfocusedRepaint";
 import {
+  canHibernateTerminalRuntimeStatus,
   isTerminalFileTransferActive,
   resolveHibernateKeepRendererCount,
   resolveHibernatePreferWasmSerialize,
@@ -1782,7 +1783,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         || hibernatedRef.current
         || softHiddenRef.current
         || !hasRuntimeRef.current
-        || statusRef.current !== "connected"
+        || !canHibernateTerminalRuntimeStatus(statusRef.current)
         || isSearchOpenRef.current
         || hibernateFileTransferActiveRef.current
         || !hibernateEnabledRef.current
@@ -1847,7 +1848,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       && !hibernatedRef.current
       && !softHiddenRef.current
       && hasRuntimeRef.current
-      && statusRef.current === "connected"
+      && canHibernateTerminalRuntimeStatus(statusRef.current)
       && !isSearchOpenRef.current
       && !hibernateFileTransferActiveRef.current
       && !runtimeHasInlineImages()
@@ -1887,13 +1888,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     applyHibernateSnapshot(snapshot);
     isBootActiveRef.current = false;
-    releaseTerminalFlowBeforeHibernate(terminalBackend, term, backendId);
+    const sessionConnected = statusRef.current === "connected";
+    if (sessionConnected) {
+      releaseTerminalFlowBeforeHibernate(terminalBackend, term, backendId);
+    }
     disposeDataRef.current?.();
     disposeDataRef.current = null;
     disposeExitRef.current?.();
     disposeExitRef.current = null;
     disposeRuntimeOnly();
-    beginHibernatedSessionListeners(backendId);
+    if (sessionConnected) {
+      beginHibernatedSessionListeners(backendId);
+    }
     hibernatedRef.current = true;
     // Hibernation rebuilds the autofill controller on wake; drop any open
     // picker so it cannot stay visible against a non-pending controller.
@@ -1940,7 +1946,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return;
     }
 
-    const keepCount = resolveHibernateKeepRendererCount(terminalSettings);
+    const keepCount = statusRef.current === "connected"
+      ? resolveHibernateKeepRendererCount(terminalSettings)
+      : 0;
     if (keepCount > 0 && terminalHiddenRendererStore.getSoftHiddenCount() < keepCount) {
       hideRuntimeOnly();
       return;

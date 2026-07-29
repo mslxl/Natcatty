@@ -107,6 +107,25 @@ test("full hibernate rechecks live state after every asynchronous step", () => {
   assert.ok(afterSerializeGuardIndex < releaseIndex, "the final guard must run before releasing the live runtime");
 });
 
+test("ended hidden sessions release xterm without reopening dead backend listeners", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const fullHibernateBody = readFunctionBody(
+    source,
+    "const fullHibernateRuntime = useCallback(async (): Promise<boolean> =>",
+  );
+  const hibernateBody = readFunctionBody(source, "const hibernateRuntime = useCallback(() =>");
+
+  assert.match(fullHibernateBody, /canHibernateTerminalRuntimeStatus\(statusRef\.current\)/);
+  assert.match(
+    fullHibernateBody,
+    /const sessionConnected = statusRef\.current === "connected";\s*if \(sessionConnected\) \{\s*releaseTerminalFlowBeforeHibernate\([\s\S]*?\}\s*disposeDataRef\.current\?\.\(\);[\s\S]*?disposeRuntimeOnly\(\);\s*if \(sessionConnected\) \{\s*beginHibernatedSessionListeners\(backendId\);\s*\}/,
+  );
+  assert.match(
+    hibernateBody,
+    /const keepCount = statusRef\.current === "connected"\s*\? resolveHibernateKeepRendererCount\(terminalSettings\)\s*: 0;/,
+  );
+});
+
 test("a cancelled soft-hidden upgrade resumes its renderer", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const subscribeIndex = source.indexOf("terminalHiddenRendererStore.subscribe");
