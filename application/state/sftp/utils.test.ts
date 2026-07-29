@@ -61,12 +61,13 @@ test("directory targets cannot escape the selected local root", () => {
 });
 
 test("path bar keeps WSL UNC paths instead of forcing a Unix root", () => {
+  const windowsPane = { acceptForwardSlashUnc: true } as const;
   assert.equal(
     normalizeSftpNavigationPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa"),
     "\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa",
   );
   assert.equal(
-    normalizeSftpNavigationPath("//wsl.localhost/Ubuntu-22.04/home/aaa"),
+    normalizeSftpNavigationPath("//wsl.localhost/Ubuntu-22.04/home/aaa", windowsPane),
     "\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa",
   );
   assert.equal(
@@ -78,6 +79,18 @@ test("path bar keeps WSL UNC paths instead of forcing a Unix root", () => {
   assert.equal(normalizeSftpNavigationPath("home/aaa"), "/home/aaa");
   assert.equal(normalizeSftpNavigationPath("/var/log"), "/var/log");
   assert.equal(normalizeSftpNavigationPath("   "), "/");
+});
+
+test("path bar keeps POSIX double-slash paths outside Windows panes", () => {
+  assert.equal(normalizeSftpNavigationPath("//srv/share"), "//srv/share");
+  assert.equal(
+    normalizeSftpNavigationPath("//srv/share/logs"),
+    "//srv/share/logs",
+  );
+  assert.equal(
+    normalizeSftpNavigationPath("//wsl.localhost/Ubuntu-22.04/home/aaa"),
+    "//wsl.localhost/Ubuntu-22.04/home/aaa",
+  );
 });
 
 test("Windows UNC share roots are treated as path roots", () => {
@@ -117,6 +130,30 @@ test("breadcrumb segments keep WSL UNC roots intact", () => {
       segments: [
         { label: "home", path: "/home" },
         { label: "aaa", path: "/home/aaa" },
+      ],
+      isWindowsDrive: false,
+    },
+  );
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("//srv/share/logs"),
+    {
+      segments: [
+        { label: "srv", path: "//srv" },
+        { label: "share", path: "//srv/share" },
+        { label: "logs", path: "//srv/share/logs" },
+      ],
+      isWindowsDrive: false,
+    },
+  );
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("//wsl.localhost/Ubuntu-22.04/home/aaa", {
+      acceptForwardSlashUnc: true,
+    }),
+    {
+      segments: [
+        { label: "\\\\wsl.localhost\\Ubuntu-22.04", path: "\\\\wsl.localhost\\Ubuntu-22.04" },
+        { label: "home", path: "\\\\wsl.localhost\\Ubuntu-22.04\\home" },
+        { label: "aaa", path: "\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa" },
       ],
       isWindowsDrive: false,
     },

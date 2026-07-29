@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Home, MoreHorizontal } from 'lucide-react';
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { getSftpBreadcrumbSegments } from '../../application/state/sftp/utils';
+import type { SftpWindowsPathOptions } from '../../application/state/sftp/utils';
 import { Dropdown, DropdownContent, DropdownTrigger } from '../ui/dropdown';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
@@ -18,6 +19,8 @@ interface SftpBreadcrumbProps {
     maxVisibleParts?: number;
     isLocal?: boolean;
     onListDrives?: () => Promise<string[]>;
+    /** When true, treat //host/share as Windows UNC (Windows-style panes). */
+    acceptForwardSlashUnc?: boolean;
 }
 
 const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
@@ -27,6 +30,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
     maxVisibleParts = 4,
     isLocal,
     onListDrives,
+    acceptForwardSlashUnc = false,
 }) => {
     const { t } = useI18n();
 
@@ -41,9 +45,14 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         }
     }, [onListDrives]);
 
+    const pathOptions = useMemo<SftpWindowsPathOptions>(
+        () => ({ acceptForwardSlashUnc }),
+        [acceptForwardSlashUnc],
+    );
+
     const { segments, isWindowsDrive } = useMemo(
-        () => getSftpBreadcrumbSegments(path),
-        [path],
+        () => getSftpBreadcrumbSegments(path, pathOptions),
+        [path, pathOptions],
     );
 
     // Determine which parts to show (always truncate, no expansion)
