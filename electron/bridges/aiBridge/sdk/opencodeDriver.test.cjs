@@ -56,6 +56,7 @@ test("buildOpenCodeConfig isolates local tools and injects Netcatty MCP", () => 
   assert.equal(cfg.permission.edit, "deny");
   assert.equal(cfg.permission.bash, "deny");
   assert.equal(cfg.permission.webfetch, "deny");
+  assert.equal(cfg.permission.question, "deny");
   assert.equal(cfg.permission.skill, "allow");
   assert.equal(cfg.permission.external_directory["*"], "deny");
   // Native OpenCode skill directories stay readable in MCP mode (issue #1939).
