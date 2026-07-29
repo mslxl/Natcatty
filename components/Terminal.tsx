@@ -1818,6 +1818,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, []);
 
   const shouldSkipHibernateForActiveAlternateScreen = useCallback((term: XTerm): boolean => {
+    if (statusRef.current !== "connected") return false;
     if (
       !isTerminalAlternateScreenActive(term)
       || !resolveHibernateSkipAltScreen(terminalSettings)
@@ -1840,7 +1841,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   );
 
   const fullHibernateRuntime = useCallback(async (): Promise<boolean> => {
-    if (hibernatedRef.current || softHiddenRef.current || !termRef.current || !serializeAddonRef.current) return false;
+    if (
+      hibernatedRef.current
+      || (softHiddenRef.current && statusRef.current !== "disconnected")
+      || !termRef.current
+      || !serializeAddonRef.current
+    ) return false;
     clearHibernateRetry();
     if (reconnectPreparationTokenRef.current !== null) return false;
     const backendId = sessionRef.current;
@@ -1850,7 +1856,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     const canFinishHibernate = () => (
       !isVisibleRef.current
       && !hibernatedRef.current
-      && !softHiddenRef.current
+      && (!softHiddenRef.current || statusRef.current === "disconnected")
       && hasRuntimeRef.current
       && canHibernateTerminalRuntimeSession(statusRef.current, sessionRef.current)
       && !isSearchOpenRef.current
@@ -1938,7 +1944,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [sessionId]);
 
   const hibernateRuntime = useCallback(() => {
-    if (hibernatedRef.current || softHiddenRef.current || !termRef.current) return;
+    if (hibernatedRef.current || !termRef.current) return;
 
     if (shouldSkipHibernateForActiveAlternateScreen(termRef.current)) {
       return;
@@ -1948,6 +1954,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // and only suspend WebGL, and never evict another tab on this session's behalf.
     if (runtimeHasInlineImages()) {
       hideRuntimeOnly();
+      return;
+    }
+
+    if (softHiddenRef.current) {
+      if (statusRef.current === "disconnected") {
+        void fullHibernateRuntime();
+      }
       return;
     }
 

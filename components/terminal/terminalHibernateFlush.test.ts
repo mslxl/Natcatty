@@ -182,6 +182,39 @@ test("reconnect preparation cancels an in-flight disconnected hibernate", () => 
   );
 });
 
+test("ended soft-hidden and alternate-screen sessions can fully hibernate", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const fullHibernateBody = readFunctionBody(
+    source,
+    "const fullHibernateRuntime = useCallback(async (): Promise<boolean> =>",
+  );
+  const hibernateBody = readFunctionBody(
+    source,
+    "const hibernateRuntime = useCallback(() =>",
+  );
+  const alternateSkipBody = readFunctionBody(
+    source,
+    "const shouldSkipHibernateForActiveAlternateScreen = useCallback((term: XTerm): boolean =>",
+  );
+
+  assert.match(
+    fullHibernateBody,
+    /softHiddenRef\.current && statusRef\.current !== "disconnected"/,
+  );
+  assert.match(
+    fullHibernateBody,
+    /!softHiddenRef\.current \|\| statusRef\.current === "disconnected"/,
+  );
+  assert.match(
+    hibernateBody,
+    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*void fullHibernateRuntime\(\);\s*\}\s*return;/,
+  );
+  assert.match(
+    alternateSkipBody,
+    /if \(statusRef\.current !== "connected"\) return false;/,
+  );
+});
+
 test("a cancelled soft-hidden upgrade resumes its renderer", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const subscribeIndex = source.indexOf("terminalHiddenRendererStore.subscribe");
