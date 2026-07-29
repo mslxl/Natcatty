@@ -651,18 +651,19 @@ Then add `onDoubleClick={handleDoubleClick}` to the tab `<div>` that has `data-t
 
 - [ ] **Step 4: Add the "Copy Tab" context-menu item**
 
-In the workspace `<ContextMenuContent>` (~line 970), add a Copy item as the first entry, above the Rename item:
+In the workspace `<ContextMenuContent>` (~line 970), add a Copy item immediately
+after Rename, matching the session-tab menu order (Rename → Copy Tab):
 
 ```tsx
-        <ContextMenuItem onClick={() => onCopyWorkspace(workspace.id)}>
-          {t('tabs.copyTab')}
-        </ContextMenuItem>
         <ContextMenuItem onClick={() => onRenameWorkspace(workspace.id)}>
           {t('common.rename')}
         </ContextMenuItem>
+        <ContextMenuItem onClick={() => onCopyWorkspace(workspace.id)}>
+          {t('tabs.copyTab')}
+        </ContextMenuItem>
 ```
 
-(Replace the existing standalone Rename item with this two-item block so Copy sits directly above Rename.)
+(Replace the existing standalone Rename item with this two-item block so Copy sits directly after Rename.)
 
 - [ ] **Step 5: Verify lint + full type-check pass**
 

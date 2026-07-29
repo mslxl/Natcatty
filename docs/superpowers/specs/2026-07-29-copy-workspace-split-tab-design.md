@@ -70,9 +70,10 @@ Two independent gaps:
   (list + single terminal) view modes — preserving the view mode and layout.
 - **cwd inheritance**: per pane, exactly the single-tab behavior applied to every
   pane (`lastCwd` → SSH probe → `localStartDir`).
-- **Not doing** (YAGNI): no connection reuse (copies are independent new
-  sessions, like single copy today); no live pane-content duplication; no
-  broadcast-mode copy.
+- **Not doing** (YAGNI): copies are fresh sessions created exactly like the
+  single-tab copy (`createCopiedTerminalSessionClone`) — connection-reuse
+  behavior is whatever `copySession` already does, not overridden here; no live
+  pane-content duplication; no broadcast-mode copy.
 
 ## Architecture
 
@@ -125,8 +126,10 @@ export function cloneWorkspaceTree(
 Notes:
 - Broadcast mode is keyed by workspace id (`broadcastWorkspaceIds`); the new
   workspace id is absent → the copy starts non-broadcast. No action needed.
-- Copies are independent: no `reuseConnectionFromSessionId`, `status:
-  'connecting'` (inherited from the clone factory).
+- Copies inherit the clone factory's behavior verbatim (`status: 'connecting'`,
+  and `reuseConnectionFromSessionId` set for a connected SSH source exactly as
+  `copySession` does) — the workspace copy does not change connection-reuse
+  semantics.
 
 ### 3. App handler — `application/app/AppHandlers.ts`
 
@@ -142,8 +145,9 @@ Notes:
 ### 4. UI wiring — presentation only
 
 - `WorkspaceTopTab` context menu (`components/top-tabs/TopTabItems.tsx`): add a
-  "Copy Tab" item reusing the existing i18n key `tabs.copyTab`, placed above
-  Rename.
+  "Copy Tab" item reusing the existing i18n key `tabs.copyTab`, placed
+  immediately after Rename to match the session-tab context-menu order
+  (Rename → Copy Tab).
 - Add a double-click-to-copy handler on `WorkspaceTopTab`, paralleling
   `SessionTopTab` (`createSessionTopTabDoubleClickHandler`).
 - New prop `onCopyWorkspace: (workspaceId: string) => void` threaded

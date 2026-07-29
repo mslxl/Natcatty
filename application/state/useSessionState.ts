@@ -153,6 +153,9 @@ export function buildCopiedWorkspace(
     if (next) prunedRoot = next;
   }
 
+  // Precondition: sessionIdMap covers every id in collectSessionIds(root)
+  // (the sole caller, copyWorkspace, builds it that way), so every liveId has
+  // a mapping and the `as string` casts here and below are sound.
   const liveIdMap = new Map<string, string>(
     liveIds.map(id => [id, params.sessionIdMap.get(id) as string]),
   );
