@@ -92,6 +92,36 @@ test("split and copy session clones preserve local start directory", () => {
   );
 });
 
+test("split clone applies remote inheritedCwd as pendingInitialCwd without touching localStartDir", () => {
+  const clone = createSplitTerminalSessionClone(session({ protocol: "ssh" }), {
+    id: "split-remote-cwd",
+    inheritedCwd: "/var/log",
+  });
+
+  assert.equal(clone.pendingInitialCwd, "/var/log");
+  assert.equal(clone.localStartDir, undefined);
+});
+
+test("split clone applies local inheritedCwd as localStartDir without pendingInitialCwd", () => {
+  const clone = createSplitTerminalSessionClone(
+    session({ protocol: "local", localStartDir: "/home/u", status: "connecting" }),
+    { id: "split-local-cwd", localShellType: "posix", inheritedCwd: "/tmp/work" },
+  );
+
+  assert.equal(clone.localStartDir, "/tmp/work");
+  assert.equal(clone.pendingInitialCwd, undefined);
+});
+
+test("copy clone without inheritedCwd keeps localStartDir and sets no pendingInitialCwd", () => {
+  const clone = createCopiedTerminalSessionClone(
+    session({ protocol: "local", localStartDir: "/home/u", status: "connecting" }),
+    { id: "copy-no-cwd", localShellType: "posix" },
+  );
+
+  assert.equal(clone.localStartDir, "/home/u");
+  assert.equal(clone.pendingInitialCwd, undefined);
+});
+
 test("split and copy session clones preserve isolated plugin connection snapshots", () => {
   const pluginConnection = {
     providerId: "com.example.transport.connection",

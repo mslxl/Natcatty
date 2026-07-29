@@ -13,6 +13,7 @@ type CloneSessionOptions = {
   id: string;
   localShellType?: TerminalSession["shellType"];
   workspaceId?: string;
+  inheritedCwd?: string;
 };
 
 function getClonedShellType(
@@ -26,6 +27,7 @@ function createTerminalSessionClone(
   session: TerminalSession,
   options: CloneSessionOptions,
 ): TerminalSession {
+  const isLocal = session.protocol === "local";
   const clonedSession: TerminalSession = {
     id: options.id,
     hostId: session.hostId,
@@ -46,10 +48,11 @@ function createTerminalSessionClone(
     localShellArgs: session.localShellArgs,
     localShellName: session.localShellName,
     localShellIcon: session.localShellIcon,
-    localStartDir: session.localStartDir,
+    localStartDir: isLocal && options.inheritedCwd ? options.inheritedCwd : session.localStartDir,
     fontSize: session.fontSize,
     fontSizeOverride: session.fontSizeOverride,
     ...(session.ephemeralHost ? { ephemeralHost: true } : {}),
+    ...(!isLocal && options.inheritedCwd ? { pendingInitialCwd: options.inheritedCwd } : {}),
     reuseConnectionFromSessionId: canReuseTerminalConnection(session) ? session.id : undefined,
   };
 
