@@ -65,6 +65,9 @@ function buildOpenCodeConfig({ model, injectedMcpServers, toolIntegrationMode, s
     edit: "deny",
     bash: allowBash ? "allow" : "deny",
     webfetch: "deny",
+    // Netcatty does not yet bridge OpenCode's question reply API to the UI.
+    // Leaving it enabled creates a tool call that can never be completed.
+    question: "deny",
     // Keep external access locked down, but let OpenCode's native skills
     // (e.g. ~/.opencode/skills, ~/.config/opencode/skills) read their own
     // reference files in every mode (issue #1939).
