@@ -217,6 +217,7 @@ export const useSftpViewFileOps = ({
 
     const editorId = editorTabStore.promoteFromModal({
       sessionId: connection.id,
+      sftpTabId: pane.id,
       hostId: target.hostId,
       remotePath: target.fullPath,
       fileName: target.file.name,

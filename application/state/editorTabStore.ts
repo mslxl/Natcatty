@@ -19,6 +19,8 @@ export interface EditorTab {
   kind: "editor";
   /** SFTP connection id (matches SftpConnection.id). Session lookup key. */
   sessionId: string;
+  /** Stable SFTP pane tab id — survives browse reconnects that regenerate connection ids. */
+  sftpTabId: string;
   /** Stable endpoint id; used to verify the session is still the one we opened against. */
   hostId: string;
   remotePath: string;
@@ -40,12 +42,29 @@ const genId = (): EditorTabId => `edt_${Date.now().toString(36)}_${(++idCounter)
 export class EditorTabStore {
   private tabs: EditorTab[] = [];
   private listeners = new Set<Listener>();
+  private presenceListeners = new Set<Listener>();
   private pendingNotify = false;
+  private pendingPresenceNotify = false;
+  private presenceRevision = 0;
 
   getTabs = (): readonly EditorTab[] => this.tabs;
   getTab = (id: EditorTabId): EditorTab | undefined => this.tabs.find((t) => t.id === id);
   hasTabForSessions = (sessionIds: ReadonlySet<string>): boolean =>
     this.tabs.some((tab) => sessionIds.has(tab.sessionId));
+
+  getPresenceRevision = (): number => this.presenceRevision;
+
+  /** Update editor tabs after browse reconnect replaces a connection id. */
+  remapSessionId = (fromSessionId: string, toSessionId: string): void => {
+    if (fromSessionId === toSessionId) return;
+    let changed = false;
+    this.tabs = this.tabs.map((tab) => {
+      if (tab.sessionId !== fromSessionId) return tab;
+      changed = true;
+      return { ...tab, sessionId: toSessionId };
+    });
+    if (changed) this.notifyStructural();
+  };
   isDirty = (id: EditorTabId): boolean => {
     const t = this.getTab(id);
     return !!t && t.content !== t.baselineContent;
@@ -82,7 +101,7 @@ export class EditorTabStore {
     const next = this.tabs.filter((t) => t.id !== id);
     if (next.length !== this.tabs.length) {
       this.tabs = next;
-      this.notify();
+      this.notifyStructural();
     }
   };
 
@@ -98,7 +117,7 @@ export class EditorTabStore {
     const removed = this.tabs.filter((t) => idSet.has(t.sessionId)).map((t) => t.id);
     if (removed.length === 0) return [];
     this.tabs = this.tabs.filter((t) => !idSet.has(t.sessionId));
-    this.notify();
+    this.notifyStructural();
 
     // If the current active tab was one of the editor tabs we just removed,
     // fall back to 'vault' so the user doesn't end up on a stale id (empty
@@ -117,6 +136,7 @@ export class EditorTabStore {
 
   promoteFromModal = (snapshot: {
     sessionId: string;
+    sftpTabId: string;
     hostId: string;
     remotePath: string;
     fileName: string;
@@ -144,6 +164,7 @@ export class EditorTabStore {
       id: this.makeId(),
       kind: "editor",
       sessionId: snapshot.sessionId,
+      sftpTabId: snapshot.sftpTabId,
       hostId: snapshot.hostId,
       remotePath: snapshot.remotePath,
       fileName: snapshot.fileName,
@@ -156,7 +177,7 @@ export class EditorTabStore {
       saveError: null,
     };
     this.tabs = [...this.tabs, tab];
-    this.notify();
+    this.notifyStructural();
     return tab.id;
   };
 
@@ -206,10 +227,16 @@ export class EditorTabStore {
     return () => { this.listeners.delete(listener); };
   };
 
+  /** Tab open/close/session remap only — not editor content or save-state churn. */
+  subscribePresence = (listener: Listener): (() => void) => {
+    this.presenceListeners.add(listener);
+    return () => { this.presenceListeners.delete(listener); };
+  };
+
   /** TEST-ONLY: seed a tab without going through promote/openOrFocus. */
   _debugInsert = (tab: EditorTab) => {
     this.tabs = [...this.tabs, tab];
-    this.notify();
+    this.notifyStructural();
   };
 
   protected makeId = genId;
@@ -221,15 +248,30 @@ export class EditorTabStore {
       changed = true;
       return { ...t, ...patch };
     });
-    if (changed) this.notify();
+    if (changed) this.notifyContent();
   };
 
-  protected notify = () => {
+  protected notifyContent = () => {
     if (this.pendingNotify) return;
     this.pendingNotify = true;
     Promise.resolve().then(() => {
       this.pendingNotify = false;
       this.listeners.forEach((l) => l());
+    });
+  };
+
+  protected notifyStructural = () => {
+    this.presenceRevision += 1;
+    this.notifyPresence();
+    this.notifyContent();
+  };
+
+  protected notifyPresence = () => {
+    if (this.pendingPresenceNotify) return;
+    this.pendingPresenceNotify = true;
+    Promise.resolve().then(() => {
+      this.pendingPresenceNotify = false;
+      this.presenceListeners.forEach((l) => l());
     });
   };
 }
@@ -251,6 +293,14 @@ export const useHasEditorTabForSessions = (
   );
   return useSyncExternalStore(editorTabStore.subscribe, getSnapshot, getSnapshot);
 };
+
+/** Re-render only when editor tabs open/close or their SFTP session binding changes. */
+export const useEditorTabPresenceRevision = (): number =>
+  useSyncExternalStore(
+    editorTabStore.subscribePresence,
+    () => editorTabStore.getPresenceRevision(),
+    () => editorTabStore.getPresenceRevision(),
+  );
 
 export const useEditorTab = (id: EditorTabId): EditorTab | undefined => {
   const getSnapshot = useCallback(() => editorTabStore.getTab(id), [id]);

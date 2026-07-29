@@ -284,9 +284,19 @@ export const useSftpExternalOperations = (
       filePath: string,
       content: string,
       filenameEncoding?: SftpFilenameEncoding,
-    ): Promise<void> => {
-      const tabRef = getTabByConnectionId?.(connectionId) ?? null;
-      const pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
+      sftpTabId?: string,
+    ): Promise<string> => {
+      let tabRef = getTabByConnectionId?.(connectionId) ?? null;
+      let pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
+
+      if (!pane?.connection && sftpTabId) {
+        const pinned = getPaneByTabId(sftpTabId);
+        if (pinned?.connection) {
+          pane = pinned;
+          const side = getSideByTabId?.(sftpTabId);
+          if (side) tabRef = { side, tabId: sftpTabId, pane: pinned };
+        }
+      }
 
       if (!pane?.connection) {
         throw new Error("SFTP connection is no longer available");
@@ -300,7 +310,7 @@ export const useSftpExternalOperations = (
         if (!bridge?.writeLocalFile) throw new Error("Local file writing not supported");
         const data = new TextEncoder().encode(content);
         await bridge.writeLocalFile(filePath, data.buffer);
-        return;
+        return pane.connection.id;
       }
 
       const liveConnectionId = pane.connection.id;
@@ -320,10 +330,12 @@ export const useSftpExternalOperations = (
       if (!bridge) throw new Error("Bridge not available");
 
       await bridge.writeSftp(sftpId, filePath, content, filenameEncoding ?? pane.filenameEncoding);
+      return liveConnectionId;
     },
     [
       ensureRemoteSftpId,
       getPaneByConnectionId,
+      getPaneByTabId,
       getSideByTabId,
       getTabByConnectionId,
       sftpSessionsRef,

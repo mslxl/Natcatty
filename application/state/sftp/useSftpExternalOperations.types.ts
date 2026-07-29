@@ -57,7 +57,8 @@ export interface SftpExternalOperationsResult {
     filePath: string,
     content: string,
     filenameEncoding?: SftpFilenameEncoding,
-  ) => Promise<void>;
+    sftpTabId?: string,
+  ) => Promise<string>;
   downloadToTempAndOpen: (
     side: "left" | "right",
     remotePath: string,

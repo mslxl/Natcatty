@@ -22,7 +22,7 @@ import {
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import {
   editorTabStore,
-  useEditorTabs,
+  useEditorTabPresenceRevision,
 } from "../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator } from "../application/state/editorTabSave";
 import { useSftpBackend } from "../application/state/useSftpBackend";
@@ -193,10 +193,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }), [t]);
 
   const ownedEditorSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
-  // Subscribe for tab open/close, but read the store synchronously on each
-  // render. useSyncExternalStore defers promote notifications to a microtask,
-  // which can park browse sessions before hasOwnedEditorTab flips true.
-  useEditorTabs();
+  // Re-render on tab open/close/session remap only — not on every editor keystroke.
+  useEditorTabPresenceRevision();
   const hasOwnedEditorTab = editorTabStore.hasTabForSessions(
     ownedEditorSessionIdsRef.current,
   );
@@ -379,8 +377,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // tab switches, listings) doesn't make this unregister+reregister on every
   // re-render.
   useEffect(() => {
-    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding) =>
-      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding),
+    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding, sftpTabId) =>
+      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding, sftpTabId),
     );
   }, []);
 
