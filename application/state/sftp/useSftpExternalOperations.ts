@@ -25,6 +25,7 @@ import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./glob
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
 import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
+import { editorTabStore } from "../editorTabStore";
 import {
   resolveUploadStreamTargetSftpId,
 } from "../../../domain/sftpDedicatedStreamPolicy";
@@ -347,6 +348,10 @@ export const useSftpExternalOperations = (
         sftpId = sftpSessionsRef.current.get(liveConnectionId);
       }
       if (!sftpId) throw new Error("SFTP session not found");
+
+      if (liveConnectionId !== connectionId) {
+        editorTabStore.remapSessionId(connectionId, liveConnectionId);
+      }
 
       const bridge = netcattyBridge.get();
       if (!bridge) throw new Error("Bridge not available");

@@ -404,17 +404,18 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => {
       const s = sftpRef.current;
       if (!s) return;
-      const owned = new Set<string>();
-      for (const tab of s.leftTabs?.tabs ?? []) {
+      const ownedSessionIds: string[] = [];
+      const ownedSftpTabIds: string[] = [];
+      for (const tab of [...(s.leftTabs?.tabs ?? []), ...(s.rightTabs?.tabs ?? [])]) {
+        ownedSftpTabIds.push(tab.id);
         const id = tab.connection?.id;
-        if (id) owned.add(id);
+        if (id) ownedSessionIds.push(id);
       }
-      for (const tab of s.rightTabs?.tabs ?? []) {
-        const id = tab.connection?.id;
-        if (id) owned.add(id);
-      }
-      if (owned.size === 0) return;
-      const closed = editorTabStore.forceCloseBySessions([...owned]);
+      if (ownedSessionIds.length === 0 && ownedSftpTabIds.length === 0) return;
+      const closed = editorTabStore.forceCloseByOwners({
+        sessionIds: ownedSessionIds,
+        sftpTabIds: ownedSftpTabIds,
+      });
       closed.forEach(releaseEditorTabSaveCoordinator);
     };
   }, []);

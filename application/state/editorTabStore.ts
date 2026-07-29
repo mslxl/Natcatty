@@ -123,18 +123,32 @@ export class EditorTabStore {
    * entirely (e.g. the hosting terminal tab was closed) and there is no
    * realistic save channel anyway. Returns the closed tab ids.
    */
-  forceCloseBySessions = (sessionIds: readonly string[]): EditorTabId[] => {
-    if (sessionIds.length === 0) return [];
-    const idSet = new Set(sessionIds);
-    const removed = this.tabs.filter((t) => idSet.has(t.sessionId)).map((t) => t.id);
+  private tabMatchesOwner = (
+    tab: EditorTab,
+    owner: { sessionId?: string; sftpTabId?: string },
+  ): boolean =>
+    (owner.sessionId != null && tab.sessionId === owner.sessionId)
+    || (owner.sftpTabId != null && tab.sftpTabId === owner.sftpTabId);
+
+  /**
+   * Force-close every tab bound to any owner id, with no dirty prompt.
+   * Matches by live connection id and/or stable SFTP pane tab id.
+   */
+  forceCloseByOwners = (owners: {
+    sessionIds?: readonly string[];
+    sftpTabIds?: readonly string[];
+  }): EditorTabId[] => {
+    const sessionSet = new Set(owners.sessionIds ?? []);
+    const tabIdSet = new Set(owners.sftpTabIds ?? []);
+    if (sessionSet.size === 0 && tabIdSet.size === 0) return [];
+    const removed = this.tabs
+      .filter((t) => sessionSet.has(t.sessionId) || tabIdSet.has(t.sftpTabId))
+      .map((t) => t.id);
     if (removed.length === 0) return [];
-    this.tabs = this.tabs.filter((t) => !idSet.has(t.sessionId));
+    const removedSet = new Set(removed);
+    this.tabs = this.tabs.filter((t) => !removedSet.has(t.id));
     this.notifyStructural();
 
-    // If the current active tab was one of the editor tabs we just removed,
-    // fall back to 'vault' so the user doesn't end up on a stale id (empty
-    // chrome + no content). Any better neighbor choice would need the full
-    // orderedTabs list, which isn't available here; 'vault' is always valid.
     const activeId = activeTabStore.getActiveTabId();
     if (isEditorTabId(activeId)) {
       const activeEditorId = fromEditorTabId(activeId);
@@ -145,6 +159,9 @@ export class EditorTabStore {
 
     return removed;
   };
+
+  forceCloseBySessions = (sessionIds: readonly string[]): EditorTabId[] =>
+    this.forceCloseByOwners({ sessionIds });
 
   promoteFromModal = (snapshot: {
     sessionId: string;
@@ -194,17 +211,17 @@ export class EditorTabStore {
   };
 
   /**
-   * Walk all editor tabs bound to `sessionId`. Clean tabs close silently; dirty tabs
-   * prompt via `promptChoice`. 'save' invokes `saveTab` and closes only on its success.
-   * Any 'cancel' aborts the batch (subsequent dirty tabs are preserved) and returns false.
+   * Walk editor tabs owned by a connection id and/or SFTP pane tab id. Clean tabs
+   * close silently; dirty tabs prompt via `promptChoice`. 'save' invokes `saveTab`
+   * and closes only on its success. Any 'cancel' aborts the batch and returns false.
    */
-  confirmCloseBySession = async (
-    sessionId: string,
+  confirmCloseByOwner = async (
+    owner: { sessionId?: string; sftpTabId?: string },
     promptChoice: (tab: EditorTab) => Promise<"save" | "discard" | "cancel">,
     saveTab?: (tabId: EditorTabId) => Promise<void>,
     onCloseTab?: (tabId: EditorTabId) => void,
   ): Promise<boolean> => {
-    const matching = this.tabs.filter((t) => t.sessionId === sessionId);
+    const matching = this.tabs.filter((t) => this.tabMatchesOwner(t, owner));
     for (const tab of matching) {
       const dirty = tab.content !== tab.baselineContent;
       if (!dirty) {
@@ -233,6 +250,14 @@ export class EditorTabStore {
     }
     return true;
   };
+
+  confirmCloseBySession = async (
+    sessionId: string,
+    promptChoice: (tab: EditorTab) => Promise<"save" | "discard" | "cancel">,
+    saveTab?: (tabId: EditorTabId) => Promise<void>,
+    onCloseTab?: (tabId: EditorTabId) => void,
+  ): Promise<boolean> =>
+    this.confirmCloseByOwner({ sessionId }, promptChoice, saveTab, onCloseTab);
 
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);

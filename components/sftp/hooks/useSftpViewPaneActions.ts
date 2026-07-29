@@ -162,50 +162,36 @@ export const useSftpViewPaneActions = ({
   // canceled the dirty-editor prompt. Callers that kick off a replacement
   // connect (e.g. the host picker) MUST gate their follow-up on this result
   // so a canceled prompt doesn't silently drop the user onto a new host.
+  const confirmCloseActivePaneEditors = useCallback(async (side: "left" | "right"): Promise<boolean> => {
+    const pane = sftpRef.current.getActivePane(side);
+    if (!pane?.connection?.id && !pane?.id) return true;
+    const choice = (tab: EditorTab) => promptUnsavedChanges(tab.fileName);
+    const saveTab = async (id: EditorTabId) => {
+      const ok = await saveEditorTab(id);
+      const tab = editorTabStore.getTab(id);
+      if (!ok || (tab && tab.content !== tab.baselineContent)) {
+        throw new Error(tab?.saveError ?? "Save failed");
+      }
+    };
+    return editorTabStore.confirmCloseByOwner(
+      { sessionId: pane.connection?.id, sftpTabId: pane.id },
+      choice,
+      saveTab,
+      releaseEditorTabSaveCoordinator,
+    );
+  }, [sftpRef]);
   const onDisconnectLeft = useCallback(async (): Promise<boolean> => {
-    const connectionId = sftpRef.current.getActivePane("left")?.connection?.id;
-    if (connectionId) {
-      const choice = (tab: EditorTab) => promptUnsavedChanges(tab.fileName);
-      const saveTab = async (id: EditorTabId) => {
-        const ok = await saveEditorTab(id);
-        const tab = editorTabStore.getTab(id);
-        if (!ok || (tab && tab.content !== tab.baselineContent)) {
-          throw new Error(tab?.saveError ?? "Save failed");
-        }
-      };
-      const ok = await editorTabStore.confirmCloseBySession(
-        connectionId,
-        choice,
-        saveTab,
-        releaseEditorTabSaveCoordinator,
-      );
-      if (!ok) return false;
-    }
+    const ok = await confirmCloseActivePaneEditors("left");
+    if (!ok) return false;
     sftpRef.current.disconnect("left");
     return true;
-  }, [sftpRef]);
+  }, [confirmCloseActivePaneEditors, sftpRef]);
   const onDisconnectRight = useCallback(async (): Promise<boolean> => {
-    const connectionId = sftpRef.current.getActivePane("right")?.connection?.id;
-    if (connectionId) {
-      const choice = (tab: EditorTab) => promptUnsavedChanges(tab.fileName);
-      const saveTab = async (id: EditorTabId) => {
-        const ok = await saveEditorTab(id);
-        const tab = editorTabStore.getTab(id);
-        if (!ok || (tab && tab.content !== tab.baselineContent)) {
-          throw new Error(tab?.saveError ?? "Save failed");
-        }
-      };
-      const ok = await editorTabStore.confirmCloseBySession(
-        connectionId,
-        choice,
-        saveTab,
-        releaseEditorTabSaveCoordinator,
-      );
-      if (!ok) return false;
-    }
+    const ok = await confirmCloseActivePaneEditors("right");
+    if (!ok) return false;
     sftpRef.current.disconnect("right");
     return true;
-  }, [sftpRef]);
+  }, [confirmCloseActivePaneEditors, sftpRef]);
   const onPrepareSelectionLeft = useCallback(() => {
     keepOnlyActivePaneSelections(sftpRef.current, "left");
   }, [sftpRef]);

@@ -187,6 +187,7 @@ test("editor tab save remaps stale session ids returned by the SFTP writer", asy
       assert.equal(sftpTabId, "pane_1");
       if (content === "next") {
         assert.equal(connectionId, "conn_old");
+        store.remapSessionId("conn_old", "conn_new");
         return "conn_new";
       }
       assert.equal(connectionId, "conn_new");
@@ -201,4 +202,25 @@ test("editor tab save remaps stale session ids returned by the SFTP writer", asy
   store.updateContent("edt_1", "next2", null);
   assert.equal(await service.saveTab("edt_1"), true);
   assert.deepEqual(seenConnectionIds, ["conn_old", "conn_new"]);
+});
+
+test("closing an SFTP pane prompts for dirty editors after reconnect id churn", async () => {
+  const store = new EditorTabStore();
+  store._debugInsert(makeTab({
+    sessionId: "conn_old",
+    sftpTabId: "pane_1",
+    content: "dirty",
+    baselineContent: "clean",
+  }));
+  let prompted = false;
+  const ok = await store.confirmCloseByOwner(
+    { sessionId: "conn_new", sftpTabId: "pane_1" },
+    async () => {
+      prompted = true;
+      return "discard";
+    },
+  );
+  assert.equal(prompted, true);
+  assert.equal(ok, true);
+  assert.equal(store.getTabs().length, 0);
 });

@@ -332,6 +332,35 @@ test("hasOwnedEditorForSftpOwner keeps ownership via pane tab id during reconnec
   );
 });
 
+test("confirmCloseByOwner matches editors by stable SFTP pane tab id", async () => {
+  const store = new EditorTabStore();
+  store._debugInsert(makeTab({
+    sessionId: "conn_old",
+    sftpTabId: "pane_1",
+    content: "dirty",
+    baselineContent: "clean",
+  }));
+  let prompted = false;
+  const ok = await store.confirmCloseByOwner(
+    { sessionId: "conn_new", sftpTabId: "pane_1" },
+    async () => {
+      prompted = true;
+      return "cancel";
+    },
+  );
+  assert.equal(prompted, true);
+  assert.equal(ok, false);
+  assert.equal(store.getTabs().length, 1);
+});
+
+test("forceCloseByOwners closes editors matched by SFTP pane tab id", () => {
+  const store = new EditorTabStore();
+  store._debugInsert(makeTab({ sessionId: "conn_old", sftpTabId: "pane_1" }));
+  const closed = store.forceCloseByOwners({ sftpTabIds: ["pane_1"] });
+  assert.deepEqual(closed, ["edt_1"]);
+  assert.equal(store.getTabs().length, 0);
+});
+
 test("updateContent does not bump editor presence revision", () => {
   const store = new EditorTabStore();
   store._debugInsert(makeTab());
