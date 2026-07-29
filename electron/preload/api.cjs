@@ -749,6 +749,12 @@ function createPreloadApi(ctx) {
   closeSftp: async (sftpId) => {
     return ipcRenderer.invoke("netcatty:sftp:close", { sftpId });
   },
+  retainSftpTransferSession: async (sftpId, leaseId) => {
+    return ipcRenderer.invoke("netcatty:transfer:retain-sftp-session", { sftpId, leaseId });
+  },
+  releaseSftpTransferSession: async (sftpId, leaseId) => {
+    return ipcRenderer.invoke("netcatty:transfer:release-sftp-session", { sftpId, leaseId });
+  },
   mkdirSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:mkdir", { sftpId, path, encoding });
   },

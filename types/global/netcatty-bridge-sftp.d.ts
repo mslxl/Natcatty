@@ -12,6 +12,8 @@ declare global {
     writeSftp(sftpId: string, path: string, content: string, encoding?: SftpFilenameEncoding): Promise<void>;
     writeSftpBinary?(sftpId: string, path: string, content: ArrayBuffer, encoding?: SftpFilenameEncoding): Promise<void>;
     closeSftp(sftpId: string): Promise<void | { success?: boolean; deferred?: boolean; leaseCount?: number }>;
+    retainSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;
+    releaseSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;
     mkdirSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     deleteSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
@@ -58,6 +60,9 @@ declare global {
         targetSftpId?: string;
         sourceHostId?: string;
         targetHostId?: string;
+        parentTaskId?: string;
+        directoryEntryIndex?: number;
+        directoryEntryIdentity?: string;
         totalBytes?: number;
         sourceEncoding?: SftpFilenameEncoding;
         targetEncoding?: SftpFilenameEncoding;
@@ -121,6 +126,9 @@ declare global {
       sessionId?: string;
       sourceHostId?: string;
       targetHostId?: string;
+      parentTaskId?: string;
+      directoryEntryIndex?: number;
+      directoryEntryIdentity?: string;
       lifecycleEpoch?: number;
       lifecycleState?: 'queued' | 'pausing' | 'paused' | 'transferring';
       resumable?: boolean;

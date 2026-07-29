@@ -6,15 +6,17 @@ import { UploadController } from "../../../lib/uploadService";
 
 test("external upload cancellation is keyed by transfer task id", () => {
   const ops = readFileSync(new URL("./useSftpExternalOperations.ts", import.meta.url), "utf8");
-  assert.match(ops, /uploadControllersByTaskRef/);
+  assert.match(ops, /registerExternalUploadController/);
   assert.match(ops, /const cancelExternalUpload = useCallback\(async \(taskId\?: string\)/);
   assert.match(ops, /bindUploadControllerCallbacks/);
+  assert.doesNotMatch(ops, /for \(const controller of controllers\) void controller\.cancel\(\)/);
 
   const queue = readFileSync(
     new URL("../../../components/sftp/SftpTransferQueue.tsx", import.meta.url),
     "utf8",
   );
-  assert.match(queue, /cancelExternalUpload\(task\.id\)/);
+  assert.doesNotMatch(queue, /cancelExternalUpload\(task\.id\)/);
+  assert.match(queue, /sftpTransferCenterStore\.cancel\(task\.id\)/);
 });
 
 test("upload conflict cancel is scoped to owning controller", () => {

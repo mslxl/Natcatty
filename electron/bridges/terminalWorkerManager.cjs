@@ -92,6 +92,9 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       lifecycleState: payload.lifecycleState,
       resumable: payload.resumable,
       pauseUnavailableReason: payload.pauseUnavailableReason,
+      parentTaskId: payload.parentTaskId,
+      directoryEntryIndex: payload.directoryEntryIndex,
+      directoryEntryIdentity: payload.directoryEntryIdentity,
     };
   }
   if (channel === "netcatty:transfer:queued" || channel === "netcatty:transfer:started") {
@@ -108,6 +111,9 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       endedAt: Date.now(),
       transferred: payload.transferred,
       totalBytes: payload.totalBytes,
+      parentTaskId: payload.parentTaskId,
+      directoryEntryIndex: payload.directoryEntryIndex,
+      directoryEntryIdentity: payload.directoryEntryIdentity,
     };
   }
   if (channel === "netcatty:transfer:cancelled") {
@@ -115,6 +121,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       type: "cancelled",
       transferId,
       endedAt: Date.now(),
+      parentTaskId: payload.parentTaskId,
     };
   }
   if (channel === "netcatty:transfer:error") {
@@ -125,6 +132,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       transferId,
       endedAt: Date.now(),
       error: message,
+      parentTaskId: payload.parentTaskId,
     };
   }
   if (channel === "netcatty:compress:progress") {

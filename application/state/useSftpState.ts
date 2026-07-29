@@ -274,6 +274,19 @@ export const useSftpState = (
   // Physical SSH transport ownership remains in the main-process registry.
   const transferPoolRef = useRef(
     getSharedTransferConnectionPool({
+      retainSession: async (sftpId, leaseId) => {
+        const bridge = netcattyBridge.get();
+        if (!bridge?.retainSftpTransferSession) {
+          throw new Error("SFTP transfer session retention is unavailable");
+        }
+        const result = await bridge.retainSftpTransferSession(sftpId, leaseId);
+        if (!result?.success) {
+          throw new Error(result?.reason || "Could not retain SFTP transfer session");
+        }
+      },
+      releaseSession: async (sftpId, leaseId) => {
+        await netcattyBridge.get()?.releaseSftpTransferSession?.(sftpId, leaseId);
+      },
       closeSession: async (sftpId) => {
         try {
           await netcattyBridge.get()?.closeSftp?.(sftpId);

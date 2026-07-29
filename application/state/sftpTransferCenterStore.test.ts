@@ -1824,6 +1824,36 @@ test("background events do not resurrect a cancelled agent transfer", () => {
   assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
 });
 
+test("background lifecycle events keep directory children nested under their parent", () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("terminal:folder", [{
+    ...makeTask("folder-root", "transferring"),
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 2,
+  }]);
+
+  store.ingestBackgroundEvent({
+    type: "started",
+    transferId: "folder-child",
+    parentTaskId: "folder-root",
+    fileName: "nested.txt",
+    sourcePath: "/local/nested.txt",
+    targetPath: "/remote/nested.txt",
+    direction: "upload",
+    totalBytes: 12,
+  });
+
+  const snapshot = store.getSnapshot().tasks;
+  const child = snapshot.find((task) => task.id === "folder-child");
+  assert.equal(child?.parentTaskId, "folder-root");
+  assert.deepEqual(
+    snapshot.filter((task) => !task.parentTaskId).map((task) => task.id),
+    ["folder-root"],
+    "a directory child must never reappear as a top-level background task",
+  );
+});
+
 test("orphaned resume prefers a dedicated SFTP session without a panel owner", async () => {
   const store = createSftpTransferCenterStore();
   store.publishOwner("closed-panel", [{
@@ -2569,6 +2599,66 @@ test("resume marks orphaned tasks pending while reconnecting", async (t) => {
   await store.cancel("reconnect-me");
   await resumePromise;
   assert.equal(store.getSnapshot().tasks[0]?.status, "cancelled");
+});
+
+test("first dedicated resume progress leaves reconnecting state while transfer keeps running", async () => {
+  const store = createSftpTransferCenterStore();
+  store.publishOwner("closed-panel", [{
+    ...makeTask("restart-resume", "interrupted"),
+    sourceHostId: "host-a",
+    checkpointBytes: 2,
+    transferredBytes: 2,
+    reconnectRequired: true,
+  }]);
+
+  let releaseResume!: () => void;
+  const resumeHeld = new Promise<void>((resolve) => {
+    releaseResume = resolve;
+  });
+  let publishProgress!: () => void;
+  const progressPublished = new Promise<void>((resolve) => {
+    publishProgress = resolve;
+  });
+  store.setDedicatedResumeHandler(async (task) => {
+    store.ingestBackgroundEvent({
+      type: "started",
+      transferId: task.id,
+      direction: "upload",
+      transferred: 2,
+      totalBytes: 10,
+      resumable: true,
+    });
+    store.ingestBackgroundEvent({
+      type: "progress",
+      transferId: task.id,
+      direction: "upload",
+      transferred: 4,
+      totalBytes: 10,
+      speed: 2,
+      checkpointBytes: 4,
+      lifecycleState: "transferring",
+      resumable: true,
+    });
+    publishProgress();
+    await resumeHeld;
+    return { success: true };
+  });
+
+  const resumePromise = store.resume("restart-resume");
+  await progressPublished;
+  try {
+    const live = store.getSnapshot().tasks[0];
+    assert.equal(live?.status, "transferring");
+    assert.equal(live?.transferredBytes, 4);
+    assert.equal(
+      live?.reconnectRequired,
+      false,
+      "real progress must replace the reconnect spinner with live pause controls",
+    );
+  } finally {
+    releaseResume();
+    await resumePromise;
+  }
 });
 
 test("resume waits for a transfer panel that becomes visible after the click", async (t) => {

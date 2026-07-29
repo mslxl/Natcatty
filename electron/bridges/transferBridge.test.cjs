@@ -5729,6 +5729,92 @@ test("transfer session leases hold SFTP ids across soft-close until release", as
   assert.equal(sftpTransferSessionLeaseStore.isHeld("s1"), false);
 });
 
+test("a directory pool lease survives terminal close between child files", async (t) => {
+  const {
+    sftpTransferSessionLeaseStore,
+  } = require("./sftpTransferSessionLease.cjs");
+  sftpTransferSessionLeaseStore.resetForTests();
+  t.after(() => sftpTransferSessionLeaseStore.resetForTests());
+
+  let hardCloseCalls = 0;
+  const sftpBridge = require("./sftpBridge.cjs");
+  const originalClose = sftpBridge.closeSftp;
+  sftpBridge.closeSftp = async (_event, payload) => {
+    if (payload?.force) {
+      hardCloseCalls += 1;
+      sftpTransferSessionLeaseStore.clear(payload.sftpId);
+      return { success: true, deferred: false };
+    }
+    if (sftpTransferSessionLeaseStore.markSoftClosed(payload.sftpId)) {
+      return {
+        success: true,
+        deferred: true,
+        leaseCount: sftpTransferSessionLeaseStore.getLeaseCount(payload.sftpId),
+      };
+    }
+    return { success: true, deferred: false };
+  };
+  t.after(() => {
+    sftpBridge.closeSftp = originalClose;
+  });
+
+  transferBridge.init({ sftpClients: new Map([["folder-sftp", {}]]) });
+  assert.deepEqual(
+    transferBridge.retainSftpTransferSession(null, {
+      sftpId: "folder-sftp",
+      leaseId: "pool:folder-sftp",
+    }),
+    { success: true },
+  );
+  transferBridge.acquireTransferSessionLeases("child-1", { targetSftpId: "folder-sftp" });
+
+  const soft = await sftpBridge.closeSftp(null, { sftpId: "folder-sftp" });
+  assert.equal(soft.deferred, true);
+  transferBridge.releaseTransferSessionLeases("child-1", ["folder-sftp"]);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hardCloseCalls, 0, "the directory pool must keep the session alive between files");
+
+  assert.doesNotThrow(() => {
+    transferBridge.acquireTransferSessionLeases("child-2", { targetSftpId: "folder-sftp" });
+  });
+  transferBridge.releaseTransferSessionLeases("child-2", ["folder-sftp"]);
+  assert.deepEqual(
+    transferBridge.releaseSftpTransferSession(null, {
+      sftpId: "folder-sftp",
+      leaseId: "pool:folder-sftp",
+    }),
+    { success: true },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(hardCloseCalls, 1, "the deferred close should run only after the pool releases");
+});
+
+test("directory child lifecycle events preserve their parent id", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-child-event-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const sourcePath = path.join(tempDir, "child.txt");
+  const targetPath = path.join(tempDir, "copied.txt");
+  await fs.promises.writeFile(sourcePath, "child");
+  transferBridge.init({ sftpClients: new Map() });
+  const sender = createSender();
+
+  const result = await transferBridge.startTransfer({ sender }, {
+    transferId: "folder-child-event",
+    parentTaskId: "folder-root-event",
+    sourcePath,
+    targetPath,
+    sourceType: "local",
+    targetType: "local",
+    totalBytes: 5,
+    resumable: false,
+    skipAdmission: true,
+  });
+
+  assert.equal(result.error, undefined);
+  const started = sender.sent.find((entry) => entry.channel === "netcatty:transfer:started");
+  assert.equal(started?.payload?.parentTaskId, "folder-root-event");
+});
+
 test("a committed soft-close never lends the SFTP client again while client.end is pending", async (t) => {
   const {
     sftpTransferSessionLeaseStore,

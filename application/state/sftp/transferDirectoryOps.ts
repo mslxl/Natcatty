@@ -306,6 +306,9 @@ export function useSftpDirectoryTransferOps({
               downloadCheckpointBytes: latest.downloadCheckpointBytes ?? task.downloadCheckpointBytes,
               uploadCheckpointBytes: latest.uploadCheckpointBytes ?? task.uploadCheckpointBytes,
               sourceFingerprint: latest.sourceFingerprint ?? task.sourceFingerprint,
+              parentTaskId: task.parentTaskId,
+              directoryEntryIndex: task.directoryEntryIndex,
+              directoryEntryIdentity: task.directoryEntryIdentity,
               // Renderer already admitted this file via globalSftpTransferScheduler
               // (unlimited host slots). Folder concurrency is only in runSftpTransferWorkers.
               skipAdmission: true,

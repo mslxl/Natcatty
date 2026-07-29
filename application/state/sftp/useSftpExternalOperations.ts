@@ -40,6 +40,12 @@ import {
   cleanupFailedExternalOpenTemp,
   useExternalFileWatchLifecycle,
 } from "./externalFileWatchLifecycle";
+import {
+  cancelExternalUploadRuntime,
+  getExternalUploadController,
+  registerExternalUploadController,
+  unregisterExternalUploadController,
+} from "./externalUploadRuntime";
 
 type UploadConflictResolver = {
   resolve: (action: FileConflictAction) => void;
@@ -129,19 +135,12 @@ export const useSftpExternalOperations = (
     return { sftpId, release: () => {} };
   }, [ensureRemoteSftpId, getActivePane, getPaneByConnectionId, getPaneByTabId, getSideByTabId, sftpSessionsRef]);
 
-  // Per-upload controllers so canceling upload A does not touch upload B.
-  const uploadControllersByTaskRef = useRef<Map<string, UploadController>>(new Map());
-
   const registerUploadController = useCallback((taskId: string, controller: UploadController) => {
-    uploadControllersByTaskRef.current.set(taskId, controller);
+    registerExternalUploadController(taskId, controller);
   }, []);
 
   const unregisterUploadController = useCallback((controller: UploadController) => {
-    for (const [taskId, active] of [...uploadControllersByTaskRef.current]) {
-      if (active === controller) {
-        uploadControllersByTaskRef.current.delete(taskId);
-      }
-    }
+    unregisterExternalUploadController(controller);
   }, []);
 
   const bindUploadControllerCallbacks = useCallback((
@@ -613,9 +612,8 @@ export const useSftpExternalOperations = (
       uploadConflictResolversRef.current,
       uploadConflictOwnersRef.current,
     );
-    const controllers = [...new Set(uploadControllersByTaskRef.current.values())];
-    uploadControllersByTaskRef.current.clear();
-    for (const controller of controllers) void controller.cancel();
+    // Upload controllers are process-level. Their upload finally blocks remove
+    // them from externalUploadRuntime; panel unmount must not cancel them.
   }, []);
 
   const createUploadConflictResolver = useCallback((controller: UploadController) => {
@@ -1392,23 +1390,17 @@ export const useSftpExternalOperations = (
   );
 
   const cancelExternalUpload = useCallback(async (taskId?: string) => {
-    let cancelPromise: Promise<void> | undefined;
     if (taskId) {
-      const controller = uploadControllersByTaskRef.current.get(taskId);
+      const controller = getExternalUploadController(taskId);
       if (controller) {
         logger.info("[SFTP] Cancelling external upload", { taskId });
         cancelPendingUploadConflicts(controller);
-        cancelPromise = controller.cancel();
       }
     } else {
-      const controllers = [...new Set(uploadControllersByTaskRef.current.values())];
-      if (controllers.length > 0) {
-        logger.info("[SFTP] Cancelling all external uploads", { count: controllers.length });
-        cancelPromise = Promise.all(controllers.map((controller) => controller.cancel())).then(() => undefined);
-      }
+      logger.info("[SFTP] Cancelling all external uploads");
       cancelPendingUploadConflicts();
     }
-    await cancelPromise;
+    await cancelExternalUploadRuntime(taskId);
   }, [cancelPendingUploadConflicts]);
 
   const selectApplication = useCallback(

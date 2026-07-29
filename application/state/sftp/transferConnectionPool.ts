@@ -21,6 +21,7 @@ export const DEFAULT_MAX_IDLE_TRANSFER_CONNECTIONS = 16;
 
 export type TransferPoolOpenFn = (poolKey: string) => Promise<string>;
 export type TransferPoolCloseFn = (sftpId: string) => void | Promise<void>;
+export type TransferPoolSessionLeaseFn = (sftpId: string, leaseId: string) => void | Promise<void>;
 
 export interface TransferConnectionLease {
   sftpId: string;
@@ -33,6 +34,8 @@ export interface TransferConnectionLease {
 
 interface PoolSlot {
   sftpId: string;
+  /** Main-process hold that keeps this SFTP channel alive between child files. */
+  sessionLeaseId: string;
   holders: Set<string>;
   lastUsedAt: number;
   idleSince?: number;
@@ -49,6 +52,8 @@ export interface TransferConnectionPoolOptions {
   /** Global cap across all host pools; oldest idle channels are evicted first. */
   maxIdleConnections?: number;
   closeSession?: TransferPoolCloseFn;
+  retainSession?: TransferPoolSessionLeaseFn;
+  releaseSession?: TransferPoolSessionLeaseFn;
   now?: () => number;
   /** Deterministic timer hooks for tests. */
   setTimeoutFn?: (callback: () => void, delayMs: number) => unknown;
@@ -141,6 +146,8 @@ export function createTransferConnectionPool(
   let idleTtlMs = normalizeIdleTtlMs(options.idleTtlMs);
   const maxIdleConnections = normalizeMaxIdleConnections(options.maxIdleConnections);
   const closeSession = options.closeSession;
+  const retainSession = options.retainSession;
+  const releaseSession = options.releaseSession;
   const now = options.now ?? (() => Date.now());
   const setTimeoutFn = options.setTimeoutFn ?? ((callback, delayMs) => setTimeout(callback, delayMs));
   const clearTimeoutFn = options.clearTimeoutFn ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
@@ -192,19 +199,46 @@ export function createTransferConnectionPool(
     return slot;
   };
 
-  const closeSessionBestEffort = (sftpId: string) => {
+  const closeSlot = async (slot: PoolSlot) => {
+    if (releaseSession) {
+      try {
+        await releaseSession(slot.sftpId, slot.sessionLeaseId);
+      } catch {
+        // best-effort; the explicit close below is still required
+      }
+    }
     try {
-      void Promise.resolve(closeSession?.(sftpId)).catch(() => {});
+      await closeSession?.(slot.sftpId);
     } catch {
       // best-effort
     }
   };
 
+  const closeSessionBestEffort = (slot: PoolSlot) => {
+    void closeSlot(slot);
+  };
+
   const removeAndCloseSlot = (poolKey: string, list: PoolSlot[], idx: number) => {
     const slot = detachSlot(poolKey, list, idx);
     if (slot) {
-      closeSessionBestEffort(slot.sftpId);
+      closeSessionBestEffort(slot);
     }
+  };
+
+  const createRetainedSlot = async (sftpId: string, transferId: string): Promise<PoolSlot> => {
+    const sessionLeaseId = `pool:${sftpId}`;
+    try {
+      await retainSession?.(sftpId, sessionLeaseId);
+    } catch (error) {
+      try { await closeSession?.(sftpId); } catch { /* best-effort */ }
+      throw error;
+    }
+    return {
+      sftpId,
+      sessionLeaseId,
+      holders: new Set([transferId]),
+      lastUsedAt: now(),
+    };
   };
 
   const scheduleIdleClose = (poolKey: string, slot: PoolSlot, delayMs?: number) => {
@@ -365,11 +399,7 @@ export function createTransferConnectionPool(
           }
           throw error;
         }
-        const slot: PoolSlot = {
-          sftpId,
-          holders: new Set([transferId]),
-          lastUsedAt: now(),
-        };
+        const slot = await createRetainedSlot(sftpId, transferId);
         // The last holder of the old list can release while open() is awaiting,
         // which removes that empty list from `pools`. Re-read/recreate the
         // canonical list before publishing the new slot; otherwise the lease is
@@ -382,11 +412,7 @@ export function createTransferConnectionPool(
       const fallback = pickSlot(list);
       if (!fallback) {
         const sftpId = await open(poolKey);
-        const slot: PoolSlot = {
-          sftpId,
-          holders: new Set([transferId]),
-          lastUsedAt: now(),
-        };
+        const slot = await createRetainedSlot(sftpId, transferId);
         list.push(slot);
         return makeLease(poolKey, sftpId, transferId);
       }
@@ -400,7 +426,7 @@ export function createTransferConnectionPool(
   };
 
   const closeIdle = async (sweepNow = now()): Promise<number> => {
-    const toClose: string[] = [];
+    const toClose: PoolSlot[] = [];
     for (const [poolKey, list] of pools.entries()) {
       const kept: PoolSlot[] = [];
       for (const slot of list) {
@@ -408,7 +434,7 @@ export function createTransferConnectionPool(
           && (slot.unhealthy || idleTtlMs <= 0 || (slot.idleSince ?? slot.lastUsedAt) + idleTtlMs <= sweepNow);
         if (expired) {
           clearIdleTimer(slot);
-          toClose.push(slot.sftpId);
+          toClose.push(slot);
           continue;
         }
         kept.push(slot);
@@ -417,13 +443,9 @@ export function createTransferConnectionPool(
       else pools.set(poolKey, kept);
     }
     let closed = 0;
-    for (const sftpId of toClose) {
+    for (const slot of toClose) {
       closed += 1;
-      try {
-        await closeSession?.(sftpId);
-      } catch {
-        // best-effort
-      }
+      await closeSlot(slot);
     }
     return closed;
   };
@@ -433,11 +455,7 @@ export function createTransferConnectionPool(
     pools.clear();
     for (const slot of toClose) clearIdleTimer(slot);
     for (const slot of toClose) {
-      try {
-        await closeSession?.(slot.sftpId);
-      } catch {
-        // best-effort
-      }
+      await closeSlot(slot);
     }
   };
 

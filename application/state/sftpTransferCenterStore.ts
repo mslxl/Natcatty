@@ -38,6 +38,7 @@ import {
   type TransferControlHost,
 } from "./sftp/globalSftpTransferControl";
 import { restoreSftpTransferHistoryCooperatively } from "./sftp/transferHistoryRestoreMigration";
+import { cancelExternalUploadRuntime } from "./sftp/externalUploadRuntime";
 
 type Listener = () => void;
 
@@ -133,6 +134,9 @@ export interface SftpTransferCenterStore {
     sessionId?: string;
     sourceHostId?: string;
     targetHostId?: string;
+    parentTaskId?: string;
+    directoryEntryIndex?: number;
+    directoryEntryIdentity?: string;
     isDirectory?: boolean;
     controlKind?: TransferTask["controlKind"];
     phase?: TransferTask["phase"];
@@ -739,6 +743,12 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
     let action = requestedAction;
     let controller = resolveLiveController(taskId);
     let task = tasks.find((candidate) => candidate.id === taskId);
+    if (action === "cancel") {
+      // External folder walks outlive their originating panel. Stop their
+      // process-level controller from the same global cancel entry used by all
+      // transfer UIs, whether or not the terminal tab still exists.
+      await cancelExternalUploadRuntime(taskId);
+    }
     // Intentional resume/retry must clear a pre-start cancel latch left by an
     // earlier cancel that never hit startTransferNow (same transferId).
     if (action === "resume" || action === "retry") {
@@ -1882,7 +1892,35 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         backgroundEventsDuringRestore.set(event.transferId, pending);
         return;
       }
-      const existing = tasks.find((task) => task.id === event.transferId);
+      let existing = tasks.find((task) => task.id === event.transferId);
+      const eventParent = event.parentTaskId
+        ? tasks.find((task) => task.id === event.parentTaskId)
+        : undefined;
+      // Hot reload / mixed-version delivery can leave an already-created child
+      // looking like a top-level background row. The first hierarchy-aware
+      // event repairs it in place instead of leaving a duplicate control row.
+      if (existing && eventParent && existing.parentTaskId !== event.parentTaskId) {
+        tasks = tasks.map((task) => task.id === event.transferId ? {
+          ...task,
+          ownerId: eventParent.ownerId ?? task.ownerId,
+          parentTaskId: event.parentTaskId,
+          directoryEntryIndex: event.directoryEntryIndex ?? task.directoryEntryIndex,
+          directoryEntryIdentity: event.directoryEntryIdentity ?? task.directoryEntryIdentity,
+          background: false,
+        } : task);
+        existing = tasks.find((task) => task.id === event.transferId);
+      }
+      // A delayed child progress event can arrive after the renderer compacted
+      // that completed child into its parent checkpoint. Never resurrect it as
+      // a live row, especially after the parent itself has finished.
+      if (!existing && eventParent) {
+        if (["completed", "failed", "cancelled"].includes(eventParent.status)) return;
+        const covered = eventParent.directoryResumeCheckpoint?.coveredEntries ?? 0;
+        if (
+          Number.isSafeInteger(event.directoryEntryIndex)
+          && (event.directoryEntryIndex ?? covered) < covered
+        ) return;
+      }
       const persistImmediately = event.type === "paused"
         || event.type === "pausing"
         || (
@@ -1952,7 +1990,8 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
         const targetPath = event.targetPath ?? "";
         tasks.push({
           id: event.transferId,
-          ownerId: event.controlKind === "compressed-upload" ? "background-transfer" : "background-agent",
+          ownerId: eventParent?.ownerId
+            ?? (event.controlKind === "compressed-upload" ? "background-transfer" : "background-agent"),
           fileName: event.fileName ?? (
             targetPath.split(/[\\/]/).pop()
             || sourcePath.split(/[\\/]/).pop()
@@ -1964,6 +2003,9 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           targetConnectionId: event.direction === "download" ? "local" : (event.sessionId ?? "agent"),
           sourceHostId: event.sourceHostId,
           targetHostId: event.targetHostId,
+          parentTaskId: event.parentTaskId,
+          directoryEntryIndex: event.directoryEntryIndex,
+          directoryEntryIdentity: event.directoryEntryIdentity,
           direction: event.direction ?? "upload",
           status: event.type === "queued" ? "queued" : "transferring",
           totalBytes: event.totalBytes ?? 0,
@@ -1972,7 +2014,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
           startTime: event.startedAt ?? Date.now(),
           isDirectory: event.isDirectory ?? false,
           origin: "agent",
-          background: true,
+          background: !event.parentTaskId,
           resumable: event.resumable ?? true,
           pauseUnavailableReason: event.pauseUnavailableReason,
           controlKind: event.controlKind,
@@ -1998,6 +2040,10 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             totalBytes: event.totalBytes ?? task.totalBytes,
             isDirectory: event.isDirectory ?? task.isDirectory,
             controlKind: event.controlKind ?? task.controlKind,
+            parentTaskId: event.parentTaskId ?? task.parentTaskId,
+            directoryEntryIndex: event.directoryEntryIndex ?? task.directoryEntryIndex,
+            directoryEntryIdentity: event.directoryEntryIdentity ?? task.directoryEntryIdentity,
+            background: event.parentTaskId ? false : task.background,
             phase: event.phase ?? task.phase,
             resumable: event.resumable ?? task.resumable,
             pauseUnavailableReason: event.pauseUnavailableReason ?? task.pauseUnavailableReason,
@@ -2109,6 +2155,14 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             pauseUnavailableReason: event.pauseUnavailableReason ?? task.pauseUnavailableReason,
             error: keepPaused ? task.error : undefined,
             endTime: undefined,
+            // A single-file dedicated resume reports bytes through the global
+            // main-process event stream, not the dedicated renderer callback.
+            // The first accepted live progress proves reconnect is over; keep
+            // no stale reconnect flag that would hide the Pause action forever.
+            reconnectRequired: task.ownerId === "dedicated-resume"
+              && lifecycleStatus === "transferring"
+              ? false
+              : task.reconnectRequired,
             updatedAt: Date.now(),
             lifecycleEpoch: acceptsLifecycle && event.lifecycleEpoch !== undefined
               ? event.lifecycleEpoch

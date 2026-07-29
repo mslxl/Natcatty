@@ -240,6 +240,39 @@ test("sequential small files reuse one channel until the short idle TTL expires"
   assert.equal(pool.getStats("host:x").connections, 0);
 });
 
+test("a pool slot retains its SFTP session for the whole directory walk", async () => {
+  const clock = createFakeClock();
+  const retained: string[] = [];
+  const released: string[] = [];
+  const closed: string[] = [];
+  const pool = createTransferConnectionPool({
+    maxPerHost: 1,
+    idleTtlMs: 5_000,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeoutFn,
+    clearTimeoutFn: clock.clearTimeoutFn,
+    retainSession: async (sftpId, leaseId) => { retained.push(`${sftpId}:${leaseId}`); },
+    releaseSession: async (sftpId, leaseId) => { released.push(`${sftpId}:${leaseId}`); },
+    closeSession: async (sftpId) => { closed.push(sftpId); },
+  });
+
+  const root = await pool.acquire("host:folder", "directory-root", async () => "sftp-folder");
+  const child = await pool.acquire("host:folder", "directory-child", async () => {
+    throw new Error("must reuse the retained directory session");
+  });
+
+  assert.deepEqual(retained, ["sftp-folder:pool:sftp-folder"]);
+  child.release();
+  assert.deepEqual(released, [], "finishing one child must not release the pool session");
+  root.release();
+  assert.deepEqual(released, [], "the idle reuse window still owns the session");
+
+  clock.advance(5_000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(released, ["sftp-folder:pool:sftp-folder"]);
+  assert.deepEqual(closed, ["sftp-folder"]);
+});
+
 test("default max per host is FileZilla-like (2)", () => {
   assert.equal(DEFAULT_TRANSFER_CONNECTIONS_PER_HOST, 2);
   assert.equal(DEFAULT_TRANSFER_CONNECTION_IDLE_TTL_MS, 5_000);

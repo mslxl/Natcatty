@@ -92,6 +92,9 @@ function buildTransferLifecycleEvent(type, payload) {
     targetPath,
     sourceHostId: payload?.sourceHostId,
     targetHostId: payload?.targetHostId,
+    parentTaskId: payload?.parentTaskId,
+    directoryEntryIndex: payload?.directoryEntryIndex,
+    directoryEntryIdentity: payload?.directoryEntryIdentity,
     totalBytes: Math.max(0, Number(payload?.totalBytes) || 0),
     isDirectory: payload?.isDirectory === true,
     controlKind: "stream",
@@ -881,6 +884,23 @@ function acquireTransferSessionLeases(transferId, payload) {
   return sftpIds;
 }
 
+function retainSftpTransferSession(_event, payload) {
+  const sftpId = payload?.sftpId;
+  const leaseId = payload?.leaseId;
+  if (!sftpId || !leaseId) {
+    return { success: false, reason: "sftpId and leaseId are required" };
+  }
+  if (!sftpClients?.has?.(sftpId)) {
+    return { success: false, reason: "SFTP session not found" };
+  }
+  try {
+    acquireTransferSessionLeases(leaseId, { targetSftpId: sftpId });
+    return { success: true };
+  } catch (error) {
+    return { success: false, reason: error?.message || String(error) };
+  }
+}
+
 async function hardCloseSftpSession(sftpId, closeToken) {
   if (!sftpId) return;
   // Give a directory walk one turn to acquire the next child lease. That
@@ -934,6 +954,16 @@ function releaseTransferSessionLeases(transferId, sftpIds) {
       );
     }
   }
+}
+
+function releaseSftpTransferSession(_event, payload) {
+  const sftpId = payload?.sftpId;
+  const leaseId = payload?.leaseId;
+  if (!sftpId || !leaseId) {
+    return { success: false, reason: "sftpId and leaseId are required" };
+  }
+  releaseTransferSessionLeases(leaseId, [sftpId]);
+  return { success: true };
 }
 
 function setGlobalTransferConcurrency(limit) {
@@ -2785,6 +2815,9 @@ async function startTransferNow(event, payload, onProgress) {
     targetPath,
     sourceSftpId,
     targetSftpId,
+    parentTaskId: payload.parentTaskId,
+    directoryEntryIndex: payload.directoryEntryIndex,
+    directoryEntryIdentity: payload.directoryEntryIdentity,
     sourceEncoding,
     targetEncoding,
     readStream: null,
@@ -2928,6 +2961,9 @@ async function startTransferNow(event, payload, onProgress) {
       }
       const progressPayload = {
         transferId,
+        parentTaskId: transfer.parentTaskId,
+        directoryEntryIndex: transfer.directoryEntryIndex,
+        directoryEntryIdentity: transfer.directoryEntryIdentity,
         transferred,
         speed,
         totalBytes: total,
@@ -2963,6 +2999,9 @@ async function startTransferNow(event, payload, onProgress) {
         phase: transfer.phase,
         resumable: progressPayload.resumable,
         pauseUnavailableReason: progressPayload.pauseUnavailableReason,
+        parentTaskId: transfer.parentTaskId,
+        directoryEntryIndex: transfer.directoryEntryIndex,
+        directoryEntryIdentity: transfer.directoryEntryIdentity,
         sourceHostId: transfer.sourceHostId || payload?.sourceHostId,
         targetHostId: transfer.targetHostId || payload?.targetHostId,
       });
@@ -3175,6 +3214,9 @@ async function startTransferNow(event, payload, onProgress) {
       endedAt: Date.now(),
       transferred: lastObservedTransferred,
       totalBytes: lastObservedTotal,
+      parentTaskId: transfer.parentTaskId,
+      directoryEntryIndex: transfer.directoryEntryIndex,
+      directoryEntryIdentity: transfer.directoryEntryIdentity,
     });
     cleanupTransfer();
   };
@@ -3189,6 +3231,9 @@ async function startTransferNow(event, payload, onProgress) {
       transferId,
       endedAt: Date.now(),
       error: message,
+      parentTaskId: transfer.parentTaskId,
+      directoryEntryIndex: transfer.directoryEntryIndex,
+      directoryEntryIdentity: transfer.directoryEntryIdentity,
     });
   };
 
@@ -4690,6 +4735,12 @@ function registerHandlers(ipcMain, options = {}) {
           return { success: true };
         })
     ));
+    ipcMain.handle("netcatty:transfer:retain-sftp-session", (event, payload) => (
+      workerRequest(event, "netcatty:transfer:retain-sftp-session", payload)
+    ));
+    ipcMain.handle("netcatty:transfer:release-sftp-session", (event, payload) => (
+      workerRequest(event, "netcatty:transfer:release-sftp-session", payload)
+    ));
     return;
   }
   ipcMain.handle("netcatty:transfer:start", startTransfer);
@@ -4707,6 +4758,8 @@ function registerHandlers(ipcMain, options = {}) {
     clearPendingCancel(payload?.transferId);
     return { success: true };
   });
+  ipcMain.handle("netcatty:transfer:retain-sftp-session", retainSftpTransferSession);
+  ipcMain.handle("netcatty:transfer:release-sftp-session", releaseSftpTransferSession);
 }
 
 module.exports = {
@@ -4728,6 +4781,8 @@ module.exports = {
   // Test / integration helpers for session leases
   acquireTransferSessionLeases,
   releaseTransferSessionLeases,
+  retainSftpTransferSession,
+  releaseSftpTransferSession,
   listTransferSftpIds,
   _promoteLocalTransferForTests: promoteLocalTransfer,
   _stableLocalFileIdentityForTests: stableLocalFileIdentity,
