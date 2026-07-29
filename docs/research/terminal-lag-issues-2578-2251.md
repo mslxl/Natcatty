@@ -28,7 +28,9 @@
 
 #2578 的现场条件不同：终端基本静止、问题随长时间运行出现，而且 renderer 常驻内存已经达到约 2.4 GiB。beta.221 可以减少已有装饰的绘制成本，但不会主动释放结束会话、缩小回滚缓冲或解释 renderer 内存增长。因此 #2578 不应因为 #2581 合并而关闭。
 
-#2581 新增的 Linux Electron 检查在合并前后都没有真正运行到测试逻辑。GitHub runner 启动 Electron 时被 `chrome-sandbox` 权限检查拦住；这需要一个只作用于该 CI 步骤的 `ELECTRON_DISABLE_SANDBOX=1`。本地在相同环境变量下，真实测试会正常执行并覆盖实际关键词高亮路径和 20,000 个装饰。[失败检查](https://github.com/binaricat/Netcatty/actions/runs/30425243594/job/90490233979)
+#2581 新增的 Linux Electron 检查在合并前后都没有真正运行到测试逻辑。GitHub runner 启动 Electron 时先被 `chrome-sandbox` 权限检查拦住；这需要一个只作用于该 CI 步骤的 `ELECTRON_DISABLE_SANDBOX=1`。[首次失败检查](https://github.com/binaricat/Netcatty/actions/runs/30425243594/job/90490233979)
+
+沙箱修正后，测试已经能启动，但隐藏的 BrowserWindow 在 Xvfb 中被稳定限速到约每秒一次画面更新，三次结果都约为 3.05 秒。这不是随机性能波动：测试的三次测量都由相同的画面时钟限速。CI 应在虚拟桌面中实际映射测试窗口，本地仍保持隐藏，同时保留原来的 150 ms 性能门槛。[第二次失败检查](https://github.com/binaricat/Netcatty/actions/runs/30426364948/job/90493589196)、[Electron BrowserWindow 可见性与后台绘制说明](https://www.electronjs.org/docs/latest/api/browser-window#page-visibility)
 
 ## 已确认的生命周期缺口
 
@@ -72,6 +74,7 @@
 ### 本次窄 PR
 
 - 修复 #2581 留下的 Linux Electron 流水线启动问题；
+- 让 CI 的 Xvfb 实际显示性能测试窗口，避免隐藏窗口的画面时钟限速；
 - 允许隐藏的已结束远程会话释放完整终端运行资源；
 - 加入状态策略、hook 调度和 backend listener 边界回归测试；
 - 不改变回滚设置，不丢弃输出，不改已连接会话的休眠语义，不把 #2578 标记为已解决。

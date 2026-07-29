@@ -16,6 +16,7 @@ if (!process.versions.electron) {
   const tempDirBridge = require("../electron/bridges/tempDirBridge.cjs");
 
   const appRoot = path.resolve(__dirname, "..");
+  const showWindow = process.env.NETCATTY_TERMINAL_PERF_SHOW_WINDOW === "1";
   const userData = fs.mkdtempSync(`${tempDirBridge.getTempFilePath("xterm-decoration-perf")}-`);
   electron.app.setPath("userData", userData);
   electron.app.on("window-all-closed", () => {});
@@ -36,7 +37,7 @@ if (!process.versions.electron) {
 
   void electron.app.whenReady().then(async () => {
     window = new electron.BrowserWindow({
-      show: false,
+      show: showWindow,
       width: 900,
       height: 560,
       paintWhenInitiallyHidden: true,

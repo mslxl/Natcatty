@@ -53,6 +53,7 @@ jobs:
       - name: Test terminal decoration performance
         env:
           ELECTRON_DISABLE_SANDBOX: "1"
+          NETCATTY_TERMINAL_PERF_SHOW_WINDOW: "1"
         run: xvfb-run -a npm run test:xterm-decoration-performance
 
       - name: Build
