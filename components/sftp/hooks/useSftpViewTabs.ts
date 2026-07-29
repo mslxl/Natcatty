@@ -72,7 +72,10 @@ export const useSftpViewTabs = ({ sftp, sftpRef, hosts = [] }: UseSftpViewTabsPa
     return tabId;
   }, [sftpRef]);
 
-  const confirmCloseEditorTabsByConnection = useCallback(async (connectionId: string): Promise<boolean> => {
+  const confirmCloseEditorTabsByOwner = useCallback(async (owner: {
+    sessionId?: string;
+    sftpTabId?: string;
+  }): Promise<boolean> => {
     const choice = (tab: EditorTab) => promptUnsavedChanges(tab.fileName);
     const saveTab = async (id: EditorTabId) => {
       const ok = await saveEditorTab(id);
@@ -81,8 +84,8 @@ export const useSftpViewTabs = ({ sftp, sftpRef, hosts = [] }: UseSftpViewTabsPa
         throw new Error(tab?.saveError ?? "Save failed");
       }
     };
-    return editorTabStore.confirmCloseBySession(
-      connectionId,
+    return editorTabStore.confirmCloseByOwner(
+      owner,
       choice,
       saveTab,
       releaseEditorTabSaveCoordinator,
@@ -92,13 +95,15 @@ export const useSftpViewTabs = ({ sftp, sftpRef, hosts = [] }: UseSftpViewTabsPa
   const handleCloseSftpTab = useCallback(async (side: "left" | "right", tabId: string) => {
     const sideTabs = side === "left" ? sftpRef.current.leftTabs : sftpRef.current.rightTabs;
     const pane = sideTabs.tabs.find((tab) => tab.id === tabId);
-    const connectionId = pane?.connection?.id;
-    if (connectionId) {
-      const ok = await confirmCloseEditorTabsByConnection(connectionId);
+    if (pane?.connection?.id || pane) {
+      const ok = await confirmCloseEditorTabsByOwner({
+        sessionId: pane?.connection?.id,
+        sftpTabId: tabId,
+      });
       if (!ok) return;
     }
     await sftpRef.current.closeTab(side, tabId);
-  }, [confirmCloseEditorTabsByConnection, sftpRef]);
+  }, [confirmCloseEditorTabsByOwner, sftpRef]);
 
   const handleCloseTabLeft = useCallback((tabId: string) => (
     handleCloseSftpTab("left", tabId)

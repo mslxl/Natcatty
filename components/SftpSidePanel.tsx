@@ -22,7 +22,7 @@ import {
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
 import {
   editorTabStore,
-  useHasEditorTabForSessions,
+  useEditorTabPresenceRevision,
 } from "../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator } from "../application/state/editorTabSave";
 import { useSftpBackend } from "../application/state/useSftpBackend";
@@ -33,6 +33,7 @@ import { resolveSftpAutoConnectPath } from "../application/state/sftp/sftpReopen
 import {
   isBrowseSessionInteractive,
   listRemoteBrowseConnectionIds,
+  listRemoteBrowseSftpTabIds,
 } from "../application/state/sftp/browseSessionLifecycle";
 import { logger } from "../lib/logger";
 import type { DropEntry } from "../lib/sftpFileUtils";
@@ -193,11 +194,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }), [t]);
 
   const ownedEditorSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
-  const getOwnedEditorSessionIds = useCallback(
-    () => ownedEditorSessionIdsRef.current,
-    [],
-  );
-  const hasOwnedEditorTab = useHasEditorTabForSessions(getOwnedEditorSessionIds);
+  const ownedEditorSftpTabIdsRef = useRef<ReadonlySet<string>>(new Set());
+  // Re-render on tab open/close/session remap only — not on every editor keystroke.
+  useEditorTabPresenceRevision();
+  const hasOwnedEditorTab = editorTabStore.hasOwnedEditorForSftpOwner({
+    sessionIds: ownedEditorSessionIdsRef.current,
+    sftpTabIds: ownedEditorSftpTabIdsRef.current,
+  });
 
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
@@ -234,6 +237,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
   ownedEditorSessionIdsRef.current = new Set(
     listRemoteBrowseConnectionIds([
+      ...sftp.leftTabs.tabs,
+      ...sftp.rightTabs.tabs,
+    ]),
+  );
+  ownedEditorSftpTabIdsRef.current = new Set(
+    listRemoteBrowseSftpTabIds([
       ...sftp.leftTabs.tabs,
       ...sftp.rightTabs.tabs,
     ]),
@@ -377,8 +386,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   // tab switches, listings) doesn't make this unregister+reregister on every
   // re-render.
   useEffect(() => {
-    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding) =>
-      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding),
+    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding, sftpTabId) =>
+      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding, sftpTabId),
     );
   }, []);
 
@@ -395,17 +404,18 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return () => {
       const s = sftpRef.current;
       if (!s) return;
-      const owned = new Set<string>();
-      for (const tab of s.leftTabs?.tabs ?? []) {
+      const ownedSessionIds: string[] = [];
+      const ownedSftpTabIds: string[] = [];
+      for (const tab of [...(s.leftTabs?.tabs ?? []), ...(s.rightTabs?.tabs ?? [])]) {
+        ownedSftpTabIds.push(tab.id);
         const id = tab.connection?.id;
-        if (id) owned.add(id);
+        if (id) ownedSessionIds.push(id);
       }
-      for (const tab of s.rightTabs?.tabs ?? []) {
-        const id = tab.connection?.id;
-        if (id) owned.add(id);
-      }
-      if (owned.size === 0) return;
-      const closed = editorTabStore.forceCloseBySessions([...owned]);
+      if (ownedSessionIds.length === 0 && ownedSftpTabIds.length === 0) return;
+      const closed = editorTabStore.forceCloseByOwners({
+        sessionIds: ownedSessionIds,
+        sftpTabIds: ownedSftpTabIds,
+      });
       closed.forEach(releaseEditorTabSaveCoordinator);
     };
   }, []);
@@ -611,7 +621,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       : null;
     const hasEditorBoundToCurrentConnection = !!(
       currentConn
-      && editorTabStore.getTabs().some((tab) => tab.sessionId === currentConn.id)
+      && editorTabStore.getTabs().some((tab) =>
+        tab.sessionId === currentConn.id || tab.sftpTabId === s.leftPane.id,
+      )
     );
     const hasActiveTransferOnCurrentConnection = !!(
       currentConn

@@ -574,6 +574,7 @@ export const useSftpState = (
     getActivePane,
     getPaneByConnectionId,
     getPaneByTabId,
+    getTabByConnectionId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,

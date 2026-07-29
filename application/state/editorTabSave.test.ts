@@ -23,6 +23,7 @@ const makeTab = (overrides: Partial<EditorTab> = {}): EditorTab => ({
   id: "edt_1",
   kind: "editor",
   sessionId: "conn_1",
+  sftpTabId: "pane_1",
   hostId: "host_1",
   remotePath: "/tmp/file.txt",
   fileName: "file.txt",
@@ -46,6 +47,7 @@ test("editor tab save service joins duplicate saves for the same content", async
     write: async (_sessionId, _hostId, _remotePath, content) => {
       writes.push(content);
       await pending.promise;
+      return "conn_1";
     },
   });
 
@@ -73,6 +75,7 @@ test("editor tab save service queues newer tab content after an in-flight save",
     write: async (_sessionId, _hostId, _remotePath, content) => {
       writes.push(content);
       await (content === "v1" ? firstSave.promise : secondSave.promise);
+      return "conn_1";
     },
   });
 
@@ -96,6 +99,7 @@ test("promoted side-panel editor saves while hidden and releases its session aft
   const store = new EditorTabStore();
   const tabId = store.promoteFromModal({
     sessionId: "conn_1",
+    sftpTabId: "pane_1",
     hostId: "host_1",
     remotePath: "/tmp/script.sh",
     fileName: "script.sh",
@@ -107,10 +111,14 @@ test("promoted side-panel editor saves while hidden and releases its session aft
   });
   const browseSessions = new Map([["conn_1", "sftp_1"]]);
   const ownedSessionIds = new Set(["conn_1"]);
+  const ownedSftpTabIds = new Set(["pane_1"]);
   const applyHiddenLifecycle = () => {
     const interactive = isBrowseSessionInteractive({
       surfaceVisible: false,
-      hasOwnedEditorTab: store.hasTabForSessions(ownedSessionIds),
+      hasOwnedEditorTab: store.hasOwnedEditorForSftpOwner({
+        sessionIds: ownedSessionIds,
+        sftpTabIds: ownedSftpTabIds,
+      }),
     });
     if (shouldParkBrowseSessions({ interactive, browseParked: false })) {
       takeBrowseSessionsForClose(browseSessions);
@@ -126,6 +134,7 @@ test("promoted side-panel editor saves while hidden and releases its session aft
     write: async (connectionId, _hostId, _remotePath, content) => {
       assert.equal(browseSessions.has(connectionId), true);
       writes.push(content);
+      return connectionId;
     },
   });
   assert.equal(await service.saveTab(tabId), true);
@@ -134,4 +143,84 @@ test("promoted side-panel editor saves while hidden and releases its session aft
   store.close(tabId);
   applyHiddenLifecycle();
   assert.equal(browseSessions.size, 0);
+});
+
+test("hidden panel stays interactive while browse reconnects before session remap", () => {
+  const store = new EditorTabStore();
+  store.promoteFromModal({
+    sessionId: "conn_old",
+    sftpTabId: "pane_1",
+    hostId: "host_1",
+    remotePath: "/tmp/script.sh",
+    fileName: "script.sh",
+    languageId: "shell",
+    content: "echo changed",
+    baselineContent: "echo original",
+    wordWrap: false,
+    viewState: null,
+  });
+  const browseSessions = new Map([["conn_new", "sftp_1"]]);
+
+  const interactive = isBrowseSessionInteractive({
+    surfaceVisible: false,
+    hasOwnedEditorTab: store.hasOwnedEditorForSftpOwner({
+      sessionIds: new Set(["conn_new"]),
+      sftpTabIds: new Set(["pane_1"]),
+    }),
+  });
+  assert.equal(interactive, true);
+  assert.equal(
+    shouldParkBrowseSessions({ interactive, browseParked: false }),
+    false,
+  );
+  assert.equal(browseSessions.get("conn_new"), "sftp_1");
+});
+
+test("editor tab save remaps stale session ids returned by the SFTP writer", async () => {
+  const store = new EditorTabStore();
+  store._debugInsert(makeTab({ sessionId: "conn_old", sftpTabId: "pane_1" }));
+  const seenConnectionIds: string[] = [];
+  const service = createEditorTabSaveService({
+    store,
+    write: async (connectionId, _hostId, _remotePath, content, _encoding, sftpTabId) => {
+      seenConnectionIds.push(connectionId);
+      assert.equal(sftpTabId, "pane_1");
+      if (content === "next") {
+        assert.equal(connectionId, "conn_old");
+        store.remapSessionId("conn_old", "conn_new");
+        return "conn_new";
+      }
+      assert.equal(connectionId, "conn_new");
+      assert.equal(content, "next2");
+      return "conn_new";
+    },
+  });
+
+  assert.equal(await service.saveTab("edt_1", "next"), true);
+  assert.equal(store.getTab("edt_1")?.sessionId, "conn_new");
+
+  store.updateContent("edt_1", "next2", null);
+  assert.equal(await service.saveTab("edt_1"), true);
+  assert.deepEqual(seenConnectionIds, ["conn_old", "conn_new"]);
+});
+
+test("closing an SFTP pane prompts for dirty editors after reconnect id churn", async () => {
+  const store = new EditorTabStore();
+  store._debugInsert(makeTab({
+    sessionId: "conn_old",
+    sftpTabId: "pane_1",
+    content: "dirty",
+    baselineContent: "clean",
+  }));
+  let prompted = false;
+  const ok = await store.confirmCloseByOwner(
+    { sessionId: "conn_new", sftpTabId: "pane_1" },
+    async () => {
+      prompted = true;
+      return "discard";
+    },
+  );
+  assert.equal(prompted, true);
+  assert.equal(ok, true);
+  assert.equal(store.getTabs().length, 0);
 });

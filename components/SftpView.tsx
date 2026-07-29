@@ -203,8 +203,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   // always reads the latest writeTextFileByConnection; that method is stable
   // across sftp re-renders (it's a methodsRef-backed dispatcher).
   useEffect(() => {
-    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding) =>
-      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding),
+    return registerEditorSftpWriterScoped((connectionId, expectedHostId, filePath, content, encoding, sftpTabId) =>
+      sftpRef.current.writeTextFileByConnection(connectionId, expectedHostId, filePath, content, encoding, sftpTabId),
     );
   }, []);
 

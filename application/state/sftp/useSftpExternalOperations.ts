@@ -25,6 +25,7 @@ import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./glob
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
 import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
+import { editorTabStore } from "../editorTabStore";
 import {
   resolveUploadStreamTargetSftpId,
 } from "../../../domain/sftpDedicatedStreamPolicy";
@@ -76,6 +77,7 @@ export const useSftpExternalOperations = (
     getActivePane,
     getPaneByConnectionId,
     getPaneByTabId,
+    getTabByConnectionId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,
@@ -283,8 +285,20 @@ export const useSftpExternalOperations = (
       filePath: string,
       content: string,
       filenameEncoding?: SftpFilenameEncoding,
-    ): Promise<void> => {
-      const pane = getPaneByConnectionId(connectionId);
+      sftpTabId?: string,
+    ): Promise<string> => {
+      let tabRef = getTabByConnectionId?.(connectionId) ?? null;
+      let pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
+
+      if (!pane?.connection && sftpTabId) {
+        const pinned = getPaneByTabId(sftpTabId);
+        if (pinned?.connection) {
+          pane = pinned;
+          const side = getSideByTabId?.(sftpTabId);
+          if (side) tabRef = { side, tabId: sftpTabId, pane: pinned };
+        }
+      }
+
       if (!pane?.connection) {
         throw new Error("SFTP connection is no longer available");
       }
@@ -297,18 +311,67 @@ export const useSftpExternalOperations = (
         if (!bridge?.writeLocalFile) throw new Error("Local file writing not supported");
         const data = new TextEncoder().encode(content);
         await bridge.writeLocalFile(filePath, data.buffer);
-        return;
+        return pane.connection.id;
       }
 
-      const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+      const tabId = tabRef?.tabId ?? pane.id;
+      const side = tabRef?.side ?? getSideByTabId?.(tabId) ?? null;
+
+      let sftpId = sftpSessionsRef.current.get(pane.connection.id);
+      if (!sftpId && ensureRemoteSftpId && side) {
+        sftpId = await ensureRemoteSftpId(side, {
+          connectionId: pane.connection.id,
+          tabId,
+        });
+      }
+
+      // Reconnect replaces the pane's connection id — resolve again before write/return.
+      const refreshedPane = (() => {
+        if (sftpTabId) {
+          const pinned = getPaneByTabId(sftpTabId);
+          if (pinned?.connection) return pinned;
+        }
+        return getTabByConnectionId?.(connectionId)?.pane
+          ?? getPaneByConnectionId(connectionId)
+          ?? pane;
+      })();
+
+      if (!refreshedPane?.connection) {
+        throw new Error("SFTP connection is no longer available");
+      }
+      if (refreshedPane.connection.hostId !== expectedHostId) {
+        throw new Error("SFTP connection changed while editing — file not saved to prevent writing to wrong host");
+      }
+
+      const liveConnectionId = refreshedPane.connection.id;
+      if (!sftpId) {
+        sftpId = sftpSessionsRef.current.get(liveConnectionId);
+      }
       if (!sftpId) throw new Error("SFTP session not found");
+
+      if (liveConnectionId !== connectionId) {
+        editorTabStore.remapSessionId(connectionId, liveConnectionId);
+      }
 
       const bridge = netcattyBridge.get();
       if (!bridge) throw new Error("Bridge not available");
 
-      await bridge.writeSftp(sftpId, filePath, content, filenameEncoding ?? pane.filenameEncoding);
+      await bridge.writeSftp(
+        sftpId,
+        filePath,
+        content,
+        filenameEncoding ?? refreshedPane.filenameEncoding,
+      );
+      return liveConnectionId;
     },
-    [getPaneByConnectionId, sftpSessionsRef],
+    [
+      ensureRemoteSftpId,
+      getPaneByConnectionId,
+      getPaneByTabId,
+      getSideByTabId,
+      getTabByConnectionId,
+      sftpSessionsRef,
+    ],
   );
 
   const downloadToTemp = useCallback(
