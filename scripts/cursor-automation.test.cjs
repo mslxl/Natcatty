@@ -67,6 +67,41 @@ test('workflow routes PR lifecycle events through pull_request_target', () => {
   assert.doesNotMatch(triggers, /^  pull_request_review:/m);
 });
 
+test('Codex polling dispatches actionable submitted reviews to the fix loop', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const poll = workflow.match(
+    /  codex_poll:\n[\s\S]*$/,
+  )?.[0] || '';
+
+  assert.match(poll, /actions: write/);
+  assert.match(poll, /DISPATCH_TOKEN:/);
+  assert.match(poll, /latestCodexReview/);
+  assert.match(poll, /\['fix', 'give_up'\]\.includes\(decision\.action\)/);
+  assert.match(poll, /cursor-codex-dispatch:review-id=/);
+  assert.match(poll, /const alreadyDispatched/);
+  assert.match(poll, /let dispatchRejected = false/);
+  assert.match(poll, /authorization: `Bearer \$\{process\.env\.DISPATCH_TOKEN\}`/);
+  assert.match(poll, /actions\/workflows\/cursor-automation\.yml\/dispatches/);
+  assert.match(poll, /github\.rest\.issues\.deleteComment/);
+  assert.match(poll, /if \(dispatchRejected\)/);
+  assert.match(poll, /reviewedInBody[\s\S]*?!auto\.commitShasMatch\(reviewedInBody, reviewedByGithub\)/);
+});
+
+test('scheduled Codex polls share one concurrency group', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /github\.event_name == 'schedule' && github\.event\.schedule == '17 3 \* \* \*' && 'cursor-smoke' \|\|[\s\S]*?github\.event_name == 'schedule' && 'codex-poll' \|\|/,
+  );
+});
+
 test('no-PR follow-ups use a writable Cursor agent mode', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),

@@ -39,6 +39,8 @@ on:
 concurrency:
   group: >-
     cursor-auto-${{
+      github.event_name == 'schedule' && github.event.schedule == '17 3 * * *' && 'cursor-smoke' ||
+      github.event_name == 'schedule' && 'codex-poll' ||
       github.event.issue && !github.event.issue.pull_request && github.event.issue.number ||
       github.event.pull_request && github.event.pull_request.number ||
       github.event.issue && github.event.issue.pull_request && github.event.issue.number ||
@@ -4462,11 +4464,13 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
+      actions: write
     env:
       OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
       ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
       MAX_ROUNDS: ${{ vars.CURSOR_CODEX_FIX_MAX_ROUNDS || '40' }}
       GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+      DISPATCH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout helpers
         uses: actions/checkout@v7
@@ -4568,9 +4572,16 @@ jobs:
               // Only current-head Codex signals count as "answered". Delayed
               // reviews for older commits must not block expiry re-requests.
               const headMatches = (commitId, body) => {
-                const reviewed =
-                  auto.extractReviewedCommitSha(body) ||
-                  String(commitId || '').toLowerCase();
+                const reviewedInBody = auto.extractReviewedCommitSha(body);
+                const reviewedByGithub = String(commitId || '').toLowerCase();
+                if (
+                  reviewedInBody &&
+                  reviewedByGithub &&
+                  !auto.commitShasMatch(reviewedInBody, reviewedByGithub)
+                ) {
+                  return false;
+                }
+                const reviewed = reviewedByGithub || reviewedInBody;
                 if (!reviewed) return false;
                 return auto.commitShasMatch(pr.head.sha, reviewed);
               };
@@ -4615,6 +4626,7 @@ jobs:
                   `PR #${pr.number}: list review comments failed: ${err.message}`,
                 );
               }
+              let latestCodexReview = null;
               try {
                 const submitted = await github.paginate(
                   github.rest.pulls.listReviews,
@@ -4630,11 +4642,92 @@ jobs:
                   const ts =
                     Date.parse(r.submitted_at || r.created_at || '') || 0;
                   if (ts > lastCodexActivityAt) lastCodexActivityAt = ts;
+                  if (!latestCodexReview || ts > latestCodexReview.at) {
+                    latestCodexReview = { review: r, at: ts };
+                  }
                 }
               } catch (err) {
                 core.warning(
                   `PR #${pr.number}: list reviews failed: ${err.message}`,
                 );
+              }
+              if (latestCodexReview) {
+                const outcome = auto.parseCodexReviewOutcome({
+                  summaryText: latestCodexReview.review.body || '',
+                  reviewComments: reviewComments.filter((c) =>
+                    auto.isCodexBotLogin(c.user?.login),
+                  ),
+                  headSha: pr.head.sha,
+                  summaryCommitId: latestCodexReview.review.commit_id || '',
+                });
+                const decision = auto.decideCodexLoopAction({
+                  eligible: true,
+                  outcome,
+                  hasCodexActivity: true,
+                  hasAutomationRequest: true,
+                  headSha: pr.head.sha,
+                  lastAutomationRequestAt,
+                  lastCodexSummaryAt: latestCodexReview.at,
+                });
+                if (['fix', 'give_up'].includes(decision.action)) {
+                  const marker =
+                    `<!-- cursor-codex-dispatch:review-id=${latestCodexReview.review.id};head=${pr.head.sha} -->`;
+                  const alreadyDispatched = issueComments.some((comment) =>
+                    auto.isTrustedAutomationControlAuthor(
+                      comment.user?.login,
+                      controlOpts,
+                    ) && String(comment.body || '').includes(marker),
+                  );
+                  if (alreadyDispatched) continue;
+                  const { data: markerComment } =
+                    await github.rest.issues.createComment({
+                      ...context.repo,
+                      issue_number: pr.number,
+                      body: marker,
+                    });
+                  let dispatchRejected = false;
+                  try {
+                    const response = await fetch(
+                      `${process.env.GITHUB_API_URL || 'https://api.github.com'}` +
+                        `/repos/${context.repo.owner}/${context.repo.repo}` +
+                        '/actions/workflows/cursor-automation.yml/dispatches',
+                      {
+                        method: 'POST',
+                        headers: {
+                          accept: 'application/vnd.github+json',
+                          authorization: `Bearer ${process.env.DISPATCH_TOKEN}`,
+                          'content-type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          ref: context.payload.repository.default_branch,
+                          inputs: { pull_number: String(pr.number) },
+                        }),
+                      },
+                    );
+                    if (!response.ok) {
+                      dispatchRejected = true;
+                      throw new Error(
+                        `workflow dispatch failed: ${response.status} ${await response.text()}`,
+                      );
+                    }
+                  } catch (err) {
+                    if (dispatchRejected) {
+                      await github.rest.issues.deleteComment({
+                        ...context.repo,
+                        comment_id: markerComment.id,
+                      });
+                    }
+                    core.warning(
+                      `PR #${pr.number}: ${err.message}; ${dispatchRejected ? 'will retry' : 'keeping dispatch marker to avoid a duplicate run'}`,
+                    );
+                    continue;
+                  }
+                  core.info(
+                    `PR #${pr.number}: dispatched Codex loop for ${decision.reason}`,
+                  );
+                  handled += 1;
+                  continue;
+                }
               }
               if (
                 reactionResult.clean &&
