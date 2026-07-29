@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { copySessionWithCurrentShellImpl, splitSessionWithCurrentShellImpl } from "./AppHandlers";
+import { copySessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, splitSessionWithCurrentShellImpl } from "./AppHandlers";
 
 type CloneOpts = { localShellType?: string; inheritedCwd?: string };
 type Calls = {
@@ -84,4 +84,69 @@ test("ephemeral network host (only in terminalHosts) is never probed", async () 
   await copySessionWithCurrentShellImpl(getCtx, "src");
   assert.equal(calls.probed, false);
   assert.equal(calls.copy?.opts.inheritedCwd, "/vrp");
+});
+
+type WorkspaceNode =
+  | { id: string; type: "pane"; sessionId: string }
+  | { id: string; type: "split"; direction: string; children: WorkspaceNode[] };
+type CopyWorkspaceOpts = { localShellType?: string; perPaneCwd?: Record<string, string | undefined> };
+
+test("copyWorkspaceWithCurrentShell captures per-pane cwd and copies the workspace", async () => {
+  const calls: { copy?: { id: string; opts: CopyWorkspaceOpts } } = {};
+  const sessions = [
+    { id: "p1", protocol: "local", localStartDir: "/home/a" },
+    { id: "p2", protocol: "local", localStartDir: "/home/b" },
+  ];
+  const workspaces = [{
+    id: "ws-1",
+    root: {
+      id: "sp", type: "split", direction: "vertical",
+      children: [
+        { id: "n1", type: "pane", sessionId: "p1" },
+        { id: "n2", type: "pane", sessionId: "p2" },
+      ],
+    } as WorkspaceNode,
+  }];
+  const collectIds = (node: WorkspaceNode): string[] =>
+    node.type === "pane" ? [node.sessionId] : node.children.flatMap(collectIds);
+  const getCtx = () => ({
+    classifyLocalShellType: () => "bash",
+    collectSessionIds: collectIds,
+    copyWorkspace: (id: string, opts: CopyWorkspaceOpts) => { calls.copy = { id, opts }; },
+    discoveredShells: [],
+    getSessionRestoreCwd: () => undefined,
+    hostById: new Map(),
+    terminalHosts: [],
+    netcattyBridge: { get: () => ({}) },
+    resolveShellSetting: () => ({ command: "bash" }),
+    sessions,
+    terminalSettings: { localShell: "bash" },
+    workspaces,
+  });
+
+  await copyWorkspaceWithCurrentShellImpl(getCtx, "ws-1");
+
+  assert.equal(calls.copy?.id, "ws-1");
+  assert.deepEqual(calls.copy?.opts.perPaneCwd, { p1: "/home/a", p2: "/home/b" });
+  assert.equal(calls.copy?.opts.localShellType, "bash");
+});
+
+test("copyWorkspaceWithCurrentShell no-ops when the workspace is gone", async () => {
+  let called = false;
+  const getCtx = () => ({
+    classifyLocalShellType: () => "bash",
+    collectSessionIds: () => [],
+    copyWorkspace: () => { called = true; },
+    discoveredShells: [],
+    getSessionRestoreCwd: () => undefined,
+    hostById: new Map(),
+    terminalHosts: [],
+    netcattyBridge: { get: () => ({}) },
+    resolveShellSetting: () => ({ command: "bash" }),
+    sessions: [],
+    terminalSettings: { localShell: "bash" },
+    workspaces: [],
+  });
+  await copyWorkspaceWithCurrentShellImpl(getCtx, "missing");
+  assert.equal(called, false);
 });

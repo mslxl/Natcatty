@@ -521,6 +521,27 @@ export async function copySessionWithCurrentShellImpl(getCtx: AppContextGetter, 
   });
 }
 
+export async function copyWorkspaceWithCurrentShellImpl(getCtx: AppContextGetter, workspaceId: string) {
+  const { classifyLocalShellType, collectSessionIds, copyWorkspace, discoveredShells, resolveShellSetting, terminalSettings, workspaces } = getCtx();
+  const workspace = workspaces.find((w: { id: string }) => w.id === workspaceId);
+  if (!workspace) return;
+
+  const sessionIds: string[] = collectSessionIds(workspace.root);
+  // Resolve each pane's cwd in parallel — SSH panes may await the /proc probe.
+  const entries = await Promise.all(
+    sessionIds.map(async (id): Promise<readonly [string, string | undefined]> =>
+      [id, await captureCtxInheritedCwd(getCtx, id)] as const),
+  );
+  const perPaneCwd: Record<string, string | undefined> = Object.fromEntries(entries);
+
+  const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return copyWorkspace(workspaceId, {
+    localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+    perPaneCwd,
+  });
+}
+
 export async function copySessionToNewWindowWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
   const { classifyLocalShellType, discoveredShells, netcattyBridge, resolveShellSetting, sessions, terminalSettings, t, toast } = getCtx();
 {
