@@ -147,7 +147,7 @@ function buildScriptSessionMeta(
   const host = hosts.find((entry) => entry.id === session.hostId);
   return {
     connected: session.status === 'connected',
-    name: host?.label ?? session.hostLabel,
+    name: session.customName || session.hostLabel || host?.label,
     hostname: host?.hostname ?? session.hostname,
     username: host?.username ?? session.username,
   };

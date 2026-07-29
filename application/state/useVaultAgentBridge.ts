@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { applyGroupDefaults, resolveGroupDefaults } from '../../domain/groupConfig';
-import type { GroupConfig, Host, Identity, KnownHost, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSettings, VaultNote } from '../../domain/models';
+import type { GroupConfig, Host, Identity, KnownHost, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, SSHKey, TerminalSession, TerminalSettings, VaultNote } from '../../domain/models';
 import { materializeHostProxyProfile } from '../../domain/proxyProfiles';
 import {
   handleVaultAgentOp,
@@ -42,6 +42,7 @@ export interface UseVaultAgentBridgeInput {
   stopRuleTunnels: VaultAgentApiDeps['stopRuleTunnels'];
   openHost?: VaultAgentApiDeps['openHost'];
   closeSession?: VaultAgentApiDeps['closeSession'];
+  getScriptSessionMeta?: (sessionId: string) => Pick<TerminalSession, 'status' | 'customName' | 'hostLabel' | 'hostname' | 'username'> | undefined;
 }
 
 type VaultAgentSnapshot = {
@@ -199,6 +200,16 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         closeSession: current.closeSession
           ? (sessionId) => current.closeSession!(sessionId)
           : undefined,
+        getScriptSessionMeta: (sessionId) => {
+          const session = current.getScriptSessionMeta?.(sessionId);
+          if (!session) return undefined;
+          return {
+            connected: session.status === 'connected',
+            name: session.customName || session.hostLabel,
+            hostname: session.hostname,
+            username: session.username,
+          };
+        },
       });
     });
     return setupVaultAgentBridge();

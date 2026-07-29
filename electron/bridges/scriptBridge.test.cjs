@@ -1035,6 +1035,56 @@ test("script run uses renderer sessionMeta when main-process session map is empt
   assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /Production:10\.0\.0\.1@root/);
 });
 
+test("script run uses the main-process session label when renderer metadata is absent", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+
+  scriptBridge.init({
+    sessions: new Map([["session-local", {
+      status: "connected",
+      label: "Local Terminal",
+      hostname: "localhost",
+      username: "local",
+    }]]),
+    electronModule: {
+      app: {
+        getVersion: () => "test",
+        getPath: () => process.cwd(),
+      },
+    },
+    terminalBridge: {
+      writeToSession() {},
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => ({
+      webContents: {
+        send(channel, payload) {
+          if (channel === "netcatty:script:runs-updated") {
+            sentRunUpdates.push(payload.runs);
+          }
+        },
+      },
+    }),
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  });
+
+  await handlers.get("netcatty:script:run")({}, {
+    scriptId: "local-session-name",
+    scriptLabel: "Local session name",
+    sessionId: "session-local",
+    content: "nct.log(nct.session.name);",
+    permissionMode: "auto",
+  });
+
+  const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "local-session-name");
+  assert.equal(finalRun.status, "completed");
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /Local Terminal/);
+});
+
 test("script run sends form dialog requests and resolves object responses", async () => {
   const handlers = new Map();
   const sentRunUpdates = [];

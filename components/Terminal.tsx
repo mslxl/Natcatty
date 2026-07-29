@@ -400,11 +400,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     setActiveScriptRun(undefined);
   }, [activeScriptRun]);
+  const scriptSessionName = sessionDisplayName || host.label;
   const outputTriggers = useOutputTriggers({
     sessionId,
     hostId: host.id,
     snippets,
-    onRunScript: (snippet, sid) => runAutomationScript({ snippet, sessionId: sid }).catch((err) => {
+    onRunScript: (snippet, sid) => runAutomationScript({
+      snippet,
+      sessionId: sid,
+      sessionMeta: {
+        connected: true,
+        name: scriptSessionName,
+        hostname: host.hostname,
+        username: host.username,
+      },
+    }).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
       throw err;
@@ -2363,7 +2373,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         sessionId,
         sessionMeta: {
           connected: true,
-          name: host.label,
+          name: scriptSessionName,
           hostname: host.hostname,
           username: host.username,
         },
@@ -2408,7 +2418,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
               sessionId,
               sessionMeta: {
                 connected: true,
-                name: host.label,
+                name: scriptSessionName,
                 hostname: host.hostname,
                 username: host.username,
               },
@@ -2431,7 +2441,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }, 400);
 
     return () => window.clearTimeout(timer);
-  }, [effectiveTerminalProtocol, host, isPendingScriptAlreadyHandled, moshShellReady, pendingScript, pendingScriptId, sessionId, snippets, status, t]);
+  }, [effectiveTerminalProtocol, host, isPendingScriptAlreadyHandled, moshShellReady, pendingScript, pendingScriptId, scriptSessionName, sessionId, snippets, status, t]);
 
   useEffect(() => {
     return registerScreenSnapshotProvider(sessionId, () => {
@@ -2818,7 +2828,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const executeSnippet = useCallback(async (snippet: Snippet) => {
     if (isScriptSnippet(snippet)) {
       try {
-        await runAutomationScript({ snippet, sessionId });
+        await runAutomationScript({
+          snippet,
+          sessionId,
+          sessionMeta: {
+            connected: true,
+            name: scriptSessionName,
+            hostname: host.hostname,
+            username: host.username,
+          },
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
@@ -2830,7 +2849,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     executeSnippetCommand(command, snippet.noAutoRun, {
       multiLineRunMode: snippet.multiLineRunMode,
     });
-  }, [executeSnippetCommand, sessionId, t]);
+  }, [executeSnippetCommand, host.hostname, host.username, scriptSessionName, sessionId, t]);
 
   const onSnippetShortkeyRef = useRef(executeSnippet);
   onSnippetShortkeyRef.current = executeSnippet;

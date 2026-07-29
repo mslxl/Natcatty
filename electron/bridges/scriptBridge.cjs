@@ -188,7 +188,7 @@ function getSessionMeta(sessionId) {
   if (session) {
     return {
       connected: session.status !== "disconnected",
-      name: rendererMeta?.name || session.hostLabel || "",
+      name: rendererMeta?.name || session.label || session.hostLabel || "",
       hostname: session.hostname || session.hostLabel || rendererMeta?.hostname || "",
       username: session.username || rendererMeta?.username || "",
     };

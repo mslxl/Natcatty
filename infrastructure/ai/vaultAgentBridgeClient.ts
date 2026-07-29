@@ -333,6 +333,7 @@ async function executeSnippetOrScriptRun(
   snippet: Snippet,
   sessionId: string,
   params: Record<string, unknown>,
+  sessionMeta?: { connected?: boolean; name?: string; hostname?: string; username?: string },
 ): Promise<Record<string, unknown>> {
   if (isScriptSnippet(snippet)) {
     const wait = parseOptionalBoolean(params.wait) ?? false;
@@ -340,6 +341,7 @@ async function executeSnippetOrScriptRun(
       const { runId } = await runAutomationScript({
         snippet,
         sessionId,
+        sessionMeta,
       });
       if (!wait) {
         return { ok: true, sessionId, snippetId: snippet.id, runId, kind: 'script' };
@@ -461,6 +463,12 @@ export interface VaultAgentApiDeps {
     ok: false;
     error: string;
   };
+  getScriptSessionMeta?: (sessionId: string) => {
+    connected?: boolean;
+    name?: string;
+    hostname?: string;
+    username?: string;
+  } | undefined;
 }
 
 function resolveEffectiveHostKeyPath(host: Host, deps: VaultAgentApiDeps): string | undefined {
@@ -1073,7 +1081,7 @@ export async function handleVaultAgentOp(
       const snippet = deps.snippets.find((entry) => entry.id === snippetId);
       if (!snippet) return { ok: false, error: `Snippet "${snippetId}" was not found.` };
       if (!sessionId) return { ok: false, error: 'sessionId is required.' };
-      return executeSnippetOrScriptRun(snippet, sessionId, params);
+      return executeSnippetOrScriptRun(snippet, sessionId, params, deps.getScriptSessionMeta?.(sessionId));
     }
     case 'scripts.list': {
       return {
@@ -1136,7 +1144,7 @@ export async function handleVaultAgentOp(
       const script = deps.snippets.find((entry) => entry.id === scriptId && isScriptSnippet(entry));
       if (!script) return { ok: false, error: `Script "${scriptId}" was not found.` };
       if (!sessionId) return { ok: false, error: 'sessionId is required.' };
-      return executeSnippetOrScriptRun(script, sessionId, params);
+      return executeSnippetOrScriptRun(script, sessionId, params, deps.getScriptSessionMeta?.(sessionId));
     }
     case 'scripts.reference': {
       return { ok: true, reference: getScriptApiReference() };
