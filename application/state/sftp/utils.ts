@@ -245,13 +245,14 @@ export const getParentPath = (path: string): string => {
     const result = `${drive}\\${parts.join("\\")}`;
     return result;
   }
-  if (path === "/") {
+  if (path === "/" || path === "//") {
     return "/";
   }
   const parts = path.split("/").filter(Boolean);
   parts.pop();
-  const result = parts.length ? `/${parts.join("/")}` : "/";
-  return result;
+  // Match breadcrumb / path-bar: pure //host/... stays POSIX with a double-slash prefix.
+  const prefix = path.startsWith("//") ? "//" : "/";
+  return parts.length ? `${prefix}${parts.join("/")}` : "/";
 };
 
 export const isConcreteTransferTargetPath = (task: Pick<TransferTask, "targetPath">): boolean => {

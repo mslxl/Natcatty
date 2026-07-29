@@ -93,6 +93,14 @@ test("path bar keeps POSIX double-slash paths outside Windows panes", () => {
   );
 });
 
+test("getParentPath preserves POSIX double-slash prefixes", () => {
+  assert.equal(getParentPath("//srv/share/logs"), "//srv/share");
+  assert.equal(getParentPath("//srv/share"), "//srv");
+  assert.equal(getParentPath("//srv"), "/");
+  assert.equal(getParentPath("//"), "/");
+  assert.equal(getParentPath("/srv/share/logs"), "/srv/share");
+});
+
 test("Windows UNC share roots are treated as path roots", () => {
   assert.equal(isWindowsRoot("\\\\wsl.localhost\\Ubuntu-22.04"), true);
   assert.equal(isWindowsRoot("\\\\wsl.localhost\\Ubuntu-22.04\\"), true);
