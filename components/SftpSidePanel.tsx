@@ -33,6 +33,7 @@ import { resolveSftpAutoConnectPath } from "../application/state/sftp/sftpReopen
 import {
   isBrowseSessionInteractive,
   listRemoteBrowseConnectionIds,
+  listRemoteBrowseSftpTabIds,
 } from "../application/state/sftp/browseSessionLifecycle";
 import { logger } from "../lib/logger";
 import type { DropEntry } from "../lib/sftpFileUtils";
@@ -193,11 +194,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }), [t]);
 
   const ownedEditorSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const ownedEditorSftpTabIdsRef = useRef<ReadonlySet<string>>(new Set());
   // Re-render on tab open/close/session remap only — not on every editor keystroke.
   useEditorTabPresenceRevision();
-  const hasOwnedEditorTab = editorTabStore.hasTabForSessions(
-    ownedEditorSessionIdsRef.current,
-  );
+  const hasOwnedEditorTab = editorTabStore.hasOwnedEditorForSftpOwner({
+    sessionIds: ownedEditorSessionIdsRef.current,
+    sftpTabIds: ownedEditorSftpTabIdsRef.current,
+  });
 
   const sftpOptions = useMemo(() => ({
     ...fileWatchHandlers,
@@ -234,6 +237,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
   ownedEditorSessionIdsRef.current = new Set(
     listRemoteBrowseConnectionIds([
+      ...sftp.leftTabs.tabs,
+      ...sftp.rightTabs.tabs,
+    ]),
+  );
+  ownedEditorSftpTabIdsRef.current = new Set(
+    listRemoteBrowseSftpTabIds([
       ...sftp.leftTabs.tabs,
       ...sftp.rightTabs.tabs,
     ]),
@@ -611,7 +620,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       : null;
     const hasEditorBoundToCurrentConnection = !!(
       currentConn
-      && editorTabStore.getTabs().some((tab) => tab.sessionId === currentConn.id)
+      && editorTabStore.getTabs().some((tab) =>
+        tab.sessionId === currentConn.id || tab.sftpTabId === s.leftPane.id,
+      )
     );
     const hasActiveTransferOnCurrentConnection = !!(
       currentConn

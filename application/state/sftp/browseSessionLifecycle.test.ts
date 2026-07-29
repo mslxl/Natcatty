@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   listRemoteBrowseConnectionIds,
+  listRemoteBrowseSftpTabIds,
   isBrowseSessionInteractive,
   listRemoteConnectionIdsForRestore,
   shouldParkBrowseSessions,
@@ -17,6 +18,15 @@ test("editor retention tracks remote browse connections but excludes local panes
     { connection: null },
     { connection: { id: "remote-a", isLocal: false } },
   ]), ["remote-a"]);
+});
+
+test("editor ownership tracks stable remote pane tab ids", () => {
+  assert.deepEqual(listRemoteBrowseSftpTabIds([
+    { id: "pane-remote-a", connection: { id: "remote-a", isLocal: false } },
+    { id: "pane-local", connection: { id: "local-a", isLocal: true } },
+    { id: "pane-empty", connection: null },
+    { id: "pane-remote-b", connection: { id: "remote-b", isLocal: false } },
+  ]), ["pane-remote-a", "pane-remote-b"]);
 });
 
 test("keeps a hidden SFTP owner interactive while its promoted editor tab is open", () => {

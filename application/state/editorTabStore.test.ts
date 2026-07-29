@@ -318,6 +318,20 @@ test("remapSessionId updates editor ownership after browse reconnect", () => {
   assert.equal(store.getPresenceRevision(), before + 1);
 });
 
+test("hasOwnedEditorForSftpOwner keeps ownership via pane tab id during reconnect gap", () => {
+  const store = new EditorTabStore();
+  store._debugInsert(makeTab({ sessionId: "conn_old", sftpTabId: "pane_1" }));
+
+  assert.equal(store.hasTabForSessions(new Set(["conn_new"])), false);
+  assert.equal(
+    store.hasOwnedEditorForSftpOwner({
+      sessionIds: new Set(["conn_new"]),
+      sftpTabIds: new Set(["pane_1"]),
+    }),
+    true,
+  );
+});
+
 test("updateContent does not bump editor presence revision", () => {
   const store = new EditorTabStore();
   store._debugInsert(makeTab());

@@ -52,6 +52,18 @@ export class EditorTabStore {
   hasTabForSessions = (sessionIds: ReadonlySet<string>): boolean =>
     this.tabs.some((tab) => sessionIds.has(tab.sessionId));
 
+  hasTabForSftpTabIds = (sftpTabIds: ReadonlySet<string>): boolean =>
+    this.tabs.some((tab) => sftpTabIds.has(tab.sftpTabId));
+
+  /** Match promoted editors by stable pane tab id and/or live connection id. */
+  hasOwnedEditorForSftpOwner = (params: {
+    sessionIds: ReadonlySet<string>;
+    sftpTabIds: ReadonlySet<string>;
+  }): boolean =>
+    this.tabs.some((tab) =>
+      params.sftpTabIds.has(tab.sftpTabId) || params.sessionIds.has(tab.sessionId),
+    );
+
   getPresenceRevision = (): number => this.presenceRevision;
 
   /** Update editor tabs after browse reconnect replaces a connection id. */

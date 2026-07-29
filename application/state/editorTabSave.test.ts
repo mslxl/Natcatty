@@ -111,10 +111,14 @@ test("promoted side-panel editor saves while hidden and releases its session aft
   });
   const browseSessions = new Map([["conn_1", "sftp_1"]]);
   const ownedSessionIds = new Set(["conn_1"]);
+  const ownedSftpTabIds = new Set(["pane_1"]);
   const applyHiddenLifecycle = () => {
     const interactive = isBrowseSessionInteractive({
       surfaceVisible: false,
-      hasOwnedEditorTab: store.hasTabForSessions(ownedSessionIds),
+      hasOwnedEditorTab: store.hasOwnedEditorForSftpOwner({
+        sessionIds: ownedSessionIds,
+        sftpTabIds: ownedSftpTabIds,
+      }),
     });
     if (shouldParkBrowseSessions({ interactive, browseParked: false })) {
       takeBrowseSessionsForClose(browseSessions);
@@ -139,6 +143,37 @@ test("promoted side-panel editor saves while hidden and releases its session aft
   store.close(tabId);
   applyHiddenLifecycle();
   assert.equal(browseSessions.size, 0);
+});
+
+test("hidden panel stays interactive while browse reconnects before session remap", () => {
+  const store = new EditorTabStore();
+  store.promoteFromModal({
+    sessionId: "conn_old",
+    sftpTabId: "pane_1",
+    hostId: "host_1",
+    remotePath: "/tmp/script.sh",
+    fileName: "script.sh",
+    languageId: "shell",
+    content: "echo changed",
+    baselineContent: "echo original",
+    wordWrap: false,
+    viewState: null,
+  });
+  const browseSessions = new Map([["conn_new", "sftp_1"]]);
+
+  const interactive = isBrowseSessionInteractive({
+    surfaceVisible: false,
+    hasOwnedEditorTab: store.hasOwnedEditorForSftpOwner({
+      sessionIds: new Set(["conn_new"]),
+      sftpTabIds: new Set(["pane_1"]),
+    }),
+  });
+  assert.equal(interactive, true);
+  assert.equal(
+    shouldParkBrowseSessions({ interactive, browseParked: false }),
+    false,
+  );
+  assert.equal(browseSessions.get("conn_new"), "sftp_1");
 });
 
 test("editor tab save remaps stale session ids returned by the SFTP writer", async () => {
