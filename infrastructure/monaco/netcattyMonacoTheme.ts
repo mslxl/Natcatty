@@ -103,6 +103,9 @@ export const buildNetcattyMonacoThemeColors = (
   'editorLineNumber.foreground': colors.mutedFg,
   'editorLineNumber.activeForeground': colors.fg,
   'editor.lineHighlightBackground': `${colors.fg}08`,
+  // Soft matching-bracket highlight; inherited Monaco #888 border reads too heavy.
+  'editorBracketMatch.background': `${colors.primary}14`,
+  'editorBracketMatch.border': `${colors.primary}40`,
   'editorWidget.background': colors.card,
   'editorWidget.foreground': colors.fg,
   'editorWidget.border': colors.border,

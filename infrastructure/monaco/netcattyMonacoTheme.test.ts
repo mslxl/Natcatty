@@ -44,3 +44,11 @@ test('buildNetcattyMonacoThemeColors still maps core editor chrome from app colo
   assert.equal(colors['editorCursor.foreground'], sampleColors.primary);
   assert.equal(colors['editor.selectionBackground'], `${sampleColors.primary}40`);
 });
+
+test('buildNetcattyMonacoThemeColors softens matching bracket highlight', () => {
+  const colors = buildNetcattyMonacoThemeColors(sampleColors);
+
+  assert.equal(colors['editorBracketMatch.background'], `${sampleColors.primary}14`);
+  assert.equal(colors['editorBracketMatch.border'], `${sampleColors.primary}40`);
+  assert.equal(colors['editor.selectionBackground'], `${sampleColors.primary}40`);
+});
