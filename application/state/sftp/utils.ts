@@ -56,7 +56,7 @@ export const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
   return entry.type === "directory" || (entry.type === "symlink" && entry.linkTarget === "directory");
 };
 
-const getWindowsUncRoot = (path: string): string | null => {
+export const getWindowsUncRoot = (path: string): string | null => {
   const normalized = path.replace(/\//g, "\\");
   const match = normalized.match(/^\\\\([^\\]+)\\([^\\]+)(?:\\|$)/);
   return match ? `\\\\${match[1]}\\${match[2]}` : null;
@@ -66,6 +66,72 @@ const getWindowsUncRoot = (path: string): string | null => {
 export const isWindowsPath = (path: string): boolean => (
   /^[A-Za-z]:/.test(path) || getWindowsUncRoot(path) !== null
 );
+
+/**
+ * Normalize a path typed/pasted into the SFTP path bar before navigation.
+ * Preserves Windows drive letters and UNC roots (e.g. \\wsl.localhost\Ubuntu-22.04\...).
+ * Non-Windows paths keep or gain a leading slash.
+ */
+export const normalizeSftpNavigationPath = (rawPath: string): string => {
+  const newPath = rawPath.trim() || "/";
+  if (isWindowsPath(newPath)) {
+    if (/^[A-Za-z]:[\\/]?$/.test(newPath)) {
+      return `${newPath.charAt(0).toUpperCase()}:\\`;
+    }
+    return newPath.replace(/\//g, "\\");
+  }
+  return newPath.startsWith("/") ? newPath : `/${newPath}`;
+};
+
+export type SftpBreadcrumbSegment = { label: string; path: string };
+
+/**
+ * Split a current path into breadcrumb segments (label + navigable path).
+ * UNC roots are kept as a single first segment (\\server\share).
+ */
+export const getSftpBreadcrumbSegments = (
+  path: string,
+): { segments: SftpBreadcrumbSegment[]; isWindowsDrive: boolean } => {
+  if (!isWindowsPath(path)) {
+    const parts = path.split("/").filter(Boolean);
+    return {
+      segments: parts.map((part, index) => ({
+        label: part,
+        path: `/${parts.slice(0, index + 1).join("/")}`,
+      })),
+      isWindowsDrive: false,
+    };
+  }
+
+  const normalized = path.replace(/\//g, "\\");
+  const uncRoot = getWindowsUncRoot(normalized);
+  if (uncRoot) {
+    const rest = normalized.slice(uncRoot.length).replace(/^[\\]+/, "");
+    const restParts = rest ? rest.split(/[\\]+/).filter(Boolean) : [];
+    return {
+      segments: [
+        { label: uncRoot, path: uncRoot },
+        ...restParts.map((part, index) => ({
+          label: part,
+          path: `${uncRoot}\\${restParts.slice(0, index + 1).join("\\")}`,
+        })),
+      ],
+      isWindowsDrive: false,
+    };
+  }
+
+  const parts = normalized.split(/[\\/]/).filter(Boolean);
+  return {
+    segments: parts.map((part, index) => {
+      const built = parts.slice(0, index + 1).join("\\");
+      return {
+        label: part,
+        path: /^[A-Za-z]:$/.test(built) ? `${built}\\` : built,
+      };
+    }),
+    isWindowsDrive: true,
+  };
+};
 
 const normalizeWindowsRoot = (path: string): string => {
   const normalized = path.replace(/\//g, "\\");

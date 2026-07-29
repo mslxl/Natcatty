@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 
 import {
   getParentPath,
+  getSftpBreadcrumbSegments,
   getSftpFilterAfterPathChange,
   getSftpFilterAfterPathChangeError,
   isConcreteTransferTargetPath,
+  isWindowsRoot,
   joinTransferTargetPath,
+  normalizeSftpNavigationPath,
   shouldClearSftpFilterForPathChange,
 } from "./utils";
 
@@ -54,6 +57,69 @@ test("directory targets cannot escape the selected local root", () => {
   assert.equal(
     getParentPath("\\\\server\\share"),
     "\\\\server\\share",
+  );
+});
+
+test("path bar keeps WSL UNC paths instead of forcing a Unix root", () => {
+  assert.equal(
+    normalizeSftpNavigationPath("\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa"),
+    "\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa",
+  );
+  assert.equal(
+    normalizeSftpNavigationPath("//wsl.localhost/Ubuntu-22.04/home/aaa"),
+    "\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa",
+  );
+  assert.equal(
+    normalizeSftpNavigationPath("\\\\wsl$\\Ubuntu-22.04\\home\\aaa"),
+    "\\\\wsl$\\Ubuntu-22.04\\home\\aaa",
+  );
+  assert.equal(normalizeSftpNavigationPath("C:"), "C:\\");
+  assert.equal(normalizeSftpNavigationPath("c:/"), "C:\\");
+  assert.equal(normalizeSftpNavigationPath("home/aaa"), "/home/aaa");
+  assert.equal(normalizeSftpNavigationPath("/var/log"), "/var/log");
+  assert.equal(normalizeSftpNavigationPath("   "), "/");
+});
+
+test("Windows UNC share roots are treated as path roots", () => {
+  assert.equal(isWindowsRoot("\\\\wsl.localhost\\Ubuntu-22.04"), true);
+  assert.equal(isWindowsRoot("\\\\wsl.localhost\\Ubuntu-22.04\\"), true);
+  assert.equal(isWindowsRoot("\\\\wsl.localhost\\Ubuntu-22.04\\home"), false);
+  assert.equal(isWindowsRoot("C:\\"), true);
+  assert.equal(isWindowsRoot("C:\\Users"), false);
+});
+
+test("breadcrumb segments keep WSL UNC roots intact", () => {
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa"),
+    {
+      segments: [
+        { label: "\\\\wsl.localhost\\Ubuntu-22.04", path: "\\\\wsl.localhost\\Ubuntu-22.04" },
+        { label: "home", path: "\\\\wsl.localhost\\Ubuntu-22.04\\home" },
+        { label: "aaa", path: "\\\\wsl.localhost\\Ubuntu-22.04\\home\\aaa" },
+      ],
+      isWindowsDrive: false,
+    },
+  );
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("C:\\Users\\alice"),
+    {
+      segments: [
+        { label: "C:", path: "C:\\" },
+        { label: "Users", path: "C:\\Users" },
+        { label: "alice", path: "C:\\Users\\alice" },
+      ],
+      isWindowsDrive: true,
+    },
+  );
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("/home/aaa"),
+    {
+      segments: [
+        { label: "home", path: "/home" },
+        { label: "aaa", path: "/home/aaa" },
+      ],
+      isWindowsDrive: false,
+    },
   );
 });
 

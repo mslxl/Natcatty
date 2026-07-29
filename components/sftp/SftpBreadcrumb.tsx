@@ -5,6 +5,7 @@
 import { ChevronDown, ChevronRight, Home, MoreHorizontal } from 'lucide-react';
 import React, { memo, useCallback, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
+import { getSftpBreadcrumbSegments } from '../../application/state/sftp/utils';
 import { Dropdown, DropdownContent, DropdownTrigger } from '../ui/dropdown';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
@@ -40,54 +41,41 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         }
     }, [onListDrives]);
 
-    // Handle both Windows (C:\path) and Unix (/path) style paths
-    const isWindowsPath = /^[A-Za-z]:/.test(path);
-    const separator = isWindowsPath ? /[\\/]/ : /\//;
-    const parts = path.split(separator).filter(Boolean);
-
-    // For Windows, first part might be drive letter like "C:"
-    const buildPath = (index: number) => {
-        if (isWindowsPath) {
-            const builtPath = parts.slice(0, index + 1).join('\\');
-            // If this is just a drive letter (e.g., "C:"), add trailing backslash
-            if (/^[A-Za-z]:$/.test(builtPath)) {
-                return builtPath + '\\';
-            }
-            return builtPath;
-        }
-        return '/' + parts.slice(0, index + 1).join('/');
-    };
+    const { segments, isWindowsDrive } = useMemo(
+        () => getSftpBreadcrumbSegments(path),
+        [path],
+    );
 
     // Determine which parts to show (always truncate, no expansion)
     const { visibleParts, hiddenParts, needsTruncation } = useMemo(() => {
-        if (parts.length <= maxVisibleParts) {
-            return { 
-                visibleParts: parts.map((part, idx) => ({ part, originalIndex: idx })), 
-                hiddenParts: [] as { part: string; originalIndex: number }[], 
-                needsTruncation: false 
+        if (segments.length <= maxVisibleParts) {
+            return {
+                visibleParts: segments.map((segment, idx) => ({ segment, originalIndex: idx })),
+                hiddenParts: [] as { segment: (typeof segments)[number]; originalIndex: number }[],
+                needsTruncation: false,
             };
         }
 
         // Show first part + ellipsis + last (maxVisibleParts - 1) parts
-        const firstPart = [{ part: parts[0], originalIndex: 0 }];
+        const firstPart = [{ segment: segments[0], originalIndex: 0 }];
         const lastPartsCount = maxVisibleParts - 1;
-        const lastParts = parts.slice(-lastPartsCount).map((part, idx) => ({
-            part,
-            originalIndex: parts.length - lastPartsCount + idx
+        const lastParts = segments.slice(-lastPartsCount).map((segment, idx) => ({
+            segment,
+            originalIndex: segments.length - lastPartsCount + idx,
         }));
-        const hidden = parts.slice(1, -lastPartsCount).map((part, idx) => ({
-            part,
-            originalIndex: idx + 1
+        const hidden = segments.slice(1, -lastPartsCount).map((segment, idx) => ({
+            segment,
+            originalIndex: idx + 1,
         }));
 
-        return { 
-            visibleParts: [...firstPart, ...lastParts], 
-            hiddenParts: hidden, 
-            needsTruncation: true 
+        return {
+            visibleParts: [...firstPart, ...lastParts],
+            hiddenParts: hidden,
+            needsTruncation: true,
         };
-    }, [parts, maxVisibleParts]);
+    }, [segments, maxVisibleParts]);
 
-    const showDriveDropdown = isWindowsPath && isLocal && !!onListDrives;
+    const showDriveDropdown = isWindowsDrive && isLocal && !!onListDrives;
 
     return (
         <Tooltip>
@@ -105,9 +93,9 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                         <TooltipContent>{t("sftp.goHome")}</TooltipContent>
                     </Tooltip>
                     <ChevronRight size={12} className="opacity-40 shrink-0" />
-                    {visibleParts.map(({ part, originalIndex }, displayIdx) => {
-                        const partPath = buildPath(originalIndex);
-                        const isLast = originalIndex === parts.length - 1;
+                    {visibleParts.map(({ segment, originalIndex }, displayIdx) => {
+                        const partPath = segment.path;
+                        const isLast = originalIndex === segments.length - 1;
                         const showEllipsisBefore = needsTruncation && displayIdx === 1;
 
                         return (
@@ -121,7 +109,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                                                 </span>
                                             </TooltipTrigger>
                                             <TooltipContent>
-                                                {`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.part).join(' > ')}`}
+                                                {`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.segment.label).join(' > ')}`}
                                             </TooltipContent>
                                         </Tooltip>
                                         <ChevronRight size={12} className="opacity-40 shrink-0" />
@@ -131,7 +119,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                                     <Dropdown open={driveDropdownOpen} onOpenChange={handleDriveDropdownOpen}>
                                         <DropdownTrigger asChild>
                                             <button className="hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 shrink-0 flex items-center gap-0.5">
-                                                {part}
+                                                {segment.label}
                                                 <ChevronDown size={10} className="opacity-60" />
                                             </button>
                                         </DropdownTrigger>
@@ -142,7 +130,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                                                     onClick={() => { onNavigate(drive + '\\'); setDriveDropdownOpen(false); }}
                                                     className={cn(
                                                         "w-full text-left px-2 py-1 text-xs rounded hover:bg-secondary/60",
-                                                        drive === part && "bg-secondary font-medium"
+                                                        drive === segment.label && "bg-secondary font-medium"
                                                     )}
                                                 >
                                                     {drive}
@@ -160,10 +148,10 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                                                     isLast && "text-foreground font-medium"
                                                 )}
                                             >
-                                                {part}
+                                                {segment.label}
                                             </button>
                                         </TooltipTrigger>
-                                        <TooltipContent>{part}</TooltipContent>
+                                        <TooltipContent>{segment.label}</TooltipContent>
                                     </Tooltip>
                                 )}
                                 {!isLast && <ChevronRight size={12} className="opacity-40 shrink-0" />}

@@ -8,7 +8,7 @@ import { useSftpPaneTreeContextMenu } from './useSftpPaneTreeContextMenu';
 import { useSftpPaneTreeRows } from './useSftpPaneTreeRows';
 import { SftpMoveToDialog } from './SftpMoveToDialog';
 import type { SftpFileEntry } from '../../types';
-import { getParentPath, joinPath } from '../../application/state/sftp/utils';
+import { getParentPath, isWindowsRoot, joinPath } from '../../application/state/sftp/utils';
 import { buildSftpColumnTemplate, filterHiddenFiles, isNavigableDirectory, isSftpColumnMenuKey, sortSftpEntries } from './utils';
 import type { SftpTransferSource } from './SftpContext';
 import type { SftpPaneTreeViewProps } from './SftpPaneTreeView.types';
@@ -447,7 +447,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
     const descriptors: NodeDescriptor[] = [];
     const pathMap = new Map<string, SftpFileEntry>();
     const currentPath = resolvedRootPath;
-    const isRootPath = currentPath === '/' || /^[A-Za-z]:[\\/]?$/.test(currentPath);
+    const isRootPath = currentPath === '/' || isWindowsRoot(currentPath);
     if (!isRootPath && currentPath) {
       const files = rootEntries;
       let parentEntry = files.find(f => f.name === '..');
