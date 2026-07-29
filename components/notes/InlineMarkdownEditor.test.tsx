@@ -24,6 +24,10 @@ test("host picker uses a constrained virtual list and keeps pointer selection", 
   assert.match(source, /FixedSizeVirtualList/);
   assert.match(source, /ref=\{hostPickerListRef\}/);
   assert.match(source, /HOST_PICKER_LIST_MAX_HEIGHT/);
+  assert.match(
+    source,
+    /filteredHosts\.length === 0\s*\?\s*HOST_PICKER_EMPTY_HEIGHT\s*:\s*HOST_PICKER_LIST_VERTICAL_PADDING \+ filteredHosts\.length \* HOST_PICKER_ROW_HEIGHT/,
+  );
   assert.match(source, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(source, /onClick=\{\(\) => insertHostLink\(host\)\}/);
 });

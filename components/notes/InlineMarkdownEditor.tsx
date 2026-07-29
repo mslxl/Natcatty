@@ -899,7 +899,14 @@ export function InlineMarkdownEditor({
           </div>
             <div
               className="max-h-64"
-              style={{ height: Math.min(HOST_PICKER_LIST_MAX_HEIGHT, HOST_PICKER_LIST_VERTICAL_PADDING + filteredHosts.length * HOST_PICKER_ROW_HEIGHT) }}
+              style={{
+                height: Math.min(
+                  HOST_PICKER_LIST_MAX_HEIGHT,
+                  filteredHosts.length === 0
+                    ? HOST_PICKER_EMPTY_HEIGHT
+                    : HOST_PICKER_LIST_VERTICAL_PADDING + filteredHosts.length * HOST_PICKER_ROW_HEIGHT,
+                ),
+              }}
             >
               {filteredHosts.length === 0 ? (
                 <div className="px-3 py-2 text-sm text-muted-foreground">没有匹配的主机</div>
