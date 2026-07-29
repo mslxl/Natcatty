@@ -31,7 +31,7 @@ import {
   resolvePathComponents,
 } from "./remotePathCompleter";
 import { getSnippetSuggestions } from "./snippetCompleter";
-import type { Snippet } from "../../../domain/models";
+import type { AutocompleteHistoryScope, Snippet } from "../../../domain/models";
 import type { AutocompleteCwdSource } from "./terminalAutocompleteLayout";
 
 /** Source indicator for where a suggestion came from */
@@ -178,9 +178,11 @@ export async function getCompletions(
     cwdSource?: AutocompleteCwdSource;
     /** Custom snippets to surface at the command position */
     snippets?: Snippet[];
+    /** Which history pool to query (default: current host only). */
+    historyScope?: AutocompleteHistoryScope;
   } = {},
 ): Promise<CompletionSuggestion[]> {
-  const { hostId, maxResults = 15 } = options;
+  const { hostId, maxResults = 15, historyScope = "host" } = options;
 
   if (!input || input.trim().length === 0) return [];
 
@@ -196,10 +198,13 @@ export async function getCompletions(
   const preferPathSuggestions = pathCheck.shouldComplete;
   const resultLimit = preferPathSuggestions ? Math.max(maxResults, 24) : maxResults;
 
+  // History queries honor historyScope; snippets still stay host-scoped.
+  const historyHostId = historyScope === "global" ? undefined : hostId;
+
   // 1. History suggestions (full command line prefix match)
   // Cap history to leave room for spec suggestions in the popup
   const historyOpts: HistoryQueryOptions = {
-    hostId,
+    hostId: historyHostId,
     limit: preferPathSuggestions ? 0 : 5,
   };
 
@@ -224,7 +229,7 @@ export async function getCompletions(
       commandName: ctx.commandName,
       excludeCommand: input,
       argumentPrefix: normalizeHistoryPathPrefix(ctx.currentWord),
-      hostId,
+      hostId: historyHostId,
       limit: 5,
     });
     for (let index = 0; index < recentHistory.length; index++) {

@@ -470,6 +470,11 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.autocomplete.ghostText.desc': '在游標後顯示灰色的建議文字（類似 fish shell）。',
   'settings.terminal.autocomplete.popupMenu': '彈出選單',
   'settings.terminal.autocomplete.popupMenu.desc': '顯示包含多個建議的浮動列表。',
+  'settings.terminal.autocomplete.historyScope': '歷史指令提示範圍',
+  'settings.terminal.autocomplete.historyScope.desc':
+    '選擇自動補全的歷史建議來自目前主機，還是所有主機上執行過的指令。',
+  'settings.terminal.autocomplete.historyScope.host': '目前主機',
+  'settings.terminal.autocomplete.historyScope.global': '全部主機',
   'settings.terminal.section.passwordPromptAssist': '密碼提示輔助',
   'settings.terminal.passwordPromptAssist.mode': '輔助模式',
   'settings.terminal.passwordPromptAssist.mode.desc':

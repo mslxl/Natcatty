@@ -221,6 +221,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'inlineImagesEnabled', 'inlineImageKittyEnabled', 'inlineImageSixelEnabled', 'inlineImageIipEnabled',
   'autocompleteEnabled', 'autocompleteGhostText', 'autocompletePopupMenu',
   'autocompleteDebounceMs', 'autocompleteMinChars', 'autocompleteMaxSuggestions',
+  'autocompleteHistoryScope',
 ] as const;
 
 export const SYNCABLE_SETTING_STORAGE_KEYS = [

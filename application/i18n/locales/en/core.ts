@@ -725,6 +725,11 @@ Highlight the focused split pane:
   'settings.terminal.autocomplete.ghostText.desc': 'Show inline gray suggestion text after the cursor (like fish shell).',
   'settings.terminal.autocomplete.popupMenu': 'Popup menu',
   'settings.terminal.autocomplete.popupMenu.desc': 'Show a floating list of multiple suggestions.',
+  'settings.terminal.autocomplete.historyScope': 'History suggestion scope',
+  'settings.terminal.autocomplete.historyScope.desc':
+    'Choose whether autocomplete history suggestions come from the current host only, or from commands recorded on all hosts.',
+  'settings.terminal.autocomplete.historyScope.host': 'Current host',
+  'settings.terminal.autocomplete.historyScope.global': 'All hosts',
 
   // Settings > Terminal > Password prompt assist (sudo/su)
   'settings.terminal.section.passwordPromptAssist': 'Password prompt assist',

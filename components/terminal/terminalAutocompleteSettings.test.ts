@@ -14,6 +14,7 @@ test("keeps autocomplete enabled for shell-like terminal protocols", () => {
         autocompleteDebounceMs: 120,
         autocompleteMinChars: 2,
         autocompleteMaxSuggestions: 6,
+        autocompleteHistoryScope: "global",
         shiftEnterNewlineEnabled: false,
       },
     }),
@@ -26,6 +27,7 @@ test("keeps autocomplete enabled for shell-like terminal protocols", () => {
       debounceMs: 120,
       minChars: 2,
       maxSuggestions: 6,
+      historyScope: "global",
       shiftEnterNewlineEnabled: false,
     },
   );
@@ -51,9 +53,22 @@ test("keeps serial autocomplete available but disables input-line preview and re
       debounceMs: 100,
       minChars: 1,
       maxSuggestions: 8,
+      historyScope: "host",
       livePreview: false,
       allowLineReplacement: false,
       shiftEnterNewlineEnabled: true,
     },
+  );
+});
+
+test("defaults autocomplete history scope to host when unset", () => {
+  assert.equal(
+    resolveTerminalAutocompleteSettings({
+      protocol: "ssh",
+      terminalSettings: {
+        autocompleteEnabled: true,
+      },
+    })?.historyScope,
+    "host",
   );
 });

@@ -685,6 +685,11 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.autocomplete.ghostText.desc': 'Показывать серую встроенную подсказку после курсора (как в fish shell).',
   'settings.terminal.autocomplete.popupMenu': 'Всплывающее меню',
   'settings.terminal.autocomplete.popupMenu.desc': 'Показывать плавающий список из нескольких подсказок.',
+  'settings.terminal.autocomplete.historyScope': 'Область подсказок истории',
+  'settings.terminal.autocomplete.historyScope.desc':
+    'Выберите, брать ли подсказки истории автодополнения только с текущего хоста или со всех хостов.',
+  'settings.terminal.autocomplete.historyScope.host': 'Текущий хост',
+  'settings.terminal.autocomplete.historyScope.global': 'Все хосты',
 
   // Settings > Terminal > Password prompt assist (sudo/su)
   'settings.terminal.section.passwordPromptAssist': 'Подсказки пароля',

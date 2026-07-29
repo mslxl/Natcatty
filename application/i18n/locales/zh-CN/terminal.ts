@@ -470,6 +470,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.autocomplete.ghostText.desc': '在光标后显示灰色的建议文本（类似 fish shell）。',
   'settings.terminal.autocomplete.popupMenu': '弹出菜单',
   'settings.terminal.autocomplete.popupMenu.desc': '显示包含多个建议的浮动列表。',
+  'settings.terminal.autocomplete.historyScope': '历史命令提示范围',
+  'settings.terminal.autocomplete.historyScope.desc':
+    '选择自动补全的历史建议来自当前主机，还是所有主机上执行过的命令。',
+  'settings.terminal.autocomplete.historyScope.host': '当前主机',
+  'settings.terminal.autocomplete.historyScope.global': '全部主机',
   'settings.terminal.section.passwordPromptAssist': '密码提示辅助',
   'settings.terminal.passwordPromptAssist.mode': '辅助模式',
   'settings.terminal.passwordPromptAssist.mode.desc':
