@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import {
   formatTerminalTitleConnectionAddress,
   getLineTimestampToggleHostUpdate,
+  resolveNetworkDeviceTipRightInset,
   resolveTerminalRightInset,
   resolveTerminalTopOffsets,
   shouldBlockTerminalReconnectForTarget,
@@ -215,6 +216,27 @@ test("terminal search keeps enough space when host information is hidden", () =>
     resolveTerminalTopOffsets({ showHostInfoBar: false, isSearchOpen: true }),
     { toolbarOffset: 64, contentTop: "68px" },
   );
+});
+
+test("network device tip reserves extra top space below the toolbar", () => {
+  // Tip stacks below the toolbar: content shifts down by the tip height, but
+  // the toolbar offset itself is unchanged.
+  assert.deepEqual(
+    resolveTerminalTopOffsets({ showHostInfoBar: true, isSearchOpen: false, networkDeviceTipHeight: 28 }),
+    { toolbarOffset: 30, contentTop: "62px" },
+  );
+  assert.deepEqual(
+    resolveTerminalTopOffsets({ showHostInfoBar: false, isSearchOpen: false, networkDeviceTipHeight: 28 }),
+    { toolbarOffset: 0, contentTop: "32px" },
+  );
+});
+
+test("network device tip clears the compact speed-dial toggle only when it is present", () => {
+  // Speed dial only renders when host info is hidden and search is closed;
+  // reserve right-side room there so the tip cannot cover its click target.
+  assert.equal(resolveNetworkDeviceTipRightInset({ showHostInfoBar: false, isSearchOpen: false }), 40);
+  assert.equal(resolveNetworkDeviceTipRightInset({ showHostInfoBar: true, isSearchOpen: false }), 0);
+  assert.equal(resolveNetworkDeviceTipRightInset({ showHostInfoBar: false, isSearchOpen: true }), 0);
 });
 
 test("hidden host information does not reserve a side gutter for its floating action button", () => {

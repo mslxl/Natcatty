@@ -1,10 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronsLeft, GripVertical, X as XIcon } from 'lucide-react';
+import { ChevronsLeft, GripVertical, Network, X as XIcon } from 'lucide-react';
 
 import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHibernate';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { classifyDistroId } from '../../domain/host';
+import { useNetworkDeviceModeSuggestion } from '../../application/state/useNetworkDeviceModeSuggestion';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
 import { OSC7_SETUP_TARGETS } from './osc7Setup';
 import PasswordCredentialPicker from './PasswordCredentialPicker';
@@ -166,19 +167,46 @@ export function formatTerminalTitleConnectionAddress(host?: TerminalTitleAddress
   return `${username}${host.hostname}${port}`;
 }
 
+/** Height (px) of the one-line "enable Network Device Mode" tip strip. */
+export const NETWORK_DEVICE_TIP_HEIGHT = 28;
+
+/**
+ * Right inset (px) the tip strip must keep clear so it does not paint over — and
+ * swallow clicks meant for — the compact speed-dial action toggle. The toggle is
+ * only rendered in `isCompactActionsMode` (host info hidden, search closed) at
+ * `right-1` with a `w-7` (28px) button, so ~40px clears it plus a small gap.
+ */
+export const NETWORK_DEVICE_TIP_SPEED_DIAL_CLEARANCE = 40;
+
+export function resolveNetworkDeviceTipRightInset({
+  showHostInfoBar,
+  isSearchOpen,
+}: {
+  showHostInfoBar: boolean;
+  isSearchOpen: boolean;
+}): number {
+  // The speed dial only appears when the host info bar is hidden and search is
+  // closed (isCompactActionsMode); otherwise nothing sits in the top-right.
+  return !showHostInfoBar && !isSearchOpen ? NETWORK_DEVICE_TIP_SPEED_DIAL_CLEARANCE : 0;
+}
+
 export function resolveTerminalTopOffsets({
   showHostInfoBar,
   isSearchOpen,
   terminalBodyInset = 4,
+  networkDeviceTipHeight = 0,
 }: {
   showHostInfoBar: boolean;
   isSearchOpen: boolean;
   terminalBodyInset?: number;
+  networkDeviceTipHeight?: number;
 }): { toolbarOffset: number; contentTop: string } {
   const toolbarOffset = isSearchOpen ? 64 : showHostInfoBar ? 30 : 0;
   return {
     toolbarOffset,
-    contentTop: `${toolbarOffset + terminalBodyInset}px`,
+    // The tip strip stacks directly below the toolbar, so the terminal
+    // content must start below both.
+    contentTop: `${toolbarOffset + networkDeviceTipHeight + terminalBodyInset}px`,
   };
 }
 
@@ -224,7 +252,7 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
-  const { Activity, Button, Clock3, Copy, Maximize2, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, selectionOverlayPosition, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const { Activity, Button, Clock3, Copy, Maximize2, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, selectionOverlayPosition, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
   const isNetworkDevice = host.deviceType === 'network'
     || classifyDistroId(host.distro) === 'network-device';
   const ymodemActionEnabled = shouldEnableYmodemAction({
@@ -235,6 +263,31 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
   });
   const terminalBodyInset = 4;
   const showHostInfoBar = terminalSettings?.showHostInfoBar !== false;
+
+  // One-line "enable Network Device Mode" tip. The persisted once-per-host
+  // lifecycle, eligibility, and cross-pane/window sync live in the application
+  // hook; here we only wire the enable side effects (persist a sparse host
+  // update + toast) and render. `host` is the *effective* session object
+  // (group defaults / proxy profile already materialized), so send a sparse
+  // update so inherited fields keep tracking their source instead of being
+  // frozen as host overrides (#2367).
+  const onEnableNetworkDeviceMode = useCallback(() => {
+    onUpdateHost({ id: host.id, deviceType: 'network' });
+    toast.success(t('terminal.networkDevice.tip.enabled', {
+      host: host.label || host.hostname || host.id,
+    }));
+  }, [host.id, host.label, host.hostname, onUpdateHost, t, toast]);
+  const {
+    visible: showNetworkDeviceTip,
+    enable: enableNetworkDeviceMode,
+    dismiss: dismissNetworkDeviceTip,
+  } = useNetworkDeviceModeSuggestion({
+    host,
+    connected: status === 'connected',
+    canUpdateHost,
+    onEnable: onEnableNetworkDeviceMode,
+  });
+
   const [compactActionsOpen, setCompactActionsOpen] = useState(false);
   const compactActionsRef = useRef<HTMLDivElement | null>(null);
   const compactActionsButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -266,6 +319,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     showHostInfoBar,
     isSearchOpen,
     terminalBodyInset,
+    networkDeviceTipHeight: showNetworkDeviceTip ? NETWORK_DEVICE_TIP_HEIGHT : 0,
   });
   const terminalRightInset = resolveTerminalRightInset({
     showHostInfoBar,
@@ -708,6 +762,36 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
           )}
           style={{ backgroundColor: 'var(--terminal-ui-bg)' }}
         >
+          {showNetworkDeviceTip && (
+            <div
+              className="absolute left-0 z-20 flex items-center gap-2 px-3 border-b border-border/60 bg-card/95 backdrop-blur-sm text-[11px]"
+              style={{
+                top: terminalToolbarOffset,
+                right: resolveNetworkDeviceTipRightInset({ showHostInfoBar, isSearchOpen }),
+                height: NETWORK_DEVICE_TIP_HEIGHT,
+              }}
+            >
+              <Network size={13} className="shrink-0 text-blue-500" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate text-foreground/90">
+                {t('terminal.networkDevice.tip.message')}
+              </span>
+              <button
+                type="button"
+                onClick={enableNetworkDeviceMode}
+                className="shrink-0 rounded px-2 py-0.5 font-medium text-primary hover:bg-primary/10 transition-colors"
+              >
+                {t('terminal.networkDevice.tip.action')}
+              </button>
+              <button
+                type="button"
+                onClick={dismissNetworkDeviceTip}
+                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-secondary/80 transition-colors"
+                aria-label={t('terminal.networkDevice.tip.dismiss')}
+              >
+                <XIcon size={12} />
+              </button>
+            </div>
+          )}
           <div
             ref={containerRef}
             className="xterm-container absolute"
