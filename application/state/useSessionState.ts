@@ -294,6 +294,19 @@ export const useSessionState = ({
     if (currentCwd === nextCwd) return;
     if (nextCwd) {
       sessionRestoreCwdByIdRef.current.set(sessionId, nextCwd);
+      // Once a live cwd is tracked, the one-shot inherited-cwd seed set by a
+      // clone/split has served its purpose — drop it so a later remount +
+      // fresh reconnect doesn't re-inject the stale `cd`. The functional
+      // update returns `prev` unchanged (no re-render) unless the field is set.
+      setSessions((prev) => {
+        const target = prev.find((candidate) => candidate.id === sessionId);
+        if (!target || target.pendingInitialCwd === undefined) return prev;
+        return prev.map((candidate) => {
+          if (candidate.id !== sessionId) return candidate;
+          const { pendingInitialCwd: _spent, ...rest } = candidate;
+          return rest;
+        });
+      });
     } else {
       sessionRestoreCwdByIdRef.current.delete(sessionId);
     }
