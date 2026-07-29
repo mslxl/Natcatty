@@ -111,17 +111,20 @@ export function finishTransferTask(
     cancelled: boolean;
     endTime?: number;
   },
+  flushPendingProgress: () => void,
   publishPanelLifecycle: (updates: Partial<TransferTask>) => void,
 ): TransferStatus {
+  flushPendingProgress();
+  const latestTask = transferRuntime.getTask(task.id) ?? task;
   const endTime = outcome.endTime ?? Date.now();
-  if (outcome.cancelled || task.status === "cancelled") {
+  if (outcome.cancelled || latestTask.status === "cancelled") {
     const updates: Partial<TransferTask> = {
       status: "cancelled",
       error: undefined,
       endTime,
       speed: 0,
     };
-    transferRuntime.patchTask(task.id, updates);
+    transferRuntime.patchTask(latestTask.id, updates);
     publishPanelLifecycle(updates);
     return "cancelled";
   }
@@ -130,12 +133,12 @@ export function finishTransferTask(
   const updates: Partial<TransferTask> = {
     status,
     error: outcome.partialFailure ? "Some files failed to transfer" : undefined,
-    retryable: outcome.partialFailure ? false : task.retryable,
+    retryable: outcome.partialFailure ? false : latestTask.retryable,
     endTime,
-    transferredBytes: outcome.partialFailure ? task.transferredBytes : task.totalBytes,
+    transferredBytes: outcome.partialFailure ? latestTask.transferredBytes : latestTask.totalBytes,
     speed: 0,
   };
-  transferRuntime.patchTask(task.id, updates);
+  transferRuntime.patchTask(latestTask.id, updates);
   publishPanelLifecycle(updates);
   return status;
 }
@@ -920,20 +923,21 @@ export const useSftpTransfers = ({
         throw new Error("Transfer cancelled");
       }
 
-      const latestTask = transferRuntime.getTask(task.id)
-        ?? transfersRef.current.find((candidate) => candidate.id === task.id)
+      const fallbackTask = transfersRef.current.find((candidate) => candidate.id === task.id)
         ?? task;
       // Publish terminal lifecycle through the runtime-aware writer while the
       // directory walk is still registered. A panel-only setState could be
       // rejected as stale by the global transfer center and remain active at 100%.
-      if (pendingProgressByIdRef.current.size > 0) {
-        flushPendingProgress();
-      }
       const finalStatus = finishTransferTask(
-        latestTask,
+        fallbackTask,
         {
           partialFailure: dirPartialFailure,
           cancelled: cancelledTasksRef.current.has(task.id),
+        },
+        () => {
+          if (pendingProgressByIdRef.current.size > 0) {
+            flushPendingProgress();
+          }
         },
         (updates) => {
           setTransfers((prev) => prev.map((candidate) => (

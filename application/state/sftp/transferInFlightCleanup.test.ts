@@ -9,6 +9,7 @@ import {
   resetTransferWalkRegistryForTests,
   unregisterTransferWalk,
 } from "./transferWalkRegistry";
+import { transferRuntime } from "./transferRuntime";
 import { finishTransferTask, runTrackedTransferAttempt } from "./useSftpTransfers.ts";
 
 const makeTask = (status: TransferTask["status"] = "transferring"): TransferTask => ({
@@ -57,7 +58,12 @@ test("a throwing completion handler does not leave the transfer marked in flight
 
 test("directory completion reaches the global store while its walk is still active", (t) => {
   const ownerId = "completion-test";
-  const task = { ...makeTask(), id: "directory-complete" };
+  const task = {
+    ...makeTask(),
+    id: "directory-complete",
+    totalBytes: 0,
+    transferredBytes: 0,
+  };
   resetTransferWalkRegistryForTests();
   sftpTransferCenterStore.publishOwner(ownerId, [task]);
   registerTransferWalk(task.id);
@@ -70,6 +76,9 @@ test("directory completion reaches the global store while its walk is still acti
   const status = finishTransferTask(
     task,
     { partialFailure: false, cancelled: false, endTime: Date.now() },
+    () => {
+      transferRuntime.patchTask(task.id, { totalBytes: 3, transferredBytes: 3 });
+    },
     (updates) => {
       sftpTransferCenterStore.publishOwner(ownerId, [{ ...task, ...updates }]);
     },
@@ -78,6 +87,7 @@ test("directory completion reaches the global store while its walk is still acti
   assert.equal(status, "completed");
   assert.equal(isTransferWalkInFlight(task.id), true);
   assert.equal(sftpTransferCenterStore.getTask(task.id)?.status, "completed");
+  assert.equal(sftpTransferCenterStore.getTask(task.id)?.transferredBytes, 3);
   assert.equal(sftpTransferCenterStore.getSnapshot().activeCount, 0);
 });
 
@@ -86,6 +96,7 @@ test("partial failure and late cancellation keep their existing terminal behavio
   const failedStatus = finishTransferTask(
     { ...makeTask(), transferredBytes: 2 },
     { partialFailure: true, cancelled: false, endTime: 456 },
+    () => {},
     (updates) => { failedUpdates.push(updates); },
   );
   assert.equal(failedStatus, "failed");
@@ -102,6 +113,7 @@ test("partial failure and late cancellation keep their existing terminal behavio
   const cancelledStatus = finishTransferTask(
     makeTask("cancelled"),
     { partialFailure: false, cancelled: false, endTime: 789 },
+    () => {},
     (updates) => { cancelledUpdates = updates; },
   );
   assert.equal(cancelledStatus, "cancelled");
