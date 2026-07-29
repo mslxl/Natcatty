@@ -1338,6 +1338,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         sessionId={session.id}
         workspaceId={session.workspaceId}
         restoreState={session.restoreState}
+        pendingInitialCwd={session.pendingInitialCwd}
         shellType={session.shellType}
         lastCwd={session.lastCwd}
         restoreTerminalCwd={restoreTerminalCwd && sessionHostResolved}
