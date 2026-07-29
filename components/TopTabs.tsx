@@ -1,4 +1,4 @@
-import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles } from 'lucide-react';
+import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles, SquareTerminal } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
@@ -137,6 +137,7 @@ interface TopTabsProps {
   onCloseLogView: (logViewId: string) => void;
   onCloseTabsBatch: (targetIds: string[]) => void;
   onOpenQuickSwitcher: () => void;
+  onCreateLocalTerminal: () => void;
   onThemeChange: (theme: 'dark' | 'light' | 'system') => void;
   onOpenSettings: () => void;
   externalMcpEnabled: boolean;
@@ -182,6 +183,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onCloseLogView,
   onCloseTabsBatch,
   onOpenQuickSwitcher,
+  onCreateLocalTerminal,
   onThemeChange,
   onOpenSettings,
   externalMcpEnabled,
@@ -1092,6 +1094,21 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           className="flex-shrink-0 flex items-center gap-0.5 app-drag self-end h-7 overflow-visible"
           style={dragRegionStyle}
         >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                data-section="top-tabs-new-local-terminal"
+                className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
+                style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+                onClick={onCreateLocalTerminal}
+              >
+                <SquareTerminal size={16} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('topTabs.newLocalTerminal')}</TooltipContent>
+          </Tooltip>
           <GlobalSftpTransferCenter />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1164,6 +1181,7 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.draggingSessionId === next.draggingSessionId &&
     prev.isMacClient === next.isMacClient &&
     prev.onCopySession === next.onCopySession &&
+    prev.onCreateLocalTerminal === next.onCreateLocalTerminal &&
     prev.onCopySessionToNewWindow === next.onCopySessionToNewWindow &&
     prev.onOpenSettings === next.onOpenSettings &&
     prev.externalMcpEnabled === next.externalMcpEnabled &&

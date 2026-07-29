@@ -99,7 +99,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
 
   const {
     accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
-    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
+    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, createLocalTerminalWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme,
@@ -258,6 +258,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onCloseLogView={closeLogView}
         onCloseTabsBatch={closeTabsBatch}
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
+        onCreateLocalTerminal={createLocalTerminalWithCurrentShell}
         onThemeChange={settings.setTheme}
         onOpenSettings={handleOpenSettings}
         externalMcpEnabled={externalMcpToggle.enabled}
