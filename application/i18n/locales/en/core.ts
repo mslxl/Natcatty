@@ -388,7 +388,8 @@ Increase menu and toolbar icon sizes:
 \`\`\`css
 [data-section="top-tabs-toolbar-actions"] button > svg,
 [data-section="terminal-toolbar"] button > svg,
-[data-section="terminal-toolbar-menu"] button > svg {
+[data-section="terminal-toolbar-menu"] button > svg,
+[data-section="terminal-toolbar"] button [data-plugin-icon-kind="package"] {
   width: 20px !important;
   height: 20px !important;
 }

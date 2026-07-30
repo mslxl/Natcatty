@@ -100,4 +100,5 @@ test("custom CSS help lists the expanded terminal and SFTP hooks", () => {
     "terminal-toolbar",
     "terminal-toolbar-menu",
   ].forEach((hook) => assert.match(source, new RegExp(hook)));
+  assert.match(source, /\[data-plugin-icon-kind="package"\]/);
 });
