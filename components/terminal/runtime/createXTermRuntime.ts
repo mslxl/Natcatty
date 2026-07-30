@@ -37,6 +37,7 @@ import {
   resolveHostTerminalFontSize,
   resolveHostTerminalFontWeight,
 } from "../../../domain/terminalAppearance";
+import { DEFAULT_TERMINAL_SCROLLBACK } from "../../../domain/models/terminal";
 import { resolveFontWeightBold } from "../../../lib/fontWeightAvailability";
 import { isPluginHostProtocol } from "../../../domain/pluginConnection";
 import { resolveTerminalFontFamilyId } from "../../../infrastructure/config/fonts";
@@ -430,7 +431,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const cursorStyle = settings?.cursorShape ?? "block";
   const cursorBlink = settings?.cursorBlink ?? true;
-  const rawScrollback = settings?.scrollback ?? 10000;
+  const rawScrollback = settings?.scrollback ?? DEFAULT_TERMINAL_SCROLLBACK;
   const scrollback = resolveXTermScrollback(rawScrollback);
   const drawBoldTextInBrightColors = settings?.drawBoldInBrightColors ?? true;
   const fontWeight = resolveHostTerminalFontWeight(ctx.host, settings?.fontWeight ?? 400);

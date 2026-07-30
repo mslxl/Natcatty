@@ -401,8 +401,11 @@ export const normalizeTerminalSettings = (
   };
 };
 
+/** Default scrollback rows for new installs (VS Code uses 1000; we keep a modest headroom). */
+export const DEFAULT_TERMINAL_SCROLLBACK = 3000;
+
 const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
-  scrollback: 10000,
+  scrollback: DEFAULT_TERMINAL_SCROLLBACK,
   drawBoldInBrightColors: true,
   terminalEmulationType: 'xterm-256color',
   startupCommandDelayMs: 600,
