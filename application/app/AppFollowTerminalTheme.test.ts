@@ -14,7 +14,14 @@ test("follow-app terminal theme selection updates the matching UI theme via Them
   assert.match(runtimeSource, /setTheme\(update\.appTheme\)/);
   assert.doesNotMatch(runtimeSource, /isFollowAppIntentSettled\(userIntent\.themeId/);
   assert.match(appSource, /useThemeRuntime\(/);
-  assert.match(appSource, /themeRuntime\.pickTheme\(themeId\)/);
+  assert.match(appSource, /pickTerminalTheme\(themeId\)/);
+  assert.match(appSource, /pickTheme: pickTerminalTheme/);
+  // Domain deps must use stable members, not the whole themeRuntime bag.
+  assert.match(appSource, /clearThemeIntent, settleManualThemeIntent, pickTerminalTheme, resolveFocusedAppearance/);
+  assert.doesNotMatch(
+    appSource,
+    /followAppTerminalTheme, themeRuntime, handleConnectSerial/,
+  );
   assert.match(appSource, /useTerminalAppearanceInjection/);
   assert.match(appSource, /includeChromeSurfaces: followAppTerminalTheme/);
   assert.match(appSource, /clearThemeIntent\(\)/);

@@ -388,17 +388,25 @@ function App({ settings }: { settings: SettingsState }) {
     setLightUiThemeId,
     setDarkUiThemeId,
   });
-  useTerminalAppearanceInjection(themeRuntime.globalAppearance, {
+  // Depend on stable members (not the whole runtime bag) so App domain memos
+  // do not rebuild on every parent render when only the bag identity would churn.
+  const {
+    globalAppearance,
+    clearIntent: clearThemeIntent,
+    settleManualIntent: settleManualThemeIntent,
+    pickTheme: pickTerminalTheme,
+    resolveFocusedAppearance,
+    currentTerminalTheme,
+  } = themeRuntime;
+  useTerminalAppearanceInjection(globalAppearance, {
     includeChromeSurfaces: followAppTerminalTheme,
   });
   const prevFollowAppTerminalThemeRef = useRef(followAppTerminalTheme);
-  const clearThemeIntent = themeRuntime.clearIntent;
   useLayoutEffect(() => {
     if (prevFollowAppTerminalThemeRef.current === followAppTerminalTheme) return;
     prevFollowAppTerminalThemeRef.current = followAppTerminalTheme;
     clearThemeIntent();
   }, [followAppTerminalTheme, clearThemeIntent]);
-  const currentTerminalTheme = themeRuntime.currentTerminalTheme;
   const editorTabs = useEditorTabs();
 
   const hostById = useMemo(
@@ -1500,8 +1508,8 @@ function App({ settings }: { settings: SettingsState }) {
   const handleProtocolSelect = useCallback((protocol: HostProtocol, port: number) => { return handleProtocolSelectImpl(() => ({ handleConnectToHost, port, protocol, protocolSelectHost, setProtocolSelectHost }), protocol, port); }, [protocolSelectHost, handleConnectToHost]);
 
   const handleFollowAppTerminalThemeChange = useCallback((themeId: string) => {
-    themeRuntime.pickTheme(themeId);
-  }, [themeRuntime]);
+    pickTerminalTheme(themeId);
+  }, [pickTerminalTheme]);
 
   const handleDefaultTerminalThemeChange = useCallback((themeId: string) => {
     setTerminalThemeId(themeId);
@@ -1636,10 +1644,10 @@ function App({ settings }: { settings: SettingsState }) {
     draggingSessionId,
     editorWordWrap,
     followAppTerminalTheme,
-    clearThemeIntent: themeRuntime.clearIntent,
-    settleManualThemeIntent: themeRuntime.settleManualIntent,
-    pickTerminalTheme: themeRuntime.pickTheme,
-    resolveSessionAppearance: themeRuntime.resolveFocusedAppearance,
+    clearThemeIntent,
+    settleManualThemeIntent,
+    pickTerminalTheme,
+    resolveSessionAppearance: resolveFocusedAppearance,
     handleConnectSerial,
     handleConnectToHost,
     handleCreateLocalTerminal,
@@ -1696,7 +1704,7 @@ function App({ settings }: { settings: SettingsState }) {
     updateSessionCodingCliProvider,
     updateTerminalSetting,
     workspaces,
-  }), [addSessionToWorkspace, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearSessionFontSizeOverride, closeSession, closeTabsBatch, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, createWorkspaceFromSessions, createWorkspaceFromEffectiveTargets, createWorkspaceWithEffectiveHosts, currentTerminalTheme, draggingSessionId, editorWordWrap, followAppTerminalTheme, themeRuntime, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleFollowAppTerminalThemeChange, handleHotkeyAction, handleSessionStatusChange, handleTerminalDataCapture, handleUpdateHostFromTerminal, hostById, terminalHosts, updateTerminalHosts, hotkeyScheme, isBroadcastEnabled, keyBindings, openNoteRequest, portForwardingRules, removeSessionFromWorkspace, reorderWorkspaceSessions, handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionsForShell, setDraggingSessionId, setEditorWordWrap, setTerminalFontFamilyId, setTerminalFontSize, setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, splitSessionWithCurrentShell, settings, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, updateHostDistro, updateSplitSizes, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, updateTerminalSetting, workspaces]);
+  }), [addSessionToWorkspace, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearSessionFontSizeOverride, closeSession, closeTabsBatch, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, createWorkspaceFromSessions, createWorkspaceFromEffectiveTargets, createWorkspaceWithEffectiveHosts, currentTerminalTheme, draggingSessionId, editorWordWrap, followAppTerminalTheme, clearThemeIntent, settleManualThemeIntent, pickTerminalTheme, resolveFocusedAppearance, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleFollowAppTerminalThemeChange, handleHotkeyAction, handleSessionStatusChange, handleTerminalDataCapture, handleUpdateHostFromTerminal, hostById, terminalHosts, updateTerminalHosts, hotkeyScheme, isBroadcastEnabled, keyBindings, openNoteRequest, portForwardingRules, removeSessionFromWorkspace, reorderWorkspaceSessions, handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionsForShell, setDraggingSessionId, setEditorWordWrap, setTerminalFontFamilyId, setTerminalFontSize, setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, splitSessionWithCurrentShell, settings, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, updateHostDistro, updateSplitSizes, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, updateTerminalSetting, workspaces]);
 
   const appChromeDomain = useMemo(() => ({
     accentMode,
@@ -1809,7 +1817,7 @@ function App({ settings }: { settings: SettingsState }) {
         customAccent={customAccent}
         editorTabs={editorTabs}
         logViews={logViews}
-        resolveSessionAppearance={themeRuntime.resolveFocusedAppearance}
+        resolveSessionAppearance={resolveFocusedAppearance}
         t={t}
       />
       <AppView domains={appViewDomains} />
