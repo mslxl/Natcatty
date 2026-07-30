@@ -397,10 +397,11 @@ const WORKSPACE_CTX_KEYS = [
   'handleProgrammaticCommandLogRewriteChange',
   'handleAddSelectionToAI',
   'activeResizers',
-  'activeWorkspace',
+  // activeWorkspace / focusedSessionId: TerminalLayerWorkspaceSection reads
+  // these from sidePanelLiveStore so tab switches do not invalidate workspace
+  // chrome solely because the active tab id changed.
   'composeBarThemeColors',
   'findSplitNode',
-  'focusedSessionId',
   'handleComposeSend',
   'handleSnippetFromPanel',
   'refocusTerminalSession',
@@ -442,8 +443,9 @@ export function terminalLayerViewCtxEqual(prev: Ctx, next: Ctx): boolean {
   if (prev.isTerminalLayerVisible !== next.isTerminalLayerVisible) return false;
   if (prev.hibernateHiddenTabs !== next.hibernateHiddenTabs) return false;
   if (prev.isComposeBarOpen !== next.isComposeBarOpen) return false;
-  if (!activeWorkspaceEqual(prev.activeWorkspace, next.activeWorkspace)) return false;
-  if (prev.focusedSessionId !== next.focusedSessionId) return false;
+  // activeWorkspace / focusedSessionId intentionally omitted: live store +
+  // focus-sidebar equal handle those without forcing a full layer rebuild on
+  // every top-tab switch between terminal sessions.
   if (prev.handleComposeSend !== next.handleComposeSend) return false;
   if (prev.refocusTerminalSession !== next.refocusTerminalSession) return false;
   if (prev.setIsComposeBarOpen !== next.setIsComposeBarOpen) return false;

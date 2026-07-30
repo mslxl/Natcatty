@@ -1,15 +1,10 @@
 import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles, Terminal } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
-import {
-  applySessionPresentation,
-  sessionPresentationStore,
-} from '../application/state/sessionPresentationStore';
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
 import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
-import { resolveSessionTabTitle } from '../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../domain/models';
 
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
@@ -218,17 +213,10 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
   const activeTabId = useActiveTabId();
-  // Title/provider chrome: subscribe so presentation updates re-render TopTabs
-  // even when parent session arrays are treated as structurally equal.
-  const presentationVersion = useSyncExternalStore(
-    sessionPresentationStore.subscribe,
-    sessionPresentationStore.getVersion,
-    sessionPresentationStore.getVersion,
-  );
-  const sessions = useMemo(() => {
-    void presentationVersion;
-    return sessionsProp.map((session) => applySessionPresentation(session));
-  }, [sessionsProp, presentationVersion]);
+  // Presentation (dynamic title / coding-CLI icon) is applied per-tab inside
+  // SessionTopTab via usePresentedSession — do not remap the whole bar on
+  // every sibling title tick.
+  const sessions = sessionsProp;
   const { getTabAnimationClass } = useTopTabLifecycleAnimations(orderedTabs);
   const fixedLeftTabsRef = useRef<HTMLDivElement>(null);
   const hostTreeToggleSlotRef = useRef<HTMLDivElement>(null);
@@ -307,16 +295,14 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   }, [updateScrollState, orderedTabs]);
 
   // Pre-compute lookup maps for O(1) access instead of O(n) find operations.
-  // Merge live title/provider the same way as `sessions` so orphan tabs never
-  // freeze while agents stream presentation-only updates.
+  // Presentation overlay is applied inside SessionTopTab, not here.
   const orphanSessionMap = useMemo(() => {
-    void presentationVersion;
     const map = new Map<string, TerminalSession>();
     for (const s of orphanSessions) {
-      map.set(s.id, applySessionPresentation(s));
+      map.set(s.id, s);
     }
     return map;
-  }, [orphanSessions, presentationVersion]);
+  }, [orphanSessions]);
 
   const workspaceMap = useMemo(() => {
     const map = new Map<string, Workspace>();
@@ -845,16 +831,11 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
         const showDropIndicatorBefore = dropIndicator?.tabId === workspace.id && dropIndicator.position === 'before';
         const showDropIndicatorAfter = dropIndicator?.tabId === workspace.id && dropIndicator.position === 'after';
         const workspaceSessionIds = collectSessionIds(workspace.root);
-        const workspaceSessionLabels: Record<string, string> = {};
-        for (const sessionId of workspaceSessionIds) {
-          const wsSession = sessions.find((s) => s.id === sessionId);
-          if (wsSession) {
-            workspaceSessionLabels[sessionId] = resolveSessionTabTitle(
-              wsSession,
-              dynamicTabTitleMode,
-            );
-          }
-        }
+        // Detach-menu labels resolve presentation inside WorkspaceTopTab so
+        // dynamic title updates stay live without remapping the whole bar.
+        const workspaceSessions = workspaceSessionIds
+          .map((sessionId) => sessions.find((s) => s.id === sessionId))
+          .filter((s): s is TerminalSession => Boolean(s));
 
         return (
           <WorkspaceTopTab
@@ -862,6 +843,8 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             workspace={workspace}
             paneCount={paneCount}
             workspaceSessionIds={workspaceSessionIds}
+            workspaceSessions={workspaceSessions}
+            dynamicTabTitleMode={dynamicTabTitleMode}
             isBeingDragged={isBeingDragged}
             isDraggingForReorder={isDraggingForReorder}
             shiftStyle={shiftStyle}
@@ -876,7 +859,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onCopyWorkspace={onCopyWorkspace}
             onCloseWorkspace={onCloseWorkspace}
             onDetachSessionFromWorkspace={(_workspaceId, sessionId) => onRemoveSessionFromWorkspace(sessionId)}
-            workspaceSessionLabels={workspaceSessionLabels}
             renderBulkCloseItems={renderBulkCloseItems}
             t={t}
             tabAnimationClass={getTabAnimationClass(workspace.id)}
@@ -1200,8 +1182,8 @@ export const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean
   return (
     prev.theme === next.theme &&
     prev.hosts === next.hosts &&
-    // Ignore presentation-only session fields; TopTabsInner merges live titles
-    // from sessionPresentationStore via useSyncExternalStore.
+    // Ignore presentation-only session fields; SessionTopTab merges live titles
+    // via usePresentedSession (per-tab snapshot).
     topTabsSessionsEqual(prev.sessions, next.sessions) &&
     topTabsSessionsEqual(prev.orphanSessions, next.orphanSessions) &&
     prev.workspaces === next.workspaces &&

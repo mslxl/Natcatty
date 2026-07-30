@@ -571,14 +571,32 @@ test("host tree toggle is hidden on root pages", () => {
   }), false);
 });
 
-test("TopTabs merges presentation store into orphanSessionMap and sessions", () => {
-  assert.match(topTabsSource, /applySessionPresentation/);
-  assert.match(topTabsSource, /sessionPresentationStore\.subscribe/);
-  assert.match(topTabsSource, /presentationVersion/);
-  assert.ok(
-    topTabsSource.includes("map.set(s.id, applySessionPresentation(s))"),
-    "orphanSessionMap must overlay store presentation like sessions",
+test("TopTabs applies presentation per session tab, not via global version fan-out", () => {
+  // Global presentationVersion remapping was removed to stop sibling title
+  // thrash from re-rendering the whole tab bar.
+  assert.doesNotMatch(topTabsSource, /presentationVersion/);
+  assert.doesNotMatch(topTabsSource, /sessionPresentationStore\.subscribe/);
+  const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
+  assert.match(topTabItemsSource, /usePresentedSession/);
+  // Workspace detach menu must also apply presentation per session so labels
+  // stay live without remapping TopTabsInner.
+  assert.match(topTabItemsSource, /WorkspaceDetachSessionMenuItem/);
+  assert.match(topTabsSource, /workspaceSessions=/);
+  assert.doesNotMatch(topTabsSource, /workspaceSessionLabels/);
+});
+
+test("tab-switch focus calls refocus primitive directly without outer rAF wrap", () => {
+  const effectsSource = readFileSync(
+    new URL("./terminalLayer/useTerminalLayerEffects.ts", import.meta.url),
+    "utf8",
   );
+  const focusBlock = effectsSource.slice(
+    effectsSource.indexOf("Restore keyboard focus after switching work tabs"),
+    effectsSource.indexOf("When focusedSessionId changes"),
+  );
+  assert.match(focusBlock, /refocusActiveTerminalSession\(\)/);
+  // Outer rAF wrapper was removed — focusTerminalSessionInput already schedules.
+  assert.doesNotMatch(focusBlock, /requestAnimationFrame\(\(\) => \{\s*refocusActiveTerminalSession/);
 });
 
 test("topTabsAreEqual tracks editorTabs for dirty chrome", () => {

@@ -51,9 +51,11 @@ import { sessionRestoreStorage } from './sessionRestoreStorage';
 import {
   buildAndWriteSessionRestorePayload,
   createInitialRestoredSessionState,
+  patchSessionRestoreActiveTabId,
   shouldPersistSessionRestoreState,
   updateRestoredSessionStatusState,
 } from './sessionRestoreState';
+import type { SessionRestorePayload } from '../../domain/sessionRestore';
 import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 import type { CodingCliProviderId } from '../../domain/codingCliProviders';
 import { normalizeCodingCliDynamicTitleForStorage } from '../../domain/codingCliTitleParse';
@@ -291,6 +293,10 @@ export const useSessionState = ({
     }
 
     let timeout: number | undefined;
+    let activeTabPatchTimeout: number | undefined;
+    // Last full restore payload written this session. Tab switches patch only
+    // activeTabId against this cache instead of re-serializing every session.
+    let lastFullPayload: SessionRestorePayload | null = null;
 
     const persistNow = () => {
       const sessionsForRestore = sessionsRef.current.map((session) => {
@@ -308,7 +314,7 @@ export const useSessionState = ({
         tabOrderRef.current,
       );
       const clearOnEmpty = hasSeenRestorableSessionRestoreStateRef.current && !hasRestorableState;
-      buildAndWriteSessionRestorePayload({
+      const wrote = buildAndWriteSessionRestorePayload({
         restoreEnabled: resolveRestorePreviousSessionSetting(
           localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION),
         ),
@@ -317,8 +323,20 @@ export const useSessionState = ({
         workspaces: workspacesRef.current,
         tabOrder: tabOrderRef.current,
         activeTabId: activeTabStore.getActiveTabId(),
-        storage: sessionRestoreStorage,
+        storage: {
+          write: (payload) => {
+            lastFullPayload = payload;
+            return sessionRestoreStorage.write(payload);
+          },
+          clear: () => {
+            lastFullPayload = null;
+            sessionRestoreStorage.clear();
+          },
+        },
       });
+      if (!wrote && !hasRestorableState) {
+        lastFullPayload = null;
+      }
     };
 
     const schedulePersist = () => {
@@ -331,14 +349,51 @@ export const useSessionState = ({
       }, 250);
     };
 
+    const scheduleActiveTabPatch = () => {
+      // Coalesce rapid tab clicks. Only patch when we hold a trusted full payload
+      // written by persistNow in this effect. Never storage.read() as a base —
+      // disk can still have pre-connect sessions while live already added a host
+      // and activated its tab (effect recreated, lastFullPayload reset to null).
+      if (activeTabPatchTimeout !== undefined) {
+        window.clearTimeout(activeTabPatchTimeout);
+      }
+      activeTabPatchTimeout = window.setTimeout(() => {
+        activeTabPatchTimeout = undefined;
+        const activeTabId = activeTabStore.getActiveTabId();
+        if (!lastFullPayload) {
+          // Cache empty after effect recreate or before first full write — rebuild
+          // from live sessions/workspaces (debounced with other structural persists).
+          schedulePersist();
+          return;
+        }
+        const result = patchSessionRestoreActiveTabId({
+          activeTabId,
+          cachedPayload: lastFullPayload,
+          storage: {
+            write: (payload) => {
+              lastFullPayload = payload;
+              return sessionRestoreStorage.write(payload);
+            },
+          },
+        });
+        if (result.status === "missing") {
+          schedulePersist();
+        }
+      }, 100);
+    };
+
     schedulePersist();
     scheduleSessionRestorePersistRef.current = schedulePersist;
-    const unsubscribeActiveTab = activeTabStore.subscribeSync(schedulePersist);
+    const unsubscribeActiveTab = activeTabStore.subscribeSync(scheduleActiveTabPatch);
 
     const handlePageHide = () => {
       if (timeout !== undefined) {
         window.clearTimeout(timeout);
         timeout = undefined;
+      }
+      if (activeTabPatchTimeout !== undefined) {
+        window.clearTimeout(activeTabPatchTimeout);
+        activeTabPatchTimeout = undefined;
       }
       persistNow();
     };
@@ -350,6 +405,9 @@ export const useSessionState = ({
       scheduleSessionRestorePersistRef.current = () => {};
       if (timeout !== undefined) {
         window.clearTimeout(timeout);
+      }
+      if (activeTabPatchTimeout !== undefined) {
+        window.clearTimeout(activeTabPatchTimeout);
       }
       unsubscribeActiveTab();
       window.removeEventListener("pagehide", handlePageHide);

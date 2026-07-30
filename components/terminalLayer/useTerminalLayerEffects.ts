@@ -92,7 +92,7 @@ export function pruneTerminalTabMemoryState(
 
 export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const { openPath } = useSftpBackend();
-  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTimeout, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setTimeout, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
+  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
 
   const activeWorkspaceId = activeWorkspace?.id;
   const activeWorkspaceViewMode = activeWorkspace?.viewMode;
@@ -523,7 +523,9 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const wasTerminalLayerVisibleRef = useRef(false);
   const prevActiveTabIdRef = useRef<string | undefined>(undefined);
 
-  // Restore keyboard focus to the active terminal after switching work tabs.
+  // Restore keyboard focus after switching work tabs.
+  // Call the existing focus primitive directly — it already schedules rAF +
+  // retry (focusTerminalSessionInput). An outer rAF here only delayed focus.
   useEffect(() => {
     if (!isTerminalLayerVisible) {
       prevActiveTabIdRef.current = activeTabId;
@@ -535,8 +537,8 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       prevActiveTabIdRef.current !== activeTabId;
     prevActiveTabIdRef.current = activeTabId;
 
-    if (!tabChanged) return;
-    refocusActiveTerminalSession?.();
+    if (!tabChanged || !refocusActiveTerminalSession) return;
+    refocusActiveTerminalSession();
   }, [activeTabId, isTerminalLayerVisible, refocusActiveTerminalSession]);
 
   // When focusedSessionId changes or terminal layer becomes visible,
@@ -577,18 +579,17 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         }
       };
   
+      // One sync attempt + one rAF; avoid the historical 50ms third focus.
       focusTarget();
       let rafId: number | null = null;
       if (typeof requestAnimationFrame === 'function') {
         rafId = requestAnimationFrame(focusTarget);
       }
-      const timerId = setTimeout(focusTarget, 50);
-  
+
       return () => {
         if (rafId !== null && typeof cancelAnimationFrame === 'function') {
           cancelAnimationFrame(rafId);
         }
-        clearTimeout(timerId);
       };
     }, [focusedSessionId, isFocusMode, activeWorkspace, isTerminalLayerVisible]);
 }

@@ -140,7 +140,19 @@ export function AppActiveTabChrome({
   }, [activeTabId, editorTabFileNameCounts, editorTabs, logViews, sessionById, t, workspaceById]);
 
   useEffect(() => {
-    void netcattyBridge.get()?.setWindowTitle?.(activeWindowTitle);
+    // Title is already memoized by activeTabId; skip redundant IPC when the
+    // string did not change (e.g. two tabs sharing the same host label).
+    let cancelled = false;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.setWindowTitle) return;
+    // Defer slightly so the title write does not compete with tab-switch paint.
+    const timer = window.setTimeout(() => {
+      if (!cancelled) void bridge.setWindowTitle?.(activeWindowTitle);
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [activeWindowTitle]);
 
   return null;
