@@ -1060,6 +1060,11 @@ export const useSessionState = ({
     );
 
     setSessions(prevSessions => {
+      // The cwd capture above is async. Avoid resurrecting a workspace that was
+      // closed (or structurally changed) while those probes were pending.
+      if (workspacesRef.current.find(w => w.id === workspaceId) !== sourceWorkspace) {
+        return prevSessions;
+      }
       const built = buildCopiedWorkspace(sourceWorkspace, prevSessions, {
         newWorkspaceId,
         sessionIdMap,

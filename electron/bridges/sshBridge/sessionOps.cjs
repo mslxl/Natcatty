@@ -238,6 +238,10 @@ function createSessionOpsApi(ctx) {
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
+      const requestedTimeoutMs = Number(payload?.timeoutMs);
+      const timeoutMs = Number.isFinite(requestedTimeoutMs)
+        ? Math.min(Math.max(requestedTimeoutMs, 100), 5000)
+        : 5000;
       const session = sessions.get(sessionId);
     
       if (!session || !session.conn) {
@@ -420,8 +424,8 @@ function createSessionOpsApi(ctx) {
         const cmd = `exec sh -c ${quoteShellArg(posixScript)}`;
     
         void executeBoundedSshCommand(session.conn, cmd, {
-          openingTimeoutMs: 5000,
-          runTimeoutMs: 5000,
+          openingTimeoutMs: timeoutMs,
+          runTimeoutMs: timeoutMs,
           maxOutputBytes: 256 * 1024,
           setTimeoutFn: setTimeout,
           clearTimeoutFn: clearTimeout,

@@ -485,7 +485,9 @@ async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: strin
   // devices (the extra exec channel can close a Huawei VRP-style session), and
   // for not-yet-classified hosts consult the SSH banner (issue #1043).
   let allowSshProbe = false;
-  if (!liveCwd && !isNetworkDevice) {
+  const isConnectedSsh = (source.protocol === "ssh" || source.protocol === undefined)
+    && source.status === "connected";
+  if (!liveCwd && isConnectedSsh && !isNetworkDevice) {
     try {
       const info = await bridge?.getSessionRemoteInfo?.(sessionId);
       allowSshProbe = shouldProbeSessionCwd({ isNetworkDevice: false, remoteSshVersion: info?.remoteSshVersion });
@@ -494,7 +496,7 @@ async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: strin
     }
   }
 
-  const probe = async (id: string, options?: { allowHomeFallback?: boolean }) =>
+  const probe = async (id: string, options?: { allowHomeFallback?: boolean; timeoutMs?: number }) =>
     (await bridge?.getSessionPwd?.(id, options)) ?? { success: false };
   return captureInheritedCwd(source, probe, { liveCwd, allowSshProbe });
 }
@@ -533,6 +535,12 @@ export async function copyWorkspaceWithCurrentShellImpl(getCtx: AppContextGetter
       [id, await captureCtxInheritedCwd(getCtx, id)] as const),
   );
   const perPaneCwd: Record<string, string | undefined> = Object.fromEntries(entries);
+
+  // Cwd capture is async, so do not invoke the state action with a workspace
+  // that was closed or changed while its panes were being inspected.
+  if (getCtx().workspaces.find((candidate: { id: string }) => candidate.id === workspaceId) !== workspace) {
+    return;
+  }
 
   const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
   const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';

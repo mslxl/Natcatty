@@ -65,6 +65,21 @@ test("network device (by deviceType) is never probed", async () => {
   assert.equal(calls.copy?.opts.inheritedCwd, "/vrp");
 });
 
+test("local sessions do not query remote SSH metadata", async () => {
+  let remoteInfoCalls = 0;
+  const { getCtx } = ctxFactory({
+    sessions: [{ id: "src", protocol: "local", status: "connected", localStartDir: "/tmp" }],
+    netcattyBridge: {
+      get: () => ({
+        getSessionPwd: async () => ({ success: false }),
+        getSessionRemoteInfo: async () => { remoteInfoCalls += 1; return { success: true }; },
+      }),
+    },
+  });
+  await copySessionWithCurrentShellImpl(getCtx, "src");
+  assert.equal(remoteInfoCalls, 0);
+});
+
 test("network device detected via distro (ignores cosmetic override) is never probed", async () => {
   const { getCtx, calls } = ctxFactory({
     hostById: new Map([["h1", { id: "h1", distro: "huawei" }]]),
@@ -148,5 +163,32 @@ test("copyWorkspaceWithCurrentShell no-ops when the workspace is gone", async ()
     workspaces: [],
   });
   await copyWorkspaceWithCurrentShellImpl(getCtx, "missing");
+  assert.equal(called, false);
+});
+
+test("copyWorkspaceWithCurrentShell no-ops when the workspace closes during cwd capture", async () => {
+  let called = false;
+  let workspaces: Array<{ id: string; root: WorkspaceNode }> = [{
+    id: "ws-1",
+    root: { id: "p", type: "pane", sessionId: "local" },
+  }];
+  const getCtx = () => ({
+    classifyLocalShellType: () => "bash",
+    collectSessionIds: () => ["local"],
+    copyWorkspace: () => { called = true; },
+    discoveredShells: [],
+    getSessionRestoreCwd: () => undefined,
+    hostById: new Map(),
+    terminalHosts: [],
+    netcattyBridge: { get: () => ({}) },
+    resolveShellSetting: () => ({ command: "bash" }),
+    sessions: [{ id: "local", protocol: "local", status: "connected", localStartDir: "/tmp" }],
+    terminalSettings: { localShell: "bash" },
+    workspaces,
+  });
+
+  const pending = copyWorkspaceWithCurrentShellImpl(getCtx, "ws-1");
+  workspaces = [];
+  await pending;
   assert.equal(called, false);
 });

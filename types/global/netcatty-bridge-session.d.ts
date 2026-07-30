@@ -218,7 +218,7 @@ declare global {
     /** Get current working directory from an active SSH session */
     getSessionPwd?(
       sessionId: string,
-      options?: { allowHomeFallback?: boolean },
+      options?: { allowHomeFallback?: boolean; timeoutMs?: number },
     ): Promise<{ success: boolean; cwd?: string; error?: string }>;
     /**
      * Get metadata about an already-connected SSH session — currently the

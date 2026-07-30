@@ -141,6 +141,31 @@ test("session cwd probe closes a remote command that exceeds its timeout", async
   assert.equal(closed, true);
 });
 
+test("session cwd probe honors a caller-provided timeout budget", async () => {
+  const timeouts = [];
+  const session = {
+    shellPid: "4242",
+    connRef: { count: 1 },
+    stream: {},
+    conn: {
+      exec(_command, callback) {
+        callback(null, makePwdStream("/srv/project", "4242"));
+      },
+    },
+  };
+  const api = makeApi(session, [], {
+    setTimeout(callback, timeoutMs) {
+      timeouts.push(timeoutMs);
+      return setTimeout(callback, timeoutMs);
+    },
+  });
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1", timeoutMs: 1234 });
+
+  assert.deepEqual(result, { success: true, cwd: "/srv/project" });
+  assert.ok(timeouts.includes(1234));
+});
+
 test("session cwd probe closes a stream returned after its timeout", async () => {
   const stream = new EventEmitter();
   stream.stderr = new EventEmitter();

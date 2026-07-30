@@ -63,6 +63,19 @@ test("connected ssh falls back to lastCwd when probe exceeds the timeout", async
   assert.equal(cwd, "/a");
 });
 
+test("connected ssh passes its probe timeout to the backend", async () => {
+  let receivedOptions: { allowHomeFallback?: boolean; timeoutMs?: number } | undefined;
+  await captureInheritedCwd(
+    { id: "s", protocol: "ssh", status: "connected" },
+    async (_sessionId, options) => {
+      receivedOptions = options;
+      return { success: false };
+    },
+    { probeTimeoutMs: 1234 },
+  );
+  assert.deepEqual(receivedOptions, { allowHomeFallback: false, timeoutMs: 1234 });
+});
+
 test("disconnected ssh uses lastCwd without probing", async () => {
   const cwd = await captureInheritedCwd(
     { id: "s", protocol: "ssh", status: "disconnected", lastCwd: "/a" },

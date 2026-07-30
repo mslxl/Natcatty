@@ -2,7 +2,7 @@ import type { TerminalSession } from "../../domain/models";
 
 export type SessionPwdProbe = (
   sessionId: string,
-  options?: { allowHomeFallback?: boolean },
+  options?: { allowHomeFallback?: boolean; timeoutMs?: number },
 ) => Promise<{ success: boolean; cwd?: string }>;
 
 type CaptureSession = Pick<TerminalSession, "id" | "protocol" | "status" | "lastCwd" | "localStartDir">;
@@ -57,7 +57,11 @@ export async function captureInheritedCwd(
   if (isRemoteSsh && allowSshProbe && session.status === "connected") {
     // Never rejects: a failed/absent probe resolves to undefined so the race
     // below can't leave a dangling unhandled rejection when the timeout wins.
-    const probePromise = getSessionPwd(session.id, { allowHomeFallback: false })
+    const probePromise = getSessionPwd(session.id, {
+      allowHomeFallback: false,
+      // Keep the backend exec within the same budget as this UI-side timeout.
+      timeoutMs: probeTimeoutMs,
+    })
       .then((res) => (res?.success ? res.cwd?.trim() : undefined))
       .catch(() => undefined);
 
