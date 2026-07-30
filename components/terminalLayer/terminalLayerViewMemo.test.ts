@@ -203,10 +203,19 @@ test("terminal layer side panel stable ctx tracks session hosts and workspaces",
     }),
     false,
   );
+  // Focus-only workspace identity changes must not bust stable side-panel equal
+  // (System/SFTP follow focus via sidePanelLiveStore).
   assert.equal(
     terminalLayerSidePanelStableCtxEqual(baseCtx, {
       ...baseCtx,
       workspaceById: new Map([["ws-1", workspace({ focusedSessionId: "session-2" })]]),
+    }),
+    true,
+  );
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(baseCtx, {
+      ...baseCtx,
+      workspaceById: new Map([["ws-1", workspace({ title: "Renamed" })]]),
     }),
     false,
   );
@@ -280,6 +289,19 @@ test("terminal layer side panel re-renders when follow terminal cwd setting chan
     terminalLayerViewCtxEqual(
       baseCtx,
       { ...baseCtx, sftpFollowTerminalCwd: true },
+    ),
+    false,
+  );
+});
+
+test("terminal layer side panel stable ctx re-renders when knownHosts change", () => {
+  const baseCtx = {
+    knownHosts: [{ id: "kh-1", hostname: "a.example", port: 22 }],
+  };
+  assert.equal(
+    terminalLayerSidePanelStableCtxEqual(
+      baseCtx,
+      { ...baseCtx, knownHosts: [{ id: "kh-2", hostname: "b.example", port: 22 }] },
     ),
     false,
   );

@@ -212,17 +212,25 @@ function SidePanelSystemSlotInner({
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const panelSelected = sidePanelTab === 'system';
   const isVisible = isTabActive && panelSelected;
+  // When this tab is active, prefer live store so focus changes do not require
+  // workspaceById identity churn through the stable side-panel ctx.
+  const live = useSidePanelLiveSnapshotForTab(tabId, isTabActive && panelSelected);
   const sessions = ctx.sessions as TerminalSession[];
   const sessionHostsMap = ctx.sessionHostsMap as Map<string, Host>;
   const workspace = (ctx.workspaceById as Map<string, Workspace>).get(tabId);
   const standaloneSession = sessions.find((session) => session.id === tabId);
-  const systemSession = resolveSystemSidebarSession(
+  const resolvedSession = resolveSystemSidebarSession(
     sessions,
     workspace,
     workspace?.focusedSessionId,
     standaloneSession,
   );
-  const systemHost = systemSession ? sessionHostsMap.get(systemSession.id) ?? null : null;
+  const systemSession = (isTabActive && panelSelected
+    ? (live.activeTerminalSessionForSystem ?? resolvedSession)
+    : resolvedSession) ?? null;
+  const systemHost = (isTabActive && panelSelected && live.activeSystemSessionHost)
+    ? live.activeSystemSessionHost
+    : (systemSession ? sessionHostsMap.get(systemSession.id) ?? null : null);
   const keepSystemWorkActive = panelSelected
     && shouldKeepTerminalBackgroundWorkActive(
       ctx.terminalSettings,
@@ -267,8 +275,8 @@ function SidePanelScriptsSlotInner({
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const isVisible = isTabActive && sidePanelTab === 'scripts';
   const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
-  // Subscribe here so script log ticks only re-render Scripts, not TerminalLayer.
-  const { runs: scriptRuns } = useScriptExecution();
+  // Subscribe only while visible so retained scripts slots skip log thrash.
+  const { runs: scriptRuns } = useScriptExecution({ enabled: isVisible });
 
   const {
     ScriptsSidePanel,
@@ -296,7 +304,7 @@ function SidePanelScriptsSlotInner({
         onRunScript={handleRunScriptFromPanel}
         onRunScriptOnWorkspace={handleRunScriptOnWorkspace}
         onStartRecording={handleStartRecordingFromPanel}
-        runs={[...scriptRuns]}
+        runs={scriptRuns as import('@/types/global/netcatty-bridge-script.d.ts').ScriptRun[]}
         onStopRun={handleStopScriptRun}
         onPauseRun={handlePauseScriptRun}
         onResumeRun={handleResumeScriptRun}
@@ -321,7 +329,9 @@ function SidePanelThemeSlotInner({
   const sidePanelOpenTabs = ctx.sidePanelOpenTabs as Map<string, SidePanelTab>;
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const isVisible = isTabActive && sidePanelTab === 'theme';
-  const live = useSidePanelLiveSnapshotForTab(tabId, isTabActive);
+  // Only subscribe while the theme panel is visible — not merely tab-active —
+  // so cwd/focus live ticks do not thrash a retained ThemeSidePanel.
+  const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
 
   const {
     ThemeSidePanel,

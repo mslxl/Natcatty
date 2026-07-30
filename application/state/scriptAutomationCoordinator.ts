@@ -5,6 +5,7 @@ import { STORAGE_KEY_AI_PERMISSION_MODE } from '@/infrastructure/config/storageK
 import type { AIPermissionMode } from '@/infrastructure/ai/types.ts';
 import { netcattyBridge } from '@/infrastructure/services/netcattyBridge.ts';
 import type { ScriptRun } from '@/types/global/netcatty-bridge-script.d.ts';
+import { publishScriptRunsSnapshot } from './scriptRunsStore.ts';
 
 type RunsListener = (runs: ScriptRun[]) => void;
 
@@ -27,8 +28,14 @@ export function subscribeScriptRuns(listener: RunsListener): () => void {
   return () => runsListeners.delete(listener);
 }
 
+export function getScriptRuns(): readonly ScriptRun[] {
+  return runs;
+}
+
 export function setScriptRuns(nextRuns: ScriptRun[]) {
   runs = nextRuns;
+  // Keep the panel-facing store in lockstep so Scripts UI and overlays share one source.
+  publishScriptRunsSnapshot(nextRuns);
   runsListeners.forEach((listener) => listener(runs));
 }
 

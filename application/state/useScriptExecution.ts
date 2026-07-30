@@ -1,42 +1,23 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { ScriptRunParams } from '@/types/global/netcatty-bridge-script.d.ts';
 import { netcattyBridge } from '@/infrastructure/services/netcattyBridge.ts';
 import {
   getScriptRunsSnapshot,
-  publishScriptRunsSnapshot,
-  subscribeScriptRuns,
+  subscribeScriptRuns as subscribeScriptRunsStore,
 } from './scriptRunsStore.ts';
 
-let scriptRunsBridgeBound = false;
-
-function ensureScriptRunsBridgeBound(): void {
-  if (scriptRunsBridgeBound) return;
-  if (typeof window === 'undefined') return;
-  const bridge = netcattyBridge.get();
-  if (!bridge?.scriptGetRuns) return;
-  scriptRunsBridgeBound = true;
-  bridge.scriptGetRuns()
-    .then((runs) => {
-      publishScriptRunsSnapshot(runs);
-    })
-    .catch(() => {});
-  bridge.onScriptRunsUpdated?.(({ runs: nextRuns }) => {
-    publishScriptRunsSnapshot(nextRuns);
-  });
-}
-
 /**
- * Script run state is externalized so TerminalLayer can avoid re-rendering on
- * every automation log tick. Call sites that need the list should subscribe
- * via this hook (or scriptRunsStore directly).
+ * Script run list for UI. Bridge → coordinator.setScriptRuns → scriptRunsStore
+ * (ScriptAutomationRoot owns the IPC bind). This hook only subscribes so Scripts
+ * side panel re-renders without TerminalLayerInner.
+ *
+ * Pass `{ enabled: false }` when the Scripts panel is not visible so retained
+ * slots do not re-render on every automation log tick.
  */
-export function useScriptExecution() {
-  useEffect(() => {
-    ensureScriptRunsBridgeBound();
-  }, []);
-
+export function useScriptExecution(options?: { enabled?: boolean }) {
+  const enabled = options?.enabled ?? true;
   const runs = useSyncExternalStore(
-    subscribeScriptRuns,
+    enabled ? subscribeScriptRunsStore : () => () => {},
     getScriptRunsSnapshot,
     getScriptRunsSnapshot,
   );

@@ -170,7 +170,29 @@ function sidePanelCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
       session.workspaceId === next.sessions[index]?.workspaceId
     ));
   }
+  if (key === 'workspaceById') {
+    // Focus-only workspace map identity changes must not invalidate every mounted
+    // side-panel slot; System reads focused session from sidePanelLiveStore.
+    return sidePanelWorkspaceByIdEqual(prev.workspaceById, next.workspaceById);
+  }
   return prev[key] === next[key];
+}
+
+function sidePanelWorkspaceByIdEqual(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (!(a instanceof Map) || !(b instanceof Map)) return false;
+  if (a.size !== b.size) return false;
+  for (const [workspaceId, prevWorkspace] of a) {
+    const nextWorkspace = b.get(workspaceId);
+    if (!nextWorkspace) return false;
+    if (prevWorkspace === nextWorkspace) continue;
+    if (prevWorkspace.id !== nextWorkspace.id) return false;
+    if (prevWorkspace.title !== nextWorkspace.title) return false;
+    if (prevWorkspace.viewMode !== nextWorkspace.viewMode) return false;
+    if (prevWorkspace.snippetId !== nextWorkspace.snippetId) return false;
+    if (!workspaceNodeEqual(prevWorkspace.root, nextWorkspace.root)) return false;
+  }
+  return true;
 }
 
 // Live fields that are also published via sidePanelLiveStore (or dedicated
@@ -222,13 +244,16 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'workspaceById',
   'keys',
   'identities',
+  'knownHosts',
   'updateHosts',
+  'handleAddKnownHost',
   'updateSnippets',
   'updateSnippetPackages',
   'sftpDefaultViewMode',
   'sftpInitialLocationForTab',
   'sftpPendingUploadsForTab',
   'handleSftpCurrentPathChange',
+  'handleSftpActiveTransfersChange',
   'sftpDoubleClickBehavior',
   'sftpAutoSync',
   'sftpShowHiddenFiles',

@@ -800,8 +800,9 @@ export const useVaultState = () => {
       setShellHistory((prev) => {
         const updated = mergeGlobalHistoryOnAppend(prev, entry);
         if (updated === prev) return prev;
+        // Persist immediately so crash between commit and layout effect cannot drop history.
+        // Store republish is also done in useLayoutEffect for load/storage-event paths.
         localStorageAdapter.write(STORAGE_KEY_SHELL_HISTORY, updated);
-        publishShellHistorySnapshot(updated);
         return updated;
       });
     },
