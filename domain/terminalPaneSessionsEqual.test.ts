@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { terminalPaneSessionsEqual } from './terminalPaneSessionsEqual.ts';
+import {
+  retainStableSessionsIgnoringPresentation,
+  terminalPaneSessionsEqual,
+} from './terminalPaneSessionsEqual.ts';
 import type { TerminalSession } from './models.ts';
 
 const session = (overrides: Partial<TerminalSession> = {}): TerminalSession => ({
@@ -54,5 +57,15 @@ test('terminalPaneSessionsEqual detects pendingInitialCwd clear and startupComma
       [session({ startupCommand: 'top' })],
     ),
     false,
+  );
+});
+
+test('retainStableSessionsIgnoringPresentation keeps prior identity for title-only churn', () => {
+  const prev = [session({ dynamicTitle: 'old' })];
+  const next = [session({ dynamicTitle: 'new', codingCliProviderId: 'claude' })];
+  assert.equal(retainStableSessionsIgnoringPresentation(prev, next), prev);
+  assert.notEqual(
+    retainStableSessionsIgnoringPresentation(prev, [session({ status: 'connecting' })]),
+    prev,
   );
 });

@@ -1,6 +1,7 @@
 import type React from 'react';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
+import { retainStableAiPanelContexts } from '../../domain/aiPanelContextsEqual';
 import { collectSessionIds } from '../../domain/workspace';
 import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import { detectLocalOs } from '../../lib/localShell';
@@ -34,6 +35,7 @@ export function useTerminalAiContexts({
   workspaces,
   workspacesRef,
 }: UseTerminalAiContextsOptions) {
+  const previousAiContextsRef = useRef<Map<string, AIPanelContext> | null>(null);
   const aiContextsByTabId = useMemo(() => {
     const localOs = detectLocalOs(navigator.userAgent || navigator.platform);
     const sessionById = new Map<string, TerminalSession>(sessions.map((session) => [session.id, session]));
@@ -85,7 +87,9 @@ export function useTerminalAiContexts({
       });
     }
 
-    return contexts;
+    const retained = retainStableAiPanelContexts(previousAiContextsRef.current, contexts);
+    previousAiContextsRef.current = retained;
+    return retained;
   }, [sessions, workspaces, mountedAiTabIds, sessionHostsMap, hosts, portForwardingRules]);
 
   const resolveAIExecutorContext = useCallback((scope: {

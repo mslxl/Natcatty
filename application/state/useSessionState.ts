@@ -28,6 +28,11 @@ import { clearSessionFontSizeOverride as clearSessionFontSizeOverrideFields } fr
 import { buildOrderedWorkTabIds, reorderWorkTabIds } from '../app/workTabSurface';
 import { activeTabStore } from './activeTabStore';
 import {
+  publishSessionCodingCliProvider,
+  publishSessionDynamicTitle,
+  sessionPresentationStore,
+} from './sessionPresentationStore';
+import {
   closeSessionsState,
   detachSessionFromWorkspaceState,
   replaceDissolvedWorkspaceTabOrder,
@@ -388,38 +393,17 @@ export const useSessionState = ({
   const updateSessionDynamicTitle = useCallback((sessionId: string, title: string | null) => {
     const normalizedTitle = title ? normalizeCodingCliDynamicTitleForStorage(title) : '';
     const nextTitle = normalizedTitle.length > 0 ? normalizedTitle : null;
-    setSessions((prev) => {
-      const session = prev.find((candidate) => candidate.id === sessionId);
-      if (!session) return prev;
-      if ((session.dynamicTitle ?? null) === nextTitle) return prev;
-      return prev.map((candidate) => {
-        if (candidate.id !== sessionId) return candidate;
-        if (!nextTitle) {
-          const { dynamicTitle: _removed, ...rest } = candidate;
-          return rest;
-        }
-        return { ...candidate, dynamicTitle: nextTitle };
-      });
-    });
+    // Presentation-only: write the external store so TopTabs refreshes without
+    // setSessions thrashing appTerminalDomain / TerminalLayer parents.
+    publishSessionDynamicTitle(sessionId, nextTitle);
   }, []);
 
   const updateSessionCodingCliProvider = useCallback((
     sessionId: string,
     providerId: CodingCliProviderId | null,
   ) => {
-    setSessions((prev) => {
-      const session = prev.find((candidate) => candidate.id === sessionId);
-      if (!session) return prev;
-      if ((session.codingCliProviderId ?? null) === providerId) return prev;
-      return prev.map((candidate) => {
-        if (candidate.id !== sessionId) return candidate;
-        if (!providerId) {
-          const { codingCliProviderId: _removed, ...rest } = candidate;
-          return rest;
-        }
-        return { ...candidate, codingCliProviderId: providerId };
-      });
-    });
+    // Presentation-only: store-driven icon chrome (see sessionPresentationStore).
+    publishSessionCodingCliProvider(sessionId, providerId);
   }, []);
 
   const createLocalTerminal = useCallback((options?: LocalTerminalOptions) => {
@@ -462,9 +446,13 @@ export const useSessionState = ({
   }, []);
 
   const closeWorkspace = useCallback((workspaceId: string) => {
-    cleanupClosedTerminalSessions(
-      sessionsRef.current.filter(session => session.workspaceId === workspaceId).map(session => session.id),
-    );
+    const closedIds = sessionsRef.current
+      .filter(session => session.workspaceId === workspaceId)
+      .map(session => session.id);
+    cleanupClosedTerminalSessions(closedIds);
+    for (const sessionId of closedIds) {
+      sessionPresentationStore.clearSession(sessionId);
+    }
     setWorkspaces(prevWorkspaces => {
       const remainingWorkspaces = prevWorkspaces.filter(w => w.id !== workspaceId);
 
@@ -485,6 +473,9 @@ export const useSessionState = ({
 
   const closeSessions = useCallback((sessionIds: string[]) => {
     cleanupClosedTerminalSessions(sessionIds);
+    for (const sessionId of sessionIds) {
+      sessionPresentationStore.clearSession(sessionId);
+    }
     const result = closeSessionsState({
       sessions: sessionsRef.current,
       workspaces: workspacesRef.current,
