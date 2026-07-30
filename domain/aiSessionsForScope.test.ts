@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  aiSessionIdSetEqual,
   exactScopeAISessionsEqual,
   filterAISessionsForScope,
   retainStableAISessionsForScope,
@@ -65,4 +66,13 @@ test('exactScopeAISessionsEqual tracks selected cross-scope resumed session', ()
     exactScopeAISessionsEqual(prev, prev, 'terminal', 't-new', 'hist'),
     true,
   );
+});
+
+test('aiSessionIdSetEqual detects create/delete without object-identity thrash', () => {
+  const a1 = session('a', 'terminal', 't1');
+  const a2 = session('a', 'terminal', 't1');
+  const b = session('b', 'terminal', 't2');
+  assert.equal(aiSessionIdSetEqual([a1, b], [a2, b]), true);
+  assert.equal(aiSessionIdSetEqual([a1, b], [a1]), false);
+  assert.equal(aiSessionIdSetEqual([a1], [b]), false);
 });

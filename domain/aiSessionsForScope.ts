@@ -56,6 +56,26 @@ export function aiSessionByIdEqual<T extends AISessionLike>(
 }
 
 /**
+ * True when both arrays contain the same session ids (order-insensitive).
+ * Detects create/delete for history lists without re-rendering on in-place
+ * stream object replacements for an existing id.
+ */
+export function aiSessionIdSetEqual<T extends AISessionLike>(
+  prev: readonly T[] | null | undefined,
+  next: readonly T[] | null | undefined,
+): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  if (prev.length !== next.length) return false;
+  if (prev.length === 0) return true;
+  const prevIds = new Set(prev.map((session) => session.id));
+  for (const session of next) {
+    if (!prevIds.has(session.id)) return false;
+  }
+  return true;
+}
+
+/**
  * True when exact-scope session object identities match (order-insensitive by id).
  * Sibling stream updates replace only their own session objects, so other panels
  * see the same exact-scope refs and can skip re-render.

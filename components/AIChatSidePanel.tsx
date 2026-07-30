@@ -51,7 +51,7 @@ import {
   type DefaultTargetSessionHint,
 } from './ai/hooks/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
-import { exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
+import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { registerGrantPersister } from '../infrastructure/ai/shared/approvalGate';
@@ -1505,6 +1505,11 @@ export function aiChatSidePanelPropsAreEqual(
     prev.scopeTargetId,
     selectedSessionId,
   )) {
+    return false;
+  }
+  // History drawer / recent list need create+delete visibility without tracking
+  // every sibling stream object replacement (same ids → still skip thrash).
+  if (!aiSessionIdSetEqual(prev.sessions, next.sessions)) {
     return false;
   }
 

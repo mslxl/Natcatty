@@ -109,8 +109,9 @@ function TerminalSelectionAIOverlayInner({
         overlayRafId = requestFrame(publishSelectionOverlayPosition);
       };
 
-      const onSelectionChange = () => {
+      const onSelectionChange = (options?: { allowCopy?: boolean }) => {
         if (disposed) return;
+        const allowCopy = options?.allowCopy !== false;
         const rawSelection = term.getSelection();
         const hasText = !!rawSelection && rawSelection.length > 0;
         if (lastHasSelection !== hasText) {
@@ -130,9 +131,15 @@ function TerminalSelectionAIOverlayInner({
         }
         scheduleSelectionOverlayPosition();
 
-        // Skip programmatic restore (preserveSelectionOnInput) so we do not
-        // overwrite clipboard content the user copied elsewhere.
-        if (hasText && copyOnSelect && !isRestoringSelectionRef?.current) {
+        // Skip programmatic restore (preserveSelectionOnInput) and the initial
+        // attach snapshot so reopening a tab does not re-copy a retained
+        // selection over the user's current clipboard.
+        if (
+          allowCopy
+          && hasText
+          && copyOnSelect
+          && !isRestoringSelectionRef?.current
+        ) {
           const selection = getTerminalSelectionForClipboard(term, normalizeTextOnCopy);
           if (!selection) return;
           copyTimer = setTimeout(() => {
@@ -143,7 +150,7 @@ function TerminalSelectionAIOverlayInner({
         }
       };
 
-      selectionDisposable = term.onSelectionChange(onSelectionChange);
+      selectionDisposable = term.onSelectionChange(() => onSelectionChange());
       scrollDisposable = term.onScroll?.(scheduleSelectionOverlayPosition);
       resizeDisposable = term.onResize?.(scheduleSelectionOverlayPosition);
       resizeObserver = typeof ResizeObserver === 'undefined'
@@ -152,16 +159,24 @@ function TerminalSelectionAIOverlayInner({
       if (containerRef.current) {
         resizeObserver?.observe(containerRef.current);
       }
-      onSelectionChange();
+      // Sync UI only; do not write clipboard on reattach.
+      onSelectionChange({ allowCopy: false });
     };
 
     // Child effects run before parent useTerminalEffects assigns termRef.
     // Poll until the xterm runtime exists so copy-on-select / overlay attach
-    // for sessions that mount already visible.
+    // for sessions that mount already visible. Bound the wait so a failed
+    // runtime never leaves a permanent rAF loop.
+    const waitStartedAt = Date.now();
+    const MAX_RUNTIME_WAIT_MS = 15_000;
     const tryAttach = () => {
       if (disposed) return;
       const term = termRef.current;
       if (!term) {
+        if (Date.now() - waitStartedAt >= MAX_RUNTIME_WAIT_MS) {
+          waitRafId = null;
+          return;
+        }
         waitRafId = requestFrame(tryAttach);
         return;
       }
