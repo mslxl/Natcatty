@@ -1213,6 +1213,7 @@ function App({ settings }: { settings: SettingsState }) {
     stopRuleTunnels,
     openHost: openHostForVaultAgent,
     closeSession: closeSessionForVaultAgent,
+    getScriptSessionMeta: (sessionId) => sessions.find((session) => session.id === sessionId),
   });
 
   const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {

@@ -72,7 +72,7 @@ await main();
   assert.deepEqual(logs, ["from-main"]);
 });
 
-test("createScriptRuntime executes simple log script", async () => {
+test("createScriptRuntime exposes the session name", async () => {
   const logs = [];
   const runtime = createScriptRuntime({
     sessionId: "s1",
@@ -84,15 +84,15 @@ test("createScriptRuntime executes simple log script", async () => {
       waitForAny: async () => 0,
       getText: () => "",
     }),
-    getSessionMeta: () => ({ connected: true, hostname: "host", username: "user" }),
+    getSessionMeta: () => ({ connected: true, name: "Production", hostname: "host", username: "user" }),
     showDialog: async () => true,
     isPaused: () => false,
     isAborted: () => false,
     onStatusChange: () => {},
   });
 
-  await runtime.execute("nct.log('hello');");
-  assert.deepEqual(logs, ["hello"]);
+  await runtime.execute("nct.log(nct.session.name);");
+  assert.deepEqual(logs, ["Production"]);
 });
 
 test("createScriptRuntime releases its isolated worker after normal completion", async () => {

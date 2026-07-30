@@ -1020,19 +1020,69 @@ test("script run uses renderer sessionMeta when main-process session map is empt
     scriptId: "renderer-meta",
     scriptLabel: "Renderer meta",
     sessionId: "session-renderer",
-    sessionMeta: { connected: true, hostname: "10.0.0.1", username: "root" },
+    sessionMeta: { connected: true, name: "Production", hostname: "10.0.0.1", username: "root" },
     content: `
       if (!nct.session.connected) {
         throw new Error("Session not connected");
       }
-      nct.log(\`\${nct.session.hostname}@\${nct.session.username}\`);
+      nct.log(\`\${nct.session.name}:\${nct.session.hostname}@\${nct.session.username}\`);
     `,
     permissionMode: "auto",
   });
 
   const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "renderer-meta");
   assert.equal(finalRun.status, "completed");
-  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /10\.0\.0\.1@root/);
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /Production:10\.0\.0\.1@root/);
+});
+
+test("script run uses the main-process session label when renderer metadata is absent", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+
+  scriptBridge.init({
+    sessions: new Map([["session-local", {
+      status: "connected",
+      label: "Local Terminal",
+      hostname: "localhost",
+      username: "local",
+    }]]),
+    electronModule: {
+      app: {
+        getVersion: () => "test",
+        getPath: () => process.cwd(),
+      },
+    },
+    terminalBridge: {
+      writeToSession() {},
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => ({
+      webContents: {
+        send(channel, payload) {
+          if (channel === "netcatty:script:runs-updated") {
+            sentRunUpdates.push(payload.runs);
+          }
+        },
+      },
+    }),
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  });
+
+  await handlers.get("netcatty:script:run")({}, {
+    scriptId: "local-session-name",
+    scriptLabel: "Local session name",
+    sessionId: "session-local",
+    content: "nct.log(nct.session.name);",
+    permissionMode: "auto",
+  });
+
+  const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "local-session-name");
+  assert.equal(finalRun.status, "completed");
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /Local Terminal/);
 });
 
 test("script run sends form dialog requests and resolves object responses", async () => {

@@ -45,6 +45,7 @@ export async function runAutomationScript(params: {
   mode?: 'sequential' | 'parallel';
   sessionMeta?: {
     connected?: boolean;
+    name?: string;
     hostname?: string;
     username?: string;
   };
@@ -135,6 +136,7 @@ export async function runConnectScriptsSequential(params: {
   onScriptComplete?: (snippet: Snippet) => void;
   sessionMeta?: {
     connected?: boolean;
+    name?: string;
     hostname?: string;
     username?: string;
   };

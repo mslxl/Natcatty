@@ -41,7 +41,7 @@ const scriptLogTokens = new Map();
 const sessionRunChains = new Map();
 /** @type {Map<string, { abort: (reason?: Error) => void }>} */
 const runAbortControls = new Map();
-/** @type {Map<string, { connected?: boolean, hostname?: string, username?: string }>} */
+/** @type {Map<string, { connected?: boolean, name?: string, hostname?: string, username?: string }>} */
 const rendererSessionMetaById = new Map();
 let disposeTerminalDataTap = null;
 let disposeWorkerOutputTap = null;
@@ -188,6 +188,7 @@ function getSessionMeta(sessionId) {
   if (session) {
     return {
       connected: session.status !== "disconnected",
+      name: rendererMeta?.name || session.label || session.hostLabel || "",
       hostname: session.hostname || session.hostLabel || rendererMeta?.hostname || "",
       username: session.username || rendererMeta?.username || "",
     };
@@ -195,11 +196,12 @@ function getSessionMeta(sessionId) {
   if (isSessionConnected(sessionId)) {
     return {
       connected: true,
+      name: rendererMeta?.name || "",
       hostname: rendererMeta?.hostname || "",
       username: rendererMeta?.username || "",
     };
   }
-  return { connected: false, hostname: "", username: "" };
+  return { connected: false, name: "", hostname: "", username: "" };
 }
 
 function notifyScriptSessionInput(sessionId, data) {
