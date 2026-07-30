@@ -13,6 +13,7 @@ export { buildAITerminalSessionInfo };
 export type { AITerminalSessionInfo };
 import { collectSessionIds, SplitDirection } from '../../domain/workspace';
 import { resolveSessionTabTitle } from '../../domain/sessionTabTitle';
+import { terminalPaneSessionsEqual } from '../../domain/terminalPaneSessionsEqual';
 import {
   resolveTerminalHibernateEnabled,
   resolveTerminalHibernateEnabledForProtocol,
@@ -545,7 +546,6 @@ export interface TerminalLayerProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
-  shellHistory?: import('../../types').ShellHistoryEntry[];
   onTerminalDataCapture?: (sessionId: string, data: string) => void;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
@@ -660,7 +660,6 @@ interface TerminalPaneProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
-  shellHistory?: import('../../types').ShellHistoryEntry[];
   onCommandSubmitted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
@@ -1462,7 +1461,6 @@ interface TerminalPanesHostProps {
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
-  shellHistory?: import('../../types').ShellHistoryEntry[];
   onCommandSubmitted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
@@ -1494,7 +1492,8 @@ const terminalPanesHostPropsAreEqual = (
   prev: TerminalPanesHostProps,
   next: TerminalPanesHostProps,
 ): boolean => {
-  if (prev.sessions !== next.sessions) return false;
+  // Ignore TopTabs-only presentation fields on sessions (dynamicTitle, coding CLI).
+  if (!terminalPaneSessionsEqual(prev.sessions, next.sessions)) return false;
   if (prev.sessionHostsMap !== next.sessionHostsMap) return false;
   if (prev.sessionChainHostsMap !== next.sessionChainHostsMap) return false;
   if (prev.sessionSudoAutofillPasswordsMap !== next.sessionSudoAutofillPasswordsMap) return false;

@@ -129,6 +129,23 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     handleCreateLocalTerminal();
   }, [handleCreateLocalTerminal]);
 
+  const handleTerminalCommandExecuted = useCallback((
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => {
+    addShellHistoryEntry({ command, hostId, hostLabel, sessionId });
+  }, [addShellHistoryEntry]);
+
+  const handleUpdateTerminalFontWeight = useCallback((weight: number) => {
+    updateTerminalSetting('fontWeight', weight);
+  }, [updateTerminalSetting]);
+
+  const handleRequestAddToWorkspace = useCallback((workspaceId: string) => {
+    setAddToWorkspaceDialog({ mode: 'append', workspaceId });
+  }, [setAddToWorkspaceDialog]);
+
   const appThemeStyle = useMemo(() => {
     const tokens = getUiThemeById(
       resolvedTheme,
@@ -465,22 +482,17 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
           onUpdateSessionDynamicTitle={updateSessionDynamicTitle}
           onUpdateSessionCodingCliProvider={updateSessionCodingCliProvider}
           onClearSessionFontSizeOverride={clearSessionFontSizeOverride}
-          onUpdateTerminalFontWeight={(w) => updateTerminalSetting('fontWeight', w)}
+          onUpdateTerminalFontWeight={handleUpdateTerminalFontWeight}
           onCloseSession={closeSession}
           onUpdateSessionStatus={handleSessionStatusChange}
           onUpdateHostDistro={updateHostDistro}
           onUpdateHost={handleUpdateHostFromTerminal}
           onAddKnownHost={handleAddKnownHost}
-          onCommandExecuted={(command, hostId, hostLabel, sessionId) => {
-            addShellHistoryEntry({ command, hostId, hostLabel, sessionId });
-          }}
-          shellHistory={shellHistory}
+          onCommandExecuted={handleTerminalCommandExecuted}
           onTerminalDataCapture={handleTerminalDataCapture}
           onCreateWorkspaceFromSessions={createWorkspaceFromSessions}
           onAddSessionToWorkspace={addSessionToWorkspace}
-          onRequestAddToWorkspace={(workspaceId) =>
-            setAddToWorkspaceDialog({ mode: 'append', workspaceId })
-          }
+          onRequestAddToWorkspace={handleRequestAddToWorkspace}
           onUpdateSplitSizes={updateSplitSizes}
           onSetDraggingSessionId={setDraggingSessionId}
           onToggleWorkspaceViewMode={toggleWorkspaceViewMode}

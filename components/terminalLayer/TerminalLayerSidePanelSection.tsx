@@ -5,9 +5,13 @@ import {
   buildTerminalSidePanelCssVars,
 } from '../../infrastructure/theme/terminalAppearanceTokens';
 import { injectTerminalLayerChromeSurfaceVars } from '../../infrastructure/theme/terminalAppearanceVars';
-import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { useActiveTabId } from '../../application/state/activeTabStore';
+import {
+  getSidePanelLiveSnapshot,
+  subscribeSidePanelLiveSnapshot,
+} from '../../application/state/sidePanelLiveStore';
 import {
   reorderTerminalSidePanelTab,
   TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
@@ -83,10 +87,16 @@ function hasMountedSidePanelContent(ctx: SidePanelContext): boolean {
   );
 }
 
-export function TerminalLayerSidePanelSection({ ctx }: { ctx: SidePanelContext }) {
+function TerminalLayerSidePanelSectionInner({ ctx }: { ctx: SidePanelContext }) {
   if (!hasMountedSidePanelContent(ctx)) return null;
   return <TerminalLayerSidePanelInner ctx={ctx} />;
 }
+
+/** Skip chrome rebuilds when only live/workspace-focus ticks change. */
+export const TerminalLayerSidePanelSection = memo(
+  TerminalLayerSidePanelSectionInner,
+  (prev, next) => terminalLayerSidePanelStableCtxEqual(prev.ctx, next.ctx),
+);
 TerminalLayerSidePanelSection.displayName = 'TerminalLayerSidePanelSection';
 
 function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
@@ -107,7 +117,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     handleOpenSystem,
     handleOpenTheme,
     handleToggleSftpFromBar,
-    resolvedPreviewTheme,
+    resolvedPreviewTheme: ctxResolvedPreviewTheme,
     setSidePanelPosition,
     setSidePanelWidth,
     persistSidePanelWidth,
@@ -116,6 +126,20 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     t,
     terminalTheme,
   } = ctx;
+
+  // Live theme for chrome when panel is open and not follow-app — stable memo
+  // no longer receives focus-driven resolvedPreviewTheme via ctx.
+  const subscribeLiveTheme = isSidePanelOpenForCurrentTab && !followAppTerminalTheme;
+  const liveSnapshot = useSyncExternalStore(
+    (listener) => subscribeSidePanelLiveSnapshot(subscribeLiveTheme, listener),
+    () => getSidePanelLiveSnapshot(subscribeLiveTheme),
+    () => getSidePanelLiveSnapshot(subscribeLiveTheme),
+  );
+  const resolvedPreviewTheme = followAppTerminalTheme
+    ? null
+    : (subscribeLiveTheme
+      ? (liveSnapshot.resolvedPreviewTheme ?? ctxResolvedPreviewTheme)
+      : ctxResolvedPreviewTheme);
 
   const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
   const {

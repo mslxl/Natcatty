@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { migrateHostsFromLegacyLineTimestamps, normalizeDistroId, sanitizeHost } from "../../domain/host";
 import { isEncryptedCredentialPlaceholder } from "../../domain/credentials";
 import { sanitizeGroupConfig } from "../../domain/groupConfig";
@@ -56,6 +56,7 @@ import {
 } from "../../domain/connectionLogTerminalData";
 import { getNextVaultOrder, normalizeVaultOrder } from "../../domain/vaultOrder";
 import { loadSanitizedShellHistory } from "./shellHistoryPersistence";
+import { publishShellHistorySnapshot } from "./shellHistoryStore";
 import { setVaultInitialized } from "./vaultInitStore";
 import {
   decryptGroupConfigs,
@@ -788,11 +789,19 @@ export const useVaultState = () => {
     updateGroupConfigs,
   ]);
 
+  // Keep store in sync for storage-event / external setShellHistory paths.
+  // Append/clear/load also publish synchronously so History never flashes empty.
+  useLayoutEffect(() => {
+    publishShellHistorySnapshot(shellHistory);
+  }, [shellHistory]);
+
   const addShellHistoryEntry = useCallback(
     (entry: Omit<ShellHistoryEntry, "id" | "timestamp">) => {
       setShellHistory((prev) => {
         const updated = mergeGlobalHistoryOnAppend(prev, entry);
         if (updated === prev) return prev;
+        // Persist immediately so crash between commit and layout effect cannot drop history.
+        // Store republish is also done in useLayoutEffect for load/storage-event paths.
         localStorageAdapter.write(STORAGE_KEY_SHELL_HISTORY, updated);
         return updated;
       });
@@ -803,6 +812,7 @@ export const useVaultState = () => {
   const clearShellHistory = useCallback(() => {
     setShellHistory([]);
     localStorageAdapter.write(STORAGE_KEY_SHELL_HISTORY, []);
+    publishShellHistorySnapshot([]);
   }, []);
 
   // Connection logs management
@@ -1067,6 +1077,7 @@ export const useVaultState = () => {
         const savedShellHistory = loadSanitizedShellHistory();
         if (savedShellHistory) {
           setShellHistory(savedShellHistory);
+          publishShellHistorySnapshot(savedShellHistory);
         }
 
         // Load connection logs
@@ -1253,6 +1264,7 @@ export const useVaultState = () => {
           safeParse<ShellHistoryEntry[]>(event.newValue) ?? [],
         );
         setShellHistory(next);
+        publishShellHistorySnapshot(next);
         return;
       }
 

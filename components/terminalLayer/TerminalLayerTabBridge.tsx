@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 import { useActiveTabId } from '../../application/state/activeTabStore';
 import { sessionCapabilitiesStore } from '../../application/state/sessionCapabilitiesStore';
@@ -18,6 +18,7 @@ import { useTerminalLayerEffects } from './useTerminalLayerEffects';
 import { useTerminalThemePanelState } from './useTerminalThemePanelState';
 import { useManualTerminalChromeSurfaceInjection } from '../../application/state/useManualTerminalChromeSurfaceInjection';
 import { sidePanelLiveStore, type SidePanelLiveSnapshot } from '../../application/state/sidePanelLiveStore';
+import { terminalCwdStore } from '../../application/state/terminalCwdStore';
 import { useTerminalWorkspaceLayout } from './useTerminalWorkspaceLayout';
 import type { SidePanelTab } from './TerminalLayerSupport';
 
@@ -26,6 +27,13 @@ type StableRef = React.MutableRefObject<Record<string, any>>;
 export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) {
   const s = stableRef.current;
   const activeTabId = useActiveTabId();
+  // Subscribe to cwd store so OSC 7 updates reach the side-panel live snapshot
+  // without TerminalLayerInner setState.
+  const terminalCwdVersion = useSyncExternalStore(
+    terminalCwdStore.subscribe,
+    terminalCwdStore.getVersion,
+    terminalCwdStore.getVersion,
+  );
   const systemBackend = useSystemManagerBackend();
   const terminalContextReadersRef = useRef<Map<string, TerminalContextReader>>(new Map());
 
@@ -152,12 +160,15 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     isSftpOpenForCurrentTab,
   ]);
 
-  const activeTerminalCwd = useMemo(() => {
-    if (!linkedTerminalSessionIdForSftp) return null;
-    return s.terminalRendererCwdBySessionRef.current.get(linkedTerminalSessionIdForSftp) ?? null;
-    // terminalCwdRevision bumps when any session cwd changes so linked SFTP can react.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkedTerminalSessionIdForSftp, s.terminalCwdRevision]);
+  // Recomputed when terminalCwdVersion changes (useSyncExternalStore above).
+  const activeTerminalCwd = linkedTerminalSessionIdForSftp
+    ? (
+      terminalCwdStore.getCwd(linkedTerminalSessionIdForSftp)
+      ?? s.terminalRendererCwdBySessionRef.current.get(linkedTerminalSessionIdForSftp)
+      ?? null
+    )
+    : null;
+  void terminalCwdVersion;
 
   const historySessionId = effectiveFocusedSessionId;
   const activeTerminalSessionForSystem = useMemo(
@@ -192,10 +203,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     if (!historySessionId) return null;
     return sessionHostsMap.get(historySessionId) ?? null;
   }, [historySessionId, sessionHostsMap]);
-  const focusedHostHistoryState = s.remoteHistory?.getState(
-    focusedHost?.id ?? null,
-    historySessionId,
-  );
 
   const themeState = useTerminalThemePanelState({
     accentMode: s.accentMode,
@@ -443,6 +450,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     History: s.History,
     historySessionId,
     HistorySidePanel: s.HistorySidePanel,
+    // remoteHistory / shellHistory are owned by History side-panel slot stores
     hibernateHiddenTabs,
     handleOsDetected: s.handleOsDetected,
     handlePendingTerminalSelectionConsumed: s.handlePendingTerminalSelectionConsumed,
@@ -458,7 +466,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handleRunScriptFromPanel: s.handleRunScriptFromPanel,
     handleRunScriptOnWorkspace: s.handleRunScriptOnWorkspace,
     handleStartRecordingFromPanel: s.handleStartRecordingFromPanel,
-    scriptRuns: s.scriptRuns,
     handleStopScriptRun: s.handleStopScriptRun,
     handlePauseScriptRun: s.handlePauseScriptRun,
     handleResumeScriptRun: s.handleResumeScriptRun,
@@ -533,8 +540,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     previewedOrVisibleThemeId: themeState.previewedOrVisibleThemeId,
     refocusActiveTerminalSession: s.refocusActiveTerminalSession,
     refocusTerminalSession: s.refocusTerminalSession,
-    remoteHistory: s.remoteHistory,
-    shellHistory: s.shellHistory,
     resizing,
     resolveAIExecutorContext,
     resolvedPreviewTheme: themeState.resolvedPreviewTheme,
@@ -614,9 +619,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     computeSplitHint,
     dropHint,
     focusedHost,
-    focusedHostHistoryState,
     focusedSessionId,
-    s.shellHistory,
     s.restoreTerminalCwd,
     s.notes,
     s.noteGroups,
@@ -645,7 +648,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     s.terminalTheme,
     s.resolveSessionAppearance,
     s.hostMap,
-    s.scriptRuns,
   ]);
 
   return <TerminalLayerView ctx={ctx} />;
