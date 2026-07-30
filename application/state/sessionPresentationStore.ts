@@ -9,6 +9,13 @@ export type SessionPresentation = {
 
 type Listener = () => void;
 
+/** Encode undefined / null / present distinctly for useSyncExternalStore snapshots. */
+function encodePresentationField(value: string | null | undefined): string {
+  if (value === undefined) return 'u';
+  if (value === null) return 'n';
+  return `v:${value}`;
+}
+
 /**
  * Presentation-only session chrome (tab title / coding-CLI icon) separate from
  * structural session identity used by TerminalLayer pane equality.
@@ -27,11 +34,14 @@ class SessionPresentationStore {
    * Stable per-session snapshot for useSyncExternalStore. Global listeners still
    * fire on any change, but React skips re-render when this string is unchanged
    * for the subscribed sessionId (Object.is).
+   *
+   * Encodes undefined / null / value distinctly so a null tombstone is not
+   * Object.is-equal to a missing field (both used to collapse to '').
    */
   getSessionSnapshot = (sessionId: string): string => {
     const presentation = this.bySession.get(sessionId);
     if (!presentation) return '';
-    return `${presentation.dynamicTitle ?? ''}\0${presentation.codingCliProviderId ?? ''}`;
+    return `${encodePresentationField(presentation.dynamicTitle)}\0${encodePresentationField(presentation.codingCliProviderId)}`;
   };
 
   subscribe = (listener: Listener): (() => void) => {

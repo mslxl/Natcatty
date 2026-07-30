@@ -110,3 +110,19 @@ test('null presentation tombstones clear stale snapshot titles', () => {
   assert.equal(sessionPresentationStore.getVersion(), version);
   sessionPresentationStore.clearSession('tomb-1');
 });
+
+test('session snapshot distinguishes missing fields from null tombstones', () => {
+  sessionPresentationStore.clearSession('snap-1');
+  sessionPresentationStore.setPresentation('snap-1', { dynamicTitle: 'live', codingCliProviderId: 'claude' });
+  const bothLive = sessionPresentationStore.getSessionSnapshot('snap-1');
+  publishSessionDynamicTitle('snap-1', null);
+  const titleTombstoned = sessionPresentationStore.getSessionSnapshot('snap-1');
+  assert.notEqual(titleTombstoned, bothLive);
+  // Clearing provider after title tombstone must also change the snapshot.
+  publishSessionCodingCliProvider('snap-1', null);
+  const bothTombstoned = sessionPresentationStore.getSessionSnapshot('snap-1');
+  assert.notEqual(bothTombstoned, titleTombstoned);
+  // Empty entry vs explicit dual null tombstone are distinct from missing.
+  assert.notEqual(bothTombstoned, '');
+  sessionPresentationStore.clearSession('snap-1');
+});

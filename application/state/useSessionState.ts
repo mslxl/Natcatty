@@ -393,8 +393,9 @@ export const useSessionState = ({
   const updateSessionDynamicTitle = useCallback((sessionId: string, title: string | null) => {
     const normalizedTitle = title ? normalizeCodingCliDynamicTitleForStorage(title) : '';
     const nextTitle = normalizedTitle.length > 0 ? normalizedTitle : null;
-    // Presentation-only: write the external store so TopTabs refreshes without
-    // setSessions thrashing appTerminalDomain / TerminalLayer parents.
+    // Presentation-only: write the external store so TopTabs / focus sidebar /
+    // pane chrome refresh via applySessionPresentation without setSessions
+    // thrashing appTerminalDomain / TerminalLayer parents.
     publishSessionDynamicTitle(sessionId, nextTitle);
   }, []);
 
@@ -402,7 +403,8 @@ export const useSessionState = ({
     sessionId: string,
     providerId: CodingCliProviderId | null,
   ) => {
-    // Presentation-only: store-driven icon chrome (see sessionPresentationStore).
+    // Presentation-only: store-driven icon chrome. Consumers must overlay via
+    // applySessionPresentation / usePresentedSession (TopTabs, focus sidebar, panes).
     publishSessionCodingCliProvider(sessionId, providerId);
   }, []);
 

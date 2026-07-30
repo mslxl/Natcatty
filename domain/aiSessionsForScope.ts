@@ -15,6 +15,8 @@ export type AISessionScopeLike = {
 export type AISessionLike = {
   id: string;
   scope: AISessionScopeLike;
+  /** Optional chrome for history list equality (title renames without stream thrash). */
+  title?: string | null;
 };
 
 export function buildAIScopeKey(scopeType: string, scopeTargetId?: string): string {
@@ -56,9 +58,9 @@ export function aiSessionByIdEqual<T extends AISessionLike>(
 }
 
 /**
- * True when both arrays contain the same session ids (order-insensitive).
- * Detects create/delete for history lists without re-rendering on in-place
- * stream object replacements for an existing id.
+ * True when both arrays contain the same session ids (order-insensitive) and
+ * matching title chrome. Detects create/delete/rename for history lists without
+ * re-rendering on in-place stream object replacements that only change messages.
  */
 export function aiSessionIdSetEqual<T extends AISessionLike>(
   prev: readonly T[] | null | undefined,
@@ -68,9 +70,11 @@ export function aiSessionIdSetEqual<T extends AISessionLike>(
   if (!prev || !next) return false;
   if (prev.length !== next.length) return false;
   if (prev.length === 0) return true;
-  const prevIds = new Set(prev.map((session) => session.id));
+  const prevById = new Map(prev.map((session) => [session.id, session]));
   for (const session of next) {
-    if (!prevIds.has(session.id)) return false;
+    const prevSession = prevById.get(session.id);
+    if (!prevSession) return false;
+    if ((prevSession.title ?? '') !== (session.title ?? '')) return false;
   }
   return true;
 }
