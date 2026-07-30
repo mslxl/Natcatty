@@ -78,11 +78,13 @@ test('aiSessionIdSetEqual detects create/delete without object-identity thrash',
 });
 
 test('aiSessionIdSetEqual detects title chrome renames without message thrash', () => {
-  const a1 = { ...session('a', 'terminal', 't1'), title: 'old' };
-  const a2 = { ...session('a', 'terminal', 't1'), title: 'old' }; // new object, same title
-  const a3 = { ...session('a', 'terminal', 't1'), title: 'new' };
+  const a1 = { ...session('a', 'terminal', 't1'), title: 'old', updatedAt: 1 };
+  const a2 = { ...session('a', 'terminal', 't1'), title: 'old', updatedAt: 1 }; // new object
+  const a3 = { ...session('a', 'terminal', 't1'), title: 'new', updatedAt: 1 };
+  const a4 = { ...session('a', 'terminal', 't1'), title: 'old', updatedAt: 2 };
   assert.equal(aiSessionIdSetEqual([a1], [a2]), true);
   assert.equal(aiSessionIdSetEqual([a1], [a3]), false);
+  assert.equal(aiSessionIdSetEqual([a1], [a4]), false);
 });
 
 test('aiSessionIdSetEqual detects updatedAt chrome without message thrash', () => {

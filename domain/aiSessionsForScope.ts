@@ -3,7 +3,7 @@
  *
  * History still needs the full sessions list for fuzzy host-match ranking
  * (`getScopedHistorySessions`). Stream thrash is blocked by comparing only
- * exact-scope session object refs in panel areEqual — not by pre-filtering
+ * exact-scope session object refs in panel are equal — not by pre-filtering
  * the history universe away.
  */
 
@@ -15,7 +15,7 @@ export type AISessionScopeLike = {
 export type AISessionLike = {
   id: string;
   scope: AISessionScopeLike;
-  /** Optional chrome for history list equality (title renames without stream thrash). */
+  /** Optional chrome for history list equality (title renames without message thrash). */
   title?: string | null;
   /** Optional chrome for history sort / relative-time display (`getScopedHistorySessions`). */
   updatedAt?: number;

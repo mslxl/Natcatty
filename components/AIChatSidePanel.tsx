@@ -1507,9 +1507,12 @@ export function aiChatSidePanelPropsAreEqual(
   )) {
     return false;
   }
-  // History drawer / recent list need create/delete/title/updatedAt chrome
-  // without requiring message-body object identity (same chrome → skip thrash).
-  if (!aiSessionIdSetEqual(prev.sessions, next.sessions)) {
+  // History drawer / recent list need create/delete/title/updatedAt chrome.
+  // Only when the panel is (or becomes) visible so hidden retained panels do
+  // not re-render on every sibling stream that bumps updatedAt.
+  const prevVisible = prev.isVisible ?? true;
+  const nextVisible = next.isVisible ?? true;
+  if ((prevVisible || nextVisible) && !aiSessionIdSetEqual(prev.sessions, next.sessions)) {
     return false;
   }
 
