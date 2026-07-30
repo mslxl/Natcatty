@@ -661,7 +661,10 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
               const compactChromeClass =
                 "h-7 rounded-full border backdrop-blur-md";
               return (
-                <div className="absolute right-1 top-1 z-30 flex flex-row-reverse items-center pointer-events-none">
+                <div
+                  className="absolute right-1 top-1 z-30 flex flex-row-reverse items-center pointer-events-none"
+                  data-section="terminal-toolbar"
+                >
                   <Tooltip open={compactActionsOpen ? false : undefined}>
                     <TooltipTrigger asChild>
                       <button
@@ -729,6 +732,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                     : "ml-auto w-fit rounded-bl-md px-1 pointer-events-auto",
                 )}
                 data-host-info-visible={showHostInfoBar ? "true" : "false"}
+                data-section="terminal-toolbar"
                 style={toolbarSurfaceStyle}
               >
                 {terminalActionsBody}

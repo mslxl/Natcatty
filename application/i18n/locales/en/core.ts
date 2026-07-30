@@ -327,6 +327,7 @@ Because many styles come from Tailwind utilities, you often need \`!important\` 
 ### Top tabs
 
 - \`top-tabs\`
+- \`top-tabs-toolbar-actions\` — Right-side menu and utility toolbar
 - \`top-tabs-host-tree-toggle\`
 - \`top-tabs-quick-switcher-toggle\`
 
@@ -341,6 +342,8 @@ Because many styles come from Tailwind utilities, you often need \`!important\` 
 ### Terminal workspace
 
 - \`terminal-workspace\`
+- \`terminal-toolbar\` — Terminal action toolbar
+- \`terminal-toolbar-menu\` — Terminal toolbar overflow and submenu
 - \`terminal-workspace-sidebar\` — Focus-mode terminal list
 - \`terminal-host-tree-sidebar\`
 - \`terminal-host-tree-sidebar-content\`
@@ -379,6 +382,18 @@ Because many styles come from Tailwind utilities, you often need \`!important\` 
 - \`ai-chat-panel\`
 
 ### Examples
+
+Increase menu and toolbar icon sizes:
+
+\`\`\`css
+[data-section="top-tabs-toolbar-actions"] button > svg,
+[data-section="terminal-toolbar"] button > svg,
+[data-section="terminal-toolbar-menu"] button > svg,
+[data-section="terminal-toolbar"] button [data-plugin-icon-kind="package"] {
+  width: 20px !important;
+  height: 20px !important;
+}
+\`\`\`
 
 Hide the host-list toggle in the top tab bar:
 
