@@ -47,3 +47,22 @@ test('exactScopeAISessionsEqual ignores sibling session object churn', () => {
   const a2 = session('a', 'terminal', 't1');
   assert.equal(exactScopeAISessionsEqual(prev, [a2, b1], 'terminal', 't1'), false);
 });
+
+test('exactScopeAISessionsEqual tracks selected cross-scope resumed session', () => {
+  const exact = session('exact', 'terminal', 't-new');
+  const history1 = session('hist', 'terminal', 't-old');
+  const history2 = session('hist', 'terminal', 't-old'); // stream update object
+  const prev = [exact, history1];
+  const next = [exact, history2];
+  // Without selectedSessionId, cross-scope history is ignored (sibling thrash isolation).
+  assert.equal(exactScopeAISessionsEqual(prev, next, 'terminal', 't-new'), true);
+  // With selectedSessionId, visible resumed history must re-render on updates.
+  assert.equal(
+    exactScopeAISessionsEqual(prev, next, 'terminal', 't-new', 'hist'),
+    false,
+  );
+  assert.equal(
+    exactScopeAISessionsEqual(prev, prev, 'terminal', 't-new', 'hist'),
+    true,
+  );
+});

@@ -29,6 +29,11 @@ type Props = {
   onAddSelectionToAI?: () => void;
   copyOnSelect?: boolean;
   normalizeTextOnCopy?: boolean;
+  /**
+   * True while createXTermRuntime programmatically restores selection
+   * (preserveSelectionOnInput). Copy-on-select must skip those events.
+   */
+  isRestoringSelectionRef?: RefObject<boolean>;
   isVisible?: boolean;
 };
 
@@ -39,6 +44,7 @@ function TerminalSelectionAIOverlayInner({
   onAddSelectionToAI,
   copyOnSelect,
   normalizeTextOnCopy = true,
+  isRestoringSelectionRef,
   isVisible = true,
 }: Props) {
   const { t } = useI18n();
@@ -46,13 +52,19 @@ function TerminalSelectionAIOverlayInner({
   const [selectionOverlayPosition, setSelectionOverlayPosition] = useState<SelectionOverlayPosition>(null);
 
   useEffect(() => {
-    const term = termRef.current;
-    if (!term || !isVisible) return;
+    if (!isVisible) return;
 
+    let disposed = false;
     let overlayRafId: number | null = null;
     let copyTimer: ReturnType<typeof setTimeout> | null = null;
+    let waitRafId: number | null = null;
     let lastHasSelection: boolean | null = null;
     let lastOverlayPosition: SelectionOverlayPosition = null;
+    let selectionDisposable: { dispose: () => void } | null = null;
+    let scrollDisposable: { dispose: () => void } | null | undefined = null;
+    let resizeDisposable: { dispose: () => void } | null | undefined = null;
+    let resizeObserver: ResizeObserver | null = null;
+
     const requestFrame = typeof requestAnimationFrame === 'function'
       ? requestAnimationFrame
       : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
@@ -60,75 +72,115 @@ function TerminalSelectionAIOverlayInner({
       ? cancelAnimationFrame
       : (id: number) => clearTimeout(id);
 
-    const publishSelectionOverlayPosition = () => {
-      overlayRafId = null;
-      const nextPosition = resolveSelectionOverlayPosition(term, containerRef.current);
-      if (areSelectionOverlayPositionsEqual(lastOverlayPosition, nextPosition)) return;
-      lastOverlayPosition = nextPosition;
-      setSelectionOverlayPosition(nextPosition);
-    };
-
-    const scheduleSelectionOverlayPosition = () => {
-      if (lastHasSelection === false) return;
-      if (overlayRafId !== null) return;
-      overlayRafId = requestFrame(publishSelectionOverlayPosition);
-    };
-
-    const onSelectionChange = () => {
-      const rawSelection = term.getSelection();
-      const hasText = !!rawSelection && rawSelection.length > 0;
-      if (lastHasSelection !== hasText) {
-        lastHasSelection = hasText;
-        setHasSelection(hasText);
+    const cleanupListeners = () => {
+      if (overlayRafId !== null) {
+        cancelFrame(overlayRafId);
+        overlayRafId = null;
       }
       if (copyTimer) {
         clearTimeout(copyTimer);
         copyTimer = null;
       }
-      if (!hasText) {
-        if (lastOverlayPosition !== null) {
-          lastOverlayPosition = null;
-          setSelectionOverlayPosition(null);
-        }
-        return;
-      }
-      scheduleSelectionOverlayPosition();
-
-      if (hasText && copyOnSelect) {
-        const selection = getTerminalSelectionForClipboard(term, normalizeTextOnCopy);
-        if (!selection) return;
-        copyTimer = setTimeout(() => {
-          void navigator.clipboard.writeText(selection).catch(() => {
-            /* ignore clipboard failures */
-          });
-        }, 80);
-      }
+      selectionDisposable?.dispose();
+      selectionDisposable = null;
+      scrollDisposable?.dispose();
+      scrollDisposable = null;
+      resizeDisposable?.dispose();
+      resizeDisposable = null;
+      resizeObserver?.disconnect();
+      resizeObserver = null;
     };
 
-    const selectionDisposable = term.onSelectionChange(onSelectionChange);
-    const scrollDisposable = term.onScroll?.(scheduleSelectionOverlayPosition);
-    const resizeDisposable = term.onResize?.(scheduleSelectionOverlayPosition);
-    const resizeObserver = typeof ResizeObserver === 'undefined'
-      ? null
-      : new ResizeObserver(scheduleSelectionOverlayPosition);
-    if (containerRef.current) {
-      resizeObserver?.observe(containerRef.current);
-    }
-    onSelectionChange();
+    const attach = (term: XTerm) => {
+      cleanupListeners();
+
+      const publishSelectionOverlayPosition = () => {
+        overlayRafId = null;
+        if (disposed) return;
+        const nextPosition = resolveSelectionOverlayPosition(term, containerRef.current);
+        if (areSelectionOverlayPositionsEqual(lastOverlayPosition, nextPosition)) return;
+        lastOverlayPosition = nextPosition;
+        setSelectionOverlayPosition(nextPosition);
+      };
+
+      const scheduleSelectionOverlayPosition = () => {
+        if (lastHasSelection === false) return;
+        if (overlayRafId !== null) return;
+        overlayRafId = requestFrame(publishSelectionOverlayPosition);
+      };
+
+      const onSelectionChange = () => {
+        if (disposed) return;
+        const rawSelection = term.getSelection();
+        const hasText = !!rawSelection && rawSelection.length > 0;
+        if (lastHasSelection !== hasText) {
+          lastHasSelection = hasText;
+          setHasSelection(hasText);
+        }
+        if (copyTimer) {
+          clearTimeout(copyTimer);
+          copyTimer = null;
+        }
+        if (!hasText) {
+          if (lastOverlayPosition !== null) {
+            lastOverlayPosition = null;
+            setSelectionOverlayPosition(null);
+          }
+          return;
+        }
+        scheduleSelectionOverlayPosition();
+
+        // Skip programmatic restore (preserveSelectionOnInput) so we do not
+        // overwrite clipboard content the user copied elsewhere.
+        if (hasText && copyOnSelect && !isRestoringSelectionRef?.current) {
+          const selection = getTerminalSelectionForClipboard(term, normalizeTextOnCopy);
+          if (!selection) return;
+          copyTimer = setTimeout(() => {
+            void navigator.clipboard.writeText(selection).catch(() => {
+              /* ignore clipboard failures */
+            });
+          }, 80);
+        }
+      };
+
+      selectionDisposable = term.onSelectionChange(onSelectionChange);
+      scrollDisposable = term.onScroll?.(scheduleSelectionOverlayPosition);
+      resizeDisposable = term.onResize?.(scheduleSelectionOverlayPosition);
+      resizeObserver = typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(scheduleSelectionOverlayPosition);
+      if (containerRef.current) {
+        resizeObserver?.observe(containerRef.current);
+      }
+      onSelectionChange();
+    };
+
+    // Child effects run before parent useTerminalEffects assigns termRef.
+    // Poll until the xterm runtime exists so copy-on-select / overlay attach
+    // for sessions that mount already visible.
+    const tryAttach = () => {
+      if (disposed) return;
+      const term = termRef.current;
+      if (!term) {
+        waitRafId = requestFrame(tryAttach);
+        return;
+      }
+      waitRafId = null;
+      attach(term);
+    };
+    tryAttach();
 
     return () => {
-      if (overlayRafId !== null) cancelFrame(overlayRafId);
-      if (copyTimer) clearTimeout(copyTimer);
-      selectionDisposable.dispose();
-      scrollDisposable?.dispose();
-      resizeDisposable?.dispose();
-      resizeObserver?.disconnect();
+      disposed = true;
+      if (waitRafId !== null) cancelFrame(waitRafId);
+      cleanupListeners();
     };
   }, [
     termRef,
     containerRef,
     copyOnSelect,
     normalizeTextOnCopy,
+    isRestoringSelectionRef,
     isVisible,
   ]);
 

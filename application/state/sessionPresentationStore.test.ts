@@ -95,3 +95,18 @@ test('per-session snapshot stays stable when a sibling session title changes', (
   sessionPresentationStore.clearSession('a');
   sessionPresentationStore.clearSession('b');
 });
+
+test('null presentation tombstones clear stale snapshot titles', () => {
+  sessionPresentationStore.clearSession('tomb-1');
+  // No prior store entry; first clear must still be persisted.
+  publishSessionDynamicTitle('tomb-1', null);
+  assert.equal(sessionPresentationStore.getPresentation('tomb-1')?.dynamicTitle, null);
+  const base = session({ id: 'tomb-1', dynamicTitle: 'stale-from-snapshot' });
+  const merged = applySessionPresentation(base);
+  assert.equal(merged.dynamicTitle, undefined);
+  // Idempotent second clear does not thrash.
+  const version = sessionPresentationStore.getVersion();
+  publishSessionDynamicTitle('tomb-1', null);
+  assert.equal(sessionPresentationStore.getVersion(), version);
+  sessionPresentationStore.clearSession('tomb-1');
+});

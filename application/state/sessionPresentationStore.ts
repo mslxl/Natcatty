@@ -44,9 +44,12 @@ class SessionPresentationStore {
   setPresentation(sessionId: string, patch: SessionPresentation): void {
     const prev = this.bySession.get(sessionId) ?? {};
     const next: SessionPresentation = { ...prev, ...patch };
+    // Distinguish missing (undefined) from explicit clear (null) so the first
+    // tombstone is stored even when the session snapshot still has a stale
+    // title/provider and the store had no prior entry.
     if (
-      (prev.dynamicTitle ?? null) === (next.dynamicTitle ?? null)
-      && (prev.codingCliProviderId ?? null) === (next.codingCliProviderId ?? null)
+      prev.dynamicTitle === next.dynamicTitle
+      && prev.codingCliProviderId === next.codingCliProviderId
     ) {
       return;
     }

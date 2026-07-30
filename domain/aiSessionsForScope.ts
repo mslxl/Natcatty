@@ -39,18 +39,41 @@ export function filterAISessionsForScope<T extends AISessionLike>(
 }
 
 /**
+ * True when the given session id's object identity is unchanged across arrays
+ * (or both sides lack that session).
+ */
+export function aiSessionByIdEqual<T extends AISessionLike>(
+  prev: readonly T[] | null | undefined,
+  next: readonly T[] | null | undefined,
+  sessionId: string | null | undefined,
+): boolean {
+  if (!sessionId) return true;
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  const prevSession = prev.find((session) => session.id === sessionId);
+  const nextSession = next.find((session) => session.id === sessionId);
+  return prevSession === nextSession;
+}
+
+/**
  * True when exact-scope session object identities match (order-insensitive by id).
  * Sibling stream updates replace only their own session objects, so other panels
  * see the same exact-scope refs and can skip re-render.
+ *
+ * When `selectedSessionId` is set (e.g. a history chat resumed under a newer
+ * terminal whose stored scope still points at an older target), that session is
+ * also compared by identity so stream updates still re-render the visible panel.
  */
 export function exactScopeAISessionsEqual<T extends AISessionLike>(
   prev: readonly T[] | null | undefined,
   next: readonly T[] | null | undefined,
   scopeType: string,
   scopeTargetId?: string,
+  selectedSessionId?: string | null,
 ): boolean {
   if (prev === next) return true;
   if (!prev || !next) return false;
+  if (!aiSessionByIdEqual(prev, next, selectedSessionId)) return false;
   const prevExact = filterAISessionsForScope(prev, scopeType, scopeTargetId);
   const nextExact = filterAISessionsForScope(next, scopeType, scopeTargetId);
   if (prevExact.length !== nextExact.length) return false;

@@ -1489,14 +1489,21 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.onOpenVaultSection !== next.onOpenVaultSection) return false;
 
   // Sibling stream thrash: full sessions array identity always changes. Only
-  // exact-scope session object refs matter for this panel's active chat.
+  // exact-scope session object refs matter for this panel's active chat —
+  // plus the currently selected session, which may be a host-matched history
+  // resume whose stored scope.targetId is an older terminal.
   // Fuzzy history still receives the full list; drawer open forces re-render
   // via isVisible / other prop paths when the user actually needs it.
+  const scopeKey = `${prev.scopeType}:${prev.scopeTargetId ?? ''}`;
+  const selectedSessionId = prev.activeSessionIdMap[scopeKey]
+    ?? next.activeSessionIdMap[scopeKey]
+    ?? null;
   if (!exactScopeAISessionsEqual(
     prev.sessions,
     next.sessions,
     prev.scopeType,
     prev.scopeTargetId,
+    selectedSessionId,
   )) {
     return false;
   }
