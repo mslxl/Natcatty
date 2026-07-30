@@ -3,11 +3,14 @@ import { applyCustomCssToDocument } from "../../../lib/customCss";
 import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, HelpCircle, Monitor, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
+import { useStoredBoolean } from "../../../application/state/useStoredBoolean";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
 import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { APP_ICON_VARIANT_ASSET_PATH, APP_ICON_VARIANT_GROUPS, APP_ICON_VARIANT_I18N_KEY } from "../../../infrastructure/config/appIconVariants";
+import { STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../infrastructure/config/storageKeys";
 import { resolveAppIconVariant, type AppIconVariant } from "../../../domain/appIconVariant";
+import { DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../domain/systemKnownHostsAutoImport";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
 import { FontSelect } from "../FontSelect";
@@ -59,6 +62,10 @@ function SettingsAppearanceTab(props: {
   const { t } = useI18n();
   const availableUIFonts = useAvailableUIFonts();
   const [customCssHelpOpen, setCustomCssHelpOpen] = useState(false);
+  const [autoImportSystemKnownHosts, setAutoImportSystemKnownHosts] = useStoredBoolean(
+    STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+    DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+  );
   const {
     theme,
     resolvedTheme,
@@ -435,6 +442,15 @@ function SettingsAppearanceTab(props: {
           description={t('settings.vault.showHostTreeSidebarDesc')}
         >
           <Toggle checked={showHostTreeSidebar} onChange={setShowHostTreeSidebar} />
+        </SettingRow>
+        <SettingRow
+          label={t('settings.vault.autoImportSystemKnownHosts')}
+          description={t('settings.vault.autoImportSystemKnownHostsDesc')}
+        >
+          <Toggle
+            checked={autoImportSystemKnownHosts}
+            onChange={setAutoImportSystemKnownHosts}
+          />
         </SettingRow>
       </div>
 

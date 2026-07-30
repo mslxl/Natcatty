@@ -253,6 +253,8 @@ export const ruCoreMessages: Messages = {
   'settings.vault.showSftpTabDesc': 'Показывать отдельный SFTP-вид в верхней панели вкладок. Если скрыто, используйте боковую панель SFTP внутри сессии.',
   'settings.vault.showHostTreeSidebar': 'Показывать боковую панель хостов',
   'settings.vault.showHostTreeSidebarDesc': 'Показывать список хостов и кнопку в верхней панели для вкладок терминала и редактора.',
+  'settings.vault.autoImportSystemKnownHosts': 'Автоимпорт системного known_hosts',
+  'settings.vault.autoImportSystemKnownHostsDesc': 'При открытии хранилища тихо импортировать записи из OpenSSH known_hosts. Отключите, чтобы держать известные хосты Netcatty отдельно; кнопка «Сканировать систему» по-прежнему импортирует вручную.',
 
   // Update notifications
   'update.available.title': 'Доступно обновление',
