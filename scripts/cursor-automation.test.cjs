@@ -82,7 +82,8 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
   assert.match(poll, /\['fix', 'give_up', 'mark_ready'\]\.includes\(decision\.action\)/);
   assert.match(poll, /cursor-codex-dispatch:review-id=/);
   assert.match(poll, /const priorDispatch/);
-  assert.match(poll, /Date\.now\(\) - dispatchedAt < auto\.CODEX_REQUEST_RETRY_MS/);
+  assert.match(poll, /Date\.now\(\) - dispatchedAt < auto\.CODEX_LOOP_TIMEOUT_MS/);
+  assert.equal(auto.CODEX_LOOP_TIMEOUT_MS, 120 * 60 * 1000);
   assert.match(poll, /let dispatchRejected = false/);
   assert.match(poll, /authorization: `Bearer \$\{process\.env\.DISPATCH_TOKEN\}`/);
   assert.match(poll, /actions\/workflows\/cursor-automation\.yml\/dispatches/);

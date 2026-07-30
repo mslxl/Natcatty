@@ -4682,7 +4682,7 @@ jobs:
                     const dispatchedAt = Date.parse(priorDispatch.created_at || '') || 0;
                     if (
                       dispatchedAt > 0 &&
-                      Date.now() - dispatchedAt < auto.CODEX_REQUEST_RETRY_MS
+                      Date.now() - dispatchedAt < auto.CODEX_LOOP_TIMEOUT_MS
                     ) {
                       continue;
                     }
