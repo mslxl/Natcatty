@@ -115,6 +115,18 @@ test("cloneWorkspaceTree mints fresh node ids and does not mutate the source", (
   assert.ok(collectIds(clone).every(id => !srcIds.has(id)));
 });
 
+test("cloneWorkspaceTree uses pre-minted node ids when supplied", () => {
+  const clone = cloneWorkspaceTree(
+    nestedRoot,
+    new Map([["s1", "n1"], ["s2", "n2"], ["s3", "n3"]]),
+    new Map([["split-root", "new-root"], ["pane-a", "new-a"], ["split-inner", "new-inner"], ["pane-b", "new-b"], ["pane-c", "new-c"]]),
+  );
+  assert.equal(clone.id, "new-root");
+  if (clone.type !== "split") return;
+  assert.equal(clone.children[0].id, "new-a");
+  assert.equal(clone.children[1].id, "new-inner");
+});
+
 test("cloneWorkspaceTree keeps original sessionId when the map lacks it", () => {
   const clone = cloneWorkspaceTree(
     { id: "p", type: "pane", sessionId: "s1" },

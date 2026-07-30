@@ -1,5 +1,5 @@
 import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
-import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceViewMode } from '../../domain/models';
+import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceNode,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
 import {
   createHostTerminalSession,
@@ -139,6 +139,7 @@ export function buildCopiedWorkspace(
     sessionIdMap: ReadonlyMap<string, string>;
     localShellType?: TerminalSession['shellType'];
     perPaneCwd?: Record<string, string | undefined>;
+    nodeIdMap?: ReadonlyMap<string, string>;
   },
 ): { newSessions: TerminalSession[]; newWorkspace: Workspace } | null {
   const sourceIds = collectSessionIds(sourceWorkspace.root);
@@ -176,7 +177,7 @@ export function buildCopiedWorkspace(
   const newWorkspace: Workspace = {
     ...sourceWorkspace,
     id: params.newWorkspaceId,
-    root: cloneWorkspaceTree(prunedRoot, liveIdMap),
+    root: cloneWorkspaceTree(prunedRoot, liveIdMap, params.nodeIdMap),
     focusedSessionId: remap(sourceWorkspace.focusedSessionId)
       ?? liveIdMap.get(liveIds[0]),
     focusSessionOrder: sourceWorkspace.focusSessionOrder
@@ -1058,6 +1059,13 @@ export const useSessionState = ({
     const sessionIdMap = new Map<string, string>(
       collectSessionIds(sourceWorkspace.root).map(id => [id, crypto.randomUUID()]),
     );
+    const nodeIdMap = new Map<string, string>();
+    const preMintNodeIds = (node: WorkspaceNode) => {
+      nodeIdMap.set(node.id, crypto.randomUUID());
+      if (node.type === 'split') node.children.forEach(preMintNodeIds);
+    };
+    preMintNodeIds(sourceWorkspace.root);
+    const newSessionIds = new Set(sessionIdMap.values());
 
     setSessions(prevSessions => {
       // The cwd capture above is async. Avoid resurrecting a workspace that was
@@ -1065,11 +1073,13 @@ export const useSessionState = ({
       if (workspacesRef.current.find(w => w.id === workspaceId) !== sourceWorkspace) {
         return prevSessions;
       }
+      if (prevSessions.some(session => newSessionIds.has(session.id))) return prevSessions;
       const built = buildCopiedWorkspace(sourceWorkspace, prevSessions, {
         newWorkspaceId,
         sessionIdMap,
         localShellType: options?.localShellType,
         perPaneCwd: options?.perPaneCwd,
+        nodeIdMap,
       });
       // Every source pane was closed between click and update — skip cleanly.
       if (!built) return prevSessions;

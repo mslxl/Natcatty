@@ -283,19 +283,20 @@ export const createWorkspaceFromSessionIds = (
 export const cloneWorkspaceTree = (
   node: WorkspaceNode,
   sessionIdMap: ReadonlyMap<string, string>,
+  nodeIdMap?: ReadonlyMap<string, string>,
 ): WorkspaceNode => {
   if (node.type === 'pane') {
     return {
-      id: crypto.randomUUID(),
+      id: nodeIdMap?.get(node.id) ?? crypto.randomUUID(),
       type: 'pane',
       sessionId: sessionIdMap.get(node.sessionId) ?? node.sessionId,
     };
   }
   return {
-    id: crypto.randomUUID(),
+    id: nodeIdMap?.get(node.id) ?? crypto.randomUUID(),
     type: 'split',
     direction: node.direction,
-    children: node.children.map(child => cloneWorkspaceTree(child, sessionIdMap)),
+    children: node.children.map(child => cloneWorkspaceTree(child, sessionIdMap, nodeIdMap)),
     ...(node.sizes ? { sizes: [...node.sizes] } : {}),
   };
 };

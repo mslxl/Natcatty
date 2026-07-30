@@ -424,7 +424,9 @@ function createSessionOpsApi(ctx) {
         const cmd = `exec sh -c ${quoteShellArg(posixScript)}`;
     
         void executeBoundedSshCommand(session.conn, cmd, {
-          openingTimeoutMs: timeoutMs,
+          // Do not shorten channel opening: a timeout there invalidates the
+          // shared SSH transport. Only bound the best-effort command itself.
+          openingTimeoutMs: 5000,
           runTimeoutMs: timeoutMs,
           maxOutputBytes: 256 * 1024,
           setTimeoutFn: setTimeout,
