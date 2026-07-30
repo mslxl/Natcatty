@@ -1,6 +1,6 @@
 import { CheckSquare, Edit2, FileSymlink, Server, Square, Expand, Minimize2 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import {
   hostTreeInlineGroupEditStore,
@@ -857,7 +857,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   );
 };
 
-export const HostTreeView: React.FC<HostTreeViewProps> = ({
+const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
   groupTree,
   hosts,
   sortMode = 'az',
@@ -1252,3 +1252,46 @@ export const HostTreeView: React.FC<HostTreeViewProps> = ({
     </div>
   );
 };
+
+function hostTreeViewAreEqual(prev: HostTreeViewProps, next: HostTreeViewProps): boolean {
+  return prev.groupTree === next.groupTree
+    && prev.hosts === next.hosts
+    && prev.sortMode === next.sortMode
+    && prev.expandedPaths === next.expandedPaths
+    && prev.onTogglePath === next.onTogglePath
+    && prev.onExpandAll === next.onExpandAll
+    && prev.onCollapseAll === next.onCollapseAll
+    && prev.onConnect === next.onConnect
+    && prev.onEditHost === next.onEditHost
+    && prev.onDuplicateHost === next.onDuplicateHost
+    && prev.onDeleteHost === next.onDeleteHost
+    && prev.onCopyCredentials === next.onCopyCredentials
+    && prev.onNewGroup === next.onNewGroup
+    && prev.onRenameGroup === next.onRenameGroup
+    && prev.onEditGroup === next.onEditGroup
+    && prev.onDeleteGroup === next.onDeleteGroup
+    && prev.moveHostToGroup === next.moveHostToGroup
+    && prev.moveGroup === next.moveGroup
+    && prev.commitInlineGroupRename === next.commitInlineGroupRename
+    && prev.cancelInlineGroupEdit === next.cancelInlineGroupEdit
+    && prev.managedGroupPaths === next.managedGroupPaths
+    && prev.onUnmanageGroup === next.onUnmanageGroup
+    && prev.isMultiSelectMode === next.isMultiSelectMode
+    && prev.selectedHostIds === next.selectedHostIds
+    && prev.selectedGroupPaths === next.selectedGroupPaths
+    && prev.toggleHostSelection === next.toggleHostSelection
+    && prev.toggleGroupSelection === next.toggleGroupSelection
+    && prev.hostClickBehavior === next.hostClickBehavior
+    && prev.focusedHostId === next.focusedHostId
+    && prev.onFocusHost === next.onFocusHost
+    && prev.focusedGroupPath === next.focusedGroupPath
+    && prev.onFocusGroup === next.onFocusGroup
+    && prev.getDropTargetClasses === next.getDropTargetClasses
+    && prev.setDragOverDropTarget === next.setDragOverDropTarget
+    && prev.groupConfigs === next.groupConfigs
+    && prev.scrollRef === next.scrollRef
+    && prev.autoExpandGroupsKey === next.autoExpandGroupsKey;
+}
+
+export const HostTreeView = memo(HostTreeViewInner, hostTreeViewAreEqual);
+HostTreeView.displayName = 'HostTreeView';

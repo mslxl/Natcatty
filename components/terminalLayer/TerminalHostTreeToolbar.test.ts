@@ -125,9 +125,10 @@ test('host tree sidebar wires expand/collapse and host creation availability', (
   assert.doesNotMatch(source, /shouldCompactTerminalHostTreeToolbar/);
 });
 
-test('top tabs no longer expose a redundant new-local-terminal control', () => {
+test('top tabs keep a local-terminal fallback when the host tree toolbar is unavailable', () => {
   const topTabsSource = readFileSync(new URL('../TopTabs.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(topTabsSource, /top-tabs-new-local-terminal/);
-  assert.doesNotMatch(topTabsSource, /topTabs\.newLocalTerminal/);
-  assert.doesNotMatch(topTabsSource, /onCreateLocalTerminal/);
+  assert.match(topTabsSource, /top-tabs-new-local-terminal/);
+  assert.match(topTabsSource, /topTabs\.newLocalTerminal/);
+  assert.match(topTabsSource, /showTopTabsLocalTerminal/);
+  assert.match(topTabsSource, /showHostTreeSidebar &&\s*\n\s*isHostTreeOpen &&\s*\n\s*showHostTreeToggle/);
 });

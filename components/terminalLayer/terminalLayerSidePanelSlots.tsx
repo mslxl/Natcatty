@@ -7,6 +7,12 @@ import {
   getSidePanelLiveSnapshot,
   subscribeSidePanelLiveSnapshot,
 } from '../../application/state/sidePanelLiveStore';
+import {
+  getShellHistorySnapshot,
+  subscribeShellHistory,
+} from '../../application/state/shellHistoryStore';
+import { useScriptExecution } from '../../application/state/useScriptExecution';
+import { useRemoteHistoryState } from '../../application/state/useRemoteHistoryState';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
 import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHibernate';
 import { resolveTerminalFontFamilyId } from '../../infrastructure/config/fonts';
@@ -19,6 +25,9 @@ import { sidePanelHiddenNotesPanelClassName, sidePanelHiddenPanelClassName } fro
 
 type SidePanelStableContext = Record<string, any>;
 const navigatorPlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
+const EMPTY_VAULT_NOTES: never[] = [];
+const EMPTY_VAULT_HOSTS: never[] = [];
+const EMPTY_VAULT_SNIPPETS: never[] = [];
 
 function useSidePanelTabType(tabId: string, sidePanelOpenTabs: Map<string, SidePanelTab>): SidePanelTab | null {
   return sidePanelOpenTabs.get(tabId) ?? null;
@@ -203,17 +212,25 @@ function SidePanelSystemSlotInner({
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const panelSelected = sidePanelTab === 'system';
   const isVisible = isTabActive && panelSelected;
+  // When this tab is active, prefer live store so focus changes do not require
+  // workspaceById identity churn through the stable side-panel ctx.
+  const live = useSidePanelLiveSnapshotForTab(tabId, isTabActive && panelSelected);
   const sessions = ctx.sessions as TerminalSession[];
   const sessionHostsMap = ctx.sessionHostsMap as Map<string, Host>;
   const workspace = (ctx.workspaceById as Map<string, Workspace>).get(tabId);
   const standaloneSession = sessions.find((session) => session.id === tabId);
-  const systemSession = resolveSystemSidebarSession(
+  const resolvedSession = resolveSystemSidebarSession(
     sessions,
     workspace,
     workspace?.focusedSessionId,
     standaloneSession,
   );
-  const systemHost = systemSession ? sessionHostsMap.get(systemSession.id) ?? null : null;
+  const systemSession = (isTabActive && panelSelected
+    ? (live.activeTerminalSessionForSystem ?? resolvedSession)
+    : resolvedSession) ?? null;
+  const systemHost = (isTabActive && panelSelected && live.activeSystemSessionHost)
+    ? live.activeSystemSessionHost
+    : (systemSession ? sessionHostsMap.get(systemSession.id) ?? null : null);
   const keepSystemWorkActive = panelSelected
     && shouldKeepTerminalBackgroundWorkActive(
       ctx.terminalSettings,
@@ -258,6 +275,8 @@ function SidePanelScriptsSlotInner({
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const isVisible = isTabActive && sidePanelTab === 'scripts';
   const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
+  // Subscribe only while visible so retained scripts slots skip log thrash.
+  const { runs: scriptRuns } = useScriptExecution({ enabled: isVisible });
 
   const {
     ScriptsSidePanel,
@@ -269,7 +288,6 @@ function SidePanelScriptsSlotInner({
     handleRunScriptFromPanel,
     handleRunScriptOnWorkspace,
     handleStartRecordingFromPanel,
-    scriptRuns,
     handleStopScriptRun,
     handlePauseScriptRun,
     handleResumeScriptRun,
@@ -286,7 +304,7 @@ function SidePanelScriptsSlotInner({
         onRunScript={handleRunScriptFromPanel}
         onRunScriptOnWorkspace={handleRunScriptOnWorkspace}
         onStartRecording={handleStartRecordingFromPanel}
-        runs={scriptRuns}
+        runs={scriptRuns as import('@/types/global/netcatty-bridge-script.d.ts').ScriptRun[]}
         onStopRun={handleStopScriptRun}
         onPauseRun={handlePauseScriptRun}
         onResumeRun={handleResumeScriptRun}
@@ -311,7 +329,9 @@ function SidePanelThemeSlotInner({
   const sidePanelOpenTabs = ctx.sidePanelOpenTabs as Map<string, SidePanelTab>;
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const isVisible = isTabActive && sidePanelTab === 'theme';
-  const live = useSidePanelLiveSnapshotForTab(tabId, isTabActive);
+  // Only subscribe while the theme panel is visible — not merely tab-active —
+  // so cwd/focus live ticks do not thrash a retained ThemeSidePanel.
+  const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
 
   const {
     ThemeSidePanel,
@@ -416,11 +436,16 @@ function SidePanelHistorySlotInner({ ctx }: { ctx: SidePanelStableContext }) {
   const sidePanelTab = activeTabId ? sidePanelOpenTabs.get(activeTabId) ?? null : null;
   const isVisible = sidePanelTab === 'history';
   const live = useSidePanelLiveSnapshotForTab(activeTabId ?? '', isVisible);
+  // Own remote-history state here so fetch/loading does not re-render TerminalLayer.
+  const remoteHistory = useRemoteHistoryState();
+  const shellHistory = useSyncExternalStore(
+    subscribeShellHistory,
+    getShellHistorySnapshot,
+    getShellHistorySnapshot,
+  );
 
   const {
     HistorySidePanel,
-    remoteHistory,
-    shellHistory,
     handleHistoryPaste,
     handleHistoryRun,
   } = ctx;
@@ -433,7 +458,7 @@ function SidePanelHistorySlotInner({ ctx }: { ctx: SidePanelStableContext }) {
         focusedHost={live.focusedHost}
         focusedSessionId={live.historySessionId}
         state={remoteHistory.getState(live.focusedHost?.id, live.historySessionId)}
-        globalEntries={shellHistory}
+        globalEntries={shellHistory as import('../../domain/models').ShellHistoryEntry[]}
         onFetch={remoteHistory.fetch}
         onPasteToTerminal={handleHistoryPaste}
         onRunInTerminal={handleHistoryRun}
@@ -476,6 +501,10 @@ function SidePanelAiSlotInner({ ctx }: { ctx: SidePanelStableContext }) {
   if (mountedAiTabIds.length === 0) return null;
   if (AI_PANEL_FORCE_HIDE_SHELL && activeSidePanelTab === 'ai') return null;
 
+  // Only the visible AI panel needs vault catalogs for artifact navigation.
+  // Hidden retained panels keep session state without re-binding huge hosts/notes.
+  const injectVaultCatalog = activeSidePanelTab === 'ai';
+
   return (
     <AISidePanelStateRoot validAIScopeTargetIds={validAIScopeTargetIds}>
       <AIChatPanelsHost
@@ -486,9 +515,9 @@ function SidePanelAiSlotInner({ ctx }: { ctx: SidePanelStableContext }) {
         resolveExecutorContext={resolveAIExecutorContext}
         pendingTerminalSelection={pendingTerminalSelectionForAI}
         onPendingTerminalSelectionConsumed={handlePendingTerminalSelectionConsumed}
-        notes={notes}
-        hosts={hosts}
-        snippets={snippets}
+        notes={injectVaultCatalog ? notes : EMPTY_VAULT_NOTES}
+        hosts={injectVaultCatalog ? hosts : EMPTY_VAULT_HOSTS}
+        snippets={injectVaultCatalog ? snippets : EMPTY_VAULT_SNIPPETS}
         onOpenVaultNoteFromChat={onOpenVaultNoteFromChat}
         onOpenVaultHostFromChat={onOpenVaultHostFromChat}
         onOpenVaultSectionFromChat={onOpenVaultSectionFromChat}
