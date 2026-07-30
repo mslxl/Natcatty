@@ -578,6 +578,25 @@ test("TopTabs applies presentation per session tab, not via global version fan-o
   assert.doesNotMatch(topTabsSource, /sessionPresentationStore\.subscribe/);
   const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
   assert.match(topTabItemsSource, /usePresentedSession/);
+  // Workspace detach menu must also apply presentation per session so labels
+  // stay live without remapping TopTabsInner.
+  assert.match(topTabItemsSource, /WorkspaceDetachSessionMenuItem/);
+  assert.match(topTabsSource, /workspaceSessions=/);
+  assert.doesNotMatch(topTabsSource, /workspaceSessionLabels/);
+});
+
+test("tab-switch focus calls refocus primitive directly without outer rAF wrap", () => {
+  const effectsSource = readFileSync(
+    new URL("./terminalLayer/useTerminalLayerEffects.ts", import.meta.url),
+    "utf8",
+  );
+  const focusBlock = effectsSource.slice(
+    effectsSource.indexOf("Restore keyboard focus after switching work tabs"),
+    effectsSource.indexOf("When focusedSessionId changes"),
+  );
+  assert.match(focusBlock, /refocusActiveTerminalSession\(\)/);
+  // Outer rAF wrapper was removed — focusTerminalSessionInput already schedules.
+  assert.doesNotMatch(focusBlock, /requestAnimationFrame\(\(\) => \{\s*refocusActiveTerminalSession/);
 });
 
 test("topTabsAreEqual tracks editorTabs for dirty chrome", () => {

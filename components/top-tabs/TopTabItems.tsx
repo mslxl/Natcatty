@@ -859,16 +859,41 @@ interface WorkspaceTopTabProps {
   onCopyWorkspace: (workspaceId: string) => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onDetachSessionFromWorkspace?: (workspaceId: string, sessionId: string) => void;
-  workspaceSessionLabels?: Record<string, string>;
+  /** Sessions for Detach menu; each menu item applies live presentation itself. */
+  workspaceSessions?: TerminalSession[];
+  dynamicTabTitleMode?: DynamicTabTitleMode;
   renderBulkCloseItems: RenderBulkCloseItems;
   t: TranslateFn;
   tabAnimationClass?: string;
 }
 
+/**
+ * Detach-menu row that subscribes to presentation for one session only, so
+ * agent title updates stay live without remapping the whole TopTabs bar.
+ */
+const WorkspaceDetachSessionMenuItem: React.FC<{
+  session: TerminalSession;
+  workspaceId: string;
+  dynamicTabTitleMode?: DynamicTabTitleMode;
+  onDetach: (workspaceId: string, sessionId: string) => void;
+  t: TranslateFn;
+}> = memo(({ session: sessionProp, workspaceId, dynamicTabTitleMode, onDetach, t }) => {
+  const session = usePresentedSession(sessionProp);
+  const label = resolveSessionTabTitle(session, dynamicTabTitleMode);
+  return (
+    <ContextMenuItem onClick={() => onDetach(workspaceId, session.id)}>
+      {t('terminal.menu.detachSession', { name: label })}
+    </ContextMenuItem>
+  );
+});
+WorkspaceDetachSessionMenuItem.displayName = 'WorkspaceDetachSessionMenuItem';
+
 export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   workspace,
   paneCount,
   workspaceSessionIds,
+  workspaceSessions,
+  dynamicTabTitleMode,
   isBeingDragged,
   isDraggingForReorder,
   shiftStyle,
@@ -883,7 +908,6 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   onCopyWorkspace,
   onCloseWorkspace,
   onDetachSessionFromWorkspace,
-  workspaceSessionLabels,
   renderBulkCloseItems,
   t,
   tabAnimationClass,
@@ -897,6 +921,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
     () => createTopTabCopyDoubleClickHandler(onCopyWorkspace, workspace.id),
     [onCopyWorkspace, workspace.id],
   );
+  const detachSessions = workspaceSessions ?? [];
 
   return (
     <ContextMenu>
@@ -984,15 +1009,17 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
         <ContextMenuItem onClick={() => onCopyWorkspace(workspace.id)}>
           {t('tabs.copyTab')}
         </ContextMenuItem>
-        {onDetachSessionFromWorkspace && workspaceSessionLabels && Object.entries(workspaceSessionLabels).map(([sessionId, label]) => (
-          <ContextMenuItem
-            key={sessionId}
-            onClick={() => onDetachSessionFromWorkspace(workspace.id, sessionId)}
-          >
-            {t('terminal.menu.detachSession', { name: label })}
-          </ContextMenuItem>
+        {onDetachSessionFromWorkspace && detachSessions.map((session) => (
+          <WorkspaceDetachSessionMenuItem
+            key={session.id}
+            session={session}
+            workspaceId={workspace.id}
+            dynamicTabTitleMode={dynamicTabTitleMode}
+            onDetach={onDetachSessionFromWorkspace}
+            t={t}
+          />
         ))}
-        {onDetachSessionFromWorkspace && workspaceSessionLabels && Object.keys(workspaceSessionLabels).length > 0 && (
+        {onDetachSessionFromWorkspace && detachSessions.length > 0 && (
           <ContextMenuSeparator />
         )}
         <ContextMenuItem className="text-destructive" onClick={() => onCloseWorkspace(workspace.id)}>

@@ -523,8 +523,9 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const wasTerminalLayerVisibleRef = useRef(false);
   const prevActiveTabIdRef = useRef<string | undefined>(undefined);
 
-  // Restore keyboard focus to the active terminal after switching work tabs.
-  // Single rAF only — avoid stacking sync + rAF + setTimeout focus thrash.
+  // Restore keyboard focus after switching work tabs.
+  // Call the existing focus primitive directly — it already schedules rAF +
+  // retry (focusTerminalSessionInput). An outer rAF here only delayed focus.
   useEffect(() => {
     if (!isTerminalLayerVisible) {
       prevActiveTabIdRef.current = activeTabId;
@@ -537,19 +538,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     prevActiveTabIdRef.current = activeTabId;
 
     if (!tabChanged || !refocusActiveTerminalSession) return;
-    let rafId: number | null = null;
-    if (typeof requestAnimationFrame === 'function') {
-      rafId = requestAnimationFrame(() => {
-        refocusActiveTerminalSession();
-      });
-    } else {
-      refocusActiveTerminalSession();
-    }
-    return () => {
-      if (rafId !== null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(rafId);
-      }
-    };
+    refocusActiveTerminalSession();
   }, [activeTabId, isTerminalLayerVisible, refocusActiveTerminalSession]);
 
   // When focusedSessionId changes or terminal layer becomes visible,

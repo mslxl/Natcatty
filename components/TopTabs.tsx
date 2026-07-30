@@ -5,7 +5,6 @@ import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
 import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
-import { resolveSessionTabTitle } from '../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../domain/models';
 
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
@@ -832,16 +831,11 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
         const showDropIndicatorBefore = dropIndicator?.tabId === workspace.id && dropIndicator.position === 'before';
         const showDropIndicatorAfter = dropIndicator?.tabId === workspace.id && dropIndicator.position === 'after';
         const workspaceSessionIds = collectSessionIds(workspace.root);
-        const workspaceSessionLabels: Record<string, string> = {};
-        for (const sessionId of workspaceSessionIds) {
-          const wsSession = sessions.find((s) => s.id === sessionId);
-          if (wsSession) {
-            workspaceSessionLabels[sessionId] = resolveSessionTabTitle(
-              wsSession,
-              dynamicTabTitleMode,
-            );
-          }
-        }
+        // Detach-menu labels resolve presentation inside WorkspaceTopTab so
+        // dynamic title updates stay live without remapping the whole bar.
+        const workspaceSessions = workspaceSessionIds
+          .map((sessionId) => sessions.find((s) => s.id === sessionId))
+          .filter((s): s is TerminalSession => Boolean(s));
 
         return (
           <WorkspaceTopTab
@@ -849,6 +843,8 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             workspace={workspace}
             paneCount={paneCount}
             workspaceSessionIds={workspaceSessionIds}
+            workspaceSessions={workspaceSessions}
+            dynamicTabTitleMode={dynamicTabTitleMode}
             isBeingDragged={isBeingDragged}
             isDraggingForReorder={isDraggingForReorder}
             shiftStyle={shiftStyle}
@@ -863,7 +859,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onCopyWorkspace={onCopyWorkspace}
             onCloseWorkspace={onCloseWorkspace}
             onDetachSessionFromWorkspace={(_workspaceId, sessionId) => onRemoveSessionFromWorkspace(sessionId)}
-            workspaceSessionLabels={workspaceSessionLabels}
             renderBulkCloseItems={renderBulkCloseItems}
             t={t}
             tabAnimationClass={getTabAnimationClass(workspace.id)}
