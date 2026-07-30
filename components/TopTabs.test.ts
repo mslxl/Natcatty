@@ -570,3 +570,26 @@ test("host tree toggle is hidden on root pages", () => {
     workspaceIds: new Set(),
   }), false);
 });
+
+test("TopTabs merges presentation store into orphanSessionMap and sessions", () => {
+  assert.match(topTabsSource, /applySessionPresentation/);
+  assert.match(topTabsSource, /sessionPresentationStore\.subscribe/);
+  assert.match(topTabsSource, /presentationVersion/);
+  assert.ok(
+    topTabsSource.includes("map.set(s.id, applySessionPresentation(s))"),
+    "orphanSessionMap must overlay store presentation like sessions",
+  );
+});
+
+test("topTabsAreEqual tracks editorTabs for dirty chrome", () => {
+  assert.match(topTabsSource, /prev\.editorTabs === next\.editorTabs/);
+  assert.match(topTabsSource, /prev\.onRequestCloseEditorTab === next\.onRequestCloseEditorTab/);
+});
+
+test("App shell retains presentation-stable sessions for domain memos", () => {
+  assert.match(appSource, /retainStableSessionsIgnoringPresentation/);
+  assert.match(appSource, /sessionsForShell/);
+  assert.match(appSource, /orphanSessionsForShell/);
+  assert.match(appSource, /sessions: sessionsForShell/);
+  assert.match(appSource, /orphanSessions: orphanSessionsForShell/);
+});

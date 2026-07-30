@@ -42,6 +42,7 @@ import {
 } from './domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from './domain/connectionLog';
 import { collectSessionIds } from './domain/workspace';
+import { retainStableSessionsIgnoringPresentation } from './domain/terminalPaneSessionsEqual';
 import { resolveCloseIntent } from './application/state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from './application/state/resolveSnippetsShortcutIntent';
 import { resolveWindowCommandCloseIntent } from './application/state/windowCommandClose';
@@ -140,7 +141,6 @@ function App({ settings }: { settings: SettingsState }) {
   const isPeerSessionWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/session-window');
 
   const {
-    theme,
     setTheme,
     setLightUiThemeId,
     setDarkUiThemeId,
@@ -228,7 +228,6 @@ function App({ settings }: { settings: SettingsState }) {
     notes,
     noteGroups,
     knownHosts,
-    shellHistory,
     connectionLogs,
     managedSources,
     updateHosts,
@@ -336,6 +335,22 @@ function App({ settings }: { settings: SettingsState }) {
     updateSessionDynamicTitle,
     updateSessionCodingCliProvider,
   } = useSessionState({ persistSessionRestore: !isPeerSessionWindow });
+
+  // Title/provider live updates are store-driven; if sessions arrays still
+  // change only on presentation fields, keep prior identity for App domain
+  // memos so AppView does not re-render Terminal/Vault solely for tab chrome.
+  const sessionsForShellRef = useRef(sessions);
+  const sessionsForShell = retainStableSessionsIgnoringPresentation(
+    sessionsForShellRef.current,
+    sessions,
+  );
+  sessionsForShellRef.current = sessionsForShell as typeof sessions;
+  const orphanSessionsForShellRef = useRef(orphanSessions);
+  const orphanSessionsForShell = retainStableSessionsIgnoringPresentation(
+    orphanSessionsForShellRef.current,
+    orphanSessions,
+  );
+  orphanSessionsForShellRef.current = orphanSessionsForShell as typeof orphanSessions;
 
   const handleRunSnippet = useCallback(
     async (snippet: Snippet, targetHosts: Host[]) => {
@@ -1553,6 +1568,220 @@ function App({ settings }: { settings: SettingsState }) {
 
   const handleRootContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => { return handleRootContextMenuImpl(() => ({ e }), e); }, []);
 
+
+  const appVaultDomain = useMemo(() => ({
+    addShellHistoryEntry,
+    commitPluginImporterData,
+    commitVaultImportTransaction,
+    connectionLogs,
+    convertKnownHostToHost,
+    customGroups,
+    deepLinkHostDraft,
+    effectiveKnownHosts,
+    groupConfigs,
+    handleAddKnownHost,
+    handleDeleteHost,
+    handleOpenHostFromVaultNote,
+    handleOpenVaultHostFromChat,
+    handleOpenVaultNoteFromChat,
+    handleOpenVaultSectionFromChat,
+    handleOpenVaultSnippetFromChat,
+    hosts,
+    identities,
+    importOrReuseKey,
+    keys,
+    managedSources,
+    navigateToSection,
+    noteGroups,
+    notes,
+    proxyProfiles,
+    readPersistedHosts,
+    readPersistedManagedSources,
+    setDeepLinkHostDraft,
+    setNavigateToSection,
+    setVaultFocusRequest,
+    snippetPackages,
+    snippets,
+    unmanageSource,
+    updateCustomGroups,
+    updateGroupConfigs,
+    updateHosts,
+    updateIdentities,
+    updateKeys,
+    updateKnownHosts,
+    updateManagedSources,
+    updateNoteGroups,
+    updateNotes,
+    updateProxyProfiles,
+    updateSnippetPackages,
+    updateSnippets,
+    vaultFocusRequest,
+  }), [addShellHistoryEntry, commitPluginImporterData, commitVaultImportTransaction, connectionLogs, convertKnownHostToHost, customGroups, deepLinkHostDraft, effectiveKnownHosts, groupConfigs, handleAddKnownHost, handleDeleteHost, handleOpenHostFromVaultNote, handleOpenVaultHostFromChat, handleOpenVaultNoteFromChat, handleOpenVaultSectionFromChat, handleOpenVaultSnippetFromChat, hosts, identities, importOrReuseKey, keys, managedSources, navigateToSection, noteGroups, notes, proxyProfiles, readPersistedHosts, readPersistedManagedSources, setDeepLinkHostDraft, setNavigateToSection, setVaultFocusRequest, snippetPackages, snippets, unmanageSource, updateCustomGroups, updateGroupConfigs, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources, updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, vaultFocusRequest]);
+
+  const appTerminalDomain = useMemo(() => ({
+    addSessionToWorkspace,
+    appendHostToWorkspace,
+    appendLocalTerminalToWorkspace,
+    clearSessionFontSizeOverride,
+    closeSession,
+    closeTabsBatch,
+    copySessionWithCurrentShell,
+    copyWorkspaceWithCurrentShell,
+    copySessionToNewWindowWithCurrentShell,
+    closeWorkspace,
+    createWorkspaceFromSessions,
+    createWorkspaceFromTargets: createWorkspaceFromEffectiveTargets,
+    createWorkspaceWithHosts: createWorkspaceWithEffectiveHosts,
+    currentTerminalTheme,
+    draggingSessionId,
+    editorWordWrap,
+    followAppTerminalTheme,
+    clearThemeIntent: themeRuntime.clearIntent,
+    settleManualThemeIntent: themeRuntime.settleManualIntent,
+    pickTerminalTheme: themeRuntime.pickTheme,
+    resolveSessionAppearance: themeRuntime.resolveFocusedAppearance,
+    handleConnectSerial,
+    handleConnectToHost,
+    handleCreateLocalTerminal,
+    handleDefaultTerminalThemeChange,
+    handleFollowAppTerminalThemeChange,
+    handleHotkeyAction,
+    handleSessionStatusChange,
+    handleTerminalDataCapture,
+    handleUpdateHostFromTerminal,
+    hostById,
+    terminalHosts,
+    updateTerminalHosts,
+    hotkeyScheme,
+    isBroadcastEnabled,
+    keyBindings,
+    openNoteRequest,
+    portForwardingRules,
+    removeSessionFromWorkspace,
+    reorderWorkspaceSessions,
+    runSnippet: handleRunSnippet,
+    sessionLogsDir,
+    sessionLogsEnabled,
+    sessionLogsFormat,
+    sessionLogsTimestampsEnabled,
+    sessions: sessionsForShell,
+    setDraggingSessionId,
+    setEditorWordWrap,
+    setTerminalFontFamilyId,
+    setTerminalFontSize,
+    setWorkspaceFocusedSession,
+    sftpAutoOpenSidebar,
+    sftpFollowTerminalCwd,
+    setSftpFollowTerminalCwd,
+    sftpAutoSync,
+    sftpDefaultViewMode,
+    sftpDoubleClickBehavior,
+    sftpShowHiddenFiles,
+    sftpUseCompressedUpload,
+    splitSessionWithCurrentShell,
+    sshDebugLogsEnabled: settings.sshDebugLogsEnabled,
+    terminalFontFamilyId,
+    terminalFontSize,
+    terminalSettings,
+    terminalThemeId,
+    toggleBroadcast,
+    toggleScriptsSidePanelRef,
+    toggleSidePanelRef,
+    toggleWorkspaceViewMode,
+    updateHostDistro,
+    updateSplitSizes,
+    updateSessionFontSize,
+    updateSessionRestoreCwd,
+    updateSessionDynamicTitle,
+    updateSessionCodingCliProvider,
+    updateTerminalSetting,
+    workspaces,
+  }), [addSessionToWorkspace, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearSessionFontSizeOverride, closeSession, closeTabsBatch, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, createWorkspaceFromSessions, createWorkspaceFromEffectiveTargets, createWorkspaceWithEffectiveHosts, currentTerminalTheme, draggingSessionId, editorWordWrap, followAppTerminalTheme, themeRuntime, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleFollowAppTerminalThemeChange, handleHotkeyAction, handleSessionStatusChange, handleTerminalDataCapture, handleUpdateHostFromTerminal, hostById, terminalHosts, updateTerminalHosts, hotkeyScheme, isBroadcastEnabled, keyBindings, openNoteRequest, portForwardingRules, removeSessionFromWorkspace, reorderWorkspaceSessions, handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionsForShell, setDraggingSessionId, setEditorWordWrap, setTerminalFontFamilyId, setTerminalFontSize, setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, splitSessionWithCurrentShell, settings, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, updateHostDistro, updateSplitSizes, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, updateTerminalSetting, workspaces]);
+
+  const appChromeDomain = useMemo(() => ({
+    accentMode,
+    clearUnsavedConnectionLogs,
+    closeLogView,
+    customAccent,
+    deleteConnectionLog,
+    handleEndSessionDrag,
+    handleOpenQuickSwitcher,
+    handleOpenSettings,
+    handleRootContextMenu,
+    handleSyncNowManual,
+    isMacClient,
+    logViews,
+    openLogView,
+    orderedTabsWithEditors,
+    orphanSessions: orphanSessionsForShell,
+    reorderWorkTabs,
+    resetSessionRename,
+    resetWorkspaceRename,
+    resolvedTheme,
+    sessionRenameTarget,
+    sessionRenameValue,
+    setActiveTabId,
+    setSessionRenameValue,
+    setWorkspaceRenameValue,
+    settings,
+    startSessionRename,
+    renameSessionInline,
+    startWorkspaceRename,
+    submitSessionRename,
+    submitWorkspaceRename,
+    t,
+    themeById,
+    toggleConnectionLogSaved,
+    updateConnectionLog,
+    workspaceRenameTarget,
+    workspaceRenameValue,
+  }), [accentMode, clearUnsavedConnectionLogs, closeLogView, customAccent, deleteConnectionLog, handleEndSessionDrag, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handleSyncNowManual, isMacClient, logViews, openLogView, orderedTabsWithEditors, orphanSessionsForShell, reorderWorkTabs, resetSessionRename, resetWorkspaceRename, resolvedTheme, sessionRenameTarget, sessionRenameValue, setActiveTabId, setSessionRenameValue, setWorkspaceRenameValue, settings, startSessionRename, renameSessionInline, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, themeById, toggleConnectionLogSaved, updateConnectionLog, workspaceRenameTarget, workspaceRenameValue]);
+
+  const appDialogsDomain = useMemo(() => ({
+    addToWorkspaceDialog,
+    clearAndRemoveSource,
+    clearAndRemoveSources,
+    editorTabs,
+    emptyVaultConflict,
+    handleHostConnectWithProtocolCheck,
+    handleKeyboardInteractiveCancel,
+    handleKeyboardInteractiveSubmit,
+    handlePassphraseCancel,
+    handlePassphraseSkip,
+    handlePassphraseSubmit,
+    handleProtocolSelect,
+    handleRequestCloseEditorTabRef,
+    isCreateWorkspaceOpen,
+    isQuickSwitcherOpen,
+    keyboardInteractiveQueue,
+    passphraseQueue,
+    protocolSelectHost,
+    quickResults,
+    quickSearch,
+    resolveEmptyVaultConflict,
+    setAddToWorkspaceDialog,
+    setIsCreateWorkspaceOpen,
+    setIsQuickSwitcherOpen,
+    setProtocolSelectHost,
+    setQuickSearch,
+  }), [addToWorkspaceDialog, clearAndRemoveSource, clearAndRemoveSources, editorTabs, emptyVaultConflict, handleHostConnectWithProtocolCheck, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect, handleRequestCloseEditorTabRef, isCreateWorkspaceOpen, isQuickSwitcherOpen, keyboardInteractiveQueue, passphraseQueue, protocolSelectHost, quickResults, quickSearch, resolveEmptyVaultConflict, setAddToWorkspaceDialog, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen, setProtocolSelectHost, setQuickSearch]);
+
+  // Mount components are module-level lazy wrappers — stable for the app lifetime.
+  const appMountsDomain = useMemo(() => ({
+    VaultViewContainer,
+    SftpViewMount,
+    TerminalLayerMount,
+    LogViewWrapper,
+  }), []);
+
+  const appViewDomains = useMemo(() => ({
+    vault: appVaultDomain,
+    terminal: appTerminalDomain,
+    chrome: appChromeDomain,
+    dialogs: appDialogsDomain,
+    mounts: appMountsDomain,
+  }), [appVaultDomain, appTerminalDomain, appChromeDomain, appDialogsDomain, appMountsDomain]);
+
   return (
     <>
       <PortForwardHostKeyDialog onAddKnownHost={handleAddKnownHost} />
@@ -1583,7 +1812,7 @@ function App({ settings }: { settings: SettingsState }) {
         resolveSessionAppearance={themeRuntime.resolveFocusedAppearance}
         t={t}
       />
-      <AppView ctx={{ accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, clearSessionFontSizeOverride, closeLogView, closeSession, closeTabsBatch, commitPluginImporterData, commitVaultImportTransaction, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets: createWorkspaceFromEffectiveTargets, createWorkspaceWithHosts: createWorkspaceWithEffectiveHosts, customAccent, customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict, followAppTerminalTheme, clearThemeIntent: themeRuntime.clearIntent, settleManualThemeIntent: themeRuntime.settleManualIntent, pickTerminalTheme: themeRuntime.pickTheme, resolveSessionAppearance: themeRuntime.resolveFocusedAppearance, groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleDeleteHost, handleEndSessionDrag, handleFollowAppTerminalThemeChange, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleOpenHostFromVaultNote, handleOpenVaultHostFromChat, handleOpenVaultNoteFromChat, handleOpenVaultSectionFromChat, handleOpenVaultSnippetFromChat, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect, handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleUpdateHostFromTerminal, hostById, hosts, terminalHosts, updateTerminalHosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen, keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, noteGroups, notes, openLogView, openNoteRequest, orderedTabsWithEditors, orphanSessions, passphraseQueue, protocolSelectHost, proxyProfiles, portForwardingRules, quickResults, quickSearch, readPersistedHosts, readPersistedManagedSources, removeSessionFromWorkspace, reorderWorkTabs, reorderWorkspaceSessions, resetSessionRename, resetWorkspaceRename, resolveEmptyVaultConflict, resolvedTheme, runSnippet: handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sessionRenameValue, sessions, setActiveTabId, setAddToWorkspaceDialog, setDeepLinkHostDraft, setDraggingSessionId, setEditorWordWrap, setIsCreateWorkspaceOpen, setIsQuickSwitcherOpen, setNavigateToSection, setProtocolSelectHost, setQuickSearch, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setVaultFocusRequest, setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, sshDebugLogsEnabled: settings.sshDebugLogsEnabled, startSessionRename, renameSessionInline, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById, toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources, updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaceRenameValue, workspaces, VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper }} />
+      <AppView domains={appViewDomains} />
     </>
   );
 }

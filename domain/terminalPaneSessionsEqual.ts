@@ -98,3 +98,18 @@ export function terminalPaneSessionsEqual(
   }
   return true;
 }
+
+/**
+ * Keep the previous sessions array identity when only TopTabs presentation
+ * fields changed. Used by App domain memos so title/provider live updates do
+ * not rebuild appTerminalDomain / appChromeDomain.
+ */
+export function retainStableSessionsIgnoringPresentation(
+  previous: readonly TerminalSession[] | null | undefined,
+  next: readonly TerminalSession[],
+): readonly TerminalSession[] {
+  if (previous && terminalPaneSessionsEqual(previous, next)) {
+    return previous;
+  }
+  return next;
+}

@@ -92,7 +92,6 @@ import {
   ProxyProfile,
   SerialConfig,
   SSHKey,
-  ShellHistoryEntry,
   Snippet,
   VaultNote,
 } from "../types";
@@ -215,7 +214,6 @@ interface VaultViewProps {
   noteGroups: string[];
   customGroups: string[];
   knownHosts: KnownHost[];
-  shellHistory: ShellHistoryEntry[];
   connectionLogs: ConnectionLog[];
   managedSources: ManagedSource[];
   sessionCount: number;
@@ -310,7 +308,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   noteGroups,
   customGroups,
   knownHosts,
-  shellHistory,
   connectionLogs,
   managedSources,
   sessionCount,
@@ -1615,7 +1612,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           setTargetParentPath,
           Settings,
           setViewMode,
-          shellHistory,
           shouldHideEmptyRootHostsSection,
           showRecentHosts,
           hostClickBehavior,
@@ -1682,7 +1678,7 @@ export const vaultViewAreEqual = (
     prev.noteGroups === next.noteGroups &&
     prev.customGroups === next.customGroups &&
     prev.knownHosts === next.knownHosts &&
-    prev.shellHistory === next.shellHistory &&
+    // shellHistory is not a VaultView prop; SnippetsManager reads shellHistoryStore.
     prev.connectionLogs === next.connectionLogs &&
     prev.sessionCount === next.sessionCount &&
     prev.managedSources === next.managedSources &&

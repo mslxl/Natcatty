@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { aiPanelContextsEqual } from '../../domain/aiPanelContextsEqual';
 import { sftpPickerSessionsEqual } from '../../domain/sftpConnectedHosts';
 
 type Ctx = Record<string, any>;
@@ -174,6 +175,9 @@ function sidePanelCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
     // Focus-only workspace map identity changes must not invalidate every mounted
     // side-panel slot; System reads focused session from sidePanelLiveStore.
     return sidePanelWorkspaceByIdEqual(prev.workspaceById, next.workspaceById);
+  }
+  if (key === 'aiContextsByTabId') {
+    return aiPanelContextsEqual(prev.aiContextsByTabId, next.aiContextsByTabId);
   }
   return prev[key] === next[key];
 }

@@ -1,6 +1,11 @@
 import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles, Terminal } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
+import {
+  applySessionPresentation,
+  sessionPresentationStore,
+} from '../application/state/sessionPresentationStore';
+import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
 import type { EditorTab } from '../application/state/editorTabStore';
 import { buildWorkspaceActivityMap } from '../application/state/sessionActivity';
@@ -168,7 +173,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   theme,
   themePreference,
   hosts,
-  sessions,
+  sessions: sessionsProp,
   orphanSessions,
   workspaces,
   logViews,
@@ -214,6 +219,17 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
   const activeTabId = useActiveTabId();
+  // Title/provider chrome: subscribe so presentation updates re-render TopTabs
+  // even when parent session arrays are treated as structurally equal.
+  const presentationVersion = useSyncExternalStore(
+    sessionPresentationStore.subscribe,
+    sessionPresentationStore.getVersion,
+    sessionPresentationStore.getVersion,
+  );
+  const sessions = useMemo(() => {
+    void presentationVersion;
+    return sessionsProp.map((session) => applySessionPresentation(session));
+  }, [sessionsProp, presentationVersion]);
   const { getTabAnimationClass } = useTopTabLifecycleAnimations(orderedTabs);
   const fixedLeftTabsRef = useRef<HTMLDivElement>(null);
   const hostTreeToggleSlotRef = useRef<HTMLDivElement>(null);
@@ -291,12 +307,17 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     }
   }, [updateScrollState, orderedTabs]);
 
-  // Pre-compute lookup maps for O(1) access instead of O(n) find operations
+  // Pre-compute lookup maps for O(1) access instead of O(n) find operations.
+  // Merge live title/provider the same way as `sessions` so orphan tabs never
+  // freeze while agents stream presentation-only updates.
   const orphanSessionMap = useMemo(() => {
+    void presentationVersion;
     const map = new Map<string, TerminalSession>();
-    for (const s of orphanSessions) map.set(s.id, s);
+    for (const s of orphanSessions) {
+      map.set(s.id, applySessionPresentation(s));
+    }
     return map;
-  }, [orphanSessions]);
+  }, [orphanSessions, presentationVersion]);
 
   const workspaceMap = useMemo(() => {
     const map = new Map<string, Workspace>();
@@ -1173,15 +1194,20 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 };
 
 // Custom comparison: only re-render when data props change - activeTabId is now managed internally via store subscription
-const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
+export const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
   return (
     prev.theme === next.theme &&
     prev.hosts === next.hosts &&
-    prev.sessions === next.sessions &&
-    prev.orphanSessions === next.orphanSessions &&
+    // Ignore presentation-only session fields; TopTabsInner merges live titles
+    // from sessionPresentationStore via useSyncExternalStore.
+    topTabsSessionsEqual(prev.sessions, next.sessions) &&
+    topTabsSessionsEqual(prev.orphanSessions, next.orphanSessions) &&
     prev.workspaces === next.workspaces &&
     prev.orderedTabs === next.orderedTabs &&
     prev.logViews === next.logViews &&
+    // Editor dirty chrome / renames ride the editorTabs array identity.
+    prev.editorTabs === next.editorTabs &&
+    prev.onRequestCloseEditorTab === next.onRequestCloseEditorTab &&
     prev.pluginViewTabs === next.pluginViewTabs &&
     prev.onClosePluginViewTab === next.onClosePluginViewTab &&
     prev.draggingSessionId === next.draggingSessionId &&
@@ -1201,7 +1227,8 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.onThemeChange === next.onThemeChange &&
     prev.showSftpTab === next.showSftpTab &&
     prev.showHostTreeSidebar === next.showHostTreeSidebar &&
-    prev.dynamicTabTitleMode === next.dynamicTabTitleMode
+    prev.dynamicTabTitleMode === next.dynamicTabTitleMode &&
+    prev.hostById === next.hostById
   );
 };
 
