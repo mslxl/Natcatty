@@ -36,6 +36,11 @@ export const terminalLayerAreEqual = (
   prev.customAccent === next.customAccent &&
   prev.terminalSettings === next.terminalSettings &&
   prev.fontSize === next.fontSize &&
+  prev.terminalFontFamilyId === next.terminalFontFamilyId &&
+  prev.sessionLogsEnabled === next.sessionLogsEnabled &&
+  prev.sessionLogsDir === next.sessionLogsDir &&
+  prev.sessionLogsFormat === next.sessionLogsFormat &&
+  prev.sessionLogsTimestampsEnabled === next.sessionLogsTimestampsEnabled &&
   prev.hotkeyScheme === next.hotkeyScheme &&
   prev.disableTerminalFontZoom === next.disableTerminalFontZoom &&
   prev.restoreTerminalCwd === next.restoreTerminalCwd &&

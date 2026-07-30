@@ -51,7 +51,18 @@ export function createCodingCliSessionSignalController(
 ): CodingCliSessionSignalController {
   const outputScanners = new Map<string, CodingCliOutputScanner>();
   const outputScanDisabled = new Set<string>();
+  // TerminalLayer may memo-skip title/provider-only session updates, so the
+  // controller keeps its own provider memory instead of trusting a stale
+  // sessionsRef from a skipped render.
+  const knownProviderBySession = new Map<string, CodingCliProviderId | null>();
   let observedDynamicTabTitleMode = deps.getDynamicTabTitleMode();
+
+  const resolveCurrentProviderId = (sessionId: string): CodingCliProviderId | null | undefined => {
+    if (knownProviderBySession.has(sessionId)) {
+      return knownProviderBySession.get(sessionId);
+    }
+    return deps.getSession(sessionId)?.codingCliProviderId;
+  };
 
   const handleDynamicTabTitleModeChange = (mode: DynamicTabTitleMode) => {
     if (mode === observedDynamicTabTitleMode) return;
@@ -73,13 +84,14 @@ export function createCodingCliSessionSignalController(
 
   const applyProvider = (sessionId: string, providerId: CodingCliProviderId | null) => {
     const session = deps.getSession(sessionId);
-    if (!session) return;
+    if (!session && !knownProviderBySession.has(sessionId)) return;
     const nextProviderId = resolveCodingCliProviderIconUpdate({
       dynamicTabTitleMode: getCurrentDynamicTabTitleMode(),
-      currentProviderId: session.codingCliProviderId,
+      currentProviderId: resolveCurrentProviderId(sessionId),
       nextProviderId: providerId,
     });
     if (nextProviderId === undefined) return;
+    knownProviderBySession.set(sessionId, nextProviderId);
     deps.onUpdateSessionCodingCliProvider?.(sessionId, nextProviderId);
   };
 
@@ -94,23 +106,24 @@ export function createCodingCliSessionSignalController(
 
   const handleTerminalTitleChange = (sessionId: string, title: string | null) => {
     const session = deps.getSession(sessionId);
-    if (!session) return;
+    if (!session && !knownProviderBySession.has(sessionId)) return;
     const dynamicTabTitleMode = getCurrentDynamicTabTitleMode();
     const trimmedTitle = title?.trim();
     const providerId = trimmedTitle
       ? inferCodingCliProviderFromTitleSignals(trimmedTitle)
       : undefined;
+    const currentProviderId = resolveCurrentProviderId(sessionId);
     const shouldStoreDynamicTitle =
       dynamicTabTitleMode === 'all'
       || (
         dynamicTabTitleMode === 'agent'
-        && Boolean(session.codingCliProviderId || providerId)
+        && Boolean(currentProviderId || providerId)
       );
     deps.onUpdateSessionDynamicTitle?.(sessionId, shouldStoreDynamicTitle ? title : null);
 
     if (!shouldUpdateCodingCliTabIcon(dynamicTabTitleMode)) return;
     if (!trimmedTitle) {
-      if (session.codingCliProviderId) {
+      if (currentProviderId) {
         outputScanners.delete(sessionId);
         outputScanDisabled.delete(sessionId);
         applyProvider(sessionId, null);
@@ -119,7 +132,7 @@ export function createCodingCliSessionSignalController(
     }
 
     if (providerId) {
-      if (!session.codingCliProviderId || session.codingCliProviderId !== providerId) {
+      if (!currentProviderId || currentProviderId !== providerId) {
         outputScanners.delete(sessionId);
         outputScanDisabled.delete(sessionId);
         applyProvider(sessionId, providerId);
@@ -128,8 +141,8 @@ export function createCodingCliSessionSignalController(
     }
 
     if (
-      session.codingCliProviderId
-      && shouldClearCodingCliProviderForTitle(trimmedTitle, session.codingCliProviderId)
+      currentProviderId
+      && shouldClearCodingCliProviderForTitle(trimmedTitle, currentProviderId)
     ) {
       outputScanners.delete(sessionId);
       outputScanDisabled.delete(sessionId);
@@ -143,12 +156,12 @@ export function createCodingCliSessionSignalController(
     if (!shouldUpdateCodingCliTabIcon(dynamicTabTitleMode)) return;
 
     const session = deps.getSession(sessionId);
-    if (!session) {
+    if (!session && !knownProviderBySession.has(sessionId)) {
       outputScanners.delete(sessionId);
       outputScanDisabled.delete(sessionId);
       return;
     }
-    if (session.codingCliProviderId) return;
+    if (resolveCurrentProviderId(sessionId)) return;
 
     let scanner = outputScanners.get(sessionId);
     if (!scanner) {
@@ -176,6 +189,7 @@ export function createCodingCliSessionSignalController(
     forgetSession: (sessionId: string) => {
       outputScanners.delete(sessionId);
       outputScanDisabled.delete(sessionId);
+      knownProviderBySession.delete(sessionId);
     },
   };
 }

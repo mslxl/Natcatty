@@ -49,10 +49,12 @@ const isRelatedTargetInside = (
   );
 };
 
+const EMPTY_GROUP_PATH_SET = new Set<string>();
+
 export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext }) {
   const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
   const hostClickBehavior: HostClickBehavior = hostClickBehaviorProp === 'select' ? 'select' : 'connect';
-  const multiSelectedGroupPaths: Set<string> = selectedGroupPaths ?? new Set();
+  const multiSelectedGroupPaths: Set<string> = selectedGroupPaths ?? EMPTY_GROUP_PATH_SET;
   const [draggingHostId, setDraggingHostId] = React.useState<string | null>(null);
   const draggingHostIdRef = React.useRef<string | null>(null);
   const lastPreviewReorderRef = React.useRef<string | null>(null);
@@ -70,6 +72,22 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
     sortMode,
     viewMode,
   ].join("|");
+
+  // Stable wrappers so HostTreeView memo can skip parent vault re-renders.
+  const handleTreeDeleteHost = React.useCallback(
+    (host: Host) => {
+      onDeleteHost(host.id);
+    },
+    [onDeleteHost],
+  );
+  const handleTreeGroupDropClasses = React.useCallback(
+    (path: string) => getDropTargetClasses({ kind: "group", path }),
+    [getDropTargetClasses],
+  );
+  const treeAutoExpandGroupsKey = React.useMemo(
+    () => getVaultTreeAutoExpandKey(search, selectedTags),
+    [search, selectedTags],
+  );
 
   React.useEffect(() => {
     if (isMultiSelectMode) {
@@ -891,12 +909,12 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                       onConnect={handleHostConnect}
                       onEditHost={handleEditHost}
                       onDuplicateHost={handleDuplicateHost}
-                      onDeleteHost={(host) => onDeleteHost(host.id)}
+                      onDeleteHost={handleTreeDeleteHost}
                       onCopyCredentials={handleCopyCredentials}
 
                       onNewGroup={startInlineNewGroup}
                       onRenameGroup={startInlineRenameGroup}
-                      onEditGroup={(groupPath) => handleEditGroupConfig(groupPath)}
+                      onEditGroup={handleEditGroupConfig}
                       commitInlineGroupRename={commitInlineGroupRename}
                       cancelInlineGroupEdit={cancelInlineGroupEdit}
                       onDeleteGroup={startInlineDeleteGroup}
@@ -914,13 +932,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                       onFocusHost={setFocusedHostId}
                       focusedGroupPath={focusedGroupPath}
                       onFocusGroup={setFocusedGroupPath}
-	                      getDropTargetClasses={(path) =>
-	                        getDropTargetClasses({ kind: "group", path })
-	                      }
+                      getDropTargetClasses={handleTreeGroupDropClasses}
                       setDragOverDropTarget={setGroupDragOverDropTarget}
                       groupConfigs={groupConfigs}
                       scrollRef={hostListScrollRef}
-                      autoExpandGroupsKey={getVaultTreeAutoExpandKey(search, selectedTags)}
+                      autoExpandGroupsKey={treeAutoExpandGroupsKey}
                     />
 	                  ) : sortMode === "group" && groupedDisplayHosts ? (
 	                    <>

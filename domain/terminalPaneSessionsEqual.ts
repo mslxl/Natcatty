@@ -2,9 +2,11 @@ import type { TerminalSession } from './models';
 
 /**
  * Session fields that affect terminal pane React trees (xterm host, layout,
- * connection chrome). Presentation-only fields used by TopTabs (dynamicTitle,
- * codingCliProviderId) are intentionally ignored so title churn does not
- * invalidate TerminalLayer / TerminalPanesHost memoization.
+ * connect/startup chrome). Presentation-only fields used by TopTabs
+ * (`dynamicTitle`, `codingCliProviderId`) are intentionally ignored so title
+ * churn does not invalidate TerminalLayer / TerminalPanesHost memoization.
+ *
+ * Keep this list aligned with props TerminalPane passes into `<Terminal />`.
  */
 export type TerminalPaneSessionFields = Pick<
   TerminalSession,
@@ -19,11 +21,27 @@ export type TerminalPaneSessionFields = Pick<
   | 'moshEnabled'
   | 'etEnabled'
   | 'fontSize'
+  | 'fontSizeOverride'
   | 'customName'
   | 'hostLabel'
   | 'hiddenFromTabs'
   | 'localShell'
   | 'localShellName'
+  | 'localShellArgs'
+  | 'localStartDir'
+  | 'shellType'
+  | 'charset'
+  | 'serialConfig'
+  | 'pluginConnection'
+  | 'restoreState'
+  | 'pendingInitialCwd'
+  | 'startupCommand'
+  | 'noAutoRun'
+  | 'multiLineRunMode'
+  | 'pendingScriptId'
+  | 'pendingScript'
+  | 'reuseConnectionFromSessionId'
+  | 'autoOpenSidePanel'
 >;
 
 function paneFieldEqual(
@@ -41,11 +59,27 @@ function paneFieldEqual(
     && Boolean(a.moshEnabled) === Boolean(b.moshEnabled)
     && Boolean(a.etEnabled) === Boolean(b.etEnabled)
     && a.fontSize === b.fontSize
+    && Boolean(a.fontSizeOverride) === Boolean(b.fontSizeOverride)
     && a.customName === b.customName
     && a.hostLabel === b.hostLabel
     && Boolean(a.hiddenFromTabs) === Boolean(b.hiddenFromTabs)
     && a.localShell === b.localShell
-    && a.localShellName === b.localShellName;
+    && a.localShellName === b.localShellName
+    && a.localShellArgs === b.localShellArgs
+    && a.localStartDir === b.localStartDir
+    && a.shellType === b.shellType
+    && a.charset === b.charset
+    && a.serialConfig === b.serialConfig
+    && a.pluginConnection === b.pluginConnection
+    && a.restoreState === b.restoreState
+    && a.pendingInitialCwd === b.pendingInitialCwd
+    && a.startupCommand === b.startupCommand
+    && Boolean(a.noAutoRun) === Boolean(b.noAutoRun)
+    && a.multiLineRunMode === b.multiLineRunMode
+    && a.pendingScriptId === b.pendingScriptId
+    && a.pendingScript === b.pendingScript
+    && a.reuseConnectionFromSessionId === b.reuseConnectionFromSessionId
+    && a.autoOpenSidePanel === b.autoOpenSidePanel;
 }
 
 export function terminalPaneSessionsEqual(

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { migrateHostsFromLegacyLineTimestamps, normalizeDistroId, sanitizeHost } from "../../domain/host";
 import { isEncryptedCredentialPlaceholder } from "../../domain/credentials";
 import { sanitizeGroupConfig } from "../../domain/groupConfig";
@@ -789,8 +789,9 @@ export const useVaultState = () => {
     updateGroupConfigs,
   ]);
 
-  // Publish for History side panel subscribers without TerminalLayer props.
-  useEffect(() => {
+  // Keep store in sync for storage-event / external setShellHistory paths.
+  // Append/clear/load also publish synchronously so History never flashes empty.
+  useLayoutEffect(() => {
     publishShellHistorySnapshot(shellHistory);
   }, [shellHistory]);
 
@@ -800,6 +801,7 @@ export const useVaultState = () => {
         const updated = mergeGlobalHistoryOnAppend(prev, entry);
         if (updated === prev) return prev;
         localStorageAdapter.write(STORAGE_KEY_SHELL_HISTORY, updated);
+        publishShellHistorySnapshot(updated);
         return updated;
       });
     },
@@ -809,6 +811,7 @@ export const useVaultState = () => {
   const clearShellHistory = useCallback(() => {
     setShellHistory([]);
     localStorageAdapter.write(STORAGE_KEY_SHELL_HISTORY, []);
+    publishShellHistorySnapshot([]);
   }, []);
 
   // Connection logs management
@@ -1073,6 +1076,7 @@ export const useVaultState = () => {
         const savedShellHistory = loadSanitizedShellHistory();
         if (savedShellHistory) {
           setShellHistory(savedShellHistory);
+          publishShellHistorySnapshot(savedShellHistory);
         }
 
         // Load connection logs
@@ -1259,6 +1263,7 @@ export const useVaultState = () => {
           safeParse<ShellHistoryEntry[]>(event.newValue) ?? [],
         );
         setShellHistory(next);
+        publishShellHistorySnapshot(next);
         return;
       }
 

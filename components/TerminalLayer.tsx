@@ -56,7 +56,6 @@ import { terminalCwdStore } from '../application/state/terminalCwdStore';
 import { resolveSnippetCommand } from './SnippetExecutionProvider';
 import type { Snippet } from '../types';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
-import { useScriptExecution } from '../application/state/useScriptExecution';
 import {
   pauseScriptRun,
   resumeScriptRun,
@@ -254,7 +253,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onRemoveSessionFromWorkspace,
 }) => {
   const { t } = useI18n();
-  const { runs } = useScriptExecution();
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
   const activeTabIdRef = useRef(activeTabStore.getActiveTabId());
@@ -303,7 +301,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const currentCwd = terminalRendererCwdBySessionRef.current.get(sessionId) ?? null;
     const nextCwd = cwd && cwd.trim().length > 0 ? cwd : null;
     if (currentCwd === nextCwd) {
-      // Still publish OSC 7 bumps already applied above; no React setState.
+      // Heal store drift if ref already has this path but the store does not.
+      if (terminalCwdStore.getCwd(sessionId) !== nextCwd) {
+        terminalCwdStore.setCwd(sessionId, nextCwd);
+      }
       return;
     }
 
@@ -1186,6 +1187,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [getActiveTerminalSessionId, refocusTerminalSession, syncWorkspaceFocusIfNeeded]);
 
   // Close the entire side panel for the current tab
+  const handleEndSessionDrag = useCallback(() => {
+    onSetDraggingSessionId(null);
+  }, [onSetDraggingSessionId]);
+
   const handleCloseSidePanel = useCallback(() => {
     const activeTabId = activeTabIdRef.current;
     if (!activeTabId) return;
@@ -1906,7 +1911,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleRunScriptFromPanel,
     handleRunScriptOnWorkspace,
     handleStartRecordingFromPanel,
-    scriptRuns: runs,
+    // scriptRuns live in scriptRunsStore; Scripts side panel subscribes directly.
     handleStopScriptRun: stopScriptRun,
     handlePauseScriptRun: pauseScriptRun,
     handleResumeScriptRun: resumeScriptRun,
@@ -1965,7 +1970,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onSubmitSessionRename,
     onRemoveSessionFromWorkspace,
     onStartSessionDrag: onSetDraggingSessionId,
-    onEndSessionDrag: () => onSetDraggingSessionId(null),
+    onEndSessionDrag: handleEndSessionDrag,
     onSplitSession,
     onSplitSessionRef,
     onToggleBroadcastRef,

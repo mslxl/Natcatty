@@ -11,6 +11,7 @@ import {
   getShellHistorySnapshot,
   subscribeShellHistory,
 } from '../../application/state/shellHistoryStore';
+import { useScriptExecution } from '../../application/state/useScriptExecution';
 import { useRemoteHistoryState } from '../../application/state/useRemoteHistoryState';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
 import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHibernate';
@@ -266,6 +267,8 @@ function SidePanelScriptsSlotInner({
   const sidePanelTab = useSidePanelTabType(tabId, sidePanelOpenTabs);
   const isVisible = isTabActive && sidePanelTab === 'scripts';
   const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
+  // Subscribe here so script log ticks only re-render Scripts, not TerminalLayer.
+  const { runs: scriptRuns } = useScriptExecution();
 
   const {
     ScriptsSidePanel,
@@ -277,7 +280,6 @@ function SidePanelScriptsSlotInner({
     handleRunScriptFromPanel,
     handleRunScriptOnWorkspace,
     handleStartRecordingFromPanel,
-    scriptRuns,
     handleStopScriptRun,
     handlePauseScriptRun,
     handleResumeScriptRun,
@@ -294,7 +296,7 @@ function SidePanelScriptsSlotInner({
         onRunScript={handleRunScriptFromPanel}
         onRunScriptOnWorkspace={handleRunScriptOnWorkspace}
         onStartRecording={handleStartRecordingFromPanel}
-        runs={scriptRuns}
+        runs={[...scriptRuns]}
         onStopRun={handleStopScriptRun}
         onPauseRun={handlePauseScriptRun}
         onResumeRun={handleResumeScriptRun}
@@ -446,7 +448,7 @@ function SidePanelHistorySlotInner({ ctx }: { ctx: SidePanelStableContext }) {
         focusedHost={live.focusedHost}
         focusedSessionId={live.historySessionId}
         state={remoteHistory.getState(live.focusedHost?.id, live.historySessionId)}
-        globalEntries={[...shellHistory]}
+        globalEntries={shellHistory as import('../../domain/models').ShellHistoryEntry[]}
         onFetch={remoteHistory.fetch}
         onPasteToTerminal={handleHistoryPaste}
         onRunInTerminal={handleHistoryRun}

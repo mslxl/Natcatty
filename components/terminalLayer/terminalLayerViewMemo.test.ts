@@ -237,13 +237,14 @@ test("terminal layer side panel stable ctx re-renders when session transport fla
   );
 });
 
-test("terminal layer side panel re-renders when linked terminal cwd changes", () => {
+test("terminal layer side panel live equal still tracks cwd; view ignores live cwd", () => {
   const baseCtx = {
     mountedSftpTabIds: ["workspace-1"],
     activeTerminalCwd: "/home/user",
     sftpFollowTerminalCwd: true,
   };
 
+  // Live equal still sees cwd (for diagnostic / full side-panel equal helpers).
   assert.equal(
     terminalLayerSidePanelCtxEqual(
       baseCtx,
@@ -251,12 +252,13 @@ test("terminal layer side panel re-renders when linked terminal cwd changes", ()
     ),
     false,
   );
+  // View equal uses stable keys only — cwd flows through sidePanelLiveStore.
   assert.equal(
     terminalLayerViewCtxEqual(
       baseCtx,
       { ...baseCtx, activeTerminalCwd: "/home/user/project" },
     ),
-    false,
+    true,
   );
 });
 

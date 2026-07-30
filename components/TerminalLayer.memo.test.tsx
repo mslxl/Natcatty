@@ -250,3 +250,13 @@ test("TerminalLayer re-renders when portForwardingRules change", () => {
     false,
   );
 });
+
+test("TerminalLayer re-renders when terminalFontFamilyId changes", () => {
+  assert.equal(
+    terminalLayerAreEqual(
+      { ...baseProps, terminalFontFamilyId: "jetbrain-mono" } as never,
+      { ...baseProps, terminalFontFamilyId: "sf-mono" } as never,
+    ),
+    false,
+  );
+});

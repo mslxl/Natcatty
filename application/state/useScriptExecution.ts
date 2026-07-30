@@ -1,21 +1,45 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ScriptRun, ScriptRunParams } from '@/types/global/netcatty-bridge-script.d.ts';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import type { ScriptRunParams } from '@/types/global/netcatty-bridge-script.d.ts';
 import { netcattyBridge } from '@/infrastructure/services/netcattyBridge.ts';
+import {
+  getScriptRunsSnapshot,
+  publishScriptRunsSnapshot,
+  subscribeScriptRuns,
+} from './scriptRunsStore.ts';
 
+let scriptRunsBridgeBound = false;
+
+function ensureScriptRunsBridgeBound(): void {
+  if (scriptRunsBridgeBound) return;
+  if (typeof window === 'undefined') return;
+  const bridge = netcattyBridge.get();
+  if (!bridge?.scriptGetRuns) return;
+  scriptRunsBridgeBound = true;
+  bridge.scriptGetRuns()
+    .then((runs) => {
+      publishScriptRunsSnapshot(runs);
+    })
+    .catch(() => {});
+  bridge.onScriptRunsUpdated?.(({ runs: nextRuns }) => {
+    publishScriptRunsSnapshot(nextRuns);
+  });
+}
+
+/**
+ * Script run state is externalized so TerminalLayer can avoid re-rendering on
+ * every automation log tick. Call sites that need the list should subscribe
+ * via this hook (or scriptRunsStore directly).
+ */
 export function useScriptExecution() {
-  const [runs, setRuns] = useState<ScriptRun[]>([]);
-  const runsRef = useRef(runs);
-  runsRef.current = runs;
-
   useEffect(() => {
-    const bridge = netcattyBridge.get();
-    if (!bridge?.scriptGetRuns) return undefined;
-    bridge.scriptGetRuns().then(setRuns).catch(() => {});
-    const dispose = bridge.onScriptRunsUpdated?.(({ runs: nextRuns }) => {
-      setRuns(nextRuns);
-    });
-    return dispose;
+    ensureScriptRunsBridgeBound();
   }, []);
+
+  const runs = useSyncExternalStore(
+    subscribeScriptRuns,
+    getScriptRunsSnapshot,
+    getScriptRunsSnapshot,
+  );
 
   const runScript = useCallback(async (params: ScriptRunParams) => {
     const bridge = netcattyBridge.get();
@@ -38,7 +62,7 @@ export function useScriptExecution() {
   }, []);
 
   const getRunsForSession = useCallback((sessionId: string) => {
-    return runsRef.current.filter((run) => run.sessionId === sessionId);
+    return getScriptRunsSnapshot().filter((run) => run.sessionId === sessionId);
   }, []);
 
   return {

@@ -466,7 +466,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     handleRunScriptFromPanel: s.handleRunScriptFromPanel,
     handleRunScriptOnWorkspace: s.handleRunScriptOnWorkspace,
     handleStartRecordingFromPanel: s.handleStartRecordingFromPanel,
-    scriptRuns: s.scriptRuns,
     handleStopScriptRun: s.handleStopScriptRun,
     handlePauseScriptRun: s.handlePauseScriptRun,
     handleResumeScriptRun: s.handleResumeScriptRun,
@@ -649,7 +648,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     s.terminalTheme,
     s.resolveSessionAppearance,
     s.hostMap,
-    s.scriptRuns,
   ]);
 
   return <TerminalLayerView ctx={ctx} />;

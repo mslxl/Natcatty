@@ -173,13 +173,15 @@ function sidePanelCtxKeyEqual(prev: Ctx, next: Ctx, key: string): boolean {
   return prev[key] === next[key];
 }
 
+// Live fields that are also published via sidePanelLiveStore (or dedicated
+// stores like scriptRunsStore). Slots subscribe to those stores directly, so
+// TerminalLayerView must NOT re-render on these ticks — only chrome-stable keys.
 const SIDE_PANEL_LIVE_CTX_KEYS = [
   'activeTerminalSessionForSystem',
   'activeSystemSessionHost',
   'focusedHost',
   'focusedSessionId',
   'historySessionId',
-  'scriptRuns',
   'resolvedPreviewTheme',
   'previewedOrVisibleThemeId',
   'sftpActiveHost',
@@ -419,7 +421,9 @@ export function terminalLayerViewCtxEqual(prev: Ctx, next: Ctx): boolean {
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
   if (prev.composeBarThemeColors !== next.composeBarThemeColors) return false;
   if (prev.workspaceOuterRef !== next.workspaceOuterRef) return false;
-  return terminalLayerSidePanelCtxEqual(prev, next)
+  // Use stable side-panel equal only: LIVE fields (cwd, theme focus, etc.) flow
+  // through sidePanelLiveStore and must not rebuild side-panel chrome.
+  return terminalLayerSidePanelStableCtxEqual(prev, next)
     && terminalLayerFocusSidebarPropsEqual(prev, next)
     && terminalLayerWorkspaceCtxEqual(prev, next);
 }

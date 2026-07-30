@@ -41,3 +41,18 @@ test('terminalPaneSessionsEqual detects workspace membership changes', () => {
     false,
   );
 });
+
+test('terminalPaneSessionsEqual detects pendingInitialCwd clear and startupCommand changes', () => {
+  const withSeed = session({ pendingInitialCwd: '/home/seed' });
+  assert.equal(
+    terminalPaneSessionsEqual([withSeed], [session({ pendingInitialCwd: undefined })]),
+    false,
+  );
+  assert.equal(
+    terminalPaneSessionsEqual(
+      [session({ startupCommand: 'htop' })],
+      [session({ startupCommand: 'top' })],
+    ),
+    false,
+  );
+});
