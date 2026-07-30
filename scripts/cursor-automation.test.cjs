@@ -55,6 +55,102 @@ test('prepareCursorCliConfig preserves preferences and adds web denials once', (
   });
 });
 
+test('workflow routes PR lifecycle events through pull_request_target', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const triggers = workflow.match(/^on:\n[\s\S]*?^concurrency:/m)?.[0] || '';
+
+  assert.match(triggers, /pull_request_target:\n\s+types: \[opened, synchronize, reopened, ready_for_review\]/);
+  assert.doesNotMatch(triggers, /^  pull_request:/m);
+  assert.doesNotMatch(triggers, /^  pull_request_review:/m);
+});
+
+test('Codex polling dispatches actionable submitted reviews to the fix loop', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const poll = workflow.match(
+    /  codex_poll:\n[\s\S]*$/,
+  )?.[0] || '';
+
+  assert.match(poll, /actions: write/);
+  assert.match(poll, /DISPATCH_TOKEN:/);
+  assert.match(poll, /latestCodexReview/);
+  assert.match(poll, /\['fix', 'give_up', 'mark_ready'\]\.includes\(decision\.action\)/);
+  assert.match(poll, /cursor-codex-dispatch:head=/);
+  assert.match(poll, /cursor-codex-dispatch:head=\$\{pr\.head\.sha\};/);
+  assert.match(poll, /const priorDispatch/);
+  assert.match(poll, /github\.paginate\(\s*github\.rest\.actions\.listWorkflowRuns/);
+  assert.match(poll, /const dispatchedRunIsActive/);
+  assert.match(poll, /if \(dispatchedRunIsActive\) continue/);
+  assert.match(poll, /run\.display_title === `Codex dispatch \$\{dispatchId\}`/);
+  assert.match(poll, /const dispatchId = crypto\.randomUUID\(\)/);
+  assert.match(poll, /labels\.includes\('ready-for-human'\)/);
+  assert.match(poll, /codex_review_id: String\(latestCodexReview\.review\.id\)/);
+  assert.match(poll, /codex_head_sha: pr\.head\.sha/);
+  assert.match(poll, /codex_dispatch_id: dispatchId/);
+  assert.match(poll, /let dispatchRejected = false/);
+  assert.match(poll, /authorization: `Bearer \$\{process\.env\.DISPATCH_TOKEN\}`/);
+  assert.match(poll, /actions\/workflows\/cursor-automation\.yml\/dispatches/);
+  assert.match(poll, /github\.rest\.issues\.deleteComment/);
+  assert.match(poll, /if \(dispatchRejected\)/);
+  assert.match(poll, /reviewedInBody[\s\S]*?!auto\.commitShasMatch\(reviewedInBody, reviewedByGithub\)/);
+});
+
+test('Codex poll dispatch markers are cleared only after the dispatched workflow completes', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const cleanup = workflow.match(
+    /  clear_codex_dispatch_marker:\n[\s\S]*?(?=\n  [a-z_]+:|$)/,
+  )?.[0] || '';
+
+  assert.match(workflow, /codex_review_id:/);
+  assert.match(workflow, /codex_head_sha:/);
+  assert.match(workflow, /codex_dispatch_id:/);
+  assert.match(workflow, /run-name:/);
+  assert.match(cleanup, /needs: \[codex_loop, publish_codex_fix\]/);
+  assert.match(cleanup, /if: always\(\)/);
+  assert.match(cleanup, /cursor-codex-dispatch:head=/);
+  assert.match(cleanup, /CODEX_DISPATCH_ID/);
+  assert.match(cleanup, /trustedAuthors/);
+  assert.match(cleanup, /github\.rest\.issues\.deleteComment/);
+});
+
+test('scheduled Codex polls share one concurrency group', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /github\.event_name == 'schedule' && github\.event\.schedule == '17 3 \* \* \*' && 'cursor-smoke' \|\|[\s\S]*?github\.event_name == 'schedule' && 'codex-poll' \|\|/,
+  );
+});
+
+test('no-PR follow-ups use a writable Cursor agent mode', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const reviewStep = workflow.match(
+    /- name: Review follow-up with Cursor CLI[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+
+  assert.match(reviewStep, /if \[\[ "\$HAS_PULL" == "true" \]\]; then/);
+  assert.match(reviewStep, /decision_dir="\$\(mktemp -d \/tmp\/cursor-followup-decision\.XXXXXX\)"/);
+  assert.match(reviewStep, /cp \.cursor-runtime\/followup\.json "\$decision_dir\/\.cursor-runtime\/followup\.json"/);
+  assert.match(reviewStep, /else[\s\S]*?sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE \\\n\s+"\$RUNNER_TEMP\/cursor-agent-authenticated" \\\n\s+-p --trust --sandbox enabled/);
+  assert.match(reviewStep, /--workspace "\$decision_dir" "\$prompt"/);
+  assert.match(reviewStep, /cp "\$decision_dir\/\.cursor-runtime\/followup-status\.txt"/);
+  assert.doesNotMatch(reviewStep, /--mode=ask/);
+});
+
 test('isValidIssueFormat accepts modern bug template', () => {
   assert.equal(
     auto.isValidIssueFormat({
