@@ -1542,10 +1542,12 @@ function App({ settings }: { settings: SettingsState }) {
   }, [updateSessionStatus, updateHostLastConnected]);
 
   const handleUpdateHostFromTerminal = useCallback((host: TerminalHostUpdate) => {
-    updateHosts(hosts.map((h) => (
+    // Functional update + identity-preserving updateHosts: only the patched
+    // host object changes, so other open terminals keep stable host props.
+    updateHosts((prev) => prev.map((h) => (
       h.id === host.id ? mergeTerminalHostUpdate(h, host) : h
     )));
-  }, [hosts, updateHosts]);
+  }, [updateHosts]);
 
   // Terminal-layer host updates may include ephemeral deep-link hosts; keep
   // those in memory only and never let them reach the persisted vault.

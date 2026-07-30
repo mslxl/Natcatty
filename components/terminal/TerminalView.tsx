@@ -328,7 +328,18 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     isSearchOpen,
     terminalBodyInset,
   });
-  const showLineTimestampGutter = lineTimestampsAvailable !== false && host.showLineTimestamps === true;
+  // Optimistic override so the gutter paints immediately; host vault write can
+  // lag behind without making the toolbar feel sticky.
+  const [timestampOverride, setTimestampOverride] = useState<boolean | null>(null);
+  const hostTimestampsEnabled = host.showLineTimestamps === true;
+  useEffect(() => {
+    if (timestampOverride === null) return;
+    if (hostTimestampsEnabled === timestampOverride) {
+      setTimestampOverride(null);
+    }
+  }, [hostTimestampsEnabled, timestampOverride]);
+  const showLineTimestampGutter = lineTimestampsAvailable !== false
+    && (timestampOverride ?? hostTimestampsEnabled);
   const lineTimestampColor = resolveTerminalTimestampGutterColor(effectiveTheme.colors);
   const [lineTimestampGutterWidth, setLineTimestampGutterWidth] = useState(() => (
     resolveTerminalTimestampGutterWidth({ fontSize: effectiveFontSize })
@@ -344,6 +355,15 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
   const lineTimestampToggleLabel = showLineTimestampGutter
     ? t("terminal.toolbar.timestampsDisable")
     : t("terminal.toolbar.timestampsEnable");
+  const handleToggleLineTimestamps = useCallback(() => {
+    const next = !showLineTimestampGutter;
+    setTimestampOverride(next);
+    // Defer vault write so first paint of the gutter is not blocked by host
+    // sanitize/encrypt scheduling on the same turn.
+    queueMicrotask(() => {
+      onUpdateHost({ id: host.id, showLineTimestamps: next });
+    });
+  }, [host.id, onUpdateHost, showLineTimestampGutter]);
   const titleConnectionAddress = formatTerminalTitleConnectionAddress(host);
   const hasBlockingReconnectOverlay = Boolean(osc52ReadPromptVisible || osc7SetupOpen || scriptExecutionOverlay || zmodem.active || zmodem.overwriteRequest);
   const showEnterReconnectHint = shouldReconnectTerminalOnEnterKey({
@@ -553,7 +573,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                               }
                               : undefined
                           }
-                          onClick={() => onUpdateHost(getLineTimestampToggleHostUpdate(host))}
+                          onClick={handleToggleLineTimestamps}
                           aria-label={lineTimestampToggleLabel}
                           aria-pressed={showLineTimestampGutter}
                         >

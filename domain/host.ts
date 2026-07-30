@@ -391,6 +391,24 @@ export const resolveHostKeepalive = (
   };
 };
 
+/**
+ * True when two host records are interchangeable for React identity reuse.
+ * Uses shallow key comparison (nested objects compared by reference).
+ */
+export const hostsEqualForIdentityReuse = (a: Host, b: Host): boolean => {
+  if (a === b) return true;
+  const aKeys = Object.keys(a) as (keyof Host)[];
+  const bKeys = Object.keys(b) as (keyof Host)[];
+  if (aKeys.length !== bKeys.length) return false;
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false;
+  }
+  for (const key of bKeys) {
+    if (a[key] !== b[key]) return false;
+  }
+  return true;
+};
+
 export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
   const cleanHostname = (host.hostname || '').trim().split(/\s+/)[0];
   const cleanDistro = normalizeDistroId(host.distro);
