@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
+import { terminalCwdStore } from '../../application/state/terminalCwdStore';
 import { useSftpBackend } from '../../application/state/useSftpBackend';
 import {
   isTransferNavigationTerminalTabId,
@@ -35,6 +36,9 @@ export function clearTerminalSessionRuntimeState(
   state.cwdProbeGenerationRef.current.delete(sessionId);
   state.terminalOsc7SignalBySessionRef.current.delete(sessionId);
   state.terminalRendererCwdBySessionRef.current.delete(sessionId);
+
+  // Keep terminalCwdStore in sync so SFTP follow does not reuse a closed session path.
+  terminalCwdStore.setCwd(sessionId, null);
 
   if (cancelProbe) {
     try {

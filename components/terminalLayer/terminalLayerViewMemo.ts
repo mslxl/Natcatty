@@ -203,8 +203,6 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'scriptsMountedTabIds',
   'systemMountedTabIds',
   'themeMountedTabIds',
-  'remoteHistory',
-  'shellHistory',
   'handleHistoryPaste',
   'handleHistoryRun',
   'handleOpenHistory',

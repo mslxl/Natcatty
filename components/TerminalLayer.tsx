@@ -52,7 +52,7 @@ import { SftpSidePanel } from './SftpSidePanel';
 import { ScriptsSidePanel } from './ScriptsSidePanel';
 import { HistorySidePanel } from './HistorySidePanel';
 import { NotesManager } from './notes/NotesManager';
-import { useRemoteHistoryState } from '../application/state/useRemoteHistoryState';
+import { terminalCwdStore } from '../application/state/terminalCwdStore';
 import { resolveSnippetCommand } from './SnippetExecutionProvider';
 import type { Snippet } from '../types';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
@@ -206,7 +206,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onUpdateHost,
   onAddKnownHost,
   onCommandExecuted,
-  shellHistory = [],
   onTerminalDataCapture,
   onCreateWorkspaceFromSessions,
   onAddSessionToWorkspace,
@@ -262,19 +261,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const activeWorkspaceRef = useRef<Workspace | undefined>(undefined);
   const activeSessionRef = useRef<TerminalSession | undefined>(undefined);
   const focusedSessionIdRef = useRef<string | undefined>(undefined);
-  const terminalCwdRevisionRef = useRef(0);
-  const [terminalCwdRevision, setTerminalCwdRevision] = useState(0);
   const terminalOsc7SignalBySessionRef = useRef<Map<string, number>>(new Map());
   const cwdProbeCancelersRef = useRef<Map<string, () => void>>(new Map());
   const cwdProbeGenerationRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
+    const liveSessionIds = new Set(sessions.map((session) => session.id));
     pruneTerminalSessionRuntimeState({
       terminalRendererCwdBySessionRef,
       terminalOsc7SignalBySessionRef,
       cwdProbeGenerationRef,
       cwdProbeCancelersRef,
-    }, new Set(sessions.map((session) => session.id)));
+    }, liveSessionIds);
+    terminalCwdStore.prune(liveSessionIds);
   }, [sessions]);
 
   useEffect(() => {
@@ -303,7 +302,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     const currentCwd = terminalRendererCwdBySessionRef.current.get(sessionId) ?? null;
     const nextCwd = cwd && cwd.trim().length > 0 ? cwd : null;
-    if (currentCwd === nextCwd) return;
+    if (currentCwd === nextCwd) {
+      // Still publish OSC 7 bumps already applied above; no React setState.
+      return;
+    }
 
     if (nextCwd) {
       terminalRendererCwdBySessionRef.current.set(sessionId, nextCwd);
@@ -311,13 +313,20 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       terminalRendererCwdBySessionRef.current.delete(sessionId);
     }
     onUpdateSessionRestoreCwd?.(sessionId, nextCwd);
-    terminalCwdRevisionRef.current += 1;
-    setTerminalCwdRevision(terminalCwdRevisionRef.current);
+    // External store: side-panel live snapshot subscribers update without
+    // re-rendering TerminalLayerInner.
+    terminalCwdStore.setCwd(sessionId, nextCwd);
   }, [onUpdateSessionRestoreCwd]);
 
+  // Stable while only presentation fields (title/provider) change.
+  const codingCliSessionIdsKey = sessions.map((session) => session.id).join('\0');
+  const codingCliSessionIds = useMemo(
+    () => (codingCliSessionIdsKey ? codingCliSessionIdsKey.split('\0') : []),
+    [codingCliSessionIdsKey],
+  );
   const codingCliSignalController = useCodingCliSessionSignals({
     dynamicTabTitleMode: terminalSettings?.dynamicTabTitleMode ?? 'agent',
-    sessionIds: sessions.map((session) => session.id),
+    sessionIds: codingCliSessionIds,
     getSession: (sessionId) => sessionsRef.current.find((candidate) => candidate.id === sessionId),
     onUpdateSessionCodingCliProvider,
     onUpdateSessionDynamicTitle,
@@ -1530,7 +1539,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     textarea?.focus();
   }, [terminalBackend]);
 
-  const remoteHistory = useRemoteHistoryState();
   const handleHistoryPaste = useCallback(
     (command: string) => handleSnippetClickForFocusedSession(command, true),
     [handleSnippetClickForFocusedSession],
@@ -1977,8 +1985,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     pendingTerminalSelectionForAI,
     refocusActiveTerminalSession,
     refocusTerminalSession,
-    remoteHistory,
-    shellHistory,
     resolveSftpHostForTab,
     ScriptsSidePanel,
     sessionActivityStore,
@@ -2036,7 +2042,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     t,
     TerminalComposeBar,
     TerminalPanesHost,
-    terminalCwdRevision,
     terminalFontFamilyId,
     terminalRendererCwdBySessionRef,
     terminalSettings,

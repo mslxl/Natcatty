@@ -7,6 +7,11 @@ import {
   getSidePanelLiveSnapshot,
   subscribeSidePanelLiveSnapshot,
 } from '../../application/state/sidePanelLiveStore';
+import {
+  getShellHistorySnapshot,
+  subscribeShellHistory,
+} from '../../application/state/shellHistoryStore';
+import { useRemoteHistoryState } from '../../application/state/useRemoteHistoryState';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
 import { shouldKeepTerminalBackgroundWorkActive } from '../../domain/terminalHibernate';
 import { resolveTerminalFontFamilyId } from '../../infrastructure/config/fonts';
@@ -19,6 +24,9 @@ import { sidePanelHiddenNotesPanelClassName, sidePanelHiddenPanelClassName } fro
 
 type SidePanelStableContext = Record<string, any>;
 const navigatorPlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
+const EMPTY_VAULT_NOTES: never[] = [];
+const EMPTY_VAULT_HOSTS: never[] = [];
+const EMPTY_VAULT_SNIPPETS: never[] = [];
 
 function useSidePanelTabType(tabId: string, sidePanelOpenTabs: Map<string, SidePanelTab>): SidePanelTab | null {
   return sidePanelOpenTabs.get(tabId) ?? null;
@@ -416,11 +424,16 @@ function SidePanelHistorySlotInner({ ctx }: { ctx: SidePanelStableContext }) {
   const sidePanelTab = activeTabId ? sidePanelOpenTabs.get(activeTabId) ?? null : null;
   const isVisible = sidePanelTab === 'history';
   const live = useSidePanelLiveSnapshotForTab(activeTabId ?? '', isVisible);
+  // Own remote-history state here so fetch/loading does not re-render TerminalLayer.
+  const remoteHistory = useRemoteHistoryState();
+  const shellHistory = useSyncExternalStore(
+    subscribeShellHistory,
+    getShellHistorySnapshot,
+    getShellHistorySnapshot,
+  );
 
   const {
     HistorySidePanel,
-    remoteHistory,
-    shellHistory,
     handleHistoryPaste,
     handleHistoryRun,
   } = ctx;
@@ -433,7 +446,7 @@ function SidePanelHistorySlotInner({ ctx }: { ctx: SidePanelStableContext }) {
         focusedHost={live.focusedHost}
         focusedSessionId={live.historySessionId}
         state={remoteHistory.getState(live.focusedHost?.id, live.historySessionId)}
-        globalEntries={shellHistory}
+        globalEntries={[...shellHistory]}
         onFetch={remoteHistory.fetch}
         onPasteToTerminal={handleHistoryPaste}
         onRunInTerminal={handleHistoryRun}
@@ -476,6 +489,10 @@ function SidePanelAiSlotInner({ ctx }: { ctx: SidePanelStableContext }) {
   if (mountedAiTabIds.length === 0) return null;
   if (AI_PANEL_FORCE_HIDE_SHELL && activeSidePanelTab === 'ai') return null;
 
+  // Only the visible AI panel needs vault catalogs for artifact navigation.
+  // Hidden retained panels keep session state without re-binding huge hosts/notes.
+  const injectVaultCatalog = activeSidePanelTab === 'ai';
+
   return (
     <AISidePanelStateRoot validAIScopeTargetIds={validAIScopeTargetIds}>
       <AIChatPanelsHost
@@ -486,9 +503,9 @@ function SidePanelAiSlotInner({ ctx }: { ctx: SidePanelStableContext }) {
         resolveExecutorContext={resolveAIExecutorContext}
         pendingTerminalSelection={pendingTerminalSelectionForAI}
         onPendingTerminalSelectionConsumed={handlePendingTerminalSelectionConsumed}
-        notes={notes}
-        hosts={hosts}
-        snippets={snippets}
+        notes={injectVaultCatalog ? notes : EMPTY_VAULT_NOTES}
+        hosts={injectVaultCatalog ? hosts : EMPTY_VAULT_HOSTS}
+        snippets={injectVaultCatalog ? snippets : EMPTY_VAULT_SNIPPETS}
         onOpenVaultNoteFromChat={onOpenVaultNoteFromChat}
         onOpenVaultHostFromChat={onOpenVaultHostFromChat}
         onOpenVaultSectionFromChat={onOpenVaultSectionFromChat}

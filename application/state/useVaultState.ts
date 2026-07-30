@@ -56,6 +56,7 @@ import {
 } from "../../domain/connectionLogTerminalData";
 import { getNextVaultOrder, normalizeVaultOrder } from "../../domain/vaultOrder";
 import { loadSanitizedShellHistory } from "./shellHistoryPersistence";
+import { publishShellHistorySnapshot } from "./shellHistoryStore";
 import { setVaultInitialized } from "./vaultInitStore";
 import {
   decryptGroupConfigs,
@@ -787,6 +788,11 @@ export const useVaultState = () => {
     updateManagedSources,
     updateGroupConfigs,
   ]);
+
+  // Publish for History side panel subscribers without TerminalLayer props.
+  useEffect(() => {
+    publishShellHistorySnapshot(shellHistory);
+  }, [shellHistory]);
 
   const addShellHistoryEntry = useCallback(
     (entry: Omit<ShellHistoryEntry, "id" | "timestamp">) => {
