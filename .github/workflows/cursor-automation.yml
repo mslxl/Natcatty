@@ -1,4 +1,6 @@
 name: Cursor automation
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && inputs.codex_dispatch_id != '' && format('Codex dispatch {0}', inputs.codex_dispatch_id) || github.event_name }}
 
 on:
   issues:
@@ -26,6 +28,18 @@ on:
         description: PR number for own Codex fix loop or external re-@codex
         required: false
         type: number
+      codex_review_id:
+        description: Codex review ID whose poll-dispatch marker should be cleared on completion
+        required: false
+        type: string
+      codex_head_sha:
+        description: PR head SHA paired with codex_review_id
+        required: false
+        type: string
+      codex_dispatch_id:
+        description: Unique marker identity for one Codex poll dispatch
+        required: false
+        type: string
       drain_backlog:
         description: Continue a queued issue-comment batch
         required: false
@@ -4208,6 +4222,49 @@ jobs:
               }),
             });
 
+  clear_codex_dispatch_marker:
+    name: Clear Codex dispatch marker
+    needs: [codex_loop, publish_codex_fix]
+    # The marker is retained while every queued/fix/publish job is active, then
+    # cleared only after this dispatched workflow has reached its terminal state.
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.codex_review_id != '' && inputs.codex_head_sha != '' && inputs.codex_dispatch_id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      PULL_NUMBER: ${{ inputs.pull_number }}
+      CODEX_REVIEW_ID: ${{ inputs.codex_review_id }}
+      CODEX_HEAD_SHA: ${{ inputs.codex_head_sha }}
+      CODEX_DISPATCH_ID: ${{ inputs.codex_dispatch_id }}
+      OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
+    steps:
+      - name: Delete matching poll marker
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const pull_number = Number(process.env.PULL_NUMBER);
+            const marker = `<!-- cursor-codex-dispatch:review-id=${process.env.CODEX_REVIEW_ID};head=${process.env.CODEX_HEAD_SHA};dispatch=${process.env.CODEX_DISPATCH_ID} -->`;
+            const trustedAuthors = new Set(
+              process.env.OWN_ACTORS.split(',').map((login) => login.trim().toLowerCase()),
+            );
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            for (const comment of comments) {
+              if (
+                comment.body !== marker ||
+                !trustedAuthors.has(String(comment.user?.login || '').toLowerCase())
+              ) continue;
+              await github.rest.issues.deleteComment({
+                ...context.repo,
+                comment_id: comment.id,
+              });
+              core.info(`Cleared Codex dispatch marker for PR #${pull_number}`);
+            }
+
   own_rerequest_codex:
     name: Own PR re-request Codex
     needs: route
@@ -4303,14 +4360,16 @@ jobs:
               1,
             );
             // New head invalidates a previous clean gate — restore draft review loop.
-            try {
-              await github.rest.issues.removeLabel({
-                ...context.repo,
-                issue_number: pull_number,
-                name: 'automation:codex-clean',
-              });
-            } catch {
-              // label may already be absent
+            for (const name of ['automation:codex-clean', 'ready-for-human']) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: pull_number,
+                  name,
+                });
+              } catch {
+                // Label may already be absent.
+              }
             }
             await github.rest.issues.addLabels({
               ...context.repo,
@@ -4528,7 +4587,12 @@ jobs:
               ) {
                 continue;
               }
-              if (labels.includes('automation:codex-clean')) continue;
+              if (
+                labels.includes('automation:codex-clean') ||
+                labels.includes('ready-for-human')
+              ) {
+                continue;
+              }
 
               const issueComments = await github.paginate(
                 github.rest.issues.listComments,
@@ -4670,27 +4734,40 @@ jobs:
                   lastCodexSummaryAt: latestCodexReview.at,
                 });
                 if (['fix', 'give_up', 'mark_ready'].includes(decision.action)) {
-                  const marker =
-                    `<!-- cursor-codex-dispatch:review-id=${latestCodexReview.review.id};head=${pr.head.sha} -->`;
+                  const markerPrefix =
+                    `<!-- cursor-codex-dispatch:review-id=${latestCodexReview.review.id};head=${pr.head.sha};dispatch=`;
                   const priorDispatch = issueComments.find((comment) =>
                     auto.isTrustedAutomationControlAuthor(
                       comment.user?.login,
                       controlOpts,
-                    ) && String(comment.body || '').includes(marker),
+                    ) && String(comment.body || '').startsWith(markerPrefix),
                   );
                   if (priorDispatch) {
-                    const dispatchedAt = Date.parse(priorDispatch.created_at || '') || 0;
-                    if (
-                      dispatchedAt > 0 &&
-                      Date.now() - dispatchedAt < auto.CODEX_LOOP_TIMEOUT_MS
-                    ) {
-                      continue;
-                    }
+                    const dispatchId = String(priorDispatch.body || '')
+                      .slice(markerPrefix.length)
+                      .replace(/\s*-->\s*$/, '');
+                    const workflowRuns = await github.paginate(
+                      github.rest.actions.listWorkflowRuns,
+                      {
+                        ...context.repo,
+                        workflow_id: 'cursor-automation.yml',
+                        event: 'workflow_dispatch',
+                        per_page: 100,
+                      },
+                    );
+                    const dispatchedRunIsActive = workflowRuns.some((run) =>
+                      run.display_title === `Codex dispatch ${dispatchId}` &&
+                      ['queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(run.status),
+                    );
+                    if (dispatchedRunIsActive) continue;
+                    // The dispatched run was canceled before its completion cleanup.
                     await github.rest.issues.deleteComment({
                       ...context.repo,
                       comment_id: priorDispatch.id,
                     });
                   }
+                  const dispatchId = crypto.randomUUID();
+                  const marker = `${markerPrefix}${dispatchId} -->`;
                   const { data: markerComment } =
                     await github.rest.issues.createComment({
                       ...context.repo,
@@ -4712,7 +4789,12 @@ jobs:
                         },
                         body: JSON.stringify({
                           ref: context.payload.repository.default_branch,
-                          inputs: { pull_number: String(pr.number) },
+                          inputs: {
+                            pull_number: String(pr.number),
+                            codex_review_id: String(latestCodexReview.review.id),
+                            codex_head_sha: pr.head.sha,
+                            codex_dispatch_id: dispatchId,
+                          },
                         }),
                       },
                     );

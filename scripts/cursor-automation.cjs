@@ -1896,8 +1896,6 @@ function hasAutomationCodexRequest(comments = [], options = {}) {
  */
 /** Default age after which a still-unanswered @codex request may be retried. */
 const CODEX_REQUEST_RETRY_MS = 30 * 60 * 1000;
-/** Maximum runtime of the codex_loop job; dispatch markers must outlive it. */
-const CODEX_LOOP_TIMEOUT_MS = 120 * 60 * 1000;
 
 function decideCodexLoopAction({
   eligible,
@@ -3236,7 +3234,6 @@ module.exports = {
   parseCodexReviewOutcome,
   hasAutomationCodexRequest,
   CODEX_REQUEST_RETRY_MS,
-  CODEX_LOOP_TIMEOUT_MS,
   decideCodexLoopAction,
   shouldReTriageIssueComment,
   mentionsIssueBot,

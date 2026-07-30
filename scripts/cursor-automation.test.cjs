@@ -82,14 +82,42 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
   assert.match(poll, /\['fix', 'give_up', 'mark_ready'\]\.includes\(decision\.action\)/);
   assert.match(poll, /cursor-codex-dispatch:review-id=/);
   assert.match(poll, /const priorDispatch/);
-  assert.match(poll, /Date\.now\(\) - dispatchedAt < auto\.CODEX_LOOP_TIMEOUT_MS/);
-  assert.equal(auto.CODEX_LOOP_TIMEOUT_MS, 120 * 60 * 1000);
+  assert.match(poll, /github\.paginate\(\s*github\.rest\.actions\.listWorkflowRuns/);
+  assert.match(poll, /const dispatchedRunIsActive/);
+  assert.match(poll, /if \(dispatchedRunIsActive\) continue/);
+  assert.match(poll, /run\.display_title === `Codex dispatch \$\{dispatchId\}`/);
+  assert.match(poll, /const dispatchId = crypto\.randomUUID\(\)/);
+  assert.match(poll, /labels\.includes\('ready-for-human'\)/);
+  assert.match(poll, /codex_review_id: String\(latestCodexReview\.review\.id\)/);
+  assert.match(poll, /codex_head_sha: pr\.head\.sha/);
+  assert.match(poll, /codex_dispatch_id: dispatchId/);
   assert.match(poll, /let dispatchRejected = false/);
   assert.match(poll, /authorization: `Bearer \$\{process\.env\.DISPATCH_TOKEN\}`/);
   assert.match(poll, /actions\/workflows\/cursor-automation\.yml\/dispatches/);
   assert.match(poll, /github\.rest\.issues\.deleteComment/);
   assert.match(poll, /if \(dispatchRejected\)/);
   assert.match(poll, /reviewedInBody[\s\S]*?!auto\.commitShasMatch\(reviewedInBody, reviewedByGithub\)/);
+});
+
+test('Codex poll dispatch markers are cleared only after the dispatched workflow completes', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const cleanup = workflow.match(
+    /  clear_codex_dispatch_marker:\n[\s\S]*?(?=\n  [a-z_]+:|$)/,
+  )?.[0] || '';
+
+  assert.match(workflow, /codex_review_id:/);
+  assert.match(workflow, /codex_head_sha:/);
+  assert.match(workflow, /codex_dispatch_id:/);
+  assert.match(workflow, /run-name:/);
+  assert.match(cleanup, /needs: \[codex_loop, publish_codex_fix\]/);
+  assert.match(cleanup, /if: always\(\)/);
+  assert.match(cleanup, /cursor-codex-dispatch:review-id=/);
+  assert.match(cleanup, /CODEX_DISPATCH_ID/);
+  assert.match(cleanup, /trustedAuthors/);
+  assert.match(cleanup, /github\.rest\.issues\.deleteComment/);
 });
 
 test('scheduled Codex polls share one concurrency group', () => {
