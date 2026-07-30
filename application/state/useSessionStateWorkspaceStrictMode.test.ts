@@ -85,6 +85,13 @@ test('copied tab order insertion remains idempotent when the same update runs tw
   assert.equal(twice.filter(id => id === 's2').length, 1);
 });
 
+test('insertCopiedTabOrderIdOnce does not duplicate the copied id on the fallback branch', () => {
+  // source 'ws-1' is NOT in prevTabOrder -> fallback path; allTabIds lists both ids.
+  const result = insertCopiedTabOrderIdOnce([], 'ws-1', 'ws-new', ['ws-1', 'ws-new']);
+  assert.equal(result.filter(id => id === 'ws-new').length, 1);
+  assert.deepEqual(result, ['ws-1', 'ws-new']);
+});
+
 test('workspace host creation paths use the host session snapshot factory', () => {
   assert.match(
     source,

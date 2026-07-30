@@ -3,11 +3,12 @@ import type React from 'react';
 import type { Host, HostProtocol, TerminalSession } from '../../types';
 import type { PassphraseRequest } from '../../components/PassphraseModal';
 import type { TerminalPopupPayload } from '../../domain/systemManager/types';
-import { getEffectiveHostDistro } from '../../domain/host';
+import { getEffectiveHostDistro, classifyDistroId, shouldProbeSessionCwd } from '../../domain/host';
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
 import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
+import { captureInheritedCwd } from '../state/inheritedCwd';
 
 type AppContextGetter = () => Record<string, any>;
 const TERMINAL_PASSTHROUGH_ACTIONS = getTerminalPassthroughActions();
@@ -460,24 +461,93 @@ export function createLocalTerminalWithCurrentShellImpl(getCtx: AppContextGetter
   }
 }
 
-export function splitSessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string, direction: 'horizontal' | 'vertical') {
-  const { classifyLocalShellType, discoveredShells, resolveShellSetting, splitSession, terminalSettings } = getCtx();
-{
-    const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
-    return splitSession(sessionId, direction, {
-      localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, navigator.userAgent),
-    });
+async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: string): Promise<string | undefined> {
+  const { sessions, netcattyBridge, hostById, terminalHosts, getSessionRestoreCwd } = getCtx();
+  const source = sessions?.find((s: { id: string }) => s.id === sessionId);
+  if (!source) return undefined;
+
+  // Freshest cwd: the live OSC 7 value tracked in terminal state (the only
+  // source that reflects `cd`s in a running local terminal — lastCwd is a
+  // startup snapshot). Falls through to the SSH probe / lastCwd when absent.
+  const liveCwd: string | undefined = getSessionRestoreCwd?.(sessionId);
+
+  const bridge = netcattyBridge?.get?.();
+  // hostById is a Map of SAVED hosts; ephemeral terminal hosts only appear in
+  // terminalHosts. Classify the DETECTED distro (host.distro), not the
+  // effective/override value, so a cosmetic Linux icon can't re-enable the
+  // probe on a network device (matches the terminal cwd-probe gate).
+  const host = hostById?.get?.(source.hostId)
+    ?? terminalHosts?.find?.((h: { id: string }) => h.id === source.hostId);
+  const isNetworkDevice = !!host
+    && (host.deviceType === 'network' || classifyDistroId(host.distro) === 'network-device');
+
+  // Only probe when the app's own cwd-probe gate would: never for network
+  // devices (the extra exec channel can close a Huawei VRP-style session), and
+  // for not-yet-classified hosts consult the SSH banner (issue #1043).
+  let allowSshProbe = false;
+  const isConnectedSsh = (source.protocol === "ssh" || source.protocol === undefined)
+    && source.status === "connected";
+  if (!liveCwd && isConnectedSsh && !isNetworkDevice) {
+    try {
+      const info = await bridge?.getSessionRemoteInfo?.(sessionId);
+      allowSshProbe = shouldProbeSessionCwd({ isNetworkDevice: false, remoteSshVersion: info?.remoteSshVersion });
+    } catch {
+      allowSshProbe = false;
+    }
   }
+
+  const probe = async (id: string, options?: { allowHomeFallback?: boolean; timeoutMs?: number }) =>
+    (await bridge?.getSessionPwd?.(id, options)) ?? { success: false };
+  return captureInheritedCwd(source, probe, { liveCwd, allowSshProbe });
 }
 
-export function copySessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
+export async function splitSessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string, direction: 'horizontal' | 'vertical') {
+  const { classifyLocalShellType, discoveredShells, resolveShellSetting, splitSession, terminalSettings } = getCtx();
+  const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+  const inheritedCwd = await captureCtxInheritedCwd(getCtx, sessionId);
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return splitSession(sessionId, direction, {
+    localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+    inheritedCwd,
+  });
+}
+
+export async function copySessionWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {
   const { classifyLocalShellType, copySession, discoveredShells, resolveShellSetting, terminalSettings } = getCtx();
-{
-    const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
-    return copySession(sessionId, {
-      localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, navigator.userAgent),
-    });
+  const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+  const inheritedCwd = await captureCtxInheritedCwd(getCtx, sessionId);
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return copySession(sessionId, {
+    localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+    inheritedCwd,
+  });
+}
+
+export async function copyWorkspaceWithCurrentShellImpl(getCtx: AppContextGetter, workspaceId: string) {
+  const { classifyLocalShellType, collectSessionIds, copyWorkspace, discoveredShells, resolveShellSetting, terminalSettings, workspaces } = getCtx();
+  const workspace = workspaces.find((w: { id: string }) => w.id === workspaceId);
+  if (!workspace) return;
+
+  const sessionIds: string[] = collectSessionIds(workspace.root);
+  // Resolve each pane's cwd in parallel — SSH panes may await the /proc probe.
+  const entries = await Promise.all(
+    sessionIds.map(async (id): Promise<readonly [string, string | undefined]> =>
+      [id, await captureCtxInheritedCwd(getCtx, id)] as const),
+  );
+  const perPaneCwd: Record<string, string | undefined> = Object.fromEntries(entries);
+
+  // Cwd capture is async, so do not invoke the state action with a workspace
+  // that was closed or changed while its panes were being inspected.
+  if (getCtx().workspaces.find((candidate: { id: string }) => candidate.id === workspaceId) !== workspace) {
+    return;
   }
+
+  const resolved = resolveShellSetting(terminalSettings.localShell, discoveredShells);
+  const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : '';
+  return copyWorkspace(workspaceId, {
+    localShellType: classifyLocalShellType(resolved?.command || terminalSettings.localShell, userAgent),
+    perPaneCwd,
+  });
 }
 
 export async function copySessionToNewWindowWithCurrentShellImpl(getCtx: AppContextGetter, sessionId: string) {

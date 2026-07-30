@@ -238,6 +238,10 @@ function createSessionOpsApi(ctx) {
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
+      const requestedTimeoutMs = Number(payload?.timeoutMs);
+      const timeoutMs = Number.isFinite(requestedTimeoutMs)
+        ? Math.min(Math.max(requestedTimeoutMs, 100), 5000)
+        : 5000;
       const session = sessions.get(sessionId);
     
       if (!session || !session.conn) {
@@ -420,8 +424,10 @@ function createSessionOpsApi(ctx) {
         const cmd = `exec sh -c ${quoteShellArg(posixScript)}`;
     
         void executeBoundedSshCommand(session.conn, cmd, {
+          // Do not shorten channel opening: a timeout there invalidates the
+          // shared SSH transport. Only bound the best-effort command itself.
           openingTimeoutMs: 5000,
-          runTimeoutMs: 5000,
+          runTimeoutMs: timeoutMs,
           maxOutputBytes: 256 * 1024,
           setTimeoutFn: setTimeout,
           clearTimeoutFn: clearTimeout,

@@ -136,6 +136,7 @@ export interface TerminalProps {
   sessionId: string;
   workspaceId?: string;
   restoreState?: TerminalSession["restoreState"];
+  pendingInitialCwd?: string;
   shellType?: TerminalSession["shellType"];
   lastCwd?: string;
   restoreTerminalCwd?: boolean;

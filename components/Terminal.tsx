@@ -33,7 +33,7 @@ import {
   type TerminalEncodingPreference,
   type TerminalEncodingAttachConnection,
 } from "../domain/terminalEncodingPreference";
-import { resolveRestoreCwdIntent } from "../domain/sessionRestore";
+import { resolveRestoreCwdIntent, resolveInheritedCwdIntent } from "../domain/sessionRestore";
 import {
   buildTerminalContextReadResult,
   buildTerminalContextSnapshotText,
@@ -259,6 +259,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   sessionId,
   workspaceId,
   restoreState,
+  pendingInitialCwd,
   shellType,
   lastCwd,
   restoreTerminalCwd = false,
@@ -1331,6 +1332,28 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     shellType,
   ]);
 
+  // Set only once the inherited `cd` is actually written to the shell (from the
+  // restore-cwd consumption callback), NOT when the intent is merely prepared —
+  // otherwise a first connect that fails before consumption would block the
+  // intent from being re-armed on retry, landing the clone in the login dir.
+  const initialCwdConsumedRef = useRef(false);
+  const prepareInitialCwdIntent = useCallback(() => {
+    if (initialCwdConsumedRef.current) return;
+    if (!pendingInitialCwd) return;
+    const intent = resolveInheritedCwdIntent({
+      session: {
+        protocol: host.protocol,
+        shellType,
+        moshEnabled: host.moshEnabled,
+        etEnabled: host.etEnabled,
+        cwd: pendingInitialCwd,
+      },
+      isNetworkDevice,
+    });
+    if (!intent) return;
+    restoreCwdIntentRef.current = intent;
+  }, [pendingInitialCwd, host.protocol, host.moshEnabled, host.etEnabled, shellType, isNetworkDevice]);
+
   const handleTerminalDataCaptureOnce = useCallback((
     capturedSessionId: string,
     data: string,
@@ -2209,6 +2232,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     },
     onRestoreCwdIntentConsumed: (cwd: string) => {
       knownCwdRef.current = cwd;
+      // The inherited `cd` was actually sent — now mark it consumed so retries
+      // don't re-arm it (see prepareInitialCwdIntent).
+      initialCwdConsumedRef.current = true;
+      // Report the new cwd to app state so `pendingInitialCwd` is cleared even
+      // for shells that never emit OSC 7 (where the post-connect fallback probe
+      // is skipped because knownCwdRef is now set). Without this the transient
+      // seed would survive and re-inject a stale dir on a later remount.
+      if (pendingInitialCwd) {
+        onTerminalCwdChange?.(sessionId, cwd);
+      }
     },
     onSessionExit: (closedSessionId, evt) => {
       clearTerminalCwd();
@@ -3111,6 +3144,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (mode === "manual") {
       clearAutoReconnect();
       prepareRestoredReconnect();
+      // A clone's first connection can fail (auth/host-key/transport) before the
+      // inherited `cd` is consumed. prepareRestoredReconnect() just cleared the
+      // intent for non-restored sessions, so re-arm it here; the callback no-ops
+      // once the cwd was consumed or when there is no pending inherited cwd.
+      prepareInitialCwdIntent();
     } else {
       restoreCwdIntentRef.current = null;
       suppressHostStartupCommandRef.current = shouldSuppressHostStartupCommandOnReconnect("automatic");
@@ -3721,7 +3759,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onWake: wakeFromHibernateRuntime,
   });
 
-  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts: resolvedChainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef, onPluginRuntimeCwdChange: pluginAwareOnRuntimeCwdChange, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRefreshRef, pluginDecorationRules, pluginDecorationRulesRef, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef: recorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shellType, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, snippetsRef, splitResizeActive: isResizing, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, workspaceId, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
+  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts: resolvedChainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef, onPluginRuntimeCwdChange: pluginAwareOnRuntimeCwdChange, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRefreshRef, pluginDecorationRules, pluginDecorationRulesRef, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef: recorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shellType, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, snippetsRef, splitResizeActive: isResizing, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, workspaceId, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
 
   return (
     <>

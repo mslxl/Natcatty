@@ -458,6 +458,7 @@ export const ruAiMessages: Messages = {
   'topTabs.openQuickSwitcher': 'Открыть быстрый переключатель',
   'topTabs.moreTabs': 'Больше вкладок',
   'topTabs.aiAssistant': 'AI-помощник',
+  'topTabs.newLocalTerminal': 'Новый локальный терминал',
   'topTabs.controlPanel': 'Быстрые настройки',
   'topTabs.controlPanel.externalMcp': 'Внешний MCP',
   'topTabs.controlPanel.theme': 'Тема',

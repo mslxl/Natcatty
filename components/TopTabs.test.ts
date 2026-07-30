@@ -32,7 +32,7 @@ const {
 } = await import("../application/state/terminalDragData.ts");
 const {
   activateLogViewTab,
-  createSessionTopTabDoubleClickHandler,
+  createTopTabCopyDoubleClickHandler,
   formatSessionTopTabLabel,
   formatSessionTopTabTooltip,
   resolveSessionTabCodingCliIconState,
@@ -245,7 +245,7 @@ test("disabling dynamic titles freezes a stored coding CLI icon and stops title 
 
 test("session top tabs copy the session on double click through the existing copy handler", () => {
   const copiedSessionIds: string[] = [];
-  const handleDoubleClick = createSessionTopTabDoubleClickHandler(
+  const handleDoubleClick = createTopTabCopyDoubleClickHandler(
     (sessionId) => copiedSessionIds.push(sessionId),
     "session-1",
   );

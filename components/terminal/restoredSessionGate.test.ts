@@ -92,6 +92,25 @@ test("manual reconnect captures restore cwd intent before clearing restored stat
   );
 });
 
+test("manual reconnect re-arms inherited cwd intent after a failed first connection", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const reconnectIndex = source.indexOf("const startReconnect = ");
+  const manualBranchIndex = source.indexOf('if (mode === "manual")', reconnectIndex);
+  const manualPrepareIndex = source.indexOf("prepareRestoredReconnect();", manualBranchIndex);
+  const rearmIndex = source.indexOf("prepareInitialCwdIntent();", manualPrepareIndex);
+  const connectingIndex = source.indexOf('updateStatus("connecting")', manualPrepareIndex);
+
+  assert.notEqual(reconnectIndex, -1);
+  assert.notEqual(manualBranchIndex, -1);
+  assert.notEqual(manualPrepareIndex, -1);
+  assert.notEqual(rearmIndex, -1);
+  assert.notEqual(connectingIndex, -1);
+  assert.ok(
+    manualPrepareIndex < rearmIndex && rearmIndex < connectingIndex,
+    "a clone whose first connection fails must re-arm the inherited cwd on manual retry",
+  );
+});
+
 test("auto reconnect connected history ref is initialized after status state exists", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const statusStateIndex = source.indexOf('const [status, setStatus] = useState<TerminalSession["status"]>');
