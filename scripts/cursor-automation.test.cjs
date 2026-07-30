@@ -80,7 +80,8 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
   assert.match(poll, /DISPATCH_TOKEN:/);
   assert.match(poll, /latestCodexReview/);
   assert.match(poll, /\['fix', 'give_up', 'mark_ready'\]\.includes\(decision\.action\)/);
-  assert.match(poll, /cursor-codex-dispatch:review-id=/);
+  assert.match(poll, /cursor-codex-dispatch:head=/);
+  assert.match(poll, /cursor-codex-dispatch:head=\$\{pr\.head\.sha\};/);
   assert.match(poll, /const priorDispatch/);
   assert.match(poll, /github\.paginate\(\s*github\.rest\.actions\.listWorkflowRuns/);
   assert.match(poll, /const dispatchedRunIsActive/);
@@ -114,7 +115,7 @@ test('Codex poll dispatch markers are cleared only after the dispatched workflow
   assert.match(workflow, /run-name:/);
   assert.match(cleanup, /needs: \[codex_loop, publish_codex_fix\]/);
   assert.match(cleanup, /if: always\(\)/);
-  assert.match(cleanup, /cursor-codex-dispatch:review-id=/);
+  assert.match(cleanup, /cursor-codex-dispatch:head=/);
   assert.match(cleanup, /CODEX_DISPATCH_ID/);
   assert.match(cleanup, /trustedAuthors/);
   assert.match(cleanup, /github\.rest\.issues\.deleteComment/);

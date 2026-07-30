@@ -4244,7 +4244,7 @@ jobs:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const pull_number = Number(process.env.PULL_NUMBER);
-            const marker = `<!-- cursor-codex-dispatch:review-id=${process.env.CODEX_REVIEW_ID};head=${process.env.CODEX_HEAD_SHA};dispatch=${process.env.CODEX_DISPATCH_ID} -->`;
+            const marker = `<!-- cursor-codex-dispatch:head=${process.env.CODEX_HEAD_SHA};review-id=${process.env.CODEX_REVIEW_ID};dispatch=${process.env.CODEX_DISPATCH_ID} -->`;
             const trustedAuthors = new Set(
               process.env.OWN_ACTORS.split(',').map((login) => login.trim().toLowerCase()),
             );
@@ -4735,7 +4735,7 @@ jobs:
                 });
                 if (['fix', 'give_up', 'mark_ready'].includes(decision.action)) {
                   const markerPrefix =
-                    `<!-- cursor-codex-dispatch:review-id=${latestCodexReview.review.id};head=${pr.head.sha};dispatch=`;
+                    `<!-- cursor-codex-dispatch:head=${pr.head.sha};`;
                   const priorDispatch = issueComments.find((comment) =>
                     auto.isTrustedAutomationControlAuthor(
                       comment.user?.login,
@@ -4744,8 +4744,7 @@ jobs:
                   );
                   if (priorDispatch) {
                     const dispatchId = String(priorDispatch.body || '')
-                      .slice(markerPrefix.length)
-                      .replace(/\s*-->\s*$/, '');
+                      .match(/;dispatch=([^\s]+)\s*-->\s*$/)?.[1] || '';
                     const workflowRuns = await github.paginate(
                       github.rest.actions.listWorkflowRuns,
                       {
@@ -4767,7 +4766,8 @@ jobs:
                     });
                   }
                   const dispatchId = crypto.randomUUID();
-                  const marker = `${markerPrefix}${dispatchId} -->`;
+                  const marker =
+                    `${markerPrefix}review-id=${latestCodexReview.review.id};dispatch=${dispatchId} -->`;
                   const { data: markerComment } =
                     await github.rest.issues.createComment({
                       ...context.repo,
