@@ -519,6 +519,7 @@ export const SftpPaneTreeView = React.memo<SftpPaneTreeViewProps>(({
   }, [
     rootEntries,
     resolvedRootPath,
+    pane.connection?.homeDir,
     pane.showHiddenFiles,
     sortField,
     sortOrder,
