@@ -129,6 +129,9 @@ export const STORAGE_KEY_SFTP_DIRECTORIES_FIRST = 'netcatty_sftp_directories_fir
 export const STORAGE_KEY_SFTP_TOOLBAR_LAYOUT = 'netcatty_sftp_toolbar_layout_v1';
 /** Dense terminal session toolbar actions: show / collapse / hide + order. */
 export const STORAGE_KEY_TERMINAL_TOOLBAR_LAYOUT = 'netcatty_terminal_toolbar_layout_v1';
+/** Terminal host-tree sidebar toolbar: show / collapse / hide + order. */
+export const STORAGE_KEY_TERMINAL_HOST_TREE_TOOLBAR_LAYOUT =
+  'netcatty_terminal_host_tree_toolbar_layout_v1';
 /** Side-panel tab strip: show / collapse / hide + order (supersedes order-only key when present). */
 export const STORAGE_KEY_TERMINAL_SIDE_PANEL_TAB_LAYOUT = 'netcatty_terminal_side_panel_tab_layout_v1';
 export const STORAGE_KEY_SFTP_TRANSFER_PANEL_HEIGHT = 'netcatty_sftp_transfer_panel_height_v1';
