@@ -1,4 +1,4 @@
-import { Copy, FileCode, FileText, LayoutGrid, Minus, Server, Square, TerminalSquare, Usb, X } from 'lucide-react';
+import { Copy, FileCode, FileText, LayoutGrid, Minus, Server, Square, Terminal, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { activeTabStore, useActiveTabId, useIsTabActive } from '../../application/state/activeTabStore';
 import {
@@ -154,7 +154,7 @@ const SessionTabIcon: React.FC<{
       </div>
     );
   }
-  return <TerminalSquare className={iconSize} style={fallbackStyle} />;
+  return <Terminal className={iconSize} style={fallbackStyle} />;
 });
 SessionTabIcon.displayName = 'SessionTabIcon';
 
