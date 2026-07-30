@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
+import { TerminalSelectionAIOverlay } from './TerminalSelectionAIOverlay';
 
 type TerminalViewContext = Record<string, any>;
 type HostLineTimestampToggle = {
@@ -251,7 +252,9 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
-  const { Activity, Button, Clock3, Copy, Maximize2, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, hasSelection, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, selectionOverlayPosition, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const { Activity, Button, Clock3, Copy, Maximize2, Radio, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  // Context menu only needs a snapshot at open; avoid selection state lifting into Terminal.
+  const [contextMenuHasSelection, setContextMenuHasSelection] = useState(false);
   const isNetworkDevice = host.deviceType === 'network'
     || classifyDistroId(host.distro) === 'network-device';
   const ymodemActionEnabled = shouldEnableYmodemAction({
@@ -390,7 +393,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
       status={status}
       hostId={host?.id}
       hostProtocol={host?.protocol ?? 'ssh'}
-      hasSelection={hasSelection}
+      hasSelection={contextMenuHasSelection}
       hotkeyScheme={hotkeyScheme}
       keyBindings={keyBindings}
       rightClickBehavior={terminalSettings?.rightClickBehavior}
@@ -414,6 +417,9 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
       onDetach={inWorkspace ? onDetach : undefined}
     >
       <div
+        onContextMenu={() => {
+          setContextMenuHasSelection(Boolean(termRef.current?.hasSelection()));
+        }}
         className={cn(
           "relative h-full w-full flex min-h-0 overflow-hidden",
           isComposeBarOpen && !inWorkspace && "flex-col"
@@ -819,45 +825,15 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             width={lineTimestampGutterWidth}
             onWidthChange={handleLineTimestampGutterWidthChange}
           />
-          {shouldShowSelectionAIOverlay({
-            hasSelection,
-            selectionOverlayPosition,
-            onAddSelectionToAI: ctx.onAddSelectionToAI,
-            showSelectionAIAction,
-          }) && handleAddSelectionToAI && (
-            <div
-              className="absolute z-30 pointer-events-none"
-              style={{
-                left: selectionOverlayPosition.left,
-                top: selectionOverlayPosition.top,
-                transform: "translate(-100%, -100%)",
-              }}
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="pointer-events-auto inline-flex h-7 min-w-max items-center gap-1.5 whitespace-nowrap rounded-md border px-2 text-[11px] font-medium shadow-lg backdrop-blur-md transition-colors hover:bg-[color:var(--terminal-toolbar-btn-hover)]"
-                    style={{
-                      backgroundColor: 'color-mix(in srgb, var(--terminal-ui-bg) 86%, transparent)',
-                      borderColor: 'var(--terminal-ui-border)',
-                      color: 'var(--terminal-ui-fg)',
-                    }}
-                    onMouseDown={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }}
-                    onClick={handleAddSelectionToAI}
-                    aria-label={t("terminal.selection.addToAI")}
-                  >
-                    <Sparkles size={12} />
-                    <span>{t("terminal.selection.addToAI")}</span>
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{t("terminal.selection.addToAIDesc")}</TooltipContent>
-              </Tooltip>
-            </div>
-          )}
+          <TerminalSelectionAIOverlay
+            termRef={termRef}
+            containerRef={containerRef}
+            showSelectionAIAction={showSelectionAIAction}
+            onAddSelectionToAI={handleAddSelectionToAI}
+            copyOnSelect={terminalSettings?.copyOnSelect}
+            normalizeTextOnCopy={terminalSettings?.normalizeTextOnCopy ?? true}
+            isVisible={isVisible}
+          />
 
           {/* Autocomplete — owns the hook + popup in its own component so
               suggestion/selection updates don't re-render Terminal. Mounted

@@ -22,7 +22,6 @@ import {
   resolveTerminalHibernateEnabledForProtocol,
 } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
-import { getTerminalSelectionForClipboard } from './normalizeTerminalSelection';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -45,6 +44,7 @@ import {
   forceXTermFontRemeasure,
   type XTermFontRemeasureTarget,
 } from './runtime/terminalFontRemeasure';
+import { shouldClaimTerminalKeyboardFocus } from '../../domain/terminalKeyboardFocus';
 import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
@@ -123,15 +123,6 @@ export function applyZmodemTransferToast(
   }
 }
 
-const areSelectionOverlayPositionsEqual = (
-  a: SelectionOverlayPosition,
-  b: SelectionOverlayPosition,
-): boolean => {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return a.left === b.left && a.top === b.top;
-};
-
 export function resolveSelectionOverlayPosition(term: any, container: HTMLElement | null): SelectionOverlayPosition {
   if (!container || !term?.getSelectionPosition || !term.getSelection()) return null;
 
@@ -171,7 +162,7 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
   const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
   const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(
     terminalSettings,
@@ -1491,6 +1482,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const shouldAutoFocus = isVisible && termRef.current && (!inWorkspace || isFocusMode);
     if (shouldAutoFocus) {
       const timer = setTimeout(() => {
+        // Pane focus ≠ document focus: do not yank caret from AI/side-panel inputs.
+        if (!shouldClaimTerminalKeyboardFocus(document.activeElement)) return;
         termRef.current?.focus();
       }, 50);
       return () => clearTimeout(timer);
@@ -1501,104 +1494,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     if (isFocused && termRef.current && isVisible) {
       const timer = setTimeout(() => {
+        if (!shouldClaimTerminalKeyboardFocus(document.activeElement)) return;
         termRef.current?.focus();
       }, 10);
       return () => clearTimeout(timer);
     }
   }, [isFocused, isVisible, sessionId]);
 
-
-  useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-
-    let overlayRafId: number | null = null;
-    let copyTimer: ReturnType<typeof setTimeout> | null = null;
-    let lastHasSelection: boolean | null = null;
-    let lastOverlayPosition: SelectionOverlayPosition = null;
-    const requestFrame = typeof requestAnimationFrame === "function"
-      ? requestAnimationFrame
-      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
-    const cancelFrame = typeof cancelAnimationFrame === "function"
-      ? cancelAnimationFrame
-      : (id: number) => clearTimeout(id);
-
-    const publishSelectionOverlayPosition = () => {
-      overlayRafId = null;
-      const nextPosition = resolveSelectionOverlayPosition(term, containerRef.current);
-      if (areSelectionOverlayPositionsEqual(lastOverlayPosition, nextPosition)) return;
-      lastOverlayPosition = nextPosition;
-      setSelectionOverlayPosition?.(nextPosition);
-    };
-
-    const scheduleSelectionOverlayPosition = () => {
-      if (lastHasSelection === false) return;
-      if (overlayRafId !== null) return;
-      overlayRafId = requestFrame(publishSelectionOverlayPosition);
-    };
-
-    const onSelectionChange = () => {
-      // hasSelection uses raw getSelection for cheap emptiness checks; the
-      // clipboard write path normalizes soft wraps + display padding.
-      const rawSelection = term.getSelection();
-      const hasText = !!rawSelection && rawSelection.length > 0;
-      if (lastHasSelection !== hasText) {
-        lastHasSelection = hasText;
-        setHasSelection(hasText);
-      }
-      if (copyTimer) {
-        clearTimeout(copyTimer);
-        copyTimer = null;
-      }
-      if (!hasText) {
-        if (lastOverlayPosition !== null) {
-          lastOverlayPosition = null;
-          setSelectionOverlayPosition?.(null);
-        }
-        return;
-      }
-      scheduleSelectionOverlayPosition();
-
-      if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
-        // Capture now so a later buffer redraw during the debounce cannot
-        // change what gets copied (selection-change may not fire again).
-        const selection = getTerminalSelectionForClipboard(
-          term,
-          terminalSettings?.normalizeTextOnCopy ?? true,
-        );
-        if (!selection) return;
-        copyTimer = setTimeout(() => {
-          navigator.clipboard.writeText(selection).catch((err) => {
-            logger.warn("Copy on select failed:", err);
-          });
-        }, 80);
-      }
-    };
-
-    const selectionDisposable = term.onSelectionChange(onSelectionChange);
-    const scrollDisposable = term.onScroll?.(scheduleSelectionOverlayPosition);
-    const resizeDisposable = term.onResize?.(scheduleSelectionOverlayPosition);
-    const resizeObserver = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(scheduleSelectionOverlayPosition);
-    if (containerRef.current) {
-      resizeObserver?.observe(containerRef.current);
-    }
-    scheduleSelectionOverlayPosition();
-    return () => {
-      if (overlayRafId !== null) {
-        cancelFrame(overlayRafId);
-      }
-      if (copyTimer) {
-        clearTimeout(copyTimer);
-      }
-      selectionDisposable.dispose();
-      scrollDisposable?.dispose();
-      resizeDisposable?.dispose();
-      resizeObserver?.disconnect();
-    };
-  }, [terminalSettings?.copyOnSelect, terminalSettings?.normalizeTextOnCopy, isSearchOpen, isVisible, isResizing]);
-
+  // Selection overlay + copy-on-select live in TerminalSelectionAIOverlay so
+  // selection churn does not re-render the whole Terminal tree (e.g. when focus
+  // moves to the AI side panel and the selection clears).
 
   // Track whether the terminal application has enabled mouse tracking
   // (e.g. tmux with `set -g mouse on`, vim with `set mouse=a`).
