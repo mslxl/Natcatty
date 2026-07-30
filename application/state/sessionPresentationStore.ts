@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react';
+
 import type { CodingCliProviderId } from '../../domain/codingCliProviders';
 
 export type SessionPresentation = {
@@ -84,8 +86,8 @@ type SessionWithPresentation = {
 
 /**
  * Overlay live presentation chrome onto a session snapshot.
- * Used by TopTabs for both main sessions and orphanSessionMap so title/provider
- * updates never freeze for either tab surface.
+ * Used by TopTabs, focus sidebar, and pane chrome so title/provider updates
+ * stay live without structural setSessions thrash.
  */
 export function applySessionPresentation<T extends SessionWithPresentation>(session: T): T {
   const presentation = sessionPresentationStore.getPresentation(session.id);
@@ -107,4 +109,19 @@ export function applySessionPresentation<T extends SessionWithPresentation>(sess
     dynamicTitle: nextTitle,
     codingCliProviderId: nextProvider,
   };
+}
+
+/** Subscribe to live title/provider chrome version for presentation consumers. */
+export function useSessionPresentationVersion(): number {
+  return useSyncExternalStore(
+    sessionPresentationStore.subscribe,
+    sessionPresentationStore.getVersion,
+    sessionPresentationStore.getVersion,
+  );
+}
+
+/** Session snapshot with live presentation overlay applied. */
+export function usePresentedSession<T extends SessionWithPresentation>(session: T): T {
+  useSessionPresentationVersion();
+  return applySessionPresentation(session);
 }

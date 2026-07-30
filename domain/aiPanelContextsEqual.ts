@@ -1,4 +1,39 @@
-import type { AITerminalSessionInfo } from '../components/terminalLayer/buildAITerminalSessionInfo';
+/**
+ * Structural equality for AI side-panel context maps.
+ * Uses a domain-local shape so domain stays independent of UI modules.
+ */
+
+/** Minimal host-chain hop used for AI context equality. */
+export type AIPanelHostChainHop = {
+  hostId: string;
+  label?: string;
+  hostname?: string;
+};
+
+/** Minimal active port-forward snapshot used for AI context equality. */
+export type AIPanelPortForwardLike = {
+  ruleId: string;
+  label?: string;
+  type?: string;
+  localPort?: number;
+  status?: string;
+};
+
+/** Minimal terminal session info used for AI context equality. */
+export type AIPanelTerminalSessionLike = {
+  sessionId: string;
+  hostId: string;
+  hostname: string;
+  label: string;
+  os?: string;
+  username?: string;
+  protocol?: string;
+  shellType?: string;
+  deviceType?: string;
+  connected: boolean;
+  hostChain?: AIPanelHostChainHop[];
+  activePortForwards?: AIPanelPortForwardLike[];
+};
 
 /** Minimal AI panel context shape used for structural equality. */
 export type AIPanelContextLike = {
@@ -6,12 +41,12 @@ export type AIPanelContextLike = {
   scopeTargetId?: string;
   scopeHostIds: string[];
   scopeLabel: string;
-  terminalSessions: AITerminalSessionInfo[];
+  terminalSessions: AIPanelTerminalSessionLike[];
 };
 
 function hostChainEqual(
-  a: AITerminalSessionInfo['hostChain'] | undefined,
-  b: AITerminalSessionInfo['hostChain'] | undefined,
+  a: AIPanelTerminalSessionLike['hostChain'] | undefined,
+  b: AIPanelTerminalSessionLike['hostChain'] | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b || a.length !== b.length) return false;
@@ -28,8 +63,8 @@ function hostChainEqual(
 }
 
 function portForwardsEqual(
-  a: AITerminalSessionInfo['activePortForwards'] | undefined,
-  b: AITerminalSessionInfo['activePortForwards'] | undefined,
+  a: AIPanelTerminalSessionLike['activePortForwards'] | undefined,
+  b: AIPanelTerminalSessionLike['activePortForwards'] | undefined,
 ): boolean {
   if (a === b) return true;
   if (!a || !b || a.length !== b.length) return false;
@@ -48,8 +83,8 @@ function portForwardsEqual(
 }
 
 function aiTerminalSessionInfoEqual(
-  a: AITerminalSessionInfo,
-  b: AITerminalSessionInfo,
+  a: AIPanelTerminalSessionLike,
+  b: AIPanelTerminalSessionLike,
 ): boolean {
   return a.sessionId === b.sessionId
     && a.hostId === b.hostId

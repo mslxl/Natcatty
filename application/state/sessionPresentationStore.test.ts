@@ -72,3 +72,13 @@ test('retainStableSessionsIgnoringPresentation keeps array identity on title-onl
   const structural = [session({ status: 'disconnected' })];
   assert.notEqual(retainStableSessionsIgnoringPresentation(prev, structural), prev);
 });
+
+test('applySessionPresentation is the shared overlay for focus sidebar and panes', () => {
+  sessionPresentationStore.clearSession('focus-1');
+  publishSessionDynamicTitle('focus-1', 'agent: search me');
+  const base = session({ id: 'focus-1', dynamicTitle: undefined });
+  const merged = applySessionPresentation(base);
+  assert.equal(merged.dynamicTitle, 'agent: search me');
+  assert.ok(merged.dynamicTitle?.toLowerCase().includes('search'));
+  sessionPresentationStore.clearSession('focus-1');
+});

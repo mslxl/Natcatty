@@ -1,6 +1,10 @@
 import React, { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { activeTabStore } from '../../application/state/activeTabStore';
+import {
+  applySessionPresentation,
+  useSessionPresentationVersion,
+} from '../../application/state/sessionPresentationStore';
 import { useTerminalLayoutSuppressActive } from '../../application/state/terminalLayoutSuppressStore';
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
 import { createTerminalSelectionAttachment } from '../../application/state/terminalSelectionAttachment';
@@ -839,7 +843,10 @@ export function useWorkspaceDetachPointerDrag({
     const ownerDocument = event.currentTarget.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     const startPoint = { clientX: event.clientX, clientY: event.clientY };
-    const dragLabel = resolveSessionTabTitle(session, terminalSettings?.dynamicTabTitleMode);
+    const dragLabel = resolveSessionTabTitle(
+    applySessionPresentation(session),
+    terminalSettings?.dynamicTabTitleMode,
+  );
     let dragStarted = false;
     let cleanupFinished = false;
     let ghostEl: HTMLDivElement | null = null;
@@ -1107,6 +1114,15 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   );
   const renderSnapshot = useSyncExternalStore(activeTabStore.subscribe, getRenderSnapshot, getRenderSnapshot);
   const { paneState, isFocusedPane } = parseTerminalPaneRenderSnapshot(renderSnapshot);
+  // Live titles/icons are store-driven; subscribe so pane chrome updates without
+  // structural setSessions thrash.
+  const presentationVersion = useSessionPresentationVersion();
+  void presentationVersion;
+  const presentedSession = applySessionPresentation(session);
+  const sessionDisplayName = resolveSessionTabTitle(
+    presentedSession,
+    terminalSettings?.dynamicTabTitleMode,
+  );
   const activeWorkspaceId = paneState.workspaceId;
   const isVisible = paneState.isVisible;
   const paneElementRef = useRef<HTMLDivElement | null>(null);
@@ -1387,7 +1403,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         sshDebugLogEnabled={sshDebugLogEnabled}
         sudoAutofillPassword={sudoAutofillPassword}
         sudoAutofillCandidates={sudoAutofillCandidates}
-        sessionDisplayName={resolveSessionTabTitle(session, terminalSettings?.dynamicTabTitleMode)}
+        sessionDisplayName={sessionDisplayName}
         showSelectionAIAction={showSelectionAIAction}
         onAddSelectionToAI={onAddSelectionToAI}
         onRename={handleRename}

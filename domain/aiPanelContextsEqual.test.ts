@@ -5,10 +5,12 @@ import {
   aiPanelContextsEqual,
   retainStableAiPanelContexts,
   type AIPanelContextLike,
+  type AIPanelTerminalSessionLike,
 } from './aiPanelContextsEqual.ts';
-import type { AITerminalSessionInfo } from '../components/terminalLayer/buildAITerminalSessionInfo.ts';
 
-const sessionInfo = (overrides: Partial<AITerminalSessionInfo> = {}): AITerminalSessionInfo => ({
+const sessionInfo = (
+  overrides: Partial<AIPanelTerminalSessionLike> = {},
+): AIPanelTerminalSessionLike => ({
   sessionId: 's1',
   hostId: 'h1',
   hostname: 'example.test',
