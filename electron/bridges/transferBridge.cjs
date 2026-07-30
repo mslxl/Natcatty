@@ -4897,7 +4897,7 @@ function registerHandlers(ipcMain, options = {}) {
           lifecycleEpoch,
           lifecycleState: "paused",
         });
-        return result;
+        return { ...result, lifecycleEpoch };
       } catch (error) {
         const rollbackEpoch = nextWorkerLifecycleEpoch(payload?.transferId);
         broadcastGlobalTransferEvent({
@@ -4914,6 +4914,8 @@ function registerHandlers(ipcMain, options = {}) {
       if (queuedResume) return queuedResume;
       const result = await workerRequest(event, "netcatty:transfer:resume", payload);
       if (result?.success) {
+        // Normalize into main-process epoch space (may advance past worker-local).
+        // Soft-resume UI must stamp THIS epoch or later worker progress is stale.
         const lifecycleEpoch = nextWorkerLifecycleEpoch(payload?.transferId, result.lifecycleEpoch);
         broadcastGlobalTransferEvent({
           type: "resumed",
@@ -4921,6 +4923,7 @@ function registerHandlers(ipcMain, options = {}) {
           lifecycleEpoch,
           lifecycleState: "transferring",
         });
+        return { ...result, lifecycleEpoch };
       }
       return result;
     });
