@@ -1079,6 +1079,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 className="h-7 w-7 flex-shrink-0 app-no-drag self-end rounded-none"
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onOpenQuickSwitcher}
+                data-section="top-tabs-toolbar-actions"
               >
                 <MoreHorizontal size={14} />
               </Button>

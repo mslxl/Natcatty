@@ -66,9 +66,15 @@ test("terminal host tree exposes stable custom CSS regions", () => {
 test("toolbars expose stable custom CSS regions for icon sizing", () => {
   const topTabsSource = readProjectFile("components/TopTabs.tsx");
   const terminalToolbarSource = readProjectFile("components/terminal/TerminalToolbar.tsx");
+  const overflowSection = topTabsSource.slice(
+    topTabsSource.indexOf('{hasOverflow && ('),
+    topTabsSource.indexOf('/* Fixed right controls'),
+  );
 
   assert.match(topTabsSource, /top-tabs-toolbar-actions/);
+  assert.match(overflowSection, /data-section="top-tabs-toolbar-actions"/);
   assert.match(terminalToolbarSource, /data-section="terminal-toolbar"/);
+  assert.match(terminalToolbarSource, /terminal-toolbar-menu/);
   assert.ok(
     terminalToolbarSource.indexOf('data-section="terminal-toolbar"')
       < terminalToolbarSource.indexOf('{pluginToolbarMenus.map'),
@@ -92,5 +98,6 @@ test("custom CSS help lists the expanded terminal and SFTP hooks", () => {
     "terminal-host-tree-sidebar-content",
     "top-tabs-toolbar-actions",
     "terminal-toolbar",
+    "terminal-toolbar-menu",
   ].forEach((hook) => assert.match(source, new RegExp(hook)));
 });

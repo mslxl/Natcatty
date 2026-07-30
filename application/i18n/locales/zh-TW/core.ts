@@ -340,6 +340,7 @@ export const zhTWCoreMessages: Messages = {
 
 - \`terminal-workspace\`
 - \`terminal-toolbar\` — 終端操作工具列
+- \`terminal-toolbar-menu\` — 終端工具列溢出選單和子選單
 - \`terminal-workspace-sidebar\` — Focus 模式終端列表
 - \`terminal-host-tree-sidebar\`
 - \`terminal-host-tree-sidebar-content\`
@@ -383,7 +384,8 @@ export const zhTWCoreMessages: Messages = {
 
 \`\`\`css
 [data-section="top-tabs-toolbar-actions"] button > svg,
-[data-section="terminal-toolbar"] button > svg {
+[data-section="terminal-toolbar"] button > svg,
+[data-section="terminal-toolbar-menu"] button > svg {
   width: 20px !important;
   height: 20px !important;
 }

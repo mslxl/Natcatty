@@ -340,6 +340,7 @@ export const zhCNCoreMessages: Messages = {
 
 - \`terminal-workspace\`
 - \`terminal-toolbar\` — 终端操作工具栏
+- \`terminal-toolbar-menu\` — 终端工具栏溢出菜单和子菜单
 - \`terminal-workspace-sidebar\` — Focus 模式终端列表
 - \`terminal-host-tree-sidebar\`
 - \`terminal-host-tree-sidebar-content\`
@@ -383,7 +384,8 @@ export const zhCNCoreMessages: Messages = {
 
 \`\`\`css
 [data-section="top-tabs-toolbar-actions"] button > svg,
-[data-section="terminal-toolbar"] button > svg {
+[data-section="terminal-toolbar"] button > svg,
+[data-section="terminal-toolbar-menu"] button > svg {
   width: 20px !important;
   height: 20px !important;
 }

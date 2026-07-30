@@ -343,6 +343,7 @@ Because many styles come from Tailwind utilities, you often need \`!important\` 
 
 - \`terminal-workspace\`
 - \`terminal-toolbar\` — Terminal action toolbar
+- \`terminal-toolbar-menu\` — Terminal toolbar overflow and submenu
 - \`terminal-workspace-sidebar\` — Focus-mode terminal list
 - \`terminal-host-tree-sidebar\`
 - \`terminal-host-tree-sidebar-content\`
@@ -386,7 +387,8 @@ Increase menu and toolbar icon sizes:
 
 \`\`\`css
 [data-section="top-tabs-toolbar-actions"] button > svg,
-[data-section="terminal-toolbar"] button > svg {
+[data-section="terminal-toolbar"] button > svg,
+[data-section="terminal-toolbar-menu"] button > svg {
   width: 20px !important;
   height: 20px !important;
 }

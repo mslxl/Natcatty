@@ -409,6 +409,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
         </PopoverTrigger>
         <PopoverContent
           data-encoding-submenu="true"
+          data-section="terminal-toolbar-menu"
           className="w-40 p-1"
           side="right"
           align="start"
@@ -972,6 +973,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
               <TooltipContent side="bottom">{t('terminal.toolbar.more')}</TooltipContent>
             </Tooltip>
             <PopoverContent
+              data-section="terminal-toolbar-menu"
               className="w-48 p-1"
               align="end"
               onInteractOutside={(e) => {
