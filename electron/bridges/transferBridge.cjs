@@ -52,15 +52,27 @@ function sleepMs(ms) {
 }
 
 /**
- * After soft-drain pause, leftover ranges keep writing under paused=true.
- * Truncate only when active==0. Run in the background so Resume is not forced
- * to wait for network, and clear deferredSparseTruncate once safe.
+ * Single-flight finalize for soft-drain sparse staging:
+ * wait for active ranges → truncate once → clear deferredSparseTruncate.
+ * Background settle and Resume both await the same promise so they cannot
+ * race two truncates around unpause.
  */
-function scheduleDeferredSparseTruncateSettle(transfer, transferId) {
-  if (!transfer?.deferredSparseTruncate) return;
-  if (transfer._deferredSparseSettlePromise) return;
+function ensureDeferredSparseFinalize(transfer, transferId, options = {}) {
+  if (!transfer) {
+    return Promise.resolve({ ok: false, reason: "Transfer is no longer active" });
+  }
+  if (!transfer.deferredSparseTruncate && !transfer._deferredSparseSettlePromise) {
+    return Promise.resolve({ ok: true });
+  }
+  if (transfer._deferredSparseSettlePromise) {
+    return transfer._deferredSparseSettlePromise;
+  }
+  const maxWaitMs = Number.isFinite(options.maxWaitMs)
+    ? options.maxWaitMs
+    : RESUME_RANGE_SETTLE_MS;
   const run = (async () => {
     try {
+      const deadline = Date.now() + Math.max(0, maxWaitMs);
       while (
         transfer.paused
         && !transfer.cancelled
@@ -68,70 +80,51 @@ function scheduleDeferredSparseTruncateSettle(transfer, transferId) {
         && transfer.deferredSparseTruncate
         && typeof transfer.getActiveRangeCount === "function"
         && transfer.getActiveRangeCount() > 0
+        && Date.now() < deadline
       ) {
         await sleepMs(RANGE_SETTLE_POLL_MS);
       }
-      if (
-        !transfer.paused
-        || transfer.cancelled
-        || activeTransfers.get(transferId) !== transfer
-        || !transfer.deferredSparseTruncate
-      ) {
-        return;
+      if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
+        return { ok: false, reason: "Transfer is no longer active" };
       }
-      if (typeof transfer.getActiveRangeCount === "function" && transfer.getActiveRangeCount() > 0) {
-        return;
+      if (!transfer.deferredSparseTruncate) {
+        return { ok: true };
+      }
+      const activeLeft = typeof transfer.getActiveRangeCount === "function"
+        ? transfer.getActiveRangeCount()
+        : 0;
+      if (activeLeft > 0) {
+        return {
+          ok: false,
+          reason: "The current file is still finishing. Try resume again.",
+        };
       }
       try {
         await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
       } catch {
         // Contiguous checkpoint remains valid for resume.
       }
-      if (activeTransfers.get(transferId) === transfer && transfer.paused) {
-        transfer.deferredSparseTruncate = false;
+      if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
+        return { ok: false, reason: "Transfer is no longer active" };
       }
+      transfer.deferredSparseTruncate = false;
+      return { ok: true };
     } finally {
-      if (transfer._deferredSparseSettlePromise === run) {
-        transfer._deferredSparseSettlePromise = null;
-      }
+      // Keep the settled promise on the transfer so concurrent awaiters still
+      // observe the same completion; replace only when starting a new pause.
     }
   })();
   transfer._deferredSparseSettlePromise = run;
+  return run;
 }
 
-/**
- * Wait until concurrent ranges finish (or deadline). Used by resume so we do
- * not unpause on top of sparse tail writes.
- */
-async function waitForActiveRangesIdle(transfer, transferId, maxMs) {
-  const deadline = Date.now() + Math.max(0, maxMs);
-  while (
-    typeof transfer.getActiveRangeCount === "function"
-    && transfer.getActiveRangeCount() > 0
-    && Date.now() < deadline
-  ) {
-    if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
-      return { ok: false, reason: "Transfer is no longer active" };
-    }
-    // Background settle may clear the flag once idle + truncated.
-    if (!transfer.deferredSparseTruncate) {
-      return { ok: true };
-    }
-    await sleepMs(RANGE_SETTLE_POLL_MS);
-  }
-  if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
-    return { ok: false, reason: "Transfer is no longer active" };
-  }
-  const activeLeft = typeof transfer.getActiveRangeCount === "function"
-    ? transfer.getActiveRangeCount()
-    : 0;
-  if (activeLeft > 0) {
-    return {
-      ok: false,
-      reason: "The current file is still finishing. Try resume again.",
-    };
-  }
-  return { ok: true };
+/** Fire-and-forget background settle after soft-drain pause. */
+function scheduleDeferredSparseTruncateSettle(transfer, transferId) {
+  if (!transfer?.deferredSparseTruncate) return;
+  void ensureDeferredSparseFinalize(transfer, transferId, {
+    // Background may wait a long time for slow SSH ranges while UI stays paused.
+    maxWaitMs: Math.max(RESUME_RANGE_SETTLE_MS, 5 * 60_000),
+  }).catch(() => {});
 }
 
 /**
@@ -4437,6 +4430,8 @@ async function pauseTransfer(_event, payload) {
         }
       } else {
         transfer.deferredSparseTruncate = true;
+        // New pause owns a fresh single-flight finalize promise.
+        transfer._deferredSparseSettlePromise = null;
         // Finish truncate in the background when in-flight ranges land so a
         // later Resume is not blocked by "still finishing" after a short wait.
         scheduleDeferredSparseTruncateSettle(transfer, payload?.transferId);
@@ -4469,6 +4464,7 @@ async function pauseTransfer(_event, payload) {
     // Unpausing here made folder pause look broken (amber error + children keep going).
     if (Number.isFinite(transfer.checkpointBytes) && transfer.checkpointBytes >= 0) {
       transfer.deferredSparseTruncate = true;
+      transfer._deferredSparseSettlePromise = null;
       scheduleDeferredSparseTruncateSettle(transfer, payload?.transferId);
     } else {
       transfer.deferredSparseTruncate = false;
@@ -4566,10 +4562,23 @@ async function resumeTransfer(_event, payload) {
   }
   if (transfer.resumable) {
     try {
-      // Soft resume: size + mtime + head sample (not full-file SHA-256).
-      // Full fingerprint remains for hard reconnect (startTransferNow).
-      if (typeof transfer.quickVerifySourceForSoftResume === "function") {
+      // Prefer pause-time full fingerprint when available (or still capturing).
+      // Only fall back to soft identity (size/mtime/head sample) when no full
+      // SHA-256 exists — never skip a stored fingerprint before unpausing.
+      if (transfer.sourceFingerprintPromise) {
+        try { await transfer.sourceFingerprintPromise; } catch { /* fall through */ }
+      }
+      if (
+        transfer.sourceFingerprint
+        && String(transfer.sourceFingerprint).startsWith("sha256:")
+        && typeof transfer.verifySourceFingerprint === "function"
+      ) {
+        await transfer.verifySourceFingerprint(transfer.sourceFingerprint);
+      } else if (typeof transfer.quickVerifySourceForSoftResume === "function") {
         await transfer.quickVerifySourceForSoftResume();
+        if (!transfer.sourceFingerprint) {
+          void transfer.captureSourceFingerprint?.().catch(() => {});
+        }
       } else if (transfer.verifySourceFingerprint) {
         if (!transfer.sourceFingerprint) {
           await transfer.captureSourceFingerprint?.();
@@ -4578,11 +4587,6 @@ async function resumeTransfer(_event, payload) {
           return { success: false, reason: "Could not verify the source file for resume" };
         }
         await transfer.verifySourceFingerprint(transfer.sourceFingerprint);
-      }
-      if (!transfer.sourceFingerprint) {
-        void transfer.captureSourceFingerprint?.().catch(() => {
-          // Best-effort; soft resume already checked soft identity.
-        });
       }
     } catch (error) {
       if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
@@ -4595,33 +4599,19 @@ async function resumeTransfer(_event, payload) {
     }
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
-  // checkpoint. Stay paused until leftover ranges settle, then truncate before
-  // unpausing. No new ranges are scheduled while paused. A stalled range gets
-  // a retryable failure while the transfer remains paused; resuming on top of
-  // an old write can corrupt the staged file.
-  //
-  // Background settle usually clears deferredSparseTruncate before Resume.
-  // If the user clicks early, wait up to RESUME_RANGE_SETTLE_MS (bounded — do
-  // not join the background promise, which has no deadline while writes stall).
-  if (transfer.deferredSparseTruncate) {
-    const settled = await waitForActiveRangesIdle(
+  // checkpoint. Single-flight finalize (background + resume share one promise)
+  // so truncate cannot race new writes after unpause.
+  if (transfer.deferredSparseTruncate || transfer._deferredSparseSettlePromise) {
+    const settled = await ensureDeferredSparseFinalize(
       transfer,
       payload?.transferId,
-      RESUME_RANGE_SETTLE_MS,
+      { maxWaitMs: RESUME_RANGE_SETTLE_MS },
     );
-    if (!settled.ok) {
-      return { success: false, reason: settled.reason };
-    }
-    if (transfer.deferredSparseTruncate) {
-      try {
-        await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
-      } catch {
-        // Best-effort; resume from contiguous checkpoint still overwrites holes.
-      }
-      if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
-        return { success: false, reason: "Transfer is no longer active" };
-      }
-      transfer.deferredSparseTruncate = false;
+    if (!settled?.ok) {
+      return {
+        success: false,
+        reason: settled?.reason || "The current file is still finishing. Try resume again.",
+      };
     }
     if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
       return { success: false, reason: "Transfer is no longer active" };
