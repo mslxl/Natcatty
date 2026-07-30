@@ -26,14 +26,21 @@ test('host tree toolbar keeps the close button outside the compact action row', 
 
 test('host tree toolbar keeps every action reachable at the minimum sidebar width', () => {
   const source = toolbarSource;
+  const popoverContent = source.match(/<PopoverContent[\s\S]*?<\/PopoverContent>/)?.[0] ?? '';
 
-  assert.ok(TERMINAL_HOST_TREE_TOOLBAR_MIN_REQUIRED_WIDTH <= 160);
+  assert.ok(TERMINAL_HOST_TREE_TOOLBAR_MIN_REQUIRED_WIDTH <= 176);
   assert.match(source, /<PopoverContent className="w-44 p-1"/);
   assert.match(source, /<FolderPlus size=\{14\} \/>/);
+  assert.match(source, /aria-label=\{t\('terminal\.layer\.hostTree\.localShell'\)\}/);
+  assert.match(source, /onClick=\{onCreateLocalTerminal\}/);
   assert.match(source, /<TerminalSquare size=\{14\} \/>/);
   assert.match(source, /<Expand size=\{14\} \/>/);
   assert.match(source, /<Minimize2 size=\{14\} \/>/);
   assert.match(source, /disabled=\{!canExpandCollapse\}/);
+  // Local shell stays a one-click toolbar action (not only under "More").
+  assert.ok(popoverContent.length > 0);
+  assert.doesNotMatch(popoverContent, /onCreateLocalTerminal/);
+  assert.doesNotMatch(popoverContent, /hostTree\.localShell/);
 });
 
 test('host tree toolbar exposes host creation alongside the context menus', () => {
@@ -81,6 +88,7 @@ test('host tree toolbar gives every icon-only control an accessible name', () =>
   assert.match(markup, /aria-label="New host"/);
   assert.match(markup, /aria-label="Search"/);
   assert.match(markup, /aria-label="Filter by tags"/);
+  assert.match(markup, /aria-label="Local shell"/);
   assert.match(markup, /aria-label="More actions"/);
   assert.match(markup, /aria-label="Collapse host list"/);
 });

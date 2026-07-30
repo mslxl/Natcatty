@@ -41,7 +41,8 @@ interface TerminalHostTreeToolbarProps {
 
 const iconButtonClass = 'netcatty-tab h-6 w-6 shrink-0 rounded-md p-0 hover:bg-transparent';
 const overflowMenuItemClass = 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50';
-export const TERMINAL_HOST_TREE_TOOLBAR_MIN_REQUIRED_WIDTH = 148;
+/** Primary actions (new host, search, tags, local shell, more) + close must fit the sidebar min width. */
+export const TERMINAL_HOST_TREE_TOOLBAR_MIN_REQUIRED_WIDTH = 176;
 
 export const TerminalHostTreeToolbar: React.FC<TerminalHostTreeToolbarProps> = ({
   theme,
@@ -153,6 +154,23 @@ export const TerminalHostTreeToolbar: React.FC<TerminalHostTreeToolbarProps> = (
               <TooltipContent side="bottom">{t('terminal.layer.hostTree.tagsButton')}</TooltipContent>
             </Tooltip>
 
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={iconButtonClass}
+                  style={{ color: theme.mutedFg }}
+                  disabled={!canCreateLocalTerminal}
+                  onClick={onCreateLocalTerminal}
+                  aria-label={t('terminal.layer.hostTree.localShell')}
+                >
+                  <TerminalSquare size={14} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t('terminal.layer.hostTree.localShell')}</TooltipContent>
+            </Tooltip>
+
             <Popover>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -180,17 +198,6 @@ export const TerminalHostTreeToolbar: React.FC<TerminalHostTreeToolbarProps> = (
                   >
                     <FolderPlus size={14} />
                     {t('terminal.layer.hostTree.newGroup')}
-                  </button>
-                </PopoverClose>
-                <PopoverClose asChild>
-                  <button
-                    type="button"
-                    className={overflowMenuItemClass}
-                    disabled={!canCreateLocalTerminal}
-                    onClick={onCreateLocalTerminal}
-                  >
-                    <TerminalSquare size={14} />
-                    {t('terminal.layer.hostTree.localShell')}
                   </button>
                 </PopoverClose>
                 <PopoverClose asChild>
