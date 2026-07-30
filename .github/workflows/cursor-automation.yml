@@ -4669,7 +4669,7 @@ jobs:
                   lastAutomationRequestAt,
                   lastCodexSummaryAt: latestCodexReview.at,
                 });
-                if (['fix', 'give_up'].includes(decision.action)) {
+                if (['fix', 'give_up', 'mark_ready'].includes(decision.action)) {
                   const marker =
                     `<!-- cursor-codex-dispatch:review-id=${latestCodexReview.review.id};head=${pr.head.sha} -->`;
                   const alreadyDispatched = issueComments.some((comment) =>

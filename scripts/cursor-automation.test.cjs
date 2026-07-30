@@ -79,7 +79,7 @@ test('Codex polling dispatches actionable submitted reviews to the fix loop', ()
   assert.match(poll, /actions: write/);
   assert.match(poll, /DISPATCH_TOKEN:/);
   assert.match(poll, /latestCodexReview/);
-  assert.match(poll, /\['fix', 'give_up'\]\.includes\(decision\.action\)/);
+  assert.match(poll, /\['fix', 'give_up', 'mark_ready'\]\.includes\(decision\.action\)/);
   assert.match(poll, /cursor-codex-dispatch:review-id=/);
   assert.match(poll, /const alreadyDispatched/);
   assert.match(poll, /let dispatchRejected = false/);
