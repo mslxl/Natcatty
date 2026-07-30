@@ -17,6 +17,8 @@ export type AISessionLike = {
   scope: AISessionScopeLike;
   /** Optional chrome for history list equality (title renames without stream thrash). */
   title?: string | null;
+  /** Optional chrome for history sort / relative-time display (`getScopedHistorySessions`). */
+  updatedAt?: number;
 };
 
 export function buildAIScopeKey(scopeType: string, scopeTargetId?: string): string {
@@ -59,8 +61,9 @@ export function aiSessionByIdEqual<T extends AISessionLike>(
 
 /**
  * True when both arrays contain the same session ids (order-insensitive) and
- * matching title chrome. Detects create/delete/rename for history lists without
- * re-rendering on in-place stream object replacements that only change messages.
+ * matching history chrome (title + updatedAt). Detects create/delete/rename and
+ * timestamp/order changes without treating message-body object replacement alone
+ * as a reason to re-render when chrome is unchanged.
  */
 export function aiSessionIdSetEqual<T extends AISessionLike>(
   prev: readonly T[] | null | undefined,
@@ -75,6 +78,7 @@ export function aiSessionIdSetEqual<T extends AISessionLike>(
     const prevSession = prevById.get(session.id);
     if (!prevSession) return false;
     if ((prevSession.title ?? '') !== (session.title ?? '')) return false;
+    if ((prevSession.updatedAt ?? 0) !== (session.updatedAt ?? 0)) return false;
   }
   return true;
 }

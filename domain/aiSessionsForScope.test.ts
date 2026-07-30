@@ -84,3 +84,11 @@ test('aiSessionIdSetEqual detects title chrome renames without message thrash', 
   assert.equal(aiSessionIdSetEqual([a1], [a2]), true);
   assert.equal(aiSessionIdSetEqual([a1], [a3]), false);
 });
+
+test('aiSessionIdSetEqual detects updatedAt chrome without message thrash', () => {
+  const a1 = { ...session('a', 'terminal', 't1'), title: 'chat', updatedAt: 1 };
+  const a2 = { ...session('a', 'terminal', 't1'), title: 'chat', updatedAt: 1 }; // new object, same chrome
+  const a3 = { ...session('a', 'terminal', 't1'), title: 'chat', updatedAt: 2 };
+  assert.equal(aiSessionIdSetEqual([a1], [a2]), true);
+  assert.equal(aiSessionIdSetEqual([a1], [a3]), false);
+});

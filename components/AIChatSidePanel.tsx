@@ -1507,8 +1507,8 @@ export function aiChatSidePanelPropsAreEqual(
   )) {
     return false;
   }
-  // History drawer / recent list need create+delete visibility without tracking
-  // every sibling stream object replacement (same ids → still skip thrash).
+  // History drawer / recent list need create/delete/title/updatedAt chrome
+  // without requiring message-body object identity (same chrome → skip thrash).
   if (!aiSessionIdSetEqual(prev.sessions, next.sessions)) {
     return false;
   }
