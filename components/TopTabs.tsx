@@ -1071,21 +1071,22 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
         {/* More tabs button - only when overflowing */}
         {hasOverflow && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 flex-shrink-0 app-no-drag self-end rounded-none"
-                style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
-                onClick={onOpenQuickSwitcher}
-                data-section="top-tabs-toolbar-actions"
-              >
-                <MoreHorizontal size={14} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('topTabs.moreTabs')}</TooltipContent>
-          </Tooltip>
+          <div className="contents" data-section="top-tabs-toolbar-actions">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 flex-shrink-0 app-no-drag self-end rounded-none"
+                  style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+                  onClick={onOpenQuickSwitcher}
+                >
+                  <MoreHorizontal size={14} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('topTabs.moreTabs')}</TooltipContent>
+            </Tooltip>
+          </div>
         )}
 
         {/* Fixed right controls — utility icons + window controls share one h-7 row */}
