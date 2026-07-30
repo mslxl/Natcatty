@@ -138,6 +138,7 @@ interface TopTabsProps {
   onCloseLogView: (logViewId: string) => void;
   onCloseTabsBatch: (targetIds: string[]) => void;
   onOpenQuickSwitcher: () => void;
+  /** Fallback one-click local shell when the host-tree toolbar is not available. */
   onCreateLocalTerminal: () => void;
   onThemeChange: (theme: 'dark' | 'light' | 'system') => void;
   onOpenSettings: () => void;
@@ -345,6 +346,14 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     activeWorkTabCount,
   });
   const effectiveShowHostTreeToggle = hostTreeChromeReady;
+  // Host-tree toolbar already exposes local shell when the sidebar is open on a
+  // work surface. Keep the top-tabs control only as a fallback when that path
+  // is disabled, collapsed, or not on the host-tree surface (Vault / SFTP / …).
+  const showTopTabsLocalTerminal = !(
+    showHostTreeSidebar &&
+    isHostTreeOpen &&
+    showHostTreeToggle
+  );
 
   useEffect(() => {
     cancelHostTreeChromeReadyRef.current?.();
@@ -1100,21 +1109,23 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
           style={dragRegionStyle}
           data-section="top-tabs-toolbar-actions"
         >
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                data-section="top-tabs-new-local-terminal"
-                className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
-                style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
-                onClick={onCreateLocalTerminal}
-              >
-                <Terminal size={16} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t('topTabs.newLocalTerminal')}</TooltipContent>
-          </Tooltip>
+          {showTopTabsLocalTerminal && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  data-section="top-tabs-new-local-terminal"
+                  className="h-7 w-7 shrink-0 app-no-drag top-tab-utility-btn"
+                  style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
+                  onClick={onCreateLocalTerminal}
+                >
+                  <Terminal size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t('topTabs.newLocalTerminal')}</TooltipContent>
+            </Tooltip>
+          )}
           <GlobalSftpTransferCenter />
           <Tooltip>
             <TooltipTrigger asChild>

@@ -125,6 +125,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
   // Stable no-arg wrapper: the top-bar terminal icon passes an onClick event we
   // must not forward as handleCreateLocalTerminal's `shell` arg, and an inline
   // arrow here would defeat the memoized TopTabs onCreateLocalTerminal check.
+  // Top-tabs shows this only when the host-tree toolbar is not available.
   const handleCreateLocalTerminalNoArg = useCallback(() => {
     handleCreateLocalTerminal();
   }, [handleCreateLocalTerminal]);
