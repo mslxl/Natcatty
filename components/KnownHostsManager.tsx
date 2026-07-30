@@ -20,10 +20,18 @@ import React, {
 } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useKnownHostsBackend } from "../application/state/useKnownHostsBackend";
+import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useStoredViewMode, ViewMode } from "../application/state/useStoredViewMode";
 import { fingerprintFromPublicKey } from "../domain/knownHosts";
+import {
+  DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+  shouldAutoScanSystemKnownHosts,
+} from "../domain/systemKnownHostsAutoImport";
 import { reorderVaultItems, sortByVaultOrder } from "../domain/vaultOrder";
-import { STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE } from "../infrastructure/config/storageKeys";
+import {
+  STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+  STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE,
+} from "../infrastructure/config/storageKeys";
 import { logger } from "../lib/logger";
 import { cn } from "../lib/utils";
 import { Host, KnownHost } from "../types";
@@ -313,6 +321,10 @@ const KnownHostsManager: React.FC<KnownHostsManagerProps> = ({
     STORAGE_KEY_VAULT_KNOWN_HOSTS_VIEW_MODE,
     "grid",
   );
+  const [autoImportSystemKnownHosts] = useStoredBoolean(
+    STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+    DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+  );
   const [sortMode, setSortMode] = useState<SortMode>("manual");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const hasScannedRef = React.useRef(false);
@@ -381,16 +393,22 @@ const KnownHostsManager: React.FC<KnownHostsManagerProps> = ({
     }
   }, [knownHosts, onRefresh, onImportFromFile, readKnownHosts, t]);
 
-  // Auto-scan on first mount (silent — don't show toasts for missing known_hosts)
+  // Auto-scan on first mount when enabled (silent — no toasts for missing known_hosts)
   useEffect(() => {
-    if (!hasScannedRef.current) {
-      hasScannedRef.current = true;
-      const timer = setTimeout(() => {
-        handleScanSystem(true);
-      }, 100);
-      return () => clearTimeout(timer);
+    if (
+      !shouldAutoScanSystemKnownHosts({
+        autoImportEnabled: autoImportSystemKnownHosts,
+        alreadyScanned: hasScannedRef.current,
+      })
+    ) {
+      return;
     }
-  }, [handleScanSystem]);
+    hasScannedRef.current = true;
+    const timer = setTimeout(() => {
+      handleScanSystem(true);
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [autoImportSystemKnownHosts, handleScanSystem]);
 
   // Sort and filter hosts with deduplication by hostname
   const filteredHosts = useMemo(() => {

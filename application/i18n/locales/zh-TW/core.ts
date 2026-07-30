@@ -262,6 +262,8 @@ export const zhTWCoreMessages: Messages = {
   'settings.vault.showSftpTabDesc': '在頂部標籤欄顯示獨立的 SFTP 檢視。關閉後可改用工作階段內左側的 SFTP 側欄。',
   'settings.vault.showHostTreeSidebar': '顯示主機列表側欄',
   'settings.vault.showHostTreeSidebarDesc': '在終端和編輯器標籤頁顯示主機列表側欄及頂部開關。',
+  'settings.vault.autoImportSystemKnownHosts': '自動匯入系統 known_hosts',
+  'settings.vault.autoImportSystemKnownHostsDesc': '開啟主機庫時靜默匯入 OpenSSH known_hosts 中的記錄。關閉後，Netcatty 已知主機與系統信任庫保持獨立；仍可透過「掃描系統」手動匯入。',
 
   // Update notifications
   'update.available.title': '發現新版本',

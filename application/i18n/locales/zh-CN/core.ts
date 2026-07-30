@@ -262,6 +262,8 @@ export const zhCNCoreMessages: Messages = {
   'settings.vault.showSftpTabDesc': '在顶部标签栏显示独立的 SFTP 视图。关闭后可改用会话内左侧的 SFTP 侧栏。',
   'settings.vault.showHostTreeSidebar': '显示主机列表侧栏',
   'settings.vault.showHostTreeSidebarDesc': '在终端和编辑器标签页显示主机列表侧栏及顶部开关。',
+  'settings.vault.autoImportSystemKnownHosts': '自动导入系统 known_hosts',
+  'settings.vault.autoImportSystemKnownHostsDesc': '打开主机库时静默导入 OpenSSH known_hosts 中的记录。关闭后，Netcatty 已知主机与系统信任库保持独立；仍可通过「扫描系统」手动导入。',
 
   // Update notifications
   'update.available.title': '发现新版本',
