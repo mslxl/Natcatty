@@ -68,12 +68,12 @@ export const getWindowsUncRoot = (
   path: string,
   options?: SftpWindowsPathOptions,
 ): string | null => {
-  // Pure forward-slash //host/share is ambiguous: UNC on Windows panes,
-  // POSIX absolute on remote/POSIX panes. Require an explicit opt-in.
+  // Forward-slash //host/share is ambiguous: UNC on Windows panes,
+  // POSIX absolute on remote/POSIX panes. A backslash can be a POSIX filename
+  // character, so require an explicit opt-in for every // path.
   if (
     !options?.acceptForwardSlashUnc
     && /^\/\//.test(path)
-    && !path.includes("\\")
   ) {
     return null;
   }
@@ -165,7 +165,7 @@ export const getSftpBreadcrumbSegments = (
 ): { segments: SftpBreadcrumbSegment[]; isWindowsDrive: boolean } => {
   if (!isWindowsPath(path, options)) {
     const parts = path.split("/").filter(Boolean);
-    const prefix = path.startsWith("//") ? "//" : "/";
+    const prefix = /^\/\/(?!\/)/.test(path) ? "//" : "/";
     return {
       segments: parts.map((part, index) => ({
         label: part,
@@ -313,7 +313,7 @@ export const getParentPath = (
   const parts = path.split("/").filter(Boolean);
   parts.pop();
   // Match breadcrumb / path-bar: pure //host/... stays POSIX with a double-slash prefix.
-  const prefix = path.startsWith("//") ? "//" : "/";
+  const prefix = /^\/\/(?!\/)/.test(path) ? "//" : "/";
   return parts.length ? `${prefix}${parts.join("/")}` : "/";
 };
 
@@ -323,7 +323,7 @@ export const isConcreteTransferTargetPath = (task: Pick<TransferTask, "targetPat
 };
 
 export const getFileName = (path: string): string => {
-  const parts = path.split(/[\\/]/).filter(Boolean);
+  const parts = path.split(isWindowsPath(path) ? /[\\/]/ : "/").filter(Boolean);
   return parts[parts.length - 1] || "";
 };
 
@@ -338,6 +338,22 @@ export const normalizeSftpPathForCompare = (path: string): string => {
 
 export const isSameSftpPath = (a: string, b: string): boolean => {
   return normalizeSftpPathForCompare(a) === normalizeSftpPathForCompare(b);
+};
+
+export const isSftpDescendantPath = (candidate: string, parent: string): boolean => {
+  const normalizedCandidate = normalizeSftpPathForCompare(candidate);
+  const normalizedParent = normalizeSftpPathForCompare(parent);
+  if (normalizedCandidate === normalizedParent) return false;
+
+  if (/^[a-z]:\\$/.test(normalizedParent)) {
+    return normalizedCandidate.startsWith(normalizedParent);
+  }
+  if (normalizedParent === "/") {
+    return normalizedCandidate.startsWith("/");
+  }
+
+  const separator = isWindowsPath(normalizedParent) ? "\\" : "/";
+  return normalizedCandidate.startsWith(`${normalizedParent}${separator}`);
 };
 
 export const shouldClearSftpFilterForPathChange = (

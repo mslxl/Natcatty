@@ -9,11 +9,11 @@ import {
   getSftpFilterAfterPathChange,
   getSftpFilterAfterPathChangeError,
   isNavigableDirectory,
+  isSftpDescendantPath,
   isSameSftpPath,
   isWindowsRoot,
   joinPath,
   normalizeSftpPaneNavigationPath,
-  normalizeSftpPathForCompare,
   resolveSftpWindowsPathOptions,
   shouldClearSftpFilterForPathChange,
 } from "./utils";
@@ -109,30 +109,9 @@ export const useSftpPaneActions = ({
   clearSelectionsExcept,
   dirCacheTtlMs,
 }: UseSftpPaneActionsParams): UseSftpPaneActionsResult => {
-  const normalizePathForCompare = useCallback((path: string): string => {
-    return normalizeSftpPathForCompare(path);
-  }, []);
-
   const isSamePath = useCallback((a: string, b: string): boolean => {
     return isSameSftpPath(a, b);
   }, []);
-
-  const isDescendantPath = useCallback((candidate: string, parent: string): boolean => {
-    const normalizedCandidate = normalizePathForCompare(candidate);
-    const normalizedParent = normalizePathForCompare(parent);
-    if (normalizedCandidate === normalizedParent) return false;
-
-    if (/^[a-z]:\\$/.test(normalizedParent)) {
-      return normalizedCandidate.startsWith(normalizedParent);
-    }
-
-    if (normalizedParent === "/") {
-      return normalizedCandidate.startsWith("/");
-    }
-
-    const separator = normalizedParent.includes("\\") ? "\\" : "/";
-    return normalizedCandidate.startsWith(`${normalizedParent}${separator}`);
-  }, [normalizePathForCompare]);
 
   // Build the shared cache key for the active pane. Prefer the last connected
   // host (which includes session-time overrides), fall back to the vault hosts list.
@@ -934,12 +913,12 @@ export const useSftpPaneActions = ({
       const filteredSources = uniqueSources
         .sort((a, b) => a.length - b.length)
         .filter((path, index, arr) =>
-          !arr.slice(0, index).some((otherPath) => isSamePath(path, otherPath) || isDescendantPath(path, otherPath)),
+          !arr.slice(0, index).some((otherPath) => isSamePath(path, otherPath) || isSftpDescendantPath(path, otherPath)),
         );
 
       const movableSources = filteredSources.filter((sourcePath) => {
         if (isSamePath(sourcePath, targetPath)) return false;
-        if (isDescendantPath(targetPath, sourcePath)) return false;
+        if (isSftpDescendantPath(targetPath, sourcePath)) return false;
         const destinationPath = joinPath(targetPath, getFileName(sourcePath));
         return !isSamePath(destinationPath, sourcePath);
       });
@@ -1020,7 +999,7 @@ export const useSftpPaneActions = ({
         throw err;
       }
     },
-    [clearCacheForConnection, getActivePane, handleSessionError, isDescendantPath, isSamePath, isSessionError, refresh, sftpSessionsRef, updateActiveTab],
+    [clearCacheForConnection, getActivePane, handleSessionError, isSamePath, isSessionError, refresh, sftpSessionsRef, updateActiveTab],
   );
 
   const changePermissions = useCallback(

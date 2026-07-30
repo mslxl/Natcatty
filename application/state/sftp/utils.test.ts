@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 
 import {
   getParentPath,
+  getFileName,
   getSftpBreadcrumbSegments,
   getSftpFilterAfterPathChange,
   getSftpFilterAfterPathChangeError,
   isConcreteTransferTargetPath,
+  isSftpDescendantPath,
   isWindowsRoot,
   joinTransferTargetPath,
   normalizeSftpNavigationPath,
@@ -114,6 +116,10 @@ test("path bar keeps POSIX double-slash paths outside Windows panes", () => {
     normalizeSftpNavigationPath("//wsl.localhost/Ubuntu-22.04/home/aaa"),
     "//wsl.localhost/Ubuntu-22.04/home/aaa",
   );
+  assert.equal(
+    normalizeSftpNavigationPath("//srv/share\\logs"),
+    "//srv/share\\logs",
+  );
 });
 
 test("getParentPath preserves POSIX double-slash prefixes", () => {
@@ -122,6 +128,32 @@ test("getParentPath preserves POSIX double-slash prefixes", () => {
   assert.equal(getParentPath("//srv"), "/");
   assert.equal(getParentPath("//"), "/");
   assert.equal(getParentPath("/srv/share/logs"), "/srv/share");
+});
+
+test("POSIX paths with three or more leading slashes stay in the root namespace", () => {
+  assert.equal(getParentPath("///srv/share/logs"), "/srv/share");
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("///srv/share/logs"),
+    {
+      segments: [
+        { label: "srv", path: "/srv" },
+        { label: "share", path: "/srv/share" },
+        { label: "logs", path: "/srv/share/logs" },
+      ],
+      isWindowsDrive: false,
+    },
+  );
+});
+
+test("getFileName preserves backslashes in POSIX path components", () => {
+  assert.equal(getFileName("//srv/share\\logs"), "share\\logs");
+  assert.equal(getFileName("\\\\server\\share\\logs"), "logs");
+});
+
+test("descendant checks use the path kind instead of literal backslashes", () => {
+  assert.equal(isSftpDescendantPath("//srv/share\\logs/child", "//srv/share\\logs"), true);
+  assert.equal(isSftpDescendantPath("//srv/share\\logs-old", "//srv/share\\logs"), false);
+  assert.equal(isSftpDescendantPath("C:\\Users\\alice\\child", "C:\\Users\\alice"), true);
 });
 
 test("Windows UNC share roots are treated as path roots", () => {
@@ -225,6 +257,16 @@ test("breadcrumb segments keep WSL UNC roots intact", () => {
         { label: "srv", path: "//srv" },
         { label: "share", path: "//srv/share" },
         { label: "logs", path: "//srv/share/logs" },
+      ],
+      isWindowsDrive: false,
+    },
+  );
+  assert.deepEqual(
+    getSftpBreadcrumbSegments("//srv/share\\logs"),
+    {
+      segments: [
+        { label: "srv", path: "//srv" },
+        { label: "share\\logs", path: "//srv/share\\logs" },
       ],
       isWindowsDrive: false,
     },
