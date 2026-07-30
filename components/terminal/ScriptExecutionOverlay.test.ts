@@ -52,26 +52,36 @@ test("script overlay covers compact speed-dial full-width instead of reserving a
 test("script overlay dismisses a completed run after five seconds", () => {
   mock.timers.enable({ apis: ["setTimeout"] });
   let dismissCount = 0;
+  let renderer: ReturnType<typeof create> | undefined;
+
+  const renderOverlay = (onDismiss: () => void) => React.createElement(ScriptExecutionOverlay, {
+    run: completedRun,
+    onPause: () => {},
+    onResume: () => {},
+    onStop: () => {},
+    onDismiss,
+  });
 
   try {
     act(() => {
-      create(
-        React.createElement(ScriptExecutionOverlay, {
-          run: completedRun,
-          onPause: () => {},
-          onResume: () => {},
-          onStop: () => {},
-          onDismiss: () => { dismissCount += 1; },
-        }),
-      );
+      renderer = create(renderOverlay(() => { dismissCount += 1; }));
     });
 
-    mock.timers.tick(SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS - 1);
+    mock.timers.tick(SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS - 1_000);
+    assert.equal(dismissCount, 0);
+
+    // Script run broadcasts replace the callback without changing this run.
+    act(() => {
+      renderer?.update(renderOverlay(() => { dismissCount += 1; }));
+    });
+
+    mock.timers.tick(999);
     assert.equal(dismissCount, 0);
 
     mock.timers.tick(1);
     assert.equal(dismissCount, 1);
   } finally {
+    renderer?.unmount();
     mock.timers.reset();
   }
 });

@@ -1,5 +1,5 @@
 import { Check, Loader2, Pause, Play, Square, X } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { useI18n } from '@/application/i18n/I18nProvider';
 import type { ScriptRun } from '@/types/global/netcatty-bridge-script.d.ts';
 import { Button } from '@/components/ui/button';
@@ -202,6 +202,7 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
   const { t } = useI18n();
   const [tick, setTick] = useState(0);
   const isFinished = run.status === 'completed' || run.status === 'failed';
+  const dismissFinishedRun = useEffectEvent(onDismiss);
 
   useEffect(() => {
     if (isFinished) return undefined;
@@ -211,9 +212,9 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
 
   useEffect(() => {
     if (!isFinished) return undefined;
-    const timer = setTimeout(onDismiss, SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS);
+    const timer = setTimeout(dismissFinishedRun, SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [isFinished, onDismiss, run.runId]);
+  }, [isFinished, run.runId]);
 
   void tick;
 
