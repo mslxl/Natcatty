@@ -1,6 +1,10 @@
 import { Copy, FileCode, FileText, LayoutGrid, Minus, Server, Square, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { activeTabStore, useActiveTabId, useIsTabActive } from '../../application/state/activeTabStore';
+import {
+  useAnySessionActivity,
+  useSessionActivity,
+} from '../../application/state/sessionActivityStore';
 import type { EditorTab } from '../../application/state/editorTabStore';
 import type { LogView } from '../../application/state/logViewState';
 import { useWindowControls } from '../../application/state/useWindowControls';
@@ -660,7 +664,6 @@ EditorTopTab.displayName = 'EditorTopTab';
 interface SessionTopTabProps {
   session: TerminalSession;
   host: Host | undefined;
-  hasActivity: boolean;
   isBeingDragged: boolean;
   isDraggingForReorder: boolean;
   shiftStyle: React.CSSProperties;
@@ -684,7 +687,6 @@ interface SessionTopTabProps {
 export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   session,
   host,
-  hasActivity,
   isBeingDragged,
   isDraggingForReorder,
   shiftStyle,
@@ -705,6 +707,8 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(session.id);
+  // Per-session store snapshot so sibling activity dots do not re-render this tab.
+  const hasActivity = useSessionActivity(session.id);
   const handleClick = useCallback(() => {
     activeTabStore.setActiveTabId(session.id);
   }, [session.id]);
@@ -833,7 +837,7 @@ SessionTopTab.displayName = 'SessionTopTab';
 interface WorkspaceTopTabProps {
   workspace: Workspace;
   paneCount: number;
-  hasActivity: boolean;
+  workspaceSessionIds: readonly string[];
   isBeingDragged: boolean;
   isDraggingForReorder: boolean;
   shiftStyle: React.CSSProperties;
@@ -857,7 +861,7 @@ interface WorkspaceTopTabProps {
 export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   workspace,
   paneCount,
-  hasActivity,
+  workspaceSessionIds,
   isBeingDragged,
   isDraggingForReorder,
   shiftStyle,
@@ -878,6 +882,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(workspace.id);
+  const hasActivity = useAnySessionActivity(workspaceSessionIds);
   const handleClick = useCallback(() => {
     activeTabStore.setActiveTabId(workspace.id);
   }, [workspace.id]);

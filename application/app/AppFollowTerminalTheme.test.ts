@@ -22,6 +22,16 @@ test("follow-app terminal theme selection updates the matching UI theme via Them
     appSource,
     /followAppTerminalTheme, themeRuntime, handleConnectSerial/,
   );
+  // Terminal domain must not thrash on whole settings bag identity.
+  assert.match(appSource, /sshDebugLogsEnabled,/);
+  assert.doesNotMatch(
+    appSource,
+    /splitSessionWithCurrentShell, settings, terminalFontFamilyId/,
+  );
+  // Hotkey path must not depend on whole settings/sessions for callback identity.
+  assert.match(appSource, /showSftpTab: showSftpTabRef\.current/);
+  assert.match(appSource, /sessions: sessionsRef\.current/);
+  assert.match(appSource, /connectionLogs: connectionLogsRef\.current/);
   assert.match(appSource, /useTerminalAppearanceInjection/);
   assert.match(appSource, /includeChromeSurfaces: followAppTerminalTheme/);
   assert.match(appSource, /clearThemeIntent\(\)/);

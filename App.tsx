@@ -108,6 +108,8 @@ type OpenSessionInNewWindowPayload = {
 const IS_DEV = import.meta.env.DEV;
 const HOTKEY_DEBUG =
   IS_DEV && localStorageAdapter.readString(STORAGE_KEY_DEBUG_HOTKEYS) === '1';
+/** Stable empty list for closed quick-switcher so dialogs domain identity holds. */
+const EMPTY_HOST_RESULTS: Host[] = [];
 
 function App({ settings }: { settings: SettingsState }) {
   const { t } = useI18n();
@@ -179,6 +181,9 @@ function App({ settings }: { settings: SettingsState }) {
     sessionLogsDir,
     sessionLogsFormat,
     sessionLogsTimestampsEnabled,
+    sshDebugLogsEnabled,
+    showSftpTab,
+    shellOnlyTabNumberShortcuts,
     applyAppTheme,
     workspaceFocusStyle,
   } = settings;
@@ -880,6 +885,23 @@ function App({ settings }: { settings: SettingsState }) {
   // Use ref to store addConnectionLog to avoid circular dependencies with executeHotkeyAction
   const addConnectionLogRef = useRef(addConnectionLog);
   addConnectionLogRef.current = addConnectionLog;
+  // Keep hotkey/capture paths on stable callback identities so settings/log/session
+  // array thrash does not rebuild appTerminalDomain (see domain isolation).
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const connectionLogsRef = useRef(connectionLogs);
+  connectionLogsRef.current = connectionLogs;
+  const editorTabsRef = useRef(editorTabs);
+  editorTabsRef.current = editorTabs;
+  const workspacesRefForHotkeys = useRef(workspaces);
+  workspacesRefForHotkeys.current = workspaces;
+  const showSftpTabRef = useRef(showSftpTab);
+  showSftpTabRef.current = showSftpTab;
+  const shellOnlyTabNumberShortcutsRef = useRef(shellOnlyTabNumberShortcuts);
+  shellOnlyTabNumberShortcutsRef.current = shellOnlyTabNumberShortcuts;
+  const isQuickSwitcherOpenRef = useRef(isQuickSwitcherOpen);
+  isQuickSwitcherOpenRef.current = isQuickSwitcherOpen;
+  const orderedTabsRef = useRef<string[]>([]);
 
   const toggleScriptsSidePanelRef = useRef<(() => void) | null>(null);
   const toggleSidePanelRef = useRef<(() => void) | null>(null);
@@ -950,6 +972,7 @@ function App({ settings }: { settings: SettingsState }) {
     () => getOrderedWorkTabs(additionalWorkTabIds),
     [additionalWorkTabIds, getOrderedWorkTabs],
   );
+  orderedTabsRef.current = orderedTabsWithEditors;
 
   const reorderWorkTabs = useCallback((
     draggedId: string,
@@ -993,8 +1016,66 @@ function App({ settings }: { settings: SettingsState }) {
     [workspaces, sessions, logViews, confirmIfBusyLocalTerminal, closeWorkspace, closeSessions, closeLogView, orderedTabsWithEditors],
   );
 
-  // Shared hotkey action handler - used by both global handler and terminal callback
-  const executeHotkeyAction = useCallback((action: string, e: KeyboardEvent) => { return executeHotkeyActionImpl(() => ({ IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, action, activeTabStore, addConnectionLogRef, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, e, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs: orderedTabsWithEditors, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, splitSessionWithCurrentShell, systemInfoRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, workspaces }), action, e); }, [orderedTabsWithEditors, editorTabs, sessions, workspaces, isQuickSwitcherOpen, setActiveTabId, closePluginViewTab, closeSession, closeWorkspace, createLocalTerminalWithCurrentShell, splitSessionWithCurrentShell, moveFocusInWorkspace, toggleBroadcast, toggleWorkspaceViewMode, settings, confirmIfBusyLocalTerminal]);
+  // Shared hotkey action handler - used by both global handler and terminal callback.
+  // Volatile arrays/settings are read from refs so this identity stays stable under
+  // title/log/settings thrash and does not rebuild appTerminalDomain.
+  const executeHotkeyAction = useCallback((action: string, e: KeyboardEvent) => {
+    return executeHotkeyActionImpl(() => ({
+      IS_DEV,
+      MOVE_FOCUS_DEBOUNCE_MS,
+      action,
+      activeTabStore,
+      addConnectionLogRef,
+      closePluginViewTab,
+      closeSession,
+      closeTabInFlightRef,
+      closeWorkspace,
+      collectSessionIds,
+      confirmIfBusyLocalTerminal,
+      createLocalTerminalWithCurrentShell,
+      e,
+      editorTabs: editorTabsRef.current,
+      fromEditorTabId,
+      handleOpenSettingsRef,
+      handleRequestCloseEditorTabRef,
+      isEditorTabId,
+      isPluginViewTabId,
+      isQuickSwitcherOpen: isQuickSwitcherOpenRef.current,
+      lastMoveFocusTimeRef,
+      moveFocusInWorkspace,
+      orderedTabs: orderedTabsRef.current,
+      resolveCloseIntent,
+      resolveSnippetsShortcutIntent,
+      sessions: sessionsRef.current,
+      setActiveTabId,
+      setAddToWorkspaceDialog,
+      setIsQuickSwitcherOpen,
+      setNavigateToSection,
+      settings: {
+        showSftpTab: showSftpTabRef.current,
+        shellOnlyTabNumberShortcuts: shellOnlyTabNumberShortcutsRef.current,
+      },
+      splitSessionWithCurrentShell,
+      systemInfoRef,
+      toEditorTabId,
+      toggleBroadcast,
+      toggleScriptsSidePanelRef,
+      toggleSidePanelRef,
+      toggleWorkspaceViewMode,
+      workspaces: workspacesRefForHotkeys.current,
+    }), action, e);
+  }, [
+    setActiveTabId,
+    closePluginViewTab,
+    closeSession,
+    closeWorkspace,
+    createLocalTerminalWithCurrentShell,
+    splitSessionWithCurrentShell,
+    moveFocusInWorkspace,
+    toggleBroadcast,
+    toggleWorkspaceViewMode,
+    confirmIfBusyLocalTerminal,
+  ]);
 
   const handleWindowCommandCloseRequest = useCallback(async () => {
     const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][data-state="open"]'));
@@ -1060,7 +1141,7 @@ function App({ settings }: { settings: SettingsState }) {
   }, []);
 
   const quickResults = useMemo(() => {
-    if (!isQuickSwitcherOpen) return [];
+    if (!isQuickSwitcherOpen) return EMPTY_HOST_RESULTS;
     const term = quickSearch.trim();
     if (!term) return hosts;
     return hosts
@@ -1495,8 +1576,19 @@ function App({ settings }: { settings: SettingsState }) {
     });
   }, [addConnectionLog, createSerialSession]);
 
-  // Handle terminal data capture when session exits
-  const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => { return handleTerminalDataCaptureImpl(() => ({ IS_DEV, connectionLogs, data, selectConnectionLogForTerminalDataCapture, sessionId, sessions, updateConnectionLog }), sessionId, data); }, [sessions, connectionLogs, updateConnectionLog]);
+  // Handle terminal data capture when session exits. Read sessions/logs via refs
+  // so connection-log appends do not rebuild appTerminalDomain.
+  const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => {
+    return handleTerminalDataCaptureImpl(() => ({
+      IS_DEV,
+      connectionLogs: connectionLogsRef.current,
+      data,
+      selectConnectionLogForTerminalDataCapture,
+      sessionId,
+      sessions: sessionsRef.current,
+      updateConnectionLog,
+    }), sessionId, data);
+  }, [updateConnectionLog]);
 
   // Check if host has multiple protocols enabled (using effective/resolved host)
   const hasMultipleProtocols = useCallback((host: Host) => { return hasMultipleProtocolsImpl(() => ({ host, resolveEffectiveHost }), host); }, [resolveEffectiveHost]);
@@ -1687,7 +1779,7 @@ function App({ settings }: { settings: SettingsState }) {
     sftpShowHiddenFiles,
     sftpUseCompressedUpload,
     splitSessionWithCurrentShell,
-    sshDebugLogsEnabled: settings.sshDebugLogsEnabled,
+    sshDebugLogsEnabled,
     terminalFontFamilyId,
     terminalFontSize,
     terminalSettings,
@@ -1704,7 +1796,7 @@ function App({ settings }: { settings: SettingsState }) {
     updateSessionCodingCliProvider,
     updateTerminalSetting,
     workspaces,
-  }), [addSessionToWorkspace, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearSessionFontSizeOverride, closeSession, closeTabsBatch, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, createWorkspaceFromSessions, createWorkspaceFromEffectiveTargets, createWorkspaceWithEffectiveHosts, currentTerminalTheme, draggingSessionId, editorWordWrap, followAppTerminalTheme, clearThemeIntent, settleManualThemeIntent, pickTerminalTheme, resolveFocusedAppearance, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleFollowAppTerminalThemeChange, handleHotkeyAction, handleSessionStatusChange, handleTerminalDataCapture, handleUpdateHostFromTerminal, hostById, terminalHosts, updateTerminalHosts, hotkeyScheme, isBroadcastEnabled, keyBindings, openNoteRequest, portForwardingRules, removeSessionFromWorkspace, reorderWorkspaceSessions, handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionsForShell, setDraggingSessionId, setEditorWordWrap, setTerminalFontFamilyId, setTerminalFontSize, setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, splitSessionWithCurrentShell, settings, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, updateHostDistro, updateSplitSizes, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, updateTerminalSetting, workspaces]);
+  }), [addSessionToWorkspace, appendHostToWorkspace, appendLocalTerminalToWorkspace, clearSessionFontSizeOverride, closeSession, closeTabsBatch, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell, copySessionToNewWindowWithCurrentShell, closeWorkspace, createWorkspaceFromSessions, createWorkspaceFromEffectiveTargets, createWorkspaceWithEffectiveHosts, currentTerminalTheme, draggingSessionId, editorWordWrap, followAppTerminalTheme, clearThemeIntent, settleManualThemeIntent, pickTerminalTheme, resolveFocusedAppearance, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleFollowAppTerminalThemeChange, handleHotkeyAction, handleSessionStatusChange, handleTerminalDataCapture, handleUpdateHostFromTerminal, hostById, terminalHosts, updateTerminalHosts, hotkeyScheme, isBroadcastEnabled, keyBindings, openNoteRequest, portForwardingRules, removeSessionFromWorkspace, reorderWorkspaceSessions, handleRunSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionsForShell, setDraggingSessionId, setEditorWordWrap, setTerminalFontFamilyId, setTerminalFontSize, setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior, sftpShowHiddenFiles, sftpUseCompressedUpload, splitSessionWithCurrentShell, sshDebugLogsEnabled, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, updateHostDistro, updateSplitSizes, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, updateTerminalSetting, workspaces]);
 
   const appChromeDomain = useMemo(() => ({
     accentMode,
@@ -1804,7 +1896,7 @@ function App({ settings }: { settings: SettingsState }) {
         onConfirm={handleConfirmDeleteHost}
       />
       <AppActiveTabChrome
-        showSftpTab={settings.showSftpTab}
+        showSftpTab={showSftpTab}
         setActiveTabId={setActiveTabId}
         applyAppTheme={applyAppTheme}
         hostById={hostById}

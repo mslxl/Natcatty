@@ -8,11 +8,10 @@ import {
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
 import type { EditorTab } from '../application/state/editorTabStore';
-import { buildWorkspaceActivityMap } from '../application/state/sessionActivity';
 import { collectSessionIds } from '../domain/workspace';
 import { resolveSessionTabTitle } from '../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../domain/models';
-import { useSessionActivityMap } from '../application/state/sessionActivityStore';
+
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
 import {
   useTerminalHostTreeLayoutWidth,
@@ -214,7 +213,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 }) => {
   const { t } = useI18n();
   const { maximize, isFullscreen, onFullscreenChanged } = useWindowControls();
-  const sessionActivityMap = useSessionActivityMap();
   const isHostTreeOpen = useTerminalHostTreeOpen();
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
@@ -336,10 +334,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     for (const h of hosts) map.set(h.id, h);
     return map;
   }, [hosts]);
-
-  const workspaceActivityMap = useMemo(() => {
-    return buildWorkspaceActivityMap(sessions, sessionActivityMap);
-  }, [sessionActivityMap, sessions]);
 
   // Pre-compute session counts per workspace for O(1) access
   const workspacePaneCounts = useMemo(() => {
@@ -802,7 +796,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
       if (item.type === 'session') {
         const session = item.session;
-        const hasActivity = !!sessionActivityMap[session.id];
         const isBeingDragged = draggingSessionId === session.id;
         const shiftStyle = tabShiftStyles[session.id] || emptyTabStyle;
         const showDropIndicatorBefore = dropIndicator?.tabId === session.id && dropIndicator.position === 'before';
@@ -813,7 +806,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             key={session.id}
             session={session}
             host={hostMap.get(session.hostId)}
-            hasActivity={hasActivity}
             isBeingDragged={isBeingDragged}
             isDraggingForReorder={isDraggingForReorder}
             shiftStyle={shiftStyle}
@@ -839,7 +831,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
       if (item.type === 'workspace') {
         const workspace = item.workspace;
         const paneCount = item.paneCount;
-        const hasActivity = !!workspaceActivityMap.get(workspace.id);
         const isBeingDragged = draggingSessionId === workspace.id;
         const shiftStyle = tabShiftStyles[workspace.id] || emptyTabStyle;
         const showDropIndicatorBefore = dropIndicator?.tabId === workspace.id && dropIndicator.position === 'before';
@@ -861,7 +852,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             key={workspace.id}
             workspace={workspace}
             paneCount={paneCount}
-            hasActivity={hasActivity}
+            workspaceSessionIds={workspaceSessionIds}
             isBeingDragged={isBeingDragged}
             isDraggingForReorder={isDraggingForReorder}
             shiftStyle={shiftStyle}

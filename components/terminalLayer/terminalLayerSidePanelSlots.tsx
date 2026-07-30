@@ -28,6 +28,9 @@ const navigatorPlatform = typeof navigator !== 'undefined' ? navigator.platform 
 const EMPTY_VAULT_NOTES: never[] = [];
 const EMPTY_VAULT_HOSTS: never[] = [];
 const EMPTY_VAULT_SNIPPETS: never[] = [];
+const EMPTY_SHELL_HISTORY: readonly never[] = [];
+const subscribeShellHistoryNoop = () => () => {};
+const getEmptyShellHistorySnapshot = () => EMPTY_SHELL_HISTORY;
 
 function useSidePanelTabType(tabId: string, sidePanelOpenTabs: Map<string, SidePanelTab>): SidePanelTab | null {
   return sidePanelOpenTabs.get(tabId) ?? null;
@@ -438,10 +441,12 @@ function SidePanelHistorySlotInner({ ctx }: { ctx: SidePanelStableContext }) {
   const live = useSidePanelLiveSnapshotForTab(activeTabId ?? '', isVisible);
   // Own remote-history state here so fetch/loading does not re-render TerminalLayer.
   const remoteHistory = useRemoteHistoryState();
+  // Gate store subscription while History is hidden so command appends do not
+  // re-render this retained mount (panel still mounts for fast reopen).
   const shellHistory = useSyncExternalStore(
-    subscribeShellHistory,
-    getShellHistorySnapshot,
-    getShellHistorySnapshot,
+    isVisible ? subscribeShellHistory : subscribeShellHistoryNoop,
+    isVisible ? getShellHistorySnapshot : getEmptyShellHistorySnapshot,
+    isVisible ? getShellHistorySnapshot : getEmptyShellHistorySnapshot,
   );
 
   const {
