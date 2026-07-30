@@ -111,14 +111,39 @@ export function buildAndWriteSessionRestorePayload({
 }
 
 /**
- * Patch only activeTabId on an already-persisted restore payload.
- * Used on top-tab switches so we avoid rebuilding/serializing every session
- * just because the active tab id changed.
+ * Decide how to persist an active-tab change without rebuilding sessions.
+ *
+ * Only the in-memory last full payload is a safe base. Disk/storage may lag
+ * behind live sessions (e.g. connect opens a session and activates its tab
+ * before the debounced full write lands) — never patch from storage alone.
+ *
+ * - full: no trusted cache → caller must rebuild from live state
+ * - noop: cache already has this activeTabId
+ * - patch: cache is trusted; only activeTabId needs updating
+ */
+export function resolveSessionRestoreActiveTabWrite({
+  activeTabId,
+  cachedPayload,
+}: {
+  activeTabId: string;
+  cachedPayload: SessionRestorePayload | null;
+}): { kind: 'full' } | { kind: 'noop' } | { kind: 'patch'; base: SessionRestorePayload } {
+  if (!cachedPayload) return { kind: 'full' };
+  if (cachedPayload.activeTabId === activeTabId) return { kind: 'noop' };
+  return { kind: 'patch', base: cachedPayload };
+}
+
+/**
+ * Patch only activeTabId on a trusted in-memory full payload.
+ * Call only after resolveSessionRestoreActiveTabWrite returns kind: 'patch'.
  *
  * Returns:
  * - 'patched' when storage was written with a new activeTabId
- * - 'unchanged' when the cached/stored activeTabId already matches
- * - 'missing' when there is no base payload to patch (caller should full-write)
+ * - 'unchanged' when the cached activeTabId already matches
+ * - 'missing' when there is no trusted base payload (caller should full-write)
+ *
+ * Intentionally does NOT fall back to storage.read() — that can pair a new
+ * activeTabId with stale sessions and corrupt restore after crash.
  */
 export function patchSessionRestoreActiveTabId({
   activeTabId,
@@ -128,23 +153,21 @@ export function patchSessionRestoreActiveTabId({
 }: {
   activeTabId: string;
   now?: number;
-  /** In-memory last full payload; preferred over storage.read() for tab clicks. */
+  /** In-memory last full payload only — never substitute disk/storage here. */
   cachedPayload: SessionRestorePayload | null;
   storage: {
-    read?(): SessionRestorePayload | null;
     write(payload: SessionRestorePayload): boolean;
   };
 }): { status: 'patched' | 'unchanged' | 'missing'; payload: SessionRestorePayload | null } {
-  const base = cachedPayload
-    ?? (typeof storage.read === 'function' ? storage.read() : null);
-  if (!base) {
+  const decision = resolveSessionRestoreActiveTabWrite({ activeTabId, cachedPayload });
+  if (decision.kind === 'full') {
     return { status: 'missing', payload: null };
   }
-  if (base.activeTabId === activeTabId) {
-    return { status: 'unchanged', payload: base };
+  if (decision.kind === 'noop') {
+    return { status: 'unchanged', payload: cachedPayload };
   }
   const next: SessionRestorePayload = {
-    ...base,
+    ...decision.base,
     activeTabId,
     savedAt: now,
   };

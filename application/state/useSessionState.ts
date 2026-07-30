@@ -350,18 +350,26 @@ export const useSessionState = ({
     };
 
     const scheduleActiveTabPatch = () => {
-      // Coalesce rapid tab clicks; never rebuild the full session tree here.
+      // Coalesce rapid tab clicks. Only patch when we hold a trusted full payload
+      // written by persistNow in this effect. Never storage.read() as a base —
+      // disk can still have pre-connect sessions while live already added a host
+      // and activated its tab (effect recreated, lastFullPayload reset to null).
       if (activeTabPatchTimeout !== undefined) {
         window.clearTimeout(activeTabPatchTimeout);
       }
       activeTabPatchTimeout = window.setTimeout(() => {
         activeTabPatchTimeout = undefined;
         const activeTabId = activeTabStore.getActiveTabId();
+        if (!lastFullPayload) {
+          // Cache empty after effect recreate or before first full write — rebuild
+          // from live sessions/workspaces (debounced with other structural persists).
+          schedulePersist();
+          return;
+        }
         const result = patchSessionRestoreActiveTabId({
           activeTabId,
           cachedPayload: lastFullPayload,
           storage: {
-            read: () => sessionRestoreStorage.read(),
             write: (payload) => {
               lastFullPayload = payload;
               return sessionRestoreStorage.write(payload);
@@ -369,8 +377,7 @@ export const useSessionState = ({
           },
         });
         if (result.status === "missing") {
-          // No base payload yet (first tab after empty) — fall back to full write.
-          persistNow();
+          schedulePersist();
         }
       }, 100);
     };

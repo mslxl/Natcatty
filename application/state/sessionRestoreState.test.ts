@@ -6,6 +6,7 @@ import {
   createInitialRestoredSessionState,
   mergeSessionRestoreCwd,
   patchSessionRestoreActiveTabId,
+  resolveSessionRestoreActiveTabWrite,
   updateRestoredSessionStatusState,
   shouldPersistSessionRestoreState,
 } from "./sessionRestoreState.ts";
@@ -152,7 +153,6 @@ test("patchSessionRestoreActiveTabId updates only activeTabId without rebuilding
       writes.push(next);
       return true;
     },
-    read: () => payload,
   };
 
   const first = patchSessionRestoreActiveTabId({
@@ -181,9 +181,72 @@ test("patchSessionRestoreActiveTabId updates only activeTabId without rebuilding
   const missing = patchSessionRestoreActiveTabId({
     activeTabId: "session-3",
     cachedPayload: null,
-    storage: { write: storage.write, read: () => null },
+    storage: { write: storage.write },
   });
   assert.equal(missing.status, "missing");
+  assert.equal(writes.length, 1);
+});
+
+test("resolveSessionRestoreActiveTabWrite forces full rebuild when cache is null", () => {
+  assert.deepEqual(
+    resolveSessionRestoreActiveTabWrite({ activeTabId: "new-tab", cachedPayload: null }),
+    { kind: "full" },
+  );
+  assert.deepEqual(
+    resolveSessionRestoreActiveTabWrite({ activeTabId: "ws-1", cachedPayload: payload }),
+    { kind: "noop" },
+  );
+  assert.deepEqual(
+    resolveSessionRestoreActiveTabWrite({ activeTabId: "session-2", cachedPayload: payload }),
+    { kind: "patch", base: payload },
+  );
+});
+
+test("null cache never patches from stale storage.read (would corrupt restore)", () => {
+  // Simulated: effect recreated after connect — lastFullPayload is null, but
+  // disk still has the pre-connect payload (missing the new session).
+  const staleOnDisk: SessionRestorePayload = {
+    ...payload,
+    sessions: [{ ...payload.sessions[0], id: "old-only" }],
+    activeTabId: "old-only",
+  };
+  let diskWrite: SessionRestorePayload | null = null;
+  const writes: SessionRestorePayload[] = [];
+
+  // Decision layer: must request full rebuild, not patch.
+  assert.equal(
+    resolveSessionRestoreActiveTabWrite({
+      activeTabId: "new-session-after-connect",
+      cachedPayload: null,
+    }).kind,
+    "full",
+  );
+
+  // Shipped patch helper must refuse to write stale sessions + new activeTabId.
+  const patched = patchSessionRestoreActiveTabId({
+    activeTabId: "new-session-after-connect",
+    now: 123,
+    cachedPayload: null,
+    storage: {
+      write: (next) => {
+        writes.push(next);
+        diskWrite = next;
+        return true;
+      },
+    },
+  });
+  assert.equal(patched.status, "missing");
+  assert.equal(writes.length, 0);
+  assert.equal(diskWrite, null);
+
+  // Contrast: if we wrongly patched from disk, restore would lose the new session.
+  const wrongBase = staleOnDisk;
+  const corrupt = {
+    ...wrongBase,
+    activeTabId: "new-session-after-connect",
+  };
+  assert.equal(corrupt.sessions.some((s) => s.id === "new-session-after-connect"), false);
+  assert.equal(corrupt.activeTabId, "new-session-after-connect");
 });
 
 test("rapid active-tab patches do not call full payload builders", async () => {
@@ -192,12 +255,14 @@ test("rapid active-tab patches do not call full payload builders", async () => {
   const { readFileSync } = await import("node:fs");
   const source = readFileSync(new URL("./sessionRestoreState.ts", import.meta.url), "utf8");
   assert.match(source, /export function patchSessionRestoreActiveTabId/);
+  assert.match(source, /export function resolveSessionRestoreActiveTabWrite/);
   assert.match(source, /activeTabId/);
-  // patch must not call buildSessionRestorePayload or walk sessions.
+  // patch must not call buildSessionRestorePayload or fall back to storage.read.
   const patchStart = source.indexOf("export function patchSessionRestoreActiveTabId");
-  const patchBody = source.slice(patchStart, patchStart + 800);
+  const patchBody = source.slice(patchStart, patchStart + 1200);
   assert.doesNotMatch(patchBody, /buildSessionRestorePayload/);
   assert.doesNotMatch(patchBody, /buildPersistableSessionRestorePayload/);
+  assert.doesNotMatch(patchBody, /storage\.read/);
 });
 
 test("session restore flush clears storage instead of writing when restore is disabled", () => {
