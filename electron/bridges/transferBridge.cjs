@@ -3214,40 +3214,92 @@ async function startTransferNow(event, payload, onProgress) {
   };
 
   /**
-   * Soft-resume stays on the live stream handle. A full SHA-256 rehash of the
-   * source (multi-GB dmg/iso) made pause→resume feel frozen. Stat size only;
-   * hard reconnect after restart still uses full fingerprint verification in
+   * Soft-resume stays on the live stream handle. Avoid full-file SHA-256 (multi-GB
+   * freeze). Detect same-size in-place rewrites with size + mtime + a short
+   * head sample; hard reconnect after restart still uses full fingerprint in
    * startTransferNow.
    */
-  transfer.quickVerifySourceForSoftResume = async () => {
-    const expected = Math.max(
-      0,
-      Number(transfer.totalBytes) || 0,
-      Number(lastObservedTotal) || 0,
-    );
-    let size = expected;
+  const SOFT_RESUME_SAMPLE_BYTES = 256 * 1024;
+  const readSourceSoftIdentity = async () => {
     if (sourceType === "local") {
       const st = await fs.promises.stat(sourcePath);
-      size = st.size;
-    } else if (sourceType === "sftp") {
+      const sampleBytes = Math.min(SOFT_RESUME_SAMPLE_BYTES, Math.max(0, st.size));
+      const sample = sampleBytes > 0
+        ? await hashLocalPrefix(sourcePath, sampleBytes, { signal: transfer.signal })
+        : null;
+      return {
+        size: st.size,
+        mtimeMs: Number.isFinite(st.mtimeMs) ? st.mtimeMs : undefined,
+        sample: sample ? `sha256:${sample}` : null,
+      };
+    }
+    if (sourceType === "sftp") {
       const client = sftpClients.get(sourceSftpId);
       if (!client) throw new Error("Source SFTP session not found");
+      let size = 0;
+      let mtimeMs;
       if (isScpModeClient(client)) {
         const st = await getScpBackendForClient(client).stat(sourcePath, {
           encoding: resolveEncodingForRequest(sourceSftpId, sourceEncoding),
           signal: transfer.signal,
         });
         size = st.size;
+        mtimeMs = Number.isFinite(st.mtimeMs) ? st.mtimeMs
+          : (Number.isFinite(st.mtime) ? st.mtime * 1000 : undefined);
       } else {
         await requireSftpChannel(client);
         const encoded = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
         const st = await client.stat(encoded);
         size = st.size;
+        // ssh2 attrs: mtime is seconds.
+        mtimeMs = Number.isFinite(st.mtimeMs) ? st.mtimeMs
+          : (Number.isFinite(st.mtime) ? st.mtime * 1000 : undefined);
       }
+      // Skip remote head samples here: open-ended SFTP reads hang on incomplete
+      // mocks and slow links. Size + mtime covers same-size rewrites that bump
+      // mtime; full SHA-256 still runs on hard reconnect.
+      return { size, mtimeMs, sample: null };
     }
-    if (expected > 0 && size !== expected) {
+    return {
+      size: Math.max(0, Number(transfer.totalBytes) || Number(lastObservedTotal) || 0),
+      mtimeMs: undefined,
+      sample: null,
+    };
+  };
+
+  transfer.captureSourceSoftIdentity = async () => {
+    try {
+      transfer.sourceSoftIdentity = await readSourceSoftIdentity();
+    } catch {
+      // Best-effort baseline for soft resume.
+    }
+  };
+
+  transfer.quickVerifySourceForSoftResume = async () => {
+    const expectedSize = Math.max(
+      0,
+      Number(transfer.sourceSoftIdentity?.size) || 0,
+      Number(transfer.totalBytes) || 0,
+      Number(lastObservedTotal) || 0,
+    );
+    const current = await readSourceSoftIdentity();
+    if (expectedSize > 0 && current.size !== expectedSize) {
       throw new Error("Resume safety check failed: the source file has changed");
     }
+    const expectedMtime = transfer.sourceSoftIdentity?.mtimeMs;
+    if (
+      Number.isFinite(expectedMtime)
+      && Number.isFinite(current.mtimeMs)
+      && current.mtimeMs !== expectedMtime
+    ) {
+      throw new Error("Resume safety check failed: the source file has changed");
+    }
+    const expectedSample = transfer.sourceSoftIdentity?.sample;
+    if (expectedSample && current.sample && current.sample !== expectedSample) {
+      throw new Error("Resume safety check failed: the source file has changed");
+    }
+    // Refresh baseline for a later pause/resume cycle in this same stream.
+    transfer.sourceSoftIdentity = current;
   };
 
   transfer.captureSourceFingerprint = () => {
@@ -3396,6 +3448,12 @@ async function startTransferNow(event, payload, onProgress) {
           fileSize = stat.size;
         }
       }
+    }
+
+    // Baseline for soft resume (size + mtime + head sample). Full SHA-256 remains
+    // for hard reconnect / crash recovery.
+    if (transfer.resumable && typeof transfer.captureSourceSoftIdentity === "function") {
+      void transfer.captureSourceSoftIdentity();
     }
 
     const sourceClient = sourceType === "sftp" ? sftpClients.get(sourceSftpId) : null;
@@ -4127,7 +4185,7 @@ function cancelQueuedTransfer(transferId) {
 
 function resumeQueuedTransfer(transferId) {
   const job = pausedAdmittedTransfers.get(transferId);
-  if (!job) return false;
+  if (!job) return null;
   pausedAdmittedTransfers.delete(transferId);
   const lifecycleEpoch = Math.max(0, Number(job.payload?.lifecycleEpoch) || 0) + 1;
   job.payload.lifecycleEpoch = lifecycleEpoch;
@@ -4137,7 +4195,8 @@ function resumeQueuedTransfer(transferId) {
   job.event?.sender?.send?.("netcatty:transfer:queued", queuedEvent);
   broadcastGlobalTransferEvent(queuedEvent);
   pumpAdmittedTransfers();
-  return true;
+  // Soft-resume must stamp this epoch; synthesizing another one freezes progress.
+  return { success: true, lifecycleEpoch };
 }
 
 function prioritizeQueuedTransfer(transferId) {
@@ -4474,7 +4533,8 @@ async function pauseTransfer(_event, payload) {
 }
 
 async function resumeTransfer(_event, payload) {
-  if (resumeQueuedTransfer(payload?.transferId)) return { success: true };
+  const queuedResume = resumeQueuedTransfer(payload?.transferId);
+  if (queuedResume) return queuedResume;
   const transfer = activeTransfers.get(payload?.transferId);
   if (!transfer) {
     return { success: false, reason: "Transfer is no longer active" };
@@ -4506,9 +4566,8 @@ async function resumeTransfer(_event, payload) {
   }
   if (transfer.resumable) {
     try {
-      // Soft resume must not re-hash multi-GB sources. Size check only; full
-      // SHA-256 remains for hard reconnect (startTransferNow). Still kick off
-      // background capture so a later crash/restart has a durable identity.
+      // Soft resume: size + mtime + head sample (not full-file SHA-256).
+      // Full fingerprint remains for hard reconnect (startTransferNow).
       if (typeof transfer.quickVerifySourceForSoftResume === "function") {
         await transfer.quickVerifySourceForSoftResume();
       } else if (transfer.verifySourceFingerprint) {
@@ -4522,7 +4581,7 @@ async function resumeTransfer(_event, payload) {
       }
       if (!transfer.sourceFingerprint) {
         void transfer.captureSourceFingerprint?.().catch(() => {
-          // Best-effort; soft resume already size-checked.
+          // Best-effort; soft resume already checked soft identity.
         });
       }
     } catch (error) {
@@ -4840,7 +4899,8 @@ function registerHandlers(ipcMain, options = {}) {
       }
     });
     ipcMain.handle("netcatty:transfer:resume", async (event, payload) => {
-      if (resumeQueuedTransfer(payload?.transferId)) return { success: true };
+      const queuedResume = resumeQueuedTransfer(payload?.transferId);
+      if (queuedResume) return queuedResume;
       const result = await workerRequest(event, "netcatty:transfer:resume", payload);
       if (result?.success) {
         const lifecycleEpoch = nextWorkerLifecycleEpoch(payload?.transferId, result.lifecycleEpoch);

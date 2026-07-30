@@ -14,6 +14,7 @@ import {
   resetDedicatedSessionOpenGateForTests,
   resumeTransferWithDedicatedSession,
   resolveDirectoryResumeTargetRoot,
+  isUsableTransferSessionId,
   resolveHostForTransferEndpoint,
   resolveResumeHosts,
   shouldSkipCompletedResumeChild,
@@ -104,6 +105,15 @@ test("resolveHostForTransferEndpoint prefers id then label", () => {
   assert.equal(resolveHostForTransferEndpoint(hosts, "missing", "gone"), null);
 });
 
+test("isUsableTransferSessionId rejects SFTP pane connection ids", () => {
+  assert.equal(isUsableTransferSessionId("term-alive"), true);
+  assert.equal(isUsableTransferSessionId("local"), false);
+  assert.equal(isUsableTransferSessionId("agent"), false);
+  assert.equal(isUsableTransferSessionId("left-abc"), false);
+  assert.equal(isUsableTransferSessionId("right-deadbeef"), false);
+  assert.equal(isUsableTransferSessionId(undefined), false);
+});
+
 test("resolveResumeHosts accepts ephemeral quick-connect hosts in the host list", () => {
   const ephemeral = {
     ...host("quick-1", "10.2.0.32", "10.2.0.32"),
@@ -130,8 +140,34 @@ test("resolveResumeHosts accepts ephemeral quick-connect hosts in the host list"
   assert.equal(resolved.ok, true);
   if (resolved.ok) {
     assert.equal(resolved.endpoints.targetHost?.id, "quick-1");
-    // Live session is always attached so hard resume can borrow the transport.
+    // Pane-style ids are not terminal sessions — only real session ids attach.
     assert.equal(resolved.endpoints.targetSessionId, "sess-1");
+  }
+});
+
+test("resolveResumeHosts ignores left-/right- pane connection ids", () => {
+  const vaultHost = host("h1", "box", "1.2.3.4");
+  const resolved = resolveResumeHosts({
+    id: "up-pane",
+    fileName: "file.bin",
+    sourcePath: "/local/file.bin",
+    targetPath: "/remote/file.bin",
+    sourceConnectionId: "local",
+    targetConnectionId: "left-not-a-terminal",
+    targetHostId: "h1",
+    targetHostLabel: "box",
+    direction: "upload",
+    status: "interrupted",
+    totalBytes: 10,
+    transferredBytes: 2,
+    speed: 0,
+    startTime: 1,
+    isDirectory: false,
+  } as TransferTask, { hosts: [vaultHost], keys: [], identities: [] });
+  assert.equal(resolved.ok, true);
+  if (resolved.ok) {
+    assert.equal(resolved.endpoints.targetHost?.id, "h1");
+    assert.equal(resolved.endpoints.targetSessionId, undefined);
   }
 });
 

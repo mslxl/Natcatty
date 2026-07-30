@@ -45,10 +45,12 @@ export function removeKeyboardInteractiveRequest<T extends KeyboardInteractiveQu
 }
 
 export function useAppStartupEffects(ctx: StartupEffectsContext) {
-  const {dismissUpdate, enabled = true, groupConfigs, hosts, identities,
+  const {dismissUpdate, enabled = true, groupConfigs, hosts, resumeHosts, identities,
     hasRuntimeTunnel, installUpdate, isVaultInitialized, keys, knownHosts, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue,
     t, terminalSettings, updateState, workspaces,
   } = ctx;
+  // Vault hosts for tray/menu; resumeHosts may include ephemeral quick-connect rows.
+  const dedicatedResumeHosts = resumeHosts ?? hosts;
   const sessionsRef = useRef(sessions);
 
   useEffect(() => {
@@ -56,9 +58,8 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
   }, [sessions]);
 
   // After app restart (or soft-resume miss), unfinished transfers reconnect via
-  // a dedicated SFTP session. `hosts` must include ephemeral quick-connect rows
-  // (terminalHosts from App) — vault-only lists break resume with
-  // "Cannot find host … in your vault".
+  // a dedicated SFTP session. Prefer resumeHosts (vault + ephemeral) so
+  // quick-connect transfers can re-auth without "Cannot find host in your vault".
   useEffect(() => {
     if (!enabled || !isVaultInitialized) {
       sftpTransferCenterStore.setDedicatedResumeHandler(null);
@@ -159,7 +160,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         return await resumeTransferWithDedicatedSession(
           task,
           {
-            hosts,
+            hosts: dedicatedResumeHosts,
             keys,
             identities,
             knownHosts,
@@ -199,7 +200,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       }
     });
     return () => sftpTransferCenterStore.setDedicatedResumeHandler(null);
-  }, [enabled, hosts, identities, isVaultInitialized, keys, knownHosts, terminalSettings]);
+  }, [dedicatedResumeHosts, enabled, identities, isVaultInitialized, keys, knownHosts, terminalSettings]);
 
   // Show toast notification when update is available (only when auto-download is idle)
   useEffect(() => {

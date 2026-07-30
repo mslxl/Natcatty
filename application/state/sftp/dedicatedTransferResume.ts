@@ -442,8 +442,15 @@ type ResolvedEndpoints = {
   resourceKeys: string[];
 };
 
-function isUsableTransferSessionId(sessionId: string | undefined): sessionId is string {
-  return !!sessionId && sessionId !== "local" && sessionId !== "agent";
+/**
+ * True for live terminal/SSH session ids that openSftpForSession can resolve.
+ * SFTP pane connection ids are `left-<uuid>` / `right-<uuid>` (createSftpConnectionId)
+ * and must not be passed to openSftpForSession.
+ */
+export function isUsableTransferSessionId(sessionId: string | undefined): sessionId is string {
+  if (!sessionId || sessionId === "local" || sessionId === "agent") return false;
+  if (/^(left|right)-/i.test(sessionId)) return false;
+  return true;
 }
 
 function missingHostError(label: string): string {
