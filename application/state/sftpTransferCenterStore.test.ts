@@ -2913,6 +2913,59 @@ test("publishOwner while latched does not raise transferredBytes after pause", a
   resetTransferPauseLatchesForTests();
 });
 
+test("soft-resume transient bridge miss stays paused without dedicated rehome", async (t) => {
+  // Regression: pause→resume was flipping "reconnecting" then stuck paused, and
+  // the SFTP panel queue lost the row because soft-fail always hard-reconnected.
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  t.after(() => {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        resumeTransfer: async () => ({
+          success: false,
+          reason: "The current file is still finishing. Try resume again.",
+        }),
+        clearPendingTransferCancel: async () => {},
+      },
+    },
+  });
+
+  const store = createSftpTransferCenterStore();
+  let dedicated = 0;
+  store.setDedicatedResumeHandler(async () => {
+    dedicated += 1;
+    return { success: false, error: "should not hard reconnect" };
+  });
+  store.registerOwner("panel-a", {
+    pause: async () => {},
+    resume: async () => {},
+    cancel: async () => {},
+    retry: async () => {},
+    prioritize: async () => {},
+    dismiss: () => {},
+    ownsTask: () => true,
+  });
+  store.publishOwner("panel-a", [{
+    ...makeTask("live-soft-miss", "paused"),
+    sourceHostId: "host-a",
+    transferredBytes: 2_000_000,
+    checkpointBytes: 2_000_000,
+    ownerId: "panel-a",
+  }]);
+
+  await store.resume("live-soft-miss");
+  const row = store.getSnapshot().tasks.find((task) => task.id === "live-soft-miss");
+  assert.equal(dedicated, 0, "must not rehome to dedicated-resume for transient soft-miss");
+  assert.equal(row?.status, "paused");
+  assert.equal(row?.ownerId, "panel-a", "panel queue must keep the task");
+  assert.equal(row?.reconnectRequired, false);
+  assert.match(row?.error || "", /still finishing/i);
+});
+
 test("soft-resume failure demotes and uses dedicated handler even with a live owner", async (t) => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
   t.after(() => {

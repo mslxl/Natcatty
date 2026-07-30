@@ -436,26 +436,50 @@ type ResolvedEndpoints = {
   isRemoteToRemote: boolean;
   sourceHost: Host | null;
   targetHost: Host | null;
+  /** Live terminal/SFTP session to borrow when vault/ephemeral host is missing. */
+  sourceSessionId?: string;
+  targetSessionId?: string;
   resourceKeys: string[];
 };
 
-function resolveResumeHosts(
+function isUsableTransferSessionId(sessionId: string | undefined): sessionId is string {
+  return !!sessionId && sessionId !== "local" && sessionId !== "agent";
+}
+
+function missingHostError(label: string): string {
+  return `Cannot find host "${label}" in your vault. Re-add the host or start a new transfer.`;
+}
+
+/**
+ * Resolve remote endpoints for hard reconnect.
+ *
+ * Prefer vault/ephemeral host credentials **and** always attach any still-live
+ * terminal/SFTP connection ids so open can borrow the shared SSH transport
+ * instead of forcing a second full dial. When the host is missing entirely
+ * (quick-connect without save), session id alone is enough to reopen a channel.
+ */
+export function resolveResumeHosts(
   task: TransferTask,
   deps: DedicatedResumeDeps,
 ): { ok: true; endpoints: ResolvedEndpoints } | { ok: false; error: string } {
   const kind = classifyDedicatedResumeEndpoints(task);
+  // Prefer live sessions even when the host is known — hard resume should
+  // reuse the open terminal transport (openSftpForSession / parked registry).
+  const liveSourceSessionId = isUsableTransferSessionId(task.sourceConnectionId)
+    ? task.sourceConnectionId
+    : undefined;
+  const liveTargetSessionId = isUsableTransferSessionId(task.targetConnectionId)
+    ? task.targetConnectionId
+    : undefined;
 
   if (kind.isRemoteToRemote) {
     const sourceHost = resolveHostForTransferEndpoint(deps.hosts, task.sourceHostId, task.sourceHostLabel);
     const targetHost = resolveHostForTransferEndpoint(deps.hosts, task.targetHostId, task.targetHostLabel);
-    if (!sourceHost || !targetHost) {
-      const missing = !sourceHost
+    if ((!sourceHost && !liveSourceSessionId) || (!targetHost && !liveTargetSessionId)) {
+      const missing = !sourceHost && !liveSourceSessionId
         ? (task.sourceHostLabel || task.sourceHostId || "source")
         : (task.targetHostLabel || task.targetHostId || "target");
-      return {
-        ok: false,
-        error: `Cannot find host "${missing}" in your vault. Re-add the host or start a new transfer.`,
-      };
+      return { ok: false, error: missingHostError(missing) };
     }
     return {
       ok: true,
@@ -463,9 +487,11 @@ function resolveResumeHosts(
         ...kind,
         sourceHost,
         targetHost,
+        sourceSessionId: liveSourceSessionId,
+        targetSessionId: liveTargetSessionId,
         resourceKeys: getSftpTransferResourceKeys({
-          sourceHostId: sourceHost.id,
-          targetHostId: targetHost.id,
+          sourceHostId: sourceHost?.id ?? task.sourceHostId,
+          targetHostId: targetHost?.id ?? task.targetHostId,
         }),
       },
     };
@@ -481,15 +507,13 @@ function resolveResumeHosts(
   const remoteHost = kind.isDownload
     ? resolveHostForTransferEndpoint(deps.hosts, task.sourceHostId, task.sourceHostLabel)
     : resolveHostForTransferEndpoint(deps.hosts, task.targetHostId, task.targetHostLabel);
+  const remoteSessionId = kind.isDownload ? liveSourceSessionId : liveTargetSessionId;
 
-  if (!remoteHost) {
+  if (!remoteHost && !remoteSessionId) {
     const label = kind.isDownload
       ? (task.sourceHostLabel || task.sourceHostId || "source")
       : (task.targetHostLabel || task.targetHostId || "target");
-    return {
-      ok: false,
-      error: `Cannot find host "${label}" in your vault. Re-add the host or start a new transfer.`,
-    };
+    return { ok: false, error: missingHostError(label) };
   }
 
   return {
@@ -498,34 +522,86 @@ function resolveResumeHosts(
       ...kind,
       sourceHost: kind.isDownload ? remoteHost : null,
       targetHost: kind.isUpload ? remoteHost : null,
+      sourceSessionId: kind.isDownload ? remoteSessionId : undefined,
+      targetSessionId: kind.isUpload ? remoteSessionId : undefined,
       resourceKeys: getSftpTransferResourceKeys({
-        sourceHostId: kind.isDownload ? remoteHost.id : undefined,
-        targetHostId: kind.isUpload ? remoteHost.id : undefined,
+        sourceHostId: kind.isDownload ? (remoteHost?.id ?? task.sourceHostId) : undefined,
+        targetHostId: kind.isUpload ? (remoteHost?.id ?? task.targetHostId) : undefined,
       }),
     },
   };
+}
+
+async function openSessionBackedSftp(sessionId: string): Promise<string> {
+  const bridge = netcattyBridge.get();
+  if (!bridge?.openSftpForSession) {
+    throw new Error("Session-backed SFTP open is unavailable");
+  }
+  const sftpId = await bridge.openSftpForSession(sessionId);
+  if (!sftpId) throw new Error("Could not open SFTP on the existing server session");
+  return sftpId;
+}
+
+/**
+ * Open a hard-reconnect SFTP channel the same way the transfer pool does:
+ * prefer a live terminal session, otherwise open with transport reuse so we
+ * attach to a parked/shared SSH conn instead of a cold dedicated dial.
+ */
+async function openRemoteEndpoint(
+  host: Host | null,
+  sessionId: string | undefined,
+  deps: DedicatedResumeDeps,
+): Promise<string> {
+  if (host) {
+    return openTransferSftpSession(host, deps, {
+      dedicated: false,
+      sourceSessionId: sessionId,
+    });
+  }
+  if (sessionId) return openSessionBackedSftp(sessionId);
+  throw new Error("No remote host or session for dedicated resume");
 }
 
 async function openEndpointSessions(
   endpoints: ResolvedEndpoints,
   deps: DedicatedResumeDeps,
 ): Promise<{ sourceSftpId?: string; targetSftpId?: string }> {
-  if (endpoints.isRemoteToRemote && endpoints.sourceHost && endpoints.targetHost) {
+  if (endpoints.isRemoteToRemote) {
     // Open sequentially under the open-slot gate so we never hold 2×N dials.
-    const sourceSftpId = await openTransferSftpSession(endpoints.sourceHost, deps);
+    const sourceSftpId = await openRemoteEndpoint(
+      endpoints.sourceHost,
+      endpoints.sourceSessionId,
+      deps,
+    );
     try {
-      const targetSftpId = await openTransferSftpSession(endpoints.targetHost, deps);
+      const targetSftpId = await openRemoteEndpoint(
+        endpoints.targetHost,
+        endpoints.targetSessionId,
+        deps,
+      );
       return { sourceSftpId, targetSftpId };
     } catch (error) {
       await closeDedicatedSftpSession(sourceSftpId);
       throw error;
     }
   }
-  if (endpoints.isDownload && endpoints.sourceHost) {
-    return { sourceSftpId: await openTransferSftpSession(endpoints.sourceHost, deps) };
+  if (endpoints.isDownload) {
+    return {
+      sourceSftpId: await openRemoteEndpoint(
+        endpoints.sourceHost,
+        endpoints.sourceSessionId,
+        deps,
+      ),
+    };
   }
-  if (endpoints.isUpload && endpoints.targetHost) {
-    return { targetSftpId: await openTransferSftpSession(endpoints.targetHost, deps) };
+  if (endpoints.isUpload) {
+    return {
+      targetSftpId: await openRemoteEndpoint(
+        endpoints.targetHost,
+        endpoints.targetSessionId,
+        deps,
+      ),
+    };
   }
   throw new Error("No remote host for dedicated resume");
 }

@@ -55,8 +55,10 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     sessionsRef.current = sessions;
   }, [sessions]);
 
-  // After app restart, unfinished transfers resume via a dedicated SFTP session
-  // built from vault credentials — no dependency on the original browse panel.
+  // After app restart (or soft-resume miss), unfinished transfers reconnect via
+  // a dedicated SFTP session. `hosts` must include ephemeral quick-connect rows
+  // (terminalHosts from App) — vault-only lists break resume with
+  // "Cannot find host … in your vault".
   useEffect(() => {
     if (!enabled || !isVaultInitialized) {
       sftpTransferCenterStore.setDedicatedResumeHandler(null);

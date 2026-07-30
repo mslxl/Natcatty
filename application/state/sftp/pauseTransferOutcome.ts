@@ -18,6 +18,15 @@ export function isBenignPauseMiss(reason?: string): boolean {
   return /no longer active|not found|session/i.test(reason || "");
 }
 
+/**
+ * Bridge reports the live stream is gone. For a single top-level file this is
+ * not a successful pause — Resume must hard-reconnect rather than soft-unpause
+ * a dead row painted as "paused".
+ */
+export function isDeadTransferPauseMiss(reason?: string): boolean {
+  return /no longer active|not found/i.test(reason || "");
+}
+
 export function isHardPauseFailure(result: PauseBridgeResult | undefined): boolean {
   if (!result) return true;
   if (result.success) return false;
@@ -33,6 +42,14 @@ export function allPauseResultsBenignOrSuccess(
 ): boolean {
   if (results.length === 0) return true;
   return results.every((result) => result.success || isBenignPauseMiss(result.reason));
+}
+
+/** True when every bridge pause miss means the stream is already dead. */
+export function allPauseResultsDeadTransfer(
+  results: readonly PauseBridgeResult[],
+): boolean {
+  if (results.length === 0) return false;
+  return results.every((result) => !result.success && isDeadTransferPauseMiss(result.reason));
 }
 
 export type DirectoryPauseParentOutcome =

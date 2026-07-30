@@ -15,6 +15,7 @@ import {
   resumeTransferWithDedicatedSession,
   resolveDirectoryResumeTargetRoot,
   resolveHostForTransferEndpoint,
+  resolveResumeHosts,
   shouldSkipCompletedResumeChild,
   withDedicatedSessionOpenSlot,
 } from "./dedicatedTransferResume";
@@ -101,6 +102,242 @@ test("resolveHostForTransferEndpoint prefers id then label", () => {
   assert.equal(resolveHostForTransferEndpoint(hosts, "missing", "CI-Build-01")?.id, "id-1");
   assert.equal(resolveHostForTransferEndpoint(hosts, undefined, "ci-01.example")?.id, "id-1");
   assert.equal(resolveHostForTransferEndpoint(hosts, "missing", "gone"), null);
+});
+
+test("resolveResumeHosts accepts ephemeral quick-connect hosts in the host list", () => {
+  const ephemeral = {
+    ...host("quick-1", "10.2.0.32", "10.2.0.32"),
+    ephemeral: true,
+    password: "secret",
+  } as Host;
+  const resolved = resolveResumeHosts({
+    id: "up-1",
+    fileName: "ChatGPT.dmg",
+    sourcePath: "/local/ChatGPT.dmg",
+    targetPath: "/remote/ChatGPT.dmg",
+    sourceConnectionId: "local",
+    targetConnectionId: "sess-1",
+    targetHostId: "quick-1",
+    targetHostLabel: "10.2.0.32",
+    direction: "upload",
+    status: "paused",
+    totalBytes: 100,
+    transferredBytes: 1,
+    speed: 0,
+    startTime: 1,
+    isDirectory: false,
+  } as TransferTask, { hosts: [ephemeral], keys: [], identities: [] });
+  assert.equal(resolved.ok, true);
+  if (resolved.ok) {
+    assert.equal(resolved.endpoints.targetHost?.id, "quick-1");
+    // Live session is always attached so hard resume can borrow the transport.
+    assert.equal(resolved.endpoints.targetSessionId, "sess-1");
+  }
+});
+
+test("resolveResumeHosts prefers attaching live session even when vault host exists", () => {
+  const vaultHost = host("h1", "box", "1.2.3.4");
+  const resolved = resolveResumeHosts({
+    id: "up-shared",
+    fileName: "file.bin",
+    sourcePath: "/local/file.bin",
+    targetPath: "/remote/file.bin",
+    sourceConnectionId: "local",
+    targetConnectionId: "term-live",
+    targetHostId: "h1",
+    targetHostLabel: "box",
+    direction: "upload",
+    status: "interrupted",
+    totalBytes: 10,
+    transferredBytes: 2,
+    speed: 0,
+    startTime: 1,
+    isDirectory: false,
+  } as TransferTask, { hosts: [vaultHost], keys: [], identities: [] });
+  assert.equal(resolved.ok, true);
+  if (resolved.ok) {
+    assert.equal(resolved.endpoints.targetHost?.id, "h1");
+    assert.equal(resolved.endpoints.targetSessionId, "term-live");
+  }
+});
+
+test("resolveResumeHosts falls back to a live session when vault host is missing", () => {
+  const resolved = resolveResumeHosts({
+    id: "up-2",
+    fileName: "ChatGPT.dmg",
+    sourcePath: "/local/ChatGPT.dmg",
+    targetPath: "/remote/ChatGPT.dmg",
+    sourceConnectionId: "local",
+    targetConnectionId: "sess-live",
+    targetHostId: "quick-missing",
+    targetHostLabel: "10.2.0.32",
+    direction: "upload",
+    status: "paused",
+    totalBytes: 100,
+    transferredBytes: 1,
+    speed: 0,
+    startTime: 1,
+    isDirectory: false,
+  } as TransferTask, { hosts: [], keys: [], identities: [] });
+  assert.equal(resolved.ok, true);
+  if (resolved.ok) {
+    assert.equal(resolved.endpoints.targetHost, null);
+    assert.equal(resolved.endpoints.targetSessionId, "sess-live");
+  }
+});
+
+test("resolveResumeHosts errors when neither vault host nor live session exists", () => {
+  const resolved = resolveResumeHosts({
+    id: "up-3",
+    fileName: "ChatGPT.dmg",
+    sourcePath: "/local/ChatGPT.dmg",
+    targetPath: "/remote/ChatGPT.dmg",
+    sourceConnectionId: "local",
+    targetConnectionId: "local",
+    targetHostId: "gone",
+    targetHostLabel: "10.2.0.32",
+    direction: "upload",
+    status: "paused",
+    totalBytes: 100,
+    transferredBytes: 1,
+    speed: 0,
+    startTime: 1,
+    isDirectory: false,
+  } as TransferTask, { hosts: [], keys: [], identities: [] });
+  assert.equal(resolved.ok, false);
+  if (!resolved.ok) {
+    assert.match(resolved.error, /Cannot find host "10\.2\.0\.32"/);
+  }
+});
+
+test("dedicated resume of quick-connect host uses session when vault list is empty", async (t) => {
+  resetDedicatedSessionOpenGateForTests();
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => "2", setItem: () => {}, removeItem: () => {} },
+  });
+  t.after(() => {
+    if (previousLocalStorage) Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  });
+  const originalGet = netcattyBridge.get;
+  let openedSession: string | undefined;
+  let startOptions: Record<string, unknown> | undefined;
+  (netcattyBridge as { get: () => unknown }).get = () => ({
+    openSftp: async () => {
+      throw new Error("must not dial vault for missing host");
+    },
+    openSftpForSession: async (sessionId: string) => {
+      openedSession = sessionId;
+      return "session-sftp";
+    },
+    closeSftp: async () => {},
+    statLocal: async () => ({ size: 100, lastModified: 123 }),
+    startStreamTransfer: async (options: Record<string, unknown>) => {
+      startOptions = options;
+      return { transferId: "qc-resume" };
+    },
+  });
+  try {
+    const result = await resumeTransferWithDedicatedSession({
+      id: "qc-resume",
+      fileName: "ChatGPT.dmg",
+      sourcePath: "/local/ChatGPT.dmg",
+      targetPath: "/remote/ChatGPT.dmg",
+      sourceConnectionId: "local",
+      targetConnectionId: "term-sess-1",
+      targetHostId: "quick-1",
+      targetHostLabel: "10.2.0.32",
+      direction: "upload",
+      status: "paused",
+      totalBytes: 100,
+      transferredBytes: 4,
+      checkpointBytes: 4,
+      speed: 0,
+      startTime: 1,
+      isDirectory: false,
+      reconnectRequired: true,
+    }, {
+      hosts: [],
+      keys: [],
+      identities: [],
+    });
+    assert.equal(result.success, true, result.error);
+    assert.equal(openedSession, "term-sess-1");
+    assert.equal(startOptions?.targetSftpId, "session-sftp");
+    assert.equal(startOptions?.checkpointBytes, 4);
+  } finally {
+    (netcattyBridge as { get: typeof originalGet }).get = originalGet;
+    resetDedicatedSessionOpenGateForTests();
+  }
+});
+
+test("hard resume with vault host + live session reuses session transport (not cold dedicated dial)", async (t) => {
+  resetDedicatedSessionOpenGateForTests();
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => "2", setItem: () => {}, removeItem: () => {} },
+  });
+  t.after(() => {
+    if (previousLocalStorage) Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  });
+  const originalGet = netcattyBridge.get;
+  let openSftpCalls = 0;
+  let openForSessionCalls = 0;
+  let openSftpOpts: { reuseTransport?: boolean } | undefined;
+  (netcattyBridge as { get: () => unknown }).get = () => ({
+    openSftp: async (options: { reuseTransport?: boolean }) => {
+      openSftpCalls += 1;
+      openSftpOpts = options;
+      return "unexpected-cold-sftp";
+    },
+    openSftpForSession: async (sessionId: string) => {
+      openForSessionCalls += 1;
+      assert.equal(sessionId, "term-alive");
+      return "shared-sftp";
+    },
+    closeSftp: async () => {},
+    statLocal: async () => ({ size: 50, lastModified: 1 }),
+    startStreamTransfer: async (options: { targetSftpId?: string }) => {
+      assert.equal(options.targetSftpId, "shared-sftp");
+      return { transferId: "shared-resume" };
+    },
+  });
+  try {
+    const result = await resumeTransferWithDedicatedSession({
+      id: "shared-resume",
+      fileName: "file.bin",
+      sourcePath: "/local/file.bin",
+      targetPath: "/remote/file.bin",
+      sourceConnectionId: "local",
+      targetConnectionId: "term-alive",
+      targetHostId: "h1",
+      targetHostLabel: "box",
+      direction: "upload",
+      status: "interrupted",
+      totalBytes: 50,
+      transferredBytes: 10,
+      checkpointBytes: 10,
+      speed: 0,
+      startTime: 1,
+      isDirectory: false,
+      reconnectRequired: true,
+    }, {
+      hosts: [host("h1", "box", "1.2.3.4")],
+      keys: [],
+      identities: [],
+    });
+    assert.equal(result.success, true, result.error);
+    assert.equal(openForSessionCalls, 1, "must open on the live terminal transport");
+    assert.equal(openSftpCalls, 0, "must not cold-dial a dedicated SSH connection");
+    assert.equal(openSftpOpts, undefined);
+  } finally {
+    (netcattyBridge as { get: typeof originalGet }).get = originalGet;
+    resetDedicatedSessionOpenGateForTests();
+  }
 });
 
 test("classifyDedicatedResumeEndpoints detects download, upload, and remote-to-remote", () => {

@@ -10,7 +10,11 @@
 import type { TransferTask } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { globalSftpTransferScheduler } from "./globalTransferScheduler";
-import { isBenignPauseMiss, planPartialPauseRollback } from "./pauseTransferOutcome";
+import {
+  allPauseResultsDeadTransfer,
+  isBenignPauseMiss,
+  planPartialPauseRollback,
+} from "./pauseTransferOutcome";
 import {
   bumpTransferControlEpoch,
   isTransferControlEpochCurrent,
@@ -272,6 +276,7 @@ export async function softPauseTransfer(
     }
     return "noop";
   }
+  const bridgePauseResults = pauseResults.map((row) => row.result);
   const allBenignOrSuccess = backendIds.length === 0 || pauseResults.every(
     ({ result }) => result.success || isBenignPauseMiss(result.reason),
   );
@@ -283,6 +288,33 @@ export async function softPauseTransfer(
         }
       }
       return "noop";
+    }
+    // Dead stream painted as "paused" made Resume soft-fail and fall into
+    // dedicated vault reconnect — which cannot resolve quick-connect hosts.
+    if (allPauseResultsDeadTransfer(bridgePauseResults)) {
+      releaseTransferPauseTree(taskId, childIds);
+      for (const id of [taskId, ...childIds]) {
+        try { globalSftpTransferScheduler.resume(id); } catch { /* best-effort */ }
+      }
+      const deadReason = pauseResults.find(({ result }) => result?.reason)?.result?.reason
+        ?? "Transfer is no longer active";
+      host.setTasks(host.getTasks().map((candidate) => (
+        candidate.id === taskId || candidate.parentTaskId === taskId
+          ? {
+            ...candidate,
+            status: (["completed", "cancelled"].includes(candidate.status)
+              ? candidate.status
+              : "interrupted") as TransferTask["status"],
+            speed: 0,
+            phase: undefined,
+            reconnectRequired: true,
+            error: candidate.id === taskId
+              ? (candidate.error ?? `${deadReason}. Resume will reconnect.`)
+              : candidate.error,
+          }
+          : candidate
+      )));
+      return "interrupted";
     }
     const byId = new Map(pauseResults.map((row) => [row.id, row.result]));
     const bridgeEpoch = maxBridgeLifecycleEpoch(pauseResults.map((row) => row.result));
@@ -356,8 +388,15 @@ export async function softPauseTransfer(
   return "noop";
 }
 
+export type SoftResumeResult = {
+  /** True when soft-resume rejoined without dedicated hard reconnect. */
+  handled: boolean;
+  /** Bridge miss reason when handled is false (drives demotion policy). */
+  reason?: string;
+};
+
 /**
- * Soft-resume a live transfer. Returns true when handled without dedicated reconnect.
+ * Soft-resume a live transfer.
  *
  * Single-file: requires at least one successful bridge resume (walkAlive alone is
  * not enough — a paused/dead stream with a live walk would paint transferring and
@@ -366,14 +405,16 @@ export async function softPauseTransfer(
  *
  * task.lifecycleEpoch follows bridge epochs only (never control-plane bumps), so
  * main-process progress ingest is not stale-dropped after soft pause/resume.
+ * Soft-resume must stamp a real bridge epoch (or keep the previous one) — never
+ * clear to `undefined`, or a late pause event re-applies "paused".
  */
 export async function softResumeTransfer(
   host: TransferControlHost,
   taskId: string,
-): Promise<boolean> {
+): Promise<SoftResumeResult> {
   const tasks = host.getTasks();
   const task = tasks.find((candidate) => candidate.id === taskId);
-  if (!task) return false;
+  if (!task) return { handled: false, reason: "Transfer not found" };
 
   const childIds = unfinishedChildren(tasks, taskId);
   // Always release the full tree known to the store so orphaned child latches
@@ -398,10 +439,10 @@ export async function softResumeTransfer(
 
   const resumeIds = treeIds.length > 0 ? treeIds : [taskId];
   const results = await Promise.all(resumeIds.map(async (id) =>
-    bridge?.resumeTransfer?.(id) ?? { success: false },
+    bridge?.resumeTransfer?.(id) ?? { success: false, reason: "Resume unavailable" },
   ));
   const after = host.getTasks().find((candidate) => candidate.id === taskId);
-  if (after?.status === "cancelled") return true;
+  if (after?.status === "cancelled") return { handled: true };
 
   const successIds = resumeIds.filter((_, index) => results[index]?.success);
   const walkAlive = isTransferWalkInFlight(taskId);
@@ -417,9 +458,11 @@ export async function softResumeTransfer(
         // Clear any control-plane / stale pause epoch so child stream progress is accepted.
         null,
       ));
-      return true;
+      return { handled: true };
     }
-    return false;
+    const reason = results.find((row) => row?.reason)?.reason
+      ?? "Transfer is no longer active";
+    return { handled: false, reason };
   }
 
   const resumed = new Set(successIds);
@@ -448,8 +491,14 @@ export async function softResumeTransfer(
       return candidate;
     }
 
-    // Parent: transferring; stamp only a real bridge epoch (or clear).
+    // Parent: transferring. Prefer bridge epoch; never wipe to undefined or a
+    // late pause fanout re-applies "paused" (acceptsLifecycle treats missing as any).
     if (candidate.id === taskId) {
+      const nextEpoch = parentBridgeEpoch !== undefined
+        ? parentBridgeEpoch
+        : (Number.isFinite(candidate.lifecycleEpoch)
+          ? Math.max(0, candidate.lifecycleEpoch as number) + 1
+          : 1);
       return {
         ...candidate,
         status: "transferring" as const,
@@ -458,12 +507,18 @@ export async function softResumeTransfer(
         pauseUnavailableReason: undefined,
         phase: undefined,
         speed: 0,
-        lifecycleEpoch: parentBridgeEpoch,
+        lifecycleEpoch: nextEpoch,
       };
     }
 
     // Bridge-resumed children only: use their own stream epoch when present.
     if (resumed.has(candidate.id)) {
+      const childEpoch = bridgeEpochById.get(candidate.id);
+      const nextEpoch = childEpoch !== undefined
+        ? childEpoch
+        : (Number.isFinite(candidate.lifecycleEpoch)
+          ? Math.max(0, candidate.lifecycleEpoch as number) + 1
+          : 1);
       return {
         ...candidate,
         status: "transferring" as const,
@@ -472,7 +527,7 @@ export async function softResumeTransfer(
         pauseUnavailableReason: undefined,
         phase: undefined,
         speed: 0,
-        lifecycleEpoch: bridgeEpochById.get(candidate.id),
+        lifecycleEpoch: nextEpoch,
       };
     }
 
@@ -495,7 +550,7 @@ export async function softResumeTransfer(
       lifecycleEpoch: undefined,
     };
   }));
-  return true;
+  return { handled: true };
 }
 
 /** Default bridge accessor for Electron / tests with window.netcatty. */

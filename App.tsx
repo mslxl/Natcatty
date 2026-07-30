@@ -702,7 +702,9 @@ function App({ settings }: { settings: SettingsState }) {
   const _handleGlobalHotkeyKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleGlobalHotkeyKeyDownImpl(() => ({ HOTKEY_DEBUG, closeTabKeyStr, e, executeHotkeyAction, hotkeyScheme, keyBindings, matchesKeyBinding }), e); });
   const _handleEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleEscapeKeyDownImpl(() => ({ e, isQuickSwitcherOpen, setIsQuickSwitcherOpen }), e); });
 
-  useAppStartupEffects({ dismissUpdate, enabled: !isPeerSessionWindow, groupConfigs, hasRuntimeTunnel, hosts, identities, installUpdate, isVaultInitialized, keys, knownHosts: effectiveKnownHosts, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue, t, terminalSettings, updateState, workspaces });
+  // Include ephemeral quick-connect / deep-link hosts (terminalHosts) so
+  // dedicated transfer resume can re-auth without "Cannot find host in your vault".
+  useAppStartupEffects({ dismissUpdate, enabled: !isPeerSessionWindow, groupConfigs, hasRuntimeTunnel, hosts: terminalHosts, identities, installUpdate, isVaultInitialized, keys, knownHosts: effectiveKnownHosts, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue, t, terminalSettings, updateState, workspaces });
 
   useEffect(() => {
     if (isPeerSessionWindow) return;
