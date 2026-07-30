@@ -571,14 +571,13 @@ test("host tree toggle is hidden on root pages", () => {
   }), false);
 });
 
-test("TopTabs merges presentation store into orphanSessionMap and sessions", () => {
-  assert.match(topTabsSource, /applySessionPresentation/);
-  assert.match(topTabsSource, /sessionPresentationStore\.subscribe/);
-  assert.match(topTabsSource, /presentationVersion/);
-  assert.ok(
-    topTabsSource.includes("map.set(s.id, applySessionPresentation(s))"),
-    "orphanSessionMap must overlay store presentation like sessions",
-  );
+test("TopTabs applies presentation per session tab, not via global version fan-out", () => {
+  // Global presentationVersion remapping was removed to stop sibling title
+  // thrash from re-rendering the whole tab bar.
+  assert.doesNotMatch(topTabsSource, /presentationVersion/);
+  assert.doesNotMatch(topTabsSource, /sessionPresentationStore\.subscribe/);
+  const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
+  assert.match(topTabItemsSource, /usePresentedSession/);
 });
 
 test("topTabsAreEqual tracks editorTabs for dirty chrome", () => {

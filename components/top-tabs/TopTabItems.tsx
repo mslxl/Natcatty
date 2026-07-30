@@ -5,6 +5,7 @@ import {
   useAnySessionActivity,
   useSessionActivity,
 } from '../../application/state/sessionActivityStore';
+import { usePresentedSession } from '../../application/state/sessionPresentationStore';
 import {
   useEditorTabDirty,
   type EditorTabChrome,
@@ -689,7 +690,7 @@ interface SessionTopTabProps {
 }
 
 export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
-  session,
+  session: sessionProp,
   host,
   isBeingDragged,
   isDraggingForReorder,
@@ -710,6 +711,8 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   t,
   tabAnimationClass,
 }) => {
+  // Per-session presentation: sibling title/provider updates do not re-render this tab.
+  const session = usePresentedSession(sessionProp);
   const isActive = useIsTabActive(session.id);
   // Per-session store snapshot so sibling activity dots do not re-render this tab.
   const hasActivity = useSessionActivity(session.id);

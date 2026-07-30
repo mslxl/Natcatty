@@ -1,11 +1,26 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { memo } from 'react';
+import React, { memo, useSyncExternalStore } from 'react';
 
+import {
+  getSidePanelLiveSnapshot,
+  sidePanelLiveStore,
+} from '../../application/state/sidePanelLiveStore';
 import { terminalLayerWorkspaceCtxEqual } from './terminalLayerViewMemo';
 
 type WorkspaceContext = Record<string, any>;
 
 function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) {
+  // Active workspace / focused session come from the live store so top-tab
+  // switches do not force a TerminalLayerView ctx rebuild just to flip them.
+  // Panes already derive visibility from activeTabStore themselves.
+  const live = useSyncExternalStore(
+    sidePanelLiveStore.subscribe,
+    sidePanelLiveStore.getSnapshot,
+    () => getSidePanelLiveSnapshot(false),
+  );
+  const activeWorkspace = live.activeWorkspace ?? ctx.activeWorkspace;
+  const focusedSessionId = live.focusedSessionId ?? ctx.focusedSessionId;
+
   const {
     workspaceInnerRef,
     workspaceOverlayRef,
@@ -81,10 +96,8 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     handleProgrammaticCommandLogRewriteChange,
     handleAddSelectionToAI,
     activeResizers,
-    activeWorkspace,
     composeBarThemeColors,
     findSplitNode,
-    focusedSessionId,
     handleComposeSend,
     handleSnippetFromPanel,
     refocusTerminalSession,

@@ -5,6 +5,7 @@ import {
   buildAndWriteSessionRestorePayload,
   createInitialRestoredSessionState,
   mergeSessionRestoreCwd,
+  patchSessionRestoreActiveTabId,
   updateRestoredSessionStatusState,
   shouldPersistSessionRestoreState,
 } from "./sessionRestoreState.ts";
@@ -142,6 +143,61 @@ test("session restore flush writes through the same sanitized payload path", () 
   assert.equal("terminalData" in writes[0].sessions[0], false);
   assert.equal("transientPanelState" in writes[0].workspaces[0], false);
   assert.equal(writes[0].savedAt, 42);
+});
+
+test("patchSessionRestoreActiveTabId updates only activeTabId without rebuilding sessions", () => {
+  const writes: SessionRestorePayload[] = [];
+  const storage = {
+    write: (next: SessionRestorePayload) => {
+      writes.push(next);
+      return true;
+    },
+    read: () => payload,
+  };
+
+  const first = patchSessionRestoreActiveTabId({
+    activeTabId: "session-2",
+    now: 99,
+    cachedPayload: payload,
+    storage,
+  });
+  assert.equal(first.status, "patched");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].activeTabId, "session-2");
+  assert.equal(writes[0].savedAt, 99);
+  // Sessions array identity preserved (no rebuild from live app state).
+  assert.equal(writes[0].sessions, payload.sessions);
+  assert.equal(writes[0].workspaces, payload.workspaces);
+
+  const second = patchSessionRestoreActiveTabId({
+    activeTabId: "session-2",
+    now: 100,
+    cachedPayload: writes[0],
+    storage,
+  });
+  assert.equal(second.status, "unchanged");
+  assert.equal(writes.length, 1);
+
+  const missing = patchSessionRestoreActiveTabId({
+    activeTabId: "session-3",
+    cachedPayload: null,
+    storage: { write: storage.write, read: () => null },
+  });
+  assert.equal(missing.status, "missing");
+});
+
+test("rapid active-tab patches do not call full payload builders", async () => {
+  // Structural: patch path only spreads the cached payload; full builds go
+  // through buildAndWriteSessionRestorePayload / buildPersistableSessionRestorePayload.
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./sessionRestoreState.ts", import.meta.url), "utf8");
+  assert.match(source, /export function patchSessionRestoreActiveTabId/);
+  assert.match(source, /activeTabId/);
+  // patch must not call buildSessionRestorePayload or walk sessions.
+  const patchStart = source.indexOf("export function patchSessionRestoreActiveTabId");
+  const patchBody = source.slice(patchStart, patchStart + 800);
+  assert.doesNotMatch(patchBody, /buildSessionRestorePayload/);
+  assert.doesNotMatch(patchBody, /buildPersistableSessionRestorePayload/);
 });
 
 test("session restore flush clears storage instead of writing when restore is disabled", () => {

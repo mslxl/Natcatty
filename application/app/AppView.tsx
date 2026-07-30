@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
-import { activeTabStore, toEditorTabId, useActiveTabId, useIsEditorTabActive } from '../state/activeTabStore';
+import { activeTabStore, toEditorTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from '../state/editorTabSave';
 import { useTerminalHostTreeLayoutWidth } from '../state/terminalHostTreeStore';
@@ -22,18 +22,16 @@ import { LazyLoadBoundary } from '../../components/ui/lazy-load-boundary';
 import { toast } from '../../components/ui/toast';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { AppHostEditorLayer } from './AppHostEditorLayer';
+import { AppPluginKeybindingHost } from './AppPluginKeybindingHost';
 import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
 import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
-import { PluginContributionHost } from '../../components/plugins/PluginContributionHost';
-import { resolveActivePluginKeybindingContext } from '../state/pluginContributionContexts';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabStore';
 import { buildPluginSettingScopeCatalog } from '../state/usePluginSettingScopeCatalog';
 import { useWorkSurfaceHostEditor } from '../state/useWorkSurfaceHostEditor';
-import { isHostTreeWorkTabSurface } from './workTabSurface';
 import {
   appViewDomainsEqual,
   mergeAppViewDomains,
@@ -72,7 +70,9 @@ export type AppViewProps = {
 };
 
 function AppViewInner({ domains }: AppViewProps) {
-  const activeTabId = useActiveTabId();
+  // Intentionally does NOT subscribe to activeTabId — leaf surfaces
+  // (TopTabs items, mounts, host tree, chrome, plugin keybindings) own that
+  // subscription so top-tab switches do not rebuild the App shell.
   const pluginViewTabs = usePluginViewTabs();
   // Merge domain slices once per AppView render. AppView only re-renders when a
   // domain slice identity changes (see appViewDomainsEqual). Depend on the
@@ -173,11 +173,6 @@ function AppViewInner({ domains }: AppViewProps) {
     } as React.CSSProperties;
   }, [accentMode, customAccent, resolvedTheme, settings.darkUiThemeId, settings.lightUiThemeId]);
 
-  const pluginKeybindingContext = useMemo(() => resolveActivePluginKeybindingContext({
-    activeTabId,
-    sessions,
-    workspaces,
-  }), [activeTabId, sessions, workspaces]);
   const pluginThemeTokens = useMemo(
     () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
     [appThemeStyle],
@@ -195,14 +190,6 @@ function AppViewInner({ domains }: AppViewProps) {
     onUpdateHosts: updateHosts,
     onSaved: handleWorkSurfaceHostSaved,
   });
-  const workSurfaceVisible = useMemo(() => isHostTreeWorkTabSurface({
-    enabled: true,
-    activeTabId,
-    logViewIds: new Set(logViews.map((logView: { id: string }) => logView.id)),
-    orderedTabs: orderedTabsWithEditors,
-    sessionIds: new Set(sessions.map((session: { id: string }) => session.id)),
-    workspaceIds: new Set(workspaces.map((workspace: { id: string }) => workspace.id)),
-  }), [activeTabId, logViews, orderedTabsWithEditors, sessions, workspaces]);
   const handleCreateWorkSurfaceHostGroup = useCallback((groupPath: string) => {
     updateCustomGroups(Array.from(new Set([...customGroups, groupPath])));
   }, [customGroups, updateCustomGroups]);
@@ -346,7 +333,6 @@ function AppViewInner({ domains }: AppViewProps) {
           onCreateLocalTerminal={handleCreateLocalTerminal}
         />
         <AppHostEditorLayer
-          surfaceVisible={workSurfaceVisible}
           target={workSurfaceHostEditor.target}
           editorKey={workSurfaceHostEditor.editorKey}
           hosts={hosts}
@@ -359,6 +345,10 @@ function AppViewInner({ domains }: AppViewProps) {
           snippets={snippets}
           terminalThemeId={terminalThemeId}
           terminalFontSize={terminalFontSize}
+          sessions={sessions}
+          workspaces={workspaces}
+          logViews={logViews}
+          orderedTabs={orderedTabsWithEditors}
           onSave={workSurfaceHostEditor.save}
           onCancel={workSurfaceHostEditor.close}
           onCreateGroup={handleCreateWorkSurfaceHostGroup}
@@ -587,11 +577,12 @@ function AppViewInner({ domains }: AppViewProps) {
           </LazyLoadBoundary>
         ))}
 
-        <PluginContributionHost
+        <AppPluginKeybindingHost
           locale={settings.uiLanguage}
           theme={resolvedTheme}
           themeTokens={pluginThemeTokens}
-          keybindingContext={pluginKeybindingContext}
+          sessions={sessions}
+          workspaces={workspaces}
         />
       </div>
 

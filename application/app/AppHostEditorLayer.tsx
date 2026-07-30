@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 
 import type { WorkSurfaceHostEditorTarget } from '../state/useWorkSurfaceHostEditor';
+import type { EditorTabChrome } from '../state/editorTabStore';
+import type { LogView } from '../state/logViewState';
 import { useI18n } from '../i18n/I18nProvider';
 import HostDetailsPanel from '../../components/HostDetailsPanel';
 import SerialHostDetailsPanel from '../../components/SerialHostDetailsPanel';
@@ -15,7 +17,10 @@ import type {
   ProxyProfile,
   Snippet,
   SSHKey,
+  TerminalSession,
+  Workspace,
 } from '../../types';
+import { useWorkSurfaceVisible } from './AppHostEditorSurface';
 
 export type WorkSurfaceHostEditorKind = 'standard' | 'serial';
 
@@ -62,7 +67,8 @@ export function getAppHostEditorLayerStyle(surfaceVisible: boolean): React.CSSPr
 }
 
 interface AppHostEditorLayerProps {
-  surfaceVisible: boolean;
+  /** When omitted, surface visibility is derived from activeTabId in this leaf. */
+  surfaceVisible?: boolean;
   target: WorkSurfaceHostEditorTarget | null;
   editorKey: string | null;
   hosts: Host[];
@@ -75,6 +81,12 @@ interface AppHostEditorLayerProps {
   snippets: Snippet[];
   terminalThemeId: string;
   terminalFontSize: number;
+  /** Required when surfaceVisible is not passed (leaf active-tab subscription). */
+  sessions?: TerminalSession[];
+  workspaces?: Workspace[];
+  logViews?: readonly LogView[];
+  orderedTabs?: readonly string[];
+  editorTabs?: readonly EditorTabChrome[];
   onSave: (host: Host) => void;
   onCancel: () => void;
   onCreateGroup: (groupPath: string) => void;
@@ -83,7 +95,7 @@ interface AppHostEditorLayerProps {
 }
 
 export const AppHostEditorLayer: React.FC<AppHostEditorLayerProps> = ({
-  surfaceVisible,
+  surfaceVisible: surfaceVisibleProp,
   target,
   editorKey,
   hosts,
@@ -96,6 +108,10 @@ export const AppHostEditorLayer: React.FC<AppHostEditorLayerProps> = ({
   snippets,
   terminalThemeId,
   terminalFontSize,
+  sessions = [],
+  workspaces = [],
+  logViews = [],
+  orderedTabs = [],
   onSave,
   onCancel,
   onCreateGroup,
@@ -103,6 +119,15 @@ export const AppHostEditorLayer: React.FC<AppHostEditorLayerProps> = ({
   onUpdateSnippets,
 }) => {
   const { t } = useI18n();
+  const derivedSurfaceVisible = useWorkSurfaceVisible({
+    enabled: true,
+    sessions,
+    workspaces,
+    logViews,
+    orderedTabs,
+  });
+  // Prefer explicit prop only when provided, so existing tests keep control.
+  const surfaceVisible = surfaceVisibleProp ?? derivedSurfaceVisible;
   const [portalContainer, setPortalContainer] = useState<HTMLDivElement | null>(null);
   const groups = useMemo(
     () => collectWorkSurfaceHostGroups(hosts, customGroups, groupConfigs),

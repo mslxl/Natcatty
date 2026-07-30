@@ -110,6 +110,48 @@ export function buildAndWriteSessionRestorePayload({
   return storage.write(payload);
 }
 
+/**
+ * Patch only activeTabId on an already-persisted restore payload.
+ * Used on top-tab switches so we avoid rebuilding/serializing every session
+ * just because the active tab id changed.
+ *
+ * Returns:
+ * - 'patched' when storage was written with a new activeTabId
+ * - 'unchanged' when the cached/stored activeTabId already matches
+ * - 'missing' when there is no base payload to patch (caller should full-write)
+ */
+export function patchSessionRestoreActiveTabId({
+  activeTabId,
+  now = Date.now(),
+  cachedPayload,
+  storage,
+}: {
+  activeTabId: string;
+  now?: number;
+  /** In-memory last full payload; preferred over storage.read() for tab clicks. */
+  cachedPayload: SessionRestorePayload | null;
+  storage: {
+    read?(): SessionRestorePayload | null;
+    write(payload: SessionRestorePayload): boolean;
+  };
+}): { status: 'patched' | 'unchanged' | 'missing'; payload: SessionRestorePayload | null } {
+  const base = cachedPayload
+    ?? (typeof storage.read === 'function' ? storage.read() : null);
+  if (!base) {
+    return { status: 'missing', payload: null };
+  }
+  if (base.activeTabId === activeTabId) {
+    return { status: 'unchanged', payload: base };
+  }
+  const next: SessionRestorePayload = {
+    ...base,
+    activeTabId,
+    savedAt: now,
+  };
+  storage.write(next);
+  return { status: 'patched', payload: next };
+}
+
 export function mergeSessionRestoreCwd(
   payload: SessionRestorePayload,
   sessionId: string,
