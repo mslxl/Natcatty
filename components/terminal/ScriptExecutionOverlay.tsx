@@ -22,6 +22,8 @@ export interface ScriptExecutionOverlayProps {
 export const SCRIPT_OVERLAY_TOP_DEFAULT_PX = 34;
 /** Top offset when only the compact speed-dial is present. */
 export const SCRIPT_OVERLAY_TOP_COMPACT_PX = 8;
+/** Completed script results remain visible briefly before dismissing themselves. */
+export const SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS = 5_000;
 
 function formatElapsed(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -206,6 +208,12 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
     const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
   }, [isFinished, run.runId]);
+
+  useEffect(() => {
+    if (!isFinished) return undefined;
+    const timer = setTimeout(onDismiss, SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [isFinished, onDismiss, run.runId]);
 
   void tick;
 
