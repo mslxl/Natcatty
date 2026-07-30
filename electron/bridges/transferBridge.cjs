@@ -52,44 +52,23 @@ function sleepMs(ms) {
 }
 
 /**
- * Single-flight finalize for soft-drain sparse staging:
- * wait for active ranges → truncate once → clear deferredSparseTruncate.
- * Background settle and Resume both await the same promise so they cannot
- * race two truncates around unpause.
+ * Single-flight *truncate only* (after active ranges are already idle).
+ * Wait loops are per-caller so Resume can enforce its own 60s budget without
+ * joining a multi-minute background wait, and a failed attempt does not stick
+ * forever on the transfer.
  */
-function ensureDeferredSparseFinalize(transfer, transferId, options = {}) {
+function runExclusiveSparseTruncate(transfer) {
   if (!transfer) {
     return Promise.resolve({ ok: false, reason: "Transfer is no longer active" });
   }
-  if (!transfer.deferredSparseTruncate && !transfer._deferredSparseSettlePromise) {
+  if (!transfer.deferredSparseTruncate) {
     return Promise.resolve({ ok: true });
   }
-  if (transfer._deferredSparseSettlePromise) {
-    return transfer._deferredSparseSettlePromise;
+  if (transfer._sparseTruncatePromise) {
+    return transfer._sparseTruncatePromise;
   }
-  const maxWaitMs = Number.isFinite(options.maxWaitMs)
-    ? options.maxWaitMs
-    : RESUME_RANGE_SETTLE_MS;
   const run = (async () => {
     try {
-      const deadline = Date.now() + Math.max(0, maxWaitMs);
-      while (
-        transfer.paused
-        && !transfer.cancelled
-        && activeTransfers.get(transferId) === transfer
-        && transfer.deferredSparseTruncate
-        && typeof transfer.getActiveRangeCount === "function"
-        && transfer.getActiveRangeCount() > 0
-        && Date.now() < deadline
-      ) {
-        await sleepMs(RANGE_SETTLE_POLL_MS);
-      }
-      if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
-        return { ok: false, reason: "Transfer is no longer active" };
-      }
-      if (!transfer.deferredSparseTruncate) {
-        return { ok: true };
-      }
       const activeLeft = typeof transfer.getActiveRangeCount === "function"
         ? transfer.getActiveRangeCount()
         : 0;
@@ -104,25 +83,67 @@ function ensureDeferredSparseFinalize(transfer, transferId, options = {}) {
       } catch {
         // Contiguous checkpoint remains valid for resume.
       }
-      if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
-        return { ok: false, reason: "Transfer is no longer active" };
-      }
       transfer.deferredSparseTruncate = false;
       return { ok: true };
     } finally {
-      // Keep the settled promise on the transfer so concurrent awaiters still
-      // observe the same completion; replace only when starting a new pause.
+      // Always clear so a later Resume can retry after ranges finish.
+      if (transfer._sparseTruncatePromise === run) {
+        transfer._sparseTruncatePromise = null;
+      }
     }
   })();
-  transfer._deferredSparseSettlePromise = run;
+  transfer._sparseTruncatePromise = run;
   return run;
+}
+
+/**
+ * Wait for active concurrent ranges (caller-owned deadline), then exclusive truncate.
+ */
+async function ensureDeferredSparseFinalize(transfer, transferId, options = {}) {
+  if (!transfer) {
+    return { ok: false, reason: "Transfer is no longer active" };
+  }
+  if (!transfer.deferredSparseTruncate && !transfer._sparseTruncatePromise) {
+    return { ok: true };
+  }
+  const maxWaitMs = Number.isFinite(options.maxWaitMs)
+    ? options.maxWaitMs
+    : RESUME_RANGE_SETTLE_MS;
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
+  while (
+    transfer.paused
+    && !transfer.cancelled
+    && activeTransfers.get(transferId) === transfer
+    && transfer.deferredSparseTruncate
+    && typeof transfer.getActiveRangeCount === "function"
+    && transfer.getActiveRangeCount() > 0
+    && Date.now() < deadline
+  ) {
+    await sleepMs(RANGE_SETTLE_POLL_MS);
+  }
+  if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
+    return { ok: false, reason: "Transfer is no longer active" };
+  }
+  if (!transfer.deferredSparseTruncate) {
+    return { ok: true };
+  }
+  const activeLeft = typeof transfer.getActiveRangeCount === "function"
+    ? transfer.getActiveRangeCount()
+    : 0;
+  if (activeLeft > 0) {
+    return {
+      ok: false,
+      reason: "The current file is still finishing. Try resume again.",
+    };
+  }
+  return runExclusiveSparseTruncate(transfer);
 }
 
 /** Fire-and-forget background settle after soft-drain pause. */
 function scheduleDeferredSparseTruncateSettle(transfer, transferId) {
   if (!transfer?.deferredSparseTruncate) return;
   void ensureDeferredSparseFinalize(transfer, transferId, {
-    // Background may wait a long time for slow SSH ranges while UI stays paused.
+    // Background may wait longer for slow SSH ranges while UI stays paused.
     maxWaitMs: Math.max(RESUME_RANGE_SETTLE_MS, 5 * 60_000),
   }).catch(() => {});
 }
@@ -4430,8 +4451,8 @@ async function pauseTransfer(_event, payload) {
         }
       } else {
         transfer.deferredSparseTruncate = true;
-        // New pause owns a fresh single-flight finalize promise.
-        transfer._deferredSparseSettlePromise = null;
+        // New pause owns a fresh exclusive truncate slot.
+        transfer._sparseTruncatePromise = null;
         // Finish truncate in the background when in-flight ranges land so a
         // later Resume is not blocked by "still finishing" after a short wait.
         scheduleDeferredSparseTruncateSettle(transfer, payload?.transferId);
@@ -4464,7 +4485,7 @@ async function pauseTransfer(_event, payload) {
     // Unpausing here made folder pause look broken (amber error + children keep going).
     if (Number.isFinite(transfer.checkpointBytes) && transfer.checkpointBytes >= 0) {
       transfer.deferredSparseTruncate = true;
-      transfer._deferredSparseSettlePromise = null;
+      transfer._sparseTruncatePromise = null;
       scheduleDeferredSparseTruncateSettle(transfer, payload?.transferId);
     } else {
       transfer.deferredSparseTruncate = false;
@@ -4599,9 +4620,9 @@ async function resumeTransfer(_event, payload) {
     }
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
-  // checkpoint. Single-flight finalize (background + resume share one promise)
-  // so truncate cannot race new writes after unpause.
-  if (transfer.deferredSparseTruncate || transfer._deferredSparseSettlePromise) {
+  // checkpoint. Wait with Resume's own budget, then single-flight truncate so
+  // background settle cannot race new writes after unpause.
+  if (transfer.deferredSparseTruncate || transfer._sparseTruncatePromise) {
     const settled = await ensureDeferredSparseFinalize(
       transfer,
       payload?.transferId,
