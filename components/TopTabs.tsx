@@ -1,4 +1,4 @@
-import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles, SquareTerminal } from 'lucide-react';
+import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles, Terminal } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
@@ -1110,7 +1110,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
                 style={{ color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
                 onClick={onCreateLocalTerminal}
               >
-                <SquareTerminal size={16} />
+                <Terminal size={16} />
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t('topTabs.newLocalTerminal')}</TooltipContent>
