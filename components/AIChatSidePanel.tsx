@@ -1313,6 +1313,41 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     setShowHistory(false);
   }, [ensureScopeDraft, showScopeDraftView, updateScopeDraft]);
 
+  // Warm the Streamdown/markdown chunk while the panel is visible but idle, so
+  // the first completed assistant reply does not pay the full parse cost mid-interaction.
+  useEffect(() => {
+    if (!isVisible) return;
+    let cancelled = false;
+    const loadMarkdown = () => {
+      if (cancelled) return;
+      void import('./ai-elements/messageResponse');
+    };
+    if (typeof requestIdleCallback === 'function') {
+      const idleId = requestIdleCallback(loadMarkdown, { timeout: 2500 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(idleId);
+      };
+    }
+    const timeoutId = window.setTimeout(loadMarkdown, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [isVisible]);
+
+  // Keep streaming/session hooks alive for retained hidden panels, but do not
+  // mount ChatMessageList / Streamdown / ChatInput while CSS-hidden — those trees
+  // are the main tab-switch and cross-tab re-render cost.
+  if (!isVisible) {
+    return (
+      <div
+        className="h-full min-h-0 bg-background"
+        data-section="ai-chat-panel-retained"
+        aria-hidden="true"
+      />
+    );
+  }
 
   return (
     <React.Profiler {...getAIPanelProfilerProps('AIChatSidePanel.Active')}>

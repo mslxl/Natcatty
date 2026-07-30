@@ -16,7 +16,8 @@ import {
   ConversationContent,
   ConversationScrollButton,
 } from '../ai-elements/conversation';
-import { Message, MessageContent, MessageResponse } from '../ai-elements/message';
+import { LazyMessageResponse } from '../ai-elements/LazyMessageResponse';
+import { Message, MessageContent } from '../ai-elements/messageShell';
 import { ToolCall } from '../ai-elements/tool-call';
 import ThinkingBlock from './ThinkingBlock';
 import AgentActivityGroup from './AgentActivityGroup';
@@ -103,6 +104,20 @@ export function shouldProvideVaultArtifactNavigation({
 }: VaultArtifactNavigationCallbackOptions): boolean {
   return Boolean(onOpenVaultNote || onOpenVaultHost || onOpenVaultSnippet || onOpenVaultSection);
 }
+
+/**
+ * Streamdown + shiki re-parse is too expensive for per-frame streaming updates.
+ * Use plain text while the assistant message is still animating; hydrate markdown
+ * once the turn settles.
+ */
+export function shouldRenderAssistantAsPlainText(options: {
+  hideMarkdown: boolean;
+  isStreamingMessage: boolean;
+}): boolean {
+  return options.hideMarkdown || options.isStreamingMessage;
+}
+
+const ASSISTANT_PLAIN_TEXT_CLASS = 'whitespace-pre-wrap break-words text-[13px] leading-[1.45]';
 
 export interface CodexApprovalRenderEntry {
   approvalId: string;
@@ -637,14 +652,26 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
 
                 {message.content && (
                   isUser
-                    ? <div className="whitespace-pre-wrap break-words text-[13px] leading-[1.45]">{message.content}</div>
-                    : hideMarkdown
-                      ? <div className="whitespace-pre-wrap break-words text-[13px] leading-[1.45]">{message.content}</div>
+                    ? <div className={ASSISTANT_PLAIN_TEXT_CLASS}>{message.content}</div>
+                    : shouldRenderAssistantAsPlainText({
+                        hideMarkdown,
+                        isStreamingMessage: !!isThisStreaming,
+                      })
+                      ? (
+                          <div
+                            className={ASSISTANT_PLAIN_TEXT_CLASS}
+                            data-ai-content="plain"
+                          >
+                            {message.content}
+                          </div>
+                        )
                       : (
                           <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Markdown')}>
-                            <MessageResponse isAnimating={isThisStreaming}>
-                              {message.content}
-                            </MessageResponse>
+                            <div data-ai-content="markdown">
+                              <LazyMessageResponse>
+                                {message.content}
+                              </LazyMessageResponse>
+                            </div>
                           </React.Profiler>
                         )
                 )}
