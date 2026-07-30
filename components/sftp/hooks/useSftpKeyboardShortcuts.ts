@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { MutableRefObject } from "react";
 import { KeyBinding, matchesKeyBinding } from "../../../domain/models";
-import { getParentPath, joinPath } from "../../../application/state/sftp/utils";
+import { getParentPath, joinPath, resolveSftpWindowsPathOptions } from "../../../application/state/sftp/utils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { sftpClipboardStore, SftpClipboardFile } from "./useSftpClipboard";
 import { sftpFocusStore } from "./useSftpFocusedPane";
@@ -954,7 +954,11 @@ export const useSftpKeyboardShortcuts = ({
         }
 
         case "sftpGoParent": {
-          const parentPath = getParentPath(pane.connection.currentPath);
+          const windowsOpts = resolveSftpWindowsPathOptions(
+            pane.connection.currentPath,
+            pane.connection.homeDir,
+          );
+          const parentPath = getParentPath(pane.connection.currentPath, windowsOpts);
           if (parentPath !== pane.connection.currentPath) {
             _kbSelectionState.delete(pane.id);
             sftp.navigateTo(focusedSide, parentPath);

@@ -9,10 +9,12 @@ import {
   getSftpFilterAfterPathChange,
   getSftpFilterAfterPathChangeError,
   isNavigableDirectory,
+  isSftpDescendantPath,
   isSameSftpPath,
   isWindowsRoot,
   joinPath,
-  normalizeSftpPathForCompare,
+  normalizeSftpPaneNavigationPath,
+  resolveSftpWindowsPathOptions,
   shouldClearSftpFilterForPathChange,
 } from "./utils";
 import { buildCacheKey, setSharedRemoteHostCache } from "./sharedRemoteHostCache";
@@ -107,30 +109,9 @@ export const useSftpPaneActions = ({
   clearSelectionsExcept,
   dirCacheTtlMs,
 }: UseSftpPaneActionsParams): UseSftpPaneActionsResult => {
-  const normalizePathForCompare = useCallback((path: string): string => {
-    return normalizeSftpPathForCompare(path);
-  }, []);
-
   const isSamePath = useCallback((a: string, b: string): boolean => {
     return isSameSftpPath(a, b);
   }, []);
-
-  const isDescendantPath = useCallback((candidate: string, parent: string): boolean => {
-    const normalizedCandidate = normalizePathForCompare(candidate);
-    const normalizedParent = normalizePathForCompare(parent);
-    if (normalizedCandidate === normalizedParent) return false;
-
-    if (/^[a-z]:\\$/.test(normalizedParent)) {
-      return normalizedCandidate.startsWith(normalizedParent);
-    }
-
-    if (normalizedParent === "/") {
-      return normalizedCandidate.startsWith("/");
-    }
-
-    const separator = normalizedParent.includes("\\") ? "\\" : "/";
-    return normalizedCandidate.startsWith(`${normalizedParent}${separator}`);
-  }, [normalizePathForCompare]);
 
   // Build the shared cache key for the active pane. Prefer the last connected
   // host (which includes session-time overrides), fall back to the vault hosts list.
@@ -192,11 +173,19 @@ export const useSftpPaneActions = ({
         return "aborted";
       }
 
+      // Bookmark / reopen / typed paths can still carry //host/share; normalize
+      // with pane Windows context so UNC roots stay intact for Up / "..".
+      const normalizedPath = normalizeSftpPaneNavigationPath(
+        path,
+        pane.connection.currentPath,
+        pane.connection.homeDir,
+      );
+
       const connectionId = pane.connection.id;
       const requestId = ++navSeqRef.current[side];
-      const cacheKey = makeCacheKey(connectionId, path, pane.filenameEncoding);
-      const clearFilterForPathChange = shouldClearSftpFilterForPathChange(pane.connection.currentPath, path);
-      const nextConfirmedFilter = getSftpFilterAfterPathChange(pane.connection.currentPath, path, pane.filter);
+      const cacheKey = makeCacheKey(connectionId, normalizedPath, pane.filenameEncoding);
+      const clearFilterForPathChange = shouldClearSftpFilterForPathChange(pane.connection.currentPath, normalizedPath);
+      const nextConfirmedFilter = getSftpFilterAfterPathChange(pane.connection.currentPath, normalizedPath, pane.filter);
       const cached = options?.force
         ? undefined
         : getDirectoryCacheEntry(dirCacheRef.current, cacheKey, Date.now(), dirCacheTtlMs);
@@ -209,7 +198,7 @@ export const useSftpPaneActions = ({
         tabNavSeqRef.current.set(targetTabId, requestId);
         lastConfirmedRef.current.set(targetTabId, {
           connectionId,
-          path,
+          path: normalizedPath,
           files: cached.files,
           selectedFiles: EMPTY_SET,
           filter: nextConfirmedFilter,
@@ -217,7 +206,7 @@ export const useSftpPaneActions = ({
         updateTab(side, targetTabId, (prev) => ({
           ...prev,
           connection: prev.connection
-            ? { ...prev.connection, currentPath: path }
+            ? { ...prev.connection, currentPath: normalizedPath }
             : null,
           files: cached.files,
           loading: false,
@@ -232,8 +221,8 @@ export const useSftpPaneActions = ({
           // overrides create separate connections with distinct cache keys
           // at the connect() layer.
           setSharedRemoteHostCache(getActivePaneCacheKey(side, pane.connection.hostId, pane.connection.id), {
-            path,
-            homeDir: pane.connection.homeDir ?? path,
+            path: normalizedPath,
+            homeDir: pane.connection.homeDir ?? normalizedPath,
             files: cached.files,
             filenameEncoding: pane.filenameEncoding,
           });
@@ -292,7 +281,7 @@ export const useSftpPaneActions = ({
       updateTab(side, targetTabId, (prev) => ({
         ...prev,
         connection: prev.connection
-          ? { ...prev.connection, currentPath: path }
+          ? { ...prev.connection, currentPath: normalizedPath }
           : null,
         selectedFiles: EMPTY_SET,
         filter: clearFilterForPathChange ? "" : prev.filter,
@@ -304,7 +293,7 @@ export const useSftpPaneActions = ({
         let files: SftpFileEntry[];
 
         if (pane.connection.isLocal) {
-          files = await listLocalFiles(path);
+          files = await listLocalFiles(normalizedPath);
         } else {
           const sftpId = sftpSessionsRef.current.get(pane.connection.id);
           if (!sftpId) {
@@ -331,7 +320,7 @@ export const useSftpPaneActions = ({
           }
 
           try {
-            files = await listRemoteFiles(sftpId, path, pane.filenameEncoding);
+            files = await listRemoteFiles(sftpId, normalizedPath, pane.filenameEncoding);
           } catch (err) {
             if (isSessionError(err)) {
               if (!isTargetRequestCurrent()) {
@@ -380,7 +369,7 @@ export const useSftpPaneActions = ({
 
         lastConfirmedRef.current.set(targetTabId, {
           connectionId,
-          path,
+          path: normalizedPath,
           files,
           selectedFiles: EMPTY_SET,
           filter: nextConfirmedFilter,
@@ -389,7 +378,7 @@ export const useSftpPaneActions = ({
         updateTab(side, targetTabId, (prev) => ({
           ...prev,
           connection: prev.connection
-            ? { ...prev.connection, currentPath: path }
+            ? { ...prev.connection, currentPath: normalizedPath }
             : null,
           files,
           loading: false,
@@ -398,8 +387,8 @@ export const useSftpPaneActions = ({
         }));
         if (!pane.connection.isLocal) {
           setSharedRemoteHostCache(getActivePaneCacheKey(side, pane.connection.hostId, pane.connection.id), {
-            path,
-            homeDir: pane.connection.homeDir ?? path,
+            path: normalizedPath,
+            homeDir: pane.connection.homeDir ?? normalizedPath,
             files,
             filenameEncoding: pane.filenameEncoding,
           });
@@ -521,10 +510,14 @@ export const useSftpPaneActions = ({
       if (!pane?.connection) return;
 
       const currentPath = pane.connection.currentPath;
-      const isAtRoot = currentPath === "/" || isWindowsRoot(currentPath);
+      const windowsOpts = resolveSftpWindowsPathOptions(
+        currentPath,
+        pane.connection.homeDir,
+      );
+      const isAtRoot = currentPath === "/" || isWindowsRoot(currentPath, windowsOpts);
 
       if (!isAtRoot) {
-        const parentPath = getParentPath(currentPath);
+        const parentPath = getParentPath(currentPath, windowsOpts);
         await navigateTo(side, parentPath);
       }
     },
@@ -541,9 +534,13 @@ export const useSftpPaneActions = ({
 
       if (entry.name === "..") {
         const currentPath = pane.connection.currentPath;
-        const isAtRoot = currentPath === "/" || isWindowsRoot(currentPath);
+        const windowsOpts = resolveSftpWindowsPathOptions(
+          currentPath,
+          pane.connection.homeDir,
+        );
+        const isAtRoot = currentPath === "/" || isWindowsRoot(currentPath, windowsOpts);
         if (!isAtRoot) {
-          const parentPath = getParentPath(currentPath);
+          const parentPath = getParentPath(currentPath, windowsOpts);
           await navigateTo(side, parentPath);
         }
         return;
@@ -916,12 +913,12 @@ export const useSftpPaneActions = ({
       const filteredSources = uniqueSources
         .sort((a, b) => a.length - b.length)
         .filter((path, index, arr) =>
-          !arr.slice(0, index).some((otherPath) => isSamePath(path, otherPath) || isDescendantPath(path, otherPath)),
+          !arr.slice(0, index).some((otherPath) => isSamePath(path, otherPath) || isSftpDescendantPath(path, otherPath)),
         );
 
       const movableSources = filteredSources.filter((sourcePath) => {
         if (isSamePath(sourcePath, targetPath)) return false;
-        if (isDescendantPath(targetPath, sourcePath)) return false;
+        if (isSftpDescendantPath(targetPath, sourcePath)) return false;
         const destinationPath = joinPath(targetPath, getFileName(sourcePath));
         return !isSamePath(destinationPath, sourcePath);
       });
@@ -1002,7 +999,7 @@ export const useSftpPaneActions = ({
         throw err;
       }
     },
-    [clearCacheForConnection, getActivePane, handleSessionError, isDescendantPath, isSamePath, isSessionError, refresh, sftpSessionsRef, updateActiveTab],
+    [clearCacheForConnection, getActivePane, handleSessionError, isSamePath, isSessionError, refresh, sftpSessionsRef, updateActiveTab],
   );
 
   const changePermissions = useCallback(
