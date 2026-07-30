@@ -102,6 +102,7 @@ import { getScriptRecordingSnapshot, setScriptRecordingState } from "@/applicati
 import {
   runAutomationScript,
   runConnectScriptsSequential,
+  selectScriptOverlayRun,
   subscribeScriptRuns,
   pauseScriptRun,
   resumeScriptRun,
@@ -372,32 +373,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   ), [sessionId]);
   const sensitivePromptOutputTailRef = useRef("");
   const [activeScriptRun, setActiveScriptRun] = useState<import('@/types/global/netcatty-bridge-script.d.ts').ScriptRun | undefined>(undefined);
-  const dismissedScriptRunIdRef = useRef<string | null>(null);
+  const dismissedScriptRunIdsRef = useRef(new Set<string>());
 
   useEffect(() => {
     return subscribeScriptRuns((runs) => {
-      const sessionRuns = runs.filter((run) => run.sessionId === sessionId);
-      const liveRun = sessionRuns.find((run) => run.status === 'running' || run.status === 'paused');
-      if (liveRun) {
-        dismissedScriptRunIdRef.current = null;
-        setActiveScriptRun(liveRun);
-        return;
-      }
-
-      const finishedRun = sessionRuns
-        .filter((run) =>
-          (run.status === 'completed' || run.status === 'failed')
-          && run.runId !== dismissedScriptRunIdRef.current,
-        )
-        .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))[0];
-
-      setActiveScriptRun(finishedRun);
+      setActiveScriptRun(selectScriptOverlayRun(runs, sessionId, dismissedScriptRunIdsRef.current));
     });
   }, [sessionId]);
 
   const dismissScriptOverlay = useCallback(() => {
     if (activeScriptRun) {
-      dismissedScriptRunIdRef.current = activeScriptRun.runId;
+      dismissedScriptRunIdsRef.current.add(activeScriptRun.runId);
     }
     setActiveScriptRun(undefined);
   }, [activeScriptRun]);

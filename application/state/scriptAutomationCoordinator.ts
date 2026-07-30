@@ -32,6 +32,43 @@ export function setScriptRuns(nextRuns: ScriptRun[]) {
   runsListeners.forEach((listener) => listener(runs));
 }
 
+/**
+ * Chooses the single overlay worth showing while retaining dismissed history
+ * so global run broadcasts cannot bring old completion banners back.
+ */
+export function selectScriptOverlayRun(
+  allRuns: ScriptRun[],
+  sessionId: string,
+  dismissedRunIds: Set<string>,
+): ScriptRun | undefined {
+  const sessionRuns = allRuns.filter((run) => run.sessionId === sessionId);
+  const activeRunIds = new Set(sessionRuns.map((run) => run.runId));
+  for (const runId of dismissedRunIds) {
+    if (!activeRunIds.has(runId)) dismissedRunIds.delete(runId);
+  }
+
+  const liveRun = sessionRuns.find((run) => run.status === 'running' || run.status === 'paused');
+  if (liveRun) {
+    for (const run of sessionRuns) {
+      if (run.status === 'completed' || run.status === 'failed') {
+        dismissedRunIds.add(run.runId);
+      }
+    }
+    return liveRun;
+  }
+
+  const finishedRuns = sessionRuns
+    .filter((run) => run.status === 'completed' || run.status === 'failed')
+    .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  const latestRun = finishedRuns.find((run) => !dismissedRunIds.has(run.runId));
+  if (!latestRun) return undefined;
+
+  for (const run of finishedRuns) {
+    if (run.runId !== latestRun.runId) dismissedRunIds.add(run.runId);
+  }
+  return latestRun;
+}
+
 export function getActiveScriptRunForSession(sessionId: string): ScriptRun | undefined {
   return runs.find((run) =>
     run.sessionId === sessionId && (run.status === 'running' || run.status === 'paused'),

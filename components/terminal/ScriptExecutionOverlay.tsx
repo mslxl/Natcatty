@@ -1,5 +1,5 @@
 import { Check, Loader2, Pause, Play, Square, X } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useEffectEvent, useMemo, useState } from 'react';
 import { useI18n } from '@/application/i18n/I18nProvider';
 import type { ScriptRun } from '@/types/global/netcatty-bridge-script.d.ts';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,8 @@ export interface ScriptExecutionOverlayProps {
 export const SCRIPT_OVERLAY_TOP_DEFAULT_PX = 34;
 /** Top offset when only the compact speed-dial is present. */
 export const SCRIPT_OVERLAY_TOP_COMPACT_PX = 8;
+/** Completed script results remain visible briefly before dismissing themselves. */
+export const SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS = 5_000;
 
 function formatElapsed(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -200,11 +202,18 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
   const { t } = useI18n();
   const [tick, setTick] = useState(0);
   const isFinished = run.status === 'completed' || run.status === 'failed';
+  const dismissFinishedRun = useEffectEvent(onDismiss);
 
   useEffect(() => {
     if (isFinished) return undefined;
     const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
     return () => window.clearInterval(timer);
+  }, [isFinished, run.runId]);
+
+  useEffect(() => {
+    if (!isFinished) return undefined;
+    const timer = setTimeout(dismissFinishedRun, SCRIPT_OVERLAY_FINISHED_DISMISS_DELAY_MS);
+    return () => clearTimeout(timer);
   }, [isFinished, run.runId]);
 
   void tick;
