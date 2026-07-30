@@ -10,6 +10,7 @@ import ChatMessageList, {
   buildCodexApprovalRenderPlan,
   pruneResolvedApprovals,
   shouldProvideVaultArtifactNavigation,
+  shouldRenderAssistantAsPlainText,
 } from "./ChatMessageList.tsx";
 import { TooltipProvider } from "../ui/tooltip.tsx";
 
@@ -34,6 +35,79 @@ test("resolved approval state retains only tool calls still present in messages"
 
   const next = pruneResolvedApprovals(previous, messages);
   assert.deepEqual([...next], [["live-call", false]]);
+});
+
+test("assistant content stays plain while streaming or when markdown is hidden", () => {
+  assert.equal(shouldRenderAssistantAsPlainText({
+    hideMarkdown: false,
+    isStreamingMessage: true,
+  }), true);
+  assert.equal(shouldRenderAssistantAsPlainText({
+    hideMarkdown: true,
+    isStreamingMessage: false,
+  }), true);
+  assert.equal(shouldRenderAssistantAsPlainText({
+    hideMarkdown: false,
+    isStreamingMessage: false,
+  }), false);
+});
+
+test("ChatMessageList uses plain text for the streaming assistant message", () => {
+  const messages: ChatMessage[] = [
+    {
+      id: "user-1",
+      role: "user",
+      content: "hello",
+      timestamp: 1,
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      content: "streaming-body",
+      timestamp: 2,
+    },
+  ];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages, isStreaming: true }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /data-ai-content="plain"/);
+  assert.match(markup, /streaming-body/);
+  assert.doesNotMatch(markup, /data-ai-content="markdown"/);
+});
+
+test("ChatMessageList hydrates markdown after streaming settles", () => {
+  const messages: ChatMessage[] = [{
+    id: "assistant-1",
+    role: "assistant",
+    content: "settled-body",
+    timestamp: 1,
+  }];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages, isStreaming: false }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /data-ai-content="markdown"/);
+  assert.match(markup, /settled-body/);
+  assert.doesNotMatch(markup, /data-ai-content="plain"/);
 });
 
 test("ChatMessageList only renders the recent message batch by default", () => {
