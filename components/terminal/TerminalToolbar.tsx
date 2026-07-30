@@ -320,7 +320,8 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
 
   if (compactToolbar) {
     return (
-      <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
+      <div data-section="terminal-toolbar">
+        <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -385,7 +386,8 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
             />
           </PopoverContent>
         </Popover>
-      </TooltipProvider>
+        </TooltipProvider>
+      </div>
     );
   }
 
@@ -940,6 +942,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
         onReset={toolbarLayout.reset}
         t={t}
         className="inline-flex items-center min-h-6 min-w-6"
+        dataSection="terminal-toolbar"
       >
         {shown.map(renderInline)}
 

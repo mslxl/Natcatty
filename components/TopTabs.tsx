@@ -1091,6 +1091,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
         <div
           className="flex-shrink-0 flex items-center gap-0.5 app-drag self-end h-7 overflow-visible"
           style={dragRegionStyle}
+          data-section="top-tabs-toolbar-actions"
         >
           <GlobalSftpTransferCenter />
           <Tooltip>

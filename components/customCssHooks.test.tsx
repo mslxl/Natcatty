@@ -63,6 +63,15 @@ test("terminal host tree exposes stable custom CSS regions", () => {
   assert.match(source, /terminal-host-tree-sidebar-content/);
 });
 
+test("toolbars expose stable custom CSS regions for icon sizing", () => {
+  const topTabsSource = readProjectFile("components/TopTabs.tsx");
+  const terminalToolbarSource = readProjectFile("components/terminal/TerminalToolbar.tsx");
+
+  assert.match(topTabsSource, /top-tabs-toolbar-actions/);
+  assert.match(terminalToolbarSource, /dataSection="terminal-toolbar"/);
+  assert.match(terminalToolbarSource, /data-section="terminal-toolbar"/);
+});
+
 test("custom CSS help lists the expanded terminal and SFTP hooks", () => {
   const source = readProjectFile("application/i18n/locales/zh-CN/core.ts");
 
@@ -74,5 +83,7 @@ test("custom CSS help lists the expanded terminal and SFTP hooks", () => {
     "terminal-sftp-tree-row",
     "terminal-sftp-transfer-queue",
     "terminal-host-tree-sidebar-content",
+    "top-tabs-toolbar-actions",
+    "terminal-toolbar",
   ].forEach((hook) => assert.match(source, new RegExp(hook)));
 });
