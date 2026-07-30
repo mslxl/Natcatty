@@ -23,6 +23,7 @@ import {
 import React, { memo, useEffect, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { getParentPath } from '../../application/state/sftp/utils';
+import { useSftpTransferTask } from '../../application/state/sftpTransferCenterStore';
 import { cn } from '../../lib/utils';
 import { TransferTask } from '../../types';
 import { Button } from '../ui/button';
@@ -100,7 +101,7 @@ const oncePerActivationHandlers = (activate: () => void) => ({
 });
 
 const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
-    task,
+    task: propsTask,
     isChild = false,
     childNameColumnWidth = 260,
     onResizeNameColumn,
@@ -124,6 +125,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     resizeHandleTabIndex = 0,
 }) => {
     const { t } = useI18n();
+    // Progress bytes live in the center store (patchTask). Avoid depending on
+    // panel setTransfersState for every tick — that re-rendered the whole SFTP
+    // tree and pegged the renderer during large copies.
+    const task = useSftpTransferTask(propsTask.id, propsTask);
     // Optimistic spinner from click until store status moves off paused/interrupted.
     const [resumeClicked, setResumeClicked] = useState(false);
 
@@ -251,18 +256,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                 )}
                 style={{
                     width: progressBarWidth,
-                    transition: 'width 150ms ease-out',
+                    // Match ~200ms IPC ticks so the bar eases between samples.
+                    transition: 'width 220ms linear',
                 }}
             >
-                {(task.status === 'transferring' || task.status === 'pausing' || isResuming) && (
-                    <div
-                        className="absolute inset-0 w-1/2 h-full"
-                        style={{
-                            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.32) 50%, transparent 100%)',
-                            animation: 'progress-shimmer 1.5s ease-in-out infinite',
-                        }}
-                    />
-                )}
             </div>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-2">
                 <span className="truncate whitespace-nowrap text-[10px] font-medium text-foreground">
@@ -578,19 +575,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                             )}
                             style={{
                                 width: progressBarWidth,
-                                transition: 'width 150ms ease-out',
+                                // Match ~200ms IPC ticks so the bar eases between samples.
+                    transition: 'width 220ms linear',
                             }}
-                        >
-                            {(task.status === 'transferring' || task.status === 'pausing' || isResuming) && (
-                                <div
-                                    className="absolute inset-0 w-1/2 h-full"
-                                    style={{
-                                        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.32) 50%, transparent 100%)',
-                                        animation: 'progress-shimmer 1.5s ease-in-out infinite',
-                                    }}
-                                />
-                            )}
-                        </div>
+                        />
                     </div>
                 </div>
             )}

@@ -144,61 +144,14 @@ export async function uploadFoldersCompressed(
           folderName,
           totalBytes,
         },
-        (phase, transferred, total) => {
-          // Check for cancellation during progress updates
-          if (controller?.isCancelled()) {
-            return;
-          }
-
-          if (callbacks?.onTaskProgress) {
-            // Map compression progress to actual file bytes
-            const progressPercent = total > 0 ? (transferred / total) * 100 : 0;
-            const mappedTransferred = Math.floor((progressPercent / 100) * totalBytes);
-
-            callbacks.onTaskProgress(taskId, {
-              transferred: mappedTransferred,
-              total: totalBytes,
-              speed: 0, // Speed is handled by the compression service
-              percent: progressPercent,
-            });
-          }
-
-          // Update task name based on phase
-          if (callbacks?.onTaskNameUpdate) {
-            // Pass phase identifier for UI layer to handle i18n
-            // Format: "folderName|phase" where phase is: compressing, extracting, uploading, or compressed
-            const phaseKey = phase === 'compressing' ? 'compressing'
-              : phase === 'extracting' ? 'extracting'
-              : phase === 'uploading' ? 'uploading'
-              : 'compressed';
-            callbacks.onTaskNameUpdate(taskId, `${folderName}|${phaseKey}`);
-          }
-        },
-        () => {
-          // Remove compression ID from controller
-          controller?.removeActiveCompression(compressionId);
-          // Mark task as completed immediately
-          if (callbacks?.onTaskCompleted) {
-            callbacks.onTaskCompleted(taskId, totalBytes);
-          }
-        },
-        (error) => {
-          // Remove compression ID from controller on error
-          controller?.removeActiveCompression(compressionId);
-          if (callbacks?.onTaskFailed) {
-            callbacks.onTaskFailed(taskId, error);
-          }
-        }
       );
+      controller?.removeActiveCompression(compressionId);
       
       if (result.success) {
         results.push({ fileName: folderName, success: true });
       } else if (result.error?.includes('cancelled') || controller?.isCancelled()) {
         // Handle cancellation
         results.push({ fileName: folderName, success: false, cancelled: true });
-        if (callbacks?.onTaskCancelled) {
-          callbacks.onTaskCancelled(taskId);
-        }
       } else {
         results.push({ fileName: folderName, success: false, error: result.error });
       }
@@ -214,15 +167,8 @@ export async function uploadFoldersCompressed(
       // Check if this was a cancellation
       if (controller?.isCancelled() || errorMessage.includes('cancelled')) {
         results.push({ fileName: folderName, success: false, cancelled: true });
-        if (callbacks?.onTaskCancelled && taskId) {
-          callbacks.onTaskCancelled(taskId);
-        }
       } else {
         results.push({ fileName: folderName, success: false, error: errorMessage });
-        // Only call onTaskFailed if we have a valid taskId (task was created) and it's not a cancellation
-        if (callbacks?.onTaskFailed && taskId) {
-          callbacks.onTaskFailed(taskId, errorMessage);
-        }
       }
     }
   }

@@ -218,6 +218,11 @@ function registerExternalSessionHandlers(ipcMain, options) {
   });
 }
 
+function registerPortForwardingWorkerBridge(ipcMain) {
+  const portForwardingBridge = require("../bridges/portForwardingBridge.cjs");
+  portForwardingBridge.registerHandlers(ipcMain);
+}
+
 function main() {
   const parentPort = process.parentPort;
   if (!parentPort) {
@@ -272,7 +277,10 @@ function main() {
       terminalBridge.init(deps);
       sftpBridge.init(deps);
       transferBridge.init(deps);
-      fileWatcherBridge.init(deps);
+      fileWatcherBridge.init({
+        ...deps,
+        transferBridge,
+      });
       compressUploadBridge.init({
         ...deps,
         transferBridge,
@@ -280,6 +288,7 @@ function main() {
       sshBridge.registerHandlers(ipcMain);
       terminalBridge.registerHandlers(ipcMain);
       sftpBridge.registerHandlers(ipcMain);
+      registerPortForwardingWorkerBridge(ipcMain);
       transferBridge.registerHandlers(ipcMain);
       fileWatcherBridge.registerHandlers(ipcMain);
       compressUploadBridge.registerHandlers(ipcMain);
@@ -368,5 +377,6 @@ module.exports = {
   createZmodemUploadFileSelector,
   normalizeParentPortMessage,
   registerExternalSessionHandlers,
+  registerPortForwardingWorkerBridge,
   main,
 };

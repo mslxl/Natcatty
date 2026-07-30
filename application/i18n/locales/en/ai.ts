@@ -532,6 +532,7 @@ export const enAiMessages: Messages = {
   'topTabs.openQuickSwitcher': 'Open quick switcher',
   'topTabs.moreTabs': 'More tabs',
   'topTabs.aiAssistant': 'AI Assistant',
+  'topTabs.newLocalTerminal': 'New Local Terminal',
   'topTabs.controlPanel': 'Quick controls',
   'topTabs.controlPanel.externalMcp': 'External MCP',
   'topTabs.controlPanel.theme': 'Theme',

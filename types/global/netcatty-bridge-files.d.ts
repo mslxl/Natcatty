@@ -6,17 +6,12 @@ declare global {
     selectApplication?(): Promise<{ path: string; name: string } | null>;
     openWithApplication?(filePath: string, appPath: string): Promise<boolean>;
     openWithSystemDefault?(filePath: string): Promise<{ success: boolean; error?: string }>;
-    downloadSftpToTemp?(sftpId: string, remotePath: string, fileName: string, encoding?: SftpFilenameEncoding): Promise<string>;
     downloadSftpToTempWithProgress?(
       sftpId: string,
       remotePath: string,
       fileName: string,
       encoding: SftpFilenameEncoding | undefined,
-      transferId: string,
-      onProgress?: (transferred: number, total: number, speed: number) => void,
-      onComplete?: () => void,
-      onError?: (error: string) => void,
-      onCancelled?: () => void
+      transferId: string
     ): Promise<{ localPath: string; cancelled: boolean }>;
 
     // Save dialog for file downloads
@@ -29,11 +24,15 @@ declare global {
     stopFileWatch?(watchId: string, cleanupTempFile?: boolean): Promise<{ success: boolean }>;
     listFileWatches?(): Promise<Array<{ watchId: string; localPath: string; remotePath: string; sftpId: string }>>;
     registerTempFile?(sftpId: string, localPath: string): Promise<{ success: boolean }>;
+    unregisterTempFile?(sftpId: string, localPath: string): Promise<{ success: boolean; retained?: boolean }>;
     onFileWatchSynced?(cb: (payload: { watchId: string; localPath: string; remotePath: string; bytesWritten: number }) => void): () => void;
     onFileWatchError?(cb: (payload: { watchId: string; localPath: string; remotePath: string; error: string }) => void): () => void;
+    onFileWatchStopped?(cb: (payload: { watchId: string; localPath: string; remotePath: string; sftpId: string }) => void): () => void;
 
     // Temp file cleanup
     deleteTempFile?(filePath: string): Promise<{ success: boolean }>;
+    stageUploadFile?(file: File, transferId: string): Promise<string>;
+    cancelStagedUploadFile?(transferId: string): Promise<{ success: boolean }>;
 
     // Crash Logs
     getCrashLogs?(): Promise<Array<{ fileName: string; date: string; size: number; entryCount: number }>>;

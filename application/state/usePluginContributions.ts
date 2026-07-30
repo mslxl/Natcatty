@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import {
+  getSharedPluginRuntimeStatus,
+  invalidateSharedPluginRuntimeStatus,
+} from './pluginRuntimeStatusCache';
 
 const EMPTY_SNAPSHOT: NetcattyPluginContributionSnapshot = Object.freeze({
   locale: 'en',
@@ -92,7 +96,9 @@ export interface UsePluginContributionsResult {
 
 export function usePluginContributions(
   query: NetcattyPluginContributionQuery = {},
+  options: { enabled?: boolean } = {},
 ): UsePluginContributionsResult {
+  const enabled = options.enabled !== false;
   const bridge = typeof window === 'undefined' ? undefined : netcattyBridge.get();
   const queryKey = useMemo(() => JSON.stringify(query), [query]);
   const [loadedSnapshot, setLoadedSnapshot] = useState(() => ({
@@ -106,7 +112,7 @@ export function usePluginContributions(
 
   const refresh = useCallback(async () => {
     const isCurrent = refreshGuard.current.begin();
-    if (!bridge?.getPluginRuntimeStatus || !bridge.getPluginContributions) {
+    if (!enabled || !bridge?.getPluginRuntimeStatus || !bridge.getPluginContributions) {
       if (!isCurrent()) return;
       setAvailable(false);
       setLoadedSnapshot({ queryKey, snapshot: EMPTY_SNAPSHOT });
@@ -114,7 +120,7 @@ export function usePluginContributions(
       return;
     }
     try {
-      const status = await bridge.getPluginRuntimeStatus();
+      const status = await getSharedPluginRuntimeStatus(bridge);
       if (!isCurrent()) return;
       setAvailable(status.available);
       if (!status.available) {
@@ -135,17 +141,21 @@ export function usePluginContributions(
     } finally {
       if (isCurrent()) setLoading(false);
     }
-  }, [bridge, queryKey]);
+  }, [bridge, enabled, queryKey]);
 
   useEffect(() => {
     const guard = refreshGuard.current;
+    if (!enabled) return () => guard.invalidate();
     void refresh();
-    const unsubscribe = bridge?.onPluginContributionsChanged?.(() => { void refresh(); });
+    const unsubscribe = bridge?.onPluginContributionsChanged?.(() => {
+      invalidateSharedPluginRuntimeStatus(bridge);
+      void refresh();
+    });
     return () => {
       guard.invalidate();
       unsubscribe?.();
     };
-  }, [bridge, refresh]);
+  }, [bridge, enabled, refresh]);
 
   const executeCommand = useCallback(async (command: string, args?: unknown, context?: Record<string, unknown>) => {
     if (!bridge?.executePluginCommand) throw new Error('Plugin commands are unavailable');

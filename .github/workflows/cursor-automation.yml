@@ -1,23 +1,20 @@
 name: Cursor automation
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && inputs.codex_dispatch_id != '' && format('Codex dispatch {0}', inputs.codex_dispatch_id) || github.event_name }}
 
 on:
   issues:
     types: [opened, reopened]
   issue_comment:
     types: [created]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  # Fork PRs get a read-only GITHUB_TOKEN on pull_request. pull_request_target
-  # (default-branch only checkout + comment) can re-@codex after contributor pushes.
+  # Route all PR lifecycle events through the default-branch workflow. This avoids
+  # approval-blocked pull_request / pull_request_review runs from fork authors.
   pull_request_target:
-    types: [synchronize]
-  # Codex often finishes as a submitted PR review (plus optional issue summary).
-  pull_request_review:
-    types: [submitted]
+    types: [opened, synchronize, reopened, ready_for_review]
   # Reaction-only clean (👍 on @codex request) does not emit review events;
   # poll open automation PRs so the loop can observe and mark ready.
   schedule:
-    - cron: '*/20 * * * *'
+    - cron: '*/5 * * * *'
     # Exercise the real Cursor sandbox/config/auth path once per day so a
     # provider behavior change cannot hide behind green Codex polling runs.
     - cron: '17 3 * * *'
@@ -31,6 +28,18 @@ on:
         description: PR number for own Codex fix loop or external re-@codex
         required: false
         type: number
+      codex_review_id:
+        description: Codex review ID whose poll-dispatch marker should be cleared on completion
+        required: false
+        type: string
+      codex_head_sha:
+        description: PR head SHA paired with codex_review_id
+        required: false
+        type: string
+      codex_dispatch_id:
+        description: Unique marker identity for one Codex poll dispatch
+        required: false
+        type: string
       drain_backlog:
         description: Continue a queued issue-comment batch
         required: false
@@ -44,6 +53,8 @@ on:
 concurrency:
   group: >-
     cursor-auto-${{
+      github.event_name == 'schedule' && github.event.schedule == '17 3 * * *' && 'cursor-smoke' ||
+      github.event_name == 'schedule' && 'codex-poll' ||
       github.event.issue && !github.event.issue.pull_request && github.event.issue.number ||
       github.event.pull_request && github.event.pull_request.number ||
       github.event.issue && github.event.issue.pull_request && github.event.issue.number ||
@@ -253,49 +264,7 @@ jobs:
               return set('skip', { reason: decision.reason });
             }
 
-            if (event === 'pull_request_review') {
-              const login = context.payload.review?.user?.login || '';
-              const pr = context.payload.pull_request;
-              if (!auto.isCodexBotLogin(login)) {
-                return set('skip', { reason: 'non-codex review' });
-              }
-              if (
-                !auto.isFixEligiblePr(pr, {
-                  ownActors,
-                  repository: `${context.repo.owner}/${context.repo.repo}`,
-                })
-              ) {
-                return set('skip', {
-                  reason: 'codex review on non-fix-eligible pr',
-                });
-              }
-              return set('codex_loop', {
-                pull_number: String(pr.number),
-                reason: 'codex pull_request_review submitted',
-              });
-            }
-
             if (event === 'pull_request_target') {
-              // Privileged path for fork comment-only re-@codex. Never implement/fix.
-              const pr = context.payload.pull_request;
-              const sameRepo =
-                pr.head?.repo?.full_name ===
-                `${context.repo.owner}/${context.repo.repo}`;
-              if (sameRepo) {
-                return set('skip', {
-                  reason: 'same-repo uses pull_request event',
-                });
-              }
-              if (context.payload.action === 'synchronize') {
-                return set('external_rerequest_codex', {
-                  pull_number: String(pr.number),
-                  reason: 'fork pr push via pull_request_target — re-@codex',
-                });
-              }
-              return set('skip', { reason: 'pull_request_target non-synchronize' });
-            }
-
-            if (event === 'pull_request') {
               const pr = context.payload.pull_request;
               const sameRepo =
                 pr.head?.repo?.full_name ===
@@ -304,48 +273,47 @@ jobs:
                 ownActors,
                 repository: `${context.repo.owner}/${context.repo.repo}`,
               });
-              // Own/bot PRs: ensure Codex on open/ready; human synchronize re-requests.
-              if (eligible) {
-                if (['opened', 'ready_for_review', 'reopened'].includes(context.payload.action)) {
-                  return set('codex_loop', {
-                    pull_number: String(pr.number),
-                    reason: 'own pr opened — ensure codex review',
-                  });
-                }
-                if (context.payload.action === 'synchronize') {
-                  const sender = String(context.payload.sender?.login || '');
-                  // Only this workflow's publish jobs re-@codex after push.
-                  // Other bots (dependabot, pre-commit, etc.) still need a request.
-                  if (sender === 'github-actions[bot]') {
-                    return set('skip', {
-                      reason: 'own pr github-actions push already requested codex',
+              if (sameRepo) {
+                if (eligible) {
+                  if (['opened', 'ready_for_review', 'reopened'].includes(context.payload.action)) {
+                    return set('codex_loop', {
+                      pull_number: String(pr.number),
+                      reason: 'own pr opened — ensure codex review',
                     });
                   }
-                  return set('own_rerequest_codex', {
+                  if (context.payload.action === 'synchronize') {
+                    const sender = String(context.payload.sender?.login || '');
+                    if (sender === 'github-actions[bot]') {
+                      return set('skip', {
+                        reason: 'own pr github-actions push already requested codex',
+                      });
+                    }
+                    return set('own_rerequest_codex', {
+                      pull_number: String(pr.number),
+                      reason: 'own pr non-automation push — re-@codex',
+                    });
+                  }
+                  return set('skip', { reason: 'own pr non-open non-synchronize' });
+                }
+                if (context.payload.action === 'synchronize') {
+                  return set('external_rerequest_codex', {
                     pull_number: String(pr.number),
-                    reason: 'own pr non-automation push — re-@codex',
+                    reason: 'external same-repo push — re-@codex review',
                   });
                 }
                 return set('skip', {
-                  reason: 'own pr non-open non-synchronize',
+                  reason: 'external pr non-synchronize (Codex auto handles open)',
                 });
               }
-              // Forks: only pull_request_target may comment (write token).
-              if (!sameRepo) {
-                return set('skip', {
-                  reason: 'fork uses pull_request_target for re-@codex',
-                });
-              }
-              // Same-repo non-eligible (rare) can comment on pull_request.
+              // Fork PRs only receive a comment-only re-request. No fork code is
+              // checked out or executed by this privileged event.
               if (context.payload.action === 'synchronize') {
                 return set('external_rerequest_codex', {
                   pull_number: String(pr.number),
-                  reason: 'external same-repo push — re-@codex review',
+                  reason: 'fork pr push via pull_request_target — re-@codex',
                 });
               }
-              return set('skip', {
-                reason: 'external pr non-synchronize (Codex auto handles open)',
-              });
+              return set('skip', { reason: 'pull_request_target non-synchronize' });
             }
 
             return set('skip', { reason: `unhandled ${event}` });
@@ -1498,11 +1466,23 @@ jobs:
               --workspace "$GITHUB_WORKSPACE" "$prompt" \
               > .cursor-runtime/followup-raw.txt
           else
+            # No PR means there is no trusted source tree the agent needs to
+            # modify. Give it only the decision inputs and recover its two
+            # required outputs, so untrusted issue content cannot alter this
+            # workflow's checkout.
+            decision_dir="$(mktemp -d /tmp/cursor-followup-decision.XXXXXX)"
+            mkdir -p "$decision_dir/.cursor-runtime"
+            cp .cursor-runtime/followup.json "$decision_dir/.cursor-runtime/followup.json"
+            cp .cursor-runtime/followup-research.md "$decision_dir/.cursor-runtime/followup-research.md"
             sudo --preserve-env=HOME,RUNNER_TEMP,GITHUB_WORKSPACE \
               "$RUNNER_TEMP/cursor-agent-authenticated" \
-              -p --mode=ask --trust --sandbox enabled --model auto --output-format text \
-              --workspace "$GITHUB_WORKSPACE" "$prompt" \
+              -p --trust --sandbox enabled --model auto --output-format text \
+              --workspace "$decision_dir" "$prompt" \
               > .cursor-runtime/followup-raw.txt
+            cp "$decision_dir/.cursor-runtime/followup-status.txt" \
+              .cursor-runtime/followup-status.txt
+            cp "$decision_dir/.cursor-runtime/followup-reply.md" \
+              .cursor-runtime/followup-reply.md
           fi
           cat .cursor-runtime/followup-raw.txt
           test -s .cursor-runtime/followup-status.txt
@@ -4242,6 +4222,49 @@ jobs:
               }),
             });
 
+  clear_codex_dispatch_marker:
+    name: Clear Codex dispatch marker
+    needs: [codex_loop, publish_codex_fix]
+    # The marker is retained while every queued/fix/publish job is active, then
+    # cleared only after this dispatched workflow has reached its terminal state.
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.codex_review_id != '' && inputs.codex_head_sha != '' && inputs.codex_dispatch_id != ''
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      PULL_NUMBER: ${{ inputs.pull_number }}
+      CODEX_REVIEW_ID: ${{ inputs.codex_review_id }}
+      CODEX_HEAD_SHA: ${{ inputs.codex_head_sha }}
+      CODEX_DISPATCH_ID: ${{ inputs.codex_dispatch_id }}
+      OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
+    steps:
+      - name: Delete matching poll marker
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const pull_number = Number(process.env.PULL_NUMBER);
+            const marker = `<!-- cursor-codex-dispatch:head=${process.env.CODEX_HEAD_SHA};review-id=${process.env.CODEX_REVIEW_ID};dispatch=${process.env.CODEX_DISPATCH_ID} -->`;
+            const trustedAuthors = new Set(
+              process.env.OWN_ACTORS.split(',').map((login) => login.trim().toLowerCase()),
+            );
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            for (const comment of comments) {
+              if (
+                comment.body !== marker ||
+                !trustedAuthors.has(String(comment.user?.login || '').toLowerCase())
+              ) continue;
+              await github.rest.issues.deleteComment({
+                ...context.repo,
+                comment_id: comment.id,
+              });
+              core.info(`Cleared Codex dispatch marker for PR #${pull_number}`);
+            }
+
   own_rerequest_codex:
     name: Own PR re-request Codex
     needs: route
@@ -4337,14 +4360,16 @@ jobs:
               1,
             );
             // New head invalidates a previous clean gate — restore draft review loop.
-            try {
-              await github.rest.issues.removeLabel({
-                ...context.repo,
-                issue_number: pull_number,
-                name: 'automation:codex-clean',
-              });
-            } catch {
-              // label may already be absent
+            for (const name of ['automation:codex-clean', 'ready-for-human']) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: pull_number,
+                  name,
+                });
+              } catch {
+                // Label may already be absent.
+              }
             }
             await github.rest.issues.addLabels({
               ...context.repo,
@@ -4498,11 +4523,13 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
+      actions: write
     env:
       OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
       ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
       MAX_ROUNDS: ${{ vars.CURSOR_CODEX_FIX_MAX_ROUNDS || '40' }}
       GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+      DISPATCH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout helpers
         uses: actions/checkout@v7
@@ -4560,7 +4587,12 @@ jobs:
               ) {
                 continue;
               }
-              if (labels.includes('automation:codex-clean')) continue;
+              if (
+                labels.includes('automation:codex-clean') ||
+                labels.includes('ready-for-human')
+              ) {
+                continue;
+              }
 
               const issueComments = await github.paginate(
                 github.rest.issues.listComments,
@@ -4604,9 +4636,16 @@ jobs:
               // Only current-head Codex signals count as "answered". Delayed
               // reviews for older commits must not block expiry re-requests.
               const headMatches = (commitId, body) => {
-                const reviewed =
-                  auto.extractReviewedCommitSha(body) ||
-                  String(commitId || '').toLowerCase();
+                const reviewedInBody = auto.extractReviewedCommitSha(body);
+                const reviewedByGithub = String(commitId || '').toLowerCase();
+                if (
+                  reviewedInBody &&
+                  reviewedByGithub &&
+                  !auto.commitShasMatch(reviewedInBody, reviewedByGithub)
+                ) {
+                  return false;
+                }
+                const reviewed = reviewedByGithub || reviewedInBody;
                 if (!reviewed) return false;
                 return auto.commitShasMatch(pr.head.sha, reviewed);
               };
@@ -4651,6 +4690,7 @@ jobs:
                   `PR #${pr.number}: list review comments failed: ${err.message}`,
                 );
               }
+              let latestCodexReview = null;
               try {
                 const submitted = await github.paginate(
                   github.rest.pulls.listReviews,
@@ -4666,11 +4706,122 @@ jobs:
                   const ts =
                     Date.parse(r.submitted_at || r.created_at || '') || 0;
                   if (ts > lastCodexActivityAt) lastCodexActivityAt = ts;
+                  if (!latestCodexReview || ts > latestCodexReview.at) {
+                    latestCodexReview = { review: r, at: ts };
+                  }
                 }
               } catch (err) {
                 core.warning(
                   `PR #${pr.number}: list reviews failed: ${err.message}`,
                 );
+              }
+              if (latestCodexReview) {
+                const outcome = auto.parseCodexReviewOutcome({
+                  summaryText: latestCodexReview.review.body || '',
+                  reviewComments: reviewComments.filter((c) =>
+                    auto.isCodexBotLogin(c.user?.login),
+                  ),
+                  headSha: pr.head.sha,
+                  summaryCommitId: latestCodexReview.review.commit_id || '',
+                });
+                const decision = auto.decideCodexLoopAction({
+                  eligible: true,
+                  outcome,
+                  hasCodexActivity: true,
+                  hasAutomationRequest: true,
+                  headSha: pr.head.sha,
+                  lastAutomationRequestAt,
+                  lastCodexSummaryAt: latestCodexReview.at,
+                });
+                if (['fix', 'give_up', 'mark_ready'].includes(decision.action)) {
+                  const markerPrefix =
+                    `<!-- cursor-codex-dispatch:head=${pr.head.sha};`;
+                  const priorDispatch = issueComments.find((comment) =>
+                    auto.isTrustedAutomationControlAuthor(
+                      comment.user?.login,
+                      controlOpts,
+                    ) && String(comment.body || '').startsWith(markerPrefix),
+                  );
+                  if (priorDispatch) {
+                    const dispatchId = String(priorDispatch.body || '')
+                      .match(/;dispatch=([^\s]+)\s*-->\s*$/)?.[1] || '';
+                    const workflowRuns = await github.paginate(
+                      github.rest.actions.listWorkflowRuns,
+                      {
+                        ...context.repo,
+                        workflow_id: 'cursor-automation.yml',
+                        event: 'workflow_dispatch',
+                        per_page: 100,
+                      },
+                    );
+                    const dispatchedRunIsActive = workflowRuns.some((run) =>
+                      run.display_title === `Codex dispatch ${dispatchId}` &&
+                      ['queued', 'in_progress', 'waiting', 'requested', 'pending'].includes(run.status),
+                    );
+                    if (dispatchedRunIsActive) continue;
+                    // The dispatched run was canceled before its completion cleanup.
+                    await github.rest.issues.deleteComment({
+                      ...context.repo,
+                      comment_id: priorDispatch.id,
+                    });
+                  }
+                  const dispatchId = crypto.randomUUID();
+                  const marker =
+                    `${markerPrefix}review-id=${latestCodexReview.review.id};dispatch=${dispatchId} -->`;
+                  const { data: markerComment } =
+                    await github.rest.issues.createComment({
+                      ...context.repo,
+                      issue_number: pr.number,
+                      body: marker,
+                    });
+                  let dispatchRejected = false;
+                  try {
+                    const response = await fetch(
+                      `${process.env.GITHUB_API_URL || 'https://api.github.com'}` +
+                        `/repos/${context.repo.owner}/${context.repo.repo}` +
+                        '/actions/workflows/cursor-automation.yml/dispatches',
+                      {
+                        method: 'POST',
+                        headers: {
+                          accept: 'application/vnd.github+json',
+                          authorization: `Bearer ${process.env.DISPATCH_TOKEN}`,
+                          'content-type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          ref: context.payload.repository.default_branch,
+                          inputs: {
+                            pull_number: String(pr.number),
+                            codex_review_id: String(latestCodexReview.review.id),
+                            codex_head_sha: pr.head.sha,
+                            codex_dispatch_id: dispatchId,
+                          },
+                        }),
+                      },
+                    );
+                    if (!response.ok) {
+                      dispatchRejected = true;
+                      throw new Error(
+                        `workflow dispatch failed: ${response.status} ${await response.text()}`,
+                      );
+                    }
+                  } catch (err) {
+                    if (dispatchRejected) {
+                      await github.rest.issues.deleteComment({
+                        ...context.repo,
+                        comment_id: markerComment.id,
+                      });
+                    }
+                    core.warning(
+                      `PR #${pr.number}: ${err.message}; ${dispatchRejected ? 'will retry' : 'keeping dispatch marker to avoid a duplicate run'}`,
+                    );
+                    continue;
+                  }
+                  core.info(
+                    `PR #${pr.number}: dispatched Codex loop for ${decision.reason}`,
+                  );
+                  handled += 1;
+                  continue;
+                }
               }
               if (
                 reactionResult.clean &&

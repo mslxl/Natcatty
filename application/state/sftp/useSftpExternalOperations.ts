@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FileConflict, FileConflictAction, Host, TransferStatus, SftpFilenameEncoding } from "../../../domain/models";
 import { getSftpConflictTypeKey } from "../../../domain/sftpConflict";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
@@ -24,6 +24,8 @@ import type { UseSftpExternalOperationsParams, SftpExternalOperationsResult } fr
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
 import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
+import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
+import { editorTabStore } from "../editorTabStore";
 import {
   resolveUploadStreamTargetSftpId,
 } from "../../../domain/sftpDedicatedStreamPolicy";
@@ -35,6 +37,37 @@ import {
   resolveUploadTargetPane,
   type UploadEndpointPin,
 } from "./uploadTargetPin";
+import {
+  cleanupFailedExternalOpenTemp,
+  useExternalFileWatchLifecycle,
+} from "./externalFileWatchLifecycle";
+import {
+  cancelExternalUploadRuntime,
+  getExternalUploadController,
+  registerExternalUploadController,
+  unregisterExternalUploadController,
+} from "./externalUploadRuntime";
+
+type UploadConflictResolver = {
+  resolve: (action: FileConflictAction) => void;
+  setDefault: (action: FileConflictAction) => void;
+};
+
+export function drainUploadConflictResolvers(
+  resolvers: Map<string, UploadConflictResolver>,
+  owners: Map<string, UploadController>,
+  controller?: UploadController,
+): string[] {
+  const canceledIds: string[] = [];
+  for (const [conflictId, resolver] of [...resolvers]) {
+    if (controller && owners.get(conflictId) !== controller) continue;
+    canceledIds.push(conflictId);
+    resolvers.delete(conflictId);
+    owners.delete(conflictId);
+    resolver.resolve("stop");
+  }
+  return canceledIds;
+}
 
 export const useSftpExternalOperations = (
   params: UseSftpExternalOperationsParams
@@ -44,6 +77,7 @@ export const useSftpExternalOperations = (
     getActivePane,
     getPaneByConnectionId,
     getPaneByTabId,
+    getTabByConnectionId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,
@@ -53,10 +87,7 @@ export const useSftpExternalOperations = (
     acquireTransferSession,
     clearDirCacheEntry,
     useCompressedUpload = false,
-    addExternalUpload,
-    updateExternalUpload,
     isTransferCancelled,
-    dismissExternalUpload,
   } = params;
 
   /** Connect-time Host for a tab (session overrides), when available. */
@@ -106,19 +137,12 @@ export const useSftpExternalOperations = (
     return { sftpId, release: () => {} };
   }, [ensureRemoteSftpId, getActivePane, getPaneByConnectionId, getPaneByTabId, getSideByTabId, sftpSessionsRef]);
 
-  // Per-upload controllers so canceling upload A does not touch upload B.
-  const uploadControllersByTaskRef = useRef<Map<string, UploadController>>(new Map());
-
   const registerUploadController = useCallback((taskId: string, controller: UploadController) => {
-    uploadControllersByTaskRef.current.set(taskId, controller);
+    registerExternalUploadController(taskId, controller);
   }, []);
 
   const unregisterUploadController = useCallback((controller: UploadController) => {
-    for (const [taskId, active] of [...uploadControllersByTaskRef.current]) {
-      if (active === controller) {
-        uploadControllersByTaskRef.current.delete(taskId);
-      }
-    }
+    unregisterExternalUploadController(controller);
   }, []);
 
   const bindUploadControllerCallbacks = useCallback((
@@ -139,14 +163,24 @@ export const useSftpExternalOperations = (
     },
   }), [registerUploadController]);
 
-  // Track active file watches so the side panel can block host-switching.
-  // Reset to 0 when the SFTP session disconnects (handled in SftpSidePanel).
-  const activeFileWatchCountRef = useRef(0);
+  // Track every renderer-owned watch id so duplicate opens stay deduplicated
+  // and panel/window teardown releases the worker-side polling resources.
+  const stopExternalFileWatch = useCallback(async (watchId: string, cleanupTempFile: boolean) => {
+    await netcattyBridge.get()?.stopFileWatch?.(watchId, cleanupTempFile);
+  }, []);
+  const subscribeExternalFileWatchStopped = useCallback((
+    callback: (payload: { watchId: string }) => void,
+  ) => netcattyBridge.get()?.onFileWatchStopped?.(callback), []);
+  const {
+    activeCountRef: activeFileWatchCountRef,
+    captureGeneration: captureExternalFileWatchGeneration,
+    remember: rememberExternalFileWatch,
+    releaseAll: releaseExternalFileWatches,
+  } = useExternalFileWatchLifecycle(
+    stopExternalFileWatch,
+    subscribeExternalFileWatchStopped,
+  );
   const [uploadConflicts, setUploadConflicts] = useState<FileConflict[]>([]);
-  type UploadConflictResolver = {
-    resolve: (action: FileConflictAction) => void;
-    setDefault: (action: FileConflictAction) => void;
-  };
   const uploadConflictResolversRef = useRef<Map<string, UploadConflictResolver>>(new Map());
   /** Maps conflict id → owning UploadController so cancel A never stops B's prompts. */
   const uploadConflictOwnersRef = useRef<Map<string, UploadController>>(new Map());
@@ -251,8 +285,20 @@ export const useSftpExternalOperations = (
       filePath: string,
       content: string,
       filenameEncoding?: SftpFilenameEncoding,
-    ): Promise<void> => {
-      const pane = getPaneByConnectionId(connectionId);
+      sftpTabId?: string,
+    ): Promise<string> => {
+      let tabRef = getTabByConnectionId?.(connectionId) ?? null;
+      let pane = tabRef?.pane ?? getPaneByConnectionId(connectionId);
+
+      if (!pane?.connection && sftpTabId) {
+        const pinned = getPaneByTabId(sftpTabId);
+        if (pinned?.connection) {
+          pane = pinned;
+          const side = getSideByTabId?.(sftpTabId);
+          if (side) tabRef = { side, tabId: sftpTabId, pane: pinned };
+        }
+      }
+
       if (!pane?.connection) {
         throw new Error("SFTP connection is no longer available");
       }
@@ -265,18 +311,67 @@ export const useSftpExternalOperations = (
         if (!bridge?.writeLocalFile) throw new Error("Local file writing not supported");
         const data = new TextEncoder().encode(content);
         await bridge.writeLocalFile(filePath, data.buffer);
-        return;
+        return pane.connection.id;
       }
 
-      const sftpId = sftpSessionsRef.current.get(pane.connection.id);
+      const tabId = tabRef?.tabId ?? pane.id;
+      const side = tabRef?.side ?? getSideByTabId?.(tabId) ?? null;
+
+      let sftpId = sftpSessionsRef.current.get(pane.connection.id);
+      if (!sftpId && ensureRemoteSftpId && side) {
+        sftpId = await ensureRemoteSftpId(side, {
+          connectionId: pane.connection.id,
+          tabId,
+        });
+      }
+
+      // Reconnect replaces the pane's connection id — resolve again before write/return.
+      const refreshedPane = (() => {
+        if (sftpTabId) {
+          const pinned = getPaneByTabId(sftpTabId);
+          if (pinned?.connection) return pinned;
+        }
+        return getTabByConnectionId?.(connectionId)?.pane
+          ?? getPaneByConnectionId(connectionId)
+          ?? pane;
+      })();
+
+      if (!refreshedPane?.connection) {
+        throw new Error("SFTP connection is no longer available");
+      }
+      if (refreshedPane.connection.hostId !== expectedHostId) {
+        throw new Error("SFTP connection changed while editing — file not saved to prevent writing to wrong host");
+      }
+
+      const liveConnectionId = refreshedPane.connection.id;
+      if (!sftpId) {
+        sftpId = sftpSessionsRef.current.get(liveConnectionId);
+      }
       if (!sftpId) throw new Error("SFTP session not found");
+
+      if (liveConnectionId !== connectionId) {
+        editorTabStore.remapSessionId(connectionId, liveConnectionId);
+      }
 
       const bridge = netcattyBridge.get();
       if (!bridge) throw new Error("Bridge not available");
 
-      await bridge.writeSftp(sftpId, filePath, content, filenameEncoding ?? pane.filenameEncoding);
+      await bridge.writeSftp(
+        sftpId,
+        filePath,
+        content,
+        filenameEncoding ?? refreshedPane.filenameEncoding,
+      );
+      return liveConnectionId;
     },
-    [getPaneByConnectionId, sftpSessionsRef],
+    [
+      ensureRemoteSftpId,
+      getPaneByConnectionId,
+      getPaneByTabId,
+      getSideByTabId,
+      getTabByConnectionId,
+      sftpSessionsRef,
+    ],
   );
 
   const downloadToTemp = useCallback(
@@ -291,7 +386,7 @@ export const useSftpExternalOperations = (
       }
 
       const bridge = netcattyBridge.get();
-      if (!bridge?.downloadSftpToTemp) {
+      if (!bridge?.downloadSftpToTempWithProgress) {
         throw new Error("SFTP temp download not supported");
       }
 
@@ -318,99 +413,67 @@ export const useSftpExternalOperations = (
         }
       };
 
-      if (bridge.downloadSftpToTempWithProgress && addExternalUpload && updateExternalUpload) {
-        externalTransferId = `download-temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      externalTransferId = `download-temp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-        addExternalUpload({
-          id: externalTransferId,
-          fileName,
-          sourcePath: remotePath,
-          targetPath: "(temp)",
-          sourceConnectionId: pane.connection.id,
-          targetConnectionId: "local",
-          direction: "download",
-          status: "transferring" as TransferStatus,
-          totalBytes: 0,
-          transferredBytes: 0,
-          speed: 0,
-          startTime: Date.now(),
-          isDirectory: false,
-          retryable: false,
-          origin: "editor-sync",
-          background: true,
-          resumable: true,
-          phase: "transferring",
-        });
+      sftpTransferCenterStore.upsertTasks([{
+        id: externalTransferId,
+        ownerId,
+        fileName,
+        sourcePath: remotePath,
+        targetPath: "(temp)",
+        sourceConnectionId: pane.connection.id,
+        targetConnectionId: "local",
+        direction: "download",
+        status: "transferring" as TransferStatus,
+        totalBytes: 0,
+        transferredBytes: 0,
+        speed: 0,
+        startTime: Date.now(),
+        isDirectory: false,
+        retryable: false,
+        origin: "editor-sync",
+        background: true,
+        resumable: true,
+        phase: "transferring",
+      }]);
 
-        try {
-          const result = await bridge.downloadSftpToTempWithProgress(
-            sftpId,
-            remotePath,
-            fileName,
-            pane.filenameEncoding,
-            externalTransferId,
-            (transferred, total, speed) => {
-              updateExternalUpload(externalTransferId, {
-                transferredBytes: transferred,
-                checkpointBytes: transferred,
-                totalBytes: total,
-                speed,
-              });
-            },
-            undefined,
-            (error) => {
-              updateExternalUpload(externalTransferId, {
-                status: "failed" as TransferStatus,
-                endTime: Date.now(),
-                error,
-                speed: 0,
-              });
-            },
-            () => {
-              updateExternalUpload(externalTransferId, {
-                status: "cancelled" as TransferStatus,
-                endTime: Date.now(),
-                speed: 0,
-              });
-            },
-          );
-          wasCancelled = result.cancelled;
-          localTempPath = result.localPath;
-        } catch (err) {
-          updateExternalUpload(externalTransferId, {
-            status: "failed" as TransferStatus,
-            endTime: Date.now(),
-            error: err instanceof Error ? err.message : String(err),
-            speed: 0,
-          });
-          throw err;
-        }
-
-        if (wasCancelled) {
-          if (localTempPath && bridge.deleteTempFile) {
-            bridge.deleteTempFile(localTempPath).catch(() => {});
-          }
-          return { localTempPath: "", sftpId, externalTransferId };
-        }
-
-        if (isLocalTempDownloadCancelled()) {
-          await cleanupTempDownload(localTempPath);
-          return { localTempPath: "", sftpId, externalTransferId };
-        }
-
-        updateExternalUpload(externalTransferId, {
-          status: "completed" as TransferStatus,
-          endTime: Date.now(),
-          speed: 0,
-        });
-      } else {
-        localTempPath = await bridge.downloadSftpToTemp(
+      try {
+        const result = await bridge.downloadSftpToTempWithProgress(
           sftpId,
           remotePath,
           fileName,
           pane.filenameEncoding,
+          externalTransferId,
         );
+        wasCancelled = result.cancelled;
+        localTempPath = result.localPath;
+      } catch (err) {
+        sftpTransferCenterStore.patchTask(externalTransferId, {
+          status: "failed" as TransferStatus,
+          endTime: Date.now(),
+          error: err instanceof Error ? err.message : String(err),
+          speed: 0,
+        });
+        throw err;
       }
+
+      if (wasCancelled) {
+        if (localTempPath && bridge.deleteTempFile) {
+          bridge.deleteTempFile(localTempPath).catch(() => {});
+        }
+        return { localTempPath: "", sftpId, externalTransferId };
+      }
+
+      if (isLocalTempDownloadCancelled()) {
+        await cleanupTempDownload(localTempPath);
+        return { localTempPath: "", sftpId, externalTransferId };
+      }
+
+      sftpTransferCenterStore.patchTask(externalTransferId, {
+        status: "completed" as TransferStatus,
+        endTime: Date.now(),
+        speed: 0,
+      });
 
       if (isLocalTempDownloadCancelled()) {
         await cleanupTempDownload(localTempPath);
@@ -427,7 +490,7 @@ export const useSftpExternalOperations = (
 
       return { localTempPath, sftpId, externalTransferId };
     },
-    [getActivePane, sftpSessionsRef, addExternalUpload, updateExternalUpload, isTransferCancelled],
+    [getActivePane, isTransferCancelled, ownerId, sftpSessionsRef],
   );
 
   const downloadToTempAndOpen = useCallback(
@@ -461,8 +524,9 @@ export const useSftpExternalOperations = (
       try {
         await bridge.openWithApplication(localTempPath, appPath);
       } catch (err) {
+        await cleanupFailedExternalOpenTemp(bridge, sftpId, localTempPath).catch(() => {});
         if (externalTransferId) {
-          updateExternalUpload?.(externalTransferId, {
+          sftpTransferCenterStore.patchTask(externalTransferId, {
             status: "failed" as TransferStatus,
             endTime: Date.now(),
             error: err instanceof Error ? err.message : String(err),
@@ -474,6 +538,7 @@ export const useSftpExternalOperations = (
 
       let watchId: string | undefined;
       if (options?.enableWatch && bridge.startFileWatch) {
+        const watchGeneration = captureExternalFileWatchGeneration();
         try {
           const result = await bridge.startFileWatch(
             localTempPath,
@@ -482,7 +547,7 @@ export const useSftpExternalOperations = (
             pane.filenameEncoding,
           );
           watchId = result.watchId;
-          activeFileWatchCountRef.current += 1;
+          rememberExternalFileWatch(watchId, watchGeneration);
         } catch (err) {
           console.warn("[SFTP] Failed to start file watch:", err);
         }
@@ -490,7 +555,7 @@ export const useSftpExternalOperations = (
 
       return { localTempPath, watchId };
     },
-    [downloadToTemp, getActivePane, updateExternalUpload],
+    [captureExternalFileWatchGeneration, downloadToTemp, getActivePane, rememberExternalFileWatch],
   );
 
   const openWithSystemDefault = useCallback(
@@ -519,10 +584,21 @@ export const useSftpExternalOperations = (
 
         if (!localTempPath) return;
 
-        const result = await bridgeMethods.openWithSystemDefault(localTempPath);
+        let result;
+        try {
+          result = await bridgeMethods.openWithSystemDefault(localTempPath);
+        } catch (error) {
+          if (!pane.connection.isLocal) {
+            await cleanupFailedExternalOpenTemp(bridgeMethods, sftpId, localTempPath).catch(() => {});
+          }
+          throw error;
+        }
         if (!result.success) {
+          if (!pane.connection.isLocal) {
+            await cleanupFailedExternalOpenTemp(bridgeMethods, sftpId, localTempPath).catch(() => {});
+          }
           if (externalTransferId) {
-            updateExternalUpload?.(externalTransferId, {
+            sftpTransferCenterStore.patchTask(externalTransferId, {
               status: "failed" as TransferStatus,
               endTime: Date.now(),
               error: result.error || "Failed to open file",
@@ -534,14 +610,15 @@ export const useSftpExternalOperations = (
 
         // Start file watch for remote SFTP auto-sync (mirrors downloadToTempAndOpen behavior)
         if (options?.enableWatch && !pane.connection.isLocal && bridgeMethods.startFileWatch) {
+          const watchGeneration = captureExternalFileWatchGeneration();
           try {
-            await bridgeMethods.startFileWatch(
+            const result = await bridgeMethods.startFileWatch(
               localTempPath,
               remotePath,
               sftpId,
               pane.filenameEncoding,
             );
-            activeFileWatchCountRef.current += 1;
+            rememberExternalFileWatch(result.watchId, watchGeneration);
           } catch (err) {
             console.warn("[SFTP] Failed to start file watch for default app open:", err);
           }
@@ -550,7 +627,7 @@ export const useSftpExternalOperations = (
         notify.error(err instanceof Error ? err.message : String(err), "SFTP");
       }
     },
-    [downloadToTemp, getActivePane, updateExternalUpload],
+    [captureExternalFileWatchGeneration, downloadToTemp, getActivePane, rememberExternalFileWatch],
   );
 
   // Create upload callbacks that translate to TransferTask updates
@@ -561,15 +638,13 @@ export const useSftpExternalOperations = (
     targetConnectionKey?: string,
     targetHostLabel?: string,
   ): UploadCallbacks => createUploadTaskCallbacks({
+    ownerId,
     connectionId,
     targetPath,
     targetHostId,
     targetHostLabel,
     targetConnectionKey,
-    addExternalUpload,
-    updateExternalUpload,
-    dismissExternalUpload,
-  }), [addExternalUpload, updateExternalUpload, dismissExternalUpload]);
+  }), [ownerId]);
 
   const resolveUploadConflict = useCallback((conflictId: string, action: FileConflictAction, applyToAll = false) => {
     const conflict = uploadConflicts.find((item) => item.transferId === conflictId);
@@ -586,18 +661,22 @@ export const useSftpExternalOperations = (
 
   const cancelPendingUploadConflicts = useCallback((controller?: UploadController) => {
     if (uploadConflictResolversRef.current.size === 0) return;
-    const canceledIds: string[] = [];
-    for (const [conflictId, resolver] of [...uploadConflictResolversRef.current]) {
-      const owner = uploadConflictOwnersRef.current.get(conflictId);
-      // Scoped cancel: only stop prompts owned by this controller.
-      if (controller && owner !== controller) continue;
-      canceledIds.push(conflictId);
-      uploadConflictResolversRef.current.delete(conflictId);
-      uploadConflictOwnersRef.current.delete(conflictId);
-      resolver.resolve("stop");
-    }
+    const canceledIds = drainUploadConflictResolvers(
+      uploadConflictResolversRef.current,
+      uploadConflictOwnersRef.current,
+      controller,
+    );
     if (canceledIds.length === 0) return;
     setUploadConflicts((prev) => prev.filter((item) => !canceledIds.includes(item.transferId)));
+  }, []);
+
+  useEffect(() => () => {
+    drainUploadConflictResolvers(
+      uploadConflictResolversRef.current,
+      uploadConflictOwnersRef.current,
+    );
+    // Upload controllers are process-level. Their upload finally blocks remove
+    // them from externalUploadRuntime; panel unmount must not cancel them.
   }, []);
 
   const createUploadConflictResolver = useCallback((controller: UploadController) => {
@@ -652,10 +731,16 @@ export const useSftpExternalOperations = (
   const createUploadBridge = useCallback((connectHost?: Host): UploadBridge => {
     const bridge = netcattyBridge.get();
     return {
+      managesTransferLifecycle: Boolean(
+        bridge?.startStreamTransfer,
+      ),
       writeLocalFile: bridge?.writeLocalFile,
       mkdirLocal: bridge?.mkdirLocal,
       statLocal: bridge?.statLocal,
       deleteLocalFile: bridge?.deleteLocalFile,
+      stageUploadFile: bridge?.stageUploadFile,
+      cancelStagedUploadFile: bridge?.cancelStagedUploadFile,
+      deleteTempFile: bridge?.deleteTempFile,
       mkdirSftp: async (sftpId: string, path: string) => {
         const b = netcattyBridge.get();
         if (b?.mkdirSftp) {
@@ -673,33 +758,11 @@ export const useSftpExternalOperations = (
           await b.deleteSftp(sftpId, path);
         }
       },
-      writeSftpBinary: bridge?.writeSftpBinary,
-      // Wrap writeSftpBinaryWithProgress to adapt UploadBridge interface to NetcattyBridge interface
-      // UploadBridge: (sftpId, path, data, taskId, onProgress, onComplete, onError)
-      // NetcattyBridge: (sftpId, path, content, transferId, encoding, onProgress, onComplete, onError)
-      writeSftpBinaryWithProgress: bridge?.writeSftpBinaryWithProgress
-        ? async (sftpId, path, data, taskId, onProgress, onComplete, onError) => {
-            const b = netcattyBridge.get();
-            if (!b?.writeSftpBinaryWithProgress) return undefined;
-            // Pass undefined for encoding to use session default, and forward callbacks
-            return b.writeSftpBinaryWithProgress(
-              sftpId,
-              path,
-              data,
-              taskId,
-              undefined, // encoding - use session default
-              onProgress,
-              onComplete,
-              onError
-            );
-          }
-        : undefined,
-      cancelSftpUpload: bridge?.cancelSftpUpload,
       // Stream transfer for large files (avoids loading into memory).
       // FileZilla-style: each concurrent file acquires a dedicated transfer
       // session (max 2/host) so the browse connection stays free.
       startStreamTransfer: bridge?.startStreamTransfer
-        ? async (options, onProgress, onComplete, onError) => {
+        ? async (options) => {
             const b = netcattyBridge.get();
             if (!b?.startStreamTransfer) {
               return { transferId: options.transferId, error: 'Stream transfer not available' };
@@ -749,13 +812,7 @@ export const useSftpExternalOperations = (
                       skipAdmission: true as const,
                     };
 
-                    const result = await b.startStreamTransfer!(
-                      transferOptions,
-                      // UploadBridge onProgress is a subset of the bridge checkpoint callback.
-                      onProgress as Parameters<NonNullable<typeof b.startStreamTransfer>>[1],
-                      onComplete,
-                      onError,
-                    );
+                    const result = await b.startStreamTransfer!(transferOptions);
 
                     // Dead session → drop from pool so the next file opens fresh.
                     if (result?.error && isSessionError(new Error(result.error))) {
@@ -1396,23 +1453,17 @@ export const useSftpExternalOperations = (
   );
 
   const cancelExternalUpload = useCallback(async (taskId?: string) => {
-    let cancelPromise: Promise<void> | undefined;
     if (taskId) {
-      const controller = uploadControllersByTaskRef.current.get(taskId);
+      const controller = getExternalUploadController(taskId);
       if (controller) {
         logger.info("[SFTP] Cancelling external upload", { taskId });
         cancelPendingUploadConflicts(controller);
-        cancelPromise = controller.cancel();
       }
     } else {
-      const controllers = [...new Set(uploadControllersByTaskRef.current.values())];
-      if (controllers.length > 0) {
-        logger.info("[SFTP] Cancelling all external uploads", { count: controllers.length });
-        cancelPromise = Promise.all(controllers.map((controller) => controller.cancel())).then(() => undefined);
-      }
+      logger.info("[SFTP] Cancelling all external uploads");
       cancelPendingUploadConflicts();
     }
-    await cancelPromise;
+    await cancelExternalUploadRuntime(taskId);
   }, [cancelPendingUploadConflicts]);
 
   const selectApplication = useCallback(
@@ -1440,6 +1491,7 @@ export const useSftpExternalOperations = (
     cancelExternalUpload,
     selectApplication,
     activeFileWatchCountRef,
+    releaseExternalFileWatches,
     uploadConflicts,
     resolveUploadConflict,
   };

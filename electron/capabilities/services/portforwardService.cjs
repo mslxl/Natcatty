@@ -3,10 +3,14 @@
 const portForwardingBridge = require("../../bridges/portForwardingBridge.cjs");
 
 /**
- * Port forwarding domain service. Tunnels live in main; rules live in renderer vault.
+ * Port forwarding domain service. Tunnels live in the configured runtime
+ * (terminal worker in the current architecture); rules live in renderer vault.
  */
 function createPortForwardService(ctx = {}) {
   const { invokeVaultAgent } = ctx;
+  const listPortForwards = typeof ctx.listPortForwards === "function"
+    ? ctx.listPortForwards
+    : () => portForwardingBridge.listPortForwards();
 
   return {
     listRules: async () => {
@@ -32,7 +36,7 @@ function createPortForwardService(ctx = {}) {
       return invokeVaultAgent("portforward.rules.delete", params);
     },
     listTunnels: async () => {
-      const tunnels = await portForwardingBridge.listPortForwards();
+      const tunnels = await listPortForwards();
       return { ok: true, tunnels };
     },
     start: async (params = {}) => {

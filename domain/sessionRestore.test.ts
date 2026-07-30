@@ -6,6 +6,7 @@ import {
   isRestoredDisconnectedSession,
   quoteRestoreCwdForShell,
   resolveRestoredActiveTabId,
+  resolveInheritedCwdIntent,
   resolveRestoreCwdIntent,
   sanitizeSessionRestorePayload,
   shouldAttemptRestoreCwd,
@@ -678,4 +679,31 @@ test("resolveRestoreCwdIntent keeps home-relative cwd expandable", () => {
     cwd: "~",
     command: "cd -- ~",
   });
+});
+
+test("resolveInheritedCwdIntent: ssh clone gets a cd command", () => {
+  const intent = resolveInheritedCwdIntent({
+    session: { protocol: "ssh", shellType: "posix", cwd: "/var/log" },
+    isNetworkDevice: false,
+  });
+  assert.deepEqual(intent, { cwd: "/var/log", command: "cd -- '/var/log'" });
+});
+
+test("resolveInheritedCwdIntent: fires without restoreState or enabled flag", () => {
+  const intent = resolveInheritedCwdIntent({
+    session: { protocol: "ssh", cwd: "/home/me/proj" },
+    isNetworkDevice: false,
+  });
+  assert.equal(intent?.command, "cd -- '/home/me/proj'");
+});
+
+test("resolveInheritedCwdIntent: skips mosh/et and network devices and bad paths", () => {
+  assert.equal(resolveInheritedCwdIntent({ session: { protocol: "ssh", etEnabled: true, cwd: "/x" }, isNetworkDevice: false }), null);
+  assert.equal(resolveInheritedCwdIntent({ session: { protocol: "ssh", cwd: "/x" }, isNetworkDevice: true }), null);
+  assert.equal(resolveInheritedCwdIntent({ session: { protocol: "ssh", cwd: "C:\\Users" }, isNetworkDevice: false }), null);
+  assert.equal(resolveInheritedCwdIntent({ session: { protocol: "ssh", cwd: "   " }, isNetworkDevice: false }), null);
+});
+
+test("resolveInheritedCwdIntent: skips windows local shells", () => {
+  assert.equal(resolveInheritedCwdIntent({ session: { protocol: "local", shellType: "powershell", cwd: "/x" }, isNetworkDevice: false }), null);
 });

@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   buildCursorCliArgs,
+  createLineBuffer,
   formatCursorCliErrorForUser,
   listCursorCliModels,
   mergeWorkspaceMcpJson,
@@ -44,6 +45,18 @@ test("stripCursorApiKeyFromEnv removes CURSOR_API_KEY", () => {
     stripCursorApiKeyFromEnv({ CURSOR_API_KEY: "secret", PATH: "/bin" }),
     { PATH: "/bin" },
   );
+});
+
+test("createLineBuffer rejects and releases an unterminated oversized message", () => {
+  const lines = [];
+  const lineBuffer = createLineBuffer((line) => lines.push(line), 8);
+  lineBuffer.push(Buffer.from("12345678"));
+  assert.throws(
+    () => lineBuffer.push(Buffer.from("9")),
+    (error) => error?.code === "CURSOR_CLI_LINE_LIMIT",
+  );
+  lineBuffer.flush();
+  assert.deepEqual(lines, []);
 });
 
 test("buildCursorCliArgs maps permission modes and resume", () => {
@@ -269,6 +282,71 @@ test("runCursorCliTurn strips API key, parses stream, emits done", async () => {
   ]);
 });
 
+test("runCursorCliTurn preserves a Chinese JSON event split across UTF-8 chunks", async () => {
+  const emitter = makeEmitter();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.kill = () => {};
+
+  await runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    env: {},
+    permissionMode: "confirm",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        const line = Buffer.from(`${JSON.stringify({
+          type: "assistant",
+          timestamp_ms: 1,
+          message: { content: [{ type: "text", text: "中文回复" }] },
+        })}\n`, "utf8");
+        const split = line.indexOf(Buffer.from("中", "utf8")) + 2;
+        fakeChild.stdout.emit("data", line.subarray(0, split));
+        fakeChild.stdout.emit("data", line.subarray(split));
+        fakeChild.emit("close", 0);
+      });
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(emitter.calls.some((call) => call[0] === "text" && call[1] === "中文回复"));
+});
+
+test("runCursorCliTurn preserves Chinese stderr split across UTF-8 chunks", async () => {
+  const emitter = makeEmitter();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.kill = () => {};
+
+  await runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    env: {},
+    permissionMode: "confirm",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        const bytes = Buffer.from("中文错误", "utf8");
+        fakeChild.stderr.emit("data", bytes.subarray(0, 2));
+        fakeChild.stderr.emit("data", bytes.subarray(2));
+        fakeChild.emit("close", 1);
+      });
+      return fakeChild;
+    },
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(emitter.calls.some((call) => call[0] === "error" && call[1] === "中文错误"));
+});
+
 test("runCursorCliTurn abort after text does not emit done", async () => {
   const emitter = makeEmitter();
   const ac = new AbortController();
@@ -342,6 +420,47 @@ test("runCursorCliTurn abort before any text is soft cancel (no error/done)", as
   });
 
   assert.ok(fakeChild.killed);
+  assert.deepEqual(emitter.calls, []);
+});
+
+test("runCursorCliTurn force-kills and settles when the CLI ignores SIGTERM", async () => {
+  const emitter = makeEmitter();
+  const ac = new AbortController();
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.killed = false;
+  const signals = [];
+  fakeChild.kill = (signal) => {
+    signals.push(signal);
+    return true;
+  };
+  let restored = false;
+
+  const turn = runCursorCliTurn({
+    prompt: "hi",
+    binPath: "/bin/agent",
+    cwd: "/repo",
+    model: "auto",
+    env: {},
+    permissionMode: "confirm",
+    injectedMcpServers: [{ name: "netcatty", command: "node", args: [] }],
+    emitter,
+    signal: ac.signal,
+    abortGraceMs: 5,
+    forceKillImpl: (child) => child.kill("SIGKILL"),
+    spawnImpl: () => fakeChild,
+    mergeMcp: () => ({ restore() { restored = true; } }),
+  });
+  ac.abort();
+
+  await Promise.race([
+    turn,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("aborted Cursor CLI did not settle")), 50)),
+  ]);
+
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(restored, true);
   assert.deepEqual(emitter.calls, []);
 });
 
@@ -503,6 +622,61 @@ test("listCursorCliModels parses agent models output and prefers auto", async ()
       { id: "gpt-5.2", name: "GPT-5.2" },
     ],
   });
+});
+
+test("listCursorCliModels preserves Chinese model names split across UTF-8 chunks", async () => {
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.kill = () => {};
+
+  const catalogPromise = listCursorCliModels({
+    binPath: "/bin/agent",
+    env: {},
+    spawnImpl: () => {
+      queueMicrotask(() => {
+        const bytes = Buffer.from("model-cn - 中文模型\n", "utf8");
+        const split = bytes.indexOf(Buffer.from("中", "utf8")) + 1;
+        fakeChild.stdout.emit("data", bytes.subarray(0, split));
+        fakeChild.stdout.emit("data", bytes.subarray(split));
+        fakeChild.emit("close", 0);
+      });
+      return fakeChild;
+    },
+  });
+
+  assert.deepEqual(await catalogPromise, {
+    currentModelId: null,
+    models: [{ id: "model-cn", name: "中文模型" }],
+  });
+});
+
+test("listCursorCliModels aborts a hung CLI and settles after forced cleanup", async () => {
+  const fakeChild = new EventEmitter();
+  fakeChild.stdout = new EventEmitter();
+  fakeChild.stderr = new EventEmitter();
+  fakeChild.pid = 4242;
+  const signals = [];
+  const abortController = new AbortController();
+
+  const catalogPromise = listCursorCliModels({
+    binPath: "/bin/agent",
+    env: {},
+    abortController,
+    abortGraceMs: 0,
+    forceKillImpl: (_child, signal) => signals.push(signal),
+    spawnImpl: () => fakeChild,
+  });
+  abortController.abort();
+
+  const outcome = await Promise.race([
+    catalogPromise.then(() => "settled"),
+    new Promise((resolve) => setTimeout(() => resolve("hung"), 20)),
+  ]);
+  if (outcome === "hung") fakeChild.emit("close", 0);
+  assert.equal(outcome, "settled");
+  assert.deepEqual(await catalogPromise, { currentModelId: null, models: [] });
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
 });
 
 test("resolveCursorCliWorkspaceCwd prefers Netcatty temp over unwritable preferred cwd", () => {

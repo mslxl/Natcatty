@@ -29,6 +29,12 @@ export type DynamicTabTitleMode = 'off' | 'agent' | 'all';
  * - picker: WindTerm-like list of host + keychain password identities
  */
 export type PasswordPromptAssistMode = 'off' | 'hint' | 'picker';
+/**
+ * Which command-history pool autocomplete suggestions draw from (#2595).
+ * - host: only the current host's recorded commands (default; avoids cross-device noise)
+ * - global: commands recorded across all hosts
+ */
+export type AutocompleteHistoryScope = 'host' | 'global';
 
 export const DEFAULT_TERMINAL_WORD_SEPARATORS = ' ()[]{}\'"';
 
@@ -191,6 +197,8 @@ export interface TerminalSettings {
   autocompleteDebounceMs: number; // Debounce delay for fetching suggestions (ms)
   autocompleteMinChars: number; // Minimum characters before showing suggestions
   autocompleteMaxSuggestions: number; // Maximum suggestions in popup menu
+  /** Scope for history-backed autocomplete suggestions (host vs all hosts). */
+  autocompleteHistoryScope: AutocompleteHistoryScope;
 
   /**
    * Assist for sudo/su password prompts: off, quick Enter-to-paste (hint),
@@ -325,6 +333,11 @@ const isPasswordPromptAssistMode = (value: unknown): value is PasswordPromptAssi
   value === 'picker'
 );
 
+const isAutocompleteHistoryScope = (value: unknown): value is AutocompleteHistoryScope => (
+  value === 'host' ||
+  value === 'global'
+);
+
 export const normalizeTerminalSettings = (
   settings?: Partial<TerminalSettings> | null,
 ): TerminalSettings => {
@@ -348,6 +361,9 @@ export const normalizeTerminalSettings = (
     passwordPromptAssist: isPasswordPromptAssistMode(settings?.passwordPromptAssist)
       ? settings.passwordPromptAssist
       : DEFAULT_TERMINAL_SETTINGS.passwordPromptAssist,
+    autocompleteHistoryScope: isAutocompleteHistoryScope(settings?.autocompleteHistoryScope)
+      ? settings.autocompleteHistoryScope
+      : DEFAULT_TERMINAL_SETTINGS.autocompleteHistoryScope,
   };
 
   // Migrate legacy 'canvas' renderer to 'dom' (canvas removed in xterm.js 6.0)
@@ -470,6 +486,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   autocompleteDebounceMs: 100, // 100ms debounce
   autocompleteMinChars: 1, // Start suggesting after 1 character
   autocompleteMaxSuggestions: 8, // Show up to 8 suggestions
+  autocompleteHistoryScope: 'host', // Per-host history suggestions by default (#2595)
   passwordPromptAssist: 'hint', // Historical sudo confirm-to-fill; picker is opt-in (#2156)
 };
 
@@ -569,4 +586,14 @@ export interface TerminalSession {
   autoOpenSidePanel?: 'sftp';
   /** Latest known working directory captured from terminal cwd tracking. */
   lastCwd?: string;
+  /**
+   * Transient one-shot: a directory a freshly-cloned/split REMOTE session
+   * should `cd` into on its first connect. Set by the clone factory when a
+   * copy/split inherits the source pane's cwd; the terminal's restore-cwd
+   * injection path applies it on connect, and it is cleared from the session as
+   * soon as a live cwd is tracked (see `updateSessionRestoreCwd`) so a later
+   * remount + reconnect does not re-inject a stale `cd`. Not persisted across
+   * relaunch. Local clones use `localStartDir` instead of this field.
+   */
+  pendingInitialCwd?: string;
 }

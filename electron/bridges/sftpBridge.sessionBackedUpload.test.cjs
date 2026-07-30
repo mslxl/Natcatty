@@ -3,7 +3,7 @@
 /**
  * Session-backed SFTP clients (openForSession / terminal reuse) are not
  * ssh2-sftp-client instances. They must still expose pipelined fastPut so
- * uploadLocal / writeSftpBinaryWithProgress stay on the high-throughput path
+ * uploadLocal stays on the high-throughput path
  * (#2449 fail-closed alignment; no serial WriteStream crawl).
  */
 
@@ -15,7 +15,12 @@ const os = require("node:os");
 const path = require("node:path");
 
 const sftpBridge = require("./sftpBridge.cjs");
+const transferBridge = require("./transferBridge.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
+const {
+  buildConnectionReuseEndpoint,
+  normalizeEndpoint,
+} = require("./sshConnectionPool.cjs");
 const {
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
@@ -156,6 +161,201 @@ function createSessionChannel(options = {}) {
   return { channel, fastPutCalls, remoteFiles, remoteMeta, chmodCalls };
 }
 
+test("openSftpForSession rejects a same-target session reached through a different jump route", async () => {
+  let openedChannel = false;
+  const connection = {
+    sftp(callback) {
+      openedChannel = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const base = {
+    hostId: "same-host",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "target-password",
+    verifyHostKeys: true,
+  };
+  const actualEndpoint = normalizeEndpoint(buildConnectionReuseEndpoint({
+    ...base,
+    jumpHosts: [{
+      hostId: "jump-a",
+      hostname: "jump-a.example",
+      username: "jump-user",
+      password: "jump-a-password",
+    }],
+  }));
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["split-route-session", {
+      conn: connection,
+      _reuseEndpoint: actualEndpoint,
+    }]]),
+    sftpClients: new Map(),
+  });
+
+  await assert.rejects(
+    sftpBridge.openSftpForSession(null, {
+      sessionId: "split-route-session",
+      expectedEndpoint: {
+        ...base,
+        jumpHosts: [{
+          hostId: "jump-b",
+          hostname: "jump-b.example",
+          username: "jump-user",
+          password: "jump-b-password",
+        }],
+      },
+    }),
+    (err) => err?.code === "ERR_SFTP_SOURCE_ROUTE_MISMATCH",
+  );
+  assert.equal(openedChannel, false, "the mismatched transport must not be borrowed even briefly");
+});
+
+test("openSftpForSession skips a mismatched source hint and reuses another session with the full route identity", async () => {
+  let wrongRouteOpened = false;
+  let matchingRouteOpened = false;
+  const wrongConnection = {
+    sftp(callback) {
+      wrongRouteOpened = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const matchingConnection = {
+    sftp(callback) {
+      matchingRouteOpened = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const base = {
+    hostId: "same-host",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "target-password",
+    verifyHostKeys: true,
+    knownHosts: [{
+      hostname: "target.example",
+      port: 22,
+      keyType: "ssh-ed25519",
+      fingerprint: "target-fingerprint",
+    }],
+  };
+  const wrongEndpoint = normalizeEndpoint(buildConnectionReuseEndpoint({
+    ...base,
+    proxy: {
+      type: "socks5",
+      host: "proxy-a.example",
+      port: 1080,
+      username: "proxy-user",
+      password: "proxy-a-password",
+    },
+    jumpHosts: [{
+      hostId: "jump-a",
+      hostname: "jump-a.example",
+      username: "jump-user",
+      password: "jump-a-password",
+    }],
+  }));
+  const matchingOptions = {
+    ...base,
+    proxy: {
+      type: "socks5",
+      host: "proxy-b.example",
+      port: 1080,
+      username: "proxy-user",
+      password: "proxy-b-password",
+    },
+    jumpHosts: [{
+      hostId: "jump-b",
+      hostname: "jump-b.example",
+      username: "jump-user",
+      password: "jump-b-password",
+    }],
+  };
+  const matchingEndpoint = normalizeEndpoint(buildConnectionReuseEndpoint(matchingOptions));
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([
+      ["wrong-source-hint", { conn: wrongConnection, _reuseEndpoint: wrongEndpoint }],
+      ["matching-source", { conn: matchingConnection, _reuseEndpoint: matchingEndpoint }],
+    ]),
+    sftpClients,
+  });
+
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "wrong-source-hint",
+    expectedEndpoint: matchingOptions,
+    fileProtocol: "sftp",
+  });
+
+  assert.equal(wrongRouteOpened, false, "the endpoint-only source hint must never be borrowed");
+  assert.equal(matchingRouteOpened, true, "a session with the complete matching identity should be reused");
+  assert.match(opened.sftpId, /^matching-source-sftp-/);
+  assert.equal(opened.sourceSessionId, "matching-source");
+  assert.equal(sftpClients.has(opened.sftpId), true);
+  await sftpBridge.closeSftp(null, { sftpId: opened.sftpId });
+});
+
+test("openSftpForSession reuses the hinted session when its full route and security identity match", async () => {
+  let openedChannel = false;
+  const connection = {
+    sftp(callback) {
+      openedChannel = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const options = {
+    hostId: "same-host",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "target-password",
+    requiresMfa: true,
+    verifyHostKeys: true,
+    keepaliveInterval: 15,
+    keepaliveCountMax: 4,
+    proxy: {
+      type: "http",
+      host: "proxy.example",
+      port: 8080,
+      username: "proxy-user",
+      password: "proxy-password",
+    },
+    jumpHosts: [{
+      hostId: "jump",
+      hostname: "jump.example",
+      username: "jump-user",
+      password: "jump-password",
+    }],
+  };
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["matching-source", {
+      conn: connection,
+      _reuseEndpoint: normalizeEndpoint(buildConnectionReuseEndpoint(options)),
+    }]]),
+    sftpClients,
+  });
+
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "matching-source",
+    expectedEndpoint: options,
+    fileProtocol: "sftp",
+  });
+
+  assert.equal(openedChannel, true);
+  assert.match(opened.sftpId, /^matching-source-sftp-/);
+  assert.equal(opened.sourceSessionId, "matching-source");
+  await sftpBridge.closeSftp(null, { sftpId: opened.sftpId });
+});
+
 test("downloadSftpToLocal aborts while initial SFTP metadata is stalled", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-stat-abort-"));
   t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
@@ -283,437 +483,6 @@ test("session-backed uploadLocalToSftp uses pipelined fastPut on the raw SFTP ch
   // Final path after staged rename
   assert.ok(remoteFiles.has("/home/alice/payload.bin"));
   assert.deepEqual(remoteFiles.get("/home/alice/payload.bin"), payload);
-});
-
-test("session-backed writeSftpBinaryWithProgress uses pipelined fastPut", async (t) => {
-  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-session-write-progress-"));
-  t.after(async () => {
-    await fs.promises.rm(tempRoot, { recursive: true, force: true });
-  });
-  tempDirBridge.init?.({ getPath: () => tempRoot });
-  // ensureTempDir may be required by getTempFilePath
-  if (typeof tempDirBridge.ensureTempDir === "function") {
-    tempDirBridge.ensureTempDir();
-  }
-
-  const payload = Buffer.alloc(40 * 1024, 29);
-  const { channel, fastPutCalls, remoteFiles } = createSessionChannel();
-  const connection = {
-    sftp(callback) {
-      callback(null, channel);
-    },
-  };
-  const sftpClients = new Map();
-  sftpBridge.init({
-    electronModule: {
-      webContents: {
-        fromId: () => ({ send() {} }),
-      },
-    },
-    sessions: new Map([["session-write", { conn: connection }]]),
-    sftpClients,
-  });
-
-  const opened = await sftpBridge.openSftpForSession(null, {
-    sessionId: "session-write",
-    fileProtocol: "sftp",
-  });
-
-  let progressError = null;
-  const result = await sftpBridge.writeSftpBinaryWithProgress(
-    { sender: { id: 1 } },
-    {
-      sftpId: opened.sftpId,
-      path: "/home/alice/mem.bin",
-      content: payload,
-      transferId: "mem-upload-1",
-      encoding: "utf-8",
-      onProgress() {},
-      onComplete() {},
-      onError(message) {
-        progressError = message;
-      },
-    },
-  );
-
-  assert.equal(progressError, null, progressError);
-  assert.equal(result.success, true, result.error || progressError || "upload failed");
-  assert.equal(fastPutCalls.length, 1);
-  assert.equal(fastPutCalls[0].concurrency, UPLOAD_TRANSFER_CONCURRENCY);
-  assert.equal(fastPutCalls[0].chunkSize, TRANSFER_CHUNK_SIZE);
-  assert.match(path.basename(fastPutCalls[0].localPath), /sftp-upload-/);
-  assert.doesNotMatch(fastPutCalls[0].localPath, /upload-source-/);
-  await assert.rejects(fs.promises.stat(fastPutCalls[0].localPath), { code: "ENOENT" });
-  // New destinations stage to a remote .part path, then rename into place.
-  assert.match(fastPutCalls[0].remotePath, /\.netcatty-upload-.*\.part$/);
-  assert.notEqual(fastPutCalls[0].remotePath, "/home/alice/mem.bin");
-  assert.ok(remoteFiles.has("/home/alice/mem.bin"));
-  assert.deepEqual(remoteFiles.get("/home/alice/mem.bin"), payload);
-});
-
-test("SCP writeSftpBinaryWithProgress uses the shared staged transaction", async (t) => {
-  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-write-progress-"));
-  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
-  tempDirBridge.init?.({ getPath: () => tempRoot });
-
-  const payload = Buffer.from("new executable payload");
-  const finalPath = "/目录/工具";
-  const remoteFiles = new Map([[finalPath, Buffer.from("old")]]);
-  const remoteModes = new Map([[finalPath, 0o755]]);
-  const uploadPaths = [];
-  const chmodCalls = [];
-  const backend = {
-    async stat(remotePath) {
-      if (!remoteFiles.has(remotePath)) {
-        const error = new Error("No such file");
-        error.code = "ENOENT";
-        throw error;
-      }
-      return {
-        type: "file",
-        isDirectory: false,
-        size: remoteFiles.get(remotePath).length,
-        mode: remoteModes.get(remotePath) ?? 0o644,
-        permissions: (remoteModes.get(remotePath) ?? 0o644) === 0o755
-          ? "rwxr-xr-x"
-          : "rw-r--r--",
-      };
-    },
-    async uploadFile(localPath, remotePath, options = {}) {
-      uploadPaths.push(remotePath);
-      const contents = await fs.promises.readFile(localPath);
-      remoteFiles.set(remotePath, contents);
-      remoteModes.set(remotePath, 0o644);
-      options.onProgress?.(contents.length, contents.length);
-    },
-    async chmod(remotePath, mode) {
-      chmodCalls.push({ remotePath, mode });
-      remoteModes.set(remotePath, mode);
-    },
-    async rename(fromPath, toPath) {
-      remoteFiles.set(toPath, remoteFiles.get(fromPath));
-      remoteFiles.delete(fromPath);
-      remoteModes.set(toPath, remoteModes.get(fromPath));
-      remoteModes.delete(fromPath);
-    },
-    async remove(remotePath) {
-      remoteFiles.delete(remotePath);
-      remoteModes.delete(remotePath);
-    },
-  };
-  const sftpClients = new Map([["scp-memory", {
-    __netcattyFileProtocol: "scp",
-    __netcattyScpBackend: backend,
-  }]]);
-  sftpBridge.init({
-    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
-    sessions: new Map(),
-    sftpClients,
-  });
-
-  const result = await sftpBridge.writeSftpBinaryWithProgress(
-    { sender: { id: 1 } },
-    {
-      sftpId: "scp-memory",
-      path: finalPath,
-      content: payload,
-      transferId: "scp-memory-upload",
-      onProgress() {},
-      onComplete() {},
-    },
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(uploadPaths.length, 1);
-  assert.match(uploadPaths[0], /\.netcatty-upload-.*\.part$/);
-  assert.equal(typeof uploadPaths[0], "string");
-  assert.match(uploadPaths[0], /^\/目录\/\.netcatty-upload-/);
-  assert.notEqual(uploadPaths[0], finalPath);
-  assert.deepEqual(remoteFiles.get(finalPath), payload);
-  assert.equal(remoteModes.get(finalPath), 0o755);
-  assert.deepEqual(chmodCalls, [{ remotePath: uploadPaths[0], mode: 0o755 }]);
-});
-
-test("SCP buffer upload creates a new remote file with mode 0644 under restrictive umask", async (t) => {
-  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-buffer-mode-"));
-  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
-  tempDirBridge.init?.({ getPath: () => tempRoot });
-
-  const payload = Buffer.from("ordinary buffer payload");
-  const finalPath = "/tmp/new-buffer.bin";
-  const remoteFiles = new Map();
-  const remoteModes = new Map();
-  let uploadedSourcePath = null;
-  const backend = {
-    async stat(remotePath) {
-      if (!remoteFiles.has(remotePath)) {
-        const error = new Error("No such file");
-        error.code = "ENOENT";
-        throw error;
-      }
-      return {
-        type: "file",
-        isDirectory: false,
-        size: remoteFiles.get(remotePath).length,
-        mode: remoteModes.get(remotePath),
-      };
-    },
-    async uploadFile(localPath, remotePath, options = {}) {
-      uploadedSourcePath = localPath;
-      const contents = await fs.promises.readFile(localPath);
-      remoteFiles.set(remotePath, contents);
-      remoteModes.set(remotePath, (await fs.promises.stat(localPath)).mode & 0o777);
-      options.onProgress?.(contents.length, contents.length);
-    },
-    async rename(fromPath, toPath) {
-      remoteFiles.set(toPath, remoteFiles.get(fromPath));
-      remoteFiles.delete(fromPath);
-      remoteModes.set(toPath, remoteModes.get(fromPath));
-      remoteModes.delete(fromPath);
-    },
-    async remove(remotePath) {
-      remoteFiles.delete(remotePath);
-      remoteModes.delete(remotePath);
-    },
-    async chmod(remotePath, mode) {
-      remoteModes.set(remotePath, mode);
-    },
-  };
-  const sftpClients = new Map([["scp-buffer-mode", {
-    __netcattyFileProtocol: "scp",
-    __netcattyScpBackend: backend,
-  }]]);
-  sftpBridge.init({
-    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
-    sessions: new Map(),
-    sftpClients,
-  });
-
-  const previousUmask = process.umask(0o077);
-  let result;
-  try {
-    result = await sftpBridge.writeSftpBinaryWithProgress(
-      { sender: { id: 1 } },
-      {
-        sftpId: "scp-buffer-mode",
-        path: finalPath,
-        content: payload,
-        transferId: "scp-buffer-mode-upload",
-        onProgress() {},
-        onComplete() {},
-      },
-    );
-  } finally {
-    process.umask(previousUmask);
-  }
-
-  assert.equal(result.success, true);
-  assert.match(path.basename(uploadedSourcePath), /sftp-upload-/);
-  assert.doesNotMatch(uploadedSourcePath, /upload-source-/);
-  assert.deepEqual(remoteFiles.get(finalPath), payload);
-  assert.equal(remoteModes.get(finalPath), 0o644);
-  await assert.rejects(fs.promises.stat(uploadedSourcePath), { code: "ENOENT" });
-});
-
-test("SCP staged uploads preserve an existing mode 000", async (t) => {
-  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-mode-zero-"));
-  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
-  tempDirBridge.init?.({ getPath: () => tempRoot });
-
-  const payload = Buffer.from("replacement over mode-zero file");
-  const finalPath = "/tmp/locked.bin";
-  const remoteFiles = new Map([[finalPath, Buffer.from("old")]]);
-  const remoteModes = new Map([[finalPath, 0]]);
-  const uploadPaths = [];
-  const chmodCalls = [];
-  const backend = {
-    async stat(remotePath) {
-      if (!remoteFiles.has(remotePath)) {
-        const error = new Error("No such file");
-        error.code = "ENOENT";
-        throw error;
-      }
-      return {
-        type: "file",
-        isDirectory: false,
-        size: remoteFiles.get(remotePath).length,
-        mode: remoteModes.get(remotePath) ?? 0o644,
-        permissions: remoteModes.get(remotePath) === 0 ? "---------" : "rw-r--r--",
-      };
-    },
-    async uploadFile(localPath, remotePath, options = {}) {
-      uploadPaths.push(remotePath);
-      const contents = await fs.promises.readFile(localPath);
-      remoteFiles.set(remotePath, contents);
-      remoteModes.set(remotePath, 0o644);
-      options.onProgress?.(contents.length, contents.length);
-    },
-    async chmod(remotePath, mode) {
-      chmodCalls.push({ remotePath, mode });
-      remoteModes.set(remotePath, mode);
-    },
-    async rename(fromPath, toPath) {
-      remoteFiles.set(toPath, remoteFiles.get(fromPath));
-      remoteFiles.delete(fromPath);
-      remoteModes.set(toPath, remoteModes.get(fromPath));
-      remoteModes.delete(fromPath);
-    },
-    async remove(remotePath) {
-      remoteFiles.delete(remotePath);
-      remoteModes.delete(remotePath);
-    },
-  };
-  const sftpClients = new Map([["scp-mode-zero", {
-    __netcattyFileProtocol: "scp",
-    __netcattyScpBackend: backend,
-  }]]);
-  sftpBridge.init({
-    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
-    sessions: new Map(),
-    sftpClients,
-  });
-
-  const result = await sftpBridge.writeSftpBinaryWithProgress(
-    { sender: { id: 1 } },
-    {
-      sftpId: "scp-mode-zero",
-      path: finalPath,
-      content: payload,
-      transferId: "scp-mode-zero-upload",
-      onProgress() {},
-      onComplete() {},
-    },
-  );
-
-  assert.equal(result.success, true, result.error || "upload failed");
-  assert.equal(uploadPaths.length, 1);
-  assert.match(uploadPaths[0], /\.netcatty-upload-.*\.part$/);
-  assert.deepEqual(remoteFiles.get(finalPath), payload);
-  assert.deepEqual(chmodCalls, [{ remotePath: uploadPaths[0], mode: 0 }]);
-  assert.equal(remoteModes.get(finalPath), 0);
-});
-
-test("SCP staged uploads do not treat an unparseable zero mode as mode 000", async () => {
-  let chmodCalls = 0;
-  const backend = {
-    async stat(remotePath) {
-      return {
-        type: "file",
-        isDirectory: false,
-        size: String(remotePath).includes(".netcatty-upload-") ? 7 : 3,
-        mode: 0,
-        // No permissions field: the shell mode could not be parsed.
-      };
-    },
-    async chmod() {
-      chmodCalls += 1;
-    },
-    async rename() {},
-    async remove() {},
-  };
-  const client = {
-    __netcattyFileProtocol: "scp",
-    __netcattyScpBackend: backend,
-  };
-
-  const result = await sftpBridge.runRemoteUploadTransaction(
-    client,
-    "/tmp/local.bin",
-    "/tmp/final.bin",
-    {
-      expectedSize: 7,
-      async uploadFile() {},
-    },
-  );
-  assert.deepEqual(result, { staged: true });
-  assert.equal(chmodCalls, 0);
-});
-
-test("SCP symlink uploads do not compare content size with the link node", async () => {
-  let uploadCalls = 0;
-  const backend = {
-    async stat() {
-      return { type: "symlink", isSymbolicLink: true, size: 99 };
-    },
-    async uploadFile() {
-      uploadCalls += 1;
-    },
-  };
-  const client = {
-    __netcattyFileProtocol: "scp",
-    __netcattyScpBackend: backend,
-  };
-
-  const result = await sftpBridge.runRemoteUploadTransaction(
-    client,
-    "/tmp/local.bin",
-    "/目录/链接.bin",
-    {
-      expectedSize: 7,
-      async uploadFile(remotePath) {
-        assert.equal(remotePath, "/目录/链接.bin");
-        uploadCalls += 1;
-      },
-    },
-  );
-  assert.deepEqual(result, { staged: false });
-  assert.equal(uploadCalls, 1);
-});
-
-test("cancelling an SCP memory upload leaves the final destination untouched", async (t) => {
-  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-memory-cancel-"));
-  t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
-  tempDirBridge.init?.({ getPath: () => tempRoot });
-
-  let uploadStarted;
-  const started = new Promise((resolve) => { uploadStarted = resolve; });
-  let renameCalls = 0;
-  let removedStage = false;
-  const backend = {
-    async stat() {
-      const error = new Error("No such file");
-      error.code = "ENOENT";
-      throw error;
-    },
-    async uploadFile(_localPath, _remotePath, options = {}) {
-      uploadStarted();
-      await new Promise((resolve, reject) => {
-        options.transfer.abort = () => reject(new Error("Transfer cancelled"));
-      });
-    },
-    async rename() {
-      renameCalls += 1;
-    },
-    async remove(remotePath) {
-      if (String(remotePath).includes(".netcatty-upload-")) removedStage = true;
-    },
-  };
-  sftpBridge.init({
-    electronModule: { webContents: { fromId: () => ({ send() {} }) } },
-    sessions: new Map(),
-    sftpClients: new Map([["scp-memory-cancel", {
-      __netcattyFileProtocol: "scp",
-      __netcattyScpBackend: backend,
-    }]]),
-  });
-
-  const upload = sftpBridge.writeSftpBinaryWithProgress(
-    { sender: { id: 1 } },
-    {
-      sftpId: "scp-memory-cancel",
-      path: "/tmp/final.bin",
-      content: Buffer.alloc(1024, 1),
-      transferId: "scp-memory-cancel-transfer",
-      onProgress() {},
-    },
-  );
-  await started;
-  await sftpBridge.cancelSftpUpload(null, { transferId: "scp-memory-cancel-transfer" });
-  const result = await upload;
-
-  assert.equal(result.cancelled, true);
-  assert.equal(renameCalls, 0);
-  assert.equal(removedStage, true);
 });
 
 test("existing destinations stage then restore mode after rename", async (t) => {
@@ -978,6 +747,173 @@ test("rename fallback replaces safely and restores the old target on promotion f
   );
 });
 
+test("SFTP rename fallback retries backup cleanup and reports a recoverable persistent failure", async () => {
+  const makeClient = (persistent) => {
+    const files = new Map([
+      ["/tmp/stage", Buffer.from("new")],
+      ["/tmp/final", Buffer.from("old")],
+    ]);
+    let promoteAttempts = 0;
+    let deleteAttempts = 0;
+    return {
+      files,
+      get deleteAttempts() { return deleteAttempts; },
+      client: {
+        sftp: {
+          readdir(_path, cb) { cb(null, []); },
+          mkdir(_path, cb) { cb(null); },
+          unlink(_path, cb) { cb(null); },
+          stat(targetPath, cb) {
+            if (!files.has(targetPath)) {
+              const error = new Error("ENOENT");
+              error.code = 2;
+              cb(error);
+              return;
+            }
+            cb(null, { size: files.get(targetPath).length, isDirectory: false });
+          },
+        },
+        async stat(targetPath) {
+          return { size: files.get(targetPath)?.length || 0, isDirectory: false };
+        },
+        async rename(from, to) {
+          if (from === "/tmp/stage" && to === "/tmp/final" && promoteAttempts++ === 0) {
+            throw new Error("overwrite unsupported");
+          }
+          if (!files.has(from)) throw new Error("ENOENT");
+          files.set(to, files.get(from));
+          files.delete(from);
+        },
+        async delete(targetPath) {
+          deleteAttempts += 1;
+          if (persistent || deleteAttempts < 3) throw new Error("backup busy");
+          files.delete(targetPath);
+        },
+      },
+    };
+  };
+
+  const transient = makeClient(false);
+  await sftpBridge._renameRemotePathForTests(
+    transient.client,
+    "/tmp/stage",
+    "/tmp/final",
+    "/tmp/backup",
+    { finalPath: "/tmp/final", backupPath: "/tmp/backup" },
+  );
+  assert.equal(transient.deleteAttempts, 3);
+  assert.deepEqual(transient.files.get("/tmp/final"), Buffer.from("new"));
+  assert.equal(transient.files.has("/tmp/backup"), false);
+
+  const persistent = makeClient(true);
+  await assert.rejects(
+    () => sftpBridge._renameRemotePathForTests(
+      persistent.client,
+      "/tmp/stage",
+      "/tmp/final",
+      "/tmp/backup",
+      { finalPath: "/tmp/final", backupPath: "/tmp/backup" },
+    ),
+    (error) => {
+      assert.equal(error.recoverable, true);
+      assert.equal(error.remoteFinalPath, "/tmp/final");
+      assert.equal(error.remoteBackupPath, "/tmp/backup");
+      return true;
+    },
+  );
+  assert.equal(persistent.deleteAttempts, 3);
+  assert.deepEqual(persistent.files.get("/tmp/final"), Buffer.from("new"));
+  assert.deepEqual(persistent.files.get("/tmp/backup"), Buffer.from("old"));
+});
+
+function createScpBackupCleanupHarness({ persistent }) {
+  const finalPath = "/tmp/scp-final.bin";
+  const backupPath = sftpBridge._buildBackupRemotePathForTests(finalPath);
+  const files = new Map([[finalPath, Buffer.from("old")]]);
+  let backupDeleteAttempts = 0;
+  let uploadCalls = 0;
+  const missing = (candidate) => {
+    const error = new Error(`ENOENT: ${candidate}`);
+    error.code = "ENOENT";
+    return error;
+  };
+  const backend = {
+    async stat(candidate) {
+      if (!files.has(candidate)) throw missing(candidate);
+      return {
+        type: "file",
+        isDirectory: false,
+        isSymbolicLink: false,
+        size: files.get(candidate).length,
+        mode: 0o100644,
+        permissions: "rw-r--r--",
+        modifyTime: 1,
+      };
+    },
+    async chmod() {},
+    async rename(from, to) {
+      if (!files.has(from)) throw missing(from);
+      if (files.has(to)) throw new Error(`EEXIST: ${to}`);
+      files.set(to, files.get(from));
+      files.delete(from);
+    },
+    async remove(candidate) {
+      if (candidate === backupPath) {
+        backupDeleteAttempts += 1;
+        if (persistent || backupDeleteAttempts < 3) throw new Error("backup cleanup unavailable");
+      }
+      files.delete(candidate);
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+  const upload = () => sftpBridge.runRemoteUploadTransaction(client, "/tmp/local.bin", finalPath, {
+    expectedSize: 3,
+    async uploadFile(_encodedPath, uploadTarget) {
+      uploadCalls += 1;
+      files.set(uploadTarget.logicalPath, Buffer.from("new"));
+    },
+  });
+  return {
+    finalPath,
+    backupPath,
+    files,
+    upload,
+    get backupDeleteAttempts() { return backupDeleteAttempts; },
+    get uploadCalls() { return uploadCalls; },
+  };
+}
+
+test("SCP upload retries transient backup cleanup", async () => {
+  const harness = createScpBackupCleanupHarness({ persistent: false });
+  await harness.upload();
+  assert.equal(harness.backupDeleteAttempts, 3);
+  assert.deepEqual(harness.files.get(harness.finalPath), Buffer.from("new"));
+  assert.equal(harness.files.has(harness.backupPath), false);
+});
+
+test("SCP persistent cleanup failure remains recoverable and repeated upload creates no new backup", async () => {
+  const harness = createScpBackupCleanupHarness({ persistent: true });
+  await assert.rejects(harness.upload, (error) => {
+    assert.equal(error.recoverable, true);
+    assert.equal(error.remoteFinalPath, harness.finalPath);
+    assert.equal(error.remoteBackupPath, harness.backupPath);
+    return true;
+  });
+  assert.deepEqual(harness.files.get(harness.finalPath), Buffer.from("new"));
+  assert.deepEqual(harness.files.get(harness.backupPath), Buffer.from("old"));
+  assert.equal(harness.uploadCalls, 1);
+
+  await assert.rejects(harness.upload, /backup cleanup unavailable/);
+  assert.equal(harness.uploadCalls, 1, "the next attempt must reconcile the stable backup before uploading");
+  assert.deepEqual(
+    [...harness.files.keys()].filter((candidate) => candidate.includes(".netcatty-backup-")),
+    [harness.backupPath],
+  );
+});
+
 test("SCP upload stops when the destination type cannot be inspected", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-scp-stat-fail-"));
   t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
@@ -1019,13 +955,22 @@ test("SCP upload does not replace a symlink that appears before promotion", asyn
   t.after(async () => fs.promises.rm(tempRoot, { recursive: true, force: true }));
   const localPath = path.join(tempRoot, "local.bin");
   await fs.promises.writeFile(localPath, Buffer.from("payload"));
-  let statCalls = 0;
+  let targetStatCalls = 0;
   let renameCalls = 0;
   let removedStage = false;
   const backend = {
-    async stat() {
-      statCalls += 1;
-      if (statCalls === 1) return { type: "file", isDirectory: false };
+    async stat(remotePath) {
+      const candidate = String(remotePath);
+      if (candidate.includes(".netcatty-backup-")) {
+        const error = new Error("ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
+      if (candidate.includes(".netcatty-upload-")) {
+        return { type: "file", isDirectory: false, size: 7 };
+      }
+      targetStatCalls += 1;
+      if (targetStatCalls === 1) return { type: "file", isDirectory: false };
       return { type: "symlink", isDirectory: false, isSymbolicLink: true };
     },
     async uploadFile() {},
@@ -1061,16 +1006,22 @@ test("SCP upload does not replace a symlink that appears before promotion", asyn
 
 test("SCP upload cancelled during the final target check does not promote", async () => {
   const controller = new AbortController();
-  let statCalls = 0;
+  let targetStatCalls = 0;
   let renameCalls = 0;
   let removedStage = false;
   const backend = {
     async stat(remotePath) {
-      statCalls += 1;
-      if (String(remotePath).includes(".netcatty-upload-")) {
+      const candidate = String(remotePath);
+      if (candidate.includes(".netcatty-backup-")) {
+        const error = new Error("ENOENT");
+        error.code = "ENOENT";
+        throw error;
+      }
+      if (candidate.includes(".netcatty-upload-")) {
         return { type: "file", isDirectory: false, size: 7 };
       }
-      if (statCalls > 2) controller.abort();
+      targetStatCalls += 1;
+      if (targetStatCalls > 1) controller.abort();
       return { type: "file", isDirectory: false, size: 3 };
     },
     async rename() {
@@ -1451,7 +1402,7 @@ test("permission failure during final target recheck never falls back to direct 
   const originalLstat = created.channel.lstat.bind(created.channel);
   let lstatCalls = 0;
   created.channel.lstat = (targetPath, callback) => {
-    lstatCalls += 1;
+    if (String(targetPath) === "/tmp/data.bin") lstatCalls += 1;
     if (lstatCalls >= 2 && String(targetPath) === "/tmp/data.bin") {
       const err = new Error("Permission denied");
       err.code = "EACCES";

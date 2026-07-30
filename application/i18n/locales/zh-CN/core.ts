@@ -324,6 +324,7 @@ export const zhCNCoreMessages: Messages = {
 ### 顶部标签栏
 
 - \`top-tabs\`
+- \`top-tabs-toolbar-actions\` — 右侧菜单和工具栏
 - \`top-tabs-host-tree-toggle\`
 - \`top-tabs-quick-switcher-toggle\`
 
@@ -338,6 +339,8 @@ export const zhCNCoreMessages: Messages = {
 ### 终端工作区
 
 - \`terminal-workspace\`
+- \`terminal-toolbar\` — 终端操作工具栏
+- \`terminal-toolbar-menu\` — 终端工具栏溢出菜单和子菜单
 - \`terminal-workspace-sidebar\` — Focus 模式终端列表
 - \`terminal-host-tree-sidebar\`
 - \`terminal-host-tree-sidebar-content\`
@@ -376,6 +379,18 @@ export const zhCNCoreMessages: Messages = {
 - \`ai-chat-panel\`
 
 ### 示例
+
+放大菜单和工具栏图标：
+
+\`\`\`css
+[data-section="top-tabs-toolbar-actions"] button > svg,
+[data-section="terminal-toolbar"] button > svg,
+[data-section="terminal-toolbar-menu"] button > svg,
+[data-section="terminal-toolbar"] button [data-plugin-icon-kind="package"] {
+  width: 20px !important;
+  height: 20px !important;
+}
+\`\`\`
 
 隐藏顶部标签栏里的主机列表开关：
 

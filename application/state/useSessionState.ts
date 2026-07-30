@@ -1,5 +1,5 @@
 import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
-import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceViewMode } from '../../domain/models';
+import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceNode,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
 import {
   createHostTerminalSession,
@@ -11,12 +11,14 @@ import {
 import { isScriptSnippet } from '../../domain/snippetScript.ts';
 import {
 appendPaneToWorkspaceRoot,
+cloneWorkspaceTree,
 collectSessionIds,
 createWorkspaceFromSessions as createWorkspaceEntity,
 createWorkspaceFromSessionIds,
 FocusDirection,
 getNextFocusSessionId,
 insertPaneIntoWorkspace,
+pruneWorkspaceNode,
 reorderWorkspaceFocusSessionOrder,
 SplitDirection,
 SplitHint,
@@ -113,10 +115,14 @@ export function insertCopiedTabOrderIdOnce(
     return next;
   }
 
-  const allTabIdSet = new Set(allTabIds);
+  // allTabIds should only ever list pre-existing tabs; defensively strip the
+  // copied id in case a caller's list includes it, so it isn't reconciled in
+  // twice (once via newIds, once via the explicit splice below).
+  const existingTabIds = allTabIds.filter(id => id !== copiedTabId);
+  const allTabIdSet = new Set(existingTabIds);
   const orderedIds = prevTabOrder.filter(id => allTabIdSet.has(id));
   const orderedIdSet = new Set(orderedIds);
-  const newIds = allTabIds.filter(id => !orderedIdSet.has(id));
+  const newIds = existingTabIds.filter(id => !orderedIdSet.has(id));
   const currentOrder = [...orderedIds, ...newIds];
   const sourceIdx = currentOrder.indexOf(sourceTabId);
   if (sourceIdx === -1) return [...prevTabOrder, copiedTabId];
@@ -125,6 +131,64 @@ export function insertCopiedTabOrderIdOnce(
   return next;
 }
 
+export function buildCopiedWorkspace(
+  sourceWorkspace: Workspace,
+  prevSessions: TerminalSession[],
+  params: {
+    newWorkspaceId: string;
+    sessionIdMap: ReadonlyMap<string, string>;
+    localShellType?: TerminalSession['shellType'];
+    perPaneCwd?: Record<string, string | undefined>;
+    nodeIdMap?: ReadonlyMap<string, string>;
+  },
+): { newSessions: TerminalSession[]; newWorkspace: Workspace } | null {
+  const sourceIds = collectSessionIds(sourceWorkspace.root);
+  const liveIds = sourceIds.filter(id => prevSessions.some(s => s.id === id));
+  if (liveIds.length === 0) return null;
+
+  // Prune panes whose source session is gone so the clone never references a
+  // missing session.
+  let prunedRoot = sourceWorkspace.root;
+  for (const deadId of sourceIds.filter(id => !liveIds.includes(id))) {
+    const next = pruneWorkspaceNode(prunedRoot, deadId);
+    if (next) prunedRoot = next;
+  }
+
+  // Precondition: sessionIdMap covers every id in collectSessionIds(root)
+  // (the sole caller, copyWorkspace, builds it that way), so every liveId has
+  // a mapping and the `as string` casts here and below are sound.
+  const liveIdMap = new Map<string, string>(
+    liveIds.map(id => [id, params.sessionIdMap.get(id) as string]),
+  );
+
+  const newSessions = liveIds.map(srcId => {
+    const src = prevSessions.find(s => s.id === srcId) as TerminalSession;
+    return createCopiedTerminalSessionClone(src, {
+      id: liveIdMap.get(srcId) as string,
+      workspaceId: params.newWorkspaceId,
+      localShellType: params.localShellType,
+      inheritedCwd: params.perPaneCwd?.[srcId],
+    });
+  });
+
+  const remap = (id?: string): string | undefined =>
+    id != null ? liveIdMap.get(id) : undefined;
+
+  const newWorkspace: Workspace = {
+    ...sourceWorkspace,
+    id: params.newWorkspaceId,
+    root: cloneWorkspaceTree(prunedRoot, liveIdMap, params.nodeIdMap),
+    focusedSessionId: remap(sourceWorkspace.focusedSessionId)
+      ?? liveIdMap.get(liveIds[0]),
+    focusSessionOrder: sourceWorkspace.focusSessionOrder
+      ? sourceWorkspace.focusSessionOrder
+          .map(id => liveIdMap.get(id))
+          .filter((id): id is string => Boolean(id))
+      : undefined,
+  };
+
+  return { newSessions, newWorkspace };
+}
 
 export const useSessionState = ({
   persistSessionRestore = true,
@@ -294,11 +358,32 @@ export const useSessionState = ({
     if (currentCwd === nextCwd) return;
     if (nextCwd) {
       sessionRestoreCwdByIdRef.current.set(sessionId, nextCwd);
+      // Once a live cwd is tracked, the one-shot inherited-cwd seed set by a
+      // clone/split has served its purpose — drop it so a later remount +
+      // fresh reconnect doesn't re-inject the stale `cd`. The functional
+      // update returns `prev` unchanged (no re-render) unless the field is set.
+      setSessions((prev) => {
+        const target = prev.find((candidate) => candidate.id === sessionId);
+        if (!target || target.pendingInitialCwd === undefined) return prev;
+        return prev.map((candidate) => {
+          if (candidate.id !== sessionId) return candidate;
+          const { pendingInitialCwd: _spent, ...rest } = candidate;
+          return rest;
+        });
+      });
     } else {
       sessionRestoreCwdByIdRef.current.delete(sessionId);
     }
     scheduleSessionRestorePersistRef.current();
   }, []);
+
+  // The live tracked cwd (OSC 7) is kept in a ref, not on the session object,
+  // so expose a reader for callers (clone/split cwd inheritance) that need the
+  // current directory of a running session without forcing a re-render.
+  const getSessionRestoreCwd = useCallback(
+    (sessionId: string): string | undefined => sessionRestoreCwdByIdRef.current.get(sessionId) ?? undefined,
+    [],
+  );
 
   const updateSessionDynamicTitle = useCallback((sessionId: string, title: string | null) => {
     const normalizedTitle = title ? normalizeCodingCliDynamicTitleForStorage(title) : '';
@@ -726,6 +811,7 @@ export const useSessionState = ({
     direction: SplitDirection,
     options?: {
       localShellType?: TerminalSession['shellType'];
+      inheritedCwd?: string;
     },
   ) => {
     const newSessionId = crypto.randomUUID();
@@ -745,6 +831,7 @@ export const useSessionState = ({
         const newSession = createSplitTerminalSessionClone(session, {
           id: newSessionId,
           localShellType: options?.localShellType,
+          inheritedCwd: options?.inheritedCwd,
           workspaceId: session.workspaceId,
         });
 
@@ -766,6 +853,7 @@ export const useSessionState = ({
       const newSession = createSplitTerminalSessionClone(session, {
         id: newSessionId,
         localShellType: options?.localShellType,
+        inheritedCwd: options?.inheritedCwd,
       });
 
       setWorkspaces(prev => addWorkspaceIfMissing(prev, standaloneWorkspace));
@@ -921,6 +1009,7 @@ export const useSessionState = ({
   // Copy a session - creates a new session with the same host connection
   const copySession = useCallback((sessionId: string, options?: {
     localShellType?: TerminalSession['shellType'];
+    inheritedCwd?: string;
   }) => {
     // Pre-allocate the new id outside the updater so StrictMode's
     // double-invocation of the functional updater doesn't mint two ids.
@@ -935,6 +1024,7 @@ export const useSessionState = ({
       const newSession = createCopiedTerminalSessionClone(session, {
         id: newSessionId,
         localShellType: options?.localShellType,
+        inheritedCwd: options?.inheritedCwd,
       });
 
       // Schedule the activeTab + tabOrder updates only when creation
@@ -953,6 +1043,62 @@ export const useSessionState = ({
       return [...prevSessions, newSession];
     });
   }, [orphanSessions, workspaces, logViews, setActiveTabId]);
+
+  // Copy a whole workspace (split/focus tab): clone every pane's session and
+  // reproduce the layout tree in a new tab.
+  const copyWorkspace = useCallback((workspaceId: string, options?: {
+    localShellType?: TerminalSession['shellType'];
+    perPaneCwd?: Record<string, string | undefined>;
+  }) => {
+    const sourceWorkspace = workspaces.find(w => w.id === workspaceId);
+    if (!sourceWorkspace) return;
+
+    // Pre-mint the new workspace id and the old->new session-id map OUTSIDE the
+    // updater so StrictMode's double-invocation does not mint two sets of ids.
+    const newWorkspaceId = `ws-${crypto.randomUUID()}`;
+    const sessionIdMap = new Map<string, string>(
+      collectSessionIds(sourceWorkspace.root).map(id => [id, crypto.randomUUID()]),
+    );
+    const nodeIdMap = new Map<string, string>();
+    const preMintNodeIds = (node: WorkspaceNode) => {
+      nodeIdMap.set(node.id, crypto.randomUUID());
+      if (node.type === 'split') node.children.forEach(preMintNodeIds);
+    };
+    preMintNodeIds(sourceWorkspace.root);
+    const newSessionIds = new Set(sessionIdMap.values());
+
+    setSessions(prevSessions => {
+      // The cwd capture above is async. Avoid resurrecting a workspace that was
+      // closed (or structurally changed) while those probes were pending.
+      if (workspacesRef.current.find(w => w.id === workspaceId) !== sourceWorkspace) {
+        return prevSessions;
+      }
+      if (prevSessions.some(session => newSessionIds.has(session.id))) return prevSessions;
+      const built = buildCopiedWorkspace(sourceWorkspace, prevSessions, {
+        newWorkspaceId,
+        sessionIdMap,
+        localShellType: options?.localShellType,
+        perPaneCwd: options?.perPaneCwd,
+        nodeIdMap,
+      });
+      // Every source pane was closed between click and update — skip cleanly.
+      if (!built) return prevSessions;
+
+      // Nested idempotent setStates (mirrors copySession's pattern).
+      setWorkspaces(prev => addWorkspaceIfMissing(prev, built.newWorkspace));
+      setActiveTabId(newWorkspaceId);
+      setTabOrder(prevTabOrder => {
+        const allTabIds = [
+          ...orphanSessions.map(s => s.id),
+          ...workspaces.map(w => w.id),
+          ...logViews.map(lv => lv.id),
+        ];
+        return insertCopiedTabOrderIdOnce(prevTabOrder, workspaceId, newWorkspaceId, allTabIds);
+      });
+
+      return [...prevSessions, ...built.newSessions];
+    });
+  }, [workspaces, orphanSessions, logViews, setActiveTabId]);
 
   const createSessionFromCloneSource = useCallback((sourceSession: TerminalSession, options?: {
     localShellType?: TerminalSession['shellType'];
@@ -1126,8 +1272,10 @@ export const useSessionState = ({
     closeLogView,
     // Copy session
     copySession,
+    copyWorkspace,
     createSessionFromCloneSource,
     updateSessionRestoreCwd,
+    getSessionRestoreCwd,
     updateSessionDynamicTitle,
     updateSessionCodingCliProvider,
   };

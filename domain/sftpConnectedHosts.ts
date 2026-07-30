@@ -126,3 +126,36 @@ export const listSftpConnectedHosts = (
     a.host.label.localeCompare(b.host.label),
   );
 };
+
+/**
+ * Resolve a terminal session id for transfer-pool opens that can reuse the
+ * live SSH transport. Unlike the picker list, this keeps every reusable
+ * session so same-hostId tabs with different live endpoints can still match.
+ * This renderer-side result is only a source hint: proxy, jump, credential,
+ * host-key and keepalive fingerprints are intentionally retained by the main
+ * process. openSftpForSession reselects and validates the live session against
+ * that complete identity before it borrows a transport.
+ *
+ * @returns session id, or undefined when no reusable source exists
+ */
+export const resolveSftpTransferSourceSessionId = (
+  sessions: ReadonlyArray<SftpPickerSessionFields>,
+  hostsById: ReadonlyMap<string, Host>,
+  hostId: string,
+  host?: Pick<Host, "hostname" | "username" | "port" | "sftpSudo" | "protocol">,
+): string | undefined => {
+  if (host?.sftpSudo) return undefined;
+  let lastMatch: string | undefined;
+  for (const session of sessions) {
+    if (session.hostId !== hostId) continue;
+    if (!isReusableSftpSourceSession(session)) continue;
+    const vaultHost = hostsById.get(session.hostId);
+    if (!vaultHost) continue;
+    if (vaultHost.protocol === "serial" || isPluginHostProtocol(vaultHost.protocol)) continue;
+    if (vaultHost.sftpSudo) continue;
+    const liveHost = hostForLiveSession(vaultHost, session);
+    if (host && !sftpHostEndpointsEqual(liveHost, host)) continue;
+    lastMatch = session.id;
+  }
+  return lastMatch;
+};

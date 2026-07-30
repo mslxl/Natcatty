@@ -6,6 +6,7 @@ const test = require("node:test");
 
 const scriptBridge = require("./scriptBridge.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+const { getOrCreateBuffer } = require("../scripts/sessionOutputBuffer.cjs");
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -20,6 +21,31 @@ async function waitUntil(predicate, timeoutMs = 1000) {
   }
   throw new Error("Timed out waiting for condition");
 }
+
+test("closing a terminal releases its script output buffer", () => {
+  let closeListener = null;
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {},
+    terminalBridge: {},
+    terminalWorkerManager: {
+      addOutputTap() { return () => {}; },
+      onSessionClosed(listener) {
+        closeListener = listener;
+        return { dispose() {} };
+      },
+    },
+    getMainWindow: () => null,
+  });
+
+  scriptBridge.appendSessionOutput("closed-session", "stale output");
+  assert.equal(getOrCreateBuffer("closed-session").getText(), "stale output");
+  assert.equal(typeof closeListener, "function");
+
+  closeListener({ sessionId: "closed-session", reason: "closed" });
+  assert.equal(getOrCreateBuffer("closed-session").getText(), "");
+  scriptBridge.removeSessionBuffer("closed-session");
+});
 
 test("script run writes through terminal worker manager when enabled", async () => {
   const handlers = new Map();
@@ -281,6 +307,55 @@ test("stopping a script releases the session queue so it can run again", async (
   ));
   assert.equal(stoppedRun.status, "failed");
   assert.equal(stoppedRun.error, "Stopped by user");
+});
+
+test("reinitializing the script bridge drops an accepted old-run sendLine tail", async () => {
+  const handlers = new Map();
+  const oldWrites = [];
+  const replacementWrites = [];
+
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {
+      app: { getVersion: () => "test", getPath: () => process.cwd() },
+      webContents: { fromId: () => null },
+    },
+    terminalBridge: {
+      writeToSession(_event, payload) { oldWrites.push(payload.data); },
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => null,
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  });
+
+  const oldRun = handlers.get("netcatty:script:run")({}, {
+    scriptId: "old-sendline-tail",
+    scriptLabel: "Old sendLine tail",
+    sessionId: "session-old-sendline-tail",
+    content: "await nct.screen.sendLine('old-body');",
+    permissionMode: "auto",
+  });
+  await waitUntil(() => oldWrites.includes("old-body"));
+
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {
+      app: { getVersion: () => "test", getPath: () => process.cwd() },
+      webContents: { fromId: () => null },
+    },
+    terminalBridge: {
+      writeToSession(_event, payload) { replacementWrites.push(payload.data); },
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => null,
+  });
+
+  await oldRun;
+  await delay(60);
+  assert.deepEqual(oldWrites, ["old-body"]);
+  assert.deepEqual(replacementWrites, []);
 });
 
 test("late startup snapshots from a stopped script do not seed the next run", async () => {
@@ -945,19 +1020,69 @@ test("script run uses renderer sessionMeta when main-process session map is empt
     scriptId: "renderer-meta",
     scriptLabel: "Renderer meta",
     sessionId: "session-renderer",
-    sessionMeta: { connected: true, hostname: "10.0.0.1", username: "root" },
+    sessionMeta: { connected: true, name: "Production", hostname: "10.0.0.1", username: "root" },
     content: `
       if (!nct.session.connected) {
         throw new Error("Session not connected");
       }
-      nct.log(\`\${nct.session.hostname}@\${nct.session.username}\`);
+      nct.log(\`\${nct.session.name}:\${nct.session.hostname}@\${nct.session.username}\`);
     `,
     permissionMode: "auto",
   });
 
   const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "renderer-meta");
   assert.equal(finalRun.status, "completed");
-  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /10\.0\.0\.1@root/);
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /Production:10\.0\.0\.1@root/);
+});
+
+test("script run uses the main-process session label when renderer metadata is absent", async () => {
+  const handlers = new Map();
+  const sentRunUpdates = [];
+
+  scriptBridge.init({
+    sessions: new Map([["session-local", {
+      status: "connected",
+      label: "Local Terminal",
+      hostname: "localhost",
+      username: "local",
+    }]]),
+    electronModule: {
+      app: {
+        getVersion: () => "test",
+        getPath: () => process.cwd(),
+      },
+    },
+    terminalBridge: {
+      writeToSession() {},
+    },
+    terminalWorkerManager: null,
+    getMainWindow: () => ({
+      webContents: {
+        send(channel, payload) {
+          if (channel === "netcatty:script:runs-updated") {
+            sentRunUpdates.push(payload.runs);
+          }
+        },
+      },
+    }),
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) {
+      handlers.set(channel, handler);
+    },
+  });
+
+  await handlers.get("netcatty:script:run")({}, {
+    scriptId: "local-session-name",
+    scriptLabel: "Local session name",
+    sessionId: "session-local",
+    content: "nct.log(nct.session.name);",
+    permissionMode: "auto",
+  });
+
+  const finalRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "local-session-name");
+  assert.equal(finalRun.status, "completed");
+  assert.match(finalRun.logs.map((entry) => entry.message).join("\n"), /Local Terminal/);
 });
 
 test("script run sends form dialog requests and resolves object responses", async () => {
@@ -1837,11 +1962,11 @@ test("script sendLine invalidates startup seed before later waits", async () => 
     permissionMode: "auto",
   });
 
-  await delay(80);
+  await waitUntil(() => writes.some((data) => String(data).includes("echo hi")));
   assert.ok(writes.some((data) => String(data).includes("echo hi")));
 
   // Startup seed must be gone: waits should not resolve on old READY / old prompt.
-  await delay(80);
+  await delay(20);
   const midRun = sentRunUpdates.at(-1).find((run) => run.scriptId === "send-invalidates-seed");
   assert.equal(midRun.status, "running");
 
@@ -1965,4 +2090,64 @@ test("resolveStartupSeedText prefers viewport when buffer only adds scrolled-off
   const seed = scriptBridge.resolveStartupSeedText(viewport, buffer);
   assert.equal(seed, viewport);
   assert.doesNotMatch(seed, /READY marker/);
+});
+
+test("script recording stops explicitly when the retained step limit is reached", async () => {
+  const handlers = new Map();
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {},
+    terminalBridge: {},
+    getMainWindow: () => null,
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  });
+
+  const sessionId = "recording-step-budget";
+  await handlers.get("netcatty:script:recording:start")({}, { sessionId });
+  let result;
+  for (let index = 0; index < 10_000; index += 1) {
+    result = await handlers.get("netcatty:script:recording:append-step")({}, {
+      sessionId,
+      step: { type: "sleep", value: index },
+    });
+  }
+
+  assert.equal(result.stopped, true);
+  assert.match(result.error, /safety limit/i);
+  assert.equal(result.steps.length, 10_000);
+  assert.match(result.code, /sleep/);
+  assert.deepEqual(
+    await handlers.get("netcatty:script:recording:append-step")({}, {
+      sessionId,
+      step: { type: "sleep", value: 10_001 },
+    }),
+    { ok: false, error: "Recording not started" },
+  );
+});
+
+test("script recording rejects one step beyond the total byte budget without retaining it", async () => {
+  const handlers = new Map();
+  scriptBridge.init({
+    sessions: new Map(),
+    electronModule: {},
+    terminalBridge: {},
+    getMainWindow: () => null,
+  });
+  scriptBridge.registerHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  });
+
+  const sessionId = "recording-byte-budget";
+  await handlers.get("netcatty:script:recording:start")({}, { sessionId });
+  const result = await handlers.get("netcatty:script:recording:append-step")({}, {
+    sessionId,
+    step: { type: "send", value: "x".repeat(2 * 1024 * 1024 + 1) },
+  });
+
+  assert.equal(result.stopped, true);
+  assert.match(result.error, /safety limit/i);
+  assert.deepEqual(result.steps, []);
+  assert.equal(result.code, "");
 });

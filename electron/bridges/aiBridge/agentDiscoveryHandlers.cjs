@@ -351,24 +351,36 @@ function registerAgentDiscoveryHandlers(ctx) {
         codexPath: codexCliPath,
       };
 
-      const handleChunk = (chunk) => {
-        appendCodexLoginOutput(session, chunk.toString("utf8"));
+      const stdoutDecoder = createCodexLoginOutputDecoder(session);
+      const stderrDecoder = createCodexLoginOutputDecoder(session);
+      let outputEnded = false;
+      const endOutput = () => {
+        if (outputEnded) return;
+        outputEnded = true;
+        stdoutDecoder.end();
+        stderrDecoder.end();
       };
 
-      child.stdout.on("data", handleChunk);
-      child.stderr.on("data", handleChunk);
+      child.stdout.on("data", (chunk) => stdoutDecoder.write(chunk));
+      child.stderr.on("data", (chunk) => stderrDecoder.write(chunk));
 
       child.once("error", (error) => {
+        endOutput();
+        clearCodexLoginKillTimer(session);
         session.state = "error";
         session.error = `[codex] Failed to start login flow: ${error.message}`;
         session.process = null;
+        recordCodexLoginSession(session);
       });
 
       child.once("close", (exitCode) => {
+        endOutput();
+        clearCodexLoginKillTimer(session);
         session.exitCode = exitCode;
         session.process = null;
 
         if (session.state === "cancelled") {
+          recordCodexLoginSession(session);
           return;
         }
 
@@ -379,9 +391,10 @@ function registerAgentDiscoveryHandlers(ctx) {
           session.state = "error";
           session.error = session.error || `Codex login exited with code ${exitCode ?? "unknown"}`;
         }
+        recordCodexLoginSession(session);
       });
 
-      codexLoginSessions.set(sessionId, session);
+      recordCodexLoginSession(session);
       invalidateCodexValidationCache();
       return { ok: true, session: toCodexLoginSessionResponse(session) };
     } catch (err) {
@@ -407,9 +420,8 @@ function registerAgentDiscoveryHandlers(ctx) {
 
     session.state = "cancelled";
     session.error = null;
-    if (session.process && !session.process.killed) {
-      session.process.kill("SIGTERM");
-    }
+    stopCodexLoginProcess(session);
+    recordCodexLoginSession(session);
 
     invalidateCodexValidationCache();
     return { ok: true, found: true, session: toCodexLoginSessionResponse(session) };

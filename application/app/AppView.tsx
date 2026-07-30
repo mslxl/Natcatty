@@ -99,7 +99,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
 
   const {
     accentMode, addShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
-    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell,
+    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell,
     connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
     customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme,
@@ -121,6 +121,13 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaceRenameValue, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
+
+  // Stable no-arg wrapper: the top-bar terminal icon passes an onClick event we
+  // must not forward as handleCreateLocalTerminal's `shell` arg, and an inline
+  // arrow here would defeat the memoized TopTabs onCreateLocalTerminal check.
+  const handleCreateLocalTerminalNoArg = useCallback(() => {
+    handleCreateLocalTerminal();
+  }, [handleCreateLocalTerminal]);
 
   const appThemeStyle = useMemo(() => {
     const tokens = getUiThemeById(
@@ -254,10 +261,12 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
         onCopySession={copySessionWithCurrentShell}
         onCopySessionToNewWindow={copySessionToNewWindowWithCurrentShell}
         onRenameWorkspace={startWorkspaceRename}
+        onCopyWorkspace={copyWorkspaceWithCurrentShell}
         onCloseWorkspace={closeWorkspace}
         onCloseLogView={closeLogView}
         onCloseTabsBatch={closeTabsBatch}
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
+        onCreateLocalTerminal={handleCreateLocalTerminalNoArg}
         onThemeChange={settings.setTheme}
         onOpenSettings={handleOpenSettings}
         externalMcpEnabled={externalMcpToggle.enabled}

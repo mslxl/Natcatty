@@ -58,6 +58,10 @@ const CLAUDE_AUTH_HELP_MESSAGE =
 const {
   codexLoginSessions,
   appendCodexLoginOutput,
+  createCodexLoginOutputDecoder,
+  recordCodexLoginSession,
+  clearCodexLoginKillTimer,
+  stopCodexLoginProcess,
   toCodexLoginSessionResponse,
   getActiveCodexLoginSession,
   normalizeCodexIntegrationState,
@@ -321,7 +325,11 @@ function getChildProcessTreePids(rootPid) {
     const pid = queue.shift();
     if (!Number.isInteger(pid) || pid <= 0) continue;
     try {
-      const output = execFileSync("pgrep", ["-P", String(pid)], { encoding: "utf8" }).trim();
+      const output = execFileSync("pgrep", ["-P", String(pid)], {
+        encoding: "utf8",
+        maxBuffer: 1024 * 1024,
+        timeout: 1_000,
+      }).trim();
       if (!output) continue;
       for (const line of output.split(/\s+/)) {
         const childPid = Number(line);
@@ -341,7 +349,11 @@ function killTrackedProcessTree(rootPid, childPids) {
   if (process.platform === "win32") {
     if (Number.isInteger(rootPid) && rootPid > 0) {
       try {
-        execFileSync("taskkill", ["/PID", String(rootPid), "/T", "/F"], { stdio: "ignore" });
+        execFileSync("taskkill", ["/PID", String(rootPid), "/T", "/F"], {
+          stdio: "ignore",
+          timeout: 5_000,
+          windowsHide: true,
+        });
       } catch {
         // Ignore kill failures; the process may have already exited.
       }
@@ -521,9 +533,12 @@ function createAbortError() {
 }
 
 function raceAgainstAbort(promise, signal) {
-  if (signal.aborted) return Promise.reject(createAbortError());
+  const abortReason = () => (
+    signal.reason instanceof Error ? signal.reason : createAbortError()
+  );
+  if (signal.aborted) return Promise.reject(abortReason());
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(createAbortError());
+    const onAbort = () => reject(abortReason());
     signal.addEventListener("abort", onAbort, { once: true });
     promise.then(
       (value) => {
@@ -539,12 +554,25 @@ function raceAgainstAbort(promise, signal) {
 }
 
 async function streamRequest(url, options, event, requestId, skipTLS) {
+  const parsedUrl = new URL(url);
   // Register cancellation before any await so Stop during PAC/proxy lookup works.
   const controller = new AbortController();
+  const totalTimeoutMs = Math.max(1, Number(options.totalTimeoutMs) || 120_000);
+  const maxErrorBodyBytes = Math.max(1, Number(options.maxErrorBodyBytes) || 64 * 1024);
+  let lifecycleFinished = false;
+  const finishLifecycle = () => {
+    if (lifecycleFinished) return;
+    lifecycleFinished = true;
+    clearTimeout(totalTimer);
+    activeStreams.delete(requestId);
+  };
+  const totalTimer = setTimeout(() => {
+    controller.abort(new Error(`AI stream total deadline exceeded after ${totalTimeoutMs} ms`));
+  }, totalTimeoutMs);
   activeStreams.set(requestId, controller);
   if (controller.signal.aborted) {
-    activeStreams.delete(requestId);
-    throw createAbortError();
+    finishLifecycle();
+    throw controller.signal.reason instanceof Error ? controller.signal.reason : createAbortError();
   }
 
   const { resolveOutboundHttpAgent } = require("./httpNetworkProxyAgent.cjs");
@@ -559,28 +587,67 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
     );
   } catch (err) {
     if (err?.name === "AbortError" || controller.signal.aborted) {
-      activeStreams.delete(requestId);
-      throw createAbortError();
+      finishLifecycle();
+      throw controller.signal.reason instanceof Error ? controller.signal.reason : createAbortError();
     }
     proxyAgent = undefined;
   }
 
   if (controller.signal.aborted) {
-    activeStreams.delete(requestId);
-    throw createAbortError();
+    finishLifecycle();
+    throw controller.signal.reason instanceof Error ? controller.signal.reason : createAbortError();
   }
 
   return new Promise((resolve, reject) => {
-    const parsedUrl = new URL(url);
     const isHttps = parsedUrl.protocol === "https:";
     const lib = isHttps ? https : http;
+    let requestSettled = false;
+    let streamFinished = false;
+    let req = null;
+
+    const settleResolve = (value) => {
+      if (requestSettled) return;
+      requestSettled = true;
+      resolve(value);
+    };
+    const settleReject = (error) => {
+      if (requestSettled) return;
+      requestSettled = true;
+      reject(error);
+    };
+    const sendStreamError = (error) => {
+      safeSend(event.sender, "netcatty:ai:stream:error", {
+        requestId,
+        error: error?.message || String(error),
+      });
+    };
+    const failStream = (error, { destroy = true } = {}) => {
+      if (streamFinished) return;
+      streamFinished = true;
+      finishLifecycle();
+      controller.signal.removeEventListener("abort", onAbort);
+      sendStreamError(error);
+      settleReject(error);
+      if (destroy) {
+        try { req?.destroy?.(); } catch { /* ignore */ }
+      }
+    };
+    const onAbort = () => {
+      const error = controller.signal.reason instanceof Error
+        ? controller.signal.reason
+        : createAbortError();
+      failStream(error);
+    };
 
     // Re-check after entering the Promise in case cancel raced the await above.
     if (controller.signal.aborted) {
-      activeStreams.delete(requestId);
-      reject(createAbortError());
+      finishLifecycle();
+      settleReject(controller.signal.reason instanceof Error
+        ? controller.signal.reason
+        : createAbortError());
       return;
     }
+    controller.signal.addEventListener("abort", onAbort, { once: true });
 
     const reqOpts = {
         method: options.method || "POST",
@@ -590,8 +657,13 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
     if (skipTLS && isHttps) reqOpts.rejectUnauthorized = false;
     if (proxyAgent) reqOpts.agent = proxyAgent;
 
-    const req = lib.request(parsedUrl, reqOpts,
-      (res) => {
+    try {
+      req = lib.request(parsedUrl, reqOpts,
+        (res) => {
+        if (streamFinished) {
+          res.destroy?.();
+          return;
+        }
         // Decode the response as one continuous UTF-8 stream. Calling
         // Buffer#toString() on each network chunk corrupts multi-byte
         // characters when a chunk boundary falls in the middle of one.
@@ -602,8 +674,21 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
         if (statusCode < 200 || statusCode >= 300) {
           // Read the error body before resolving so we can include it in the response
           let errorBody = "";
-          res.on("data", (chunk) => { errorBody += chunk.toString(); });
+          let errorBodyBytes = 0;
+          res.on("data", (chunk) => {
+            if (streamFinished) return;
+            const text = chunk.toString();
+            errorBodyBytes += Buffer.byteLength(text);
+            if (errorBodyBytes > maxErrorBodyBytes) {
+              failStream(new Error(
+                `AI error response exceeded maximum size (${maxErrorBodyBytes} bytes)`,
+              ));
+              return;
+            }
+            errorBody += text;
+          });
           res.on("end", () => {
+            if (streamFinished) return;
             // Try to extract error message from JSON response (OpenAI-compatible format)
             let errorDetail = statusText;
             try {
@@ -616,34 +701,36 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
               requestId,
               error: `HTTP ${statusCode}: ${errorDetail}`,
             });
-            activeStreams.delete(requestId);
-            resolve({ statusCode, statusText: `${statusCode} ${errorDetail}` });
+            streamFinished = true;
+            finishLifecycle();
+            controller.signal.removeEventListener("abort", onAbort);
+            settleResolve({ statusCode, statusText: `${statusCode} ${errorDetail}` });
           });
+          res.on("error", (error) => failStream(error, { destroy: false }));
           return;
         }
 
         // Resolve with success status — data will flow via stream events
-        resolve({ statusCode, statusText });
+        settleResolve({ statusCode, statusText });
 
         let buffer = "";
         const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB safety limit
 
         res.on("data", (chunk) => {
+          const previousBufferLength = buffer.length;
           buffer += chunk.toString();
           // Guard against unbounded buffer growth
           if (buffer.length > MAX_BUFFER_SIZE) {
-            safeSend(event.sender, "netcatty:ai:stream:error", {
-              requestId,
-              error: "Stream buffer exceeded maximum size (10MB)",
-            });
-            req.destroy();
-            activeStreams.delete(requestId);
+            failStream(new Error("Stream buffer exceeded maximum size (10MB)"));
             return;
           }
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
+          let consumedUntil = 0;
+          let searchFrom = previousBufferLength;
+          let newlineIndex;
+          while ((newlineIndex = buffer.indexOf("\n", searchFrom)) >= 0) {
+            const line = buffer.slice(consumedUntil, newlineIndex);
+            consumedUntil = newlineIndex + 1;
+            searchFrom = consumedUntil;
             const trimmed = line.trim();
             if (!trimmed) continue;
 
@@ -655,9 +742,11 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
               });
             }
           }
+          if (consumedUntil > 0) buffer = buffer.slice(consumedUntil);
         });
 
         res.on("end", () => {
+          if (streamFinished) return;
           // Flush any remaining buffer
           if (buffer.trim().startsWith("data: ")) {
             safeSend(event.sender, "netcatty:ai:stream:data", {
@@ -666,46 +755,33 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
             });
           }
           safeSend(event.sender, "netcatty:ai:stream:end", { requestId });
-          activeStreams.delete(requestId);
+          streamFinished = true;
+          finishLifecycle();
+          controller.signal.removeEventListener("abort", onAbort);
         });
 
-        res.on("error", (err) => {
-          safeSend(event.sender, "netcatty:ai:stream:error", {
-            requestId,
-            error: err.message,
-          });
-          activeStreams.delete(requestId);
-        });
-      }
-    );
+        res.on("error", (err) => failStream(err, { destroy: false }));
+        }
+      );
+    } catch (error) {
+      failStream(error, { destroy: false });
+      return;
+    }
 
-    req.on("error", (err) => {
-      safeSend(event.sender, "netcatty:ai:stream:error", {
-        requestId,
-        error: err.message,
-      });
-      activeStreams.delete(requestId);
-      reject(err);
-    });
+    req.on("error", (err) => failStream(err, { destroy: false }));
 
     req.on("timeout", () => {
-      req.destroy();
-      safeSend(event.sender, "netcatty:ai:stream:error", {
-        requestId,
-        error: "Request timeout",
-      });
-      activeStreams.delete(requestId);
+      failStream(new Error("Request timeout"));
     });
 
-    // Wire up abort signal to destroy the request
-    controller.signal.addEventListener("abort", () => {
-      req.destroy();
-    }, { once: true });
-
-    if (options.body) {
-      req.write(options.body);
+    try {
+      if (options.body) {
+        req.write(options.body);
+      }
+      req.end();
+    } catch (error) {
+      failStream(error);
     }
-    req.end();
   });
 }
 
@@ -757,6 +833,10 @@ function createHandlerContext(ipcMain) {
     CLAUDE_AUTH_HELP_MESSAGE,
     codexLoginSessions,
     appendCodexLoginOutput,
+    createCodexLoginOutputDecoder,
+    recordCodexLoginSession,
+    clearCodexLoginKillTimer,
+    stopCodexLoginProcess,
     toCodexLoginSessionResponse,
     getActiveCodexLoginSession,
     normalizeCodexIntegrationState,
@@ -817,6 +897,7 @@ function createHandlerContext(ipcMain) {
     normalizeAgentEnv,
     safeReadJson,
     streamRequest,
+    loadCodexSdk: () => import("@openai/codex-sdk"),
   };
 }
 
@@ -876,9 +957,7 @@ function cleanup() {
 
   for (const [id, session] of codexLoginSessions) {
     try {
-      if (session.process && !session.process.killed) {
-        session.process.kill("SIGTERM");
-      }
+      stopCodexLoginProcess(session);
     } catch {}
   }
   codexLoginSessions.clear();
@@ -905,5 +984,7 @@ module.exports = {
   reportOpenedSessionActivity,
   buildExternalAgentSystemContext,
   buildExternalAgentContextualPrompt,
+  _streamRequestForTests: streamRequest,
+  _getActiveStreamCountForTests: () => activeStreams.size,
   getExternalMcpController: () => externalMcpController,
 };

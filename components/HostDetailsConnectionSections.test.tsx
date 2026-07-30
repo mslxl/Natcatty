@@ -152,6 +152,29 @@ test("wires same-value key/certificate reselect through pointer and keyboard han
   assert.doesNotMatch(source, /onSelect=\{\(\) => \{[\s\S]*shouldForceAuthMethodReselect/);
 });
 
+test("username identity suggestions use PopoverAnchor so focus click does not flash-close", () => {
+  const source = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), "HostDetailsConnectionSections.tsx"),
+    "utf8",
+  );
+  // Identity suggestions must anchor to the username field without making the
+  // Input a PopoverTrigger (focus open + trigger toggle close = flash).
+  assert.match(
+    source,
+    /identitySuggestionsOpen[\s\S]*?<PopoverAnchor asChild>[\s\S]*?hostDetails\.username\.placeholder[\s\S]*?<\/PopoverAnchor>/,
+  );
+  assert.doesNotMatch(
+    source,
+    /identitySuggestionsOpen[\s\S]*?<PopoverTrigger asChild>[\s\S]*?hostDetails\.username\.placeholder/,
+  );
+  // Anchor clicks are outside interactions in Radix 1.1.x; ignore them so
+  // caret reposition / chevron toggle do not dismiss-then-reopen.
+  assert.match(
+    source,
+    /data-identity-suggestions-anchor[\s\S]*?onInteractOutside=\{\(e\) => \{[\s\S]*?closest\("\[data-identity-suggestions-anchor\]"\)/,
+  );
+});
+
 test("reselecting the current key or certificate method still forces the chooser path", () => {
   assert.equal(shouldForceAuthMethodReselect("key", "key"), true);
   assert.equal(shouldForceAuthMethodReselect("certificate", "certificate"), true);

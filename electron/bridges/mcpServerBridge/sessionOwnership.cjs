@@ -6,16 +6,25 @@ function createSessionOwnershipRegistry() {
 
   function captureGeneration(chatSessionId) {
     if (!chatSessionId) return null;
-    return scopeGenerations.get(chatSessionId) || 0;
+    let generation = scopeGenerations.get(chatSessionId);
+    if (!generation) {
+      generation = { chatSessionId, revoked: false };
+      scopeGenerations.set(chatSessionId, generation);
+    }
+    return generation;
   }
 
   function register(chatSessionId, sessionId, expectedGeneration = null) {
     if (!chatSessionId || !sessionId) return false;
-    if (
-      expectedGeneration !== null
-      && expectedGeneration !== captureGeneration(chatSessionId)
-    ) {
-      return false;
+    if (expectedGeneration !== null) {
+      const currentGeneration = scopeGenerations.get(chatSessionId);
+      if (
+        expectedGeneration.revoked
+        || expectedGeneration.chatSessionId !== chatSessionId
+        || currentGeneration !== expectedGeneration
+      ) {
+        return false;
+      }
     }
     const owned = ownedByScope.get(chatSessionId) || new Set();
     owned.add(sessionId);
@@ -43,10 +52,23 @@ function createSessionOwnershipRegistry() {
 
   function clearScope(chatSessionId) {
     ownedByScope.delete(chatSessionId);
-    scopeGenerations.set(chatSessionId, captureGeneration(chatSessionId) + 1);
+    const generation = scopeGenerations.get(chatSessionId);
+    if (generation) generation.revoked = true;
+    scopeGenerations.delete(chatSessionId);
   }
 
-  return { captureGeneration, register, validate, forgetSession, clearScope };
+  function getTrackedGenerationCountForTests() {
+    return scopeGenerations.size;
+  }
+
+  return {
+    captureGeneration,
+    register,
+    validate,
+    forgetSession,
+    clearScope,
+    getTrackedGenerationCountForTests,
+  };
 }
 
 module.exports = { createSessionOwnershipRegistry };

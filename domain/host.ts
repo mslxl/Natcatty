@@ -215,6 +215,35 @@ export const classifyDistroId = (distroId?: string): DeviceClass => {
 };
 
 /**
+ * Decide whether to offer the "enable Network Device Mode" suggestion after
+ * distro/vendor detection. We only nag once per host, and never when the user
+ * has already turned the mode on. The detected value must classify as a
+ * network-device vendor (exact match — see `classifyDistroId`), so a normal
+ * Linux distro whose name merely embeds a vendor keyword never triggers it.
+ */
+export const shouldSuggestNetworkDeviceMode = (opts: {
+  host?: Pick<Host, 'deviceType'> | null;
+  detectedDistro?: string;
+  alreadyHandled?: boolean;
+  /**
+   * Effective session protocol (mosh/et folded in). The suggestion — and its
+   * host-level `deviceType: 'network'` write — must match the Host Details
+   * "Network Device Mode" toggle, which is only exposed for plain SSH sessions
+   * (not Mosh/ET/serial/telnet/local). Offering it elsewhere would let the user
+   * persist a hidden host-level mode that surprises later SSH reconnects (#2367).
+   */
+  effectiveProtocol?: string;
+}): boolean => {
+  if (!opts.host) return false;
+  if (opts.host.deviceType === 'network') return false;
+  if (opts.alreadyHandled) return false;
+  if (opts.effectiveProtocol !== undefined && opts.effectiveProtocol !== 'ssh') {
+    return false;
+  }
+  return classifyDistroId(opts.detectedDistro) === 'network-device';
+};
+
+/**
  * Decide whether it is safe to run the post-connect `pwd` probe that
  * discovers the session's working directory. The probe opens an extra exec
  * channel running a POSIX-shell script; strict network-device CLIs such as

@@ -4,6 +4,8 @@ const {
   registerSdkStreamHandlers,
   buildSdkTurnPrompt,
   buildSdkModelCacheKey,
+  getSdkModelCacheEntry,
+  setSdkModelCacheEntry,
   buildSdkSessionKey,
   normalizeSdkListModelsResult,
   resolveSdkPromptPlacement,
@@ -119,6 +121,31 @@ test("SDK model cache keys include catalog-affecting agent environment", () => {
     buildSdkModelCacheKey("opencode", "/usr/bin/opencode", { HOME: "/Users/a" }),
     buildSdkModelCacheKey("opencode", "/usr/bin/opencode", { HOME: "/Users/a" }),
   );
+  assert.doesNotMatch(
+    buildSdkModelCacheKey("cursor", "/usr/bin/cursor", { CURSOR_API_KEY: "very-secret-key" }),
+    /very-secret-key/,
+  );
+});
+
+test("SDK model cache removes expired entries instead of retaining tombstones", () => {
+  const cache = new Map([
+    ["expired", { at: 1, currentModelId: null, models: [{ id: "old" }] }],
+    ["fresh", { at: 95, currentModelId: null, models: [{ id: "new" }] }],
+  ]);
+
+  assert.equal(getSdkModelCacheEntry(cache, "expired", { now: 100, ttlMs: 10, maxEntries: 8 }), null);
+  assert.equal(cache.has("expired"), false);
+  assert.equal(getSdkModelCacheEntry(cache, "fresh", { now: 100, ttlMs: 10, maxEntries: 8 }).models[0].id, "new");
+});
+
+test("SDK model cache evicts the least recently used catalog at its hard limit", () => {
+  const cache = new Map();
+  setSdkModelCacheEntry(cache, "a", { at: 1, models: [{ id: "a" }] }, { now: 1, ttlMs: 100, maxEntries: 2 });
+  setSdkModelCacheEntry(cache, "b", { at: 2, models: [{ id: "b" }] }, { now: 2, ttlMs: 100, maxEntries: 2 });
+  assert.ok(getSdkModelCacheEntry(cache, "a", { now: 3, ttlMs: 100, maxEntries: 2 }));
+  setSdkModelCacheEntry(cache, "c", { at: 3, models: [{ id: "c" }] }, { now: 3, ttlMs: 100, maxEntries: 2 });
+
+  assert.deepEqual(Array.from(cache.keys()), ["a", "c"]);
 });
 
 test("normalizeSdkListModelsResult preserves current model ids from object results", () => {

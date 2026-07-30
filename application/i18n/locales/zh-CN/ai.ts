@@ -532,6 +532,7 @@ export const zhCNAiMessages: Messages = {
   'topTabs.openQuickSwitcher': '打开快速切换',
   'topTabs.moreTabs': '更多标签页',
   'topTabs.aiAssistant': 'AI 助手',
+  'topTabs.newLocalTerminal': '新建本地终端',
   'topTabs.controlPanel': '快捷控制',
   'topTabs.controlPanel.externalMcp': '对外 MCP',
   'topTabs.controlPanel.theme': '主题',

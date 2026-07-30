@@ -17,7 +17,7 @@ test("renderer SFTP operations keep their source terminal session active", async
     async request(channel, payload) {
       requests.push({ channel, payload });
       if (channel === "netcatty:sftp:openForSession") {
-        return { sftpId: "sftp-1" };
+        return { sftpId: "sftp-1", sourceSessionId: "terminal-2" };
       }
       if (channel === "netcatty:sftp:list") return [];
       if (channel === "netcatty:sftp:close") return { ok: true };
@@ -44,10 +44,11 @@ test("renderer SFTP operations keep their source terminal session active", async
   ]);
   assert.deepEqual(activity, [
     { sessionId: "terminal-1", phase: "begin" },
+    { sessionId: "terminal-2", phase: "touch" },
     { sessionId: "terminal-1", phase: "end" },
-    { sessionId: "terminal-1", phase: "begin" },
-    { sessionId: "terminal-1", phase: "end" },
-    { sessionId: "terminal-1", phase: "begin" },
-    { sessionId: "terminal-1", phase: "end" },
+    { sessionId: "terminal-2", phase: "begin" },
+    { sessionId: "terminal-2", phase: "end" },
+    { sessionId: "terminal-2", phase: "begin" },
+    { sessionId: "terminal-2", phase: "end" },
   ]);
 });

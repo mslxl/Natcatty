@@ -3,28 +3,54 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
 
-const { releaseConnectionRef } = require("./sshConnectionPool.cjs");
+const {
+  createConnectionRef,
+  releaseConnectionRef,
+  resetSshTransportRegistryForTests,
+} = require("./sshConnectionPool.cjs");
 
 // Load sshBridge with a mocked ssh2 module so we can observe whether a *new*
 // SSH client is constructed (a fresh connection) versus an existing connection
 // being reused for a new shell channel (issue #1204).
-function loadBridgeWithMockedSsh2(t) {
+function loadBridgeWithMockedSsh2(t, { connectReady = false } = {}) {
   const bridgePath = require.resolve("./sshBridge.cjs");
   const authHelperPath = require.resolve("./sshAuthHelper.cjs");
   const originalLoad = Module._load;
   let clientConstructCount = 0;
 
   class MockSSHClient extends EventEmitter {
+    constructor() {
+      super();
+      this._sock = {
+        destroyed: false,
+        setTimeout() {},
+        setNoDelay() {},
+      };
+      this._remoteVer = "OpenSSH_9.0";
+      this.openedShells = [];
+    }
     connect() {
       clientConstructCount += 1;
+      if (connectReady) {
+        setImmediate(() => {
+          this.emit("connect");
+          this.emit("handshake");
+          this.emit("ready");
+        });
+        return;
+      }
       // We never want the reuse test to reach a real connect; if it does the
       // test asserts on clientConstructCount and fails clearly.
       setImmediate(() => this.emit("error", new Error("unexpected fresh connect")));
     }
     end() {}
     destroy() {}
-    exec() {}
-    shell() {}
+    exec(_command, callback) { callback?.(new Error("exec unavailable")); }
+    shell(_pty, _options, callback) {
+      const stream = makeStream();
+      this.openedShells.push(stream);
+      setImmediate(() => callback(null, stream));
+    }
   }
 
   Module._load = function patchedLoad(request, parent, isMain) {
@@ -50,6 +76,34 @@ function loadBridgeWithMockedSsh2(t) {
   return { bridge, getClientConstructCount: () => clientConstructCount };
 }
 
+test("simultaneous normal opens of the same host make one physical SSH dial", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  const [first, second] = await Promise.all([
+    start({ sender: makeSender() }, { ...options, sessionId: "normal-1" }),
+    start({ sender: makeSender() }, { ...options, sessionId: "normal-2" }),
+  ]);
+
+  assert.equal(first.sessionId, "normal-1");
+  assert.equal(second.sessionId, "normal-2");
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sessions.get("normal-1").conn, sessions.get("normal-2").conn);
+  assert.equal(sessions.get("normal-1").connRef.count, 2);
+});
+
 function makeSender() {
   return {
     id: 1,
@@ -62,6 +116,14 @@ function makeSender() {
 function getConnectionReuseFallbackEvents(sender) {
   return sender.sent.filter((m) => m.channel === "netcatty:connection-reuse:fallback");
 }
+
+test.beforeEach(() => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+});
+
+test.afterEach(() => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+});
 
 // A fake ssh2 shell channel.
 function makeStream() {
@@ -179,14 +241,13 @@ function makeDeferredShellConn() {
 }
 
 // Build a live source session as if it had connected normally, including the
-// reference-counted descriptor and the recorded endpoint used for reuse target
+// registry transport lease and the recorded endpoint used for reuse target
 // matching.
 function makeSourceSession(conn, endpoint) {
-  return {
+  const session = {
     conn,
     stream: makeStream(),
     chainConnections: [],
-    connRef: { count: 1, conn, chainConnections: [] },
     webContentsId: 1,
     zmodemSentry: { cancel() {} },
     hostname: endpoint.hostname,
@@ -197,6 +258,8 @@ function makeSourceSession(conn, endpoint) {
       username: endpoint.username,
     },
   };
+  createConnectionRef(session, conn, []);
+  return session;
 }
 
 function registerStartHandler(bridge, sessions) {
@@ -484,9 +547,10 @@ test("closing the reused channel keeps the source connection alive", async (t) =
   assert.equal(sessions.has("copy"), false, "copy session cleaned up");
   assert.ok(sessions.has("source"), "source session still alive");
 
-  // Now releasing the source (last holder) ends the connection.
-  assert.equal(releaseConnectionRef(sessions.get("source")), true);
-  assert.equal(sourceConn.ended, 1);
+  // Last release parks the healthy connection for later reuse.
+  assert.equal(releaseConnectionRef(sessions.get("source")), false);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(connRef.state, "idle");
 });
 
 test("skips reuse for X11-forwarding hosts and connects fresh", async (t) => {
@@ -551,9 +615,10 @@ test("source closed while reused shell is pending keeps the connection alive", a
   assert.equal(copy.connRef, connRef);
   assert.equal(connRef.count, 1, "count reflects exactly the one remaining channel");
 
-  // Closing the copy (last holder) finally ends the connection.
+  // Closing the copy (last holder) parks the healthy connection.
   terminalBridge.closeSession({ sender: {} }, { sessionId: "copy" });
-  assert.equal(conn.ended, 1);
+  assert.equal(conn.ended, 0);
+  assert.equal(connRef.state, "idle");
 });
 
 test("does not reuse when the source endpoint differs from the requested target", async (t) => {

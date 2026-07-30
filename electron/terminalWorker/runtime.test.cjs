@@ -395,6 +395,43 @@ test("runtime tags a failing start exit so its queued replacement can distinguis
   )), true);
 });
 
+test("runtime prunes sessions that naturally exit before their start response completes", async () => {
+  const parentPort = createParentPort();
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    sessionLifecycleTombstoneTtlMs: 60_000,
+    maxSessionLifecycleTombstones: 1,
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:local:start", async (event, payload) => {
+        const generation = event.sender.claimSessionGeneration(payload.sessionId);
+        event.sender.send("netcatty:exit", {
+          sessionId: payload.sessionId,
+          reason: "exited-during-start",
+          _terminalSessionGeneration: generation,
+        });
+        return { sessionId: payload.sessionId };
+      });
+    },
+  });
+  runtime.start();
+
+  for (let index = 0; index < 3; index += 1) {
+    parentPort.emitMessage({
+      kind: "request",
+      requestId: `start-exit-${index}`,
+      channel: "netcatty:local:start",
+      payload: { sessionId: `start-exit-${index}` },
+      webContentsId: 7,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  assert.deepEqual(runtime._getSessionLifecycleStateCountsForTests(), {
+    outputGenerations: 1,
+    closeEpochs: 0,
+  });
+});
+
 test("runtime routes interceptor ports to the worker-owned data pipeline", () => {
   const parentPort = createParentPort();
   const attached = [];
@@ -510,6 +547,148 @@ test("stale backend output is rejected before taps, observation, or interception
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(observed, [{ sessionId: "session-1", data: "new-output" }]);
   assert.deepEqual(intercepted, [{ sessionId: "session-1", data: "new-output" }]);
+  assert.deepEqual(parentPort.messages.map((message) => message.kind), ["output-tap", "output"]);
+});
+
+test("runtime bounds closed lifecycle generations and safely reuses a recent session id", async () => {
+  const parentPort = createParentPort();
+  let now = 0;
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    now: () => now,
+    sessionLifecycleTombstoneTtlMs: 100,
+    maxSessionLifecycleTombstones: 8,
+    registerBridges(ipcMain) {
+      ipcMain.on("netcatty:close", () => {});
+    },
+  });
+  runtime.start();
+
+  const recentSenders = new Map();
+  for (let index = 0; index < 24; index += 1) {
+    const sessionId = `closed-${index}`;
+    const sender = runtime.createSender(7);
+    recentSenders.set(sessionId, {
+      sender,
+      generation: sender.claimSessionGeneration(sessionId),
+    });
+    parentPort.emitMessage({
+      kind: "send",
+      channel: "netcatty:close",
+      payload: { sessionId },
+      webContentsId: 7,
+    });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(runtime._getSessionLifecycleStateCountsForTests(), {
+    outputGenerations: 8,
+    closeEpochs: 8,
+  });
+
+  const sessionId = "closed-23";
+  const recent = recentSenders.get(sessionId);
+  parentPort.messages.length = 0;
+  now = 99;
+  recent.sender.send("netcatty:data", {
+    sessionId,
+    data: "stale",
+    _terminalSessionGeneration: recent.generation,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(parentPort.messages, [], "old sender stays fenced during the safety window");
+
+  const replacement = runtime.createSender(8);
+  const replacementGeneration = replacement.claimSessionGeneration(sessionId);
+  replacement.send("netcatty:data", {
+    sessionId,
+    data: "fresh",
+    _terminalSessionGeneration: replacementGeneration,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(replacementGeneration > recent.generation);
+  assert.deepEqual(parentPort.messages.map((message) => message.kind), ["output-tap", "output"]);
+});
+
+test("runtime bounds natural-exit lifecycle generations and allows same-id restart", async () => {
+  const parentPort = createParentPort();
+  let now = 0;
+  let starts = 0;
+  const senders = new Map();
+  const generations = new Map();
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    now: () => now,
+    sessionLifecycleTombstoneTtlMs: 100,
+    maxSessionLifecycleTombstones: 8,
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:local:start", async (event, payload) => {
+        starts += 1;
+        senders.set(payload.sessionId, event.sender);
+        generations.set(payload.sessionId, event.sender.claimSessionGeneration(payload.sessionId));
+        return { sessionId: payload.sessionId };
+      });
+    },
+  });
+  runtime.start();
+
+  for (let index = 0; index < 24; index += 1) {
+    const sessionId = `natural-exit-${index}`;
+    parentPort.emitMessage({
+      kind: "request",
+      requestId: `start-${index}`,
+      channel: "netcatty:local:start",
+      payload: { sessionId },
+      webContentsId: 7,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    senders.get(sessionId).send("netcatty:exit", {
+      sessionId,
+      reason: "exited",
+      _terminalSessionGeneration: generations.get(sessionId),
+    });
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(runtime._getSessionLifecycleStateCountsForTests(), {
+    outputGenerations: 8,
+    closeEpochs: 0,
+  });
+
+  const sessionId = "natural-exit-23";
+  const exitedSender = senders.get(sessionId);
+  const exitedGeneration = generations.get(sessionId);
+  parentPort.messages.length = 0;
+  now = 99;
+  exitedSender.send("netcatty:data", {
+    sessionId,
+    data: "late-output",
+    _terminalSessionGeneration: exitedGeneration,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(parentPort.messages, [], "natural exit keeps late output fenced");
+
+  parentPort.emitMessage({
+    kind: "request",
+    requestId: "restart-natural-exit",
+    channel: "netcatty:local:start",
+    payload: { sessionId },
+    webContentsId: 8,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const replacementSender = senders.get(sessionId);
+  const replacementGeneration = generations.get(sessionId);
+  assert.ok(replacementGeneration > exitedGeneration);
+  assert.equal(starts, 25);
+
+  parentPort.messages.length = 0;
+  replacementSender.send("netcatty:data", {
+    sessionId,
+    data: "fresh-output",
+    _terminalSessionGeneration: replacementGeneration,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(parentPort.messages.map((message) => message.kind), ["output-tap", "output"]);
 });
 

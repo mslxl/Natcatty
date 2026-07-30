@@ -11,7 +11,24 @@ import {
 } from "./globalTransferScheduler";
 import { runWithTransferRetry } from "./transferRetry";
 import { runSftpTransferWorkers } from "./transferConcurrency";
-import { getParentPath, joinPath } from "./utils";
+import { getParentPath, joinPath, joinTransferTargetPath } from "./utils";
+import {
+  accountSftpDirectoryEntries,
+  claimSftpDirectoryVisit,
+  compareDirectoryTraversalPaths,
+  createDirectoryManifestAccumulator,
+  createSftpDirectoryTraversalBudget,
+  createDirectoryEntryIdentity,
+  createEmptyDirectoryResumeCheckpoint,
+  isValidDirectoryResumeCheckpoint,
+  releaseSftpDirectoryVisit,
+  shouldFollowSftpSymlinkDirectory,
+  type SftpDirectoryTraversalBudget,
+} from "../../../domain/sftpDirectoryCheckpoint";
+import {
+  isMissingDirectoryReplacePathError,
+  promoteDirectoryReplaceStage as promoteDirectoryReplacePaths,
+} from "./directoryReplacePromotion";
 
 export interface DedicatedResumeDeps {
   hosts: readonly Host[];
@@ -44,6 +61,7 @@ export type DedicatedResumeResult = {
 export type DedicatedResumeOptions = {
   children?: readonly TransferTask[];
   onChildUpdate?: (child: TransferTask) => void;
+  onDirectoryCheckpointUpdate?: (checkpoint: TransferTask["directoryResumeCheckpoint"]) => void;
   shouldAbort?: () => boolean;
 };
 
@@ -97,35 +115,27 @@ export function resolveHostForTransferEndpoint(
   }) ?? null;
 }
 
-function isAuthError(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const msg = err.message.toLowerCase();
-  return (
-    msg.includes("authentication")
-    || msg.includes("auth")
-    || msg.includes("password")
-    || msg.includes("permission denied")
-  );
-}
-
 export type OpenTransferSftpSessionOptions = {
   /**
-   * Prefer a live terminal SSH channel (fast). Only use for disposable probes —
-   * bulk transfers must use a dedicated vault open so closing the terminal/SFTP
-   * tab cannot kill in-flight global-center work.
+   * Prefer a live terminal SSH transport (borrow a lease + open SFTP channel).
+   * Safe for bulk transfers when the main-process transport registry holds a
+   * transfer/sftp lease: closing the terminal tab returns only the shell lease
+   * and does not tear down the shared transport until this SFTP handle closes.
    */
   sourceSessionId?: string;
   /**
    * When true (default), open an independent SSH/SFTP session from vault
-   * credentials. Session-backed channels die when the terminal tab closes.
+   * credentials. When false, try sourceSessionId first (shared transport).
    */
   dedicated?: boolean;
 };
 
 /**
  * Open a transfer-owned SFTP session.
- * Default is a dedicated vault connection so transfers outlive panel/tab close.
- * Optional sourceSessionId is only used when dedicated:false (not for bulk I/O).
+ * Default is a dedicated vault connection for restart/resume. With
+ * dedicated:false it uses the unified transport registry, preferring the
+ * specified terminal transport when available and otherwise reusing/dialing by
+ * endpoint without forcing a second physical SSH connection.
  */
 export async function openTransferSftpSession(
   host: Host,
@@ -137,22 +147,6 @@ export async function openTransferSftpSession(
     if (!bridge?.openSftp) throw new Error("SFTP bridge unavailable");
 
     const wantDedicated = options?.dedicated !== false;
-    // Bulk transfer pool always uses dedicated sessions. Session-backed SFTP
-    // shares the terminal SSH socket — closing that tab aborts the transfer.
-    if (
-      !wantDedicated
-      && options?.sourceSessionId
-      && !host.sftpSudo
-      && bridge.openSftpForSession
-    ) {
-      try {
-        const sftpId = await bridge.openSftpForSession(options.sourceSessionId);
-        if (sftpId) return sftpId;
-      } catch {
-        // Fall through to vault credentials.
-      }
-    }
-
     const credentials = buildSftpHostCredentials({
       host,
       hosts: [...deps.hosts],
@@ -161,32 +155,34 @@ export async function openTransferSftpSession(
       knownHosts: deps.knownHosts ? [...deps.knownHosts] : undefined,
       terminalSettings: deps.terminalSettings,
     });
-
-    const hasKey = !!credentials.privateKey || !!credentials.identityFilePaths?.length;
-    const hasPassword = !!credentials.password;
-
-    if (hasKey) {
+    // Shared transport path: open an SFTP channel on the already-authenticated
+    // terminal connection. The transport registry lease keeps the conn alive
+    // after the shell tab closes until this sftpId is closed.
+    if (
+      !wantDedicated
+      && options?.sourceSessionId
+      && !host.sftpSudo
+      && bridge.openSftpForSession
+    ) {
       try {
-        const keyFirst = { ...credentials };
-        if (!credentials.sudo) keyFirst.password = undefined;
-        return await bridge.openSftp(keyFirst);
-      } catch (err) {
-        if (hasPassword && isAuthError(err)) {
-          return await bridge.openSftp({
-            ...credentials,
-            privateKey: undefined,
-            certificate: undefined,
-            publicKey: undefined,
-            keyId: undefined,
-            keySource: undefined,
-            identityFilePaths: undefined,
-          });
-        }
-        throw err;
+        const sftpId = await bridge.openSftpForSession(options.sourceSessionId, credentials);
+        if (sftpId) return sftpId;
+      } catch {
+        // Fall through to vault credentials.
       }
     }
 
-    return bridge.openSftp(credentials);
+    // Restart/resume owns an independent SSH dial. Normal pooled transfer opens
+    // leave reuseTransport enabled so the main-process registry can reuse an
+    // authenticated endpoint even when no terminal tab exists.
+    const openOpts = wantDedicated
+      ? { ...credentials, reuseTransport: false as const }
+      : credentials;
+
+    // The main-process auth driver owns method ordering, fallback, MFA and
+    // retry. A renderer-side key-then-password retry performs a second full SSH
+    // dial and can repeat interactive authentication.
+    return bridge.openSftp(openOpts);
   });
 }
 
@@ -231,7 +227,121 @@ export type DirectoryResumeFilePlan = {
   targetPath: string;
   size: number;
   lastModified?: number;
+  directoryEntryIndex?: number;
+  directoryEntryIdentity?: string;
 };
+
+const DIRECTORY_RESUME_SYNC_BUDGET_MS = 8;
+const DIRECTORY_RESUME_YIELD_CHECK_INTERVAL = 128;
+
+function directoryResumeNow(): number {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+async function yieldDirectoryResumeWork(): Promise<void> {
+  const scheduler = (globalThis as typeof globalThis & {
+    scheduler?: { yield?: () => Promise<void> };
+  }).scheduler;
+  if (typeof scheduler?.yield === "function") {
+    await scheduler.yield();
+    return;
+  }
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
+async function indexDirectoryResumeFiles(files: DirectoryResumeFilePlan[]): Promise<DirectoryResumeFilePlan[]> {
+  const sorted = [...files]
+    .sort((left, right) => compareDirectoryTraversalPaths(left.relativePath, right.relativePath));
+  if (sorted.length >= DIRECTORY_RESUME_YIELD_CHECK_INTERVAL) {
+    await yieldDirectoryResumeWork();
+  }
+  const indexed = new Array<DirectoryResumeFilePlan>(sorted.length);
+  let sliceStartedAt = directoryResumeNow();
+  for (let directoryEntryIndex = 0; directoryEntryIndex < sorted.length; directoryEntryIndex += 1) {
+    const file = sorted[directoryEntryIndex]!;
+    indexed[directoryEntryIndex] = {
+      ...file,
+      directoryEntryIndex,
+      directoryEntryIdentity: createDirectoryEntryIdentity({
+        sourcePath: file.sourcePath,
+        targetPath: file.targetPath,
+        size: file.size,
+        lastModified: file.lastModified,
+      }),
+    };
+    if (
+      directoryEntryIndex > 0
+      && directoryEntryIndex % DIRECTORY_RESUME_YIELD_CHECK_INTERVAL === 0
+      && directoryResumeNow() - sliceStartedAt >= DIRECTORY_RESUME_SYNC_BUDGET_MS
+    ) {
+      await yieldDirectoryResumeWork();
+      sliceStartedAt = directoryResumeNow();
+    }
+  }
+  return indexed;
+}
+
+export async function validateDirectoryResumeCheckpoint(
+  parent: Pick<TransferTask, "directoryResumeCheckpoint">,
+  planned: readonly DirectoryResumeFilePlan[],
+): Promise<boolean> {
+  const checkpoint = parent.directoryResumeCheckpoint;
+  if (!isValidDirectoryResumeCheckpoint(checkpoint)) return false;
+  if (checkpoint.coveredEntries > planned.length) return false;
+  const rebuilt = checkpoint.version === 1
+    ? {
+      version: 1 as const,
+      coveredEntries: 0,
+      completedEntries: 0,
+      manifestHash: "0".repeat(64),
+    }
+    : createEmptyDirectoryResumeCheckpoint();
+  const manifest = createDirectoryManifestAccumulator(rebuilt);
+  let sliceStartedAt = directoryResumeNow();
+  for (let index = 0; index < checkpoint.coveredEntries; index += 1) {
+    const identity = planned[index]?.directoryEntryIdentity;
+    if (!identity) return false;
+    manifest.append(identity);
+    rebuilt.coveredEntries += 1;
+    if (
+      index > 0
+      && index % DIRECTORY_RESUME_YIELD_CHECK_INTERVAL === 0
+      && directoryResumeNow() - sliceStartedAt >= DIRECTORY_RESUME_SYNC_BUDGET_MS
+    ) {
+      await yieldDirectoryResumeWork();
+      sliceStartedAt = directoryResumeNow();
+    }
+  }
+  rebuilt.manifestHash = manifest.digest();
+  return rebuilt.manifestHash === checkpoint.manifestHash;
+}
+
+async function migrateLegacyDirectoryResumeCheckpoint(
+  checkpoint: NonNullable<TransferTask["directoryResumeCheckpoint"]>,
+  planned: readonly DirectoryResumeFilePlan[],
+): Promise<NonNullable<TransferTask["directoryResumeCheckpoint"]>> {
+  if (checkpoint.version !== 1) return checkpoint;
+  const migrated = createEmptyDirectoryResumeCheckpoint();
+  const manifest = createDirectoryManifestAccumulator(migrated);
+  let sliceStartedAt = directoryResumeNow();
+  for (let index = 0; index < checkpoint.coveredEntries; index += 1) {
+    const identity = planned[index]?.directoryEntryIdentity;
+    if (!identity) throw new Error("Directory resume manifest is incomplete");
+    manifest.append(identity);
+    migrated.coveredEntries += 1;
+    if (
+      index > 0
+      && index % DIRECTORY_RESUME_YIELD_CHECK_INTERVAL === 0
+      && directoryResumeNow() - sliceStartedAt >= DIRECTORY_RESUME_SYNC_BUDGET_MS
+    ) {
+      await yieldDirectoryResumeWork();
+      sliceStartedAt = directoryResumeNow();
+    }
+  }
+  migrated.manifestHash = manifest.digest();
+  migrated.completedEntries = checkpoint.completedEntries;
+  return migrated;
+}
 
 /**
  * Destination root for directory resume. Replace-mode parents write under
@@ -252,10 +362,31 @@ export function findPersistedChildForResumeFile(
   const exact = children.find((child) =>
     child.sourcePath === file.sourcePath && child.targetPath === file.targetPath
   );
-  if (exact) return exact;
-  // Fallback: unique sourcePath match only (avoid OR that can alias wrong child).
-  const bySource = children.filter((child) => child.sourcePath === file.sourcePath);
-  return bySource.length === 1 ? bySource[0]! : null;
+  return exact ?? null;
+}
+
+type PersistedResumeChild = Pick<
+  TransferTask,
+  "id" | "status" | "sourcePath" | "targetPath" | "checkpointBytes" | "transferredBytes"
+    | "resumeStage" | "downloadCheckpointBytes" | "uploadCheckpointBytes" | "sourceFingerprint"
+    | "totalBytes" | "sourceLastModified"
+>;
+
+/** Build once per directory resume; every planned-file match is then O(1). */
+export function createPersistedResumeChildLookup(
+  children: readonly PersistedResumeChild[],
+): (file: Pick<DirectoryResumeFilePlan, "sourcePath" | "targetPath">) => PersistedResumeChild | null {
+  const exactBySource = new Map<string, Map<string, PersistedResumeChild>>();
+  for (const child of children) {
+    let targets = exactBySource.get(child.sourcePath);
+    if (!targets) {
+      targets = new Map();
+      exactBySource.set(child.sourcePath, targets);
+    }
+    if (!targets.has(child.targetPath)) targets.set(child.targetPath, child);
+  }
+  return (file) => exactBySource.get(file.sourcePath)?.get(file.targetPath)
+    ?? null;
 }
 
 export function shouldSkipCompletedResumeChild(
@@ -487,18 +618,6 @@ async function resumeSingleFileWithDedicatedSession(
             uploadCheckpointBytes: task.uploadCheckpointBytes,
             sourceFingerprint: task.sourceFingerprint,
             skipAdmission: true,
-          }, (transferred, total, speed, checkpoint) => {
-            if (shouldAbort?.()) return;
-            onProgress?.({
-              transferred,
-              total,
-              speed,
-              checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
-              resumeStage: checkpoint?.resumeStage,
-              downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes,
-              uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes,
-              sourceFingerprint: checkpoint?.sourceFingerprint,
-            });
           });
 
           if (streamResult?.error) {
@@ -527,50 +646,103 @@ async function resumeSingleFileWithDedicatedSession(
   }
 }
 
+type DirectoryResumeTraversal = {
+  files: DirectoryResumeFilePlan[];
+  directoryRelativePaths: string[];
+};
+
 async function listRemoteFilesRecursive(
   sftpId: string,
   rootPath: string,
   relativePrefix = "",
-): Promise<DirectoryResumeFilePlan[]> {
+  followSymlinkDirectories = false,
+  symlinkDepth = 0,
+  shouldAbort?: () => boolean,
+  traversalBudget?: SftpDirectoryTraversalBudget,
+): Promise<DirectoryResumeTraversal> {
+  if (shouldAbort?.()) throw new Error("Transfer cancelled");
   const bridge = netcattyBridge.get();
   if (!bridge?.listSftp) throw new Error("SFTP list unavailable");
-  const entries = await bridge.listSftp(sftpId, rootPath, "auto");
-  const files: DirectoryResumeFilePlan[] = [];
-  for (const entry of entries) {
-    if (!entry?.name || entry.name === "." || entry.name === "..") continue;
-    const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
-    const fullPath = joinPath(rootPath, entry.name);
-    if (entry.type === "directory" || (entry.type === "symlink" && entry.linkTarget === "directory")) {
-      files.push(...await listRemoteFilesRecursive(sftpId, fullPath, relativePath));
-      continue;
-    }
-    if (entry.type === "directory") continue;
-    const sizeRaw = entry.size as unknown;
-    const size = typeof sizeRaw === "number"
-      ? sizeRaw
-      : Number.parseInt(String(sizeRaw ?? "0"), 10) || 0;
-    const mtimeRaw = entry.lastModified as unknown;
-    const lastModified = typeof mtimeRaw === "number"
-      ? mtimeRaw
-      : (Number.parseInt(String(mtimeRaw ?? ""), 10) || undefined);
-    files.push({
-      relativePath,
-      sourcePath: fullPath,
-      targetPath: "",
-      size,
-      lastModified,
-    });
+  const traversal = traversalBudget ?? createSftpDirectoryTraversalBudget();
+  const canonicalPath = await bridge.realpathSftp?.(sftpId, rootPath, "auto")
+    .catch(() => rootPath) ?? rootPath;
+  const claimedCanonicalPath = claimSftpDirectoryVisit(traversal, canonicalPath);
+  if (!claimedCanonicalPath) {
+    return { files: [], directoryRelativePaths: [] };
   }
-  return files;
+  try {
+    const entries = (await bridge.listSftp(sftpId, rootPath, "auto"))
+      .filter((entry) => entry?.name && entry.name !== "." && entry.name !== "..");
+    accountSftpDirectoryEntries(traversal, entries.length);
+    if (shouldAbort?.()) throw new Error("Transfer cancelled");
+    const files: DirectoryResumeFilePlan[] = [];
+    const directoryRelativePaths: string[] = [];
+    for (const entry of entries) {
+      if (shouldAbort?.()) throw new Error("Transfer cancelled");
+      const relativePath = relativePrefix ? `${relativePrefix}/${entry.name}` : entry.name;
+      const fullPath = joinPath(rootPath, entry.name);
+      const isDirectory = entry.type === "directory";
+      const isFollowedSymlinkDirectory = followSymlinkDirectories
+        && entry.type === "symlink"
+        && entry.linkTarget === "directory"
+        && shouldFollowSftpSymlinkDirectory(symlinkDepth);
+      if (isDirectory || isFollowedSymlinkDirectory) {
+        directoryRelativePaths.push(relativePath);
+        const nested = await listRemoteFilesRecursive(
+          sftpId,
+          fullPath,
+          relativePath,
+          followSymlinkDirectories,
+          isFollowedSymlinkDirectory ? symlinkDepth + 1 : symlinkDepth,
+          shouldAbort,
+          traversal,
+        );
+        for (const nestedFile of nested.files) files.push(nestedFile);
+        for (const nestedDirectory of nested.directoryRelativePaths) {
+          directoryRelativePaths.push(nestedDirectory);
+        }
+        continue;
+      }
+      if (entry.type === "directory") continue;
+      const sizeRaw = entry.size as unknown;
+      const size = typeof sizeRaw === "number"
+        ? sizeRaw
+        : Number.parseInt(String(sizeRaw ?? "0"), 10) || 0;
+      const mtimeRaw = entry.lastModified as unknown;
+      const lastModified = typeof mtimeRaw === "number"
+        ? mtimeRaw
+        : (Number.parseInt(String(mtimeRaw ?? ""), 10) || undefined);
+      files.push({
+        relativePath,
+        sourcePath: fullPath,
+        targetPath: "",
+        size,
+        lastModified,
+      });
+    }
+    return { files, directoryRelativePaths };
+  } finally {
+    releaseSftpDirectoryVisit(traversal, claimedCanonicalPath);
+  }
+}
+
+function normalizeLocalTreeRelativePath(sourceRoot: string, relativePath: string): string {
+  const normalized = relativePath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+  const rootName = sourceRoot.replace(/\\/g, "/").replace(/\/+$/g, "").split("/").pop() ?? "";
+  if (!rootName) return normalized;
+  if (normalized === rootName) return "";
+  return normalized.startsWith(`${rootName}/`) ? normalized.slice(rootName.length + 1) : normalized;
 }
 
 async function collectDirectoryResumeFiles(
   parent: TransferTask,
   endpoints: ResolvedEndpoints,
   sourceSftpId: string | undefined,
-): Promise<DirectoryResumeFilePlan[]> {
+  shouldAbort?: () => boolean,
+): Promise<{ files: DirectoryResumeFilePlan[]; directoryTargetPaths: string[] }> {
   const bridge = netcattyBridge.get();
   const destRoot = resolveDirectoryResumeTargetRoot(parent);
+  if (shouldAbort?.()) throw new Error("Transfer cancelled");
 
   // Upload: local source tree.
   if (endpoints.isUpload) {
@@ -578,27 +750,65 @@ async function collectDirectoryResumeFiles(
       throw new Error("Local folder listing is unavailable for upload resume");
     }
     const localEntries = await bridge.listLocalTree(parent.sourcePath);
-    return localEntries
+    if (shouldAbort?.()) throw new Error("Transfer cancelled");
+    const normalizedEntries = localEntries.map((entry) => ({
+      ...entry,
+      normalizedRelativePath: normalizeLocalTreeRelativePath(parent.sourcePath, entry.relativePath),
+    }));
+    const files = await indexDirectoryResumeFiles(normalizedEntries
       .filter((entry) => entry.type === "file")
       .map((entry) => ({
-        relativePath: entry.relativePath.replace(/\\/g, "/"),
+        relativePath: entry.normalizedRelativePath,
         sourcePath: entry.localPath,
-        targetPath: joinPath(destRoot, entry.relativePath.replace(/\\/g, "/")),
+        targetPath: joinTransferTargetPath(destRoot, entry.normalizedRelativePath),
         size: entry.size,
         lastModified: entry.lastModified,
-      }));
+      })));
+    return {
+      files,
+      directoryTargetPaths: normalizedEntries
+        .filter((entry) => entry.type === "directory" && !!entry.normalizedRelativePath)
+        .map((entry) => joinTransferTargetPath(destRoot, entry.normalizedRelativePath)),
+    };
   }
 
   // Download or remote-to-remote: list remote source.
   if (!sourceSftpId) throw new Error("Source SFTP session missing for directory resume");
-  const remoteFiles = await listRemoteFilesRecursive(sourceSftpId, parent.sourcePath);
-  return remoteFiles.map((file) => ({
-    ...file,
-    targetPath: joinPath(destRoot, file.relativePath),
-  }));
+  const remote = await listRemoteFilesRecursive(
+    sourceSftpId,
+    parent.sourcePath,
+    "",
+    endpoints.isDownload,
+    0,
+    shouldAbort,
+  );
+  const files = await indexDirectoryResumeFiles(remote.files.map((file) => ({
+      ...file,
+      targetPath: joinTransferTargetPath(destRoot, file.relativePath),
+    })));
+  return {
+    files,
+    directoryTargetPaths: remote.directoryRelativePaths.map((relativePath) => (
+      joinTransferTargetPath(destRoot, relativePath)
+    )),
+  };
 }
 
 /** Atomically promote a replace-mode staged directory to the final target path. */
+function expectedDirectoryReplaceStage(parent: Pick<TransferTask, "id" | "targetPath">): string {
+  const safeId = String(parent.id).replace(/[^A-Za-z0-9_-]/g, "_");
+  return `${parent.targetPath}.netcatty-${safeId}.part`;
+}
+
+function assertSafeDirectoryReplaceStage(parent: TransferTask): void {
+  if (
+    parent.stagedTargetPath
+    && parent.stagedTargetPath !== expectedDirectoryReplaceStage(parent)
+  ) {
+    throw new Error("Unsafe replacement stage path in saved transfer history");
+  }
+}
+
 async function promoteDirectoryReplaceStage(
   parent: TransferTask,
   endpoints: ResolvedEndpoints,
@@ -606,64 +816,82 @@ async function promoteDirectoryReplaceStage(
 ): Promise<void> {
   const staged = parent.stagedTargetPath;
   if (!staged || staged === parent.targetPath) return;
+  assertSafeDirectoryReplaceStage(parent);
   const bridge = netcattyBridge.get();
   if (!bridge) throw new Error("Transfer bridge unavailable");
   const safeId = String(parent.id).replace(/[^A-Za-z0-9_-]/g, "_");
   const backupPath = `${parent.targetPath}.netcatty-${safeId}.backup`;
-  let backedUp = false;
-  try {
-    if (endpoints.isDownload) {
-      if (!bridge.renameLocalFile || !bridge.deleteLocalFile) {
-        throw new Error("Local directory replacement is unavailable");
-      }
-      try {
-        await bridge.renameLocalFile(parent.targetPath, backupPath);
-        backedUp = true;
-      } catch { /* target may not exist */ }
-      await bridge.renameLocalFile(staged, parent.targetPath);
-      if (backedUp) await bridge.deleteLocalFile(backupPath);
-      return;
+  if (endpoints.isDownload) {
+    if (!bridge.statLocal || !bridge.renameLocalFile || !bridge.deleteLocalFile) {
+      throw new Error("Local directory replacement is unavailable");
     }
-    if (!targetSftpId) throw new Error("Target SFTP session missing for directory promote");
-    if (!bridge.renameSftp || !bridge.deleteSftp) {
-      throw new Error("Remote directory replacement is unavailable");
-    }
-    try {
-      await bridge.renameSftp(targetSftpId, parent.targetPath, backupPath, "auto");
-      backedUp = true;
-    } catch { /* target may not exist */ }
-    try {
-      await bridge.renameSftp(targetSftpId, staged, parent.targetPath, "auto");
-    } catch (error) {
-      if (backedUp) {
-        await bridge.renameSftp(targetSftpId, backupPath, parent.targetPath, "auto").catch(() => {});
-      }
-      throw error;
-    }
-    if (backedUp) await bridge.deleteSftp(targetSftpId, backupPath, "auto");
-  } catch (error) {
-    if (backedUp && endpoints.isDownload) {
-      await bridge.renameLocalFile?.(backupPath, parent.targetPath).catch(() => {});
-    }
-    throw error;
+    await promoteDirectoryReplacePaths({
+      targetPath: parent.targetPath,
+      stagedPath: staged,
+      backupPath,
+      statPath: bridge.statLocal,
+      renamePath: bridge.renameLocalFile,
+      deletePath: bridge.deleteLocalFile,
+    });
+    return;
   }
+  if (!targetSftpId) throw new Error("Target SFTP session missing for directory promote");
+  if (!bridge.statSftp || !bridge.renameSftp || !bridge.deleteSftp) {
+    throw new Error("Remote directory replacement is unavailable");
+  }
+  await promoteDirectoryReplacePaths({
+    targetPath: parent.targetPath,
+    stagedPath: staged,
+    backupPath,
+    statPath: (candidate) => bridge.statSftp!(targetSftpId, candidate, "auto"),
+    renamePath: (source, target) => bridge.renameSftp!(targetSftpId, source, target, "auto"),
+    deletePath: (candidate) => bridge.deleteSftp!(targetSftpId, candidate, "auto"),
+  });
 }
 
 async function ensureLocalDir(dirPath: string): Promise<void> {
   if (!dirPath) return;
-  try {
-    await netcattyBridge.get()?.mkdirLocal?.(dirPath);
-  } catch {
-    // Parent may already exist.
-  }
+  const mkdirLocal = netcattyBridge.get()?.mkdirLocal;
+  if (!mkdirLocal) throw new Error("Local directory creation is unavailable");
+  await mkdirLocal(dirPath);
 }
 
 async function ensureRemoteDir(sftpId: string, dirPath: string): Promise<void> {
   if (!dirPath || dirPath === "/") return;
+  const mkdirSftp = netcattyBridge.get()?.mkdirSftp;
+  if (!mkdirSftp) throw new Error("Remote directory creation is unavailable");
+  await mkdirSftp(sftpId, dirPath, "auto");
+}
+
+function isMissingTransferPathError(error: unknown): boolean {
+  return isMissingDirectoryReplacePathError(error);
+}
+
+async function resetDirectoryReplaceStage(
+  parent: TransferTask,
+  endpoints: ResolvedEndpoints,
+  targetSftpId: string | undefined,
+): Promise<void> {
+  const staged = parent.stagedTargetPath;
+  if (!staged || staged === parent.targetPath) return;
+  assertSafeDirectoryReplaceStage(parent);
+  const bridge = netcattyBridge.get();
+  if (!bridge) throw new Error("Transfer bridge unavailable");
+
   try {
-    await netcattyBridge.get()?.mkdirSftp?.(sftpId, dirPath, "auto");
-  } catch {
-    // Intermediate exists is fine.
+    if (endpoints.isDownload) {
+      if (!bridge.deleteLocalFile) throw new Error("Local directory replacement is unavailable");
+      if (bridge.statLocal && !await bridge.statLocal(staged)) return;
+      await bridge.deleteLocalFile(staged);
+      return;
+    }
+    if (!targetSftpId || !bridge.deleteSftp) {
+      throw new Error("Remote directory replacement is unavailable");
+    }
+    if (bridge.statSftp && !await bridge.statSftp(targetSftpId, staged, "auto")) return;
+    await bridge.deleteSftp(targetSftpId, staged, "auto");
+  } catch (error) {
+    if (!isMissingTransferPathError(error)) throw error;
   }
 }
 
@@ -712,20 +940,80 @@ async function resumeDirectoryWithDedicatedSession(
         sourceSftpId = opened.sourceSftpId;
         targetSftpId = opened.targetSftpId;
 
+        const traversal = await collectDirectoryResumeFiles(
+          parent,
+          endpoints,
+          sourceSftpId,
+          options?.shouldAbort,
+        );
+        const planned = traversal.files;
+        totalFiles = planned.length;
+        const hasCompactCheckpoint = isValidDirectoryResumeCheckpoint(parent.directoryResumeCheckpoint);
+        const compactCheckpointValid = hasCompactCheckpoint
+          && await validateDirectoryResumeCheckpoint(parent, planned);
+        if (
+          compactCheckpointValid
+          && parent.directoryResumeCheckpoint?.version === 1
+          && !parent.stagedTargetPath
+        ) {
+          const migrated = await migrateLegacyDirectoryResumeCheckpoint(
+            parent.directoryResumeCheckpoint,
+            planned,
+          );
+          parent = { ...parent, directoryResumeCheckpoint: migrated };
+          options?.onDirectoryCheckpointUpdate?.(migrated);
+        }
+        // File checkpoints intentionally do not persist an unbounded directory
+        // path list. Consequently they cannot prove that an empty directory was
+        // not deleted at the source. Rebuild every interrupted replace stage so
+        // promotion is an exact snapshot; ordinary copy/resume still reuses its
+        // compact file checkpoint.
+        const resetReplaceStage = !!parent.stagedTargetPath;
+        const reusableCompactCheckpoint = compactCheckpointValid && !resetReplaceStage;
+        if ((hasCompactCheckpoint && !compactCheckpointValid) || resetReplaceStage) {
+          // Fail closed: a changed/reordered source invalidates the whole compact
+          // prefix. Persist the reset before retransferring so another restart
+          // cannot reuse stale completion state.
+          options?.onDirectoryCheckpointUpdate?.(undefined);
+        }
+        if (resetReplaceStage) {
+          // A stage is an exact replacement snapshot. Without a valid manifest,
+          // retained files in it cannot be distinguished from files deleted at
+          // the source since the interrupted attempt, so rebuild it from empty.
+          await resetDirectoryReplaceStage(parent, endpoints, targetSftpId);
+        }
         const destRoot = resolveDirectoryResumeTargetRoot(parent);
         if (endpoints.isDownload) await ensureLocalDir(destRoot);
         if (targetSftpId) await ensureRemoteDir(targetSftpId, destRoot);
-
-        const planned = await collectDirectoryResumeFiles(parent, endpoints, sourceSftpId);
-        totalFiles = planned.length;
-        completedCount = planned.filter((file) =>
-          shouldSkipCompletedResumeChild(findPersistedChildForResumeFile(existingChildren, file)),
-        ).length;
+        for (const directoryPath of traversal.directoryTargetPaths) {
+          if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
+          if (endpoints.isDownload) await ensureLocalDir(directoryPath);
+          else if (targetSftpId) await ensureRemoteDir(targetSftpId, directoryPath);
+        }
+        const compactedCompleted = reusableCompactCheckpoint
+          ? parent.directoryResumeCheckpoint!.completedEntries
+          : 0;
+        const retainedCompleted = !resetReplaceStage && (!hasCompactCheckpoint || compactCheckpointValid)
+          ? existingChildren.filter((child) => child.status === "completed").length
+          : 0;
+        completedCount = compactedCompleted + retainedCompleted;
         bumpParentProgress(0);
 
-        const pending = planned.filter((file) =>
-          !shouldSkipCompletedResumeChild(findPersistedChildForResumeFile(existingChildren, file)),
-        );
+        const findPersistedChild = createPersistedResumeChildLookup(existingChildren);
+        const pending = planned.filter((file) => {
+          const persisted = findPersistedChild(file);
+          if (
+            shouldSkipCompletedResumeChild(persisted)
+            && !resetReplaceStage
+            && (!hasCompactCheckpoint || compactCheckpointValid)
+          ) return false;
+          return !(
+            reusableCompactCheckpoint
+            && (file.directoryEntryIndex ?? Number.MAX_SAFE_INTEGER)
+              < parent.directoryResumeCheckpoint!.coveredEntries
+            && !persisted
+          );
+        });
 
         await runSftpTransferWorkers(
           pending,
@@ -733,10 +1021,12 @@ async function resumeDirectoryWithDedicatedSession(
           async (file) => {
             if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
 
-            const persisted = findPersistedChildForResumeFile(existingChildren, file);
+            const persisted = findPersistedChild(file);
             if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
 
             const childId = persisted?.id ?? crypto.randomUUID();
+            const resetPersistedCheckpoint = resetReplaceStage
+              || (hasCompactCheckpoint && !compactCheckpointValid);
             let childBase: TransferTask = {
               ...parent,
               ...persisted,
@@ -751,7 +1041,9 @@ async function resumeDirectoryWithDedicatedSession(
               ownerId: "dedicated-resume",
               status: "transferring",
               totalBytes: file.size || persisted?.totalBytes || 0,
-              transferredBytes: persisted?.checkpointBytes ?? persisted?.transferredBytes ?? 0,
+              transferredBytes: resetPersistedCheckpoint
+                ? 0
+                : (persisted?.checkpointBytes ?? persisted?.transferredBytes ?? 0),
               speed: 0,
               startTime: persisted?.startTime ?? Date.now(),
               endTime: undefined,
@@ -759,12 +1051,18 @@ async function resumeDirectoryWithDedicatedSession(
               reconnectRequired: false,
               phase: "transferring",
               resumable: parent.resumable !== false,
-              checkpointBytes: persisted?.checkpointBytes ?? persisted?.transferredBytes ?? 0,
-              resumeStage: persisted?.resumeStage,
-              downloadCheckpointBytes: persisted?.downloadCheckpointBytes,
-              uploadCheckpointBytes: persisted?.uploadCheckpointBytes,
-              sourceFingerprint: persisted?.sourceFingerprint,
-              sourceLastModified: file.lastModified ?? persisted?.sourceLastModified,
+              checkpointBytes: resetPersistedCheckpoint
+                ? 0
+                : (persisted?.checkpointBytes ?? persisted?.transferredBytes ?? 0),
+              resumeStage: resetPersistedCheckpoint ? undefined : persisted?.resumeStage,
+              downloadCheckpointBytes: resetPersistedCheckpoint ? undefined : persisted?.downloadCheckpointBytes,
+              uploadCheckpointBytes: resetPersistedCheckpoint ? undefined : persisted?.uploadCheckpointBytes,
+              sourceFingerprint: resetPersistedCheckpoint ? undefined : persisted?.sourceFingerprint,
+              sourceLastModified: resetPersistedCheckpoint
+                ? file.lastModified
+                : (persisted?.sourceLastModified ?? file.lastModified),
+              directoryEntryIndex: file.directoryEntryIndex,
+              directoryEntryIdentity: file.directoryEntryIdentity,
               conflict: undefined,
             };
 
@@ -787,11 +1085,6 @@ async function resumeDirectoryWithDedicatedSession(
               if (!sourceStat) {
                 throw new Error("Source is unavailable");
               }
-              childBase = {
-                ...childBase,
-                totalBytes: sourceStat.size || childBase.totalBytes,
-                sourceLastModified: sourceStat.lastModified ?? childBase.sourceLastModified,
-              };
               const validationError = validateTransferResumeSource(childBase, {
                 size: sourceStat.size,
                 lastModified: sourceStat.lastModified,
@@ -803,6 +1096,7 @@ async function resumeDirectoryWithDedicatedSession(
                   checkpointBytes: 0,
                   transferredBytes: 0,
                   totalBytes: sourceStat.size,
+                  sourceLastModified: sourceStat.lastModified,
                 };
               } else if (classified.kind === "modified") {
                 attentionCount += 1;
@@ -818,6 +1112,12 @@ async function resumeDirectoryWithDedicatedSession(
                 return;
               } else if (classified.kind === "fatal") {
                 throw new Error(classified.message || validationError || "Resume validation failed");
+              } else {
+                childBase = {
+                  ...childBase,
+                  totalBytes: sourceStat.size || childBase.totalBytes,
+                  sourceLastModified: sourceStat.lastModified ?? childBase.sourceLastModified,
+                };
               }
 
               // Re-check abort after async stat before inserting a transferring child.
@@ -842,21 +1142,6 @@ async function resumeDirectoryWithDedicatedSession(
                 uploadCheckpointBytes: childBase.uploadCheckpointBytes,
                 sourceFingerprint: childBase.sourceFingerprint,
                 skipAdmission: true,
-              }, (transferred, total, speed, checkpoint) => {
-                if (options?.shouldAbort?.()) return;
-                options?.onChildUpdate?.({
-                  ...childBase,
-                  status: "transferring",
-                  transferredBytes: transferred,
-                  totalBytes: total > 0 ? total : childBase.totalBytes,
-                  speed,
-                  checkpointBytes: checkpoint?.checkpointBytes ?? transferred,
-                  resumeStage: checkpoint?.resumeStage ?? childBase.resumeStage,
-                  downloadCheckpointBytes: checkpoint?.downloadCheckpointBytes ?? childBase.downloadCheckpointBytes,
-                  uploadCheckpointBytes: checkpoint?.uploadCheckpointBytes ?? childBase.uploadCheckpointBytes,
-                  sourceFingerprint: checkpoint?.sourceFingerprint ?? childBase.sourceFingerprint,
-                });
-                bumpParentProgress(speed);
               });
 
               if (streamResult?.error || streamResult?.cancelled) {

@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
+const http = require("node:http");
 const { prepareCommandForSpawn } = require("./ai/shellUtils.cjs");
 const {
   isCodexAuthError: realIsCodexAuthError,
@@ -241,6 +242,104 @@ test("cleanup closes persistent CodeBuddy sessions", () => {
     assert.equal(codebuddyCloseCalls, 1);
   } finally {
     restore();
+  }
+});
+
+test("non-2xx streaming responses are bounded and actively terminated", async () => {
+  let requestClosed = false;
+  let resolveRequestClosed;
+  const requestClosedPromise = new Promise((resolve) => { resolveRequestClosed = resolve; });
+  const server = http.createServer((_request, response) => {
+    response.writeHead(500, { "content-type": "text/plain" });
+    const interval = setInterval(() => response.write("abcdefgh"), 2);
+    response.on("close", () => {
+      clearInterval(interval);
+      requestClosed = true;
+      resolveRequestClosed();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const { bridge, restore } = loadBridgeWithMocks();
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() }, session: {} },
+  });
+
+  try {
+    await assert.rejects(
+      () => bridge._streamRequestForTests(
+        `http://127.0.0.1:${address.port}/streaming-error`,
+        {
+          method: "GET",
+          maxErrorBodyBytes: 32,
+          totalTimeoutMs: 1_000,
+        },
+        { sender: { id: 1 } },
+        "streaming-error",
+        false,
+      ),
+      /error response exceeded/i,
+    );
+    await Promise.race([
+      requestClosedPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server request stayed open")), 500)),
+    ]);
+    assert.equal(requestClosed, true);
+    assert.equal(bridge._getActiveStreamCountForTests(), 0);
+  } finally {
+    restore();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("streaming requests enforce a total deadline even while bytes keep arriving", async () => {
+  let requestClosed = false;
+  let resolveRequestClosed;
+  const requestClosedPromise = new Promise((resolve) => { resolveRequestClosed = resolve; });
+  const server = http.createServer((_request, response) => {
+    response.writeHead(500, { "content-type": "text/plain" });
+    const interval = setInterval(() => response.write("x"), 2);
+    response.on("close", () => {
+      clearInterval(interval);
+      requestClosed = true;
+      resolveRequestClosed();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const { bridge, restore } = loadBridgeWithMocks();
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() }, session: {} },
+  });
+
+  try {
+    await assert.rejects(
+      () => bridge._streamRequestForTests(
+        `http://127.0.0.1:${address.port}/never-ending`,
+        {
+          method: "GET",
+          maxErrorBodyBytes: 1024 * 1024,
+          totalTimeoutMs: 30,
+        },
+        { sender: { id: 1 } },
+        "never-ending",
+        false,
+      ),
+      /total deadline exceeded/i,
+    );
+    await Promise.race([
+      requestClosedPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server request stayed open")), 500)),
+    ]);
+    assert.equal(requestClosed, true);
+    assert.equal(bridge._getActiveStreamCountForTests(), 0);
+  } finally {
+    restore();
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 

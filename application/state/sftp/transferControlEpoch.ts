@@ -7,6 +7,9 @@
  */
 
 const epochs = new Map<string, number>();
+// A scalar generation prevents ABA when a settled task id is reused. It does
+// not retain task ids, while making every new control round process-unique.
+let nextEpoch = 0;
 
 export function getTransferControlEpoch(taskId: string): number {
   return epochs.get(taskId) ?? 0;
@@ -14,16 +17,27 @@ export function getTransferControlEpoch(taskId: string): number {
 
 /** Bump and return the new epoch. Call on intentional Pause and Resume. */
 export function bumpTransferControlEpoch(taskId: string): number {
-  const next = getTransferControlEpoch(taskId) + 1;
+  const next = nextEpoch + 1;
+  nextEpoch = next;
   epochs.set(taskId, next);
   return next;
 }
 
 export function isTransferControlEpochCurrent(taskId: string, epoch: number): boolean {
-  return getTransferControlEpoch(taskId) === epoch;
+  return epochs.get(taskId) === epoch;
+}
+
+/** Release control epochs after the transfer tree has fully settled. */
+export function settleTransferControlEpochTree(
+  rootTaskId: string,
+  childIds: readonly string[] = [],
+): void {
+  epochs.delete(rootTaskId);
+  for (const childId of childIds) epochs.delete(childId);
 }
 
 /** Test helper. */
 export function resetTransferControlEpochsForTests(): void {
   epochs.clear();
+  nextEpoch = 0;
 }

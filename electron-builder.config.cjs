@@ -257,7 +257,8 @@ module.exports = {
     deb: {
         // Use gzip instead of default xz(lzma) for better compatibility with
         // Deepin OS and other distros that have issues with lzma decompression
-        compression: 'gz'
+        compression: 'gz',
+        afterInstall: 'scripts/linux/after-install.tpl'
     },
     rpm: {
         // Default fpm/electron-builder RPM compression is "xzmt" (multi-threaded
@@ -265,6 +266,7 @@ module.exports = {
         // rpmbuild fails with exit 127 during packaging. gzip is portable and
         // matches our deb preference for older distros.
         compression: 'gzip',
+        afterInstall: 'scripts/linux/after-install.tpl',
         fpm: [
             // Avoid rpm's generated /usr/lib/.build-id symlinks. Those hashes
             // are global on the host, so owning them can conflict with other RPMs.

@@ -8,7 +8,7 @@ import {
   type CompletionSuggestion,
 } from './completionEngine';
 import type { AutocompleteCwdSource } from './terminalAutocompleteLayout';
-import type { Snippet } from '../../../domain/models';
+import type { AutocompleteHistoryScope, Snippet } from '../../../domain/models';
 
 export interface TerminalCompletionProviderRequest {
   input: string;
@@ -17,6 +17,8 @@ export interface TerminalCompletionProviderRequest {
   cwdSource?: AutocompleteCwdSource;
   snippets?: Snippet[];
   maximum: number;
+  /** Which history pool built-in suggestions draw from. */
+  historyScope?: AutocompleteHistoryScope;
   /** Internal end-to-end wait bound; tests may lower it deterministically. */
   pluginResponseTimeoutMs?: number;
   /** Host security/session cancellation propagated to the plugin bridge. */
@@ -63,6 +65,7 @@ export async function provideTerminalCompletions(
     cwd: request.session.cwd,
     cwdSource: request.cwdSource,
     snippets: request.snippets,
+    historyScope: request.historyScope,
   });
   const pluginRequestController = new AbortController();
   const abortPluginRequest = () => pluginRequestController.abort();

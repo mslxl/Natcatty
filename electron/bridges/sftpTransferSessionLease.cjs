@@ -27,6 +27,10 @@
  * @property {(sftpId: string) => string[]} listTransferIds
  * @property {(sftpId: string) => boolean} markSoftClosed
  * @property {(sftpId: string) => boolean} isSoftClosed
+ * @property {(sftpId: string) => number|undefined} getPendingHardCloseToken
+ * @property {(sftpId: string) => number|undefined} beginHardClose
+ * @property {(sftpId: string, closeToken: number) => boolean} commitHardClose
+ * @property {(sftpId: string) => boolean} isHardCloseCommitted
  * @property {(sftpId: string) => void} clear
  * @property {() => void} resetForTests
  */
@@ -39,6 +43,20 @@ function createSftpTransferSessionLeaseStore() {
   const leases = new Map();
   /** @type {Set<string>} */
   const softClosed = new Set();
+  /** @type {Map<string, { token: number, committed: boolean }>} */
+  const hardCloseClaims = new Map();
+  let nextHardCloseToken = 0;
+
+  function beginHardClose(sftpId) {
+    const existing = hardCloseClaims.get(sftpId);
+    if (existing) return existing.token;
+    nextHardCloseToken += 1;
+    hardCloseClaims.set(sftpId, {
+      token: nextHardCloseToken,
+      committed: false,
+    });
+    return nextHardCloseToken;
+  }
 
   function getSet(sftpId) {
     let set = leases.get(sftpId);
@@ -52,6 +70,17 @@ function createSftpTransferSessionLeaseStore() {
   return {
     acquire(sftpId, transferId) {
       if (!sftpId || !transferId) return false;
+      const closeClaim = hardCloseClaims.get(sftpId);
+      // Before commit, a directory walk's next child may cancel the deferred
+      // close and keep using the live session. After commit, the SSH/SFTP close
+      // has started and this client must never be lent again.
+      if (closeClaim?.committed) return false;
+      if (closeClaim) {
+        hardCloseClaims.delete(sftpId);
+        // The panel's close intent remains sticky across the cancelled close;
+        // the next last release must claim hard-close again.
+        softClosed.add(sftpId);
+      }
       const set = getSet(sftpId);
       const before = set.size;
       set.add(String(transferId));
@@ -79,7 +108,10 @@ function createSftpTransferSessionLeaseStore() {
       if (remaining === 0) {
         leases.delete(sftpId);
         const shouldHardClose = softClosed.has(sftpId);
-        if (shouldHardClose) softClosed.delete(sftpId);
+        if (shouldHardClose) {
+          beginHardClose(sftpId);
+          softClosed.delete(sftpId);
+        }
         return { released: true, shouldHardClose, remaining: 0 };
       }
       return { released: true, shouldHardClose: false, remaining };
@@ -120,15 +152,40 @@ function createSftpTransferSessionLeaseStore() {
       return !!sftpId && softClosed.has(sftpId);
     },
 
+    getPendingHardCloseToken(sftpId) {
+      return hardCloseClaims.get(sftpId)?.token;
+    },
+
+    beginHardClose(sftpId) {
+      if (!sftpId) return undefined;
+      return beginHardClose(sftpId);
+    },
+
+    commitHardClose(sftpId, closeToken) {
+      const claim = hardCloseClaims.get(sftpId);
+      if (!claim || claim.token !== closeToken || claim.committed || this.isHeld(sftpId)) {
+        return false;
+      }
+      claim.committed = true;
+      return true;
+    },
+
+    isHardCloseCommitted(sftpId) {
+      return hardCloseClaims.get(sftpId)?.committed === true;
+    },
+
     clear(sftpId) {
       if (!sftpId) return;
       leases.delete(sftpId);
       softClosed.delete(sftpId);
+      hardCloseClaims.delete(sftpId);
     },
 
     resetForTests() {
       leases.clear();
       softClosed.clear();
+      hardCloseClaims.clear();
+      nextHardCloseToken = 0;
     },
   };
 }

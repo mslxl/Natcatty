@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
   refreshFonts,
@@ -29,6 +29,8 @@ interface Props {
   onChange: (next: string) => void;
   className?: string;
   disabled?: boolean;
+  label?: string;
+  description?: string;
 }
 
 export const TerminalCjkFontSelect: React.FC<Props> = ({
@@ -36,6 +38,8 @@ export const TerminalCjkFontSelect: React.FC<Props> = ({
   onChange,
   className,
   disabled,
+  label,
+  description,
 }) => {
   const { t } = useI18n();
   const installedFamilies = useInstalledFontFamilies();
@@ -88,58 +92,75 @@ export const TerminalCjkFontSelect: React.FC<Props> = ({
   );
   const selectedFontFamily = previewFontFamily(value);
   const previewFamily = previewFontFamily(previewValue);
+  const controls = (
+    <div className="flex items-center gap-2">
+      <Combobox
+        options={options}
+        value={value}
+        onValueChange={onChange}
+        placeholder={t('settings.terminal.font.cjk.searchPlaceholder')}
+        emptyText={t('settings.terminal.font.cjk.empty')}
+        allowCreate
+        createText={t('settings.terminal.font.cjk.useCustom')}
+        triggerClassName="h-9"
+        inputStyle={{ fontFamily: selectedFontFamily }}
+        onInputValueChange={setPreviewValue}
+        disabled={disabled}
+      />
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="h-9 w-9 shrink-0"
+        aria-label={t('settings.terminal.font.cjk.refresh')}
+        title={t('settings.terminal.font.cjk.refresh')}
+        disabled={disabled || isLoading}
+        onClick={() => void refreshFonts()}
+      >
+        <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
+      </Button>
+    </div>
+  );
 
-  return (
-    <div className={cn('space-y-2', className)}>
-      <div className="flex items-center gap-2">
-        <Combobox
-          options={options}
-          value={value}
-          onValueChange={onChange}
-          placeholder={t('settings.terminal.font.cjk.searchPlaceholder')}
-          emptyText={t('settings.terminal.font.cjk.empty')}
-          allowCreate
-          createText={t('settings.terminal.font.cjk.useCustom')}
-          triggerClassName="h-9"
-          inputStyle={{ fontFamily: selectedFontFamily }}
-          onInputValueChange={setPreviewValue}
-          disabled={disabled}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="h-9 w-9 shrink-0"
-          aria-label={t('settings.terminal.font.cjk.refresh')}
-          title={t('settings.terminal.font.cjk.refresh')}
-          disabled={disabled || isLoading}
-          onClick={() => void refreshFonts()}
-        >
-          <RefreshCw size={14} className={cn(isLoading && 'animate-spin')} />
-        </Button>
-      </div>
-
-      {previewValue.trim() && (
-        <pre
-          className="overflow-hidden rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm leading-5"
-          style={{ fontFamily: previewFamily }}
-        >
-          {'你好 │ ABC  │ 123\n123  │ 测试 │ ABC'}
-        </pre>
-      )}
+  const preview = previewValue.trim() && (
+    <>
+      <pre
+        className="m-0 py-2 text-center text-base leading-7 text-foreground"
+        style={{ fontFamily: previewFamily }}
+      >
+        {'你好 │ ABC  │ 123\n123  │ 测试 │ ABC'}
+      </pre>
 
       {status === 'alignment-risk' && (
-        <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>{t('settings.terminal.font.cjk.alignmentWarning')}</span>
+        <p className="m-0 text-center text-xs text-amber-600 dark:text-amber-400">
+          {t('settings.terminal.font.cjk.alignmentWarning')}
         </p>
       )}
       {status === 'unavailable' && (
-        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-          <span>{t('settings.terminal.font.cjk.unavailableWarning')}</span>
+        <p className="m-0 text-center text-xs text-muted-foreground">
+          {t('settings.terminal.font.cjk.unavailableWarning')}
         </p>
       )}
+    </>
+  );
+
+  if (label) {
+    return (
+      <div className={cn('grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 py-3', className)}>
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{label}</div>
+          {description && <div className="mt-0.5 text-xs text-muted-foreground">{description}</div>}
+        </div>
+        <div className="w-72 shrink-0">{controls}</div>
+        {preview && <div className="col-span-2 justify-self-center">{preview}</div>}
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn('space-y-2', className)}>
+      {controls}
+      {preview}
     </div>
   );
 };

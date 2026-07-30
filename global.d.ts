@@ -160,16 +160,18 @@ declare global {
     // When set, reuse the already-authenticated SSH connection of this existing
     // session by opening a new shell channel on it, instead of dialing a fresh
     // connection. Lets a duplicated tab skip a second MFA prompt (issue #1204).
-    // The bridge falls back to a fresh connection if the source is gone, unless
-    // reuseOnly is also set.
+    // The bridge falls back to a fresh connection if the source is gone.
     sourceSessionId?: string;
     // Skip POSIX process discovery when copying a network-device session.
     skipShellPidDiscovery?: boolean;
-    // When true with sourceSessionId: (1) fail instead of falling back to a
-    // fresh SSH dial, and (2) skip renderer endpoint matching so a Connected
-    // picker probe can reuse the named live session even if session.username
-    // /port lag the authenticated bridge endpoint.
-    reuseOnly?: boolean;
+    /**
+     * When false, openSftp must dial a fresh SSH connection and must not
+     * borrow a parked/shared registry transport. Used for dedicated bulk
+     * transfer / restart-resume so transfers do not attach to a terminal
+     * conn that may die or leave checkpoint resume half-bound.
+     * Default true (browse / MFA-skip reuse of parked transports).
+     */
+    reuseTransport?: boolean;
   }
 
   interface SftpStatResult {

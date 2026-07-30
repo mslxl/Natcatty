@@ -2,15 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("directory progress freeze is latch-primary (no sticky status re-pause)", () => {
+test("directory parent progress freezes while pausing without re-pausing child streams", () => {
   const source = readFileSync(new URL("./transferDirectoryOps.ts", import.meta.url), "utf8");
-  // Must not re-force pause solely from status after intentional resume.
-  assert.match(source, /const pauseRequested = latchedNow;/);
-  assert.doesNotMatch(
-    source,
-    /const pauseRequested = latchedNow\s*\|\|\s*t\.status === "paused"/,
-  );
-  assert.match(source, /Latch-primary only/);
+  assert.match(source, /const parentFrozen = !!parentRow/);
+  assert.match(source, /parentRow\.status === "paused"/);
+  assert.match(source, /parentRow\.status === "pausing"/);
+  assert.match(source, /\|\| isPauseLatched\(rootTaskId\)/);
+  assert.match(source, /if \(parentFrozen\) \{\s*return \{ \.\.\.t, speed: 0 \};/);
+  assert.doesNotMatch(source, /const pauseRequested = .*status === "paused"/);
 });
 
 test("directory pauseWatch undoes pause when control epoch is superseded", () => {

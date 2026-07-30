@@ -158,6 +158,7 @@ const attachHomeWebContentsIds = new Map();
 const {
   markAttachPopupClosePrepared,
   retryPendingAttachedSessionOutput,
+  releaseAttachedSessionState,
   setRestoreAttachedSessionOutput,
   setAttachHomeLookup,
   setFanoutSessionExit,
@@ -762,7 +763,13 @@ function findExecutable(name, opts = {}) {
       : process.env.PATH;
     const env = { ...process.env, PATH: pathOverride || "" };
     const whereExe = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "where.exe");
-    const result = execFileSync(fs.existsSync(whereExe) ? whereExe : "where.exe", [name], { encoding: "utf8", env });
+    const result = execFileSync(fs.existsSync(whereExe) ? whereExe : "where.exe", [name], {
+      encoding: "utf8",
+      env,
+      maxBuffer: 1024 * 1024,
+      timeout: 3_000,
+      windowsHide: true,
+    });
     const candidates = result
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -1903,6 +1910,7 @@ function clearSessionPtyBuffer(event, payload) {
  */
 function closeSession(event, payload) {
   const session = sessions.get(payload.sessionId);
+  releaseAttachedSessionState(payload.sessionId);
   if (!session) return;
   terminalFlowPauseArbiter.clearSession(payload.sessionId);
   session.closed = true;

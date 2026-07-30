@@ -16,9 +16,79 @@ import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection'
 
 type TerminalLayerEffectsContext = Record<string, any>;
 
+type RuntimeStateRef<T> = { current: Map<string, T> };
+
+export type TerminalSessionRuntimeState = {
+  terminalRendererCwdBySessionRef: RuntimeStateRef<string>;
+  terminalOsc7SignalBySessionRef: RuntimeStateRef<number>;
+  cwdProbeGenerationRef: RuntimeStateRef<number>;
+  cwdProbeCancelersRef: RuntimeStateRef<() => void>;
+};
+
+export function clearTerminalSessionRuntimeState(
+  state: TerminalSessionRuntimeState,
+  sessionId: string,
+): void {
+  const cancelProbe = state.cwdProbeCancelersRef.current.get(sessionId);
+
+  state.cwdProbeCancelersRef.current.delete(sessionId);
+  state.cwdProbeGenerationRef.current.delete(sessionId);
+  state.terminalOsc7SignalBySessionRef.current.delete(sessionId);
+  state.terminalRendererCwdBySessionRef.current.delete(sessionId);
+
+  if (cancelProbe) {
+    try {
+      cancelProbe();
+    } catch {
+      // Session teardown is best-effort: one faulty canceler must not retain state.
+    }
+  }
+}
+
+export function pruneTerminalSessionRuntimeState(
+  state: TerminalSessionRuntimeState,
+  liveSessionIds: ReadonlySet<string>,
+): void {
+  const trackedSessionIds = new Set<string>([
+    ...state.terminalRendererCwdBySessionRef.current.keys(),
+    ...state.terminalOsc7SignalBySessionRef.current.keys(),
+    ...state.cwdProbeGenerationRef.current.keys(),
+    ...state.cwdProbeCancelersRef.current.keys(),
+  ]);
+
+  for (const sessionId of trackedSessionIds) {
+    if (!liveSessionIds.has(sessionId)) {
+      clearTerminalSessionRuntimeState(state, sessionId);
+    }
+  }
+}
+
+type TabMemoryRef = { current: Map<string, unknown> };
+
+export type TerminalTabMemoryState = {
+  lastSidePanelTabRef: TabMemoryRef;
+  notesReturnTabRef: TabMemoryRef;
+  sftpLastPathForSourceRef: TabMemoryRef;
+};
+
+export function pruneTerminalTabMemoryState(
+  state: TerminalTabMemoryState,
+  liveTabIds: ReadonlySet<string>,
+): void {
+  for (const memoryRef of [
+    state.lastSidePanelTabRef,
+    state.notesReturnTabRef,
+    state.sftpLastPathForSourceRef,
+  ]) {
+    for (const tabId of memoryRef.current.keys()) {
+      if (!liveTabIds.has(tabId)) memoryRef.current.delete(tabId);
+    }
+  }
+}
+
 export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const { openPath } = useSftpBackend();
-  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTimeout, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setTimeout, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, terminalRendererCwdBySessionRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
+  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTimeout, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setTimeout, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
 
   const activeWorkspaceId = activeWorkspace?.id;
   const activeWorkspaceViewMode = activeWorkspace?.viewMode;
@@ -78,15 +148,6 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     }
   }, [clearTopTabsPreviewVars, isTerminalLayerVisible]);
 
-  useEffect(() => {
-      const liveSessionIds = new Set(sessions.map((session) => session.id));
-      for (const sessionId of terminalRendererCwdBySessionRef.current.keys()) {
-        if (!liveSessionIds.has(sessionId)) {
-          terminalRendererCwdBySessionRef.current.delete(sessionId);
-        }
-      }
-    }, [sessions]);
-  
   useEffect(() => {
       sidePanelOpenTabs.forEach((tab, tabId) => {
         lastSidePanelTabRef.current.set(tabId, tab);

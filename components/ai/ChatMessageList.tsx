@@ -137,6 +137,21 @@ export function buildCodexApprovalRenderPlan(
 const MESSAGE_RENDER_BATCH = 50;
 const MESSAGE_RENDER_STEP = 50;
 
+export function pruneResolvedApprovals(
+  previous: ReadonlyMap<string, boolean>,
+  messages: readonly ChatMessage[],
+): Map<string, boolean> {
+  const visibleToolCallIds = new Set<string>();
+  for (const message of messages) {
+    for (const toolCall of message.toolCalls ?? []) visibleToolCallIds.add(toolCall.id);
+  }
+  const next = new Map<string, boolean>();
+  for (const [toolCallId, approved] of previous) {
+    if (visibleToolCallIds.has(toolCallId)) next.set(toolCallId, approved);
+  }
+  return next;
+}
+
 const ChatMessageList: React.FC<ChatMessageListProps> = ({
   messages,
   isStreaming,
@@ -155,6 +170,10 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   const [resolvedApprovals, setResolvedApprovals] = useState<Map<string, boolean>>(new Map());
   const [pendingCodexInteractions, setPendingCodexInteractions] = useState<Map<string, CodexAppServerInteraction>>(new Map());
   const [pendingCodebuddyElicitations, setPendingCodebuddyElicitations] = useState<Map<string, CodebuddyElicitation>>(new Map());
+
+  useEffect(() => {
+    setResolvedApprovals((previous) => pruneResolvedApprovals(previous, messages));
+  }, [activeSessionId, messages]);
 
   // Subscribe to approval gate events (SDK + MCP tool calls)
   useEffect(() => {

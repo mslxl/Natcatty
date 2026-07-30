@@ -118,7 +118,14 @@ test("full hibernate and the eviction upgrade both re-check inline images", () =
     "if (runtimeHasInlineImages()) return;",
     evictionIndex,
   );
-  const evictionUpgradeIndex = terminalSource.indexOf("wakeSoftHiddenRuntime();", evictionIndex);
+  const evictionUpgradeIndex = terminalSource.indexOf(
+    "upgradeSoftHiddenRuntimeToHibernate();",
+    evictionIndex,
+  );
+  const upgradeBody = readCallbackBody(
+    terminalSource,
+    "const upgradeSoftHiddenRuntimeToHibernate = useCallback(() =>",
+  );
 
   assert.notEqual(evictionIndex, -1);
   assert.notEqual(
@@ -129,5 +136,10 @@ test("full hibernate and the eviction upgrade both re-check inline images", () =
   assert.ok(
     evictionGuardIndex < evictionUpgradeIndex,
     "the image guard must run before the renderer is woken for the hibernate upgrade",
+  );
+  assert.match(
+    upgradeBody,
+    /wakeSoftHiddenRuntimeRef\.current\?\.\(\);[\s\S]*?fullHibernateRuntime\(\)/,
+    "the shared upgrade path must wake the soft-hidden renderer before hibernating",
   );
 });

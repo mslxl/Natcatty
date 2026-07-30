@@ -4,9 +4,14 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import type { Host, Identity, KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding, SSHKey } from "../../../domain/models";
 import type { SftpHostKeyInfo, SftpHostKeyVerificationState, SftpPane } from "./types";
 import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
-import { buildSftpReuseCredentials, useSftpHostCredentials } from "./useSftpHostCredentials";
+import { useSftpHostCredentials } from "./useSftpHostCredentials";
 import { buildCacheKey, getSharedRemoteHostCache, setSharedRemoteHostCache } from "./sharedRemoteHostCache";
 import { resolveRemoteSftpStartState } from "./sftpConnectStartPath";
+import { normalizeSftpPaneNavigationPath } from "./utils";
+import {
+  setDirectoryCacheEntry,
+  type DirectoryListingCache,
+} from "./directoryListingCache";
 
 interface UseSftpConnectionsParams {
   hosts: Host[];
@@ -26,7 +31,7 @@ interface UseSftpConnectionsParams {
   getActivePane: (side: "left" | "right") => SftpPane | null;
   updateTab: (side: "left" | "right", tabId: string, updater: (prev: SftpPane) => SftpPane) => void;
   navSeqRef: MutableRefObject<{ left: number; right: number }>;
-  dirCacheRef: MutableRefObject<Map<string, { files: SftpFileEntry[]; timestamp: number }>>;
+  dirCacheRef: MutableRefObject<DirectoryListingCache>;
   sftpSessionsRef: MutableRefObject<Map<string, string>>;
   lastConnectedHostRef: MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   connectionCacheKeyMapRef: MutableRefObject<Map<string, string>>;
@@ -57,6 +62,43 @@ interface OpenSftpWithSessionPreferenceParams {
   openOptions: NetcattySSHOptions;
 }
 
+export function takeSftpConnectionMetadataForClose(params: {
+  connectionId: string;
+  sftpSessions: Map<string, string>;
+  connectionCacheKeys: Map<string, string>;
+  clearCacheForConnection: (connectionId: string) => void;
+}): string | undefined {
+  const sftpId = params.sftpSessions.get(params.connectionId);
+  params.sftpSessions.delete(params.connectionId);
+  params.connectionCacheKeys.delete(params.connectionId);
+  params.clearCacheForConnection(params.connectionId);
+  return sftpId;
+}
+
+export async function releaseSftpConnectionMetadata(params: {
+  connectionId: string;
+  isLocal?: boolean;
+  sftpSessions: Map<string, string>;
+  connectionCacheKeys: Map<string, string>;
+  clearCacheForConnection: (connectionId: string) => void;
+  closeSftp: (sftpId: string) => Promise<unknown>;
+}): Promise<void> {
+  const sftpId = takeSftpConnectionMetadataForClose(params);
+  if (params.isLocal || !sftpId) return;
+  try {
+    await params.closeSftp(sftpId);
+  } catch {
+    // Best-effort: backend owner cleanup remains the final safety net.
+  }
+}
+
+export function createSftpConnectionId(
+  side: "left" | "right",
+  randomUUID: () => string = () => crypto.randomUUID(),
+): string {
+  return `${side}-${randomUUID()}`;
+}
+
 /** Open SFTP through an already-authenticated terminal session before retrying normal auth. */
 export async function openSftpWithSessionPreference({
   bridge,
@@ -66,7 +108,7 @@ export async function openSftpWithSessionPreference({
   if (!bridge?.openSftp) throw new Error("SFTP bridge unavailable");
   if (sourceSessionId && bridge.openSftpForSession) {
     try {
-      return await bridge.openSftpForSession(sourceSessionId);
+      return await bridge.openSftpForSession(sourceSessionId, openOptions);
     } catch {
       // Fall through to the existing SFTP open path so users still get a usable
       // file browser when the live SSH transport cannot provide an SFTP channel.
@@ -74,6 +116,9 @@ export async function openSftpWithSessionPreference({
   }
   return bridge.openSftp(openOptions);
 }
+
+/** One complete SFTP connect attempt: optional shared-channel reuse, then one fresh dial. */
+export const openSftpConnectionOnce = openSftpWithSessionPreference;
 
 export function rejectHostKeyVerificationRequest(
   bridge: Partial<Pick<NetcattyBridge, "respondHostKeyVerification">> | null | undefined,
@@ -378,7 +423,7 @@ export const useSftpConnections = ({
       // immediately, avoiding race conditions with deferred effects.
       options?.onTabCreated?.(activeTabId);
 
-      const connectionId = `${side}-${Date.now()}`;
+      const connectionId = createSftpConnectionId(side);
 
       navSeqRef.current[side] += 1;
       const connectRequestId = navSeqRef.current[side];
@@ -399,16 +444,13 @@ export const useSftpConnections = ({
         return connection?.id === connectionId && connection.currentPath === path;
       };
       const closeSftpSessionForConnection = async () => {
-        const sftpId = sftpSessionsRef.current.get(connectionId);
-        sftpSessionsRef.current.delete(connectionId);
-        connectionCacheKeyMapRef.current.delete(connectionId);
-        clearCacheForConnection(connectionId);
-        if (!sftpId) return;
-        try {
-          await netcattyBridge.get()?.closeSftp(sftpId);
-        } catch {
-          // Ignore errors when closing stale SFTP sessions
-        }
+        await releaseSftpConnectionMetadata({
+          connectionId,
+          sftpSessions: sftpSessionsRef.current,
+          connectionCacheKeys: connectionCacheKeyMapRef.current,
+          clearCacheForConnection,
+          closeSftp: async (sftpId) => netcattyBridge.get()?.closeSftp(sftpId),
+        });
       };
 
       // Keep side-wide recovery host pointed at the active tab only.
@@ -437,15 +479,13 @@ export const useSftpConnections = ({
       // don't close its SFTP session or clear its cache.
       if (!options?.forceNewTab) {
         if (currentPane?.connection) {
-          clearCacheForConnection(currentPane.connection.id);
-        }
-        if (currentPane?.connection && !currentPane.connection.isLocal) {
-          const oldSftpId = sftpSessionsRef.current.get(currentPane.connection.id);
-          if (oldSftpId) {
-            // Delete the mapping BEFORE the async closeSftp call to prevent
-            // concurrent code from using a stale sftpId that the backend may
-            // have already removed during the await.
-            sftpSessionsRef.current.delete(currentPane.connection.id);
+          const oldSftpId = takeSftpConnectionMetadataForClose({
+            connectionId: currentPane.connection.id,
+            sftpSessions: sftpSessionsRef.current,
+            connectionCacheKeys: connectionCacheKeyMapRef.current,
+            clearCacheForConnection,
+          });
+          if (!currentPane.connection.isLocal && oldSftpId) {
             try {
               await netcattyBridge.get()?.closeSftp(oldSftpId);
             } catch {
@@ -462,7 +502,10 @@ export const useSftpConnections = ({
           homeDir = isWindows ? "C:\\Users\\damao" : "/Users/damao";
         }
 
-        const startPath = effectiveInitialPath || homeDir;
+        const startPath = normalizeSftpPaneNavigationPath(
+          effectiveInitialPath || homeDir,
+          homeDir,
+        );
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -487,7 +530,7 @@ export const useSftpConnections = ({
         try {
           const files = await listLocalFiles(startPath);
           if (!isTargetConnectionAtPath(startPath)) return;
-          dirCacheRef.current.set(makeCacheKey(connectionId, startPath, filenameEncoding), {
+          setDirectoryCacheEntry(dirCacheRef.current, makeCacheKey(connectionId, startPath, filenameEncoding), {
             files,
             timestamp: Date.now(),
           });
@@ -519,6 +562,11 @@ export const useSftpConnections = ({
           initialPath: effectiveInitialPath,
           sharedHostCacheCandidate,
         });
+        const normalizedCachedStartPath = normalizeSftpPaneNavigationPath(
+          cachedStartPath,
+          sharedHostCache?.homeDir,
+          sharedHostCache?.path,
+        );
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -526,7 +574,7 @@ export const useSftpConnections = ({
           hostLabel: host.label,
           isLocal: false,
           status: "connecting",
-          currentPath: cachedStartPath,
+          currentPath: normalizedCachedStartPath,
           // Suppress loading animation when connection reuse is requested.
           // If the backend falls back to a fresh connection, the pane stays
           // non-interactive (loading=true) with stale cached files visible —
@@ -598,84 +646,20 @@ export const useSftpConnections = ({
           const openSftp = bridge?.openSftp;
           if (!openSftp) throw new Error("SFTP bridge unavailable");
 
-          const isAuthError = (err: unknown): boolean => {
-            if (!(err instanceof Error)) return false;
-            const msg = err.message.toLowerCase();
-            return (
-              msg.includes("authentication") ||
-              msg.includes("auth") ||
-              msg.includes("password") ||
-              msg.includes("permission denied")
-            );
-          };
+          const credentials = getHostCredentials(host);
+          // The main-process SSH auth driver owns key/password/MFA fallback.
+          // Keep one renderer connect entry so a failed fresh dial is never
+          // immediately repeated after a shared-channel attempt fails.
+          const sftpId = await openSftpConnectionOnce({
+            bridge,
+            sourceSessionId: !host.sftpSudo ? options?.sourceSessionId : undefined,
+            openOptions: {
+              sessionId: sftpSessionId,
+              ...credentials,
+            },
+          });
 
-          let credentials: NetcattySSHOptions | null = null;
-          let sftpId: string | undefined;
-
-          // Live Connected rows: try reuse with endpoint-only options first so
-          // missing/undecryptable vault credentials do not block an already-
-          // authenticated terminal session. Fall back to full credentials if
-          // reuse fails (bridge may also fall through to a fresh connect).
-          if (options?.sourceSessionId && !host.sftpSudo) {
-            const reuseCredentials = buildSftpReuseCredentials(host, options.sourceSessionId);
-            try {
-              sftpId = await openSftpWithSessionPreference({
-                bridge,
-                sourceSessionId: options.sourceSessionId,
-                openOptions: {
-                  sessionId: sftpSessionId,
-                  ...reuseCredentials,
-                },
-              });
-              credentials = reuseCredentials;
-            } catch {
-              sftpId = undefined;
-            }
-          }
-
-          if (!sftpId) {
-            credentials = getHostCredentials(host);
-            const hasKey = !!credentials.privateKey || !!credentials.identityFilePaths?.length;
-            const hasPassword = !!credentials.password;
-
-            if (hasKey) {
-              try {
-                const keyFirstCredentials = {
-                  sessionId: sftpSessionId,
-                  ...credentials,
-                  sourceSessionId: options?.sourceSessionId,
-                };
-                if (!credentials.sudo) {
-                  keyFirstCredentials.password = undefined;
-                }
-                sftpId = await openSftp(keyFirstCredentials);
-              } catch (err) {
-                if (hasPassword && isAuthError(err)) {
-                  sftpId = await openSftp({
-                    sessionId: sftpSessionId,
-                    ...credentials,
-                    sourceSessionId: options?.sourceSessionId,
-                    privateKey: undefined,
-                    certificate: undefined,
-                    publicKey: undefined,
-                    keyId: undefined,
-                    keySource: undefined,
-                    identityFilePaths: undefined,
-                  });
-                } else {
-                  throw err;
-                }
-              }
-            } else {
-              sftpId = await openSftp({
-                sessionId: sftpSessionId,
-                ...credentials,
-                sourceSessionId: options?.sourceSessionId,
-              });
-            }
-          }
-
-          if (!sftpId || !credentials) throw new Error("Failed to open SFTP session");
+          if (!sftpId) throw new Error("Failed to open SFTP session");
 
           sftpSessionsRef.current.set(connectionId, sftpId);
           if (!isTargetConnectionCurrent()) {
@@ -749,12 +733,13 @@ export const useSftpConnections = ({
           if (initialPath) {
             startPath = initialPath;
           }
+          startPath = normalizeSftpPaneNavigationPath(startPath, homeDir);
 
           const provisionalCacheKey = sharedHostCache
             ? makeCacheKey(connectionId, startPath, filenameEncoding)
             : null;
           if (sharedHostCache && provisionalCacheKey) {
-            dirCacheRef.current.set(provisionalCacheKey, {
+            setDirectoryCacheEntry(dirCacheRef.current, provisionalCacheKey, {
               files: sharedHostCache.files,
               timestamp: Date.now(),
             });
@@ -798,7 +783,7 @@ export const useSftpConnections = ({
             await closeSftpSessionForConnection();
             return;
           }
-          dirCacheRef.current.set(makeCacheKey(connectionId, startPath, filenameEncoding), {
+          setDirectoryCacheEntry(dirCacheRef.current, makeCacheKey(connectionId, startPath, filenameEncoding), {
             files,
             timestamp: Date.now(),
           });
@@ -832,6 +817,9 @@ export const useSftpConnections = ({
             await closeSftpSessionForConnection();
             return;
           }
+          // A backend may already be open when initial directory discovery
+          // fails. Never leave that handle mapped behind an error pane.
+          await closeSftpSessionForConnection();
           clearSideReconnecting();
           updateTargetTab((prev) => ({
             ...prev,
@@ -954,23 +942,26 @@ export const useSftpConnections = ({
 
       navSeqRef.current[side] += 1;
 
-      if (pane.connection) {
-        clearCacheForConnection(pane.connection.id);
-      }
+      const sftpId = pane.connection
+        ? takeSftpConnectionMetadataForClose({
+          connectionId: pane.connection.id,
+          sftpSessions: sftpSessionsRef.current,
+          connectionCacheKeys: connectionCacheKeyMapRef.current,
+          clearCacheForConnection,
+        })
+        : undefined;
 
       reconnectingRef.current[side] = false;
       lastConnectedHostRef.current[side] = null;
       connectedHostByTabIdRef.current.delete(activeTabId);
 
       if (pane.connection && !pane.connection.isLocal) {
-        const sftpId = sftpSessionsRef.current.get(pane.connection.id);
         if (sftpId) {
           try {
             await netcattyBridge.get()?.closeSftp(sftpId);
           } catch {
             // Ignore errors when closing SFTP session during disconnect
           }
-          sftpSessionsRef.current.delete(pane.connection.id);
         }
       }
 

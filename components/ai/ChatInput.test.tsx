@@ -1,10 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import ChatInput from './ChatInput';
 import { TooltipProvider } from '../ui/tooltip';
+
+test('virtualizes the host mention list without changing its option contract', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /VariableSizeVirtualList/);
+  assert.match(source, /ref=\{atMentionListRef\}/);
+  assert.match(source, /aria-activedescendant=\{hosts\[activeMenuIndex\] \? `at-mention-/);
+  assert.match(source, /onMouseEnter=\{\(\) => setActiveMenuIndex\(idx\)\}/);
+  assert.match(source, /onClick=\{\(\) => handleSelectAtMention\(host\)\}/);
+  assert.match(source, /max-h-\[280px\]/);
+});
 
 test('does not render a standalone slash command toolbar button', () => {
   const html = renderToStaticMarkup(

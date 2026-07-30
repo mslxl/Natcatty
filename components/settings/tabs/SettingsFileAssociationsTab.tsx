@@ -44,7 +44,7 @@ export default function SettingsFileAssociationsTab() {
     sftpFollowTerminalCwd, setSftpFollowTerminalCwd,
     sftpDefaultViewMode, setSftpDefaultViewMode,
     sftpTransferConcurrency, setSftpTransferConcurrency,
-    sftpTransferPoolIdleTtlMs, setSftpTransferPoolIdleTtlMs,
+    sshTransportIdleTtlMs, setSshTransportIdleTtlMs,
   } = useSettingsState();
   const associations = getAllAssociations();
   const defaultOpener = getDefaultOpener();
@@ -210,18 +210,18 @@ export default function SettingsFileAssociationsTab() {
           </div>
         </SettingRow>
         <SettingRow
-          label={t('settings.sftp.transferPoolIdleTtl')}
-          description={t('settings.sftp.transferPoolIdleTtl.desc')}
+          label={t('settings.ssh.transportIdleTtl')}
+          description={t('settings.ssh.transportIdleTtl.desc')}
         >
           <Select
-            value={String(sftpTransferPoolIdleTtlMs)}
-            onChange={(value) => setSftpTransferPoolIdleTtlMs(Number(value))}
+            value={String(sshTransportIdleTtlMs)}
+            onChange={(value) => setSshTransportIdleTtlMs(Number(value))}
             options={[
-              { value: '60000', label: t('settings.sftp.transferPoolIdleTtl.1m') },
-              { value: '300000', label: t('settings.sftp.transferPoolIdleTtl.5m') },
-              { value: '900000', label: t('settings.sftp.transferPoolIdleTtl.15m') },
-              { value: '1800000', label: t('settings.sftp.transferPoolIdleTtl.30m') },
-              { value: '0', label: t('settings.sftp.transferPoolIdleTtl.never') },
+              { value: '60000', label: t('settings.ssh.transportIdleTtl.1m') },
+              { value: '300000', label: t('settings.ssh.transportIdleTtl.5m') },
+              { value: '900000', label: t('settings.ssh.transportIdleTtl.15m') },
+              { value: '1800000', label: t('settings.ssh.transportIdleTtl.30m') },
+              { value: '0', label: t('settings.ssh.transportIdleTtl.never') },
             ]}
           />
         </SettingRow>

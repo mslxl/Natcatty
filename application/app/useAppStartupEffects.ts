@@ -10,6 +10,12 @@ import { resumeTransferWithDedicatedSession } from '../state/sftp/dedicatedTrans
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from '../state/sftp/globalTransferScheduler';
 import { hasNewSourceFingerprint } from '../state/sftp/transferProgressMetadata';
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from '../../infrastructure/config/storageKeys';
+import type { TransferTask } from '../../domain/models';
+import {
+  canApplyDedicatedResumeProgress,
+  createDedicatedResumeChildUpdateBatcher,
+  createDedicatedResumeProgressBatcher,
+} from './dedicatedResumeProgress';
 
 type StartupEffectsContext = Record<string, any>;
 
@@ -69,75 +75,126 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       const children = sftpTransferCenterStore.getSnapshot().tasks.filter(
         (row) => row.parentTaskId === task.id,
       );
-      return resumeTransferWithDedicatedSession(
-        task,
-        {
-          hosts,
-          keys,
-          identities,
-          knownHosts,
-          terminalSettings,
-        },
-        (progress) => {
-          // Do not resurrect a paused/cancelled row from late stream progress.
-          // After force-quit continue, status may still briefly be interrupted/
-          // pending while the dedicated stream arms — those must accept progress.
+      // rAF-coalesce progress so dedicated resume does not flood the global center.
+      type ProgressSample = {
+        transferred: number;
+        total: number;
+        speed: number;
+        checkpointBytes?: number;
+        resumeStage?: TransferTask["resumeStage"];
+        downloadCheckpointBytes?: number;
+        uploadCheckpointBytes?: number;
+        sourceFingerprint?: string;
+      };
+      // One rAF coalesce only — main process already time-throttles IPC.
+      // A second 500ms timer here made dedicated-resume bars jump.
+      const applyProgress = (progress: ProgressSample) => {
+        const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+        if (!current || current.status === "cancelled") return;
+        if (current.status === "pausing" || current.status === "paused") {
+          if (hasNewSourceFingerprint(current.sourceFingerprint, progress.sourceFingerprint)) {
+            sftpTransferCenterStore.patchTask(task.id, { sourceFingerprint: progress.sourceFingerprint });
+          }
+          return;
+        }
+        // The final sample can still be queued in requestAnimationFrame after
+        // the resume promise settles. Never let it turn a completed/failed row
+        // back into a permanently "transferring" task.
+        if (!canApplyDedicatedResumeProgress(current.status)) return;
+        // Directory parents use file-count progress; single files use bytes.
+        // Prefer durable contiguous checkpoint when the bridge supplies it.
+        const durableCheckpoint = task.isDirectory
+          ? progress.transferred
+          : (progress.checkpointBytes ?? progress.transferred);
+        // Keep progress monotonic so a late force-checkpoint paint cannot hide
+        // later bytes, and the bar never freezes at the pre-quit offset.
+        const nextTransferred = Math.max(current.transferredBytes ?? 0, progress.transferred);
+        const nextCheckpoint = task.isDirectory
+          ? Math.max(current.checkpointBytes ?? 0, progress.transferred)
+          : Math.max(current.checkpointBytes ?? 0, durableCheckpoint);
+        sftpTransferCenterStore.patchTask(task.id, {
+          status: "transferring",
+          transferredBytes: nextTransferred,
+          ...(progress.total > 0 ? { totalBytes: progress.total } : {}),
+          speed: progress.speed,
+          ...(task.isDirectory
+            ? { checkpointBytes: nextCheckpoint, progressMode: "files" as const }
+            : {
+                checkpointBytes: nextCheckpoint,
+                resumeStage: progress.resumeStage,
+                downloadCheckpointBytes: progress.downloadCheckpointBytes,
+                uploadCheckpointBytes: progress.uploadCheckpointBytes,
+                sourceFingerprint: progress.sourceFingerprint,
+              }),
+          reconnectRequired: false,
+          error: undefined,
+          phase: "transferring",
+          ownerId: "dedicated-resume",
+        });
+      };
+      const progressBatcher = createDedicatedResumeProgressBatcher<ProgressSample>({
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (handle) => window.cancelAnimationFrame(handle),
+        canApply: () => {
           const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
-          if (!current || current.status === "cancelled") {
-            return;
-          }
-          if (current.status === "pausing" || current.status === "paused") {
-            if (hasNewSourceFingerprint(current.sourceFingerprint, progress.sourceFingerprint)) {
-              sftpTransferCenterStore.patchTask(task.id, { sourceFingerprint: progress.sourceFingerprint });
-            }
-            return;
-          }
-          // Directory parents use file-count progress; single files use bytes.
-          // Prefer durable contiguous checkpoint when the bridge supplies it.
-          const durableCheckpoint = task.isDirectory
-            ? progress.transferred
-            : (progress.checkpointBytes ?? progress.transferred);
-          // Keep progress monotonic so a late force-checkpoint paint cannot hide
-          // later bytes, and the bar never freezes at the pre-quit offset.
-          const nextTransferred = Math.max(current.transferredBytes ?? 0, progress.transferred);
-          const nextCheckpoint = task.isDirectory
-            ? Math.max(current.checkpointBytes ?? 0, progress.transferred)
-            : Math.max(current.checkpointBytes ?? 0, durableCheckpoint);
-          sftpTransferCenterStore.patchTask(task.id, {
-            status: "transferring",
-            transferredBytes: nextTransferred,
-            ...(progress.total > 0 ? { totalBytes: progress.total } : {}),
-            speed: progress.speed,
-            ...(task.isDirectory
-              ? { checkpointBytes: nextCheckpoint, progressMode: "files" as const }
-              : {
-                  checkpointBytes: nextCheckpoint,
-                  resumeStage: progress.resumeStage,
-                  downloadCheckpointBytes: progress.downloadCheckpointBytes,
-                  uploadCheckpointBytes: progress.uploadCheckpointBytes,
-                  sourceFingerprint: progress.sourceFingerprint,
-                }),
-            reconnectRequired: false,
-            error: undefined,
-            phase: "transferring",
-            ownerId: "dedicated-resume",
-          });
+          return !!current && canApplyDedicatedResumeProgress(current.status);
         },
-        {
-          children,
-          onChildUpdate: (child) => {
-            sftpTransferCenterStore.upsertTasks([{ ...child, ownerId: "dedicated-resume" }]);
+        apply: applyProgress,
+      });
+      const childUpdateBatcher = createDedicatedResumeChildUpdateBatcher({
+        // Use the restart snapshot, not repeated linear store lookups. Completed
+        // rows disappear as batches compact, but later updates for those ids can
+        // still stay in the same bounded batching path safely.
+        getTaskCount: () => children.length + 1,
+        hasTask: (() => {
+          const retainedChildIds = new Set(children.map((child) => child.id));
+          return (taskId: string) => retainedChildIds.has(taskId);
+        })(),
+        upsertTasks: (updates) => sftpTransferCenterStore.upsertTasks(updates),
+      });
+      let acceptsResumeCallbacks = true;
+      try {
+        return await resumeTransferWithDedicatedSession(
+          task,
+          {
+            hosts,
+            keys,
+            identities,
+            knownHosts,
+            terminalSettings,
           },
-          shouldAbort: () => {
-            const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
-            // interrupted is the pre-reconnect persisted state — do not abort a
-            // live dedicated walk just because children/parent still show it.
-            return !current
-              || current.status === "cancelled"
-              || current.status === "paused";
+          (progress) => {
+            if (acceptsResumeCallbacks) progressBatcher.push(progress);
           },
-        },
-      );
+          {
+            children,
+            onChildUpdate: (child) => {
+              if (acceptsResumeCallbacks) {
+                childUpdateBatcher.push({ ...child, ownerId: "dedicated-resume" });
+              }
+            },
+            onDirectoryCheckpointUpdate: (checkpoint) => {
+              if (acceptsResumeCallbacks) {
+                sftpTransferCenterStore.patchTask(task.id, {
+                  directoryResumeCheckpoint: checkpoint,
+                });
+              }
+            },
+            shouldAbort: () => {
+              const current = sftpTransferCenterStore.getSnapshot().tasks.find((row) => row.id === task.id);
+              // interrupted is the pre-reconnect persisted state — do not abort a
+              // live dedicated walk just because children/parent still show it.
+              return !current
+                || current.status === "cancelled"
+                || current.status === "paused";
+            },
+          },
+        );
+      } finally {
+        acceptsResumeCallbacks = false;
+        progressBatcher.finish();
+        childUpdateBatcher.flush();
+      }
     });
     return () => sftpTransferCenterStore.setDedicatedResumeHandler(null);
   }, [enabled, hosts, identities, isVaultInitialized, keys, knownHosts, terminalSettings]);
@@ -357,15 +414,6 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
               uploadCheckpointBytes: fromBeginning ? 0 : task.uploadCheckpointBytes,
               sourceFingerprint: fromBeginning ? undefined : task.sourceFingerprint,
               skipAdmission: true,
-            }, (transferred, totalBytes, speed, checkpoint) => {
-              sftpTransferCenterStore.ingestBackgroundEvent({
-                type: "progress",
-                transferId: task.id,
-                transferred,
-                totalBytes,
-                speed,
-                ...checkpoint,
-              });
             });
           },
         );

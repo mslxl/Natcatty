@@ -27,6 +27,22 @@ export function listRemoteBrowseConnectionIds(
   return [...ids];
 }
 
+/** Stable SFTP pane tab ids for editor ownership across browse reconnects. */
+export function listRemoteBrowseSftpTabIds(
+  tabs: ReadonlyArray<{
+    id: string;
+    connection: { id: string; isLocal: boolean } | null;
+  }>,
+): string[] {
+  const ids = new Set<string>();
+  for (const tab of tabs) {
+    const connection = tab.connection;
+    if (!connection || connection.isLocal) continue;
+    ids.add(tab.id);
+  }
+  return [...ids];
+}
+
 export function shouldParkBrowseSessions(params: {
   interactive: boolean;
   /** True after we already soft-closed browse while the owner stayed mounted. */

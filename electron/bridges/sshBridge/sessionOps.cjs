@@ -1,4 +1,5 @@
 /* eslint-disable no-undef */
+const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
 function decodeLsofFileName(value) {
   if (typeof value !== 'string') return null;
   // lsof's caret form is ambiguous: a BEL byte and the literal characters
@@ -107,39 +108,16 @@ function createSessionOpsApi(ctx) {
         return { success: false, error: 'Session not found or not connected' };
       }
       const command = "cat /etc/os-release 2>/dev/null || uname -a";
-      return new Promise((resolve) => {
-        let settled = false;
-        const settle = (result) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(result);
-        };
-        const timer = setTimeout(() => {
-          settle({ success: false, error: 'Timeout probing distro' });
-          // Clean up the exec channel so it doesn't linger.
-          try { if (activeStream) activeStream.close(); } catch { /* ignore */ }
-        }, 5000);
-        let activeStream = null;
-        try {
-          session.conn.exec(command, (err, stream) => {
-            if (err) {
-              settle({ success: false, error: err.message || String(err) });
-              return;
-            }
-            activeStream = stream;
-            let stdout = '';
-            let stderr = '';
-            stream.on('data', (chunk) => { stdout += chunk.toString(); });
-            stream.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-            stream.on('close', () => {
-              settle({ success: true, stdout, stderr });
-            });
-          });
-        } catch (err) {
-          settle({ success: false, error: err?.message || String(err) });
-        }
-      });
+      try {
+        const { stdout, stderr } = await executeBoundedSshCommand(session.conn, command, {
+          openingTimeoutMs: 5000,
+          runTimeoutMs: 5000,
+          maxOutputBytes: 256 * 1024,
+        });
+        return { success: true, stdout, stderr };
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) };
+      }
     }
 
     async function readRemoteHistory(event, payload) {
@@ -245,42 +223,25 @@ function createSessionOpsApi(ctx) {
         return { success: false, error: 'Session not found or not connected' };
       }
 
-      return new Promise((resolve) => {
-        let settled = false;
-        let activeStream = null;
-        const settle = (result) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(result);
-        };
-        const timer = setTimeout(() => {
-          settle({ success: false, error: 'Timeout reading remote history' });
-          try { if (activeStream) activeStream.close(); } catch { /* ignore */ }
-        }, 8000);
-        try {
-          conn.exec(command, (err, stream) => {
-            if (err) {
-              settle({ success: false, error: err.message || String(err) });
-              return;
-            }
-            activeStream = stream;
-            let stdout = '';
-            stream.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
-            if (stream.stderr) stream.stderr.on('data', () => { /* swallow */ });
-            stream.on('close', () => {
-              settle({ success: true, ...parse(stdout) });
-            });
-          });
-        } catch (err) {
-          settle({ success: false, error: err?.message || String(err) });
-        }
-      });
+      try {
+        const { stdout } = await executeBoundedSshCommand(conn, command, {
+          openingTimeoutMs: 8000,
+          runTimeoutMs: 8000,
+          maxOutputBytes: 10 * 1024 * 1024,
+        });
+        return { success: true, ...parse(stdout) };
+      } catch (err) {
+        return { success: false, error: err?.message || String(err) };
+      }
     }
     
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
+      const requestedTimeoutMs = Number(payload?.timeoutMs);
+      const timeoutMs = Number.isFinite(requestedTimeoutMs)
+        ? Math.min(Math.max(requestedTimeoutMs, 100), 5000)
+        : 5000;
       const session = sessions.get(sessionId);
     
       if (!session || !session.conn) {
@@ -308,17 +269,11 @@ function createSessionOpsApi(ctx) {
       // so we find the shell as a sibling via $PPID.
       return new Promise((resolve) => {
         let settled = false;
-        let activeStream = null;
         const settle = (result) => {
           if (settled) return;
           settled = true;
-          clearTimeout(timer);
           resolve(result);
         };
-        const timer = setTimeout(() => {
-          settle({ success: false, error: 'Timeout getting pwd' });
-          try { activeStream?.close(); } catch { /* ignore */ }
-        }, 5000);
     
         // POSIX sh script that:
         //   1. Finds the user's interactive shell on the same SSH connection
@@ -468,55 +423,48 @@ function createSessionOpsApi(ctx) {
     exit 1`;
         const cmd = `exec sh -c ${quoteShellArg(posixScript)}`;
     
-        try {
-          session.conn.exec(cmd, (err, stream) => {
-            if (settled) {
-              try { stream?.close(); } catch { /* ignore */ }
-              return;
-            }
-            if (err) {
-              log('[getSessionPwd] exec error:', err.message);
-              settle({ success: false, error: err.message });
-              return;
-            }
-            activeStream = stream;
-            let out = '';
-            let errOut = '';
-            stream.on('data', (d) => { out += d.toString(); });
-            stream.stderr?.on('data', (d) => { errOut += d.toString(); });
-            stream.on('close', (code) => {
-              if (settled) return;
-              const rawPath = out.replace(/\r?\n$/, '');
+        void executeBoundedSshCommand(session.conn, cmd, {
+          // Do not shorten channel opening: a timeout there invalidates the
+          // shared SSH transport. Only bound the best-effort command itself.
+          openingTimeoutMs: 5000,
+          runTimeoutMs: timeoutMs,
+          maxOutputBytes: 256 * 1024,
+          setTimeoutFn: setTimeout,
+          clearTimeoutFn: clearTimeout,
+        }).then(({ stdout, stderr, code }) => {
+              const rawPath = stdout.replace(/\r?\n$/, '');
               const lsofPrefix = 'NETCATTY_LSOF_CWD=';
               const path = rawPath.startsWith(lsofPrefix)
                 ? decodeLsofFileName(rawPath.slice(lsofPrefix.length))
                 : rawPath;
-              const loginPidMatch = errOut.match(/(?:^|\n)NETCATTY_LOGIN_PID=(\d+)(?:\n|$)/);
+              const loginPidMatch = stderr.match(/(?:^|\n)NETCATTY_LOGIN_PID=(\d+)(?:\n|$)/);
               if (loginPidMatch) {
                 session.shellPid = loginPidMatch[1];
               }
-              log('[getSessionPwd]', { stdout: rawPath, stderr: errOut.trim(), exitCode: code });
+              log('[getSessionPwd]', { stdout: rawPath, stderr: stderr.trim(), exitCode: code });
               if (path && path.startsWith('/')) {
                 settle({ success: true, cwd: path });
               } else {
                 settle({ success: false, error: 'Could not determine cwd' });
               }
-            });
+        }, (err) => {
+          log('[getSessionPwd] exec error:', err?.message || String(err));
+          settle({
+            success: false,
+            error: err?.code === "SSH_EXEC_OPEN_TIMEOUT" || err?.code === "SSH_EXEC_RUN_TIMEOUT"
+              ? "Timeout getting pwd"
+              : err?.message || String(err),
           });
-        } catch (err) {
-          settle({ success: false, error: err?.message || String(err) });
-        }
+        });
       });
     }
     
     // Resolve the directory the running `rz` writes to (its own cwd) and report
     // which of `names` already exist there. Returns { dir, existing } or null.
-    function probeReceiveConflicts(session, names) {
-      return new Promise((resolve) => {
+    async function probeReceiveConflicts(session, names) {
         if (!session || !session.conn || !Array.isArray(names) || names.length === 0) {
-          return resolve(null);
+          return null;
         }
-        const timer = setTimeout(() => resolve(null), 5000);
         const script = `SELF=$$
     find_login_shell() {
       ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
@@ -549,12 +497,12 @@ function createSessionOpsApi(ctx) {
     done`;
         const argv = names.map((n) => quoteShellArg(n)).join(" ");
         const cmd = `exec sh -c ${quoteShellArg(script)} sh ${argv}`;
-        session.conn.exec(cmd, (err, stream) => {
-          if (err) { clearTimeout(timer); return resolve(null); }
-          let out = "";
-          stream.on("data", (d) => { out += d.toString(); });
-          stream.on("close", () => {
-            clearTimeout(timer);
+        try {
+            const { stdout: out } = await executeBoundedSshCommand(session.conn, cmd, {
+              openingTimeoutMs: 5000,
+              runTimeoutMs: 5000,
+              maxOutputBytes: 1024 * 1024,
+            });
             let dir = null; const existing = []; const modes = {};
             for (const line of out.split("\n")) {
               const [tag, val, mode] = line.split("\t");
@@ -564,46 +512,40 @@ function createSessionOpsApi(ctx) {
                 if (mode && /^[0-7]{3,4}$/.test(mode)) modes[val] = mode;
               }
             }
-            resolve(dir ? { dir, existing, modes } : null);
-          });
-        });
-      });
+            return dir ? { dir, existing, modes } : null;
+        } catch {
+          return null;
+        }
     }
     
     // rm -f the given absolute remote paths (quoted; injection-safe).
-    function removeRemoteFiles(session, paths) {
-      return new Promise((resolve) => {
-        if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return resolve();
+    async function removeRemoteFiles(session, paths) {
+        if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return;
         const argv = paths.map((p) => quoteShellArg(p)).join(" ");
-        const timer = setTimeout(resolve, 5000);
-        session.conn.exec(`exec sh -c 'rm -f -- "$@"' sh ${argv}`, (err, stream) => {
-          if (err) { clearTimeout(timer); return resolve(); }
-          stream.on("data", () => {}); stream.stderr?.on("data", () => {});
-          stream.on("close", () => { clearTimeout(timer); resolve(); });
-        });
-      });
+        await executeBoundedSshCommand(
+          session.conn,
+          `exec sh -c 'rm -f -- "$@"' sh ${argv}`,
+          { openingTimeoutMs: 5000, runTimeoutMs: 5000, maxOutputBytes: 64 * 1024 },
+        ).catch(() => {});
     }
     
     // chmod the given { path, mode } entries back to their captured permissions
     // (parameterized; injection-safe). Modes are validated octal before use.
-    function restoreRemoteModes(session, entries) {
-      return new Promise((resolve) => {
-        if (!session || !session.conn || !Array.isArray(entries) || entries.length === 0) return resolve();
+    async function restoreRemoteModes(session, entries) {
+        if (!session || !session.conn || !Array.isArray(entries) || entries.length === 0) return;
         const args = [];
         for (const e of entries) {
           if (!e || !e.path || !/^[0-7]{3,4}$/.test(String(e.mode))) continue;
           args.push(quoteShellArg(String(e.mode)));
           args.push(quoteShellArg(e.path));
         }
-        if (args.length === 0) return resolve();
-        const timer = setTimeout(resolve, 5000);
+        if (args.length === 0) return;
         const script = 'while [ "$#" -ge 2 ]; do chmod "$1" "$2" 2>/dev/null; shift 2; done';
-        session.conn.exec(`exec sh -c ${quoteShellArg(script)} sh ${args.join(" ")}`, (err, stream) => {
-          if (err) { clearTimeout(timer); return resolve(); }
-          stream.on("data", () => {}); stream.stderr?.on("data", () => {});
-          stream.on("close", () => { clearTimeout(timer); resolve(); });
-        });
-      });
+        await executeBoundedSshCommand(
+          session.conn,
+          `exec sh -c ${quoteShellArg(script)} sh ${args.join(" ")}`,
+          { openingTimeoutMs: 5000, runTimeoutMs: 5000, maxOutputBytes: 64 * 1024 },
+        ).catch(() => {});
     }
     
     /**
@@ -630,20 +572,11 @@ function createSessionOpsApi(ctx) {
     
       return new Promise((resolve) => {
         let settled = false;
-        let streamRef = null;
         const resolveOnce = (result) => {
           if (settled) return;
           settled = true;
-          clearTimeout(timer);
           resolve(result);
         };
-        const timer = setTimeout(() => {
-          try {
-            streamRef?.close?.();
-            streamRef?.destroy?.();
-          } catch {}
-          resolveOnce({ success: false, entries: [], error: 'Timeout listing directory' });
-        }, 3000);
     
         // Emit a NUL-delimited stream from plain POSIX shell/find so we don't depend on
         // Python/Perl, while still preserving whitespace and newline characters in filenames.
@@ -699,20 +632,14 @@ function createSessionOpsApi(ctx) {
           done
         ' sh '${safePrefix}' ${foldersOnly ? 1 : 0} ${maxEntries} {} + 2>/dev/null`;
     
-        session.conn.exec(cmd, (err, stream) => {
-          if (err) {
-            resolveOnce({ success: false, entries: [], error: err.message });
-            return;
-          }
-          streamRef = stream;
-          const chunks = [];
-          let errOut = '';
-          stream.on('data', (d) => { chunks.push(Buffer.from(d)); });
-          stream.stderr?.on('data', (d) => { errOut += d.toString(); });
-          stream.on('close', () => {
+        void executeBoundedSshCommand(session.conn, cmd, {
+          openingTimeoutMs: 3000,
+          runTimeoutMs: 3000,
+          maxOutputBytes: 1024 * 1024,
+        }).then(({ stdout, stderr: errOut }) => {
             if (settled) return;
             try {
-              const output = Buffer.concat(chunks);
+              const output = Buffer.from(stdout, 'utf8');
               const entries = [];
               let fieldStart = 0;
               let pendingName = null;
@@ -743,7 +670,8 @@ function createSessionOpsApi(ctx) {
                 error: errOut.trim() || 'Failed to parse directory listing',
               });
             }
-          });
+        }, (err) => {
+          resolveOnce({ success: false, entries: [], error: err?.message || String(err) });
         });
       });
     }
@@ -928,58 +856,21 @@ function createSessionOpsApi(ctx) {
         ? Promise.resolve(measureTcpConnectLatency(tcpLatencyTarget)).catch(() => null)
         : Promise.resolve(null);
       return new Promise((resolve) => {
-        let activeStream = null;
         let settled = false;
-        let timeout = null;
-        const disposeStream = (stream) => {
-          if (!stream) return;
-          try {
-            if (typeof stream.close === 'function') stream.close();
-            else if (typeof stream.destroy === 'function') stream.destroy();
-          } catch {
-            try { stream.destroy?.(); } catch { /* ignore cleanup errors */ }
-          }
-        };
         const settle = (result) => {
           if (settled) return false;
           settled = true;
-          if (timeout) clearTimeout(timeout);
           resolve(result);
           return true;
         };
-        timeout = setTimeout(() => {
-          const stream = activeStream;
-          activeStream = null;
-          if (settle({ success: false, error: 'Timeout getting server stats' })) {
-            disposeStream(stream);
-          }
-        }, 10000);
-    
-        conn.exec(statsCommand, (err, stream) => {
-          if (settled) {
-            disposeStream(stream);
-            return;
-          }
-          if (err) {
-            settle({ success: false, error: err.message });
-            return;
-          }
-          activeStream = stream;
-    
-          let stdout = '';
-          let stderr = '';
-    
-          stream.on('data', (data) => {
-            stdout += data.toString();
-          });
-    
-          stream.stderr.on('data', (data) => {
-            stderr += data.toString();
-          });
-    
-          stream.on('close', async () => {
+        void executeBoundedSshCommand(conn, statsCommand, {
+          openingTimeoutMs: 10000,
+          runTimeoutMs: 10000,
+          maxOutputBytes: 1024 * 1024,
+          setTimeoutFn: setTimeout,
+          clearTimeoutFn: clearTimeout,
+        }).then(async ({ stdout }) => {
             if (settled) return;
-            activeStream = null;
             const measuredLatency = await tcpLatencyPromise;
             if (settled) return;
             const latencyMs = Number.isFinite(measuredLatency) ? measuredLatency : null;
@@ -1300,9 +1191,14 @@ function createSessionOpsApi(ctx) {
                 loadAverage,
               },
             });
+          }, (error) => {
+            settle({
+              success: false,
+              error: error?.code === "SSH_EXEC_OPEN_TIMEOUT" || error?.code === "SSH_EXEC_RUN_TIMEOUT"
+                ? "Timeout getting server stats"
+                : error?.message || String(error),
+            });
           });
-
-        });
       });
     }
     

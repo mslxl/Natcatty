@@ -3,7 +3,6 @@ import {
   Host,
   Identity,
   SftpFilenameEncoding,
-  SftpFileEntry,
   SSHKey,
 } from "../../domain/models";
 import {
@@ -23,14 +22,18 @@ import { isSessionError } from "./sftp/errors";
 import { useSftpExternalOperations } from "./sftp/useSftpExternalOperations";
 import { useSftpTransfers } from "./sftp/useSftpTransfers";
 import { useSftpPaneActions } from "./sftp/useSftpPaneActions";
-import { useSftpConnections } from "./sftp/useSftpConnections";
+import {
+  releaseSftpConnectionMetadata,
+  useSftpConnections,
+} from "./sftp/useSftpConnections";
+import { buildSftpHostCredentials } from "./sftp/useSftpHostCredentials";
 import { useSftpFileWatch } from "./sftp/useSftpFileWatch";
 import { useSftpSessionCleanup } from "./sftp/useSftpSessionCleanup";
 import { useSftpSessionErrors } from "./sftp/useSftpSessionErrors";
 import { ensureRemoteSftpSession } from "./sftp/ensureRemoteSftpSession";
 import { openTransferSftpSession } from "./sftp/dedicatedTransferResume";
 import {
-  buildTransferPoolKey,
+  createTransferPoolKeyCache,
   getSharedTransferConnectionPool,
 } from "./sftp/transferConnectionPool";
 import {
@@ -41,8 +44,20 @@ import {
 import { sftpTransferCenterStore } from "./sftpTransferCenterStore";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { logger } from "../../lib/logger";
+import type { DirectoryListingCache } from "./sftp/directoryListingCache";
 
 // types + utils now live in ./sftp/*
+
+export async function releaseSftpTabConnection(params: {
+  connectionId: string;
+  isLocal: boolean;
+  sftpSessions: Map<string, string>;
+  connectionCacheKeys: Map<string, string>;
+  clearCacheForConnection: (connectionId: string) => void;
+  closeSftp: (sftpId: string) => Promise<unknown>;
+}): Promise<void> {
+  await releaseSftpConnectionMetadata(params);
+}
 
 export const useSftpState = (
   hosts: Host[],
@@ -93,9 +108,7 @@ export const useSftpState = (
 
   // Directory listing cache (connectionId + path)
   const DIR_CACHE_TTL_MS = 10_000;
-  const dirCacheRef = useRef<
-    Map<string, { files: SftpFileEntry[]; timestamp: number }>
-  >(new Map());
+  const dirCacheRef = useRef<DirectoryListingCache>(new Map());
 
   // Navigation sequence per pane, used to ignore stale async results
   const navSeqRef = useRef<{ left: number; right: number }>({
@@ -217,80 +230,132 @@ export const useSftpState = (
     }
   }, [leftTabsRef, rightTabsRef]);
 
-  const closeTabAndClearHost = useCallback((side: "left" | "right", tabId: string) => {
+  const closeTabAndClearHost = useCallback(async (side: "left" | "right", tabId: string) => {
+    const pane = getPaneByTabId(tabId);
     connectedHostByTabIdRef.current.delete(tabId);
+    if (pane?.connection) {
+      await releaseSftpTabConnection({
+        connectionId: pane.connection.id,
+        isLocal: pane.connection.isLocal,
+        sftpSessions: sftpSessionsRef.current,
+        connectionCacheKeys: connectionCacheKeyMapRef.current,
+        clearCacheForConnection,
+        closeSftp: async (sftpId) => netcattyBridge.get()?.closeSftp(sftpId),
+      });
+    }
     closeTab(side, tabId);
-  }, [closeTab]);
+  }, [clearCacheForConnection, closeTab, getPaneByTabId]);
+
+  const releaseConnection = useCallback(async (connectionId: string) => {
+    await releaseSftpConnectionMetadata({
+      connectionId,
+      sftpSessions: sftpSessionsRef.current,
+      connectionCacheKeys: connectionCacheKeyMapRef.current,
+      clearCacheForConnection,
+      closeSftp: async (sftpId) => netcattyBridge.get()?.closeSftp(sftpId),
+    });
+  }, [clearCacheForConnection]);
 
   const handleSessionError = useSftpSessionErrors({
     getActivePane,
     leftTabsRef,
     rightTabsRef,
     updateActiveTab,
-    sftpSessionsRef,
-    clearCacheForConnection,
     navSeqRef,
     lastConnectedHostRef,
     reconnectingRef,
+    releaseConnection,
   });
 
   useSftpSessionCleanup(sftpSessionsRef);
   useSftpFileWatch(options);
 
-  // FileZilla-style dedicated transfer connection pool (1–2 sessions per host).
-  // Shared across SFTP panels so we never open more than maxPerHost globally.
+  // Transfer channel pool (max concurrent sftpIds per host, short idle reuse).
+  // Physical SSH transport ownership remains in the main-process registry.
   const transferPoolRef = useRef(
     getSharedTransferConnectionPool({
+      retainSession: async (sftpId, leaseId) => {
+        const bridge = netcattyBridge.get();
+        if (!bridge?.retainSftpTransferSession) {
+          throw new Error("SFTP transfer session retention is unavailable");
+        }
+        const result = await bridge.retainSftpTransferSession(sftpId, leaseId);
+        if (!result?.success) {
+          throw new Error(result?.reason || "Could not retain SFTP transfer session");
+        }
+      },
+      releaseSession: async (sftpId, leaseId) => {
+        await netcattyBridge.get()?.releaseSftpTransferSession?.(sftpId, leaseId);
+      },
       closeSession: async (sftpId) => {
         try {
           await netcattyBridge.get()?.closeSftp?.(sftpId);
         } catch {
-          // best-effort idle/session cleanup
+          // best-effort channel cleanup (returns transport lease)
         }
       },
-      idleTtlMs: options?.transferPoolIdleTtlMs,
     }),
   );
-
-  // Keep shared pool TTL in sync with settings (singleton may already exist).
-  useEffect(() => {
-    if (options?.transferPoolIdleTtlMs === undefined) return;
-    transferPoolRef.current.setIdleTtlMs(options.transferPoolIdleTtlMs);
-  }, [options?.transferPoolIdleTtlMs]);
-
-  // Periodically reclaim idle transfer sessions (busy holders are never closed).
-  useEffect(() => {
-    const pool = transferPoolRef.current;
-    const timer = window.setInterval(() => {
-      void pool.closeIdle().then((closed) => {
-        if (closed > 0) {
-          logger.debug(`[SFTP] Closed ${closed} idle transfer connection(s)`);
-        }
-      });
-    }, 15_000);
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, []);
+  const transferKnownHosts = options?.knownHosts;
+  const transferTerminalSettings = options?.terminalSettings;
+  // The cache is scoped to every input that can change resolved credentials.
+  const transferPoolKeyCache = useMemo(
+    () => createTransferPoolKeyCache(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hosts, identities, keys, transferKnownHosts, transferTerminalSettings],
+  );
+  const resolveTransferSourceSessionId = options?.resolveTransferSourceSessionId;
 
   const openPoolSftpSession = useCallback(
     async (host: Host) => {
-      // Always dedicated vault SSH: bulk transfers must survive SFTP/terminal
-      // tab close. Warm this in the background so the user does not feel the handshake.
-      logger.info(`[SFTP] Opening dedicated transfer connection for ${host.label || host.hostname}`);
+      // Prefer borrowing the live (or parked) terminal SSH transport so MFA is
+      // not repeated. Transport leases keep the shared conn alive after the
+      // terminal tab closes until the transfer SFTP lease is returned.
+      const sourceSessionId = !host.sftpSudo
+        ? resolveTransferSourceSessionId?.(host.id, host)
+        : undefined;
+      if (sourceSessionId) {
+        try {
+          logger.info(
+            `[SFTP] Opening transfer connection via shared transport for ${host.label || host.hostname}`,
+          );
+          return await openTransferSftpSession(
+            host,
+            {
+              hosts,
+              keys,
+              identities,
+              knownHosts: transferKnownHosts,
+              terminalSettings: transferTerminalSettings,
+            },
+            { dedicated: false, sourceSessionId },
+          );
+        } catch (err) {
+          logger.debug(
+            "[SFTP] Source-session transfer open failed; retrying through the pooled endpoint",
+            err,
+          );
+        }
+      }
+
+      // No live terminal is required: open through the unified transport
+      // registry so the first file authenticates and later files/operations on
+      // the same endpoint reuse that transport. Restart resume remains the only
+      // dedicated path because it has a different lifecycle contract.
+      logger.info(`[SFTP] Opening pooled transfer connection for ${host.label || host.hostname}`);
       return openTransferSftpSession(
         host,
         {
           hosts,
           keys,
           identities,
-          knownHosts: options?.knownHosts,
-          terminalSettings: options?.terminalSettings,
+          knownHosts: transferKnownHosts,
+          terminalSettings: transferTerminalSettings,
         },
-        { dedicated: true },
+        { dedicated: false },
       );
     },
-    [hosts, identities, keys, options?.knownHosts, options?.terminalSettings],
+    [hosts, identities, keys, resolveTransferSourceSessionId, transferKnownHosts, transferTerminalSettings],
   );
 
   const acquireTransferSession = useCallback(
@@ -308,51 +373,34 @@ export const useSftpState = (
           `Transfer connect host id mismatch: expected ${hostId}, got ${connectHost.id}`,
         );
       }
-      const poolKey = buildTransferPoolKey({
+      const poolKey = await transferPoolKeyCache.get(host, () => ({
         hostId: host.id,
         hostname: host.hostname,
         port: host.port,
         username: host.username,
         protocol: host.protocol,
         sftpSudo: host.sftpSudo,
-      });
+        connectionOptions: buildSftpHostCredentials({
+          host,
+          hosts,
+          keys,
+          identities,
+          knownHosts: transferKnownHosts,
+          terminalSettings: transferTerminalSettings,
+        }),
+      }));
       return transferPoolRef.current.acquire(poolKey, transferId, () => openPoolSftpSession(host));
     },
-    [hosts, openPoolSftpSession],
+    [hosts, identities, keys, openPoolSftpSession, transferKnownHosts, transferPoolKeyCache, transferTerminalSettings],
   );
 
   /**
-   * Warm one idle transfer-pool slot for a host (background). Prefer terminal
-   * session reuse so the first real transfer skips a cold SSH handshake.
+   * @deprecated No-op. SSH transport idle park keeps connections warm; opening
+   * a background transfer channel is unnecessary and could re-trigger MFA.
    */
-  const warmTransferPoolForHost = useCallback(
-    async (hostId: string) => {
-      const host = hosts.find((candidate) => candidate.id === hostId);
-      if (!host || host.protocol === "serial") return;
-      const poolKey = buildTransferPoolKey({
-        hostId: host.id,
-        hostname: host.hostname,
-        port: host.port,
-        username: host.username,
-        protocol: host.protocol,
-        sftpSudo: host.sftpSudo,
-      });
-      const stats = transferPoolRef.current.getStats(poolKey);
-      if (stats.connections > 0) return;
-      try {
-        const lease = await transferPoolRef.current.acquire(
-          poolKey,
-          `warm:${hostId}`,
-          () => openPoolSftpSession(host),
-        );
-        lease.release();
-        logger.debug(`[SFTP] Warmed transfer pool for ${host.label || host.hostname}`);
-      } catch (err) {
-        logger.debug("[SFTP] Transfer pool warm failed (will open on first transfer)", err);
-      }
-    },
-    [hosts, openPoolSftpSession],
-  );
+  const warmTransferPoolForHost = useCallback(async (_hostId: string) => {
+    // Intentionally empty — unified transport registry owns keep-alive.
+  }, []);
 
   /** True after browse channels were soft-closed while this owner stayed mounted. */
   const browseParkedRef = useRef(false);
@@ -436,6 +484,7 @@ export const useSftpState = (
     listLocalFiles,
     listRemoteFiles,
     handleSessionError,
+    releaseConnection,
     isSessionError,
     clearSelectionsExcept,
     dirCacheTtlMs: DIR_CACHE_TTL_MS,
@@ -476,8 +525,6 @@ export const useSftpState = (
     activeTransfersCount,
     startTransfer,
     downloadToLocal,
-    addExternalUpload,
-    updateExternalUpload,
     cancelTransfer,
     pauseTransfer,
     resumeTransfer,
@@ -490,6 +537,7 @@ export const useSftpState = (
   } = useSftpTransfers({
     ownerId: transferOwnerIdRef.current,
     canPrepareAdoption: options?.canPrepareTransferAdoption,
+    surfaceVisible: options?.surfaceVisible ?? true,
     getActivePane,
     getPaneByConnectionId,
     getTabByConnectionId,
@@ -518,6 +566,7 @@ export const useSftpState = (
     cancelExternalUpload,
     selectApplication,
     activeFileWatchCountRef,
+    releaseExternalFileWatches,
     uploadConflicts,
     resolveUploadConflict,
   } = useSftpExternalOperations({
@@ -525,6 +574,7 @@ export const useSftpState = (
     getActivePane,
     getPaneByConnectionId,
     getPaneByTabId,
+    getTabByConnectionId,
     getSideByTabId,
     refresh,
     sftpSessionsRef,
@@ -556,6 +606,7 @@ export const useSftpState = (
         resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
         resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
         forceReconnect: ensureOptions?.forceReconnect,
+        releaseConnection,
         tabId,
         probeSession: async (sftpId) => {
           // Lightweight liveness check; any session-error from the bridge
@@ -573,10 +624,7 @@ export const useSftpState = (
     acquireTransferSession,
     clearDirCacheEntry,
     useCompressedUpload: options?.useCompressedUpload,
-    addExternalUpload,
-    updateExternalUpload,
     isTransferCancelled,
-    dismissExternalUpload: dismissTransfer,
   });
 
   const conflicts = useMemo(
@@ -670,6 +718,7 @@ export const useSftpState = (
               }
               return true;
             },
+            releaseConnection,
           });
           logger.info(`[SFTP] Restored browse session on ${side}`);
         } catch (err) {
@@ -692,11 +741,12 @@ export const useSftpState = (
     hosts,
     lastConnectedHostRef,
     sftpSessionsRef,
+    releaseConnection,
   ]);
 
   // Store methods in a ref to create stable wrapper functions
   // This prevents callback reference changes from causing re-renders in consumers
-  const methodsRef = useRef({
+  const currentMethods = {
     getFilteredFiles,
     addTab,
     closeTab: closeTabAndClearHost,
@@ -742,10 +792,9 @@ export const useSftpState = (
     uploadExternalEntries,
     cancelExternalUpload,
     selectApplication,
+    releaseExternalFileWatches,
     startTransfer,
     downloadToLocal,
-    addExternalUpload,
-    updateExternalUpload,
     cancelTransfer,
     pauseTransfer,
     resumeTransfer,
@@ -762,71 +811,9 @@ export const useSftpState = (
     acceptHostKeyVerification,
     acceptAndSaveHostKeyVerification,
     warmTransferPoolForHost,
-  });
-  methodsRef.current = {
-    getFilteredFiles,
-    addTab,
-    closeTab: closeTabAndClearHost,
-    selectTab,
-    reorderTabs,
-    moveTabToOtherSide,
-    getTabsInfo,
-    getActiveTabId,
-    getActivePane,
-    connect,
-    disconnect,
-    navigateTo,
-    navigateUp,
-    refresh,
-    openEntry,
-    toggleSelection,
-    rangeSelect,
-    clearSelection,
-    clearSelectionsExcept,
-    selectAll,
-    setFilter,
-    setFilenameEncoding,
-    setShowHiddenFiles,
-    createDirectory,
-    createDirectoryAtPath,
-    createFile,
-    createFileAtPath,
-    deleteFiles,
-    deleteFilesAtPath,
-    renameFile,
-    renameFileAtPath,
-    moveEntriesToPath,
-    changePermissions,
-    readTextFile,
-    readBinaryFile,
-    writeTextFile,
-    writeTextFileByConnection,
-    downloadToTempAndOpen,
-    openWithSystemDefault,
-    uploadExternalFiles,
-    uploadExternalFileList,
-    uploadExternalFolderPath,
-    uploadExternalEntries,
-    cancelExternalUpload,
-    selectApplication,
-    startTransfer,
-    downloadToLocal,
-    addExternalUpload,
-    updateExternalUpload,
-    cancelTransfer,
-    retryTransfer,
-    clearCompletedTransfers,
-    dismissTransfer,
-    resolveConflict: resolveAnyConflict,
-    getSftpIdForConnection,
-    getConnectionCacheKey,
-    setLastConnectedHost,
-    reportSessionError: handleSessionError,
-    rejectHostKeyVerification,
-    acceptHostKeyVerification,
-    acceptAndSaveHostKeyVerification,
-    warmTransferPoolForHost,
   };
+  const methodsRef = useRef(currentMethods);
+  methodsRef.current = currentMethods;
 
   // Create stable method wrappers that call through methodsRef
   // These are created once and never change reference
@@ -887,10 +874,10 @@ export const useSftpState = (
       methodsRef.current.uploadExternalEntries(...args),
     cancelExternalUpload: (taskId?: string) => methodsRef.current.cancelExternalUpload(taskId),
     selectApplication: () => methodsRef.current.selectApplication(),
+    releaseExternalFileWatches: (...args: Parameters<typeof releaseExternalFileWatches>) =>
+      methodsRef.current.releaseExternalFileWatches(...args),
     startTransfer: (...args: Parameters<typeof startTransfer>) => methodsRef.current.startTransfer(...args),
     downloadToLocal: (...args: Parameters<typeof downloadToLocal>) => methodsRef.current.downloadToLocal(...args),
-    addExternalUpload: (...args: Parameters<typeof addExternalUpload>) => methodsRef.current.addExternalUpload(...args),
-    updateExternalUpload: (...args: Parameters<typeof updateExternalUpload>) => methodsRef.current.updateExternalUpload(...args),
     cancelTransfer: (...args: Parameters<typeof cancelTransfer>) => methodsRef.current.cancelTransfer(...args),
     pauseTransfer: (...args: Parameters<typeof pauseTransfer>) => methodsRef.current.pauseTransfer(...args),
     resumeTransfer: (...args: Parameters<typeof resumeTransfer>) => methodsRef.current.resumeTransfer(...args),

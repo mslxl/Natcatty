@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { SftpFileEntry } from "../../../types";
 import type { SftpPane } from "../../../application/state/sftp/types";
+import { isWindowsRoot, resolveSftpWindowsPathOptions } from "../../../application/state/sftp/utils";
 import type { SortField, SortOrder } from "../utils";
 import { filterHiddenFiles, sortSftpEntries } from "../utils";
 
@@ -50,7 +51,10 @@ export const useSftpPaneFiles = ({
 
     const isRootPath =
       connection.currentPath === "/" ||
-      /^[A-Za-z]:[\\/]?$/.test(connection.currentPath);
+      isWindowsRoot(
+        connection.currentPath,
+        resolveSftpWindowsPathOptions(connection.currentPath, connection.homeDir),
+      );
 
     // Split ".." from other files in a single pass
     let parentEntry: SftpFileEntry | undefined;

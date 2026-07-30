@@ -45,7 +45,12 @@ const DRIVER_REGISTRY = {
       return claude.runClaudeTurn({ prompt: ctx.prompt, attachments: ctx.attachments, options, emitter: ctx.emitter });
     },
     async listModels(ctx) {
-      return claude.listClaudeModels({ pathToClaudeCodeExecutable: ctx.binPath, env: ctx.env });
+      return claude.listClaudeModels({
+        pathToClaudeCodeExecutable: ctx.binPath,
+        env: ctx.env,
+        abortController: ctx.abortController,
+        signal: ctx.signal,
+      });
     },
   },
   codex: {
@@ -92,7 +97,11 @@ const DRIVER_REGISTRY = {
       });
     },
     async listModels(ctx) {
-      return copilot.listCopilotModels({ cliPath: ctx.binPath });
+      return copilot.listCopilotModels({
+        cliPath: ctx.binPath,
+        abortController: ctx.abortController,
+        signal: ctx.signal,
+      });
     },
   },
   cursor: {
@@ -136,9 +145,15 @@ const DRIVER_REGISTRY = {
         return cursorCli.listCursorCliModels({
           binPath: ctx.cursorCliBinPath || ctx.binPath,
           env: ctx.env,
+          abortController: ctx.abortController,
+          signal: ctx.signal,
         });
       }
-      return cursor.listCursorModels({ env: ctx.env });
+      return cursor.listCursorModels({
+        env: ctx.env,
+        abortController: ctx.abortController,
+        signal: ctx.signal,
+      });
     },
   },
   codebuddy: {
@@ -261,7 +276,12 @@ const DRIVER_REGISTRY = {
       });
     },
     async listModels(ctx) {
-      return codebuddy.listCodebuddyModels({ pathToCodebuddyCode: ctx.binPath, env: ctx.env });
+      return codebuddy.listCodebuddyModels({
+        pathToCodebuddyCode: ctx.binPath,
+        env: ctx.env,
+        abortController: ctx.abortController,
+        signal: ctx.signal,
+      });
     },
   },
   opencode: {

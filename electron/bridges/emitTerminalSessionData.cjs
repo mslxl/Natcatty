@@ -13,6 +13,22 @@ let onSessionActivity = null;
 /** @type {Set<(sessionId: string, data: string) => void>} */
 const dataTaps = new Set();
 const emitPerfLogStateBySession = new Map();
+const MAX_EMIT_PERF_SESSION_STATES = 512;
+
+function retainTerminalSessionPerformanceState(key, state) {
+  emitPerfLogStateBySession.delete(key);
+  emitPerfLogStateBySession.set(key, state);
+  while (emitPerfLogStateBySession.size > MAX_EMIT_PERF_SESSION_STATES) {
+    const oldestKey = emitPerfLogStateBySession.keys().next().value;
+    if (oldestKey === undefined) break;
+    emitPerfLogStateBySession.delete(oldestKey);
+  }
+}
+
+function clearTerminalSessionPerformanceState(sessionId) {
+  if (!sessionId) return;
+  emitPerfLogStateBySession.delete(sessionId);
+}
 
 function configureTerminalSessionDataEmitter(options = {}) {
   getSession = typeof options.getSession === "function" ? options.getSession : null;
@@ -50,7 +66,7 @@ function getEmitPerfLogDetails(sessionId, terminalPerf, options = {}) {
     || now - state.lastLoggedAt >= 1000;
 
   if (!shouldLog) {
-    emitPerfLogStateBySession.set(key, state);
+    retainTerminalSessionPerformanceState(key, state);
     return null;
   }
 
@@ -66,7 +82,7 @@ function getEmitPerfLogDetails(sessionId, terminalPerf, options = {}) {
     rows: options?.rows,
   };
 
-  emitPerfLogStateBySession.set(key, {
+  retainTerminalSessionPerformanceState(key, {
     lastLoggedAt: now,
     batchChunks: 0,
     batchChars: 0,
@@ -118,4 +134,6 @@ module.exports = {
   configureTerminalSessionDataEmitter,
   emitTerminalSessionData,
   addTerminalDataTap,
+  clearTerminalSessionPerformanceState,
+  _getTerminalSessionPerformanceStateCountForTests: () => emitPerfLogStateBySession.size,
 };

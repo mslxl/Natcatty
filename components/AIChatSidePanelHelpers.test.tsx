@@ -272,3 +272,33 @@ test('SDK runtime model cache ignores degraded empty catalogs', async () => {
   }));
   assert.equal(emptyCache.read('opencode:/usr/bin/opencode'), null);
 });
+
+test('SDK runtime model cache evicts expired catalogs', async () => {
+  let now = 1_000;
+  const cache = createSdkRuntimeModelCache({ ttlMs: 100, now: () => now });
+
+  await cache.refresh('opencode:/opt/bin/opencode', async () => ({
+    currentModelId: 'openai/gpt-5.1',
+    models: [{ id: 'openai/gpt-5.1', name: 'GPT-5.1' }],
+  }));
+  assert.equal(cache.size(), 1);
+
+  now = 1_101;
+  assert.equal(cache.read('opencode:/opt/bin/opencode'), null);
+  assert.equal(cache.size(), 0);
+});
+
+test('SDK runtime model cache stays bounded under agent configuration churn', async () => {
+  const cache = createSdkRuntimeModelCache({ maxEntries: 4 });
+
+  for (let index = 0; index < 20; index += 1) {
+    await cache.refresh(`agent:${index}`, async () => ({
+      currentModelId: `model-${index}`,
+      models: [{ id: `model-${index}`, name: `Model ${index}` }],
+    }));
+  }
+
+  assert.equal(cache.size(), 4);
+  assert.equal(cache.read('agent:0'), null);
+  assert.equal(cache.read('agent:19')?.currentModelId, 'model-19');
+});

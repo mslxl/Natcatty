@@ -80,6 +80,11 @@ import { resolveSidePanelToggleIntent } from '../application/state/resolveSidePa
 import { resolveAiSidePanelToggleIntent } from '../application/state/resolveAiSidePanelToggleIntent';
 import { terminalLayerAreEqual } from './terminalLayerMemo';
 import { TerminalLayerTabBridge } from './terminalLayer/TerminalLayerTabBridge';
+import {
+  clearTerminalSessionRuntimeState,
+  pruneTerminalTabMemoryState,
+  pruneTerminalSessionRuntimeState,
+} from './terminalLayer/useTerminalLayerEffects';
 import { sftpTransferCenterStore } from '../application/state/sftpTransferCenterStore';
 import {
   SFTP_TRANSFER_HISTORY_RETENTION_MS,
@@ -142,6 +147,7 @@ function buildScriptSessionMeta(
   const host = hosts.find((entry) => entry.id === session.hostId);
   return {
     connected: session.status === 'connected',
+    name: session.customName || session.hostLabel || host?.label,
     hostname: host?.hostname ?? session.hostname,
     username: host?.username ?? session.username,
   };
@@ -263,6 +269,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const cwdProbeGenerationRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
+    pruneTerminalSessionRuntimeState({
+      terminalRendererCwdBySessionRef,
+      terminalOsc7SignalBySessionRef,
+      cwdProbeGenerationRef,
+      cwdProbeCancelersRef,
+    }, new Set(sessions.map((session) => session.id)));
+  }, [sessions]);
+
+  useEffect(() => {
     const runPrewarm = () => prewarmAIStateStorageSnapshots();
     if (typeof window.requestIdleCallback === 'function') {
       const idleId = window.requestIdleCallback(runPrewarm, { timeout: 2500 });
@@ -319,6 +334,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Stable callback references for Terminal components
   const handleCloseSession = useCallback((sessionId: string) => {
+    clearTerminalSessionRuntimeState({
+      terminalRendererCwdBySessionRef,
+      terminalOsc7SignalBySessionRef,
+      cwdProbeGenerationRef,
+      cwdProbeCancelersRef,
+    }, sessionId);
     codingCliSignalController.forgetSession(sessionId);
     sessionCapabilitiesStore.delete(sessionId);
     onCloseSession(sessionId);
@@ -954,10 +975,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [onCommandExecuted]);
 
   useEffect(() => () => {
-    for (const cancel of cwdProbeCancelersRef.current.values()) {
-      cancel();
-    }
-    cwdProbeCancelersRef.current.clear();
+    pruneTerminalSessionRuntimeState({
+      terminalRendererCwdBySessionRef,
+      terminalOsc7SignalBySessionRef,
+      cwdProbeGenerationRef,
+      cwdProbeCancelersRef,
+    }, new Set());
   }, []);
   const sessionSudoAutofillPasswordsMap = useMemo(() => {
     const map = new Map<string, string | undefined>();
@@ -1013,6 +1036,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     for (const workspace of workspaces) ids.add(workspace.id);
     return ids;
   }, [sessions, workspaces]);
+
+  useEffect(() => {
+    pruneTerminalTabMemoryState({
+      lastSidePanelTabRef,
+      notesReturnTabRef,
+      sftpLastPathForSourceRef,
+    }, validAIScopeTargetIds);
+  }, [validAIScopeTargetIds]);
 
   useEffect(() => {
     const storeActiveTransferTabIds = listTerminalTabIdsWithRetainingTransfers(

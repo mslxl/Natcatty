@@ -17,6 +17,7 @@ import { SftpBreadcrumb } from "./SftpBreadcrumb";
 import type { SftpFilenameEncoding } from "../../types";
 import type { SftpPane } from "../../application/state/sftp/types";
 import type { SftpBookmark } from "../../domain/models";
+import { isWindowsPath } from "../../application/state/sftp/utils";
 import { toast } from "../ui/toast";
 
 export const SFTP_TOOLBAR_ITEM_IDS = [
@@ -938,6 +939,10 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
                     }
                     isLocal={!isRemote}
                     onListDrives={onListDrives}
+                    acceptForwardSlashUnc={
+                      isWindowsPath(displayPath)
+                      || isWindowsPath(pane.connection?.homeDir ?? "")
+                    }
                   />
                 </div>
               </TooltipTrigger>

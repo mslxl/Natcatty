@@ -13,6 +13,7 @@ type CloneSessionOptions = {
   id: string;
   localShellType?: TerminalSession["shellType"];
   workspaceId?: string;
+  inheritedCwd?: string;
 };
 
 function getClonedShellType(
@@ -26,6 +27,14 @@ function createTerminalSessionClone(
   session: TerminalSession,
   options: CloneSessionOptions,
 ): TerminalSession {
+  const isLocal = session.protocol === "local";
+  // Only ssh/undefined (non-mosh/et) sessions inject an inherited `cd`; setting
+  // pendingInitialCwd for telnet/serial/mosh/et would be dead, never-cleared
+  // state (those protocols don't track cwd, so it's never consumed or cleared).
+  const injectsInheritedCwd =
+    (session.protocol === "ssh" || session.protocol === undefined)
+    && !session.moshEnabled
+    && !session.etEnabled;
   const clonedSession: TerminalSession = {
     id: options.id,
     hostId: session.hostId,
@@ -46,10 +55,11 @@ function createTerminalSessionClone(
     localShellArgs: session.localShellArgs,
     localShellName: session.localShellName,
     localShellIcon: session.localShellIcon,
-    localStartDir: session.localStartDir,
+    localStartDir: isLocal && options.inheritedCwd ? options.inheritedCwd : session.localStartDir,
     fontSize: session.fontSize,
     fontSizeOverride: session.fontSizeOverride,
     ...(session.ephemeralHost ? { ephemeralHost: true } : {}),
+    ...(injectsInheritedCwd && options.inheritedCwd ? { pendingInitialCwd: options.inheritedCwd } : {}),
     reuseConnectionFromSessionId: canReuseTerminalConnection(session) ? session.id : undefined,
   };
 

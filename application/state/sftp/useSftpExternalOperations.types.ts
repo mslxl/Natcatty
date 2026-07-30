@@ -1,5 +1,5 @@
 import type React from "react";
-import type { FileConflict, FileConflictAction, Host, TransferTask, SftpFilenameEncoding } from "../../../domain/models";
+import type { FileConflict, FileConflictAction, Host, SftpFilenameEncoding } from "../../../domain/models";
 import type { UploadResult } from "../../../lib/uploadService";
 import type { DropEntry } from "../../../lib/sftpFileUtils";
 import type { SftpPane } from "./types";
@@ -10,6 +10,11 @@ export interface UseSftpExternalOperationsParams {
   getActivePane: (side: "left" | "right") => SftpPane | null;
   getPaneByConnectionId: (connectionId: string) => SftpPane | null;
   getPaneByTabId: (tabId: string) => SftpPane | null;
+  getTabByConnectionId?: (connectionId: string) => {
+    side: "left" | "right";
+    tabId: string;
+    pane: SftpPane;
+  } | null;
   getSideByTabId?: (tabId: string) => "left" | "right" | null;
   refresh: (side: "left" | "right", options?: { tabId?: string }) => Promise<void>;
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
@@ -39,10 +44,7 @@ export interface UseSftpExternalOperationsParams {
   ) => Promise<{ sftpId: string; release: () => void; discard: () => void }>;
   clearDirCacheEntry?: (connectionId: string, path: string) => void;
   useCompressedUpload?: boolean;
-  addExternalUpload?: (task: TransferTask) => void;
-  updateExternalUpload?: (taskId: string, updates: Partial<TransferTask>) => void;
   isTransferCancelled?: (taskId: string) => boolean;
-  dismissExternalUpload?: (taskId: string) => void;
 }
 
 export interface SftpExternalOperationsResult {
@@ -55,7 +57,8 @@ export interface SftpExternalOperationsResult {
     filePath: string,
     content: string,
     filenameEncoding?: SftpFilenameEncoding,
-  ) => Promise<void>;
+    sftpTabId?: string,
+  ) => Promise<string>;
   downloadToTempAndOpen: (
     side: "left" | "right",
     remotePath: string,
@@ -65,6 +68,7 @@ export interface SftpExternalOperationsResult {
   ) => Promise<{ localTempPath: string; watchId?: string }>;
   openWithSystemDefault: (side: "left" | "right", remotePath: string, fileName: string, options?: { enableWatch?: boolean }) => Promise<void>;
   activeFileWatchCountRef: React.MutableRefObject<number>;
+  releaseExternalFileWatches: (cleanupTempFiles?: boolean) => Promise<void>;
   uploadExternalFiles: (
     side: "left" | "right",
     dataTransfer: DataTransfer,

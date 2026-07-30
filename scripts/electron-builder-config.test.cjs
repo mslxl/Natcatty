@@ -254,22 +254,28 @@ test("windows zip follows the requested build architecture", () => {
   );
 });
 
-test("linux FPM packages refresh the hicolor icon cache after install and remove", () => {
+test("linux FPM packages use the custom post-install template", () => {
   const fs = require("node:fs");
   const path = require("node:path");
 
-  assert.equal(
-    config.pacman.afterInstall,
-    "scripts/linux/after-install.tpl",
-    "pacman.afterInstall must point at the custom FPM post-install template",
-  );
+  for (const [target, afterInstall] of Object.entries({
+    deb: config.deb.afterInstall,
+    rpm: config.rpm.afterInstall,
+    pacman: config.pacman.afterInstall,
+  })) {
+    assert.equal(
+      afterInstall,
+      "scripts/linux/after-install.tpl",
+      `${target}.afterInstall must point at the custom FPM post-install template`,
+    );
+  }
   assert.equal(
     config.pacman.afterRemove,
     "scripts/linux/after-remove.tpl",
     "pacman.afterRemove must point at the custom FPM post-remove template",
   );
 
-  for (const relPath of [config.pacman.afterInstall, config.pacman.afterRemove]) {
+  for (const relPath of [config.deb.afterInstall, config.pacman.afterRemove]) {
     const file = path.join(__dirname, "..", relPath);
     const contents = fs.readFileSync(file, "utf8");
     assert.match(

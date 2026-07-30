@@ -5,7 +5,12 @@ const { readFileSync } = require("node:fs");
 const Module = require("node:module");
 
 const passphraseHandler = require("./passphraseHandler.cjs");
-const { releaseConnectionRef } = require("./sshConnectionPool.cjs");
+const {
+  createConnectionRef,
+  releaseConnectionRef,
+  setDefaultTransportIdleTtlMs,
+  resetSshTransportRegistryForTests,
+} = require("./sshConnectionPool.cjs");
 
 function loadSftpBridgeWithProxySocket(proxySocket, overrides = {}) {
   const bridgePath = require.resolve("./sftpBridge.cjs");
@@ -174,6 +179,7 @@ test("openSftp cleans a jump proxy socket when the first jump connection fails",
 });
 
 test("openSftpForSession holds a shared SSH connection until the SFTP handle closes", async () => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 60_000 });
   const bridge = loadSftpBridgeWithProxySocket(null);
   const sftpClients = new Map();
   const fakeSftp = {
@@ -188,6 +194,7 @@ test("openSftpForSession holds a shared SSH connection until the SFTP handle clo
   };
   const conn = {
     ended: false,
+    _sock: { destroyed: false },
     sftp(cb) {
       cb(null, fakeSftp);
     },
@@ -195,26 +202,32 @@ test("openSftpForSession holds a shared SSH connection until the SFTP handle clo
       this.ended = true;
     },
   };
-  const connRef = { count: 1, conn, chainConnections: [] };
   const session = {
     conn,
     stream: {},
-    connRef,
   };
+  createConnectionRef(session, conn, []);
+  const transport = session.connRef;
   const sessions = new Map([["session-1", session]]);
   bridge.init({ sftpClients, sessions, electronModule: {} });
 
   const opened = await bridge.openSftpForSession(null, { sessionId: "session-1" });
 
   assert.equal(opened.ok, true);
-  assert.equal(connRef.count, 2);
+  assert.equal(transport.count, 2);
+  // Drop the terminal lease; SFTP still holds the shared transport.
   assert.equal(releaseConnectionRef(session), false);
   assert.equal(conn.ended, false);
+  assert.equal(transport.count, 1);
 
   await bridge.closeSftp(null, { sftpId: opened.sftpId });
 
   assert.equal(fakeSftp.ended, true);
-  assert.equal(conn.ended, true);
+  // Last lease parks (does not force-end) while idle TTL remains.
+  assert.equal(conn.ended, false);
+  assert.equal(transport.state, "idle");
+  assert.equal(transport.count, 0);
+  setDefaultTransportIdleTtlMs(60_000);
 });
 
 test("openSftpForSession honors session.sftpFileProtocol when payload omits fileProtocol", async () => {
