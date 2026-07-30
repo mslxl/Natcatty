@@ -82,3 +82,16 @@ test('applySessionPresentation is the shared overlay for focus sidebar and panes
   assert.ok(merged.dynamicTitle?.toLowerCase().includes('search'));
   sessionPresentationStore.clearSession('focus-1');
 });
+
+test('per-session snapshot stays stable when a sibling session title changes', () => {
+  sessionPresentationStore.clearSession('a');
+  sessionPresentationStore.clearSession('b');
+  publishSessionDynamicTitle('a', 'title-a');
+  const snapBBefore = sessionPresentationStore.getSessionSnapshot('b');
+  publishSessionDynamicTitle('a', 'title-a-2');
+  assert.equal(sessionPresentationStore.getSessionSnapshot('b'), snapBBefore);
+  publishSessionDynamicTitle('b', 'title-b');
+  assert.notEqual(sessionPresentationStore.getSessionSnapshot('b'), snapBBefore);
+  sessionPresentationStore.clearSession('a');
+  sessionPresentationStore.clearSession('b');
+});

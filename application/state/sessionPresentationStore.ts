@@ -23,6 +23,17 @@ class SessionPresentationStore {
   getPresentation = (sessionId: string): SessionPresentation | undefined =>
     this.bySession.get(sessionId);
 
+  /**
+   * Stable per-session snapshot for useSyncExternalStore. Global listeners still
+   * fire on any change, but React skips re-render when this string is unchanged
+   * for the subscribed sessionId (Object.is).
+   */
+  getSessionSnapshot = (sessionId: string): string => {
+    const presentation = this.bySession.get(sessionId);
+    if (!presentation) return '';
+    return `${presentation.dynamicTitle ?? ''}\0${presentation.codingCliProviderId ?? ''}`;
+  };
+
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener);
     return () => {
@@ -111,7 +122,7 @@ export function applySessionPresentation<T extends SessionWithPresentation>(sess
   };
 }
 
-/** Subscribe to live title/provider chrome version for presentation consumers. */
+/** Subscribe to live title/provider chrome version for multi-session consumers. */
 export function useSessionPresentationVersion(): number {
   return useSyncExternalStore(
     sessionPresentationStore.subscribe,
@@ -120,8 +131,20 @@ export function useSessionPresentationVersion(): number {
   );
 }
 
-/** Session snapshot with live presentation overlay applied. */
+/**
+ * Per-session presentation snapshot. Other sessions' title updates notify the
+ * store but do not re-render this consumer when its own snapshot is unchanged.
+ */
+export function useSessionPresentationSnapshot(sessionId: string): string {
+  return useSyncExternalStore(
+    sessionPresentationStore.subscribe,
+    () => sessionPresentationStore.getSessionSnapshot(sessionId),
+    () => sessionPresentationStore.getSessionSnapshot(sessionId),
+  );
+}
+
+/** Session snapshot with live presentation overlay applied (single session). */
 export function usePresentedSession<T extends SessionWithPresentation>(session: T): T {
-  useSessionPresentationVersion();
+  useSessionPresentationSnapshot(session.id);
   return applySessionPresentation(session);
 }

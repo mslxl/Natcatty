@@ -3,7 +3,7 @@ import React, { createContext, lazy, memo, Suspense, useCallback, useContext, us
 import { activeTabStore } from '../../application/state/activeTabStore';
 import {
   applySessionPresentation,
-  useSessionPresentationVersion,
+  usePresentedSession,
 } from '../../application/state/sessionPresentationStore';
 import { useTerminalLayoutSuppressActive } from '../../application/state/terminalLayoutSuppressStore';
 import type { TerminalSessionExitEvent } from '../../application/state/resolveTerminalSessionExitIntent';
@@ -1114,11 +1114,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   );
   const renderSnapshot = useSyncExternalStore(activeTabStore.subscribe, getRenderSnapshot, getRenderSnapshot);
   const { paneState, isFocusedPane } = parseTerminalPaneRenderSnapshot(renderSnapshot);
-  // Live titles/icons are store-driven; subscribe so pane chrome updates without
-  // structural setSessions thrash.
-  const presentationVersion = useSessionPresentationVersion();
-  void presentationVersion;
-  const presentedSession = applySessionPresentation(session);
+  // Live titles/icons are store-driven; per-session snapshot so other panes do
+  // not re-render when only a sibling title changes.
+  const presentedSession = usePresentedSession(session);
   const sessionDisplayName = resolveSessionTabTitle(
     presentedSession,
     terminalSettings?.dynamicTabTitleMode,
