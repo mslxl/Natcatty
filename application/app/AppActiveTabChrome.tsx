@@ -17,7 +17,7 @@ import type {
   Workspace,
 } from '../../types';
 import type { LogView } from '../state/logViewState';
-import type { EditorTab } from '../state/editorTabStore';
+import type { EditorTabChrome } from '../state/editorTabStore';
 
 interface AppActiveTabChromeProps {
   showSftpTab: boolean;
@@ -31,7 +31,7 @@ interface AppActiveTabChromeProps {
   followAppTerminalTheme: boolean;
   accentMode: 'theme' | 'custom';
   customAccent: string;
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   logViews: readonly LogView[];
   resolveSessionAppearance?: (hostScope: TerminalAppearanceHostScope) => ResolvedAppearance;
   t: (key: string) => string;

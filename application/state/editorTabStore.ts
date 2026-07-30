@@ -1,4 +1,4 @@
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import type * as Monaco from "monaco-editor";
 
 import { activeTabStore, fromEditorTabId, isEditorTabId } from "./activeTabStore";
@@ -321,6 +321,33 @@ const getTabsSnapshot = () => editorTabStore.getTabs();
 export const useEditorTabs = (): readonly EditorTab[] =>
   useSyncExternalStore(editorTabStore.subscribe, getTabsSnapshot, getTabsSnapshot);
 
+/**
+ * Chrome-only editor tab fields for App shell / TopTabs ordering.
+ * Content/save-state churn must not flow through this list.
+ */
+export type EditorTabChrome = Pick<
+  EditorTab,
+  | 'id'
+  | 'kind'
+  | 'sessionId'
+  | 'sftpTabId'
+  | 'hostId'
+  | 'remotePath'
+  | 'fileName'
+  | 'languageId'
+>;
+
+const projectEditorTabChrome = (tab: EditorTab): EditorTabChrome => ({
+  id: tab.id,
+  kind: tab.kind,
+  sessionId: tab.sessionId,
+  sftpTabId: tab.sftpTabId,
+  hostId: tab.hostId,
+  remotePath: tab.remotePath,
+  fileName: tab.fileName,
+  languageId: tab.languageId,
+});
+
 export const useHasEditorTabForSessions = (
   getSessionIds: () => ReadonlySet<string>,
 ): boolean => {
@@ -339,7 +366,30 @@ export const useEditorTabPresenceRevision = (): number =>
     () => editorTabStore.getPresenceRevision(),
   );
 
+/**
+ * Subscribe to open/close/remap only. Safe for App domain memos and tab strip
+ * structure; dirty dots and Monaco content must use per-tab hooks.
+ */
+export const useEditorTabChromeList = (): readonly EditorTabChrome[] => {
+  const revision = useEditorTabPresenceRevision();
+  return useMemo(() => {
+    void revision;
+    return editorTabStore.getTabs().map(projectEditorTabChrome);
+  }, [revision]);
+};
+
 export const useEditorTab = (id: EditorTabId): EditorTab | undefined => {
   const getSnapshot = useCallback(() => editorTabStore.getTab(id), [id]);
   return useSyncExternalStore(editorTabStore.subscribe, getSnapshot, getSnapshot);
 };
+
+/**
+ * Per-tab dirty flag. Content edits notify the store, but React skips re-render
+ * when this tab's dirty boolean is unchanged (Object.is).
+ */
+export const useEditorTabDirty = (id: EditorTabId): boolean =>
+  useSyncExternalStore(
+    editorTabStore.subscribe,
+    () => editorTabStore.isDirty(id),
+    () => editorTabStore.isDirty(id),
+  );

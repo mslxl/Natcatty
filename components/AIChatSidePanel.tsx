@@ -51,6 +51,7 @@ import {
   type DefaultTargetSessionHint,
 } from './ai/hooks/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
+import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { registerGrantPersister } from '../infrastructure/ai/shared/approvalGate';
@@ -1487,7 +1488,36 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.onOpenVaultSnippet !== next.onOpenVaultSnippet) return false;
   if (prev.onOpenVaultSection !== next.onOpenVaultSection) return false;
 
+  // Sibling stream thrash: full sessions array identity always changes. Only
+  // exact-scope session object refs matter for this panel's active chat —
+  // plus the currently selected session, which may be a host-matched history
+  // resume whose stored scope.targetId is an older terminal.
+  // Fuzzy history still receives the full list; drawer open forces re-render
+  // via isVisible / other prop paths when the user actually needs it.
+  const scopeKey = `${prev.scopeType}:${prev.scopeTargetId ?? ''}`;
+  const selectedSessionId = prev.activeSessionIdMap[scopeKey]
+    ?? next.activeSessionIdMap[scopeKey]
+    ?? null;
+  if (!exactScopeAISessionsEqual(
+    prev.sessions,
+    next.sessions,
+    prev.scopeType,
+    prev.scopeTargetId,
+    selectedSessionId,
+  )) {
+    return false;
+  }
+  // History drawer / recent list need create/delete/title/updatedAt chrome.
+  // Only when the panel is (or becomes) visible so hidden retained panels do
+  // not re-render on every sibling stream that bumps updatedAt.
+  const prevVisible = prev.isVisible ?? true;
+  const nextVisible = next.isVisible ?? true;
+  if ((prevVisible || nextVisible) && !aiSessionIdSetEqual(prev.sessions, next.sessions)) {
+    return false;
+  }
+
   for (const key of AI_CHAT_SIDE_PANEL_AI_STATE_KEYS) {
+    if (key === 'sessions') continue;
     if (prev[key] !== next[key]) return false;
   }
   return true;

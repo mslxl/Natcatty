@@ -1,13 +1,17 @@
 import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles, Terminal } from 'lucide-react';
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
+import {
+  applySessionPresentation,
+  sessionPresentationStore,
+} from '../application/state/sessionPresentationStore';
+import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
-import type { EditorTab } from '../application/state/editorTabStore';
-import { buildWorkspaceActivityMap } from '../application/state/sessionActivity';
+import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
 import { resolveSessionTabTitle } from '../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../domain/models';
-import { useSessionActivityMap } from '../application/state/sessionActivityStore';
+
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
 import {
   useTerminalHostTreeLayoutWidth,
@@ -158,7 +162,7 @@ interface TopTabsProps {
   showSftpTab: boolean;
   showHostTreeSidebar: boolean;
   dynamicTabTitleMode?: DynamicTabTitleMode;
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   pluginViewTabs: readonly PluginViewTab[];
   onClosePluginViewTab: (tabId: string) => void;
   onRequestCloseEditorTab: (editorTabId: string) => void;
@@ -169,7 +173,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   theme,
   themePreference,
   hosts,
-  sessions,
+  sessions: sessionsProp,
   orphanSessions,
   workspaces,
   logViews,
@@ -210,11 +214,21 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 }) => {
   const { t } = useI18n();
   const { maximize, isFullscreen, onFullscreenChanged } = useWindowControls();
-  const sessionActivityMap = useSessionActivityMap();
   const isHostTreeOpen = useTerminalHostTreeOpen();
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
   const activeTabId = useActiveTabId();
+  // Title/provider chrome: subscribe so presentation updates re-render TopTabs
+  // even when parent session arrays are treated as structurally equal.
+  const presentationVersion = useSyncExternalStore(
+    sessionPresentationStore.subscribe,
+    sessionPresentationStore.getVersion,
+    sessionPresentationStore.getVersion,
+  );
+  const sessions = useMemo(() => {
+    void presentationVersion;
+    return sessionsProp.map((session) => applySessionPresentation(session));
+  }, [sessionsProp, presentationVersion]);
   const { getTabAnimationClass } = useTopTabLifecycleAnimations(orderedTabs);
   const fixedLeftTabsRef = useRef<HTMLDivElement>(null);
   const hostTreeToggleSlotRef = useRef<HTMLDivElement>(null);
@@ -292,12 +306,17 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     }
   }, [updateScrollState, orderedTabs]);
 
-  // Pre-compute lookup maps for O(1) access instead of O(n) find operations
+  // Pre-compute lookup maps for O(1) access instead of O(n) find operations.
+  // Merge live title/provider the same way as `sessions` so orphan tabs never
+  // freeze while agents stream presentation-only updates.
   const orphanSessionMap = useMemo(() => {
+    void presentationVersion;
     const map = new Map<string, TerminalSession>();
-    for (const s of orphanSessions) map.set(s.id, s);
+    for (const s of orphanSessions) {
+      map.set(s.id, applySessionPresentation(s));
+    }
     return map;
-  }, [orphanSessions]);
+  }, [orphanSessions, presentationVersion]);
 
   const workspaceMap = useMemo(() => {
     const map = new Map<string, Workspace>();
@@ -316,10 +335,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     for (const h of hosts) map.set(h.id, h);
     return map;
   }, [hosts]);
-
-  const workspaceActivityMap = useMemo(() => {
-    return buildWorkspaceActivityMap(sessions, sessionActivityMap);
-  }, [sessionActivityMap, sessions]);
 
   // Pre-compute session counts per workspace for O(1) access
   const workspacePaneCounts = useMemo(() => {
@@ -644,9 +659,9 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     return styles;
   }, [dropIndicator, isDraggingForReorder, orderedTabs]);
 
-  // Pre-compute editor tab map for O(1) access
+  // Pre-compute editor tab map for O(1) access (chrome fields only; dirty via store).
   const editorTabMap = useMemo(() => {
-    const map = new Map<string, EditorTab>();
+    const map = new Map<string, EditorTabChrome>();
     for (const t of editorTabs) map.set(t.id, t);
     return map;
   }, [editorTabs]);
@@ -790,7 +805,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
       if (item.type === 'session') {
         const session = item.session;
-        const hasActivity = !!sessionActivityMap[session.id];
         const isBeingDragged = draggingSessionId === session.id;
         const shiftStyle = tabShiftStyles[session.id] || emptyTabStyle;
         const showDropIndicatorBefore = dropIndicator?.tabId === session.id && dropIndicator.position === 'before';
@@ -801,7 +815,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             key={session.id}
             session={session}
             host={hostMap.get(session.hostId)}
-            hasActivity={hasActivity}
             isBeingDragged={isBeingDragged}
             isDraggingForReorder={isDraggingForReorder}
             shiftStyle={shiftStyle}
@@ -827,7 +840,6 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
       if (item.type === 'workspace') {
         const workspace = item.workspace;
         const paneCount = item.paneCount;
-        const hasActivity = !!workspaceActivityMap.get(workspace.id);
         const isBeingDragged = draggingSessionId === workspace.id;
         const shiftStyle = tabShiftStyles[workspace.id] || emptyTabStyle;
         const showDropIndicatorBefore = dropIndicator?.tabId === workspace.id && dropIndicator.position === 'before';
@@ -849,7 +861,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             key={workspace.id}
             workspace={workspace}
             paneCount={paneCount}
-            hasActivity={hasActivity}
+            workspaceSessionIds={workspaceSessionIds}
             isBeingDragged={isBeingDragged}
             isDraggingForReorder={isDraggingForReorder}
             shiftStyle={shiftStyle}
@@ -1184,15 +1196,20 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 };
 
 // Custom comparison: only re-render when data props change - activeTabId is now managed internally via store subscription
-const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
+export const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
   return (
     prev.theme === next.theme &&
     prev.hosts === next.hosts &&
-    prev.sessions === next.sessions &&
-    prev.orphanSessions === next.orphanSessions &&
+    // Ignore presentation-only session fields; TopTabsInner merges live titles
+    // from sessionPresentationStore via useSyncExternalStore.
+    topTabsSessionsEqual(prev.sessions, next.sessions) &&
+    topTabsSessionsEqual(prev.orphanSessions, next.orphanSessions) &&
     prev.workspaces === next.workspaces &&
     prev.orderedTabs === next.orderedTabs &&
     prev.logViews === next.logViews &&
+    // Editor open/close/fileName chrome only (presence list). Dirty dots use store.
+    prev.editorTabs === next.editorTabs &&
+    prev.onRequestCloseEditorTab === next.onRequestCloseEditorTab &&
     prev.pluginViewTabs === next.pluginViewTabs &&
     prev.onClosePluginViewTab === next.onClosePluginViewTab &&
     prev.draggingSessionId === next.draggingSessionId &&
@@ -1212,7 +1229,8 @@ const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean => {
     prev.onThemeChange === next.onThemeChange &&
     prev.showSftpTab === next.showSftpTab &&
     prev.showHostTreeSidebar === next.showHostTreeSidebar &&
-    prev.dynamicTabTitleMode === next.dynamicTabTitleMode
+    prev.dynamicTabTitleMode === next.dynamicTabTitleMode &&
+    prev.hostById === next.hostById
   );
 };
 

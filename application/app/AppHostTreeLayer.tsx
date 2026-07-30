@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 
 import { useActiveTabId } from '../state/activeTabStore';
-import type { EditorTab } from '../state/editorTabStore';
+import type { EditorTabChrome } from '../state/editorTabStore';
 import type { LogView } from '../state/logViewState';
 import { useManualTerminalChromeSurfaceInjection } from '../state/useManualTerminalChromeSurfaceInjection';
 import { TerminalHostTreeSidebar } from '../../components/terminalLayer/TerminalHostTreeSidebar';
@@ -23,7 +23,7 @@ interface AppHostTreeLayerProps {
   groupConfigs: GroupConfig[];
   sessions: TerminalSession[];
   workspaces: Workspace[];
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   logViews: readonly LogView[];
   orderedTabs: readonly string[];
   accentMode: 'theme' | 'custom';

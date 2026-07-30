@@ -5,6 +5,7 @@ import type { Host } from "./models.ts";
 import {
   classifyDistroId,
   detectVendorFromSshVersion,
+  hostsEqualForIdentityReuse,
   migrateHostsFromLegacyLineTimestamps,
   normalizeDistroId,
   normalizePrimaryTelnetState,
@@ -695,4 +696,11 @@ test("resolveHostKeepalive lets each field fall back independently", () => {
     ),
     { interval: 30, countMax: 50, source: "host" },
   );
+});
+
+test("hostsEqualForIdentityReuse is true for shallow-identical field values", () => {
+  const a = makeHost({ showLineTimestamps: true });
+  const b = { ...a };
+  assert.equal(hostsEqualForIdentityReuse(a, b), true);
+  assert.equal(hostsEqualForIdentityReuse(a, makeHost({ showLineTimestamps: false })), false);
 });

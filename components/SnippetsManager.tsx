@@ -1,10 +1,14 @@
 import { CheckSquare, ChevronDown, Clock, Copy, Download, Edit2, FileCode, FolderPlus, LayoutGrid, List as ListIcon, Package, Play, Plus, Search, Square, Trash2, Upload, X, Zap } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useStoredViewMode } from '../application/state/useStoredViewMode';
 import { STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE } from '../infrastructure/config/storageKeys';
 import { cn, isMacPlatform } from '../lib/utils';
 import { Host, ProxyProfile, ShellHistoryEntry, Snippet, SSHKey } from '../types';
+import {
+  getShellHistorySnapshot,
+  subscribeShellHistory,
+} from '../application/state/shellHistoryStore';
 import { HotkeyScheme, KeyBinding, keyEventToString, ManagedSource, matchesKeyBinding, parseKeyCombo } from '../domain/models';
 import {
   buildSnippetExportPayload,
@@ -59,7 +63,8 @@ interface SnippetsManagerProps {
   packages: string[];
   hosts: Host[];
   customGroups?: string[];
-  shellHistory: ShellHistoryEntry[];
+  /** @deprecated Prefer shellHistoryStore; optional override for tests only. */
+  shellHistory?: ShellHistoryEntry[];
   hotkeyScheme: HotkeyScheme;
   keyBindings: KeyBinding[];
   onSave: (snippet: Snippet) => void;
@@ -447,7 +452,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   packages,
   hosts,
   customGroups = [],
-  shellHistory,
+  shellHistory: shellHistoryProp,
   hotkeyScheme,
   keyBindings,
   onSave,
@@ -466,6 +471,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   onOpenSnippetIdHandled,
 }) => {
   const { t } = useI18n();
+  const shellHistoryFromStore = useSyncExternalStore(
+    subscribeShellHistory,
+    getShellHistorySnapshot,
+    getShellHistorySnapshot,
+  );
+  const shellHistory = shellHistoryProp ?? (shellHistoryFromStore as ShellHistoryEntry[]);
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('none');
   const [editingSnippet, setEditingSnippet] = useState<Partial<Snippet>>({
     label: '',

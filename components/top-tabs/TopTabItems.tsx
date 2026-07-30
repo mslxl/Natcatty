@@ -1,7 +1,14 @@
 import { Copy, FileCode, FileText, LayoutGrid, Minus, Server, Square, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { activeTabStore, useActiveTabId, useIsTabActive } from '../../application/state/activeTabStore';
-import type { EditorTab } from '../../application/state/editorTabStore';
+import {
+  useAnySessionActivity,
+  useSessionActivity,
+} from '../../application/state/sessionActivityStore';
+import {
+  useEditorTabDirty,
+  type EditorTabChrome,
+} from '../../application/state/editorTabStore';
 import type { LogView } from '../../application/state/logViewState';
 import { useWindowControls } from '../../application/state/useWindowControls';
 import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
@@ -527,7 +534,7 @@ PluginViewTopTab.displayName = 'PluginViewTopTab';
 
 interface EditorTopTabProps {
   tabId: string;
-  editorTab: EditorTab;
+  editorTab: EditorTabChrome;
   host: Host | undefined;
   suffix: string;
   onRequestCloseEditorTab: (editorTabId: string) => void;
@@ -563,7 +570,8 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(tabId);
-  const dirty = editorTab.content !== editorTab.baselineContent;
+  // Dirty is store-driven so App/TopTabs structure can stay presence-only.
+  const dirty = useEditorTabDirty(editorTab.id);
   const tooltip = `${host?.label ?? editorTab.hostId}@${host?.hostname ?? ''}:${editorTab.remotePath}`;
   const FileIcon = CODE_EXTENSIONS_RE.test(editorTab.fileName) ? FileCode : FileText;
   const handleClick = useCallback(() => {
@@ -660,7 +668,6 @@ EditorTopTab.displayName = 'EditorTopTab';
 interface SessionTopTabProps {
   session: TerminalSession;
   host: Host | undefined;
-  hasActivity: boolean;
   isBeingDragged: boolean;
   isDraggingForReorder: boolean;
   shiftStyle: React.CSSProperties;
@@ -684,7 +691,6 @@ interface SessionTopTabProps {
 export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   session,
   host,
-  hasActivity,
   isBeingDragged,
   isDraggingForReorder,
   shiftStyle,
@@ -705,6 +711,8 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(session.id);
+  // Per-session store snapshot so sibling activity dots do not re-render this tab.
+  const hasActivity = useSessionActivity(session.id);
   const handleClick = useCallback(() => {
     activeTabStore.setActiveTabId(session.id);
   }, [session.id]);
@@ -833,7 +841,7 @@ SessionTopTab.displayName = 'SessionTopTab';
 interface WorkspaceTopTabProps {
   workspace: Workspace;
   paneCount: number;
-  hasActivity: boolean;
+  workspaceSessionIds: readonly string[];
   isBeingDragged: boolean;
   isDraggingForReorder: boolean;
   shiftStyle: React.CSSProperties;
@@ -857,7 +865,7 @@ interface WorkspaceTopTabProps {
 export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   workspace,
   paneCount,
-  hasActivity,
+  workspaceSessionIds,
   isBeingDragged,
   isDraggingForReorder,
   shiftStyle,
@@ -878,6 +886,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   tabAnimationClass,
 }) => {
   const isActive = useIsTabActive(workspace.id);
+  const hasActivity = useAnySessionActivity(workspaceSessionIds);
   const handleClick = useCallback(() => {
     activeTabStore.setActiveTabId(workspace.id);
   }, [workspace.id]);

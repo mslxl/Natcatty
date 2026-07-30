@@ -228,3 +228,26 @@ test('AI side panel re-renders when command timeout changes', () => {
     { ...props, commandTimeout: 86_400 },
   ), false);
 });
+
+test('AI side panel skips re-render when only a sibling scope session object changes', () => {
+  const own = session({ id: 'session-1', scope: { type: 'terminal', targetId: 'terminal-1' } });
+  const siblingA = session({ id: 'session-2', scope: { type: 'terminal', targetId: 'terminal-2' } });
+  const siblingB = session({ id: 'session-2', scope: { type: 'terminal', targetId: 'terminal-2' } });
+  const prev = baseProps({
+    isVisible: true,
+    scopeType: 'terminal',
+    scopeTargetId: 'terminal-1',
+    sessions: [own, siblingA],
+  });
+  const next = {
+    ...prev,
+    sessions: [own, siblingB],
+  };
+  assert.equal(aiChatSidePanelPropsAreEqual(prev, next), true);
+
+  const ownStreamed = session({ id: 'session-1', scope: { type: 'terminal', targetId: 'terminal-1' } });
+  assert.equal(
+    aiChatSidePanelPropsAreEqual(prev, { ...prev, sessions: [ownStreamed, siblingA] }),
+    false,
+  );
+});

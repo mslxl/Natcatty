@@ -1,6 +1,10 @@
 import { Circle, Columns2, Plus, Search, Server } from 'lucide-react';
 import React, { memo, useCallback, useMemo, useState, type DragEvent, type MouseEvent } from 'react';
 
+import {
+  applySessionPresentation,
+  useSessionPresentationVersion,
+} from '../../application/state/sessionPresentationStore';
 import { useStoredNumber } from '../../application/state/useStoredNumber';
 import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import { resolveWorkspaceFocusSessionOrder } from '../../domain/workspace';
@@ -284,12 +288,18 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
     };
   }, [resolvedPreviewTheme]);
 
+  // Live OSC / coding-CLI titles live in sessionPresentationStore (not sessions).
+  const presentationVersion = useSessionPresentationVersion();
   const workspaceSessions = useMemo(() => {
+    void presentationVersion;
     const sessionMap = new Map(sessions.map((session) => [session.id, session]));
     return resolveWorkspaceFocusSessionOrder(activeWorkspace.root, activeWorkspace.focusSessionOrder)
-      .map((sessionId) => sessionMap.get(sessionId))
+      .map((sessionId) => {
+        const session = sessionMap.get(sessionId);
+        return session ? applySessionPresentation(session) : undefined;
+      })
       .filter((session): session is TerminalSession => Boolean(session));
-  }, [activeWorkspace, sessions]);
+  }, [activeWorkspace, sessions, presentationVersion]);
 
   const visibleSessions = useMemo(() => {
     const term = focusSidebarSearch.trim().toLowerCase();

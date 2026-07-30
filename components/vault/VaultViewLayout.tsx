@@ -233,7 +233,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     setTargetParentPath,
     Settings,
     setViewMode,
-    shellHistory,
     shouldHideEmptyRootHostsSection,
     showRecentHosts,
     hostClickBehavior,
@@ -1143,7 +1142,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                       packages={snippetPackages}
                       hosts={hosts}
                       customGroups={customGroups}
-                      shellHistory={shellHistory}
                       hotkeyScheme={hotkeyScheme}
                       keyBindings={keyBindings}
                       onPackagesChange={onUpdateSnippetPackages}

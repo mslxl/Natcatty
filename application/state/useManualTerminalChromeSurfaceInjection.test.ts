@@ -12,7 +12,7 @@ test('manual mode injects chrome surfaces from focused session theme', () => {
   assert.match(bridgeSource, /useManualTerminalChromeSurfaceInjection/);
   assert.match(bridgeSource, /!s\.followAppTerminalTheme && isTerminalLayerVisible/);
   assert.match(readFileSync(new URL('../app/AppHostTreeLayer.tsx', import.meta.url), 'utf8'), /useManualTerminalChromeSurfaceInjection/);
-  assert.match(appSource, /resolveSessionAppearance=\{themeRuntime\.resolveFocusedAppearance\}/);
+  assert.match(appSource, /resolveSessionAppearance=\{resolveFocusedAppearance\}/);
   assert.match(hookSource, /applyTopTabsChromeThemeVars\(theme\)/);
   assert.match(hookSource, /injectTerminalLayerChromeSurfaceVars\(theme\)/);
   assert.match(hookSource, /if \(wasEnabled\) \{[\s\S]*clearTerminalLayerChromeSurfaceVars\(\)/);

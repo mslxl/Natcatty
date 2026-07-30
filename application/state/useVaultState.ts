@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { migrateHostsFromLegacyLineTimestamps, normalizeDistroId, sanitizeHost } from "../../domain/host";
+import {
+  hostsEqualForIdentityReuse,
+  migrateHostsFromLegacyLineTimestamps,
+  normalizeDistroId,
+  sanitizeHost,
+} from "../../domain/host";
 import { isEncryptedCredentialPlaceholder } from "../../domain/credentials";
 import { sanitizeGroupConfig } from "../../domain/groupConfig";
 import { normalizeKnownHosts } from "../../domain/knownHosts";
@@ -270,8 +275,10 @@ export const useVaultState = () => {
   const [groupConfigs, setGroupConfigs] = useState<GroupConfig[]>([]);
   const customGroupsRef = useRef<string[]>([]);
   const managedSourcesRef = useRef<ManagedSource[]>([]);
+  const hostsRef = useRef<Host[]>([]);
   customGroupsRef.current = customGroups;
   managedSourcesRef.current = managedSources;
+  hostsRef.current = hosts;
 
   // Write-version counters prevent out-of-order async writes from overwriting
   // newer data.  Each update bumps the counter; the .then() callback only
@@ -425,8 +432,30 @@ export const useVaultState = () => {
     return mergeConnectionLogsFromStorage(prev, storedLogs, terminalDataMap);
   }, []);
 
-  const updateHosts = useCallback((data: Host[]) => {
-    const cleaned = normalizeVaultOrder(data.map((host) => sanitizeHost(host)));
+  const updateHosts = useCallback((data: Host[] | ((prev: Host[]) => Host[])) => {
+    // Keep object identity for hosts that did not actually change. Callers that
+    // do `hosts.map(h => h.id === id ? patch(h) : h)` already pass through
+    // unchanged refs; re-running sanitizeHost on every host would allocate new
+    // objects for the whole vault and re-render every open terminal.
+    const prev = hostsRef.current;
+    const raw = typeof data === "function" ? data(prev) : data;
+    const prevById = new Map(prev.map((host) => [host.id, host]));
+    const cleaned = normalizeVaultOrder(raw.map((host) => {
+      if (prevById.get(host.id) === host) return host;
+      const sanitized = sanitizeHost(host);
+      const existing = prevById.get(sanitized.id);
+      if (existing && hostsEqualForIdentityReuse(existing, sanitized)) {
+        return existing;
+      }
+      return sanitized;
+    }));
+    if (
+      cleaned.length === prev.length
+      && cleaned.every((host, index) => host === prev[index])
+    ) {
+      return Promise.resolve("unchanged" as const);
+    }
+    hostsRef.current = cleaned;
     setHosts(cleaned);
     const ver = ++hostsWriteVersion.current;
     // Encrypt outside the lock so importers that hold the lock can still wait

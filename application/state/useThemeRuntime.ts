@@ -24,66 +24,82 @@ export type ThemeRuntimeSettings = TerminalAppearanceSettings & {
 };
 
 export function useThemeRuntime(settings: ThemeRuntimeSettings) {
+  const {
+    terminalThemeId,
+    terminalThemeDarkId,
+    terminalThemeLightId,
+    followAppTerminalTheme,
+    resolvedTheme,
+    lightUiThemeId,
+    darkUiThemeId,
+    accentMode,
+    customAccent,
+    customThemes,
+    setTheme,
+    setLightUiThemeId,
+    setDarkUiThemeId,
+  } = settings;
+
   const [userIntent, setUserIntent] = useState<ThemeUserIntent>(idleThemeUserIntent());
 
   const appearanceSettings = useMemo((): TerminalAppearanceSettings => ({
-    terminalThemeId: settings.terminalThemeId,
-    terminalThemeDarkId: settings.terminalThemeDarkId,
-    terminalThemeLightId: settings.terminalThemeLightId,
-    followAppTerminalTheme: settings.followAppTerminalTheme,
-    resolvedTheme: settings.resolvedTheme,
-    lightUiThemeId: settings.lightUiThemeId,
-    darkUiThemeId: settings.darkUiThemeId,
-    accentMode: settings.accentMode,
-    customAccent: settings.customAccent,
+    terminalThemeId,
+    terminalThemeDarkId,
+    terminalThemeLightId,
+    followAppTerminalTheme,
+    resolvedTheme,
+    lightUiThemeId,
+    darkUiThemeId,
+    accentMode,
+    customAccent,
   }), [
-    settings.terminalThemeId,
-    settings.terminalThemeDarkId,
-    settings.terminalThemeLightId,
-    settings.followAppTerminalTheme,
-    settings.resolvedTheme,
-    settings.lightUiThemeId,
-    settings.darkUiThemeId,
-    settings.accentMode,
-    settings.customAccent,
+    terminalThemeId,
+    terminalThemeDarkId,
+    terminalThemeLightId,
+    followAppTerminalTheme,
+    resolvedTheme,
+    lightUiThemeId,
+    darkUiThemeId,
+    accentMode,
+    customAccent,
   ]);
 
   const globalAppearance = useMemo(() => resolveGlobalTerminalAppearance({
     userIntent,
     settings: appearanceSettings,
-    customThemes: settings.customThemes,
-  }), [userIntent, appearanceSettings, settings.customThemes]);
+    customThemes,
+  }), [userIntent, appearanceSettings, customThemes]);
 
   const resolveFocusedAppearance = useCallback((hostScope: TerminalAppearanceHostScope): ResolvedAppearance => (
     resolveTerminalAppearance({
       userIntent,
       settings: appearanceSettings,
       hostScope,
-      customThemes: settings.customThemes,
+      customThemes,
     })
-  ), [userIntent, appearanceSettings, settings.customThemes]);
+  ), [userIntent, appearanceSettings, customThemes]);
 
   const applyFollowAppSettingsForPick = useCallback((themeId: string) => {
     const update = getFollowAppTerminalThemeSelectionUpdate(themeId);
     if (!update) return false;
     if (update.appTheme === 'dark') {
-      settings.setDarkUiThemeId(update.uiThemeId);
+      setDarkUiThemeId(update.uiThemeId);
     } else {
-      settings.setLightUiThemeId(update.uiThemeId);
+      setLightUiThemeId(update.uiThemeId);
     }
-    settings.setTheme(update.appTheme);
+    setTheme(update.appTheme);
     return true;
-  }, [settings]);
+  }, [setDarkUiThemeId, setLightUiThemeId, setTheme]);
 
   const pickTheme = useCallback((themeId: string, options?: { followApp?: boolean; scopeHostId?: string | null }) => {
-    const followApp = options?.followApp ?? settings.followAppTerminalTheme;
+    const followApp = options?.followApp ?? followAppTerminalTheme;
     setUserIntent(pickingThemeUserIntent(themeId, {
       scopeHostId: followApp ? undefined : options?.scopeHostId,
     }));
     if (followApp) {
       applyFollowAppSettingsForPick(themeId);
     }
-  }, [applyFollowAppSettingsForPick, settings.followAppTerminalTheme]);
+  }, [applyFollowAppSettingsForPick, followAppTerminalTheme]);
 
   const clearIntent = useCallback(() => {
     setUserIntent(idleThemeUserIntent());
@@ -93,7 +109,9 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
     setUserIntent(idleThemeUserIntent());
   }, []);
 
-  return {
+  // Stable bag identity so App domain memos can depend on members (or the
+  // bag) without thrashing on every parent render.
+  return useMemo(() => ({
     userIntent,
     globalAppearance,
     resolveFocusedAppearance,
@@ -101,7 +119,14 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
     clearIntent,
     settleManualIntent,
     currentTerminalTheme: globalAppearance.theme,
-  };
+  }), [
+    userIntent,
+    globalAppearance,
+    resolveFocusedAppearance,
+    pickTheme,
+    clearIntent,
+    settleManualIntent,
+  ]);
 }
 
 export function useTerminalAppearanceInjection(

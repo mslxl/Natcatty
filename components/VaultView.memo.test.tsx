@@ -15,7 +15,6 @@ test("VaultView re-renders when an external section navigation request changes",
     noteGroups: [],
     customGroups: [],
     knownHosts: [],
-    shellHistory: [],
     connectionLogs: [],
     sessions: [],
     managedSources: [],
@@ -34,6 +33,37 @@ test("VaultView re-renders when an external section navigation request changes",
   );
 });
 
+test("VaultView memo does not depend on shellHistory prop identity", () => {
+  const baseProps = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    proxyProfiles: [],
+    snippets: [],
+    snippetPackages: [],
+    notes: [],
+    noteGroups: [],
+    customGroups: [],
+    knownHosts: [],
+    connectionLogs: [],
+    sessions: [],
+    managedSources: [],
+    groupConfigs: {},
+    terminalThemeId: "default",
+    terminalFontSize: 14,
+    navigateToSection: null,
+  };
+  // History-only updates must not be part of VaultView equality (store path).
+  assert.equal(
+    vaultViewAreEqual(baseProps as never, { ...baseProps } as never),
+    true,
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(baseProps, "shellHistory"),
+    false,
+  );
+});
+
 test("VaultView re-renders when proxy profiles change", () => {
   const baseProps = {
     hosts: [],
@@ -46,7 +76,6 @@ test("VaultView re-renders when proxy profiles change", () => {
     noteGroups: [],
     customGroups: [],
     knownHosts: [],
-    shellHistory: [],
     connectionLogs: [],
     sessions: [],
     managedSources: [],
@@ -87,7 +116,6 @@ test("VaultView re-renders when host-key verification setting changes", () => {
     noteGroups: [],
     customGroups: [],
     knownHosts: [],
-    shellHistory: [],
     connectionLogs: [],
     sessions: [],
     managedSources: [],

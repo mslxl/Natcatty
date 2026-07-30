@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { Suspense, lazy, useCallback, useEffect, useMemo } from 'react';
+import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { activeTabStore, toEditorTabId, useActiveTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
@@ -34,6 +34,11 @@ import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabSto
 import { buildPluginSettingScopeCatalog } from '../state/usePluginSettingScopeCatalog';
 import { useWorkSurfaceHostEditor } from '../state/useWorkSurfaceHostEditor';
 import { isHostTreeWorkTabSurface } from './workTabSurface';
+import {
+  appViewDomainsEqual,
+  mergeAppViewDomains,
+  type AppViewDomains,
+} from './appViewDomains';
 
 const LazyProtocolSelectDialog = lazy(() => import('../../components/ProtocolSelectDialog'));
 const LazyQuickSwitcher = lazy(() =>
@@ -62,11 +67,21 @@ const TextEditorTabFallback = ({ tabId }: { tabId: string }) => {
   );
 };
 
-type AppViewContext = Record<string, any>;
+export type AppViewProps = {
+  domains: AppViewDomains;
+};
 
-export function AppView({ ctx }: { ctx: AppViewContext }) {
+function AppViewInner({ domains }: AppViewProps) {
   const activeTabId = useActiveTabId();
   const pluginViewTabs = usePluginViewTabs();
+  // Merge domain slices once per AppView render. AppView only re-renders when a
+  // domain slice identity changes (see appViewDomainsEqual). Depend on the
+  // domain bag so the hook graph stays honest; bag identity only changes when
+  // App rebuilds a domain slice.
+  const ctx = useMemo(
+    () => mergeAppViewDomains(domains),
+    [domains],
+  ) as Record<string, any>;
   const {
     resetSessionRename,
     resetWorkspaceRename,
@@ -114,7 +129,7 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     sessionRenameValue, sessions, setActiveTabId, setDeepLinkHostDraft, setDraggingSessionId, setEditorWordWrap,
     setNavigateToSection, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setVaultFocusRequest, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, clearSessionFontSizeOverride,
     setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
-    sftpShowHiddenFiles, sftpUseCompressedUpload, shellHistory, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
+    sftpShowHiddenFiles, sftpUseCompressedUpload, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
     startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
     toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog,
     readPersistedHosts, readPersistedManagedSources, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
@@ -363,7 +378,6 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
             noteGroups={noteGroups}
             customGroups={customGroups}
             knownHosts={effectiveKnownHosts}
-            shellHistory={shellHistory}
             connectionLogs={connectionLogs}
             managedSources={managedSources}
             sessionCount={sessions.filter((s) => !s.hiddenFromTabs).length}
@@ -857,3 +871,8 @@ export function AppView({ ctx }: { ctx: AppViewContext }) {
     </SnippetExecutionProvider>
   );
 }
+
+export const AppView = memo(AppViewInner, (prev, next) => (
+  appViewDomainsEqual(prev.domains, next.domains)
+));
+AppView.displayName = 'AppView';

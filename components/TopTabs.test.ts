@@ -570,3 +570,36 @@ test("host tree toggle is hidden on root pages", () => {
     workspaceIds: new Set(),
   }), false);
 });
+
+test("TopTabs merges presentation store into orphanSessionMap and sessions", () => {
+  assert.match(topTabsSource, /applySessionPresentation/);
+  assert.match(topTabsSource, /sessionPresentationStore\.subscribe/);
+  assert.match(topTabsSource, /presentationVersion/);
+  assert.ok(
+    topTabsSource.includes("map.set(s.id, applySessionPresentation(s))"),
+    "orphanSessionMap must overlay store presentation like sessions",
+  );
+});
+
+test("topTabsAreEqual tracks editorTabs for dirty chrome", () => {
+  assert.match(topTabsSource, /prev\.editorTabs === next\.editorTabs/);
+  assert.match(topTabsSource, /prev\.onRequestCloseEditorTab === next\.onRequestCloseEditorTab/);
+  // Dirty dots come from useEditorTabDirty; structure list is presence-only chrome.
+  assert.match(
+    readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8"),
+    /useEditorTabDirty/,
+  );
+});
+
+test("App shell uses editor presence chrome list not full content tabs", () => {
+  assert.match(appSource, /useEditorTabChromeList/);
+  assert.doesNotMatch(appSource, /useEditorTabs\(\)/);
+});
+
+test("App shell retains presentation-stable sessions for domain memos", () => {
+  assert.match(appSource, /retainStableSessionsIgnoringPresentation/);
+  assert.match(appSource, /sessionsForShell/);
+  assert.match(appSource, /orphanSessionsForShell/);
+  assert.match(appSource, /sessions: sessionsForShell/);
+  assert.match(appSource, /orphanSessions: orphanSessionsForShell/);
+});
