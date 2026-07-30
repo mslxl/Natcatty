@@ -68,8 +68,15 @@ test("toolbars expose stable custom CSS regions for icon sizing", () => {
   const terminalToolbarSource = readProjectFile("components/terminal/TerminalToolbar.tsx");
 
   assert.match(topTabsSource, /top-tabs-toolbar-actions/);
-  assert.match(terminalToolbarSource, /dataSection="terminal-toolbar"/);
   assert.match(terminalToolbarSource, /data-section="terminal-toolbar"/);
+  assert.ok(
+    terminalToolbarSource.indexOf('data-section="terminal-toolbar"')
+      < terminalToolbarSource.indexOf('{pluginToolbarMenus.map'),
+  );
+  assert.ok(
+    terminalToolbarSource.indexOf('{pluginToolbarMenus.map')
+      < terminalToolbarSource.lastIndexOf('</TooltipProvider>'),
+  );
 });
 
 test("custom CSS help lists the expanded terminal and SFTP hooks", () => {

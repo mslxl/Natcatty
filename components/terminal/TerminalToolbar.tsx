@@ -320,7 +320,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
 
   if (compactToolbar) {
     return (
-      <div data-section="terminal-toolbar">
+      <div className="contents" data-section="terminal-toolbar">
         <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -928,8 +928,9 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
   const hasCollapsed = collapsedNodes.length > 0;
 
   return (
-    <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
-      <ToolbarCustomizeContextMenu
+    <div className="contents" data-section="terminal-toolbar">
+      <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
+        <ToolbarCustomizeContextMenu
         items={customizeItems}
         placementOf={(id) => {
           const placement = toolbarLayout.layout.placement[id] ?? 'show';
@@ -942,7 +943,6 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
         onReset={toolbarLayout.reset}
         t={t}
         className="inline-flex items-center min-h-6 min-w-6"
-        dataSection="terminal-toolbar"
       >
         {shown.map(renderInline)}
 
@@ -988,9 +988,9 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
             </PopoverContent>
           </Popover>
         )}
-      </ToolbarCustomizeContextMenu>
+        </ToolbarCustomizeContextMenu>
 
-      {pluginToolbarMenus.map((menu) => (
+        {pluginToolbarMenus.map((menu) => (
         <Tooltip key={menu.id}>
           <TooltipTrigger asChild>
             <Button
@@ -1009,11 +1009,11 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
           </TooltipTrigger>
           <TooltipContent side="bottom">{menu.title}{menu.shortcut ? ` (${menu.shortcut})` : ''}</TooltipContent>
         </Tooltip>
-      ))}
+        ))}
 
-      {recordingIndicator}
+        {recordingIndicator}
 
-      {showClose && onClose && (
+        {showClose && onClose && (
         <Tooltip>
           <TooltipTrigger asChild>
             <Button
@@ -1030,8 +1030,9 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
           </TooltipTrigger>
           <TooltipContent side="bottom">{t('terminal.toolbar.closeSession')}</TooltipContent>
         </Tooltip>
-      )}
-    </TooltipProvider>
+        )}
+      </TooltipProvider>
+    </div>
   );
 };
 
