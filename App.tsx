@@ -9,7 +9,7 @@ import { useUpdateCheck } from './application/state/useUpdateCheck';
 import { useVaultState } from './application/state/useVaultState';
 import { useVaultAgentBridge } from './application/state/useVaultAgentBridge';
 import { useWindowControls } from './application/state/useWindowControls';
-import { useEditorTabs } from './application/state/editorTabStore';
+import { useEditorTabChromeList } from './application/state/editorTabStore';
 import {
   isPluginViewTabId,
   pluginViewTabStore,
@@ -412,7 +412,8 @@ function App({ settings }: { settings: SettingsState }) {
     prevFollowAppTerminalThemeRef.current = followAppTerminalTheme;
     clearThemeIntent();
   }, [followAppTerminalTheme, clearThemeIntent]);
-  const editorTabs = useEditorTabs();
+  // Presence-only list: keystrokes must not rebuild App domains / TopTabs structure.
+  const editorTabs = useEditorTabChromeList();
 
   const hostById = useMemo(
     () => new Map(hosts.map((host) => [host.id, host])),

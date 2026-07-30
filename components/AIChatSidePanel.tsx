@@ -51,6 +51,7 @@ import {
   type DefaultTargetSessionHint,
 } from './ai/hooks/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
+import { exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { registerGrantPersister } from '../infrastructure/ai/shared/approvalGate';
@@ -1487,7 +1488,21 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.onOpenVaultSnippet !== next.onOpenVaultSnippet) return false;
   if (prev.onOpenVaultSection !== next.onOpenVaultSection) return false;
 
+  // Sibling stream thrash: full sessions array identity always changes. Only
+  // exact-scope session object refs matter for this panel's active chat.
+  // Fuzzy history still receives the full list; drawer open forces re-render
+  // via isVisible / other prop paths when the user actually needs it.
+  if (!exactScopeAISessionsEqual(
+    prev.sessions,
+    next.sessions,
+    prev.scopeType,
+    prev.scopeTargetId,
+  )) {
+    return false;
+  }
+
   for (const key of AI_CHAT_SIDE_PANEL_AI_STATE_KEYS) {
+    if (key === 'sessions') continue;
     if (prev[key] !== next[key]) return false;
   }
   return true;

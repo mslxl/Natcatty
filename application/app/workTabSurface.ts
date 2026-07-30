@@ -5,7 +5,7 @@ import {
 import { isPluginViewTabId } from '../state/pluginViewTabStore';
 import { applyCustomAccentToTerminalTheme, resolveHostTerminalThemeId } from '../../domain/terminalAppearance';
 import { collectSessionIds } from '../../domain/workspace';
-import type { EditorTab } from '../state/editorTabStore';
+import type { EditorTabChrome } from '../state/editorTabStore';
 import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
 
 function uniqueTabIds(tabIds: readonly string[]): string[] {
@@ -135,7 +135,7 @@ export function resolveWorkTabActiveHostId({
   workspaces,
 }: {
   activeTabId: string;
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   sessions: readonly TerminalSession[];
   workspaces: readonly Workspace[];
 }): string | null {

@@ -3,7 +3,7 @@ import { clearTopTabsChromeThemeVars } from '../app/topTabsChromeTheme';
 import type { TerminalAppearanceHostScope, ResolvedAppearance } from '../../domain/terminalAppearanceRuntime';
 import type { Host, TerminalSession, TerminalTheme, Workspace } from '../../types';
 import { activeTabStore } from './activeTabStore';
-import type { EditorTab } from './editorTabStore';
+import type { EditorTabChrome } from './editorTabStore';
 import type { LogView } from './logViewState';
 import { syncActiveChromeTheme } from './useActiveChromeTheme';
 
@@ -12,7 +12,7 @@ export type ActiveChromeThemeDeps = {
   applyAppTheme: () => void;
   currentTerminalTheme: TerminalTheme;
   customAccent: string;
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   followAppTerminalTheme: boolean;
   hostById: Map<string, Host>;
   logViews: readonly LogView[];

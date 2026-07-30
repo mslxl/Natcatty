@@ -7,7 +7,7 @@ import {
 } from '../application/state/sessionPresentationStore';
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
-import type { EditorTab } from '../application/state/editorTabStore';
+import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
 import { resolveSessionTabTitle } from '../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../domain/models';
@@ -161,7 +161,7 @@ interface TopTabsProps {
   showSftpTab: boolean;
   showHostTreeSidebar: boolean;
   dynamicTabTitleMode?: DynamicTabTitleMode;
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   pluginViewTabs: readonly PluginViewTab[];
   onClosePluginViewTab: (tabId: string) => void;
   onRequestCloseEditorTab: (editorTabId: string) => void;
@@ -650,9 +650,9 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     return styles;
   }, [dropIndicator, isDraggingForReorder, orderedTabs]);
 
-  // Pre-compute editor tab map for O(1) access
+  // Pre-compute editor tab map for O(1) access (chrome fields only; dirty via store).
   const editorTabMap = useMemo(() => {
-    const map = new Map<string, EditorTab>();
+    const map = new Map<string, EditorTabChrome>();
     for (const t of editorTabs) map.set(t.id, t);
     return map;
   }, [editorTabs]);
@@ -1196,7 +1196,7 @@ export const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean
     prev.workspaces === next.workspaces &&
     prev.orderedTabs === next.orderedTabs &&
     prev.logViews === next.logViews &&
-    // Editor dirty chrome / renames ride the editorTabs array identity.
+    // Editor open/close/fileName chrome only (presence list). Dirty dots use store.
     prev.editorTabs === next.editorTabs &&
     prev.onRequestCloseEditorTab === next.onRequestCloseEditorTab &&
     prev.pluginViewTabs === next.pluginViewTabs &&

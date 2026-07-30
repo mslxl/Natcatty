@@ -433,6 +433,8 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
             <LazyLoadBoundary name="AI side panel" resetKey={tabId}>
               <Suspense fallback={<AIChatSidePanelFallback />}>
                 <LazyAIChatSidePanel
+                    // Full list keeps fuzzy history ranking; panel areEqual only
+                    // compares exact-scope session object refs for stream isolation.
                     sessions={aiState.sessions}
                     activeSessionIdMap={aiState.activeSessionIdMap}
                     draftsByScope={aiState.draftsByScope}

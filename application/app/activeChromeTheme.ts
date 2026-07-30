@@ -6,7 +6,7 @@ import type {
   TerminalAppearanceHostScope,
 } from "../../domain/terminalAppearanceRuntime";
 import { collectSessionIds } from "../../domain/workspace";
-import type { EditorTab } from "../state/editorTabStore";
+import type { EditorTabChrome } from "../state/editorTabStore";
 import type { LogView } from "../state/logViewState";
 import type { Host, TerminalSession, TerminalTheme, Workspace } from "../../types";
 import { resolveWorkspaceTargetSessionFromMap } from "./workTabSurface";
@@ -16,7 +16,7 @@ export type ResolveActiveChromeThemeInput = {
   activeTabId: string;
   currentTerminalTheme: TerminalTheme;
   customAccent: string;
-  editorTabs: readonly EditorTab[];
+  editorTabs: readonly EditorTabChrome[];
   followAppTerminalTheme: boolean;
   hostById: Map<string, Host>;
   logViews: readonly LogView[];
