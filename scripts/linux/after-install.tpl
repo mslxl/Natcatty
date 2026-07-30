@@ -10,7 +10,7 @@ else
     ln -sf '/opt/${sanitizedProductName}/${executable}' '/usr/bin/${executable}'
 fi
 
-# Always mark chrome-sandbox as SUID root so the SUID sandbox works as a fallback.
+# Always set the chrome-sandbox SUID bit so its sandbox works as a fallback.
 #
 # The upstream electron-builder template gates this on a `unshare --user true`
 # probe and only sets 4755 when unprivileged user namespaces look unavailable.
