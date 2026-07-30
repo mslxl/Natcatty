@@ -1,18 +1,77 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  registerSdkStreamHandlers,
   buildSdkTurnPrompt,
   buildSdkModelCacheKey,
   getSdkModelCacheEntry,
   setSdkModelCacheEntry,
   buildSdkSessionKey,
   normalizeSdkListModelsResult,
+  resolveSdkPromptPlacement,
   resolveSdkResumeSessionId,
+  shouldReplaySdkHistory,
   expireSiblingCursorCliModeSessions,
   resolveBackendKey,
   resolveSdkBackendBinPath,
   shouldCacheSdkRuntimeModels,
 } = require("./sdkStreamHandlers.cjs");
+
+/**
+ * Register the real IPC handlers against a stubbed ctx so lifecycle handlers
+ * (cleanup) can be invoked directly. registerSdkStreamHandlers exposes its
+ * request-scoped maps on ctx for exactly this kind of test.
+ */
+function registerWithStubbedCtx() {
+  const handlers = new Map();
+  const ctx = {
+    ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
+    electronModule: undefined,
+    validateSender: () => true,
+    mcpServerBridge: {
+      setChatSessionCancelled: () => {},
+      cancelPtyExecsForSession: () => {},
+      cancelWorkerBackgroundJobsForSession: () => {},
+      cleanupScopedMetadata: async () => {},
+    },
+  };
+  registerSdkStreamHandlers(ctx);
+  return { handlers, ctx };
+}
+
+test("sdk-agent:cleanup aborts and removes request entries for the target chat only", async () => {
+  const { handlers, ctx } = registerWithStubbedCtx();
+
+  const targetController = new AbortController();
+  const otherController = new AbortController();
+  ctx.sdkActiveStreams.set("req-1", targetController);
+  ctx.sdkRequestSessions.set("req-1", "chat-1");
+  ctx.sdkRequestRuntimes.set("req-1", { backendKey: "codebuddy", codexRuntime: "sdk", binPath: "/bin/cb" });
+  ctx.sdkActiveStreams.set("req-2", otherController);
+  ctx.sdkRequestSessions.set("req-2", "chat-2");
+  ctx.sdkRequestRuntimes.set("req-2", { backendKey: "codex", codexRuntime: "sdk", binPath: "/bin/codex" });
+
+  const cleanup = handlers.get("netcatty:ai:sdk-agent:cleanup");
+  assert.equal(typeof cleanup, "function");
+  const result = await cleanup({ sender: {} }, { chatSessionId: "chat-1" });
+  assert.deepEqual(result, { ok: true });
+
+  // Target chat: controller aborted and every request-scoped entry removed.
+  assert.ok(targetController.signal.aborted);
+  assert.ok(!ctx.sdkActiveStreams.has("req-1"));
+  assert.ok(!ctx.sdkRequestSessions.has("req-1"));
+  assert.ok(!ctx.sdkRequestRuntimes.has("req-1"));
+
+  // Other chat: untouched.
+  assert.ok(!otherController.signal.aborted);
+  assert.equal(ctx.sdkActiveStreams.get("req-2"), otherController);
+  assert.equal(ctx.sdkRequestSessions.get("req-2"), "chat-2");
+  assert.deepEqual(ctx.sdkRequestRuntimes.get("req-2"), {
+    backendKey: "codex",
+    codexRuntime: "sdk",
+    binPath: "/bin/codex",
+  });
+});
 
 test("resolveBackendKey maps backend command/value to registry key", () => {
   assert.equal(resolveBackendKey("claude"), "claude");
@@ -100,6 +159,35 @@ test("normalizeSdkListModelsResult preserves current model ids from object resul
   assert.deepEqual(normalizeSdkListModelsResult([{ id: "claude-sonnet" }]), {
     currentModelId: null,
     models: [{ id: "claude-sonnet" }],
+  });
+});
+
+test("CodeBuddy and OpenCode keep Netcatty context in the system prompt only", () => {
+  const input = {
+    turnPrompt: "user request",
+    contextualPrompt: "netcatty context\n\nuser request",
+    systemContext: "netcatty context",
+  };
+  assert.deepEqual(resolveSdkPromptPlacement({
+    ...input,
+    backendKey: "codebuddy",
+  }), {
+    prompt: "user request",
+    systemPrompt: "netcatty context",
+  });
+  assert.deepEqual(resolveSdkPromptPlacement({
+    ...input,
+    backendKey: "opencode",
+  }), {
+    prompt: "user request",
+    systemPrompt: "netcatty context",
+  });
+  assert.deepEqual(resolveSdkPromptPlacement({
+    ...input,
+    backendKey: "claude",
+  }), {
+    prompt: "netcatty context\n\nuser request",
+    systemPrompt: undefined,
   });
 });
 
@@ -379,6 +467,27 @@ test("buildSdkTurnPrompt replays history only when requested", () => {
   assert.equal(steadyStatePrompt, "latest question");
 });
 
+test("CodeBuddy does not replay renderer history when a persisted session can resume", () => {
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "codebuddy",
+    codexRuntime: "sdk",
+    resumeSessionId: "resumed-codebuddy",
+    hasInMemorySession: false,
+  }), false);
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "codebuddy",
+    codexRuntime: "sdk",
+    resumeSessionId: undefined,
+    hasInMemorySession: false,
+  }), true);
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "claude",
+    codexRuntime: "sdk",
+    resumeSessionId: "resumed-claude",
+    hasInMemorySession: false,
+  }), true);
+});
+
 test("buildSdkTurnPrompt stages attachments as local file hints", () => {
   const staged = [];
   const prompt = buildSdkTurnPrompt({
@@ -401,6 +510,20 @@ test("buildSdkTurnPrompt stages attachments as local file hints", () => {
     filePath: "/tmp/screen.png",
     base64Data: Buffer.from("img").toString("base64"),
   }]);
+});
+
+test("buildSdkTurnPrompt directs Skills-mode attachments to the controlled CLI", () => {
+  const prompt = buildSdkTurnPrompt({
+    prompt: "read it",
+    toolIntegrationMode: "skills",
+    attachments: [
+      { base64Data: "ZGF0YQ==", mediaType: "text/plain", filename: "notes.txt" },
+    ],
+    writeAttachmentToTemp: (attachment) => `/tmp/${attachment.filename}`,
+  });
+
+  assert.match(prompt, /attachment list\/read CLI commands/);
+  assert.doesNotMatch(prompt, /list_attachments|read_attachment/);
 });
 
 test("resolveSdkBackendBinPath prefers configured CodeBuddy path", () => {

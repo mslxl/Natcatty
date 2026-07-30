@@ -19,6 +19,11 @@ import type {
   TurnSteerResult,
 } from './types';
 import { resolveEstimatedUsageFallback, upsertAgentActivity } from './externalSdkEventState';
+import {
+  clearCodebuddyElicitationsForChat,
+  completeCodebuddyElicitation,
+  registerCodebuddyElicitation,
+} from '../../shared/codebuddyElicitations';
 
 interface LiveExternalTurn {
   requestId: string;
@@ -270,6 +275,32 @@ async function runExternalTurn(
     onStatus: (message: string) => runOrBufferUiOperation(() => {
       updateActiveAssistant(msg => ({ ...msg, statusText: message }));
     }),
+    onHook: (hookEvent: string, payload: Record<string, unknown>) => {
+      // Surface lifecycle hooks as status text so the user sees tool activity.
+      const toolName = (payload.toolName as string) || '';
+      if (hookEvent === 'PreToolUse' && toolName) {
+        runOrBufferUiOperation(() => {
+          updateActiveAssistant(msg => ({ ...msg, statusText: `Running ${toolName}…` }));
+        });
+      } else if (hookEvent === 'Notification') {
+        const message = (payload.message as string) || '';
+        if (message) {
+          runOrBufferUiOperation(() => {
+            updateActiveAssistant(msg => ({ ...msg, statusText: message }));
+          });
+        }
+      }
+    },
+    onElicitationCreate: (elicitationId: string, request: Record<string, unknown>) => {
+      registerCodebuddyElicitation({
+        elicitationId,
+        chatSessionId: sessionId,
+        request,
+      });
+    },
+    onElicitationComplete: (notification) => {
+      completeCodebuddyElicitation(notification);
+    },
     onSessionId: (externalSessionId: string) => {
       context.updateExternalSessionId?.(sessionId, externalSessionId);
     },
@@ -370,6 +401,7 @@ async function runExternalTurn(
   } finally {
     ended = true;
     liveTurn.ended = true;
+    clearCodebuddyElicitationsForChat(sessionId);
     if (steerInFlight) {
       steerInFlight = false;
       flushBufferedUiOperations();

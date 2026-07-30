@@ -16,6 +16,17 @@ const cursor = require("./cursorDriver.cjs");
 const cursorCli = require("./cursorCliDriver.cjs");
 const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
+const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
+
+function hasCodebuddyQueryOnlyOptions(options) {
+  return Boolean(
+    options.maxBudgetUsd ||
+    options.sandbox?.enabled === true ||
+    options.fallbackModel ||
+    options.enableFileCheckpointing === true ||
+    options.outputFormat,
+  );
+}
 
 const DRIVER_REGISTRY = {
   claude: {
@@ -147,6 +158,23 @@ const DRIVER_REGISTRY = {
   },
   codebuddy: {
     async runTurn(ctx) {
+      // Build the permission handler: when the CLI hits a security restriction,
+      // auto-confirm (auto mode) or prompt the user (confirm mode) instead of
+      // throwing an error.
+      const canUseTool = codebuddy.buildCodebuddyCanUseTool({
+        permissionMode: ctx.permissionMode,
+        chatSessionId: ctx.chatSessionId,
+        requestApproval: ctx.requestApprovalFromRenderer,
+      });
+      // Build the elicitation handler: forwards create/complete events to the
+      // renderer and waits for the user's decision via the session manager's
+      // pending-response map (resolved by the elicitation-response IPC).
+      // chatSessionId lets closeForChat cancel pendings when the chat closes.
+      const elicitation = codebuddy.buildCodebuddyElicitation(
+        ctx.emitter,
+        codebuddySessionManager.elicitationPending,
+        { chatSessionId: ctx.chatSessionId },
+      );
       const options = codebuddy.buildCodebuddyQueryOptions({
         cwd: ctx.cwd,
         model: ctx.model,
@@ -156,12 +184,95 @@ const DRIVER_REGISTRY = {
         resume: ctx.resumeSessionId,
         pathToCodebuddyCode: ctx.binPath,
         toolIntegrationMode: ctx.toolIntegrationMode,
+        // SDK 0.3.230 options
+        systemPrompt: ctx.systemPrompt,
+        effort: ctx.effort,
+        maxTurns: ctx.maxTurns,
+        maxBudgetUsd: ctx.maxBudgetUsd,
+        fallbackModel: ctx.fallbackModel,
+        sandbox: ctx.sandbox,
+        agents: ctx.agents,
+        outputFormat: ctx.outputFormat,
+        enableFileCheckpointing: ctx.enableFileCheckpointing,
+        traceId: ctx.traceId,
+        parentSpanId: ctx.parentSpanId,
+        hooks: codebuddy.buildCodebuddyHooks(ctx.emitter, {
+          toolIntegrationMode: ctx.toolIntegrationMode,
+          additionalHooks: ctx.hooks,
+          allowedCliCommandPrefix: ctx.skillsCliCommandPrefix,
+        }),
+        elicitation,
+        canUseTool,
       });
+
+      const sessionKey = [
+        String(ctx.chatSessionId || ""),
+        "codebuddy",
+        String(ctx.binPath || ""),
+        "sdk",
+      ].join("\u0000");
+
+      // Try V2 Session API first (persistent multi-turn), falling back to
+      // query() only for fields that SessionOptions does not support.
+      const hasQueryOnlyOptions = hasCodebuddyQueryOnlyOptions(options);
+
+      if (!hasQueryOnlyOptions) {
+        const sessionOptions = {
+          cwd: options.cwd,
+          model: options.model,
+          env: options.env,
+          pathToCodebuddyCode: options.pathToCodebuddyCode,
+          mcpServers: options.mcpServers,
+          permissionMode: options.permissionMode,
+          extraArgs: options.extraArgs,
+          systemPrompt: options.systemPrompt,
+          hooks: options.hooks,
+          elicitation: options.elicitation,
+          canUseTool: options.canUseTool,
+          includePartialMessages: true,
+          tools: options.tools,
+          disallowedTools: options.disallowedTools,
+          settingSources: options.settingSources,
+          maxTurns: options.maxTurns,
+          agents: options.agents,
+          thinking: options.thinking,
+          effort: options.effort,
+        };
+        const v2Result = await codebuddySessionManager.runTurn({
+          sessionKey,
+          prompt: ctx.prompt,
+          attachments: ctx.attachments,
+          options,
+          emitter: ctx.emitter,
+          sessionOptions,
+          resumeSessionId: ctx.resumeSessionId,
+        });
+        if (v2Result) return v2Result;
+      } else {
+        // Do not leave a warm V2 process with stale context while query() is
+        // resuming and advancing the same persisted conversation.
+        codebuddySessionManager.closeSession(sessionKey);
+      }
+
+      // Fallback: legacy query() per-turn (supports all Options fields).
       return codebuddy.runCodebuddyTurn({
         prompt: ctx.prompt,
         attachments: ctx.attachments,
         options,
         emitter: ctx.emitter,
+      });
+    },
+    async steerTurn(ctx) {
+      const sessionKey = [
+        String(ctx.chatSessionId || ""),
+        "codebuddy",
+        String(ctx.binPath || ""),
+        "sdk",
+      ].join("\u0000");
+      return codebuddySessionManager.steer({
+        sessionKey,
+        prompt: ctx.prompt,
+        attachments: ctx.attachments,
       });
     },
     async listModels(ctx) {
@@ -211,4 +322,9 @@ function listBackends() {
   return Object.keys(DRIVER_REGISTRY);
 }
 
-module.exports = { DRIVER_REGISTRY, getDriver, listBackends };
+module.exports = {
+  DRIVER_REGISTRY,
+  getDriver,
+  listBackends,
+  hasCodebuddyQueryOnlyOptions,
+};

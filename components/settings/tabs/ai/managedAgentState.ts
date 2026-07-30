@@ -65,7 +65,14 @@ export function buildManagedAgentState(
       };
     }
     if (agentKey === "codebuddy") {
-      if (existingManaged?.env && Object.keys(existingManaged.env).length > 0) {
+      const hasSavedCodebuddyConfig = Boolean(
+        (existingManaged?.env && Object.keys(existingManaged.env).length > 0) ||
+        (
+          existingManaged?.codebuddyOptions &&
+          Object.keys(existingManaged.codebuddyOptions).length > 0
+        ),
+      );
+      if (hasSavedCodebuddyConfig) {
         return {
           agents: [
             ...otherAgents,
@@ -75,6 +82,7 @@ export function buildManagedAgentState(
               id: managedId,
               command: existingManaged.command || "codebuddy",
               enabled: false,
+              available: false,
             },
           ],
           defaultAgentId: existingManaged.id === defaultAgentId ? "catty" : defaultAgentId,
@@ -178,6 +186,42 @@ export function updateCodebuddyManagedEnv(
       command: "codebuddy",
       enabled: false,
       env: nextEnv,
+    },
+  ];
+}
+
+export function updateCodebuddyManagedOptions(
+  prevAgents: ExternalAgentConfig[],
+  options: ExternalAgentConfig['codebuddyOptions'],
+): ExternalAgentConfig[] {
+  const managedId = "discovered_codebuddy";
+  const existingManaged = prevAgents.find((agent) => agent.id === managedId);
+
+  if (existingManaged) {
+    if (
+      !options &&
+      (!existingManaged.env || Object.keys(existingManaged.env).length === 0) &&
+      !isPathLikeCommand(existingManaged.command)
+    ) {
+      return prevAgents.filter((agent) => agent.id !== managedId);
+    }
+    return prevAgents.map((agent) =>
+      agent.id === managedId
+        ? { ...agent, codebuddyOptions: options }
+        : agent,
+    );
+  }
+
+  if (!options) return prevAgents;
+
+  return [
+    ...prevAgents,
+    {
+      ...AGENT_DEFAULTS.codebuddy,
+      id: managedId,
+      command: "codebuddy",
+      enabled: false,
+      codebuddyOptions: options,
     },
   ];
 }

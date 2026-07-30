@@ -1,3 +1,4 @@
+import type { CodebuddyAdvancedOptions } from '../../infrastructure/ai/types';
 
 declare global {
   interface NetcattyBridge {
@@ -167,7 +168,7 @@ declare global {
       context?: string;
       error?: string;
     }>;
-    aiSdkAgentStream?(requestId: string, chatSessionId: string, sdkBackend: string, prompt: string, cwd?: string, providerId?: string, model?: string, existingSessionId?: string, historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>, images?: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }>, toolIntegrationMode?: 'mcp' | 'skills', defaultTargetSession?: { sessionId: string; hostname: string; label: string; os?: string; username?: string; protocol?: string; shellType?: string; deviceType?: string; connected: boolean; source: 'scope-target' | 'only-connected-in-scope' }, userSkillsContext?: string, agentEnv?: Record<string, string>, agentCommand?: string, codexRuntime?: 'sdk' | 'app-server', permissionMode?: 'observer' | 'confirm' | 'auto'): Promise<{ ok: boolean; error?: string }>;
+    aiSdkAgentStream?(requestId: string, chatSessionId: string, sdkBackend: string, prompt: string, cwd?: string, providerId?: string, model?: string, existingSessionId?: string, historyMessages?: Array<{ role: 'user' | 'assistant'; content: string }>, images?: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }>, toolIntegrationMode?: 'mcp' | 'skills', defaultTargetSession?: { sessionId: string; hostname: string; label: string; os?: string; username?: string; protocol?: string; shellType?: string; deviceType?: string; connected: boolean; source: 'scope-target' | 'only-connected-in-scope' }, userSkillsContext?: string, agentEnv?: Record<string, string>, agentCommand?: string, codexRuntime?: 'sdk' | 'app-server', permissionMode?: 'observer' | 'confirm' | 'auto', codebuddyOptions?: CodebuddyAdvancedOptions): Promise<{ ok: boolean; error?: string }>;
     aiSdkAgentSteer?(requestId: string, chatSessionId: string, prompt: string, images: Array<{ base64Data: string; mediaType: string; filename?: string; filePath?: string }> | undefined, clientUserMessageId: string): Promise<{
       status: 'accepted' | 'not-steerable' | 'busy' | 'inactive' | 'unsupported' | 'cancelled' | 'failed';
       message?: string;
@@ -214,6 +215,14 @@ declare global {
     externalMcpGrokAdd?(): Promise<Record<string, unknown>>;
     aiSdkAgentCancel?(requestId: string, chatSessionId?: string): Promise<{ ok: boolean; error?: string }>;
     aiSdkAgentCleanup?(chatSessionId: string): Promise<{ ok: boolean }>;
+    aiSdkAgentElicitationResponse?(elicitationId: string, action: string, content?: Record<string, unknown>): Promise<{ ok: boolean; error?: string }>;
+    aiSdkAgentMcpStatus?(agentEnv?: Record<string, string>, agentCommand?: string): Promise<{ ok: boolean; servers?: Array<Record<string, unknown>>; error?: string }>;
+    aiSdkAgentAccountInfo?(agentEnv?: Record<string, string>, agentCommand?: string): Promise<{ ok: boolean; account?: Record<string, unknown> | null; error?: string }>;
+    aiSdkAgentPluginInstall?(options: { name: string; marketplace: string }): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentPluginEnable?(name: string, marketplace: string): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentPluginDisable?(name: string, marketplace: string): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentMarketplaceInstall?(options: { name: string; repo: string; autoUpdate?: boolean }): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
+    aiSdkAgentMarketplaceRemove?(options: { name: string; removePlugins?: boolean }): Promise<{ ok: boolean; result?: { success: boolean; message: string }; error?: string }>;
     onAiSdkAgentEvent?(requestId: string, cb: (event: Record<string, unknown>) => void): () => void;
     onAiSdkAgentDone?(requestId: string, cb: () => void): () => void;
     onAiSdkAgentError?(requestId: string, cb: (error: string) => void): () => void;

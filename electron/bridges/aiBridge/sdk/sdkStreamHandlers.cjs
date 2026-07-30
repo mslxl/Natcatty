@@ -11,6 +11,8 @@ const { realpathSync } = require("node:fs");
 const { createHash } = require("node:crypto");
 const { CodexAppServerRuntime } = require("../codexAppServer/runtime.cjs");
 const { probeCodexAppServer } = require("../codexAppServer/probe.cjs");
+const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
+const codebuddyDriver = require("./codebuddyDriver.cjs");
 
 const VALID_BACKENDS = new Set(listBackends());
 
@@ -124,6 +126,19 @@ function normalizeSdkListModelsResult(raw) {
   const currentModelId = Array.isArray(raw) ? null : raw?.currentModelId || null;
   const models = Array.isArray(rawModels) ? rawModels.filter((m) => m && m.id) : [];
   return { currentModelId, models };
+}
+
+function resolveSdkPromptPlacement({
+  backendKey,
+  turnPrompt,
+  contextualPrompt,
+  systemContext,
+}) {
+  const supportsSystemContext = backendKey === "opencode" || backendKey === "codebuddy";
+  return {
+    prompt: supportsSystemContext ? turnPrompt : contextualPrompt,
+    systemPrompt: supportsSystemContext ? systemContext : undefined,
+  };
 }
 
 function deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId) {
@@ -350,6 +365,7 @@ function buildSdkTurnPrompt({
   historyMessages,
   replayHistory,
   attachments,
+  toolIntegrationMode,
   writeAttachmentToTemp = defaultWriteAttachmentToTemp,
   onStagedAttachment,
 }) {
@@ -385,10 +401,13 @@ function buildSdkTurnPrompt({
       }
     }
     if (hints.length > 0) {
+      const attachmentAccessHint = toolIntegrationMode === "skills"
+        ? "[If direct local filesystem tools are unavailable, use Netcatty's attachment list/read CLI commands described in the host context.]"
+        : "[If local filesystem tools are unavailable, use Netcatty's list_attachments and read_attachment MCP tools to inspect these user-supplied files.]";
       sections.push(
         [
           "[Attached files: these paths are local to the machine running Netcatty, not remote hosts. Inspect them locally if needed.]",
-          "[If local filesystem tools are unavailable, use Netcatty's list_attachments and read_attachment MCP tools to inspect these user-supplied files.]",
+          attachmentAccessHint,
           ...hints,
         ].join("\n"),
       );
@@ -399,6 +418,21 @@ function buildSdkTurnPrompt({
   return sections.length > 0
     ? `${sections.join("\n\n")}\n\n${trimmedPrompt}`
     : trimmedPrompt;
+}
+
+function shouldReplaySdkHistory({
+  backendKey,
+  codexRuntime,
+  resumeSessionId,
+  hasInMemorySession,
+}) {
+  // CodeBuddy and Codex App Server resumes restore their own conversation
+  // history. Replaying renderer history as well duplicates every prior turn
+  // after the main-process session map is recreated.
+  if (backendKey === "codebuddy" || codexRuntime === "app-server") {
+    return !resumeSessionId;
+  }
+  return !hasInMemorySession;
 }
 
 function registerSdkStreamHandlers(ctx) {
@@ -432,6 +466,10 @@ function registerSdkStreamHandlers(ctx) {
           model, existingSessionId, toolIntegrationMode,
           defaultTargetSession, userSkillsContext, agentEnv: requestedAgentEnv, agentCommand,
           codexRuntime: requestedCodexRuntime, permissionMode,
+          // SDK 0.3.230 advanced options (passed from renderer via sdkAgentAdapter)
+          effort, maxTurns, maxBudgetUsd, fallbackModel,
+          sandbox, agents, outputFormat, enableFileCheckpointing,
+          traceId, parentSpanId,
         } = payload;
 
         const backendKey = resolveBackendKey(sdkBackend);
@@ -525,7 +563,12 @@ function registerSdkStreamHandlers(ctx) {
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
-          sdkRequestRuntimes.set(requestId, { backendKey, codexRuntime });
+          sdkRequestRuntimes.set(requestId, {
+            backendKey,
+            codexRuntime,
+            binPath,
+            toolIntegrationMode: effectiveMode,
+          });
 
           const hasConfiguredCommand = isPathLikeCommand(agentCommand);
           const sessionBinPath = backendKey === "cursor" && cursorAuthMode === "cli-login"
@@ -573,8 +616,14 @@ function registerSdkStreamHandlers(ctx) {
           const turnPrompt = buildSdkTurnPrompt({
             prompt,
             historyMessages: payload?.historyMessages,
-            replayHistory: codexRuntime === "app-server" ? !resumeSessionId : !hasInMemorySession,
+            replayHistory: shouldReplaySdkHistory({
+              backendKey,
+              codexRuntime,
+              resumeSessionId,
+              hasInMemorySession,
+            }),
             attachments: payload?.images,
+            toolIntegrationMode: effectiveMode,
             onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
           });
           mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
@@ -626,11 +675,16 @@ function registerSdkStreamHandlers(ctx) {
                 .filter(Boolean),
             })
             : undefined;
+          const promptPlacement = resolveSdkPromptPlacement({
+            backendKey,
+            turnPrompt,
+            contextualPrompt,
+            systemContext,
+          });
           const commonTurnContext = {
             requestId,
             chatSessionId,
-            prompt: backendKey === "opencode" ? turnPrompt : contextualPrompt,
-            systemPrompt: backendKey === "opencode" ? systemContext : undefined,
+            ...promptPlacement,
             cwd: cwd || process.cwd(),
             model: model || undefined,
             permissionMode: permissionMode || "confirm",
@@ -642,6 +696,9 @@ function registerSdkStreamHandlers(ctx) {
             injectedMcpServers,
             claudeSettings,
             toolIntegrationMode: effectiveMode,
+            skillsCliCommandPrefix: effectiveMode === "skills"
+              ? getSkillsCliInvocation().commandPrefix
+              : undefined,
             skillsPathAllowlist,
             emitter: driverEmitter,
             signal: abortController.signal,
@@ -650,6 +707,21 @@ function registerSdkStreamHandlers(ctx) {
             resumeThreadId: resumeSessionId,
             attachments: stagedAttachments,
             sender: event.sender,
+            // Approval channel for codebuddy canUseTool permission handler:
+            // when the CLI hits a security restriction, route the decision
+            // through the renderer approval UI instead of throwing an error.
+            requestApprovalFromRenderer: mcpServerBridge.requestApprovalFromRenderer,
+            // SDK 0.3.230 advanced options
+            effort: effort || undefined,
+            maxTurns: maxTurns || undefined,
+            maxBudgetUsd: maxBudgetUsd || undefined,
+            fallbackModel: fallbackModel || undefined,
+            sandbox: sandbox || undefined,
+            agents: agents || undefined,
+            outputFormat: outputFormat || undefined,
+            enableFileCheckpointing: enableFileCheckpointing != null ? enableFileCheckpointing : undefined,
+            traceId: traceId || undefined,
+            parentSpanId: parentSpanId || undefined,
           };
           const result = codexRuntime === "app-server"
             ? await codexAppServerRuntime.runTurn(commonTurnContext)
@@ -824,6 +896,13 @@ function registerSdkStreamHandlers(ctx) {
       }
       const runtime = sdkRequestRuntimes.get(requestId);
       if (!runtime) return { status: "busy" };
+
+      // SDK 0.3.230 Session.send() resets the active message stream, so it
+      // cannot safely implement mid-turn steering.
+      if (runtime.backendKey === "codebuddy") {
+        return { status: "unsupported" };
+      }
+
       if (runtime?.backendKey !== "codex" || runtime.codexRuntime !== "app-server") {
         return { status: "unsupported" };
       }
@@ -833,6 +912,7 @@ function registerSdkStreamHandlers(ctx) {
         prompt,
         replayHistory: false,
         attachments: payload?.images,
+        toolIntegrationMode: runtime.toolIntegrationMode,
         onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
       });
       mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
@@ -869,7 +949,21 @@ function registerSdkStreamHandlers(ctx) {
       mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
       mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
       mcpServerBridge.cancelWorkerBackgroundJobsForSession?.(chatSessionId);
+      // Abort any in-flight SDK turns for this chat and drop their
+      // request-scoped entries immediately: if a turn never settles (renderer
+      // crash / window closed mid-stream), the stream handler's finally never
+      // runs and sdkActiveStreams/sdkRequestSessions/sdkRequestRuntimes would
+      // leak forever. Steer then reports "inactive" for these requests, which
+      // is correct for a chat being torn down.
+      for (const [requestId, requestChatSessionId] of [...sdkRequestSessions]) {
+        if (requestChatSessionId !== chatSessionId) continue;
+        try { sdkActiveStreams.get(requestId)?.abort(); } catch { /* best effort */ }
+        sdkActiveStreams.delete(requestId);
+        sdkRequestSessions.delete(requestId);
+        sdkRequestRuntimes.delete(requestId);
+      }
       deleteSdkSessionKeysForChat(sdkSessionIds, chatSessionId);
+      codebuddySessionManager.closeForChat(chatSessionId);
       await codexAppServerRuntime.cleanupChatSession(chatSessionId);
       await mcpServerBridge.cleanupScopedMetadata(chatSessionId);
       return { ok: true };
@@ -911,9 +1005,125 @@ function registerSdkStreamHandlers(ctx) {
       }
     });
 
-    // Expose teardown so aiBridge.cleanup() can abort active SDK streams.
+    // --- CodeBuddy SDK 0.3.230 IPC handlers ---
+
+    ipcMain.handle("netcatty:ai:sdk-agent:mcp-status", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const shellEnv = await getShellEnv();
+        const env = buildSdkAgentEnv({
+          shellEnv,
+          requestedAgentEnv: normalizeAgentEnv(payload?.agentEnv),
+          withCliDiscoveryEnv,
+          normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
+        });
+        const binPath = resolveSdkBackendBinPath({
+          backendKey: "codebuddy",
+          configuredCommand: payload?.agentCommand,
+          shellEnv, env,
+          resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath,
+          resolveClaudeCodeExecutableForSdk, resolveCodexExecutableForSdk, resolveCodebuddyExecutableForSdk,
+        });
+        const status = await codebuddyDriver.getCodebuddyMcpStatus({ pathToCodebuddyCode: binPath, env });
+        return { ok: true, servers: status };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:account-info", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const shellEnv = await getShellEnv();
+        const env = buildSdkAgentEnv({
+          shellEnv,
+          requestedAgentEnv: normalizeAgentEnv(payload?.agentEnv),
+          withCliDiscoveryEnv,
+          normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
+        });
+        const binPath = resolveSdkBackendBinPath({
+          backendKey: "codebuddy",
+          configuredCommand: payload?.agentCommand,
+          shellEnv, env,
+          resolveCliFromPath, normalizeCliPathForPlatform, resolveSdkBinPath,
+          resolveClaudeCodeExecutableForSdk, resolveCodexExecutableForSdk, resolveCodebuddyExecutableForSdk,
+        });
+        const info = await codebuddyDriver.getCodebuddyAccountInfo({ pathToCodebuddyCode: binPath, env });
+        return { ok: true, account: info };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:elicitation-response", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      const { elicitationId, action, content } = payload || {};
+      if (!elicitationId) return { ok: false, error: "Missing elicitationId" };
+      const resolved = codebuddySessionManager.resolveElicitation(elicitationId, {
+        action: action || "cancel",
+        content: content || undefined,
+      });
+      return resolved ? { ok: true } : { ok: false, error: "Elicitation not found or already resolved" };
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-install", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyInstallPlugin(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-enable", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyEnablePlugin(payload?.name, payload?.marketplace);
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:plugin-disable", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyDisablePlugin(payload?.name, payload?.marketplace);
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:marketplace-install", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyInstallMarketplace(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    ipcMain.handle("netcatty:ai:sdk-agent:marketplace-remove", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      try {
+        const result = await codebuddyDriver.codebuddyRemoveMarketplace(payload?.options || {});
+        return { ok: true, result };
+      } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+      }
+    });
+
+    // Expose teardown so aiBridge.cleanup() can abort active streams and close
+    // persistent SDK runtimes, including idle CodeBuddy V2 sessions. The
+    // request-scoped maps are also exposed for lifecycle tests.
     ctx.sdkActiveStreams = sdkActiveStreams;
+    ctx.sdkRequestSessions = sdkRequestSessions;
+    ctx.sdkRequestRuntimes = sdkRequestRuntimes;
     ctx.codexAppServerRuntime = codexAppServerRuntime;
+    ctx.codebuddySessionManager = codebuddySessionManager;
   }
 }
 
@@ -926,9 +1136,11 @@ module.exports = {
   getSdkModelCacheEntry,
   setSdkModelCacheEntry,
   normalizeSdkListModelsResult,
+  resolveSdkPromptPlacement,
   resolveSdkResumeSessionId,
   expireSiblingCursorCliModeSessions,
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
   buildSdkTurnPrompt,
+  shouldReplaySdkHistory,
 };

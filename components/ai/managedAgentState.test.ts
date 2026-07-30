@@ -5,6 +5,7 @@ import {
   buildManagedAgentState,
   getInitialManagedAgentPaths,
   updateCodebuddyManagedEnv,
+  updateCodebuddyManagedOptions,
 } from '../settings/tabs/ai/managedAgentState';
 import type { ExternalAgentConfig } from '../../infrastructure/ai/types';
 
@@ -380,6 +381,46 @@ test('buildManagedAgentState enables preconfigured CodeBuddy when path detection
 test('updateCodebuddyManagedEnv removes an empty pre-detection placeholder', () => {
   const agents = updateCodebuddyManagedEnv([], 'internal', 'CODEBUDDY_API_KEY=secret');
   const cleared = updateCodebuddyManagedEnv(agents, '', '');
+
+  assert.deepEqual(cleared, []);
+});
+
+test('updateCodebuddyManagedOptions persists settings before CLI detection', () => {
+  const state = updateCodebuddyManagedOptions([], {
+    effort: 'high',
+    enableFileCheckpointing: true,
+  });
+
+  assert.equal(state.length, 1);
+  assert.equal(state[0].id, 'discovered_codebuddy');
+  assert.equal(state[0].command, 'codebuddy');
+  assert.equal(state[0].enabled, false);
+  assert.deepEqual(state[0].codebuddyOptions, {
+    effort: 'high',
+    enableFileCheckpointing: true,
+  });
+});
+
+test('buildManagedAgentState preserves advanced CodeBuddy config when detection fails', () => {
+  const agents = updateCodebuddyManagedOptions([], { effort: 'high' });
+
+  const state = buildManagedAgentState(
+    agents,
+    'discovered_codebuddy',
+    'codebuddy',
+    { path: null, version: null, available: false },
+  );
+
+  assert.equal(state.defaultAgentId, 'catty');
+  assert.equal(state.agents.length, 1);
+  assert.equal(state.agents[0].enabled, false);
+  assert.equal(state.agents[0].available, false);
+  assert.deepEqual(state.agents[0].codebuddyOptions, { effort: 'high' });
+});
+
+test('updateCodebuddyManagedOptions removes an empty pre-detection placeholder', () => {
+  const agents = updateCodebuddyManagedOptions([], { effort: 'high' });
+  const cleared = updateCodebuddyManagedOptions(agents, undefined);
 
   assert.deepEqual(cleared, []);
 });

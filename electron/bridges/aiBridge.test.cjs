@@ -173,6 +173,11 @@ function loadBridgeWithMocks(options = {}) {
       },
     },
   };
+  if (typeof options.registerSdkStreamHandlers === "function") {
+    mocks["./aiBridge/sdk/sdkStreamHandlers.cjs"] = {
+      registerSdkStreamHandlers: options.registerSdkStreamHandlers,
+    };
+  }
 
   const bridgePath = require.resolve("./aiBridge.cjs");
   const originalLoad = Module._load;
@@ -203,6 +208,42 @@ function loadBridgeWithMocks(options = {}) {
     throw error;
   }
 }
+
+test("cleanup closes persistent CodeBuddy sessions", () => {
+  let codebuddyCloseCalls = 0;
+  let codexCloseCalls = 0;
+  let sdkAbortCalls = 0;
+  const { bridge, restore } = loadBridgeWithMocks({
+    registerSdkStreamHandlers: (context) => {
+      context.sdkActiveStreams = new Map([
+        ["request-1", { abort: () => { sdkAbortCalls += 1; } }],
+      ]);
+      context.codexAppServerRuntime = {
+        close: () => { codexCloseCalls += 1; },
+      };
+      context.codebuddySessionManager = {
+        closeAll: () => { codebuddyCloseCalls += 1; },
+      };
+    },
+  });
+  const ipcMain = createIpcMainStub();
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    bridge.cleanup();
+    assert.equal(sdkAbortCalls, 1);
+    assert.equal(codexCloseCalls, 1);
+    assert.equal(codebuddyCloseCalls, 1);
+  } finally {
+    restore();
+  }
+});
 
 test("non-2xx streaming responses are bounded and actively terminated", async () => {
   let requestClosed = false;

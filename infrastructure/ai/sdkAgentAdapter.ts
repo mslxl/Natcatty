@@ -44,6 +44,9 @@ export interface SdkAgentCallbacks {
   onWarning?: (activity: Extract<AgentActivity, { type: 'warning' }>) => void;
   onUsage?: (usage: AgentUsage) => void;
   onStatus?: (message: string) => void;
+  onHook?: (hookEvent: string, payload: Record<string, unknown>) => void;
+  onElicitationCreate?: (elicitationId: string, request: Record<string, unknown>) => void;
+  onElicitationComplete?: (notification: Record<string, unknown>) => void;
   onError: (error: string) => void;
   onDone: () => void;
 }
@@ -67,6 +70,7 @@ interface SdkAgentBridge {
     agentCommand?: string,
     codexRuntime?: 'sdk' | 'app-server',
     permissionMode?: AIPermissionMode,
+    codebuddyOptions?: ExternalAgentConfig['codebuddyOptions'],
   ): Promise<{ ok: boolean; error?: unknown }>;
   aiSdkAgentSteer?(
     requestId: string,
@@ -342,6 +346,7 @@ export async function runSdkAgentTurn(
     agentCommand,
     sdkBackend === 'codex' ? (config.codexRuntime ?? 'sdk') : undefined,
     permissionMode,
+    sdkBackend === 'codebuddy' ? config.codebuddyOptions : undefined,
   ).then((result) => {
     if (result?.ok === false) {
       settle(() => {
@@ -493,6 +498,26 @@ function handleStreamEvent(event: StreamEvent, callbacks: SdkAgentCallbacks): bo
           event.cliMode as string | undefined,
         ));
       }
+      return false;
+    }
+    case 'hook': {
+      const hookEvent = (event.hookEvent as string) || '';
+      if (hookEvent) {
+        callbacks.onHook?.(hookEvent, event as Record<string, unknown>);
+      }
+      return false;
+    }
+    case 'elicitation-create': {
+      const elicitationId = (event.elicitationId as string) || '';
+      const request = (event.request as Record<string, unknown>) || {};
+      if (elicitationId) {
+        callbacks.onElicitationCreate?.(elicitationId, request);
+      }
+      return false;
+    }
+    case 'elicitation-complete': {
+      const notification = (event.notification as Record<string, unknown>) || {};
+      callbacks.onElicitationComplete?.(notification);
       return false;
     }
     case 'error': {

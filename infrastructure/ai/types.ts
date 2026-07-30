@@ -263,6 +263,24 @@ export interface ExternalAgentConfig {
   acpArgs?: string[];
   /** Internal: disabled only because the managed CLI was unavailable. */
   autoDisabledUntilAvailable?: boolean;
+  /** CodeBuddy-specific advanced options (SDK 0.3.230). */
+  codebuddyOptions?: CodebuddyAdvancedOptions;
+}
+
+/** Advanced options specific to the CodeBuddy backend (SDK 0.3.230+). */
+export interface CodebuddyAdvancedOptions {
+  /** Effort level for model reasoning. */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
+  /** Maximum conversation turns per request. */
+  maxTurns?: number;
+  /** Maximum budget in USD per request. */
+  maxBudgetUsd?: number;
+  /** Sandbox settings for tool execution. */
+  sandbox?: { enabled?: boolean; autoAllowBashIfSandboxed?: boolean };
+  /** Enable file checkpointing for rollback. */
+  enableFileCheckpointing?: boolean;
+  /** Fallback model when primary is unavailable. */
+  fallbackModel?: string;
 }
 
 // Discovered agent from system PATH
