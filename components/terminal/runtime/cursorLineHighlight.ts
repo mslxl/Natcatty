@@ -1,4 +1,9 @@
-import type { IDecoration, IDisposable, IMarker, Terminal as XTerm } from '@xterm/xterm';
+import type {
+  IDecoration,
+  IDisposable,
+  IMarker,
+  Terminal as XTerm,
+} from '@xterm/xterm';
 
 type CursorLineTerminal = Pick<
   XTerm,
@@ -11,20 +16,23 @@ type CursorLineTerminal = Pick<
   | 'onWriteParsed'
 >;
 
+type HighlightRange = { x: number; width: number };
+
 /**
- * Highlights the buffer row under the cursor with a full-width xterm decoration.
- * Hidden on the alternate screen so full-screen applications keep their own styling.
+ * Highlights the buffer row under the cursor without tinting its glyphs.
+ * ANSI-colored cells keep their own background; only default-background cells
+ * receive the opaque theme color.
  */
 export class CursorLineHighlighter implements IDisposable {
   private enabled = false;
-  private overlayColor = 'rgba(201, 209, 217, 0.18)';
+  private backgroundColor = '#263449';
   private marker: IMarker | null = null;
-  private decoration: IDecoration | null = null;
-  private decorationRenderListener: IDisposable | null = null;
-  private decorationDisposeListener: IDisposable | null = null;
+  private decorations: IDecoration[] = [];
+  private decorationDisposeListeners: IDisposable[] = [];
   private activeLine: number | null = null;
   private activeCols: number | null = null;
   private activeColor: string | null = null;
+  private activeRanges: HighlightRange[] = [];
   private readonly disposables: IDisposable[] = [];
   private disposed = false;
 
@@ -51,11 +59,11 @@ export class CursorLineHighlighter implements IDisposable {
     this.refresh({ force: true });
   }
 
-  setOverlayColor(color: string): void {
+  setBackgroundColor(color: string): void {
     if (this.disposed) return;
     const next = color.trim();
-    if (!next || next === this.overlayColor) return;
-    this.overlayColor = next;
+    if (!next || next === this.backgroundColor) return;
+    this.backgroundColor = next;
     if (this.enabled) this.refresh({ force: true });
   }
 
@@ -69,14 +77,15 @@ export class CursorLineHighlighter implements IDisposable {
     }
     const absoluteLine = buffer.baseY + buffer.cursorY;
     const cols = Math.max(1, this.term.cols || 1);
-    const color = this.overlayColor;
+    const color = this.backgroundColor;
+    const ranges = this.getDefaultBackgroundRanges(buffer.getLine(absoluteLine), cols, buffer.getNullCell());
 
     if (
       !options.force &&
       absoluteLine === this.activeLine &&
       cols === this.activeCols &&
       color === this.activeColor &&
-      this.decoration &&
+      rangesEqual(ranges, this.activeRanges) &&
       this.marker &&
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
@@ -89,36 +98,34 @@ export class CursorLineHighlighter implements IDisposable {
     const marker = this.term.registerMarker(0);
     if (!marker) return;
 
-    const decoration = this.term.registerDecoration({
-      marker,
-      x: 0,
-      width: cols,
-    });
-
-    if (!decoration) {
-      marker.dispose();
-      return;
+    const decorations: IDecoration[] = [];
+    for (const range of ranges) {
+      const decoration = this.term.registerDecoration({
+        marker,
+        x: range.x,
+        width: range.width,
+        backgroundColor: color,
+        layer: 'bottom',
+      });
+      if (decoration) decorations.push(decoration);
     }
 
     this.marker = marker;
-    this.decoration = decoration;
-    this.decorationRenderListener = decoration.onRender((element) => {
-      element.style.backgroundColor = color;
-      element.style.pointerEvents = 'none';
-      element.setAttribute('aria-hidden', 'true');
-    });
-    this.decorationDisposeListener = decoration.onDispose(() => {
-      if (this.decoration !== decoration) return;
-      this.decoration = null;
-      this.decorationRenderListener = null;
-      this.decorationDisposeListener = null;
-      this.activeLine = null;
-      this.activeCols = null;
-      this.activeColor = null;
-    });
+    this.decorations = decorations;
+    this.decorationDisposeListeners = decorations.map((decoration) =>
+      decoration.onDispose(() => {
+        if (this.decorations.includes(decoration)) {
+          this.activeLine = null;
+          this.activeCols = null;
+          this.activeColor = null;
+          this.activeRanges = [];
+        }
+      }),
+    );
     this.activeLine = absoluteLine;
     this.activeCols = cols;
     this.activeColor = color;
+    this.activeRanges = ranges;
   }
 
   dispose(): void {
@@ -131,17 +138,41 @@ export class CursorLineHighlighter implements IDisposable {
     this.disposables.length = 0;
   }
 
+  private getDefaultBackgroundRanges(
+    line: ReturnType<CursorLineTerminal['buffer']['active']['getLine']>,
+    cols: number,
+    cell: ReturnType<CursorLineTerminal['buffer']['active']['getNullCell']>,
+  ): HighlightRange[] {
+    const ranges: HighlightRange[] = [];
+    let rangeStart: number | null = null;
+    for (let x = 0; x < cols; x += 1) {
+      const isDefaultBackground = line?.getCell(x, cell)?.isBgDefault() ?? true;
+      if (isDefaultBackground && rangeStart === null) rangeStart = x;
+      if ((!isDefaultBackground || x === cols - 1) && rangeStart !== null) {
+        const end = isDefaultBackground && x === cols - 1 ? x + 1 : x;
+        ranges.push({ x: rangeStart, width: end - rangeStart });
+        rangeStart = null;
+      }
+    }
+    return ranges;
+  }
+
   private clear(): void {
-    this.decorationRenderListener?.dispose();
-    this.decorationRenderListener = null;
-    this.decorationDisposeListener?.dispose();
-    this.decorationDisposeListener = null;
-    this.decoration?.dispose();
-    this.decoration = null;
+    for (const disposable of this.decorationDisposeListeners) disposable.dispose();
+    this.decorationDisposeListeners = [];
+    for (const decoration of this.decorations) decoration.dispose();
+    this.decorations = [];
     this.marker?.dispose();
     this.marker = null;
     this.activeLine = null;
     this.activeCols = null;
     this.activeColor = null;
+    this.activeRanges = [];
   }
 }
+
+const rangesEqual = (left: HighlightRange[], right: HighlightRange[]): boolean =>
+  left.length === right.length && left.every((range, index) => {
+    const other = right[index];
+    return other?.x === range.x && other.width === range.width;
+  });

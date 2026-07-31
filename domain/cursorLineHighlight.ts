@@ -1,8 +1,4 @@
-/**
- * Pure helpers for the terminal cursor-line highlight (WindTerm-style).
- * The highlight is rendered as a translucent DOM overlay so existing ANSI
- * cell backgrounds remain visible underneath it.
- */
+/** Pure helpers for the terminal cursor-line highlight (WindTerm-style). */
 
 export type CursorLineHighlightColors = {
   background: string;
@@ -30,14 +26,16 @@ const parseHexRgb = (value: string): Rgb | null => {
   return { r, g, b };
 };
 
-/** Opacity of the selection/foreground overlay above the cursor row. */
-export const CURSOR_LINE_HIGHLIGHT_OPACITY = 0.18;
+/** Strength of the theme accent mixed into the terminal background. */
+export const CURSOR_LINE_HIGHLIGHT_BLEND = 0.55;
 
 /**
- * Resolve a translucent overlay color for the cursor line decoration.
+ * Resolve an opaque background for the cursor line decoration.
  * Prefers selection over foreground so the highlight stays theme-aligned.
+ * The renderer applies this only to cells with the default background, which
+ * keeps ANSI-colored cells and the terminal's text foreground untouched.
  */
-export const resolveCursorLineHighlightOverlay = (
+export const resolveCursorLineHighlightBackground = (
   colors: CursorLineHighlightColors,
 ): string => {
   const background = parseHexRgb(colors.background) ?? { r: 13, g: 17, b: 23 };
@@ -49,5 +47,12 @@ export const resolveCursorLineHighlightOverlay = (
     (backgroundLuminance >= 128
       ? { r: 0, g: 0, b: 0 }
       : { r: 255, g: 255, b: 255 });
-  return `rgba(${overlay.r}, ${overlay.g}, ${overlay.b}, ${CURSOR_LINE_HIGHLIGHT_OPACITY})`;
+  const mix = (base: number, accent: number) =>
+    Math.round(base + (accent - base) * CURSOR_LINE_HIGHLIGHT_BLEND);
+  const channels = [
+    mix(background.r, overlay.r),
+    mix(background.g, overlay.g),
+    mix(background.b, overlay.b),
+  ];
+  return `#${channels.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
 };

@@ -22,7 +22,7 @@ import {
   resolveTerminalHibernateEnabledForProtocol,
 } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
-import { resolveCursorLineHighlightOverlay } from '../../domain/cursorLineHighlight';
+import { resolveCursorLineHighlightBackground } from '../../domain/cursorLineHighlight';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -235,8 +235,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     const runtime = xtermRuntimeRef.current;
     if (!runtime?.cursorLineHighlighter) return;
-    runtime.cursorLineHighlighter.setOverlayColor(
-      resolveCursorLineHighlightOverlay(effectiveTheme.colors),
+    runtime.cursorLineHighlighter.setBackgroundColor(
+      resolveCursorLineHighlightBackground(effectiveTheme.colors),
     );
     runtime.cursorLineHighlighter.setEnabled(
       terminalSettings?.highlightCursorLine ?? false,
@@ -516,8 +516,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         ];
         const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled;
         runtime.keywordHighlighter.setRules(mergedRules, isEnabled);
-        runtime.cursorLineHighlighter.setOverlayColor(
-          resolveCursorLineHighlightOverlay(effectiveTheme.colors),
+        runtime.cursorLineHighlighter.setBackgroundColor(
+          resolveCursorLineHighlightBackground(effectiveTheme.colors),
         );
         runtime.cursorLineHighlighter.setEnabled(
           terminalSettingsRef.current?.highlightCursorLine ?? false,

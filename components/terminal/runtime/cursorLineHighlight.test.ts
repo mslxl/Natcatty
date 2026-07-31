@@ -4,16 +4,11 @@ import assert from 'node:assert/strict';
 import { CursorLineHighlighter } from './cursorLineHighlight.ts';
 
 type Handler = () => void;
-type FakeElement = {
-  style: Record<string, string>;
-  attributes: Record<string, string>;
-  setAttribute: (name: string, value: string) => void;
-};
-
 const createFakeTerm = (cols = 80) => {
   let cursorY = 0;
   let baseY = 0;
   let bufferType: 'normal' | 'alternate' = 'normal';
+  const coloredBackgrounds = new Set<number>();
   const cursorMoveHandlers: Handler[] = [];
   const writeParsedHandlers: Handler[] = [];
   const resizeHandlers: Handler[] = [];
@@ -21,9 +16,7 @@ const createFakeTerm = (cols = 80) => {
   const decorations: Array<{
     options: Record<string, unknown>;
     disposed: boolean;
-    element: FakeElement;
     dispose: () => void;
-    onRender: (handler: (element: FakeElement) => void) => { dispose: () => void };
     onDispose: (handler: Handler) => { dispose: () => void };
   }> = [];
   const markers: Array<{ line: number; disposed: boolean }> = [];
@@ -40,6 +33,16 @@ const createFakeTerm = (cols = 80) => {
         },
         get cursorY() {
           return cursorY;
+        },
+        getLine() {
+          return {
+            getCell(x: number) {
+              return { isBgDefault: () => !coloredBackgrounds.has(x) };
+            },
+          };
+        },
+        getNullCell() {
+          return { isBgDefault: () => true };
         },
       },
       onBufferChange(handler: Handler) {
@@ -75,17 +78,9 @@ const createFakeTerm = (cols = 80) => {
     },
     registerDecoration(options: Record<string, unknown>) {
       const disposeHandlers = new Set<Handler>();
-      const element: FakeElement = {
-        style: {},
-        attributes: {},
-        setAttribute(name, value) {
-          this.attributes[name] = value;
-        },
-      };
       const decoration = {
         options,
         disposed: false,
-        element,
         dispose() {
           if (this.disposed) return;
           this.disposed = true;
@@ -95,10 +90,6 @@ const createFakeTerm = (cols = 80) => {
         onDispose(handler: Handler) {
           disposeHandlers.add(handler);
           return { dispose: () => disposeHandlers.delete(handler) };
-        },
-        onRender(handler: (element: FakeElement) => void) {
-          handler(element);
-          return { dispose() {} };
         },
       };
       decorations.push(decoration);
@@ -122,6 +113,11 @@ const createFakeTerm = (cols = 80) => {
       bufferType = nextType;
       for (const handler of bufferChangeHandlers) handler();
     },
+    setColoredBackgrounds(columns: number[]) {
+      coloredBackgrounds.clear();
+      for (const column of columns) coloredBackgrounds.add(column);
+      for (const handler of writeParsedHandlers) handler();
+    },
     resetDecorations() {
       for (const decoration of decorations) decoration.dispose();
     },
@@ -136,18 +132,34 @@ const createFakeTerm = (cols = 80) => {
   return term;
 };
 
-test('CursorLineHighlighter paints a translucent full-width overlay when enabled', () => {
+test('CursorLineHighlighter paints an opaque background without changing text', () => {
   const term = createFakeTerm(100);
   const highlighter = new CursorLineHighlighter(term as never);
-  highlighter.setOverlayColor('rgba(38, 79, 120, 0.18)');
+  highlighter.setBackgroundColor('#263449');
   highlighter.setEnabled(true);
 
   assert.equal(term.decorations.length, 1);
   assert.equal(term.decorations[0]?.options.width, 100);
-  assert.equal(term.decorations[0]?.options.backgroundColor, undefined);
-  assert.equal(term.decorations[0]?.element.style.backgroundColor, 'rgba(38, 79, 120, 0.18)');
-  assert.equal(term.decorations[0]?.element.style.pointerEvents, 'none');
-  assert.equal(term.decorations[0]?.element.attributes['aria-hidden'], 'true');
+  assert.equal(term.decorations[0]?.options.backgroundColor, '#263449');
+  assert.equal(term.decorations[0]?.options.layer, 'bottom');
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter leaves ANSI background cells untouched', () => {
+  const term = createFakeTerm(10);
+  term.setColoredBackgrounds([2, 3, 7]);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setBackgroundColor('#263449');
+  highlighter.setEnabled(true);
+
+  assert.deepEqual(
+    term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
+    [
+      { x: 0, width: 2 },
+      { x: 4, width: 3 },
+      { x: 8, width: 2 },
+    ],
+  );
   highlighter.dispose();
 });
 
@@ -171,20 +183,20 @@ test('CursorLineHighlighter recreates on resize and overlay color changes', () =
   const term = createFakeTerm(40);
   const highlighter = new CursorLineHighlighter(term as never);
   highlighter.setEnabled(true);
-  highlighter.setOverlayColor('rgba(17, 34, 51, 0.18)');
+  highlighter.setBackgroundColor('#112233');
   assert.equal(
-    term.decorations.at(-1)?.element.style.backgroundColor,
-    'rgba(17, 34, 51, 0.18)',
+    term.decorations.at(-1)?.options.backgroundColor,
+    '#112233',
   );
   assert.equal(term.decorations.at(-1)?.options.width, 40);
 
   term.setCols(120);
   assert.equal(term.decorations.at(-1)?.options.width, 120);
 
-  highlighter.setOverlayColor('rgba(68, 85, 102, 0.18)');
+  highlighter.setBackgroundColor('#445566');
   assert.equal(
-    term.decorations.at(-1)?.element.style.backgroundColor,
-    'rgba(68, 85, 102, 0.18)',
+    term.decorations.at(-1)?.options.backgroundColor,
+    '#445566',
   );
   highlighter.dispose();
 });
