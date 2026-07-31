@@ -72,3 +72,14 @@ test('ensureCursorLineHighlightContrast protects keyword blue', () => {
     '#000000',
   );
 });
+
+test('resolveCursorLineHighlightBackground keeps Tokyo Night Light visible', () => {
+  assert.notEqual(
+    resolveCursorLineHighlightBackground({
+      background: '#e1e2e7',
+      foreground: '#3760bf',
+      selection: '#abc7d4',
+    }),
+    '#e1e2e7',
+  );
+});

@@ -250,8 +250,8 @@ test('CursorLineHighlighter fills the blank tail after short output', () => {
   assert.equal(term.decorations[0]?.options.width, 4);
   assert.equal(term.decorations[1]?.options.x, 4);
   assert.equal(term.decorations[1]?.options.width, 6);
-  assert.equal(term.decorations[1]?.options.backgroundColor, undefined);
-  assert.equal(term.decorations[1]?.element.style.backgroundColor, '#263449');
+  assert.equal(term.decorations[1]?.options.backgroundColor, '#263449');
+  assert.equal(term.decorations[1]?.options.layer, 'bottom');
   highlighter.dispose();
 });
 

@@ -117,7 +117,7 @@ export const resolveCursorLineHighlightBackground = (
         mixed = candidate;
         bestContrast = candidateContrast;
       }
-      if (candidateContrast >= MIN_CURSOR_LINE_CONTRAST) {
+      if (step > 0 && candidateContrast >= MIN_CURSOR_LINE_CONTRAST) {
         mixed = candidate;
         return toHex(mixed);
       }

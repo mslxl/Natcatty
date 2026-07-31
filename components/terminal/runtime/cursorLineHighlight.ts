@@ -30,7 +30,6 @@ export class CursorLineHighlighter implements IDisposable {
   private marker: IMarker | null = null;
   private decorations: IDecoration[] = [];
   private decorationDisposeListeners: IDisposable[] = [];
-  private decorationRenderListeners: IDisposable[] = [];
   private activeLine: number | null = null;
   private activeCols: number | null = null;
   private activeColor: string | null = null;
@@ -129,15 +128,10 @@ export class CursorLineHighlighter implements IDisposable {
         marker,
         x: tailRange.x,
         width: tailRange.width,
+        backgroundColor: color,
+        layer: 'bottom',
       });
       if (tailDecoration) {
-        this.decorationRenderListeners.push(
-          tailDecoration.onRender((element) => {
-            element.style.backgroundColor = color;
-            element.style.pointerEvents = 'none';
-            element.setAttribute('aria-hidden', 'true');
-          }),
-        );
         decorations.push(tailDecoration);
       }
     }
@@ -232,8 +226,6 @@ export class CursorLineHighlighter implements IDisposable {
   }
 
   private clear(): void {
-    for (const disposable of this.decorationRenderListeners) disposable.dispose();
-    this.decorationRenderListeners = [];
     for (const disposable of this.decorationDisposeListeners) disposable.dispose();
     this.decorationDisposeListeners = [];
     for (const decoration of this.decorations) decoration.dispose();
