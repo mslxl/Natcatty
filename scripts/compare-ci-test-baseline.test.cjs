@@ -122,6 +122,28 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     parseTapResult(dynamicValues(52942, 'renamed later test'), 1),
   );
   assert.equal(dynamic.passed, true);
+
+  const multilineError = (reason) => [
+    'TAP version 13',
+    'not ok 1 - duplicate title',
+    '  ---',
+    "  location: '/workspace/example.test.js:10:1'",
+    "  failureType: 'testCodeFailure'",
+    '  error: |-',
+    `    ${reason}`,
+    "  code: 'ERR_ASSERTION'",
+    "  operator: 'strictEqual'",
+    '  ...',
+    '# fail 1',
+    '# cancelled 0',
+    '# tests 10',
+  ].join('\n');
+  const changedMultilineError = compareTapResults(
+    parseTapResult(multilineError('old failure'), 1),
+    parseTapResult(multilineError('new regression'), 1),
+  );
+  assert.equal(changedMultilineError.passed, false);
+  assert.deepEqual(changedMultilineError.newFailures, ['duplicate title']);
 });
 
 test('rejects added duplicate failures and cancelled tests', () => {

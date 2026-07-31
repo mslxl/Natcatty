@@ -19,6 +19,7 @@ function parseTapResult(text, exitCode) {
       const name = failed[1].trim();
       const diagnostic = [];
       let inDiagnostic = false;
+      let errorBlockIndent = -1;
       let skippingStack = false;
       let stackIndent = -1;
       for (let detailIndex = index + 1; detailIndex < lines.length; detailIndex += 1) {
@@ -33,6 +34,14 @@ function parseTapResult(text, exitCode) {
         if (inDiagnostic && /^\s*\.\.\.\s*$/.test(detail)) break;
         if (!inDiagnostic) continue;
         const indent = detail.match(/^\s*/)?.[0].length || 0;
+        if (errorBlockIndent >= 0) {
+          if (!detail.trim()) continue;
+          if (indent > errorBlockIndent) {
+            diagnostic.push(`error-detail: ${detail.trim()}`);
+            continue;
+          }
+          errorBlockIndent = -1;
+        }
         if (skippingStack) {
           if (!detail.trim() || indent > stackIndent) continue;
           skippingStack = false;
@@ -43,6 +52,11 @@ function parseTapResult(text, exitCode) {
           continue;
         }
         if (/^\s*duration_ms:/.test(detail)) continue;
+        if (/^\s*error:\s*(?:\|-|>)\s*$/.test(detail)) {
+          diagnostic.push('error:');
+          errorBlockIndent = indent;
+          continue;
+        }
         if (/^\s*(?:type|location|failureType|error|code|operator):/.test(detail)) {
           diagnostic.push(
             detail.trimEnd().replace(
