@@ -157,6 +157,29 @@ test('rejects an additional runner failure after comparable TAP output', () => {
   assert.equal(crashAfterUnterminatedDiagnostic.passed, false);
   assert.equal(crashAfterUnterminatedDiagnostic.kind, 'unclassified_failure');
 
+  const diagnosticWithExtra = (extra) => [
+    'TAP version 13',
+    'not ok 1 - base failure',
+    '  ---',
+    "  error: 'existing failure'",
+    "  code: 'ERR_TEST_FAILURE'",
+    ...(extra ? [`  ${extra}`] : []),
+    '  ...',
+    '# fail 1',
+    '# cancelled 0',
+    '# skipped 0',
+    '# todo 0',
+    '# tests 10',
+  ].join('\n');
+  for (const extra of ['Segmentation fault (core dumped)', 'signal: SIGSEGV']) {
+    const crashInsideClosedDiagnostic = compareTapResults(
+      parseTapResult(diagnosticWithExtra(''), 1),
+      parseTapResult(diagnosticWithExtra(extra), 1),
+    );
+    assert.equal(crashInsideClosedDiagnostic.passed, false);
+    assert.equal(crashInsideClosedDiagnostic.kind, 'new_failures');
+  }
+
   const unchangedArbitraryOutput = compareTapResults(
     parseTapResult(`starting custom runner\n${sameTap}`, 1),
     parseTapResult(`starting custom runner\n${sameTap}`, 1),

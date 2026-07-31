@@ -16,6 +16,12 @@ function normalizeAssertionDetail(detail) {
     );
 }
 
+function normalizeStableDiagnosticDetail(detail) {
+  return normalizeAssertionDetail(detail)
+    .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
+    .replace(/:\d+:\d+\b/g, ':<line>:<column>');
+}
+
 function collectNonTapOutput(lines) {
   const output = [];
   let inDiagnostic = false;
@@ -131,25 +137,21 @@ function parseTapResult(text, exitCode) {
           continue;
         }
         if (/^\s*duration_ms:/.test(detail)) continue;
+        if (/^\s*(?:actual|expected):/.test(detail)) continue;
         if (/^\s*error:\s*(?:\|-|>)\s*$/.test(detail)) {
           diagnostic.push('error:');
           errorBlockIndent = indent;
           continue;
         }
-        if (/^\s*(?:type|location|failureType|error|code|operator):/.test(detail)) {
-          diagnostic.push(
-            detail.trimEnd().replace(
-              /^(\s*location:\s*['"]?.*?):\d+:\d+(['"]?\s*)$/,
-              '$1$2',
-            ),
-          );
+        if (detail.trim()) {
+          diagnostic.push(normalizeStableDiagnosticDetail(detail.trimEnd()));
         }
       }
       const assertionFailure = diagnostic.some((detail) =>
         /^\s*code:\s*['"]?ERR_ASSERTION['"]?\s*$/.test(detail),
       );
       const stableErrorDetails = assertionFailure
-        ? errorDetails.map(normalizeAssertionDetail)
+        ? errorDetails.map(normalizeStableDiagnosticDetail)
         : errorDetails;
       diagnostic.push(...stableErrorDetails.map((detail) => `error-detail: ${detail}`));
       failures.push(name);
