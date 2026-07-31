@@ -29,6 +29,8 @@ interface CachedDecorationRange {
   priority: number;
 }
 
+type HighlightRange = Pick<CachedDecorationRange, 'x' | 'width'>;
+
 interface LogicalDecorationRange {
   start: number;
   length: number;
@@ -44,6 +46,7 @@ interface DirtyLineSegment {
 interface LineDecorationState {
   marker: IMarker;
   decorations: IDecoration[];
+  ranges: readonly CachedDecorationRange[];
   signature: string;
 }
 
@@ -275,6 +278,10 @@ export class KeywordHighlighter implements IDisposable {
     }
   }
 
+  public getForegroundRanges(lineY: number): readonly HighlightRange[] {
+    return this.lineDecorations.get(lineY)?.ranges ?? EMPTY_RANGES;
+  }
+
   public dispose() {
     this.cancelScrollRefresh();
     this.clearDecorations();
@@ -433,6 +440,7 @@ export class KeywordHighlighter implements IDisposable {
     this.lineDecorations.set(lineY, {
       marker,
       decorations,
+      ranges,
       signature,
     });
     this.markTerminalRefreshNeeded(lineY);

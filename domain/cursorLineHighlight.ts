@@ -53,6 +53,30 @@ const mixRgb = (base: Rgb, accent: Rgb, amount: number): Rgb => ({
 const toHex = ({ r, g, b }: Rgb): string =>
   `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
 
+/** Keep the cursor-row background readable against other foreground decorations. */
+export const ensureCursorLineHighlightContrast = (
+  backgroundColor: string,
+  foregroundColors: readonly string[],
+): string => {
+  const background = parseHexRgb(backgroundColor);
+  const foregrounds = foregroundColors
+    .map(parseHexRgb)
+    .filter((color): color is Rgb => color !== null);
+  if (!background || foregrounds.length === 0) return backgroundColor;
+  const contrastScore = (candidate: Rgb) =>
+    Math.min(...foregrounds.map((foreground) => contrastRatio(candidate, foreground)));
+  const baseScore = contrastScore(background);
+  if (baseScore >= MIN_CURSOR_LINE_CONTRAST) return backgroundColor;
+
+  const black = { r: 0, g: 0, b: 0 };
+  const white = { r: 255, g: 255, b: 255 };
+  const blackScore = contrastScore(black);
+  const whiteScore = contrastScore(white);
+  if (blackScore >= MIN_CURSOR_LINE_CONTRAST && blackScore >= whiteScore) return '#000000';
+  if (whiteScore >= MIN_CURSOR_LINE_CONTRAST) return '#ffffff';
+  return blackScore >= Math.max(baseScore, whiteScore) ? '#000000' : '#ffffff';
+};
+
 /** Strength of the theme accent mixed into the terminal background. */
 export const CURSOR_LINE_HIGHLIGHT_BLEND = 0.55;
 
@@ -79,14 +103,23 @@ export const resolveCursorLineHighlightBackground = (
     (backgroundLuminance >= 128
       ? { r: 0, g: 0, b: 0 }
       : { r: 255, g: 255, b: 255 });
-  let mixed = mixRgb(background, overlay, CURSOR_LINE_HIGHLIGHT_BLEND);
-  if (contrastRatio(mixed, foreground) < MIN_CURSOR_LINE_CONTRAST) {
-    for (let step = 1; step <= 20; step += 1) {
-      const amount = CURSOR_LINE_HIGHLIGHT_BLEND * (1 - step / 20);
-      const candidate = mixRgb(background, overlay, amount);
-      if (contrastRatio(candidate, foreground) >= MIN_CURSOR_LINE_CONTRAST) {
+  const contrastSafeAccents = [overlay, { r: 0, g: 0, b: 0 }, { r: 255, g: 255, b: 255 }];
+  const baseContrast = contrastRatio(background, foreground);
+  let mixed = background;
+  let bestContrast = baseContrast;
+  for (const [accentIndex, accent] of contrastSafeAccents.entries()) {
+    const maxAmount = accentIndex === 0 ? CURSOR_LINE_HIGHLIGHT_BLEND : 1;
+    for (let step = 20; step >= 0; step -= 1) {
+      const amount = maxAmount * (step / 20);
+      const candidate = mixRgb(background, accent, amount);
+      const candidateContrast = contrastRatio(candidate, foreground);
+      if (candidateContrast > bestContrast) {
         mixed = candidate;
-        break;
+        bestContrast = candidateContrast;
+      }
+      if (candidateContrast >= MIN_CURSOR_LINE_CONTRAST) {
+        mixed = candidate;
+        return toHex(mixed);
       }
     }
   }

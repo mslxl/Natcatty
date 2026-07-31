@@ -14,6 +14,7 @@ type CursorLineTerminal = Pick<
   | 'onCursorMove'
   | 'onResize'
   | 'onWriteParsed'
+  | 'onRender'
 >;
 
 type HighlightRange = { x: number; width: number };
@@ -38,10 +39,14 @@ export class CursorLineHighlighter implements IDisposable {
   private readonly disposables: IDisposable[] = [];
   private disposed = false;
 
-  constructor(private readonly term: CursorLineTerminal) {
+  constructor(
+    private readonly term: CursorLineTerminal,
+    private readonly getProtectedRanges: (absoluteLine: number) => readonly HighlightRange[] = () => [],
+  ) {
     this.disposables.push(
       this.term.onCursorMove(() => this.refresh()),
       this.term.onWriteParsed(() => this.refresh()),
+      this.term.onRender(() => this.refresh()),
       this.term.onResize(() => this.refresh({ force: true })),
       this.term.buffer.onBufferChange(() => this.refresh({ force: true })),
     );
@@ -81,8 +86,13 @@ export class CursorLineHighlighter implements IDisposable {
     const cols = Math.max(1, this.term.cols || 1);
     const color = this.backgroundColor;
     const line = buffer.getLine(absoluteLine);
-    const lineLength = Math.min(line?.length ?? 0, cols);
-    const ranges = this.getDefaultBackgroundRanges(line, lineLength, buffer.getNullCell());
+    const { ranges, contentEnd } = this.getDefaultBackgroundRanges(
+      line,
+      cols,
+      buffer.getNullCell(),
+      this.getProtectedRanges(absoluteLine),
+    );
+    const lineLength = contentEnd;
     const tailWidth = cols - lineLength;
 
     if (
@@ -162,26 +172,46 @@ export class CursorLineHighlighter implements IDisposable {
 
   private getDefaultBackgroundRanges(
     line: ReturnType<CursorLineTerminal['buffer']['active']['getLine']>,
-    lineLength: number,
+    cols: number,
     cell: ReturnType<CursorLineTerminal['buffer']['active']['getNullCell']>,
-  ): HighlightRange[] {
+    protectedRanges: readonly HighlightRange[],
+  ): { ranges: HighlightRange[]; contentEnd: number } {
     const ranges: HighlightRange[] = [];
     let rangeStart: number | null = null;
-    for (let x = 0; x < lineLength; x += 1) {
+    let contentEnd = 0;
+    for (let x = 0; x < cols; x += 1) {
       const currentCell = line?.getCell(x, cell);
+      if (
+        currentCell &&
+        (currentCell.getChars() !== '' || !currentCell.isAttributeDefault())
+      ) {
+        contentEnd = x + 1;
+      }
+      const isProtected = protectedRanges.some(
+        (range) => x >= range.x && x < range.x + range.width,
+      );
       const isHighlightable =
-        currentCell === undefined ||
-        (currentCell.isBgDefault() &&
-          currentCell.isFgDefault() &&
-          !currentCell.isInverse());
+        !isProtected &&
+        (currentCell === undefined ||
+          (currentCell.isBgDefault() &&
+            currentCell.isFgDefault() &&
+            !currentCell.isInverse()));
       if (isHighlightable && rangeStart === null) rangeStart = x;
-      if ((!isHighlightable || x === lineLength - 1) && rangeStart !== null) {
-        const end = isHighlightable && x === lineLength - 1 ? x + 1 : x;
+      if ((!isHighlightable || x === cols - 1) && rangeStart !== null) {
+        const end = isHighlightable && x === cols - 1 ? x + 1 : x;
         ranges.push({ x: rangeStart, width: end - rangeStart });
         rangeStart = null;
       }
     }
-    return ranges;
+    return {
+      ranges: ranges
+        .map((range) => {
+          const end = Math.min(range.x + range.width, contentEnd);
+          return { x: range.x, width: end - range.x };
+        })
+        .filter((range) => range.width > 0),
+      contentEnd,
+    };
   }
 
   private clear(): void {

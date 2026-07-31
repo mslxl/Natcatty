@@ -21,6 +21,7 @@ const createFakeTerm = (cols = 80) => {
   const writeParsedHandlers: Handler[] = [];
   const resizeHandlers: Handler[] = [];
   const bufferChangeHandlers: Handler[] = [];
+  const renderHandlers: Handler[] = [];
   const decorations: Array<{
     options: Record<string, unknown>;
     disposed: boolean;
@@ -46,9 +47,11 @@ const createFakeTerm = (cols = 80) => {
         },
         getLine() {
           return {
-            length: lineLength,
+            length: cols,
             getCell(x: number) {
               return {
+                getChars: () => (x < lineLength ? 'x' : ''),
+                isAttributeDefault: () => x >= lineLength,
                 isBgDefault: () => !coloredBackgrounds.has(x),
                 isFgDefault: () => !coloredForegrounds.has(x),
                 isInverse: () => (inverseCells.has(x) ? 1 : 0),
@@ -75,6 +78,10 @@ const createFakeTerm = (cols = 80) => {
     },
     onWriteParsed(handler: Handler) {
       writeParsedHandlers.push(handler);
+      return { dispose() {} };
+    },
+    onRender(handler: Handler) {
+      renderHandlers.push(handler);
       return { dispose() {} };
     },
     registerMarker(offset: number) {
@@ -183,6 +190,25 @@ test('CursorLineHighlighter paints an opaque background without changing text', 
   assert.equal(term.decorations[0]?.options.width, 100);
   assert.equal(term.decorations[0]?.options.backgroundColor, '#263449');
   assert.equal(term.decorations[0]?.options.layer, 'bottom');
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter leaves keyword decoration ranges untouched', () => {
+  const term = createFakeTerm(10);
+  const highlighter = new CursorLineHighlighter(
+    term as never,
+    () => [{ x: 2, width: 2 }],
+  );
+  highlighter.setBackgroundColor('#263449');
+  highlighter.setEnabled(true);
+
+  assert.deepEqual(
+    term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
+    [
+      { x: 0, width: 2 },
+      { x: 4, width: 6 },
+    ],
+  );
   highlighter.dispose();
 });
 

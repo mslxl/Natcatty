@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   CURSOR_LINE_HIGHLIGHT_BLEND,
+  ensureCursorLineHighlightContrast,
   resolveCursorLineHighlightBackground,
 } from './cursorLineHighlight.ts';
 
@@ -52,4 +53,22 @@ test('resolveCursorLineHighlightBackground keeps white text readable', () => {
   const channel = Number.parseInt(color.slice(1, 3), 16) / 255;
   const luminance = channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
   assert.ok((1.05) / (luminance + 0.05) >= 4.5);
+});
+
+test('resolveCursorLineHighlightBackground repairs a low-contrast light theme', () => {
+  assert.equal(
+    resolveCursorLineHighlightBackground({
+      background: '#f0f0f0',
+      foreground: '#888888',
+      selection: '#ffffff',
+    }),
+    '#000000',
+  );
+});
+
+test('ensureCursorLineHighlightContrast protects keyword blue', () => {
+  assert.equal(
+    ensureCursorLineHighlightContrast('#1b334c', ['#3b82f6']),
+    '#000000',
+  );
 });
