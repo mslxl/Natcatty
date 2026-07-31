@@ -121,11 +121,11 @@ export class CursorLineHighlighter implements IDisposable {
       color === this.activeColor &&
       rangesEqual(ranges, this.activeRanges) &&
       rangesEqual(tailRanges, this.activeTailRanges) &&
-      protectedRangesVersion === this.activeProtectedRangesVersion &&
       this.marker &&
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
     ) {
+      this.activeProtectedRangesVersion = protectedRangesVersion;
       return;
     }
 

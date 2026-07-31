@@ -731,6 +731,7 @@ export class KeywordHighlighter implements IDisposable {
     if (this.lineDecorations.size === 0) return;
     const nextLineDecorations = new Map<number, LineDecorationState>();
     const staleStates = new Set<LineDecorationState>();
+    const changedLines = new Set<number>();
 
     for (const state of this.lineDecorations.values()) {
       if (state.marker.isDisposed || state.marker.line < 0) {
@@ -749,7 +750,21 @@ export class KeywordHighlighter implements IDisposable {
       staleStates.delete(state);
     }
 
+    let mappingChanged = this.lineDecorations.size !== nextLineDecorations.size;
+    for (const [lineY, state] of this.lineDecorations) {
+      if (nextLineDecorations.get(lineY) !== state) {
+        mappingChanged = true;
+        changedLines.add(lineY);
+      }
+    }
+    for (const [lineY, state] of nextLineDecorations) {
+      if (this.lineDecorations.get(lineY) !== state) changedLines.add(lineY);
+    }
+    if (staleStates.size > 0) mappingChanged = true;
+
     this.lineDecorations = nextLineDecorations;
+    if (mappingChanged) this.decorationsVersion += 1;
+    for (const lineY of changedLines) this.markTerminalRefreshNeeded(lineY);
 
     for (const state of staleStates) {
       const markerLineBeforeDispose = state.marker.isDisposed ? -1 : state.marker.line;
