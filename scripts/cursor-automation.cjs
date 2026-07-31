@@ -2794,6 +2794,7 @@ async function markNeedsHuman({
   issueNumber,
   message,
   dedupeMarker = '',
+  trustedCommentAuthors = 'binaricat,netcatty-bot,github-actions[bot]',
 }) {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
@@ -2818,13 +2819,23 @@ async function markNeedsHuman({
   });
   const marker = String(dedupeMarker || '').trim();
   if (marker) {
+    const trusted = normalizeLoginList(trustedCommentAuthors, [
+      'binaricat',
+      'netcatty-bot',
+      'github-actions[bot]',
+    ]);
     const comments = await github.paginate(github.rest.issues.listComments, {
       owner,
       repo,
       issue_number: issue.number,
       per_page: 100,
     });
-    if ((comments || []).some((comment) => String(comment?.body || '').includes(marker))) {
+    if ((comments || []).some((comment) => {
+      const author = String(
+        comment?.user?.login || comment?.author?.login || '',
+      ).toLowerCase();
+      return trusted.has(author) && String(comment?.body || '').includes(marker);
+    })) {
       return { issue, labels: next, commented: false };
     }
   }
@@ -2910,10 +2921,28 @@ async function findOpenBotPrForIssue({ github, context, issueNumber }) {
  * Maintainer/own-actor PRs that merely say `Fixes #N` must not stay draft
  * forever because issue comments lack automation processed markers.
  */
-function shouldGatePullOnSourceIssueFollowups(pull) {
+function shouldGatePullOnSourceIssueFollowups(pull, options = {}) {
   if (!pull) return false;
-  if (!extractSourceIssueNumber(pull)) return false;
   const body = String(pull.body || '');
+  if (!SOURCE_ISSUE_RE.test(body)) return false;
+  const trustedAuthors = normalizeLoginList(options.ownActors, [
+    'binaricat',
+    'netcatty-bot',
+    'github-actions[bot]',
+    'github-actions',
+  ]);
+  const author = String(pull.user?.login || pull.author?.login || '').toLowerCase();
+  if (!trustedAuthors.has(author)) return false;
+  const repository = String(options.repository || '').toLowerCase();
+  if (repository) {
+    const headRepo = String(
+      pull.head?.repo?.full_name || pull.head?.repo?.nameWithOwner || '',
+    ).toLowerCase();
+    const baseRepo = String(
+      pull.base?.repo?.full_name || pull.base?.repo?.nameWithOwner || repository,
+    ).toLowerCase();
+    if (!headRepo || headRepo !== repository || baseRepo !== repository) return false;
+  }
   if (isBotPrMarker(body)) return true;
   return (pull.labels || []).some((label) => {
     const name = typeof label === 'string' ? label : label?.name;
@@ -2926,10 +2955,14 @@ async function getPendingIssueFollowupsForPull({
   context,
   pull,
   botLogins = ['netcatty-bot', 'github-actions[bot]'],
+  ownActors = 'binaricat,netcatty-bot,github-actions[bot]',
 }) {
   const issueNumber = extractSourceIssueNumber(pull);
   if (!issueNumber) return { issue: null, pending: [], gated: false };
-  if (!shouldGatePullOnSourceIssueFollowups(pull)) {
+  if (!shouldGatePullOnSourceIssueFollowups(pull, {
+    ownActors,
+    repository: `${context.repo.owner}/${context.repo.repo}`,
+  })) {
     return { issue: null, pending: [], gated: false };
   }
   const { data: issue } = await github.rest.issues.get({

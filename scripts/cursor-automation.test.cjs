@@ -805,6 +805,43 @@ test('implementation failure messages report the real category and preserved art
   assert.match(message, /github\.example/);
 });
 
+test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', async () => {
+  let created = 0;
+  let comments = [{
+    user: { login: 'mallory' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=no_changes -->',
+  }];
+  const github = {
+    rest: {
+      issues: {
+        get: async () => ({ data: { number: 42, labels: [] } }),
+        update: async () => ({ data: {} }),
+        listComments: Symbol('listComments'),
+        createComment: async () => { created += 1; return { data: {} }; },
+      },
+    },
+    paginate: async () => comments,
+  };
+  const args = {
+    github,
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    issueNumber: 42,
+    message: 'failure details',
+    dedupeMarker: '<!-- cursor-implement-failure:base=abc;kind=no_changes -->',
+  };
+  const first = await auto.markNeedsHuman(args);
+  assert.equal(first.commented, true);
+  assert.equal(created, 1);
+
+  comments = [{
+    user: { login: 'netcatty-bot' },
+    body: args.dedupeMarker,
+  }];
+  const second = await auto.markNeedsHuman(args);
+  assert.equal(second.commented, false);
+  assert.equal(created, 1);
+});
+
 test('workflow cleans source labels on automation PR close and dedupes clean notices', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
@@ -812,7 +849,13 @@ test('workflow cleans source labels on automation PR close and dedupes clean not
   );
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
   assert.match(workflow, /kind == 'source_issue_cleanup'/);
-  assert.match(workflow, /nextSourceIssueLabelsAfterPull/);
+  assert.match(workflow, /shouldGatePullOnSourceIssueFollowups\(pull/);
+  assert.match(workflow, /github\.rest\.issues\.removeLabel/);
+  assert.match(workflow, /github\.rest\.issues\.addLabels/);
+  assert.match(workflow, /not a trusted automation pull request; skipping source cleanup/);
+  assert.match(workflow, /Follow-up changed before the simple reply; dispatched a fresh review/);
+  assert.match(workflow, /is merged; skipped stale follow-up handoff state changes/);
+  assert.match(workflow, /trusted_comment_bodies/);
   assert.match(workflow, /cursor-codex-clean-head:/);
   assert.match(workflow, /Clean handoff already recorded/);
 });
@@ -961,10 +1004,13 @@ test('buildIssueFollowupFallbackReply follows the reporter language', () => {
 test('getPendingIssueFollowupsForPull protects ready state with live issue comments', async () => {
   const pull = {
     number: 77,
-    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
     created_at: '2026-07-24T10:00:00Z',
     labels: [{ name: 'automation:bot-pr' }],
     user: { login: 'netcatty-bot' },
+    user: { login: 'netcatty-bot' },
+    head: { repo: { full_name: 'binaricat/Netcatty' } },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
   };
   const github = {
     rest: {
@@ -1026,6 +1072,19 @@ test('shouldGatePullOnSourceIssueFollowups is limited to automation bot PRs', ()
       body: 'No closing keyword or automation marker',
       labels: [{ name: 'automation:bot-pr' }],
       user: { login: 'netcatty-bot' },
+    }),
+    false,
+  );
+  assert.equal(
+    auto.shouldGatePullOnSourceIssueFollowups({
+      body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\nFixes #42`,
+      labels: [{ name: 'automation:bot-pr' }],
+      user: { login: 'untrusted-collaborator' },
+      head: { repo: { full_name: 'binaricat/Netcatty' } },
+      base: { repo: { full_name: 'binaricat/Netcatty' } },
+    }, {
+      ownActors: 'binaricat,netcatty-bot,github-actions[bot]',
+      repository: 'binaricat/Netcatty',
     }),
     false,
   );
@@ -1292,6 +1351,7 @@ test('restoreCleanPullRequestAfterNoChange undoes ready when a comment races', a
     state: 'open',
     draft,
     body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
+    user: { login: 'netcatty-bot' },
     head: {
       sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       ref: 'cursor/issue-42-1',
@@ -1369,7 +1429,12 @@ test('restoreCleanPullRequestAfterNoChange ignores only the current batch', asyn
     state: 'open',
     draft,
     body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
-    head: { sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' },
+    user: { login: 'netcatty-bot' },
+    head: {
+      sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
   });
   const github = {
     rest: {
@@ -1432,7 +1497,12 @@ test('restoreCleanPullRequestAfterNoChange rejects an edited current-batch comme
     state: 'open',
     draft: true,
     body: `${auto.BOT_PR_MARKER}\n<!-- cursor-source-issue:42 -->\n<!-- cursor-issue-watermark:comment-id=1 -->\nFixes #42`,
-    head: { sha: 'cccccccccccccccccccccccccccccccccccccccc' },
+    user: { login: 'netcatty-bot' },
+    head: {
+      sha: 'cccccccccccccccccccccccccccccccccccccccc',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
   };
   const github = {
     rest: {
@@ -1749,6 +1819,12 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
   assert.match(implement, /name: Fail after preserving rejected implementation/);
   assert.match(implement, /\.cursor-runtime\/verify-result\.json/);
   assert.match(implement, /\.cursor-runtime\/test-comparison\.json/);
+  assert.match(implement, /Validation scripts changed/);
+  assert.match(implement, /candidate-lint\.log/);
+  assert.ok(
+    implement.indexOf('name: Install test shell dependencies') <
+      implement.indexOf('name: Capture exact-base test baseline'),
+  );
   assert.doesNotMatch(
     implement,
     /name: Prepare patch for isolated publish\n\s+if:[^\n]*steps\.verify\.outputs\.passed/,
@@ -1758,6 +1834,11 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
   assert.match(followup, /set -o pipefail/);
   assert.match(followup, /name: Fail after preserving rejected follow-up/);
   assert.match(followup, /followup-test-comparison\.json/);
+  assert.match(followup, /followup-candidate-build\.log/);
+  assert.ok(
+    followup.indexOf('name: Install test shell dependencies') <
+      followup.indexOf('name: Capture follow-up exact-base test baseline'),
+  );
   assert.doesNotMatch(
     followup,
     /name: Prepare follow-up patch\n\s+if:[^\n]*steps\.verify\.outputs\.passed/,
@@ -1768,6 +1849,11 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
   assert.match(codex, /name: Fail after preserving rejected Codex fix/);
   assert.match(codex, /fix-test-comparison\.json/);
   assert.match(codex, /steps\.fixpatch\.outputs\.artifact_ready == 'true'/);
+  assert.match(codex, /fix-candidate-tests\.log/);
+  assert.ok(
+    codex.indexOf('name: Install test shell dependencies') <
+      codex.indexOf('name: Capture Codex-fix exact-base test baseline'),
+  );
 });
 
 test('classification failure handoff receives its issue number', () => {

@@ -276,9 +276,13 @@ jobs:
               if (
                 sameRepo &&
                 context.payload.action === 'closed' &&
-                auto.shouldGatePullOnSourceIssueFollowups(pr)
+                auto.shouldGatePullOnSourceIssueFollowups(pr, {
+                  ownActors,
+                  repository: `${context.repo.owner}/${context.repo.repo}`,
+                })
               ) {
                 return set('source_issue_cleanup', {
+                  issue_number: String(auto.extractSourceIssueNumber(pr)),
                   pull_number: String(pr.number),
                   reason: pr.merged ? 'automation PR merged' : 'automation PR closed',
                 });
@@ -333,6 +337,9 @@ jobs:
     needs: route
     if: needs.route.outputs.kind == 'source_issue_cleanup'
     runs-on: ubuntu-latest
+    concurrency:
+      group: cursor-source-issue-${{ needs.route.outputs.issue_number || github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
@@ -348,6 +355,7 @@ jobs:
         uses: actions/github-script@v9
         env:
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+          OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
@@ -357,29 +365,39 @@ jobs:
               ...context.repo,
               pull_number: pullNumber,
             });
+            if (!auto.shouldGatePullOnSourceIssueFollowups(pull, {
+              ownActors: process.env.OWN_ACTORS,
+              repository: `${context.repo.owner}/${context.repo.repo}`,
+            })) {
+              core.warning(`PR #${pullNumber} is not a trusted automation pull request; skipping source cleanup.`);
+              return;
+            }
             const issueNumber = auto.extractSourceIssueNumber(pull);
             if (!issueNumber) return;
-            const { data: issue } = await github.rest.issues.get({
-              ...context.repo,
-              issue_number: issueNumber,
-            });
-            const labels = auto.nextSourceIssueLabelsAfterPull(
-              issue.labels || [],
-              Boolean(pull.merged),
-            );
-            await github.rest.issues.update({
-              ...context.repo,
-              issue_number: issueNumber,
-              labels,
-            });
-            const pullLabels = (pull.labels || [])
-              .map((label) => typeof label === 'string' ? label : label.name)
-              .filter((label) => !['automation:codex-loop', 'ready-for-human'].includes(label));
-            await github.rest.issues.update({
-              ...context.repo,
-              issue_number: pullNumber,
-              labels: pullLabels,
-            });
+            const removeLabel = async (issue_number, name) => {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number,
+                  name,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            };
+            for (const name of ['ready-for-agent', 'needs-info', 'ready-for-human']) {
+              await removeLabel(issueNumber, name);
+            }
+            if (!pull.merged) {
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: issueNumber,
+                labels: ['ready-for-human'],
+              });
+            }
+            for (const name of ['automation:codex-loop', 'ready-for-human']) {
+              await removeLabel(pullNumber, name);
+            }
 
   classify:
     name: Classify issue
@@ -397,7 +415,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-      actions: read
+      actions: write
     outputs:
       category: ${{ steps.apply.outputs.category }}
       should_implement: ${{ steps.apply.outputs.should_implement }}
@@ -1187,6 +1205,9 @@ jobs:
     if: needs.route.outputs.kind == 'issue_followup'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    concurrency:
+      group: cursor-source-issue-${{ needs.route.outputs.issue_number || github.run_id }}
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
@@ -1325,26 +1346,58 @@ jobs:
         env:
           SIMPLE_KIND: ${{ steps.prepare.outputs.simple_kind }}
           PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
+          PENDING_SNAPSHOTS: ${{ steps.prepare.outputs.pending_snapshots }}
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const pullNumber = Number(process.env.PULL_NUMBER) || null;
             const { data: issue } = await github.rest.issues.get({
               ...context.repo,
               issue_number: issueNumber,
             });
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              { ...context.repo, issue_number: issueNumber, per_page: 100 },
+            );
+            const snapshots = JSON.parse(process.env.PENDING_SNAPSHOTS || '[]');
+            const changed = auto.getChangedIssueCommentSnapshotIds(comments, snapshots);
+            const pendingIds = process.env.PENDING_IDS.split(',').filter(Boolean);
+            const livePending = comments.filter((comment) =>
+              pendingIds.includes(String(comment.id)),
+            );
+            const liveKind = auto.classifySimpleIssueFollowup(livePending);
+            if (changed.length || !liveKind) {
+              if (!livePending.length) {
+                core.info('The simple follow-up was removed before reply; nothing to process.');
+                return;
+              }
+              const inputs = { issue_number: String(issueNumber) };
+              if (pullNumber) {
+                inputs.pull_number = String(pullNumber);
+                inputs.drain_backlog = 'true';
+              }
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: 'cursor-automation.yml',
+                ref: context.payload.repository.default_branch,
+                inputs,
+              });
+              core.info(`Follow-up changed before the simple reply; dispatched a fresh review for issue #${issueNumber}.`);
+              return;
+            }
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: issueNumber,
               body: auto.buildIssueFollowupReply({
-                commentIds: process.env.PENDING_IDS.split(',').filter(Boolean),
+                commentIds: pendingIds,
                 result: 'no_change',
                 reply: auto.buildSimpleIssueFollowupReply(
                   issue,
-                  process.env.SIMPLE_KIND,
+                  liveKind,
                 ),
-                pullNumber: Number(process.env.PULL_NUMBER) || null,
+                pullNumber,
               }),
             });
 
@@ -1389,6 +1442,13 @@ jobs:
       - name: Install dependencies
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
         run: npm ci
+
+      - name: Install test shell dependencies
+        if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
+        run: |
+          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
+          sudo apt-get update
+          sudo apt-get install -y fish
 
       - name: Capture follow-up exact-base test baseline
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
@@ -1686,23 +1746,38 @@ jobs:
             }
           ' "$status" "$names" "$name_status"
 
-      - name: Install test shell dependencies
-        if: steps.decision.outputs.action == 'updated'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y fish
-
       - name: Verify updated pull request
         if: steps.decision.outputs.action == 'updated'
         id: verify
+        env:
+          BASE_SHA: ${{ steps.snapshot.outputs.base_sha }}
         run: |
           mkdir -p .cursor-runtime
           set -o pipefail
           set +e
-          npm run lint 2>&1 | tee .cursor-runtime/followup-candidate-lint.log
-          lint=$?
-          npm test 2>&1 | tee .cursor-runtime/followup-candidate-tests.log
-          tests=$?
+          node -e '
+            const fs = require("node:fs");
+            const { execFileSync } = require("node:child_process");
+            const base = JSON.parse(execFileSync("git", ["show", `${process.argv[1]}:package.json`], { encoding: "utf8" }));
+            const current = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const names = ["lint", "test", "build"];
+            const changed = names.filter((name) => base.scripts?.[name] !== current.scripts?.[name]);
+            if (changed.length) throw new Error(`Validation scripts changed: ${changed.join(", ")}`);
+          ' "$BASE_SHA"
+          script_guard=$?
+          if [[ "$script_guard" == "0" ]]; then
+            npm run lint 2>&1 | tee .cursor-runtime/followup-candidate-lint.log
+            lint=$?
+            npm test 2>&1 | tee .cursor-runtime/followup-candidate-tests.log
+            tests=$?
+            npm run build 2>&1 | tee .cursor-runtime/followup-candidate-build.log
+            build=$?
+          else
+            lint=2
+            tests=2
+            build=2
+            echo "Skipped because package.json changed a validation script." | tee .cursor-runtime/followup-candidate-lint.log .cursor-runtime/followup-candidate-tests.log .cursor-runtime/followup-candidate-build.log
+          fi
           node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
             --baseline-log .cursor-runtime/followup-base-tests.log \
             --baseline-exit "$(cat .cursor-runtime/followup-base-tests.exit)" \
@@ -1710,8 +1785,6 @@ jobs:
             --candidate-exit "$tests" \
             --output .cursor-runtime/followup-test-comparison.json
           tests_compared=$?
-          npm run build 2>&1 | tee .cursor-runtime/followup-candidate-build.log
-          build=$?
           set -e
           node -e '
             const fs = require("node:fs");
@@ -1720,10 +1793,11 @@ jobs:
               tests: Number(process.argv[2]),
               testComparison: Number(process.argv[3]),
               build: Number(process.argv[4]),
+              scriptGuard: Number(process.argv[5]),
             };
             fs.writeFileSync(".cursor-runtime/followup-verify-result.json", JSON.stringify(result, null, 2) + "\n");
-          ' "$lint" "$tests" "$tests_compared" "$build"
-          if [[ "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
+          ' "$lint" "$tests" "$tests_compared" "$build" "$script_guard"
+          if [[ "$script_guard" != "0" || "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
             echo "passed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -1782,6 +1856,9 @@ jobs:
                 ".cursor-runtime/followup-pending-snapshots.json",
                 ".cursor-runtime/followup-verify-result.json",
                 ".cursor-runtime/followup-test-comparison.json",
+                ".cursor-runtime/followup-candidate-lint.log",
+                ".cursor-runtime/followup-candidate-tests.log",
+                ".cursor-runtime/followup-candidate-build.log",
               ],
               process.env.CURSOR_API_KEY,
               "issue-followup-publish",
@@ -1800,6 +1877,9 @@ jobs:
             .cursor-runtime/followup-pending-snapshots.json
             .cursor-runtime/followup-verify-result.json
             .cursor-runtime/followup-test-comparison.json
+            .cursor-runtime/followup-candidate-lint.log
+            .cursor-runtime/followup-candidate-tests.log
+            .cursor-runtime/followup-candidate-build.log
           if-no-files-found: error
 
       - name: Fail after preserving rejected follow-up
@@ -1985,6 +2065,32 @@ jobs:
               process.env.ISSUE_BOT_LOGINS,
             );
             const remainingIds = pendingIds.filter((id) => !processed.has(id));
+            if (pullNumber) {
+              const { data: livePull } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullNumber,
+              });
+              if (livePull.merged || livePull.merged_at) {
+                if (remainingIds.length) {
+                  const chinese = /[\u3400-\u9fff]/u.test(`${issue.title || ''}\n${issue.body || ''}`);
+                  await github.rest.issues.createComment({
+                    ...context.repo,
+                    issue_number: issueNumber,
+                    body: auto.buildIssueFollowupReply({
+                      commentIds: remainingIds,
+                      result: 'blocked',
+                      reply: chinese
+                        ? '相关修复已在本次处理期间合并，因此没有重新打开这条 Issue 或改回旧状态。如果合并后的版本仍有问题，请提交一条新的问题报告。'
+                        : 'The related fix merged while this follow-up was being processed, so the issue was not reopened and its old state was not restored. If the merged version is still affected, please open a new report.',
+                      pullNumber,
+                      headSha: process.env.HEAD_SHA,
+                    }),
+                  });
+                }
+                core.info(`PR #${pullNumber} is merged; skipped stale follow-up handoff state changes.`);
+                return;
+              }
+            }
             const labels = (issue.labels || []).map((label) =>
               typeof label === 'string' ? label : label.name,
             );
@@ -2033,6 +2139,17 @@ jobs:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const pullNumber = Number(process.env.PULL_NUMBER) || null;
+            if (pullNumber) {
+              const { data: livePull } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: pullNumber,
+              });
+              if (livePull.merged || livePull.merged_at) {
+                core.info(`PR #${pullNumber} is merged; emergency handoff will not reopen the source issue.`);
+                return;
+              }
+            }
             const { data: issue } = await github.rest.issues.get({
               ...context.repo,
               issue_number: issueNumber,
@@ -2710,6 +2827,13 @@ jobs:
         if: steps.existing.outputs.exists != 'true'
         run: npm ci
 
+      - name: Install test shell dependencies
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
+          sudo apt-get update
+          sudo apt-get install -y fish
+
       - name: Capture exact-base test baseline
         if: steps.existing.outputs.exists != 'true'
         run: |
@@ -2864,24 +2988,38 @@ jobs:
               dedupeMarker: `<!-- cursor-implement-failure:base=${{ steps.branch.outputs.base_sha }};kind=no_changes -->`,
             });
 
-      - name: Install test shell dependencies
-        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
-        run: |
-          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
-          sudo apt-get update
-          sudo apt-get install -y fish
-
       - name: Verify
         if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
         id: verify
+        env:
+          BASE_SHA: ${{ steps.branch.outputs.base_sha }}
         run: |
           mkdir -p .cursor-runtime
           set -o pipefail
           set +e
-          npm run lint 2>&1 | tee .cursor-runtime/candidate-lint.log
-          lint=$?
-          npm test 2>&1 | tee .cursor-runtime/candidate-tests.log
-          tests=$?
+          node -e '
+            const fs = require("node:fs");
+            const { execFileSync } = require("node:child_process");
+            const base = JSON.parse(execFileSync("git", ["show", `${process.argv[1]}:package.json`], { encoding: "utf8" }));
+            const current = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const names = ["lint", "test", "build"];
+            const changed = names.filter((name) => base.scripts?.[name] !== current.scripts?.[name]);
+            if (changed.length) throw new Error(`Validation scripts changed: ${changed.join(", ")}`);
+          ' "$BASE_SHA"
+          script_guard=$?
+          if [[ "$script_guard" == "0" ]]; then
+            npm run lint 2>&1 | tee .cursor-runtime/candidate-lint.log
+            lint=$?
+            npm test 2>&1 | tee .cursor-runtime/candidate-tests.log
+            tests=$?
+            npm run build 2>&1 | tee .cursor-runtime/candidate-build.log
+            build=$?
+          else
+            lint=2
+            tests=2
+            build=2
+            echo "Skipped because package.json changed a validation script." | tee .cursor-runtime/candidate-lint.log .cursor-runtime/candidate-tests.log .cursor-runtime/candidate-build.log
+          fi
           node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
             --baseline-log .cursor-runtime/base-tests.log \
             --baseline-exit "$(cat .cursor-runtime/base-tests.exit)" \
@@ -2889,8 +3027,6 @@ jobs:
             --candidate-exit "$tests" \
             --output .cursor-runtime/test-comparison.json
           tests_compared=$?
-          npm run build 2>&1 | tee .cursor-runtime/candidate-build.log
-          build=$?
           set -e
           node -e '
             const fs = require("node:fs");
@@ -2899,10 +3035,11 @@ jobs:
               tests: Number(process.argv[2]),
               testComparison: Number(process.argv[3]),
               build: Number(process.argv[4]),
+              scriptGuard: Number(process.argv[5]),
             };
             fs.writeFileSync(".cursor-runtime/verify-result.json", JSON.stringify(result, null, 2) + "\n");
-          ' "$lint" "$tests" "$tests_compared" "$build"
-          if [[ "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
+          ' "$lint" "$tests" "$tests_compared" "$build" "$script_guard"
+          if [[ "$script_guard" != "0" || "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
             echo "passed=false" >> "$GITHUB_OUTPUT"
             echo "kind=candidate_verification" >> "$GITHUB_OUTPUT"
             exit 0
@@ -2979,6 +3116,9 @@ jobs:
                 ".cursor-runtime/implement-pr-body.md",
                 ".cursor-runtime/verify-result.json",
                 ".cursor-runtime/test-comparison.json",
+                ".cursor-runtime/candidate-lint.log",
+                ".cursor-runtime/candidate-tests.log",
+                ".cursor-runtime/candidate-build.log",
               ],
               process.env.CURSOR_API_KEY,
               "implement-publish",
@@ -2996,6 +3136,9 @@ jobs:
             .cursor-runtime/implement-pr-body.out.md
             .cursor-runtime/verify-result.json
             .cursor-runtime/test-comparison.json
+            .cursor-runtime/candidate-lint.log
+            .cursor-runtime/candidate-tests.log
+            .cursor-runtime/candidate-build.log
           if-no-files-found: error
 
       - name: Fail after preserving rejected implementation
@@ -3816,8 +3959,14 @@ jobs:
           GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           EXPECTED_HEAD: ${{ steps.codex.outputs.head_sha }}
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+          OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
         run: |
           set -euo pipefail
+          trusted_comment_authors="$(jq -Rn --arg raw "$OWN_ACTORS,github-actions[bot],github-actions" '$raw | split(",") | map(ascii_downcase) | unique')"
+          trusted_comment_bodies() {
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/comments" 2>/dev/null \
+              | jq -r --argjson trusted "$trusted_comment_authors" '.[] | select((.user.login | ascii_downcase) as $login | $trusted | index($login)) | .body'
+          }
           # Closed / missing PRs are not an automation failure.
           state="$(gh pr view "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --json state -q .state 2>/dev/null || echo MISSING)"
           if [[ "$state" != "OPEN" ]]; then
@@ -3867,7 +4016,7 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/labels" \
               -f 'labels[]=ready-for-human' >/dev/null 2>&1 || true
             blocked_marker="<!-- cursor-codex-ready-blocked:${live_head} -->"
-            existing_comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/comments" --jq '.[].body' 2>/dev/null || true)"
+            existing_comments="$(trusted_comment_bodies || true)"
             if ! grep -Fq "$blocked_marker" <<<"$existing_comments"; then
               blocked_body="$(printf '%s\n\n%s' "$blocked_marker" 'Codex reported no major issues, but the automation token cannot change draft state. A maintainer can mark this PR ready.')"
               gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$blocked_body" 2>/dev/null || true
@@ -3907,7 +4056,7 @@ jobs:
             exit 0
           fi
           clean_marker="<!-- cursor-codex-clean-head:${live_head} -->"
-          existing_comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/comments" --jq '.[].body')"
+          existing_comments="$(trusted_comment_bodies)"
           if grep -Fq "$clean_marker" <<<"$existing_comments"; then
             echo "Clean handoff already recorded for ${live_head}."
             exit 0
@@ -4054,6 +4203,13 @@ jobs:
       - name: Install dependencies
         if: steps.codex.outputs.action == 'fix'
         run: npm ci
+
+      - name: Install test shell dependencies
+        if: steps.codex.outputs.action == 'fix'
+        run: |
+          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
+          sudo apt-get update
+          sudo apt-get install -y fish
 
       - name: Install Cursor CLI
         if: steps.codex.outputs.action == 'fix'
@@ -4206,24 +4362,38 @@ jobs:
             }
           ' "$status" "$names" "$name_status"
 
-      - name: Install test shell dependencies
-        if: steps.codex.outputs.action == 'fix'
-        run: |
-          # Match .github/workflows/test.yml — osc7Setup.test.ts requires fish in CI.
-          sudo apt-get update
-          sudo apt-get install -y fish
-
       - name: Verify fix
         if: steps.codex.outputs.action == 'fix'
         id: fixverify
+        env:
+          BASE_SHA: ${{ steps.base.outputs.sha }}
         run: |
           mkdir -p .cursor-runtime
           set -o pipefail
           set +e
-          npm run lint 2>&1 | tee .cursor-runtime/fix-candidate-lint.log
-          lint=$?
-          npm test 2>&1 | tee .cursor-runtime/fix-candidate-tests.log
-          tests=$?
+          node -e '
+            const fs = require("node:fs");
+            const { execFileSync } = require("node:child_process");
+            const base = JSON.parse(execFileSync("git", ["show", `${process.argv[1]}:package.json`], { encoding: "utf8" }));
+            const current = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const names = ["lint", "test", "build"];
+            const changed = names.filter((name) => base.scripts?.[name] !== current.scripts?.[name]);
+            if (changed.length) throw new Error(`Validation scripts changed: ${changed.join(", ")}`);
+          ' "$BASE_SHA"
+          script_guard=$?
+          if [[ "$script_guard" == "0" ]]; then
+            npm run lint 2>&1 | tee .cursor-runtime/fix-candidate-lint.log
+            lint=$?
+            npm test 2>&1 | tee .cursor-runtime/fix-candidate-tests.log
+            tests=$?
+            npm run build 2>&1 | tee .cursor-runtime/fix-candidate-build.log
+            build=$?
+          else
+            lint=2
+            tests=2
+            build=2
+            echo "Skipped because package.json changed a validation script." | tee .cursor-runtime/fix-candidate-lint.log .cursor-runtime/fix-candidate-tests.log .cursor-runtime/fix-candidate-build.log
+          fi
           node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
             --baseline-log .cursor-runtime/fix-base-tests.log \
             --baseline-exit "$(cat .cursor-runtime/fix-base-tests.exit)" \
@@ -4231,8 +4401,6 @@ jobs:
             --candidate-exit "$tests" \
             --output .cursor-runtime/fix-test-comparison.json
           tests_compared=$?
-          npm run build 2>&1 | tee .cursor-runtime/fix-candidate-build.log
-          build=$?
           set -e
           node -e '
             const fs = require("node:fs");
@@ -4241,10 +4409,11 @@ jobs:
               tests: Number(process.argv[2]),
               testComparison: Number(process.argv[3]),
               build: Number(process.argv[4]),
+              scriptGuard: Number(process.argv[5]),
             };
             fs.writeFileSync(".cursor-runtime/fix-verify-result.json", JSON.stringify(result, null, 2) + "\n");
-          ' "$lint" "$tests" "$tests_compared" "$build"
-          if [[ "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
+          ' "$lint" "$tests" "$tests_compared" "$build" "$script_guard"
+          if [[ "$script_guard" != "0" || "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
             echo "passed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -4309,6 +4478,9 @@ jobs:
                 ".cursor-runtime/fix.patch",
                 ".cursor-runtime/fix-verify-result.json",
                 ".cursor-runtime/fix-test-comparison.json",
+                ".cursor-runtime/fix-candidate-lint.log",
+                ".cursor-runtime/fix-candidate-tests.log",
+                ".cursor-runtime/fix-candidate-build.log",
               ],
               process.env.CURSOR_API_KEY,
               "fix-publish",
@@ -4324,6 +4496,9 @@ jobs:
             .cursor-runtime/fix.patch
             .cursor-runtime/fix-verify-result.json
             .cursor-runtime/fix-test-comparison.json
+            .cursor-runtime/fix-candidate-lint.log
+            .cursor-runtime/fix-candidate-tests.log
+            .cursor-runtime/fix-candidate-build.log
           if-no-files-found: error
 
       - name: Fail after preserving rejected Codex fix

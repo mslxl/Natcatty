@@ -9,6 +9,7 @@ function parseTapResult(text, exitCode) {
   const failures = [];
   let failCount = null;
   let cancelledCount = null;
+  let testCount = null;
   for (const line of normalized.split('\n')) {
     const failed = line.match(/^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/);
     if (failed) failures.push(failed[1].trim());
@@ -16,13 +17,17 @@ function parseTapResult(text, exitCode) {
     if (failSummary) failCount = Number(failSummary[1]);
     const cancelledSummary = line.match(/^\s*# cancelled (\d+)\s*$/);
     if (cancelledSummary) cancelledCount = Number(cancelledSummary[1]);
+    const testSummary = line.match(/^\s*# tests (\d+)\s*$/);
+    if (testSummary) testCount = Number(testSummary[1]);
   }
   return {
     exitCode: Number(exitCode),
     failures,
     failCount,
     cancelledCount,
-    complete: failCount !== null && cancelledCount !== null,
+    testCount,
+    complete:
+      failCount !== null && cancelledCount !== null && testCount !== null,
   };
 }
 
@@ -36,9 +41,14 @@ function countFailures(failures) {
 
 function compareTapResults(baseline, candidate) {
   if (candidate.exitCode === 0) {
+    const completeCleanRun =
+      candidate.complete &&
+      candidate.failCount === 0 &&
+      candidate.cancelledCount === 0 &&
+      (!baseline.complete || candidate.testCount >= baseline.testCount);
     return {
-      passed: true,
-      kind: 'clean',
+      passed: completeCleanRun,
+      kind: completeCleanRun ? 'clean' : 'unclassified_failure',
       baselineFailures: baseline.failures,
       candidateFailures: [],
       newFailures: [],
@@ -56,6 +66,16 @@ function compareTapResults(baseline, candidate) {
   }
 
   if (!baseline.complete || !candidate.complete) {
+    return {
+      passed: false,
+      kind: 'unclassified_failure',
+      baselineFailures: baseline.failures,
+      candidateFailures: candidate.failures,
+      newFailures: candidate.failures,
+    };
+  }
+
+  if (candidate.failCount === 0 || candidate.testCount < baseline.testCount) {
     return {
       passed: false,
       kind: 'unclassified_failure',

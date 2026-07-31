@@ -7,11 +7,12 @@ const {
   parseTapResult,
 } = require('./compare-ci-test-baseline.cjs');
 
-const tap = ({ failures = [], fail = failures.length, cancelled = 0 } = {}) => [
+const tap = ({ failures = [], fail = failures.length, cancelled = 0, tests = 10 } = {}) => [
   'TAP version 13',
   ...failures.map((name, index) => `not ok ${index + 1} - ${name}`),
   `# fail ${fail}`,
   `# cancelled ${cancelled}`,
+  `# tests ${tests}`,
 ].join('\n');
 
 test('accepts a clean candidate even when the base was red', () => {
@@ -21,6 +22,15 @@ test('accepts a clean candidate even when the base was red', () => {
   );
   assert.equal(result.passed, true);
   assert.equal(result.kind, 'clean');
+});
+
+test('rejects a zero-exit candidate without a complete clean TAP summary', () => {
+  const result = compareTapResults(
+    parseTapResult(tap(), 0),
+    parseTapResult('custom test command completed', 0),
+  );
+  assert.equal(result.passed, false);
+  assert.equal(result.kind, 'unclassified_failure');
 });
 
 test('accepts only failures already present on the exact base', () => {
@@ -65,4 +75,20 @@ test('fails closed when a red run has no complete TAP summary', () => {
   );
   assert.equal(result.passed, false);
   assert.equal(result.kind, 'unclassified_failure');
+});
+
+test('rejects non-test failures and a candidate that runs fewer tests', () => {
+  const posttestFailure = compareTapResults(
+    parseTapResult(tap({ failures: ['existing'] }), 1),
+    parseTapResult(tap({ fail: 0 }), 1),
+  );
+  assert.equal(posttestFailure.passed, false);
+  assert.equal(posttestFailure.kind, 'unclassified_failure');
+
+  const fewerTests = compareTapResults(
+    parseTapResult(tap({ failures: ['existing'], tests: 20 }), 1),
+    parseTapResult(tap({ failures: ['existing'], tests: 19 }), 1),
+  );
+  assert.equal(fewerTests.passed, false);
+  assert.equal(fewerTests.kind, 'unclassified_failure');
 });
