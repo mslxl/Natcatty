@@ -7,7 +7,7 @@ const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 function normalizeAssertionDetail(detail) {
   return detail
     .replace(
-      /\b(now|timestamp|time|port|pid|nonce|random(?:Value)?)\b(['"]?\s*[:=]\s*)[^,\s}\]]+/gi,
+      /\b(now|timestamp|pid|nonce|random(?:Value)?)\b(['"]?\s*[:=]\s*)[^,\s}\]]+/gi,
       '$1$2<volatile>',
     )
     .replace(

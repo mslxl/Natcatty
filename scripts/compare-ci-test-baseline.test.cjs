@@ -180,6 +180,12 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   );
   assert.equal(changedStableAssertionValue.passed, false);
 
+  const changedPortAssertion = compareTapResults(
+    parseTapResult(assertionDiff('port', 2222), 1),
+    parseTapResult(assertionDiff('port', 443), 1),
+  );
+  assert.equal(changedPortAssertion.passed, false);
+
   const customMultilineError = (reason) => multilineError(reason).replace(
     "code: 'ERR_ASSERTION'",
     "code: 'ERR_CUSTOM'",
