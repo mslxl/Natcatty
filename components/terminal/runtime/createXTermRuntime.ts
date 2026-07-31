@@ -2048,7 +2048,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   cursorLineHighlighter.setBackgroundColor(
     resolveCursorLineHighlightBackground(ctx.terminalTheme.colors),
   );
-  cursorLineHighlighter.setEnabled(settings?.highlightCursorLine ?? true);
+  cursorLineHighlighter.setEnabled(settings?.highlightCursorLine ?? false);
 
   return {
     term,

@@ -239,7 +239,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       resolveCursorLineHighlightBackground(effectiveTheme.colors),
     );
     runtime.cursorLineHighlighter.setEnabled(
-      terminalSettings?.highlightCursorLine ?? true,
+      terminalSettings?.highlightCursorLine ?? false,
     );
   }, [
     effectiveTheme.colors.background,
@@ -520,7 +520,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           resolveCursorLineHighlightBackground(effectiveTheme.colors),
         );
         runtime.cursorLineHighlighter.setEnabled(
-          terminalSettingsRef.current?.highlightCursorLine ?? true,
+          terminalSettingsRef.current?.highlightCursorLine ?? false,
         );
 
         const term = runtime.term;

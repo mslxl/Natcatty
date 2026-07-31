@@ -419,7 +419,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fallbackFont: '',
   cursorShape: 'block',
   cursorBlink: true,
-  highlightCursorLine: true, // On by default for WindTerm-like cursor row emphasis (#2639)
+  highlightCursorLine: false,
   minimumContrastRatio: 1,
   altAsMeta: false,
   optionArrowWordJump: false,
