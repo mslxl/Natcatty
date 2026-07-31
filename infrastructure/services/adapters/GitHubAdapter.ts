@@ -424,6 +424,11 @@ const fetchGistRawContent = async (
   accessToken: string,
   rawUrl: string,
 ): Promise<string> => {
+  const bridge = netcattyBridge.get();
+  if (bridge?.githubDownloadGistRawContent) {
+    return bridge.githubDownloadGistRawContent({ accessToken, rawUrl });
+  }
+
   const response = await fetch(rawUrl, {
     headers: {
       Authorization: `Bearer ${accessToken}`,

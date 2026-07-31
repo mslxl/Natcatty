@@ -214,6 +214,7 @@ declare global {
       error_description?: string;
     }>;
     githubCancelDeviceFlowPoll?(pollId: string): Promise<void>;
+    githubDownloadGistRawContent?(options: { accessToken: string; rawUrl: string }): Promise<string>;
 
     // Google OAuth (cloud sync) - proxied via main process to avoid CORS
     googleExchangeCodeForTokens?(options: {

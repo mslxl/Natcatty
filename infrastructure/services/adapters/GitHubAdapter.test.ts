@@ -75,7 +75,12 @@ test('downloadSyncGist fetches raw_url when Gist API marks the file truncated', 
   try {
     const result = await downloadSyncGist('token-xyz', 'gist-1');
     assert.deepEqual(result, FULL_SYNCED_FILE);
-    assert.ok(calls.some((c) => c.url === rawUrl), 'must fetch raw_url for truncated gist');
+    const rawCall = calls.find((c) => c.url === rawUrl);
+    assert.ok(rawCall, 'must fetch raw_url for truncated gist');
+    assert.deepEqual(rawCall.headers, {
+      Authorization: 'Bearer token-xyz',
+      Accept: 'application/vnd.github.raw',
+    });
   } finally {
     restore();
   }
