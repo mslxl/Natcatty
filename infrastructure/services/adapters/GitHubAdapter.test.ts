@@ -40,6 +40,8 @@ const FULL_SYNCED_FILE = {
 const FULL_CONTENT = JSON.stringify(FULL_SYNCED_FILE, null, 2);
 // Reproduce #2643: Gist API embeds a truncated mid-string payload (~900 KiB cut).
 const TRUNCATED_CONTENT = FULL_CONTENT.slice(0, 900);
+const utf8ByteLength = (value: string): number =>
+  new TextEncoder().encode(value).byteLength;
 
 test('downloadSyncGist fetches raw_url when Gist API marks the file truncated', async () => {
   const rawUrl = 'https://gist.githubusercontent.com/u/abc/raw/netcatty-vault.json';
@@ -55,7 +57,7 @@ test('downloadSyncGist fetches raw_url when Gist API marks the file truncated', 
               content: TRUNCATED_CONTENT,
               truncated: true,
               raw_url: rawUrl,
-              size: FULL_CONTENT.length,
+              size: utf8ByteLength(FULL_CONTENT),
             },
           },
           created_at: '2026-01-01T00:00:00Z',
@@ -93,7 +95,7 @@ test('downloadSyncGist falls back to raw_url when embedded content is incomplete
               // truncated flag missing (edge case) but content is cut mid-string
               content: TRUNCATED_CONTENT,
               raw_url: rawUrl,
-              size: FULL_CONTENT.length,
+              size: utf8ByteLength(FULL_CONTENT),
             },
           },
           created_at: '2026-01-01T00:00:00Z',
@@ -132,7 +134,54 @@ test('downloadSyncGist uses embedded content when file is not truncated', async 
               content: body,
               truncated: false,
               raw_url: 'https://gist.githubusercontent.com/u/abc/raw/unused',
-              size: body.length,
+              size: utf8ByteLength(body),
+            },
+          },
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        }),
+        { status: 200 },
+      );
+    }
+    rawFetches += 1;
+    return new Response('should not fetch', { status: 500 });
+  });
+
+  try {
+    const result = await downloadSyncGist('token-xyz', 'gist-1');
+    assert.deepEqual(result, small);
+    assert.equal(rawFetches, 0);
+  } finally {
+    restore();
+  }
+});
+
+test('downloadSyncGist keeps embedded multibyte content without raw fetch', async () => {
+  const small = {
+    meta: {
+      version: 1,
+      deviceName: '我的电脑',
+    },
+    payload: 'small',
+  };
+  const body = JSON.stringify(small);
+  // GitHub reports UTF-8 bytes; string.length is smaller for CJK, which must not
+  // be treated as truncation.
+  assert.ok(utf8ByteLength(body) > body.length);
+  let rawFetches = 0;
+  const { restore } = installFetchMock((url) => {
+    if (url.includes('/gists/')) {
+      return new Response(
+        JSON.stringify({
+          id: 'gist-1',
+          description: SYNC_CONSTANTS.GIST_DESCRIPTION,
+          files: {
+            [SYNC_CONSTANTS.SYNC_FILE_NAME]: {
+              filename: SYNC_CONSTANTS.SYNC_FILE_NAME,
+              content: body,
+              truncated: false,
+              raw_url: 'https://gist.githubusercontent.com/u/abc/raw/unused',
+              size: utf8ByteLength(body),
             },
           },
           created_at: '2026-01-01T00:00:00Z',
@@ -168,7 +217,7 @@ test('downloadGistRevision also recovers truncated content via raw_url', async (
               content: TRUNCATED_CONTENT,
               truncated: true,
               raw_url: rawUrl,
-              size: FULL_CONTENT.length,
+              size: utf8ByteLength(FULL_CONTENT),
             },
           },
           created_at: '2026-01-01T00:00:00Z',

@@ -38,6 +38,7 @@ export interface GitHubGistFile {
   content?: string;
   truncated?: boolean;
   raw_url?: string;
+  /** File size in UTF-8 bytes (GitHub Gist API). */
   size?: number;
 }
 
@@ -437,12 +438,16 @@ const fetchGistRawContent = async (
   return response.text();
 };
 
+const utf8ByteLength = (value: string): number =>
+  new TextEncoder().encode(value).byteLength;
+
 const gistFileNeedsRawFetch = (file: GitHubGistFile): boolean => {
   if (file.truncated) return true;
+  // GitHub `size` is UTF-8 bytes; JS string `.length` is UTF-16 code units.
   if (
     typeof file.size === 'number' &&
     typeof file.content === 'string' &&
-    file.size > file.content.length
+    file.size > utf8ByteLength(file.content)
   ) {
     return true;
   }
