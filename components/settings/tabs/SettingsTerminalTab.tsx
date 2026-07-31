@@ -640,6 +640,16 @@ function SettingsTerminalTab(props: {
             onChange={(v) => updateTerminalSetting("cursorBlink", v)}
           />
         </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.cursor.highlightLine")}
+          description={t("settings.terminal.cursor.highlightLine.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.highlightCursorLine}
+            onChange={(v) => updateTerminalSetting("highlightCursorLine", v)}
+          />
+        </SettingRow>
       </div>
 
       <SectionHeader title={t("settings.terminal.section.keyboard")} />

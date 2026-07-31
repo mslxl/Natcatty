@@ -22,6 +22,7 @@ import {
   resolveTerminalHibernateEnabledForProtocol,
 } from '../../domain/terminalHibernate';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
+import { resolveCursorLineHighlightBackground } from '../../domain/cursorLineHighlight';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -229,6 +230,22 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     host?.keywordHighlightEnabled,
     host?.keywordHighlightRules,
     pluginDecorationRules,
+  ]);
+
+  useEffect(() => {
+    const runtime = xtermRuntimeRef.current;
+    if (!runtime?.cursorLineHighlighter) return;
+    runtime.cursorLineHighlighter.setBackgroundColor(
+      resolveCursorLineHighlightBackground(effectiveTheme.colors),
+    );
+    runtime.cursorLineHighlighter.setEnabled(
+      terminalSettings?.highlightCursorLine ?? true,
+    );
+  }, [
+    effectiveTheme.colors.background,
+    effectiveTheme.colors.foreground,
+    effectiveTheme.colors.selection,
+    terminalSettings?.highlightCursorLine,
   ]);
 
   useEffect(() => {
@@ -499,6 +516,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         ];
         const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled;
         runtime.keywordHighlighter.setRules(mergedRules, isEnabled);
+        runtime.cursorLineHighlighter.setBackgroundColor(
+          resolveCursorLineHighlightBackground(effectiveTheme.colors),
+        );
+        runtime.cursorLineHighlighter.setEnabled(
+          terminalSettingsRef.current?.highlightCursorLine ?? true,
+        );
 
         const term = runtime.term;
         const restoredReconnect = restoreState === "restored-disconnected";

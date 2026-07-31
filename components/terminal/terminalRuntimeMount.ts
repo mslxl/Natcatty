@@ -128,6 +128,7 @@ export async function wakeTerminalFromHibernate(
     replayOptions,
     deferWebgl: true,
   });
+  runtime.cursorLineHighlighter.refresh({ force: true });
 
   let replayedPendingLength = pendingAtApplyStart.length;
   for (let drainPass = 0; drainPass < 16; drainPass += 1) {

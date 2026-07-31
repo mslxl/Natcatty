@@ -14,6 +14,8 @@ import {
 } from "../../../application/state/useGlobalHotkeys";
 import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
+import { CursorLineHighlighter } from "./cursorLineHighlight";
+import { resolveCursorLineHighlightBackground } from "../../../domain/cursorLineHighlight";
 import {
   registerPluginTerminalLinkProvider,
   type PluginTerminalLinkProviderHost,
@@ -195,6 +197,7 @@ export type XTermRuntime = {
   /** Current working directory detected via OSC 7 */
   currentCwd: string | undefined;
   keywordHighlighter: KeywordHighlighter;
+  cursorLineHighlighter: CursorLineHighlighter;
   pluginProviderHost: PluginTerminalVisualProviderHost | null;
   pluginLinkProviderHost: PluginTerminalLinkProviderHost | null;
   /**
@@ -2041,12 +2044,19 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const keywordHighlighter = new KeywordHighlighter(term);
   keywordHighlighter.setRules(keywordHighlightRules, keywordHighlightEnabled);
 
+  const cursorLineHighlighter = new CursorLineHighlighter(term);
+  cursorLineHighlighter.setBackgroundColor(
+    resolveCursorLineHighlightBackground(ctx.terminalTheme.colors),
+  );
+  cursorLineHighlighter.setEnabled(settings?.highlightCursorLine ?? true);
+
   return {
     term,
     fitAddon,
     serializeAddon,
     searchAddon,
     keywordHighlighter,
+    cursorLineHighlighter,
     pluginProviderHost,
     pluginLinkProviderHost,
     clearTextureAtlas: clearWebglTextureAtlas,
@@ -2085,6 +2095,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();
       keywordHighlighter.dispose();
+      cursorLineHighlighter.dispose();
       pluginLinkProviderHost?.dispose();
       pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
