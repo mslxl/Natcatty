@@ -11,8 +11,12 @@ export interface EnsureRemoteSftpSessionParams {
   connect: (
     side: "left" | "right",
     host: Host | "local",
-    options?: { initialPath?: string; ignoreSharedCache?: boolean; tabId?: string },
+    options?: { initialPath?: string; ignoreSharedCache?: boolean; tabId?: string; sourceSessionId?: string },
   ) => Promise<void>;
+  /** Preferred already-authenticated SSH session for this reconnect. */
+  sourceSessionId?: string;
+  /** Resolve an SSH session after the reconnect host has been resolved. */
+  resolveSourceSessionId?: (hostId: string, host: Host) => string | undefined;
   /**
    * Per-tab connect-time host (includes session hostname/port/user overrides).
    * Prefer this over the vault entry so upload reconnects keep the same endpoint.
@@ -47,6 +51,8 @@ export async function ensureRemoteSftpSession(
     releaseConnection,
     forceReconnect = false,
     tabId,
+    sourceSessionId,
+    resolveSourceSessionId,
   } = params;
 
   const resolveHost = (): Host => {
@@ -115,10 +121,12 @@ export async function ensureRemoteSftpSession(
   const paneBefore = getActivePane(side);
   const resumePath = paneBefore?.connection?.currentPath;
   const host = resolveHost();
+  const resolvedSourceSessionId = sourceSessionId ?? resolveSourceSessionId?.(host.id, host);
   await connect(side, host, {
     initialPath: resumePath,
     ignoreSharedCache: true,
     ...(tabId ? { tabId } : {}),
+    ...(resolvedSourceSessionId ? { sourceSessionId: resolvedSourceSessionId } : {}),
   });
 
   const sftpId = readMappedId();

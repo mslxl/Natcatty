@@ -72,6 +72,31 @@ test("reconnects when the mapped session is missing", async () => {
   assert.equal(sftpId, "sftp-reconnected");
 });
 
+test("resolves source session when restoring a missing browse session", async () => {
+  let connectOptions: { initialPath?: string; sourceSessionId?: string } | undefined;
+  let resolvedHost: Host | undefined;
+  const sessions = { current: new Map<string, string>() };
+  const sftpId = await ensureRemoteSftpSession({
+    side: "left",
+    getActivePane: () => remotePane("conn-1"),
+    sftpSessionsRef: sessions,
+    lastConnectedHostRef: { current: { left: host, right: null } },
+    resolveSourceSessionId: (hostId, reconnectHost) => {
+      resolvedHost = reconnectHost;
+      return hostId === "host-1" ? "term-1" : undefined;
+    },
+    connect: async (_side, _host, options) => {
+      connectOptions = options;
+      sessions.current.set("conn-1", "sftp-restored");
+    },
+    releaseConnection: noopReleaseConnection,
+  });
+  assert.equal(sftpId, "sftp-restored");
+  assert.equal(resolvedHost?.hostname, "ci.example");
+  assert.equal(connectOptions?.initialPath, "/root");
+  assert.equal(connectOptions?.sourceSessionId, "term-1");
+});
+
 test("forceReconnect reopens even when a mapping exists", async () => {
   let connectCalls = 0;
   const released: string[] = [];
