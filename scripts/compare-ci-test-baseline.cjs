@@ -192,6 +192,24 @@ function compareTapResults(baseline, candidate) {
     const missing = count - (candidateSuccessCounts.get(success) || 0);
     for (let i = 0; i < missing; i += 1) missingBaselineSuccesses.push(success);
   }
+  const candidateFailurePool = countFailures(
+    candidate.failureRecords.map((failure) => failure.identity),
+  );
+  const candidateSuccessPool = new Map(candidateSuccessCounts);
+  const missingBaselineFailures = [];
+  for (const failure of baseline.failureRecords) {
+    const matchingFailures = candidateFailurePool.get(failure.identity) || 0;
+    if (matchingFailures > 0) {
+      candidateFailurePool.set(failure.identity, matchingFailures - 1);
+      continue;
+    }
+    const matchingSuccesses = candidateSuccessPool.get(failure.name) || 0;
+    if (matchingSuccesses > 0) {
+      candidateSuccessPool.set(failure.name, matchingSuccesses - 1);
+      continue;
+    }
+    missingBaselineFailures.push(failure.name);
+  }
 
   if (candidate.exitCode === 0) {
     const completeCleanRun =
@@ -202,7 +220,8 @@ function compareTapResults(baseline, candidate) {
       candidate.skippedCount <= baseline.skippedCount &&
       candidate.todoCount <= baseline.todoCount &&
       candidate.testCount >= baseline.testCount &&
-      missingBaselineSuccesses.length === 0;
+      missingBaselineSuccesses.length === 0 &&
+      missingBaselineFailures.length === 0;
     return {
       passed: completeCleanRun,
       kind: completeCleanRun ? 'clean' : 'unclassified_failure',
@@ -308,13 +327,23 @@ function compareTapResults(baseline, candidate) {
   const parsedCountsMatch =
     baseline.failureRecords.length >= Number(baseline.failCount) &&
     candidate.failureRecords.length >= Number(candidate.failCount);
-  const passed = newFailures.length === 0 && parsedCountsMatch;
+  const passed =
+    newFailures.length === 0 &&
+    missingBaselineFailures.length === 0 &&
+    parsedCountsMatch;
+  const reportedFailures = newFailures.length
+    ? newFailures
+    : missingBaselineFailures;
   return {
     passed,
-    kind: passed ? 'baseline_only' : 'new_failures',
+    kind: passed
+      ? 'baseline_only'
+      : newFailures.length
+        ? 'new_failures'
+        : 'unclassified_failure',
     baselineFailures: baseline.failures,
     candidateFailures: candidate.failures,
-    newFailures,
+    newFailures: reportedFailures,
   };
 }
 

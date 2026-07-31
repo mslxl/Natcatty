@@ -21,7 +21,7 @@ const tap = ({ failures = [], successes = [], fail = failures.length, cancelled 
 test('accepts a clean candidate even when the base was red', () => {
   const result = compareTapResults(
     parseTapResult(tap({ failures: ['base failure'] }), 1),
-    parseTapResult(tap(), 0),
+    parseTapResult(tap({ successes: ['base failure'] }), 0),
   );
   assert.equal(result.passed, true);
   assert.equal(result.kind, 'clean');
@@ -67,11 +67,21 @@ test('rejects a clean candidate when the exact-base TAP summary is incomplete', 
 test('accepts only failures already present on the exact base', () => {
   const result = compareTapResults(
     parseTapResult(tap({ failures: ['base A', 'base B'] }), 1),
-    parseTapResult(tap({ failures: ['base B'] }), 1),
+    parseTapResult(tap({ failures: ['base B'], successes: ['base A'] }), 1),
   );
   assert.equal(result.passed, true);
   assert.equal(result.kind, 'baseline_only');
   assert.deepEqual(result.newFailures, []);
+
+  const removedFailure = compareTapResults(
+    parseTapResult(tap({ failures: ['base A', 'base B'] }), 1),
+    parseTapResult(tap({
+      failures: ['base B'],
+      successes: ['unrelated replacement'],
+    }), 1),
+  );
+  assert.equal(removedFailure.passed, false);
+  assert.equal(removedFailure.kind, 'unclassified_failure');
 });
 
 test('rejects a different candidate failure even when both runs are red', () => {
