@@ -96,6 +96,32 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   );
   assert.equal(changed.passed, false);
   assert.deepEqual(changed.newFailures, ['duplicate title']);
+
+  const dynamicValues = (actual, nextTitle) => [
+    'TAP version 13',
+    'not ok 1 - duplicate title',
+    '  ---',
+    "  location: '/workspace/example.test.js:10:1'",
+    "  failureType: 'testCodeFailure'",
+    "  error: 'old failure'",
+    `  actual: ${actual}`,
+    '  expected: 1',
+    "  code: 'ERR_ASSERTION'",
+    '  stack: |- ',
+    '    volatile stack line',
+    '  ...',
+    `# Subtest: ${nextTitle}`,
+    `ok 2 - ${nextTitle}`,
+    '1..2',
+    '# fail 1',
+    '# cancelled 0',
+    '# tests 2',
+  ].join('\n');
+  const dynamic = compareTapResults(
+    parseTapResult(dynamicValues(41831, 'later test'), 1),
+    parseTapResult(dynamicValues(52942, 'renamed later test'), 1),
+  );
+  assert.equal(dynamic.passed, true);
 });
 
 test('rejects added duplicate failures and cancelled tests', () => {
