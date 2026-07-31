@@ -24,6 +24,19 @@ export function resolveHostActivateAction(input: {
   return 'select';
 }
 
+export function isHostClickFocusSelected(input: {
+  behavior: HostClickBehavior;
+  isMultiSelectMode: boolean;
+  focusedHostId: string | null | undefined;
+  hostId: string;
+}): boolean {
+  return (
+    input.behavior === 'select'
+    && !input.isMultiSelectMode
+    && input.focusedHostId === input.hostId
+  );
+}
+
 export function resolveGroupActivateAction(input: {
   behavior: HostClickBehavior;
   focusedGroupPath: string | null | undefined;

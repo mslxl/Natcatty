@@ -18,6 +18,7 @@ import {
 } from "./vaultReorderDrag";
 import {
   hostCardFocusClassName,
+  isHostClickFocusSelected,
   resolveGroupActivateAction,
   resolveHostActivateAction,
   shouldClearHostFocusOnBackgroundClick,
@@ -215,6 +216,17 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
     (focusedGroupIsVisible ? focusedGroupPath === groupPath : initialKeyboardGroupPath === groupPath)
       ? 0
       : -1
+  );
+  const isHostFocusSelected = (hostId: string) => (
+    isHostClickFocusSelected({
+      behavior: hostClickBehavior,
+      isMultiSelectMode,
+      focusedHostId,
+      hostId,
+    })
+  );
+  const isGroupFocusSelected = (groupPath: string) => (
+    hostClickBehavior === "select" && !isMultiSelectMode && focusedGroupPath === groupPath
   );
 
   const activateGroup = React.useCallback((groupPath: string) => {
@@ -500,11 +512,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       ? cn(
                                         "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
                                         draggingHostId === host.id && "opacity-45",
-                                        hostCardFocusClassName(viewMode, focusedHostId === host.id),
+                                        hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                       )
                                       : cn(
                                         "h-14 px-2 py-2 rounded-lg transition-colors",
-                                        focusedHostId === host.id
+                                        isHostFocusSelected(host.id)
                                           ? hostCardFocusClassName("list", true)
                                           : "hover:bg-secondary/60",
                                       ),
@@ -619,11 +631,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       ? cn(
                                         "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
                                         draggingHostId === host.id && "opacity-45",
-                                        hostCardFocusClassName(viewMode, focusedHostId === host.id),
+                                        hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                       )
                                       : cn(
                                         "h-14 px-2 py-2 rounded-lg transition-colors",
-                                        focusedHostId === host.id
+                                        isHostFocusSelected(host.id)
                                           ? hostCardFocusClassName("list", true)
                                           : "hover:bg-secondary/60",
                                       ),
@@ -750,12 +762,12 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[box-shadow,border-color,background-color] duration-150",
                                     hostCardFocusClassName(
                                       "grid",
-                                      focusedGroupPath === node.path || multiSelectedGroupPaths.has(node.path),
+                                      isGroupFocusSelected(node.path) || multiSelectedGroupPaths.has(node.path),
                                     ),
                                   )
                                   : cn(
                                     "h-14 px-2 py-2 rounded-lg transition-colors",
-                                    focusedGroupPath === node.path || multiSelectedGroupPaths.has(node.path)
+                                    isGroupFocusSelected(node.path) || multiSelectedGroupPaths.has(node.path)
                                       ? hostCardFocusClassName("list", true)
                                       : "hover:bg-secondary/60",
                                   ),
@@ -978,11 +990,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                             ? cn(
                                               "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
                                               draggingHostId === host.id && "opacity-45",
-                                              hostCardFocusClassName(viewMode, focusedHostId === host.id),
+                                              hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                             )
                                             : cn(
                                               "h-14 px-2 py-2 rounded-lg transition-colors",
-                                              focusedHostId === host.id
+                                              isHostFocusSelected(host.id)
                                                 ? hostCardFocusClassName("list", true)
                                                 : "hover:bg-secondary/60",
                                             ),
@@ -1122,11 +1134,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       ? cn(
                                         "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
                                         draggingHostId === host.id && "opacity-45",
-                                        hostCardFocusClassName(viewMode, focusedHostId === host.id),
+                                        hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                       )
                                       : cn(
                                         "h-14 px-2 py-2 rounded-lg transition-colors",
-                                        focusedHostId === host.id
+                                        isHostFocusSelected(host.id)
                                           ? hostCardFocusClassName("list", true)
                                           : "hover:bg-secondary/60",
                                       ),
