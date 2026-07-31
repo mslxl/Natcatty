@@ -18,6 +18,7 @@ function parseTapResult(text, exitCode) {
     if (failed) {
       const name = failed[1].trim();
       const diagnostic = [];
+      const errorDetails = [];
       let inDiagnostic = false;
       let errorBlockIndent = -1;
       let skippingStack = false;
@@ -37,7 +38,7 @@ function parseTapResult(text, exitCode) {
         if (errorBlockIndent >= 0) {
           if (!detail.trim()) continue;
           if (indent > errorBlockIndent) {
-            diagnostic.push(`error-detail: ${detail.trim()}`);
+            errorDetails.push(detail.trim());
             continue;
           }
           errorBlockIndent = -1;
@@ -66,6 +67,15 @@ function parseTapResult(text, exitCode) {
           );
         }
       }
+      const assertionFailure = diagnostic.some((detail) =>
+        /^\s*code:\s*['"]?ERR_ASSERTION['"]?\s*$/.test(detail),
+      );
+      const stableErrorDetails = assertionFailure
+        ? errorDetails.slice(0, 1).map((detail) =>
+            detail.replace(/\b\d+(?:\.\d+)?\b/g, '<number>'),
+          )
+        : errorDetails;
+      diagnostic.push(...stableErrorDetails.map((detail) => `error-detail: ${detail}`));
       failures.push(name);
       failureRecords.push({
         name,

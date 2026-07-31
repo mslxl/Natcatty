@@ -144,6 +144,38 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   );
   assert.equal(changedMultilineError.passed, false);
   assert.deepEqual(changedMultilineError.newFailures, ['duplicate title']);
+
+  const assertionDiff = (actual) => [
+    'TAP version 13',
+    'not ok 1 - duplicate title',
+    '  ---',
+    "  failureType: 'testCodeFailure'",
+    '  error: |-',
+    '    Expected values to be strictly equal:',
+    '',
+    `    ${actual} !== 1`,
+    "  code: 'ERR_ASSERTION'",
+    "  operator: 'strictEqual'",
+    '  ...',
+    '# fail 1',
+    '# cancelled 0',
+    '# tests 10',
+  ].join('\n');
+  const changedAssertionValue = compareTapResults(
+    parseTapResult(assertionDiff(111), 1),
+    parseTapResult(assertionDiff(222), 1),
+  );
+  assert.equal(changedAssertionValue.passed, true);
+
+  const customMultilineError = (reason) => multilineError(reason).replace(
+    "code: 'ERR_ASSERTION'",
+    "code: 'ERR_CUSTOM'",
+  );
+  const changedCustomError = compareTapResults(
+    parseTapResult(customMultilineError('service rejected: old reason'), 1),
+    parseTapResult(customMultilineError('service rejected: new reason'), 1),
+  );
+  assert.equal(changedCustomError.passed, false);
 });
 
 test('rejects added duplicate failures and cancelled tests', () => {
