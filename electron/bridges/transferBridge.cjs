@@ -33,9 +33,120 @@ const {
 const PAUSE_RANGE_DRAIN_MS = 50;
 /** Cap stream drain / pending-open waits for non-concurrent (pipe) pauses. */
 const PAUSE_STREAM_DRAIN_MS = 80;
-/** Resume never overlaps old range writes; report a retryable miss if they stall. */
-const RESUME_RANGE_SETTLE_MS = 1500;
+/**
+ * Max time resume waits for leftover concurrent ranges after soft-drain pause.
+ * Was 1.5s — real SSH writes often exceed that under concurrency, so a second
+ * pause→resume mid-file surfaced "still finishing" while ranges were healthy.
+ * Background settle (scheduleDeferredSparseTruncateSettle) usually clears the
+ * flag before the user clicks Resume; this is the safety wait on that click.
+ */
+const RESUME_RANGE_SETTLE_MS = Number(process.env.NETCATTY_RESUME_RANGE_SETTLE_MS) > 0
+  ? Number(process.env.NETCATTY_RESUME_RANGE_SETTLE_MS)
+  : 60_000;
+/** Poll interval while waiting for in-flight concurrent ranges to finish. */
+const RANGE_SETTLE_POLL_MS = 20;
 const internalTransferIds = new Set();
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Single-flight *truncate only* (after active ranges are already idle).
+ * Wait loops are per-caller so Resume can enforce its own 60s budget without
+ * joining a multi-minute background wait, and a failed attempt does not stick
+ * forever on the transfer.
+ */
+function runExclusiveSparseTruncate(transfer) {
+  if (!transfer) {
+    return Promise.resolve({ ok: false, reason: "Transfer is no longer active" });
+  }
+  if (!transfer.deferredSparseTruncate) {
+    return Promise.resolve({ ok: true });
+  }
+  if (transfer._sparseTruncatePromise) {
+    return transfer._sparseTruncatePromise;
+  }
+  const run = (async () => {
+    try {
+      const activeLeft = typeof transfer.getActiveRangeCount === "function"
+        ? transfer.getActiveRangeCount()
+        : 0;
+      if (activeLeft > 0) {
+        return {
+          ok: false,
+          reason: "The current file is still finishing. Try resume again.",
+        };
+      }
+      try {
+        await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
+      } catch {
+        // Contiguous checkpoint remains valid for resume.
+      }
+      transfer.deferredSparseTruncate = false;
+      return { ok: true };
+    } finally {
+      // Always clear so a later Resume can retry after ranges finish.
+      if (transfer._sparseTruncatePromise === run) {
+        transfer._sparseTruncatePromise = null;
+      }
+    }
+  })();
+  transfer._sparseTruncatePromise = run;
+  return run;
+}
+
+/**
+ * Wait for active concurrent ranges (caller-owned deadline), then exclusive truncate.
+ */
+async function ensureDeferredSparseFinalize(transfer, transferId, options = {}) {
+  if (!transfer) {
+    return { ok: false, reason: "Transfer is no longer active" };
+  }
+  if (!transfer.deferredSparseTruncate && !transfer._sparseTruncatePromise) {
+    return { ok: true };
+  }
+  const maxWaitMs = Number.isFinite(options.maxWaitMs)
+    ? options.maxWaitMs
+    : RESUME_RANGE_SETTLE_MS;
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
+  while (
+    transfer.paused
+    && !transfer.cancelled
+    && activeTransfers.get(transferId) === transfer
+    && transfer.deferredSparseTruncate
+    && typeof transfer.getActiveRangeCount === "function"
+    && transfer.getActiveRangeCount() > 0
+    && Date.now() < deadline
+  ) {
+    await sleepMs(RANGE_SETTLE_POLL_MS);
+  }
+  if (transfer.cancelled || activeTransfers.get(transferId) !== transfer) {
+    return { ok: false, reason: "Transfer is no longer active" };
+  }
+  if (!transfer.deferredSparseTruncate) {
+    return { ok: true };
+  }
+  const activeLeft = typeof transfer.getActiveRangeCount === "function"
+    ? transfer.getActiveRangeCount()
+    : 0;
+  if (activeLeft > 0) {
+    return {
+      ok: false,
+      reason: "The current file is still finishing. Try resume again.",
+    };
+  }
+  return runExclusiveSparseTruncate(transfer);
+}
+
+/** Fire-and-forget background settle after soft-drain pause. */
+function scheduleDeferredSparseTruncateSettle(transfer, transferId) {
+  if (!transfer?.deferredSparseTruncate) return;
+  void ensureDeferredSparseFinalize(transfer, transferId, {
+    // Background may wait longer for slow SSH ranges while UI stays paused.
+    maxWaitMs: Math.max(RESUME_RANGE_SETTLE_MS, 5 * 60_000),
+  }).catch(() => {});
+}
 
 /**
  * Fan transfer lifecycle to every window so the global transfer center keeps
@@ -737,6 +848,27 @@ const activeTransfers = new Map();
 const admittedTransferQueue = [];
 const pausedAdmittedTransfers = new Map();
 const workerTransferLifecycleEpochs = new Map();
+
+/**
+ * Lift a worker-local transfer lifecycleEpoch into main-process space.
+ * Soft-resume/pause on main may advance the main epoch past the worker's;
+ * progress still carrying the lower worker epoch would be rejected as stale.
+ */
+function resolveWorkerTransferLifecycleEpoch(transferId, workerEpoch) {
+  if (!transferId) {
+    return Number.isFinite(Number(workerEpoch)) ? Number(workerEpoch) : undefined;
+  }
+  const entry = workerTransferLifecycleEpochs.get(transferId);
+  const mainEpoch = Math.max(0, Number(entry?.epoch) || 0);
+  const workerVal = Number(workerEpoch);
+  const hasWorker = Number.isFinite(workerVal);
+  if (!entry) {
+    return hasWorker ? workerVal : undefined;
+  }
+  const resolved = Math.max(mainEpoch, hasWorker ? workerVal : 0);
+  if (resolved > mainEpoch) entry.epoch = resolved;
+  return resolved;
+}
 /** Transfer ids cancelled before startTransferNow registered them (skipAdmission open window). */
 const pendingCancelTransferIds = new Map();
 const MAX_PENDING_CANCEL_TRANSFER_IDS = 4_096;
@@ -3116,6 +3248,95 @@ async function startTransferNow(event, payload, onProgress) {
     }
   };
 
+  /**
+   * Soft-resume stays on the live stream handle. Avoid full-file SHA-256 (multi-GB
+   * freeze). Detect same-size in-place rewrites with size + mtime + a short
+   * head sample; hard reconnect after restart still uses full fingerprint in
+   * startTransferNow.
+   */
+  const SOFT_RESUME_SAMPLE_BYTES = 256 * 1024;
+  const readSourceSoftIdentity = async () => {
+    if (sourceType === "local") {
+      const st = await fs.promises.stat(sourcePath);
+      const sampleBytes = Math.min(SOFT_RESUME_SAMPLE_BYTES, Math.max(0, st.size));
+      const sample = sampleBytes > 0
+        ? await hashLocalPrefix(sourcePath, sampleBytes, { signal: transfer.signal })
+        : null;
+      return {
+        size: st.size,
+        mtimeMs: Number.isFinite(st.mtimeMs) ? st.mtimeMs : undefined,
+        sample: sample ? `sha256:${sample}` : null,
+      };
+    }
+    if (sourceType === "sftp") {
+      const client = sftpClients.get(sourceSftpId);
+      if (!client) throw new Error("Source SFTP session not found");
+      let size = 0;
+      let mtimeMs;
+      if (isScpModeClient(client)) {
+        const st = await getScpBackendForClient(client).stat(sourcePath, {
+          encoding: resolveEncodingForRequest(sourceSftpId, sourceEncoding),
+          signal: transfer.signal,
+        });
+        size = st.size;
+        mtimeMs = Number.isFinite(st.mtimeMs) ? st.mtimeMs
+          : (Number.isFinite(st.mtime) ? st.mtime * 1000 : undefined);
+      } else {
+        await requireSftpChannel(client);
+        const encoded = encodePathForSession(sourceSftpId, sourcePath, sourceEncoding);
+        const st = await client.stat(encoded);
+        size = st.size;
+        // ssh2 attrs: mtime is seconds.
+        mtimeMs = Number.isFinite(st.mtimeMs) ? st.mtimeMs
+          : (Number.isFinite(st.mtime) ? st.mtime * 1000 : undefined);
+      }
+      // Skip remote head samples here: open-ended SFTP reads hang on incomplete
+      // mocks and slow links. Size + mtime covers same-size rewrites that bump
+      // mtime; full SHA-256 still runs on hard reconnect.
+      return { size, mtimeMs, sample: null };
+    }
+    return {
+      size: Math.max(0, Number(transfer.totalBytes) || Number(lastObservedTotal) || 0),
+      mtimeMs: undefined,
+      sample: null,
+    };
+  };
+
+  transfer.captureSourceSoftIdentity = async () => {
+    try {
+      transfer.sourceSoftIdentity = await readSourceSoftIdentity();
+    } catch {
+      // Best-effort baseline for soft resume.
+    }
+  };
+
+  transfer.quickVerifySourceForSoftResume = async () => {
+    const expectedSize = Math.max(
+      0,
+      Number(transfer.sourceSoftIdentity?.size) || 0,
+      Number(transfer.totalBytes) || 0,
+      Number(lastObservedTotal) || 0,
+    );
+    const current = await readSourceSoftIdentity();
+    if (expectedSize > 0 && current.size !== expectedSize) {
+      throw new Error("Resume safety check failed: the source file has changed");
+    }
+    const expectedMtime = transfer.sourceSoftIdentity?.mtimeMs;
+    if (
+      Number.isFinite(expectedMtime)
+      && Number.isFinite(current.mtimeMs)
+      && current.mtimeMs !== expectedMtime
+    ) {
+      throw new Error("Resume safety check failed: the source file has changed");
+    }
+    const expectedSample = transfer.sourceSoftIdentity?.sample;
+    if (expectedSample && current.sample && current.sample !== expectedSample) {
+      throw new Error("Resume safety check failed: the source file has changed");
+    }
+    // Refresh baseline for a later pause/resume cycle in this same stream.
+    transfer.sourceSoftIdentity = current;
+  };
+
   transfer.captureSourceFingerprint = () => {
     if (transfer.sourceFingerprint) return Promise.resolve(transfer.sourceFingerprint);
     if (transfer.sourceFingerprintPromise) return transfer.sourceFingerprintPromise;
@@ -3262,6 +3483,12 @@ async function startTransferNow(event, payload, onProgress) {
           fileSize = stat.size;
         }
       }
+    }
+
+    // Baseline for soft resume (size + mtime + head sample). Full SHA-256 remains
+    // for hard reconnect / crash recovery.
+    if (transfer.resumable && typeof transfer.captureSourceSoftIdentity === "function") {
+      void transfer.captureSourceSoftIdentity();
     }
 
     const sourceClient = sourceType === "sftp" ? sftpClients.get(sourceSftpId) : null;
@@ -3993,7 +4220,7 @@ function cancelQueuedTransfer(transferId) {
 
 function resumeQueuedTransfer(transferId) {
   const job = pausedAdmittedTransfers.get(transferId);
-  if (!job) return false;
+  if (!job) return null;
   pausedAdmittedTransfers.delete(transferId);
   const lifecycleEpoch = Math.max(0, Number(job.payload?.lifecycleEpoch) || 0) + 1;
   job.payload.lifecycleEpoch = lifecycleEpoch;
@@ -4003,7 +4230,8 @@ function resumeQueuedTransfer(transferId) {
   job.event?.sender?.send?.("netcatty:transfer:queued", queuedEvent);
   broadcastGlobalTransferEvent(queuedEvent);
   pumpAdmittedTransfers();
-  return true;
+  // Soft-resume must stamp this epoch; synthesizing another one freezes progress.
+  return { success: true, lifecycleEpoch };
 }
 
 function prioritizeQueuedTransfer(transferId) {
@@ -4244,6 +4472,11 @@ async function pauseTransfer(_event, payload) {
         }
       } else {
         transfer.deferredSparseTruncate = true;
+        // New pause owns a fresh exclusive truncate slot.
+        transfer._sparseTruncatePromise = null;
+        // Finish truncate in the background when in-flight ranges land so a
+        // later Resume is not blocked by "still finishing" after a short wait.
+        scheduleDeferredSparseTruncateSettle(transfer, payload?.transferId);
       }
     } else if (transfer.stagedLocalPath) {
       try {
@@ -4273,6 +4506,8 @@ async function pauseTransfer(_event, payload) {
     // Unpausing here made folder pause look broken (amber error + children keep going).
     if (Number.isFinite(transfer.checkpointBytes) && transfer.checkpointBytes >= 0) {
       transfer.deferredSparseTruncate = true;
+      transfer._sparseTruncatePromise = null;
+      scheduleDeferredSparseTruncateSettle(transfer, payload?.transferId);
     } else {
       transfer.deferredSparseTruncate = false;
       transfer.paused = false;
@@ -4336,7 +4571,8 @@ async function pauseTransfer(_event, payload) {
 }
 
 async function resumeTransfer(_event, payload) {
-  if (resumeQueuedTransfer(payload?.transferId)) return { success: true };
+  const queuedResume = resumeQueuedTransfer(payload?.transferId);
+  if (queuedResume) return queuedResume;
   const transfer = activeTransfers.get(payload?.transferId);
   if (!transfer) {
     return { success: false, reason: "Transfer is no longer active" };
@@ -4364,17 +4600,36 @@ async function resumeTransfer(_event, payload) {
       transferId: payload.transferId,
       lifecycleEpoch: transfer.lifecycleEpoch,
     });
-    return { success: true };
+    return { success: true, lifecycleEpoch: transfer.lifecycleEpoch };
   }
   if (transfer.resumable) {
     try {
-      if (!transfer.sourceFingerprint) {
-        await transfer.captureSourceFingerprint?.();
+      // Prefer pause-time full fingerprint when available (or still capturing).
+      // Only fall back to soft identity (size/mtime/head sample) when no full
+      // SHA-256 exists — never skip a stored fingerprint before unpausing.
+      if (transfer.sourceFingerprintPromise) {
+        try { await transfer.sourceFingerprintPromise; } catch { /* fall through */ }
       }
-      if (!transfer.sourceFingerprint) {
-        return { success: false, reason: "Could not verify the source file for resume" };
+      if (
+        transfer.sourceFingerprint
+        && String(transfer.sourceFingerprint).startsWith("sha256:")
+        && typeof transfer.verifySourceFingerprint === "function"
+      ) {
+        await transfer.verifySourceFingerprint(transfer.sourceFingerprint);
+      } else if (typeof transfer.quickVerifySourceForSoftResume === "function") {
+        await transfer.quickVerifySourceForSoftResume();
+        if (!transfer.sourceFingerprint) {
+          void transfer.captureSourceFingerprint?.().catch(() => {});
+        }
+      } else if (transfer.verifySourceFingerprint) {
+        if (!transfer.sourceFingerprint) {
+          await transfer.captureSourceFingerprint?.();
+        }
+        if (!transfer.sourceFingerprint) {
+          return { success: false, reason: "Could not verify the source file for resume" };
+        }
+        await transfer.verifySourceFingerprint(transfer.sourceFingerprint);
       }
-      await transfer.verifySourceFingerprint?.(transfer.sourceFingerprint);
     } catch (error) {
       if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
         return { success: false, reason: "Transfer is no longer active" };
@@ -4386,48 +4641,23 @@ async function resumeTransfer(_event, payload) {
     }
   }
   // Soft-drained concurrent pause may leave a sparse tail past the contiguous
-  // checkpoint. Stay paused until leftover ranges settle, then truncate before
-  // unpausing. No new ranges are scheduled while paused. A stalled range gets
-  // a retryable failure while the transfer remains paused; resuming on top of
-  // an old write can corrupt the staged file.
-  if (transfer.deferredSparseTruncate) {
-    // Soft-drain already returned after PAUSE_RANGE_DRAIN_MS; leftover ranges
-    // almost always settle quickly. A multi-second wait made folder resume
-    // feel stuck (each child could block the resume path for up to 6s).
-    const settleDeadline = Date.now() + RESUME_RANGE_SETTLE_MS;
-    while (
-      typeof transfer.getActiveRangeCount === "function"
-      && transfer.getActiveRangeCount() > 0
-      && Date.now() < settleDeadline
-    ) {
-      if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
-        return { success: false, reason: "Transfer is no longer active" };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
-      return { success: false, reason: "Transfer is no longer active" };
-    }
-    const activeLeft = typeof transfer.getActiveRangeCount === "function"
-      ? transfer.getActiveRangeCount()
-      : 0;
-    if (activeLeft > 0) {
+  // checkpoint. Wait with Resume's own budget, then single-flight truncate so
+  // background settle cannot race new writes after unpause.
+  if (transfer.deferredSparseTruncate || transfer._sparseTruncatePromise) {
+    const settled = await ensureDeferredSparseFinalize(
+      transfer,
+      payload?.transferId,
+      { maxWaitMs: RESUME_RANGE_SETTLE_MS },
+    );
+    if (!settled?.ok) {
       return {
         success: false,
-        reason: "The current file is still finishing. Try resume again.",
+        reason: settled?.reason || "The current file is still finishing. Try resume again.",
       };
-    }
-    if (activeLeft === 0) {
-      try {
-        await prepareStreamFallbackAfterRangeFailure(transfer, transfer.stagedRemote?.client);
-      } catch {
-        // Best-effort; resume from contiguous checkpoint still overwrites holes.
-      }
     }
     if (transfer.cancelled || activeTransfers.get(payload?.transferId) !== transfer) {
       return { success: false, reason: "Transfer is no longer active" };
     }
-    transfer.deferredSparseTruncate = false;
   }
   transfer.paused = false;
   transfer.pauseSuperseded = false;
@@ -4439,7 +4669,9 @@ async function resumeTransfer(_event, payload) {
     transferId: payload.transferId,
     lifecycleEpoch: transfer.lifecycleEpoch,
   });
-  return { success: true };
+  // Soft-resume UI stamps this epoch so a late pause event with an older
+  // epoch cannot paint the row back to "paused" after a successful resume.
+  return { success: true, lifecycleEpoch: transfer.lifecycleEpoch };
 }
 
 async function prioritizeTransfer(_event, payload) {
@@ -4686,7 +4918,7 @@ function registerHandlers(ipcMain, options = {}) {
           lifecycleEpoch,
           lifecycleState: "paused",
         });
-        return result;
+        return { ...result, lifecycleEpoch };
       } catch (error) {
         const rollbackEpoch = nextWorkerLifecycleEpoch(payload?.transferId);
         broadcastGlobalTransferEvent({
@@ -4699,9 +4931,12 @@ function registerHandlers(ipcMain, options = {}) {
       }
     });
     ipcMain.handle("netcatty:transfer:resume", async (event, payload) => {
-      if (resumeQueuedTransfer(payload?.transferId)) return { success: true };
+      const queuedResume = resumeQueuedTransfer(payload?.transferId);
+      if (queuedResume) return queuedResume;
       const result = await workerRequest(event, "netcatty:transfer:resume", payload);
       if (result?.success) {
+        // Normalize into main-process epoch space (may advance past worker-local).
+        // Soft-resume UI must stamp THIS epoch or later worker progress is stale.
         const lifecycleEpoch = nextWorkerLifecycleEpoch(payload?.transferId, result.lifecycleEpoch);
         broadcastGlobalTransferEvent({
           type: "resumed",
@@ -4709,6 +4944,7 @@ function registerHandlers(ipcMain, options = {}) {
           lifecycleEpoch,
           lifecycleState: "transferring",
         });
+        return { ...result, lifecycleEpoch };
       }
       return result;
     });
@@ -4776,6 +5012,7 @@ module.exports = {
   setGlobalTransferConcurrency,
   getGlobalTransferConcurrency,
   broadcastGlobalTransferEvent,
+  resolveWorkerTransferLifecycleEpoch,
   cleanupTransferArtifacts,
   sameHostCopyDirectory,
   // Test / integration helpers for session leases
@@ -4787,6 +5024,12 @@ module.exports = {
   _promoteLocalTransferForTests: promoteLocalTransfer,
   _stableLocalFileIdentityForTests: stableLocalFileIdentity,
   _getWorkerTransferLifecycleEpochCountForTests: () => workerTransferLifecycleEpochs.size,
+  _setWorkerTransferLifecycleEpochForTests: (transferId, epoch) => {
+    workerTransferLifecycleEpochs.set(transferId, { epoch: Math.max(0, Number(epoch) || 0) });
+  },
+  _clearWorkerTransferLifecycleEpochsForTests: () => {
+    workerTransferLifecycleEpochs.clear();
+  },
   _getPendingCancelCountForTests: () => pendingCancelTransferIds.size,
   _getActiveTransferCountForTests: () => activeTransfers.size,
   _execSshCommandCancellableForTests: execSshCommandCancellable,

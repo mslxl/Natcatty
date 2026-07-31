@@ -1168,10 +1168,11 @@ test("fast resumable uploads pause only after in-flight ranges are durable", asy
   assert.equal(paused.success, true);
   assert.equal(paused.checkpointBytes, UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE);
 
-  assert.deepEqual(
-    await transferBridge.resumeTransfer(null, { transferId: "upload-fast-paused" }),
-    { success: true },
-  );
+  {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "upload-fast-paused" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
   assert.equal((await running).error, undefined);
   assert.equal(durableBytes, payload.length);
 });
@@ -1275,10 +1276,9 @@ test("pause soft-drains concurrent ranges but resume waits before truncating", a
 
   holdWrites = false;
   for (const { complete } of pendingWrites.splice(0)) complete();
-  assert.deepEqual(
-    await resuming,
-    { success: true },
-  );
+  const resumeResult = await resuming;
+  assert.equal(resumeResult.success, true);
+  assert.ok(Number.isFinite(resumeResult.lifecycleEpoch));
   assert.equal((await running).error, undefined);
   assert.equal(truncatedBeforeDrain, false, "must not truncate while range writes are active");
   assert.equal(resumedBeforeDrain, false, "resume must wait for active range writes to settle");
@@ -1436,10 +1436,11 @@ test("resuming while a fast pause is pending settles the pause request", async (
   assert.equal(typeof finishWrite, "function");
 
   const pausing = transferBridge.pauseTransfer(null, { transferId: "pause-resume-race" });
-  assert.deepEqual(
-    await transferBridge.resumeTransfer(null, { transferId: "pause-resume-race" }),
-    { success: true },
-  );
+  {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "pause-resume-race" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
   assert.deepEqual(await pausing, {
     success: false,
     reason: "Pause was superseded by resume",
@@ -1543,10 +1544,11 @@ test("pause acknowledges quickly then publishes a full source identity", async (
       `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`,
     );
 
-    assert.deepEqual(
-      await transferBridge.resumeTransfer(null, { transferId: "late-pause-race" }),
-      { success: true },
-    );
+    {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "late-pause-race" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
   }
 
   assert.equal((await running).error, undefined);
@@ -3931,10 +3933,11 @@ test("fast resumable downloads pause only at a complete checkpoint", async (t) =
   assert.equal(paused.success, true);
   assert.equal(paused.checkpointBytes, 2 * 1024 * 1024);
 
-  assert.deepEqual(
-    await transferBridge.resumeTransfer(null, { transferId: "download-fast-paused" }),
-    { success: true },
-  );
+  {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "download-fast-paused" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
   assert.equal((await running).error, undefined);
   assert.deepEqual(await fs.promises.readFile(targetPath), payload);
 });
@@ -4715,7 +4718,9 @@ test("resumable stream transfers pause without losing their checkpoint and conti
   assert.equal(pausedAgain.checkpointBytes, 3);
   assert.equal(pausedAgain.resumeStage, "direct");
 
-  assert.deepEqual(await transferBridge.resumeTransfer(null, { transferId: "download-paused" }), { success: true });
+  const resumed = await transferBridge.resumeTransfer(null, { transferId: "download-paused" });
+  assert.equal(resumed.success, true);
+  assert.ok(Number.isFinite(resumed.lifecycleEpoch), "soft-resume must return bridge lifecycleEpoch");
   assert.deepEqual(
     lifecycleEvents.findLast((event) => event.type === "resumed"),
     { type: "resumed", transferId: "download-paused", lifecycleEpoch: 2 },
@@ -4816,10 +4821,11 @@ test("stream local-copy pause survives write-stream drain without auto-resuming 
     "paused stream copy must not keep writing after drain",
   );
 
-  assert.deepEqual(
-    await transferBridge.resumeTransfer(null, { transferId: "local-pipe-pause" }),
-    { success: true },
-  );
+  {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "local-pipe-pause" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
   assert.equal((await running).error, undefined);
   assert.equal(durableBytes, payload.length);
 });
@@ -4908,14 +4914,16 @@ test("repeated resume does not double-pipe the same stream pair", async (t) => {
   assert.equal(paused.success, true, paused.reason);
   const pipesAfterPause = pipeCount;
 
-  assert.deepEqual(
-    await transferBridge.resumeTransfer(null, { transferId: "local-double-resume" }),
-    { success: true },
-  );
-  assert.deepEqual(
-    await transferBridge.resumeTransfer(null, { transferId: "local-double-resume" }),
-    { success: true },
-  );
+  {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "local-double-resume" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
+  {
+    const resumed = await transferBridge.resumeTransfer(null, { transferId: "local-double-resume" });
+    assert.equal(resumed.success, true);
+    assert.ok(Number.isFinite(resumed.lifecycleEpoch));
+  }
   assert.equal(
     pipeCount,
     pipesAfterPause + 1,

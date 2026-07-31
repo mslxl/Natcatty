@@ -79,7 +79,7 @@ test("softResumeTransfer with live walk paints transferring without requiring br
   ]);
 
   const handled = await softResumeTransfer(host, "dir");
-  assert.equal(handled, true);
+  assert.equal(handled.handled, true);
   assert.equal(getTasks().find((t) => t.id === "dir")?.status, "transferring");
   assert.equal(isTransferPauseLatched("dir"), false);
 
@@ -101,7 +101,8 @@ test("single-file softResume with live walk + bridge resume fail returns false (
   );
 
   const handled = await softResumeTransfer(host, "file-1");
-  assert.equal(handled, false, "must not soft-succeed when every bridge resume fails");
+  assert.equal(handled.handled, false, "must not soft-succeed when every bridge resume fails");
+  assert.match(handled.reason || "", /not active/i);
   // Must not paint transferring — hard reconnect path must remain available.
   assert.notEqual(getTasks().find((t) => t.id === "file-1")?.status, "transferring");
 
@@ -122,12 +123,55 @@ test("directory softResume with live walk and no bridge success still rejoins", 
   );
 
   const handled = await softResumeTransfer(host, "dir-2");
-  assert.equal(handled, true);
+  assert.equal(handled.handled, true);
   assert.equal(getTasks().find((t) => t.id === "dir-2")?.status, "transferring");
   // lifecycleEpoch cleared so child stream progress is accepted
   assert.equal(getTasks().find((t) => t.id === "dir-2")?.lifecycleEpoch, undefined);
 
   unregisterTransferWalk("dir-2");
+  resetTransferPauseLatchesForTests();
+  resetTransferWalkRegistryForTests();
+});
+
+test("single-file softPause demotes dead streams instead of painting paused", async () => {
+  resetTransferPauseLatchesForTests();
+  resetTransferWalkRegistryForTests();
+  const { host, getTasks } = createHost(
+    [makeTask("dead-file", "transferring")],
+    () => ({
+      pauseTransfer: async () => ({ success: false, reason: "Transfer is no longer active" }),
+    }),
+  );
+
+  const outcome = await softPauseTransfer(host, "dead-file");
+  assert.equal(outcome, "interrupted");
+  const row = getTasks().find((t) => t.id === "dead-file");
+  assert.equal(row?.status, "interrupted");
+  assert.equal(row?.reconnectRequired, true);
+  assert.match(row?.error || "", /no longer active/i);
+  assert.equal(isTransferPauseLatched("dead-file"), false);
+
+  resetTransferPauseLatchesForTests();
+  resetTransferWalkRegistryForTests();
+});
+
+test("soft resume without bridge lifecycleEpoch keeps a monotonic epoch (no stale re-pause)", async () => {
+  resetTransferPauseLatchesForTests();
+  resetTransferWalkRegistryForTests();
+  const { host, getTasks } = createHost(
+    [{ ...makeTask("no-epoch", "paused"), lifecycleEpoch: 3, speed: 0 }],
+    () => ({
+      // Older bridges returned only { success: true } — must not clear epoch.
+      resumeTransfer: async () => ({ success: true }),
+    }),
+  );
+
+  const result = await softResumeTransfer(host, "no-epoch");
+  assert.equal(result.handled, true);
+  const row = getTasks().find((t) => t.id === "no-epoch");
+  assert.equal(row?.status, "transferring");
+  assert.equal(row?.lifecycleEpoch, 4, "must advance past pause epoch when bridge omits epoch");
+
   resetTransferPauseLatchesForTests();
   resetTransferWalkRegistryForTests();
 });
@@ -157,7 +201,7 @@ test("soft pause/resume stamps bridge lifecycleEpoch so later progress is not st
   assert.ok(typeof pausedEpoch === "number" && pausedEpoch > 0);
 
   const handled = await softResumeTransfer(host, "stream");
-  assert.equal(handled, true);
+  assert.equal(handled.handled, true);
   const resumed = getTasks().find((t) => t.id === "stream");
   assert.equal(resumed?.status, "transferring");
   // Bridge-aligned: must equal last resume bridge epoch, not control-plane bumps.
@@ -186,7 +230,7 @@ test("directory softResume stamps bridge epoch only on successIds; queued siblin
   );
 
   const handled = await softResumeTransfer(host, "folder-mix");
-  assert.equal(handled, true);
+  assert.equal(handled.handled, true);
   const parent = getTasks().find((t) => t.id === "folder-mix");
   const live = getTasks().find((t) => t.id === "live-child");
   const queued = getTasks().find((t) => t.id === "queued-child");

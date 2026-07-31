@@ -5,7 +5,9 @@ import test from "node:test";
 import { createGlobalSftpTransferScheduler } from "./globalTransferScheduler.ts";
 import {
   allPauseResultsBenignOrSuccess,
+  allPauseResultsDeadTransfer,
   isBenignPauseMiss,
+  isDeadTransferPauseMiss,
   isHardPauseFailure,
   planPartialPauseRollback,
   resolveDirectoryPauseParentOutcome,
@@ -18,6 +20,22 @@ test("benign pause misses match store regex (no longer active / not found / sess
   assert.equal(isBenignPauseMiss("SFTP session closed"), true);
   assert.equal(isBenignPauseMiss("This transfer cannot be paused safely"), false);
   assert.equal(isBenignPauseMiss("Pause unavailable"), false);
+});
+
+test("dead transfer pause misses are a strict subset of benign misses", () => {
+  assert.equal(isDeadTransferPauseMiss("Transfer is no longer active"), true);
+  assert.equal(isDeadTransferPauseMiss("session not found"), true);
+  assert.equal(isDeadTransferPauseMiss("SFTP session closed"), false);
+  assert.equal(allPauseResultsDeadTransfer([
+    { success: false, reason: "Transfer is no longer active" },
+  ]), true);
+  assert.equal(allPauseResultsDeadTransfer([
+    { success: true },
+    { success: false, reason: "Transfer is no longer active" },
+  ]), false);
+  assert.equal(allPauseResultsDeadTransfer([
+    { success: false, reason: "cannot be paused safely" },
+  ]), false);
 });
 
 test("allPauseResultsBenignOrSuccess rejects mixed hard failures", () => {

@@ -922,18 +922,39 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       }
 
       // Soft-resume whenever a walk may still be alive, even if reconnectRequired
-      // was set spuriously. Dedicated only when soft-resume cannot rejoin.
+      // was set spuriously. Dedicated only when the live stream is truly gone.
       const preferSoft = !needsDedicatedReconnect || isTransferWalkInFlight(taskId);
       if (preferSoft) {
-        const handled = await softResumeTransfer(controlHost, taskId);
-        if (handled) {
+        const soft = await softResumeTransfer(controlHost, taskId);
+        if (soft.handled) {
           notifyOwners();
           return;
         }
-        // Soft could not rejoin (dead walk + bridge miss). Never silent-return:
-        // demote so the hard reconnect / adopt path below can run even when a
-        // stale panel owner is still registered.
         if (action === "resume") {
+          const reason = soft.reason || "Transfer session is no longer active";
+          // Transient / verification soft-misses must NOT hard-reconnect: that
+          // rehomes ownerId to dedicated-resume (panel queue disappears) and can
+          // race a still-live paused stream → "reconnecting" then stuck paused.
+          // "Resume unavailable" / not found = no live bridge stream (restart or
+          // tests without a bridge) — those must still hard-reconnect / adopt.
+          const streamGone = /no longer active|not active|not found|session is no longer|Resume unavailable|Transfer not found/i
+            .test(reason);
+          if (!streamGone) {
+            tasks = tasks.map((candidate) => candidate.id === taskId ? {
+              ...candidate,
+              status: "paused" as const,
+              reconnectRequired: false,
+              speed: 0,
+              phase: undefined,
+              error: reason,
+              pauseUnavailableReason: undefined,
+            } : candidate);
+            emit();
+            notifyOwners();
+            return;
+          }
+          // Soft could not rejoin a dead stream. Demote so the hard reconnect /
+          // adopt path below can run even when a stale panel owner remains.
           tasks = tasks.map((candidate) => candidate.id === taskId ? {
             ...candidate,
             status: "interrupted" as const,
@@ -941,7 +962,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             speed: 0,
             phase: undefined,
             error: candidate.error
-              ?? "Transfer session is no longer active. Resume will reconnect.",
+              ?? `${reason}. Resume will reconnect.`,
           } : candidate);
           emit();
           task = tasks.find((candidate) => candidate.id === taskId);
