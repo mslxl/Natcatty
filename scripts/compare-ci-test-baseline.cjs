@@ -16,8 +16,8 @@ function normalizeAssertionDetail(detail) {
     );
 }
 
-function collectNonTapFailures(lines) {
-  const failures = [];
+function collectNonTapOutput(lines) {
+  const output = [];
   let inDiagnostic = false;
   for (const rawLine of lines) {
     const line = rawLine.trim();
@@ -38,17 +38,14 @@ function collectNonTapFailures(lines) {
     ) {
       continue;
     }
-    if (!/\b(?:error|failed|failure|crash(?:ed)?|fatal|exception|unhandled|abort(?:ed)?)\b/i.test(line)) {
-      continue;
-    }
-    failures.push(
+    output.push(
       line
         .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')
         .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
         .replace(/:\d+:\d+\b/g, ':<line>:<column>'),
     );
   }
-  return failures;
+  return output;
 }
 
 function parseTapResult(text, exitCode) {
@@ -166,7 +163,7 @@ function parseTapResult(text, exitCode) {
     skippedCount,
     todoCount,
     testCount,
-    nonTapFailures: collectNonTapFailures(lines),
+    nonTapOutput: collectNonTapOutput(lines),
     complete:
       failCount !== null &&
       cancelledCount !== null &&
@@ -273,12 +270,12 @@ function compareTapResults(baseline, candidate) {
     };
   }
 
-  const baselineNonTapCounts = countFailures(baseline.nonTapFailures);
-  const candidateNonTapCounts = countFailures(candidate.nonTapFailures);
-  const addedNonTapFailure = [...candidateNonTapCounts].some(
-    ([failure, count]) => count > (baselineNonTapCounts.get(failure) || 0),
+  const baselineNonTapCounts = countFailures(baseline.nonTapOutput);
+  const candidateNonTapCounts = countFailures(candidate.nonTapOutput);
+  const addedNonTapOutput = [...candidateNonTapCounts].some(
+    ([line, count]) => count > (baselineNonTapCounts.get(line) || 0),
   );
-  if (addedNonTapFailure) {
+  if (addedNonTapOutput) {
     return {
       passed: false,
       kind: 'unclassified_failure',

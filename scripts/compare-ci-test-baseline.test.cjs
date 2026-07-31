@@ -122,6 +122,20 @@ test('rejects an additional runner failure after comparable TAP output', () => {
   );
   assert.equal(preSummaryCrash.passed, false);
   assert.equal(preSummaryCrash.kind, 'unclassified_failure');
+
+  const crashWithoutFailureKeyword = compareTapResults(
+    parseTapResult(sameTap, 1),
+    parseTapResult(`${sameTap}\nSegmentation fault (core dumped)`, 1),
+  );
+  assert.equal(crashWithoutFailureKeyword.passed, false);
+  assert.equal(crashWithoutFailureKeyword.kind, 'unclassified_failure');
+
+  const unchangedArbitraryOutput = compareTapResults(
+    parseTapResult(`starting custom runner\n${sameTap}`, 1),
+    parseTapResult(`starting custom runner\n${sameTap}`, 1),
+  );
+  assert.equal(unchangedArbitraryOutput.passed, true);
+  assert.equal(unchangedArbitraryOutput.kind, 'baseline_only');
 });
 
 test('distinguishes same-title failures by stable TAP diagnostics', () => {
