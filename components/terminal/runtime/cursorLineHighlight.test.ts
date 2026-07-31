@@ -146,8 +146,14 @@ const createFakeTerm = (cols = 80) => {
     moveCursor(nextY: number) {
       cursorY = nextY;
       for (const handler of cursorMoveHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     scrollOutput(lines: number) {
+      baseY += lines;
+      for (const handler of writeParsedHandlers) handler();
+      for (const handler of renderHandlers) handler();
+    },
+    writeHiddenOutput(lines: number) {
       baseY += lines;
       for (const handler of writeParsedHandlers) handler();
     },
@@ -156,6 +162,7 @@ const createFakeTerm = (cols = 80) => {
         if (!marker.disposed) marker.line -= lines;
       }
       for (const handler of writeParsedHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     setBufferType(nextType: 'normal' | 'alternate') {
       bufferType = nextType;
@@ -165,14 +172,17 @@ const createFakeTerm = (cols = 80) => {
       coloredBackgrounds.clear();
       for (const column of columns) coloredBackgrounds.add(column);
       for (const handler of writeParsedHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     setLineLength(nextLength: number) {
       lineLength = nextLength;
       for (const handler of writeParsedHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     setCursorX(nextX: number) {
       cursorX = nextX;
       for (const handler of cursorMoveHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     setSelection(next: boolean) {
       hasSelection = next;
@@ -185,11 +195,13 @@ const createFakeTerm = (cols = 80) => {
       coloredForegrounds.clear();
       for (const column of columns) coloredForegrounds.add(column);
       for (const handler of writeParsedHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     setInverseCells(columns: number[]) {
       inverseCells.clear();
       for (const column of columns) inverseCells.add(column);
       for (const handler of writeParsedHandlers) handler();
+      for (const handler of renderHandlers) handler();
     },
     resetDecorations() {
       for (const decoration of decorations) decoration.dispose();
@@ -242,7 +254,7 @@ test('CursorLineHighlighter refreshes after hidden writes become visible', () =>
   highlighter.setEnabled(true);
   assert.equal(term.decorations.at(-1)?.options.width, 10);
 
-  term.scrollOutput(1);
+  term.writeHiddenOutput(1);
   protectedRanges = [{ x: 0, width: 2 }];
   term.render();
 

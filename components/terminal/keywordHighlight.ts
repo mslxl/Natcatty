@@ -103,6 +103,7 @@ export class KeywordHighlighter implements IDisposable {
   private term: XTerm;
   private compiledRules: CompiledRule[] = [];
   private lineDecorations = new Map<number, LineDecorationState>();
+  private decorationsVersion = 0;
   private debounceTimer: NodeJS.Timeout | null = null;
   /** Single quiet-window catch-up after bulk dumps (no per-write schedule). */
   private bulkPressureCatchUpTimer: NodeJS.Timeout | null = null;
@@ -282,6 +283,10 @@ export class KeywordHighlighter implements IDisposable {
     return this.lineDecorations.get(lineY)?.ranges ?? EMPTY_RANGES;
   }
 
+  public getForegroundRangesVersion(): number {
+    return this.decorationsVersion;
+  }
+
   public dispose() {
     this.cancelScrollRefresh();
     this.clearDecorations();
@@ -359,6 +364,7 @@ export class KeywordHighlighter implements IDisposable {
       this.disposeLineDecorations(lineY, state);
     }
     this.lineDecorations.clear();
+    if (hadDecorations) this.decorationsVersion += 1;
     this.lastViewportRange = null;
     this.lastRenderRange = null;
     this.clearDirtySegments();
@@ -443,6 +449,7 @@ export class KeywordHighlighter implements IDisposable {
       ranges,
       signature,
     });
+    this.decorationsVersion += 1;
     this.markTerminalRefreshNeeded(lineY);
   }
 

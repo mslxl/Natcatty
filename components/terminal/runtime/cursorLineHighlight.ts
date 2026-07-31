@@ -37,17 +37,28 @@ export class CursorLineHighlighter implements IDisposable {
   private activeColor: string | null = null;
   private activeRanges: HighlightRange[] = [];
   private activeTailRanges: HighlightRange[] = [];
+  private activeProtectedRangesVersion = 0;
   private readonly disposables: IDisposable[] = [];
+  private pendingRefresh = false;
   private disposed = false;
 
   constructor(
     private readonly term: CursorLineTerminal,
     private readonly getProtectedRanges: (absoluteLine: number) => readonly HighlightRange[] = () => [],
+    private readonly getProtectedRangesVersion: () => number = () => 0,
   ) {
     this.disposables.push(
-      this.term.onCursorMove(() => this.refresh()),
-      this.term.onWriteParsed(() => this.refresh()),
-      this.term.onRender(() => this.refresh()),
+      this.term.onCursorMove(() => this.markPendingRefresh()),
+      this.term.onWriteParsed(() => this.markPendingRefresh()),
+      this.term.onRender(() => {
+        if (
+          this.pendingRefresh ||
+          this.getProtectedRangesVersion() !== this.activeProtectedRangesVersion
+        ) {
+          this.pendingRefresh = false;
+          this.refresh();
+        }
+      }),
       this.term.onSelectionChange(() => this.refresh({ force: true })),
       this.term.onResize(() => this.refresh({ force: true })),
       this.term.buffer.onBufferChange(() => this.refresh({ force: true })),
@@ -78,6 +89,7 @@ export class CursorLineHighlighter implements IDisposable {
 
   refresh(options: { force?: boolean } = {}): void {
     if (this.disposed || !this.enabled) return;
+    this.pendingRefresh = false;
 
     if (this.term.hasSelection()) {
       this.clear();
@@ -100,6 +112,7 @@ export class CursorLineHighlighter implements IDisposable {
       this.getProtectedRanges(absoluteLine),
     );
     const tailRanges = this.getTailRanges(contentEnd, cols);
+    const protectedRangesVersion = this.getProtectedRangesVersion();
 
     if (
       !options.force &&
@@ -108,6 +121,7 @@ export class CursorLineHighlighter implements IDisposable {
       color === this.activeColor &&
       rangesEqual(ranges, this.activeRanges) &&
       rangesEqual(tailRanges, this.activeTailRanges) &&
+      protectedRangesVersion === this.activeProtectedRangesVersion &&
       this.marker &&
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
@@ -161,6 +175,7 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeColor = color;
     this.activeRanges = ranges;
     this.activeTailRanges = tailRanges;
+    this.activeProtectedRangesVersion = protectedRangesVersion;
   }
 
   dispose(): void {
@@ -234,6 +249,10 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeColor = null;
     this.activeRanges = [];
     this.activeTailRanges = [];
+  }
+
+  private markPendingRefresh(): void {
+    if (!this.disposed && this.enabled) this.pendingRefresh = true;
   }
 }
 
