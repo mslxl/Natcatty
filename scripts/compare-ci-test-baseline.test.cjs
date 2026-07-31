@@ -53,6 +53,12 @@ test('rejects replacing an existing successful test with an unrelated one', () =
     }), 0),
   );
   assert.equal(issueNumberName.passed, false);
+
+  const duplicateName = compareTapResults(
+    parseTapResult(tap({ failures: ['same name'], successes: ['same name'] }), 1),
+    parseTapResult(tap({ successes: ['same name', 'unrelated replacement'] }), 0),
+  );
+  assert.equal(duplicateName.passed, false);
 });
 
 test('rejects a clean candidate when the exact-base TAP summary is incomplete', () => {

@@ -187,15 +187,17 @@ function countFailures(failures) {
 function compareTapResults(baseline, candidate) {
   const baselineSuccessCounts = countFailures(baseline.successes);
   const candidateSuccessCounts = countFailures(candidate.successes);
+  const candidateSuccessPool = new Map(candidateSuccessCounts);
   const missingBaselineSuccesses = [];
   for (const [success, count] of baselineSuccessCounts) {
-    const missing = count - (candidateSuccessCounts.get(success) || 0);
+    const available = candidateSuccessPool.get(success) || 0;
+    const missing = count - available;
+    candidateSuccessPool.set(success, Math.max(0, available - count));
     for (let i = 0; i < missing; i += 1) missingBaselineSuccesses.push(success);
   }
   const candidateFailurePool = countFailures(
     candidate.failureRecords.map((failure) => failure.identity),
   );
-  const candidateSuccessPool = new Map(candidateSuccessCounts);
   const missingBaselineFailures = [];
   for (const failure of baseline.failureRecords) {
     const matchingFailures = candidateFailurePool.get(failure.identity) || 0;
