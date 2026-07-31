@@ -11,6 +11,7 @@ type FakeElement = {
 };
 const createFakeTerm = (cols = 80) => {
   let cursorY = 0;
+  let cursorX = 0;
   let baseY = 0;
   let bufferType: 'normal' | 'alternate' = 'normal';
   let lineLength = cols;
@@ -45,12 +46,16 @@ const createFakeTerm = (cols = 80) => {
         get cursorY() {
           return cursorY;
         },
+        get cursorX() {
+          return cursorX;
+        },
         getLine() {
           return {
             length: cols,
             getCell(x: number) {
               return {
                 getChars: () => (x < lineLength ? 'x' : ''),
+                getWidth: () => 1,
                 isAttributeDefault: () => x >= lineLength,
                 isBgDefault: () => !coloredBackgrounds.has(x),
                 isFgDefault: () => !coloredForegrounds.has(x),
@@ -156,6 +161,10 @@ const createFakeTerm = (cols = 80) => {
       lineLength = nextLength;
       for (const handler of writeParsedHandlers) handler();
     },
+    setCursorX(nextX: number) {
+      cursorX = nextX;
+      for (const handler of cursorMoveHandlers) handler();
+    },
     setColoredForegrounds(columns: number[]) {
       coloredForegrounds.clear();
       for (const column of columns) coloredForegrounds.add(column);
@@ -243,6 +252,25 @@ test('CursorLineHighlighter fills the blank tail after short output', () => {
   assert.equal(term.decorations[1]?.options.width, 6);
   assert.equal(term.decorations[1]?.options.backgroundColor, undefined);
   assert.equal(term.decorations[1]?.element.style.backgroundColor, '#263449');
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter leaves the cursor cell above the blank tail', () => {
+  const term = createFakeTerm(10);
+  term.setLineLength(4);
+  term.setCursorX(5);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setBackgroundColor('#263449');
+  highlighter.setEnabled(true);
+
+  assert.deepEqual(
+    term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
+    [
+      { x: 0, width: 4 },
+      { x: 4, width: 1 },
+      { x: 6, width: 4 },
+    ],
+  );
   highlighter.dispose();
 });
 

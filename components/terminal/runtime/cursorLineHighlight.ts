@@ -35,7 +35,7 @@ export class CursorLineHighlighter implements IDisposable {
   private activeCols: number | null = null;
   private activeColor: string | null = null;
   private activeRanges: HighlightRange[] = [];
-  private activeTailWidth: number | null = null;
+  private activeTailRanges: HighlightRange[] = [];
   private readonly disposables: IDisposable[] = [];
   private disposed = false;
 
@@ -92,8 +92,7 @@ export class CursorLineHighlighter implements IDisposable {
       buffer.getNullCell(),
       this.getProtectedRanges(absoluteLine),
     );
-    const lineLength = contentEnd;
-    const tailWidth = cols - lineLength;
+    const tailRanges = this.getTailRanges(contentEnd, cols, buffer.cursorX);
 
     if (
       !options.force &&
@@ -101,7 +100,7 @@ export class CursorLineHighlighter implements IDisposable {
       cols === this.activeCols &&
       color === this.activeColor &&
       rangesEqual(ranges, this.activeRanges) &&
-      tailWidth === this.activeTailWidth &&
+      rangesEqual(tailRanges, this.activeTailRanges) &&
       this.marker &&
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
@@ -125,18 +124,20 @@ export class CursorLineHighlighter implements IDisposable {
       });
       if (decoration) decorations.push(decoration);
     }
-    if (tailWidth > 0) {
+    for (const tailRange of tailRanges) {
       const tailDecoration = this.term.registerDecoration({
         marker,
-        x: lineLength,
-        width: tailWidth,
+        x: tailRange.x,
+        width: tailRange.width,
       });
       if (tailDecoration) {
-        this.decorationRenderListeners.push(tailDecoration.onRender((element) => {
-          element.style.backgroundColor = color;
-          element.style.pointerEvents = 'none';
-          element.setAttribute('aria-hidden', 'true');
-        }));
+        this.decorationRenderListeners.push(
+          tailDecoration.onRender((element) => {
+            element.style.backgroundColor = color;
+            element.style.pointerEvents = 'none';
+            element.setAttribute('aria-hidden', 'true');
+          }),
+        );
         decorations.push(tailDecoration);
       }
     }
@@ -157,7 +158,7 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeCols = cols;
     this.activeColor = color;
     this.activeRanges = ranges;
-    this.activeTailWidth = tailWidth;
+    this.activeTailRanges = tailRanges;
   }
 
   dispose(): void {
@@ -185,7 +186,7 @@ export class CursorLineHighlighter implements IDisposable {
         currentCell &&
         (currentCell.getChars() !== '' || !currentCell.isAttributeDefault())
       ) {
-        contentEnd = x + 1;
+        contentEnd = Math.min(cols, x + Math.max(1, currentCell.getWidth()));
       }
       const isProtected = protectedRanges.some(
         (range) => x >= range.x && x < range.x + range.width,
@@ -214,6 +215,22 @@ export class CursorLineHighlighter implements IDisposable {
     };
   }
 
+  private getTailRanges(contentEnd: number, cols: number, cursorX: number): HighlightRange[] {
+    if (contentEnd >= cols) return [];
+    const cursorColumn = cursorX >= 0 && cursorX < cols ? cursorX : null;
+    if (cursorColumn === null || cursorColumn < contentEnd) {
+      return [{ x: contentEnd, width: cols - contentEnd }];
+    }
+    return [
+      ...(cursorColumn > contentEnd
+        ? [{ x: contentEnd, width: cursorColumn - contentEnd }]
+        : []),
+      ...(cursorColumn + 1 < cols
+        ? [{ x: cursorColumn + 1, width: cols - cursorColumn - 1 }]
+        : []),
+    ];
+  }
+
   private clear(): void {
     for (const disposable of this.decorationRenderListeners) disposable.dispose();
     this.decorationRenderListeners = [];
@@ -227,7 +244,7 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeCols = null;
     this.activeColor = null;
     this.activeRanges = [];
-    this.activeTailWidth = null;
+    this.activeTailRanges = [];
   }
 }
 
