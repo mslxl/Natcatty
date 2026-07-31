@@ -1348,7 +1348,6 @@ jobs:
                 pullNumber,
               }),
             });
-
       - name: Handle simple resolution or acknowledgement
         if: steps.prepare.outputs.simple_kind != ''
         uses: actions/github-script@v9
@@ -1409,6 +1408,17 @@ jobs:
                 pullNumber,
               }),
             });
+            if (pullNumber) {
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: 'cursor-automation.yml',
+                ref: context.payload.repository.default_branch,
+                inputs: { pull_number: String(pullNumber) },
+              });
+              core.info(
+                `Queued a readiness check for PR #${pullNumber} after the simple follow-up reply.`,
+              );
+            }
 
       - name: Pause linked pull request during follow-up review
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'

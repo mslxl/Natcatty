@@ -868,6 +868,23 @@ test('workflow cleans source labels on automation PR close and dedupes clean not
   assert.match(workflow, /Clean handoff already recorded/);
 });
 
+test('simple follow-ups immediately recheck linked clean pull requests', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const simpleStep = workflow.match(
+    /- name: Handle simple resolution or acknowledgement[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  const recordReply = simpleStep.indexOf('await github.rest.issues.createComment');
+  const recheckPull = simpleStep.indexOf('await github.rest.actions.createWorkflowDispatch', recordReply);
+
+  assert.ok(recordReply >= 0);
+  assert.ok(recheckPull > recordReply);
+  assert.match(simpleStep, /inputs: \{ pull_number: String\(pullNumber\) \}/);
+  assert.match(simpleStep, /Queued a readiness check for PR/);
+});
+
 test('findPendingIssueFollowups coalesces rapid no-PR comments after bot triage', () => {
   const pending = auto.findPendingIssueFollowups({
     comments: [
