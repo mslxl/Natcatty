@@ -82,8 +82,8 @@ test("build workflow builds Linux x64 native modules in a glibc 2.28 container",
   assert.ok(x64Job, "build-linux-x64 job must be present before build-linux-arm64");
   assert.match(
     x64Job[0],
-    /container:\s*\n\s*image:\s*almalinux:8/,
-    "Linux x64 package job must build inside almalinux:8 for glibc 2.28 + modern GCC",
+    /container:[\s\S]*?image:\s*quay\.io\/almalinuxorg\/almalinux:8/,
+    "Linux x64 package job must build inside the official AlmaLinux 8 image for glibc 2.28 + modern GCC",
   );
   assert.equal(
     x64Job[0].includes("debian:buster"),

@@ -91,12 +91,15 @@ const PROTECTED_PATH_PREFIXES = Object.freeze([
   '.github/',
   '.cursor/',
   'scripts/cursor-automation',
+  'scripts/compare-ci-test-baseline',
   'scripts/prepare-cursor-research-input',
   'scripts/issue-triage',
   'scripts/release',
   'nix/',
   'signing/',
   'packaging/',
+  'package.json',
+  'package-lock.json',
 ]);
 
 /** Exact / basename-sensitive packaging and signing config files. */
@@ -1306,7 +1309,7 @@ function findPendingIssueFollowups({
   const processed = extractProcessedIssueFollowupIds(list, botLogins);
   const watermark =
     extractIssueCommentWatermark(pull?.body) ||
-    (!pull ? extractIssueTriageWatermark(list, botLogins) : '');
+    extractIssueTriageWatermark(list, botLogins);
   const watermarkIndex = watermark
     ? list.findIndex((comment) => String(comment?.id) === watermark)
     : -1;
@@ -1318,7 +1321,7 @@ function findPendingIssueFollowups({
     ? list.findIndex((comment) => String(comment?.id) === triggerId)
     : -1;
   let lastAutomationReplyIndex = -1;
-  if (!pull && !watermark) {
+  if (!watermark) {
     const bots = normalizeLoginList(botLogins, [
       'netcatty-bot',
       'github-actions[bot]',
@@ -1361,12 +1364,82 @@ function findPendingIssueFollowups({
       }
       return id === triggerId;
     }
+    if (lastAutomationReplyIndex >= 0) {
+      return index > lastAutomationReplyIndex;
+    }
     if (Number.isFinite(pullCreatedAt)) {
       const createdAt = Date.parse(comment?.created_at || comment?.createdAt || '');
       return Number.isFinite(createdAt) && createdAt > pullCreatedAt;
     }
     return true;
   });
+}
+
+function classifySimpleIssueFollowup(comments = []) {
+  if (!comments.length) return null;
+  const kinds = [];
+  for (const comment of comments) {
+    const text = sanitizeUntrustedText(comment?.body, 1_000)
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('>'))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const unresolved = /(?:未解决|没解决|仍然|还是|not\s+(?:fixed|resolved|working)|still\s+(?:broken|fails?|not\s+working))/i.test(text);
+    if (unresolved) return null;
+    const resolved = /^(?:已(?:经)?解决|解决了|问题已解决|现在好了|已经好了|恢复正常|resolved|solved|fixed now|it works now|working now)[，,。.！!\s]*(?:谢谢|感谢(?:你|回复|帮助)?|thanks?(?: you)?[.!\s]*)?$/iu.test(text);
+    const thanks = /^(?:谢谢|感谢(?:你|回复|帮助)?|收到[，,。.！!\s]*(?:谢谢|感谢)?|thanks?(?: you)?|got it[,.!\s]*(?:thanks?)?)[。.！!\s]*$/iu.test(text);
+    if (!resolved && !thanks) return null;
+    kinds.push(resolved ? 'resolved' : 'acknowledgement');
+  }
+  return kinds.includes('resolved') ? 'resolved' : 'acknowledgement';
+}
+
+function buildSimpleIssueFollowupReply(issue = {}, kind = 'acknowledgement') {
+  const chinese = /[\u3400-\u9fff]/u.test(`${issue.title || ''}\n${issue.body || ''}`);
+  if (kind === 'resolved') {
+    return chinese
+      ? '收到，很高兴问题已经解决。这条补充已记录，不需要再转给维护者处理。'
+      : 'Thanks for confirming that the problem is resolved. We recorded the update; no maintainer handoff is needed.';
+  }
+  return chinese
+    ? '收到，谢谢反馈。这条回复不需要额外处理。'
+    : 'Thanks for the update. No additional action is needed for this reply.';
+}
+
+function nextSourceIssueLabelsAfterPull(existing = [], merged = false) {
+  const remove = new Set(['ready-for-agent', 'needs-info', 'ready-for-human']);
+  const labels = (existing || [])
+    .map((label) => (typeof label === 'string' ? label : label?.name))
+    .filter((label) => label && !remove.has(label));
+  if (!merged) labels.push('ready-for-human');
+  return [...new Set(labels)];
+}
+
+function buildImplementationFailureMessage(issue = {}, {
+  kind = 'processing_failed',
+  workflowUrl = '',
+  artifactName = '',
+} = {}) {
+  const chinese = /[\u3400-\u9fff]/u.test(`${issue.title || ''}\n${issue.body || ''}`);
+  const link = workflowUrl ? (chinese ? `查看本次运行：${workflowUrl}` : `View this run: ${workflowUrl}`) : '';
+  const artifact = artifactName
+    ? (chinese ? `候选补丁和验证报告已保存为 ${artifactName}。` : `The candidate patch and verification report were preserved as ${artifactName}.`)
+    : '';
+  const messages = chinese
+    ? {
+        verification_failed: '自动修改已经完成，但本次改动新增了验证失败，因此没有创建 PR。',
+        protected_path: '自动修改涉及受保护的发布或自动化文件，安全规则已停止发布。',
+        no_changes: 'Cursor 没有产出可安全提交的聚焦修改，已转给维护者继续判断。',
+        processing_failed: '自动修改流程自身没有正常完成，已转给维护者继续处理。',
+      }
+    : {
+        verification_failed: 'The automatic change completed, but it introduced a verification failure, so no PR was created.',
+        protected_path: 'The automatic change touched protected release or automation files, so the safety gate stopped publication.',
+        no_changes: 'Cursor did not produce a safe focused change. A maintainer needs to continue the investigation.',
+        processing_failed: 'The automation process itself did not finish normally. A maintainer needs to continue.',
+      };
+  return [messages[kind] || messages.processing_failed, artifact, link].filter(Boolean).join('\n\n');
 }
 
 function buildIssueFollowupReply({
@@ -2223,12 +2296,48 @@ function listProtectedPathHits(filePaths) {
         normalized.startsWith(prefix),
     );
     const baseHit = PROTECTED_PATH_BASENAMES.includes(base);
-    const builderHit = /electron-builder/i.test(normalized);
-    if (prefixHit || baseHit || builderHit) {
+    if (prefixHit || baseHit) {
       hits.push(normalized);
     }
   }
   return hits;
+}
+
+function isTestSourcePath(filePath) {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  return (
+    /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/.test(normalized) ||
+    /(?:^|\/)__tests__\//.test(normalized)
+  );
+}
+
+function listModifiedExistingTestPaths({
+  gitStatusPorcelain = '',
+  nameStatusText = '',
+} = {}) {
+  const hits = [];
+  for (const line of String(gitStatusPorcelain || '').split('\n')) {
+    if (!line.trim()) continue;
+    const status = line.slice(0, 2);
+    if (status === '??' || status.includes('A')) continue;
+    const rest = line.slice(3).trim();
+    const paths = rest.includes(' -> ')
+      ? rest.split(' -> ').map((value) => unquoteGitPath(value.trim()))
+      : [unquoteGitPath(rest)];
+    hits.push(...paths.filter(isTestSourcePath));
+  }
+  for (const line of String(nameStatusText || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\t/);
+    const status = parts[0] || '';
+    if (/^A\d*$/.test(status)) continue;
+    const paths = /^R\d*/.test(status) && parts.length >= 3
+      ? [parts[1], parts[2]]
+      : parts.slice(1, 2);
+    hits.push(...paths.map(unquoteGitPath).filter(isTestSourcePath));
+  }
+  return [...new Set(hits)];
 }
 
 function hasProtectedChanges(gitStatusPorcelain) {
@@ -2244,11 +2353,15 @@ function hasProtectedChangesInSources({
   const fromStatus = pathsFromGitStatusPorcelain(gitStatusPorcelain);
   const fromCommits = (changedFiles || []).map(String);
   const fromNameStatus = pathsFromGitDiffNameStatus(nameStatusText);
-  return listProtectedPathHits([
+  const protectedHits = listProtectedPathHits([
     ...fromStatus,
     ...fromCommits,
     ...fromNameStatus,
   ]);
+  return [...new Set([
+    ...protectedHits,
+    ...listModifiedExistingTestPaths({ gitStatusPorcelain, nameStatusText }),
+  ])];
 }
 
 function getCodexRoundFromComments(comments = [], options = {}) {
@@ -2719,7 +2832,14 @@ async function applyClassification({
   return classification;
 }
 
-async function markNeedsHuman({ github, context, issueNumber, message }) {
+async function markNeedsHuman({
+  github,
+  context,
+  issueNumber,
+  message,
+  dedupeMarker = '',
+  trustedCommentAuthors = 'binaricat,netcatty-bot,github-actions[bot]',
+}) {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
   const { data: issue } = await github.rest.issues.get({
@@ -2741,14 +2861,37 @@ async function markNeedsHuman({ github, context, issueNumber, message }) {
     issue_number: issue.number,
     labels: next,
   });
+  const marker = String(dedupeMarker || '').trim();
+  if (marker) {
+    const trusted = normalizeLoginList(trustedCommentAuthors, [
+      'binaricat',
+      'netcatty-bot',
+      'github-actions[bot]',
+    ]);
+    const comments = await github.paginate(github.rest.issues.listComments, {
+      owner,
+      repo,
+      issue_number: issue.number,
+      per_page: 100,
+    });
+    if ((comments || []).some((comment) => {
+      const author = String(
+        comment?.user?.login || comment?.author?.login || '',
+      ).toLowerCase();
+      return trusted.has(author) && String(comment?.body || '').includes(marker);
+    })) {
+      return { issue, labels: next, commented: false };
+    }
+  }
   await github.rest.issues.createComment({
     owner,
     repo,
     issue_number: issue.number,
-    body: [TRIAGE_MARKER, '', sanitizeUntrustedText(message, 3_000)].join(
+    body: [TRIAGE_MARKER, marker, '', sanitizeUntrustedText(message, 3_000)].filter(Boolean).join(
       '\n',
     ),
   });
+  return { issue, labels: next, commented: true };
 }
 
 function isBotPrForIssue(pull, issueNumber) {
@@ -2822,10 +2965,28 @@ async function findOpenBotPrForIssue({ github, context, issueNumber }) {
  * Maintainer/own-actor PRs that merely say `Fixes #N` must not stay draft
  * forever because issue comments lack automation processed markers.
  */
-function shouldGatePullOnSourceIssueFollowups(pull) {
+function shouldGatePullOnSourceIssueFollowups(pull, options = {}) {
   if (!pull) return false;
-  if (!extractSourceIssueNumber(pull)) return false;
   const body = String(pull.body || '');
+  if (!SOURCE_ISSUE_RE.test(body)) return false;
+  const trustedAuthors = normalizeLoginList(options.ownActors, [
+    'binaricat',
+    'netcatty-bot',
+    'github-actions[bot]',
+    'github-actions',
+  ]);
+  const author = String(pull.user?.login || pull.author?.login || '').toLowerCase();
+  if (!trustedAuthors.has(author)) return false;
+  const repository = String(options.repository || '').toLowerCase();
+  if (repository) {
+    const headRepo = String(
+      pull.head?.repo?.full_name || pull.head?.repo?.nameWithOwner || '',
+    ).toLowerCase();
+    const baseRepo = String(
+      pull.base?.repo?.full_name || pull.base?.repo?.nameWithOwner || repository,
+    ).toLowerCase();
+    if (!headRepo || headRepo !== repository || baseRepo !== repository) return false;
+  }
   if (isBotPrMarker(body)) return true;
   return (pull.labels || []).some((label) => {
     const name = typeof label === 'string' ? label : label?.name;
@@ -2838,10 +2999,14 @@ async function getPendingIssueFollowupsForPull({
   context,
   pull,
   botLogins = ['netcatty-bot', 'github-actions[bot]'],
+  ownActors = 'binaricat,netcatty-bot,github-actions[bot]',
 }) {
   const issueNumber = extractSourceIssueNumber(pull);
   if (!issueNumber) return { issue: null, pending: [], gated: false };
-  if (!shouldGatePullOnSourceIssueFollowups(pull)) {
+  if (!shouldGatePullOnSourceIssueFollowups(pull, {
+    ownActors,
+    repository: `${context.repo.owner}/${context.repo.repo}`,
+  })) {
     return { issue: null, pending: [], gated: false };
   }
   const { data: issue } = await github.rest.issues.get({
@@ -3061,8 +3226,11 @@ async function prepareIssueFollowupContext({
     startOfDay.getTime(),
     botLogins,
   );
+  const simpleKind = classifySimpleIssueFollowup(pending);
   const rateLimited =
-    pending.length > 0 && followupsToday >= Math.max(1, Number(dailyLimit) || 20);
+    pending.length > 0 &&
+    !simpleKind &&
+    followupsToday >= Math.max(1, Number(dailyLimit) || 20);
   const labels = (issue.labels || []).map((label) =>
     typeof label === 'string' ? label : label.name,
   );
@@ -3114,8 +3282,9 @@ async function prepareIssueFollowupContext({
     })),
   };
   writeJson(outputPath, payload);
-  setOutput(core, 'should_run', pending.length > 0 && !rateLimited);
+  setOutput(core, 'should_run', pending.length > 0 && !rateLimited && !simpleKind);
   setOutput(core, 'rate_limited', rateLimited);
+  setOutput(core, 'simple_kind', simpleKind || '');
   setOutput(core, 'issue_number', issue.number);
   setOutput(core, 'issue_url', issue.html_url || '');
   setOutput(core, 'issue_title', issue.title || '');
@@ -3143,8 +3312,9 @@ async function prepareIssueFollowupContext({
     }))),
   );
   return {
-    shouldRun: pending.length > 0 && !rateLimited,
+    shouldRun: pending.length > 0 && !rateLimited && !simpleKind,
     rateLimited,
+    simpleKind,
     issue,
     pull,
     pending,
@@ -3210,6 +3380,10 @@ module.exports = {
   extractIssueTriageWatermark,
   isEligibleIssueFollowupComment,
   findPendingIssueFollowups,
+  classifySimpleIssueFollowup,
+  buildSimpleIssueFollowupReply,
+  nextSourceIssueLabelsAfterPull,
+  buildImplementationFailureMessage,
   buildIssueFollowupReply,
   buildIssueFollowupFallbackReply,
   buildPullRequestComment,

@@ -1,5 +1,5 @@
 import type { DropEntry } from "./sftpFileUtils";
-import { getPathForFile } from "./sftpFileUtils";
+import { getDropEntryLocalPath } from "./sftpFileUtils";
 import type { UploadCallbacks, UploadResult } from "./uploadService.types";
 import type { UploadController } from "./uploadController";
 
@@ -31,7 +31,7 @@ export async function uploadFoldersCompressed(
       continue;
     }
     
-    const localFilePath = getPathForFile(firstFile.file);
+    const localFilePath = getDropEntryLocalPath(firstFile);
     if (!localFilePath) {
       results.push({ fileName: folderName, success: false, error: "Could not get local file path" });
       continue;

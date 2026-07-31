@@ -6,7 +6,7 @@
  * cancellation support, and works for both local and remote (SFTP) uploads.
  */
 
-import { extractDropEntries, DropEntry, getPathForFile } from "./sftpFileUtils";
+import { extractDropEntries, DropEntry, getDropEntryLocalPath, getPathForFile } from "./sftpFileUtils";
 import { logger } from "./logger";
 import { uploadFoldersCompressed } from "./uploadCompressed";
 import {
@@ -38,8 +38,6 @@ const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 const getDropEntrySize = (entry: DropEntry): number => entry.file?.size ?? entry.size ?? 0;
-const getDropEntryLocalPath = (entry: DropEntry): string | undefined =>
-  entry.localPath ?? (entry.file as (File & { path?: string }) | null | undefined)?.path;
 const getRootDropLocalPath = (rootName: string, entries: DropEntry[]): string | undefined => {
   const entry = entries.find((candidate) => getDropEntryLocalPath(candidate));
   const localPath = entry ? getDropEntryLocalPath(entry) : undefined;
@@ -196,12 +194,9 @@ export async function uploadFromFileList(
     const localPath = getPathForFile(file);
     // Use webkitRelativePath if available (folder upload), otherwise use file.name (regular file upload)
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-    if (localPath) {
-      // Set the path property on the file for stream transfer
-      (file as File & { path?: string }).path = localPath;
-    }
     return {
       file,
+      localPath,
       relativePath,
       isDirectory: false,
     };

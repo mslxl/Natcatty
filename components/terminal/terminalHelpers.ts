@@ -5,7 +5,7 @@ import type { TerminalContextReader } from "../../domain/terminalContextRead";
 import type { TerminalSessionExitEvent } from "../../application/state/resolveTerminalSessionExitIntent";
 import { resolveSessionTabTitle } from "../../domain/sessionTabTitle";
 import { logger } from "../../lib/logger";
-import { getPathForFile, type DropEntry } from "../../lib/sftpFileUtils";
+import { getDropEntryLocalPath, type DropEntry } from "../../lib/sftpFileUtils";
 import { normalizeLineEndings } from "../../lib/utils";
 import { resolveSnippetMultiLineRunMode } from "../../domain/snippetRunMode";
 import type {
@@ -46,7 +46,7 @@ export function extractRootPathsFromDropEntries(dropEntries: DropEntry[]): strin
   for (const entry of dropEntries) {
     if (!entry.file) continue;
 
-    const fullPath = getPathForFile(entry.file);
+    const fullPath = getDropEntryLocalPath(entry);
     if (!fullPath) continue;
 
     const pathParts = entry.relativePath.split("/");

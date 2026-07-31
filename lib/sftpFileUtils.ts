@@ -242,16 +242,16 @@ export interface DropEntry {
   isDirectory: boolean;
 }
 
+export const getDropEntryLocalPath = (entry: DropEntry): string | undefined =>
+  entry.localPath ?? (entry.file ? getPathForFile(entry.file) : undefined);
+
 const createDropEntriesFromFiles = (files: FileList | File[]): DropEntry[] => {
   const results: DropEntry[] = [];
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
-    const path = getPathForFile(file);
-    if (path) {
-      (file as File & { path?: string }).path = path;
-    }
     results.push({
       file,
+      localPath: getPathForFile(file),
       relativePath: (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
       isDirectory: false,
     });
@@ -424,15 +424,14 @@ export async function extractDropEntries(
       return createDropEntriesFromFiles(dataTransfer.files);
     }
 
-    // Restore the 'path' property for all files
-    // Try to get the path directly from webUtils.getPathForFile for each file
-    // This is more reliable than trying to reconstruct from folder paths
+    // Preserve local paths on DropEntry instead of mutating File.path. Modern
+    // runtimes expose File.path as read-only when it exists.
     for (const result of results) {
       if (result.file) {
         // First try to get path directly from the file
         const directPath = getPathForFile(result.file);
         if (directPath) {
-          (result.file as File & { path?: string }).path = directPath;
+          result.localPath = directPath;
         } else {
           // Fallback: try to reconstruct from root folder path
           const pathParts = result.relativePath.split('/');
@@ -442,14 +441,14 @@ export async function extractDropEntries(
           if (rootPath) {
             if (pathParts.length === 1) {
               // Root-level file: use the path directly
-              (result.file as File & { path?: string }).path = rootPath;
+              result.localPath = rootPath;
             } else {
               // Nested file in a folder: construct full path
               // rootPath is the path to the root folder, we need to append the rest
               const restOfPath = pathParts.slice(1).join('/');
               const separator = rootPath.includes('\\') ? '\\' : '/';
               const fullPath = rootPath + separator + restOfPath.replace(/\//g, separator);
-              (result.file as File & { path?: string }).path = fullPath;
+              result.localPath = fullPath;
             }
           }
         }
