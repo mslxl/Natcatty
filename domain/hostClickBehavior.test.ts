@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   DEFAULT_HOST_CLICK_BEHAVIOR,
   hostCardFocusClassName,
+  isHostClickFocusSelected,
   isHostClickBehavior,
   resolveGroupActivateAction,
   resolveHostActivateAction,
@@ -90,6 +91,36 @@ test('resolveHostActivateAction: select mode focuses then connects', () => {
       hostId: 'a',
     }),
     'connect',
+  );
+});
+
+test('isHostClickFocusSelected only shows a selection in select-before-connect mode', () => {
+  assert.equal(
+    isHostClickFocusSelected({
+      behavior: 'connect',
+      isMultiSelectMode: false,
+      focusedHostId: 'a',
+      hostId: 'a',
+    }),
+    false,
+  );
+  assert.equal(
+    isHostClickFocusSelected({
+      behavior: 'select',
+      isMultiSelectMode: false,
+      focusedHostId: 'a',
+      hostId: 'a',
+    }),
+    true,
+  );
+  assert.equal(
+    isHostClickFocusSelected({
+      behavior: 'select',
+      isMultiSelectMode: true,
+      focusedHostId: 'a',
+      hostId: 'a',
+    }),
+    false,
   );
 });
 
