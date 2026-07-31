@@ -12,6 +12,7 @@ type FakeElement = {
 const createFakeTerm = (cols = 80) => {
   let cursorY = 0;
   let cursorX = 0;
+  let hasSelection = false;
   let baseY = 0;
   let bufferType: 'normal' | 'alternate' = 'normal';
   let lineLength = cols;
@@ -23,6 +24,7 @@ const createFakeTerm = (cols = 80) => {
   const resizeHandlers: Handler[] = [];
   const bufferChangeHandlers: Handler[] = [];
   const renderHandlers: Handler[] = [];
+  const selectionChangeHandlers: Handler[] = [];
   const decorations: Array<{
     options: Record<string, unknown>;
     disposed: boolean;
@@ -88,6 +90,13 @@ const createFakeTerm = (cols = 80) => {
     onRender(handler: Handler) {
       renderHandlers.push(handler);
       return { dispose() {} };
+    },
+    onSelectionChange(handler: Handler) {
+      selectionChangeHandlers.push(handler);
+      return { dispose() {} };
+    },
+    hasSelection() {
+      return hasSelection;
     },
     registerMarker(offset: number) {
       const marker = {
@@ -165,6 +174,10 @@ const createFakeTerm = (cols = 80) => {
       cursorX = nextX;
       for (const handler of cursorMoveHandlers) handler();
     },
+    setSelection(next: boolean) {
+      hasSelection = next;
+      for (const handler of selectionChangeHandlers) handler();
+    },
     setColoredForegrounds(columns: number[]) {
       coloredForegrounds.clear();
       for (const column of columns) coloredForegrounds.add(column);
@@ -199,6 +212,20 @@ test('CursorLineHighlighter paints an opaque background without changing text', 
   assert.equal(term.decorations[0]?.options.width, 100);
   assert.equal(term.decorations[0]?.options.backgroundColor, '#263449');
   assert.equal(term.decorations[0]?.options.layer, 'bottom');
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter gives selection and search matches priority', () => {
+  const term = createFakeTerm(10);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+
+  term.setSelection(true);
+  assert.equal(term.decorations.at(-1)?.disposed, true);
+
+  term.setSelection(false);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
   highlighter.dispose();
 });
 

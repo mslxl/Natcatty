@@ -15,6 +15,8 @@ type CursorLineTerminal = Pick<
   | 'onResize'
   | 'onWriteParsed'
   | 'onRender'
+  | 'onSelectionChange'
+  | 'hasSelection'
 >;
 
 type HighlightRange = { x: number; width: number };
@@ -46,6 +48,7 @@ export class CursorLineHighlighter implements IDisposable {
       this.term.onCursorMove(() => this.refresh()),
       this.term.onWriteParsed(() => this.refresh()),
       this.term.onRender(() => this.refresh()),
+      this.term.onSelectionChange(() => this.refresh({ force: true })),
       this.term.onResize(() => this.refresh({ force: true })),
       this.term.buffer.onBufferChange(() => this.refresh({ force: true })),
     );
@@ -75,6 +78,11 @@ export class CursorLineHighlighter implements IDisposable {
 
   refresh(options: { force?: boolean } = {}): void {
     if (this.disposed || !this.enabled) return;
+
+    if (this.term.hasSelection()) {
+      this.clear();
+      return;
+    }
 
     const buffer = this.term.buffer.active;
     if (buffer.type === 'alternate') {
