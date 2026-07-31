@@ -33,6 +33,15 @@ test('rejects a zero-exit candidate without a complete clean TAP summary', () =>
   assert.equal(result.kind, 'unclassified_failure');
 });
 
+test('rejects a clean candidate when the exact-base TAP summary is incomplete', () => {
+  const result = compareTapResults(
+    parseTapResult('base runner stopped early', 1),
+    parseTapResult(tap(), 0),
+  );
+  assert.equal(result.passed, false);
+  assert.equal(result.kind, 'unclassified_failure');
+});
+
 test('accepts only failures already present on the exact base', () => {
   const result = compareTapResults(
     parseTapResult(tap({ failures: ['base A', 'base B'] }), 1),
@@ -51,6 +60,36 @@ test('rejects a different candidate failure even when both runs are red', () => 
   assert.equal(result.passed, false);
   assert.equal(result.kind, 'new_failures');
   assert.deepEqual(result.newFailures, ['candidate regression']);
+});
+
+test('distinguishes same-title failures by stable TAP diagnostics', () => {
+  const withDiagnostic = (error) => [
+    'TAP version 13',
+    'not ok 1 - duplicate title',
+    '  ---',
+    "  location: '/workspace/example.test.js:10:1'",
+    "  failureType: 'testCodeFailure'",
+    `  error: '${error}'`,
+    "  code: 'ERR_ASSERTION'",
+    '  stack: |- ',
+    '    volatile stack line',
+    '  ...',
+    '# fail 1',
+    '# cancelled 0',
+    '# tests 10',
+  ].join('\n');
+  const same = compareTapResults(
+    parseTapResult(withDiagnostic('old failure'), 1),
+    parseTapResult(withDiagnostic('old failure'), 1),
+  );
+  assert.equal(same.passed, true);
+
+  const changed = compareTapResults(
+    parseTapResult(withDiagnostic('old failure'), 1),
+    parseTapResult(withDiagnostic('new regression'), 1),
+  );
+  assert.equal(changed.passed, false);
+  assert.deepEqual(changed.newFailures, ['duplicate title']);
 });
 
 test('rejects added duplicate failures and cancelled tests', () => {

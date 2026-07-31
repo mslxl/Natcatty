@@ -6,13 +6,45 @@ const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
 function parseTapResult(text, exitCode) {
   const normalized = String(text || '').replace(ANSI_RE, '').replace(/\r\n?/g, '\n');
+  const lines = normalized.split('\n');
   const failures = [];
+  const failureRecords = [];
   let failCount = null;
   let cancelledCount = null;
   let testCount = null;
-  for (const line of normalized.split('\n')) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const failed = line.match(/^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/);
-    if (failed) failures.push(failed[1].trim());
+    if (failed) {
+      const name = failed[1].trim();
+      const diagnostic = [];
+      let skippingStack = false;
+      let stackIndent = -1;
+      for (let detailIndex = index + 1; detailIndex < lines.length; detailIndex += 1) {
+        const detail = lines[detailIndex];
+        if (/^\s*(?:ok|not ok) \d+ - /.test(detail) || /^\s*# (?:tests|fail|cancelled) \d+\s*$/.test(detail)) {
+          break;
+        }
+        const indent = detail.match(/^\s*/)?.[0].length || 0;
+        if (skippingStack) {
+          if (!detail.trim() || indent > stackIndent) continue;
+          skippingStack = false;
+        }
+        if (/^\s*stack:\s*(?:\|-)?\s*$/.test(detail)) {
+          skippingStack = true;
+          stackIndent = indent;
+          continue;
+        }
+        if (/^\s*(?:---|\.\.\.)\s*$/.test(detail)) continue;
+        if (/^\s*duration_ms:/.test(detail)) continue;
+        if (detail.trim()) diagnostic.push(detail.trimEnd());
+      }
+      failures.push(name);
+      failureRecords.push({
+        name,
+        identity: diagnostic.length ? `${name}\n${diagnostic.join('\n')}` : name,
+      });
+    }
     const failSummary = line.match(/^\s*# fail (\d+)\s*$/);
     if (failSummary) failCount = Number(failSummary[1]);
     const cancelledSummary = line.match(/^\s*# cancelled (\d+)\s*$/);
@@ -23,6 +55,7 @@ function parseTapResult(text, exitCode) {
   return {
     exitCode: Number(exitCode),
     failures,
+    failureRecords,
     failCount,
     cancelledCount,
     testCount,
@@ -42,10 +75,11 @@ function countFailures(failures) {
 function compareTapResults(baseline, candidate) {
   if (candidate.exitCode === 0) {
     const completeCleanRun =
+      baseline.complete &&
       candidate.complete &&
       candidate.failCount === 0 &&
       candidate.cancelledCount === 0 &&
-      (!baseline.complete || candidate.testCount >= baseline.testCount);
+      candidate.testCount >= baseline.testCount;
     return {
       passed: completeCleanRun,
       kind: completeCleanRun ? 'clean' : 'unclassified_failure',
@@ -95,16 +129,23 @@ function compareTapResults(baseline, candidate) {
     };
   }
 
-  const baselineCounts = countFailures(baseline.failures);
-  const candidateCounts = countFailures(candidate.failures);
+  const baselineCounts = countFailures(
+    baseline.failureRecords.map((failure) => failure.identity),
+  );
+  const candidateCounts = countFailures(
+    candidate.failureRecords.map((failure) => failure.identity),
+  );
   const newFailures = [];
-  for (const [failure, count] of candidateCounts) {
-    const extra = count - (baselineCounts.get(failure) || 0);
-    for (let i = 0; i < extra; i += 1) newFailures.push(failure);
+  for (const [identity, count] of candidateCounts) {
+    const extra = count - (baselineCounts.get(identity) || 0);
+    const name = candidate.failureRecords.find(
+      (failure) => failure.identity === identity,
+    )?.name || identity;
+    for (let i = 0; i < extra; i += 1) newFailures.push(name);
   }
   const parsedCountsMatch =
-    baseline.failures.length >= Number(baseline.failCount) &&
-    candidate.failures.length >= Number(candidate.failCount);
+    baseline.failureRecords.length >= Number(baseline.failCount) &&
+    candidate.failureRecords.length >= Number(candidate.failCount);
   const passed = newFailures.length === 0 && parsedCountsMatch;
   return {
     passed,
