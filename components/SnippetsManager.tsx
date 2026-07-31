@@ -1790,7 +1790,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
         {isMultiSelectMode && (
           <div className="px-4 py-1.5 bg-background border-b border-border/40 flex items-center gap-2">
-            <span className="flex items-center h-7 text-xs text-muted-foreground leading-none">
+            <span className="flex h-7 items-center text-xs leading-4 text-muted-foreground">
               {t('snippets.selection.selected', { count: selectedSnippetIds.size })}
             </span>
             <div className="flex-1" />

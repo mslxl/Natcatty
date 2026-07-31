@@ -1516,7 +1516,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-8 pt-6 pb-1" data-note-title-row>
                 <div className="min-w-0 flex-1">
                   <input
-                    className="h-7 w-full bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground"
+                    className="h-8 w-full bg-transparent text-lg font-semibold leading-8 outline-none placeholder:text-muted-foreground"
                     value={selectedNote.title}
                     placeholder={t("notes.title.placeholder")}
                     onChange={(event) => saveNote({
@@ -1594,7 +1594,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               </TooltipTrigger>
               <TooltipContent side="bottom">{t("common.back")}</TooltipContent>
             </Tooltip>
-            <div className="min-w-0 flex-1 truncate px-1 text-xs font-medium text-foreground">
+            <div className="min-w-0 flex-1 truncate px-1 text-xs font-medium leading-4 text-foreground">
               {overlayNote.title || t("notes.title.placeholder")}
             </div>
           </div>
@@ -1602,7 +1602,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-4 pt-5 pb-1" data-note-title-row>
               <div className="min-w-0 flex-1">
                 <input
-                  className="h-7 w-full bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground"
+                  className="h-8 w-full bg-transparent text-lg font-semibold leading-8 outline-none placeholder:text-muted-foreground"
                   value={overlayNote.title}
                   placeholder={t("notes.title.placeholder")}
                   onChange={(event) => saveNote({

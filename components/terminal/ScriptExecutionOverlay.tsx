@@ -165,7 +165,7 @@ function ScriptStatusLine({
   ) : null;
 
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-1.5 leading-none">
+    <span className="flex min-w-0 flex-1 items-center gap-1.5 leading-4">
       <ScriptStatusIcon status={run.status} />
       <span className="shrink-0 whitespace-nowrap font-semibold text-foreground">{label}</span>
       <span className="inline-flex min-w-0 flex-1 items-center truncate">
@@ -245,12 +245,12 @@ export const ScriptExecutionOverlay: React.FC<ScriptExecutionOverlayProps> = ({
       data-compact-top-chrome={compactTopChrome ? "true" : "false"}
     >
       <div className="flex items-center gap-2 min-w-0">
-        <div className="min-w-0 flex flex-1 items-center text-[11px] leading-none">
+        <div className="flex min-w-0 flex-1 items-center text-[11px] leading-4">
           {statusLine}
         </div>
         {errorMessage ? (
           <div
-            className="min-w-0 max-w-[42%] shrink text-[11px] leading-none text-destructive truncate text-right"
+            className="min-w-0 max-w-[42%] shrink truncate text-right text-[11px] leading-4 text-destructive"
             title={errorMessage}
           >
             {errorMessage}

@@ -511,7 +511,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
           {showDropIndicatorAfter && isDraggingForReorder && <div className="absolute -right-0.5 bottom-1 top-1 w-0.5 rounded-full bg-primary" />}
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <PluginContributionIcon pluginId={tab.pluginId} icon={tab.icon} className="shrink-0" />
-            <span className="truncate">{tab.title}</span>
+            <span className="truncate leading-5">{tab.title}</span>
           </div>
           <button onClick={close} className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-muted" aria-label={t('tabs.closePluginViewAria', { title: tab.title })}><X size={12} /></button>
         </div>
@@ -645,10 +645,10 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
               className="shrink-0"
               style={{ color: isActive ? 'var(--top-tabs-accent, hsl(var(--accent)))' : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
             />
-            <span className="truncate flex items-center gap-0.5">
-              {dirty && <span className="text-primary mr-0.5">●</span>}
+            <span className="flex items-center gap-0.5 truncate leading-5">
+              {dirty && <span className="mr-0.5 text-primary">●</span>}
               {editorTab.fileName}
-              {suffix && <span className="text-muted-foreground ml-1">{suffix}</span>}
+              {suffix && <span className="ml-1 text-muted-foreground">{suffix}</span>}
             </span>
           </div>
           <button
@@ -790,7 +790,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
           shellIcon={session.localShellIcon}
           dynamicTabTitleMode={dynamicTabTitleMode}
         />
-        <span className="truncate">{tabTitle}</span>
+        <span className="truncate leading-5">{tabTitle}</span>
         <div className="flex-shrink-0">{sessionStatusDot(session.status, hasActivity)}</div>
       </div>
       <button
@@ -986,7 +986,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
               className="shrink-0"
               style={{ color: isActive ? 'var(--top-tabs-accent, hsl(var(--accent)))' : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
             />
-            <span className="truncate">{workspace.title}</span>
+            <span className="truncate leading-5">{workspace.title}</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {hasActivity && sessionStatusDot('connected', true)}
@@ -1135,7 +1135,7 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
           className="shrink-0"
           style={{ color: isActive ? 'var(--top-tabs-accent, hsl(var(--accent)))' : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
         />
-        <span className="truncate">
+        <span className="truncate leading-5">
           {t('tabs.logPrefix')} {isLocal ? t('tabs.logLocal') : logView.log.hostname}
         </span>
       </div>

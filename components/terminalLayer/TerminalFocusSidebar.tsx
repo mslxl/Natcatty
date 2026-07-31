@@ -176,18 +176,18 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
               className={cn('absolute bottom-0 right-0 fill-current', statusColor)}
             />
           </div>
-          <div className="flex h-6 flex-1 min-w-0 flex-col justify-center self-center text-left">
+          <div className="flex min-h-6 min-w-0 flex-1 flex-col justify-center self-center text-left">
             {isRenaming ? (
               <SessionInlineRenameInput
                 initialName={renameValue}
                 onCommit={onSubmitRename}
                 onCancel={onCancelRename}
-                className="h-5 text-xs leading-none"
+                className="h-5 text-xs leading-4"
               />
             ) : (
               <>
                 <div
-                  className={cn('truncate text-xs leading-none', isSelected ? 'font-semibold' : 'font-medium')}
+                  className={cn('truncate text-xs leading-4', isSelected ? 'font-semibold' : 'font-medium')}
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     onStartRename(session.id);
@@ -195,7 +195,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
                 >
                   {resolveSessionTabTitle(session, dynamicTabTitleMode)}
                 </div>
-                <div className="mt-0.5 truncate text-[10px] leading-none" style={{ color: mutedFg }}>
+                <div className="mt-0.5 truncate text-[10px] leading-4" style={{ color: mutedFg }}>
                   {session.username}@{session.hostname}
                 </div>
               </>
