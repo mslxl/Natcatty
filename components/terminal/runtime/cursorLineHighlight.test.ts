@@ -178,6 +178,9 @@ const createFakeTerm = (cols = 80) => {
       hasSelection = next;
       for (const handler of selectionChangeHandlers) handler();
     },
+    render() {
+      for (const handler of renderHandlers) handler();
+    },
     setColoredForegrounds(columns: number[]) {
       coloredForegrounds.clear();
       for (const column of columns) coloredForegrounds.add(column);
@@ -226,6 +229,31 @@ test('CursorLineHighlighter gives selection and search matches priority', () => 
 
   term.setSelection(false);
   assert.equal(term.decorations.at(-1)?.disposed, false);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter refreshes after hidden writes become visible', () => {
+  const term = createFakeTerm(10);
+  let protectedRanges: Array<{ x: number; width: number }> = [];
+  const highlighter = new CursorLineHighlighter(
+    term as never,
+    () => protectedRanges,
+  );
+  highlighter.setEnabled(true);
+  assert.equal(term.decorations.at(-1)?.options.width, 10);
+
+  term.scrollOutput(1);
+  protectedRanges = [{ x: 0, width: 2 }];
+  term.render();
+
+  assert.deepEqual(
+    term.decorations
+      .filter(({ disposed }) => !disposed)
+      .map(({ options }) => ({ x: options.x, width: options.width })),
+    [
+      { x: 2, width: 8 },
+    ],
+  );
   highlighter.dispose();
 });
 

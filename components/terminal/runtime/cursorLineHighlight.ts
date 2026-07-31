@@ -38,7 +38,6 @@ export class CursorLineHighlighter implements IDisposable {
   private activeRanges: HighlightRange[] = [];
   private activeTailRanges: HighlightRange[] = [];
   private readonly disposables: IDisposable[] = [];
-  private skipNextRenderRefresh = false;
   private disposed = false;
 
   constructor(
@@ -47,19 +46,8 @@ export class CursorLineHighlighter implements IDisposable {
   ) {
     this.disposables.push(
       this.term.onCursorMove(() => this.refresh()),
-      this.term.onWriteParsed(() => {
-        this.refresh();
-        // xterm emits onRender for the same write. The parsed-write refresh
-        // already observed the current cells, so avoid rebuilding twice.
-        this.skipNextRenderRefresh = true;
-      }),
-      this.term.onRender(() => {
-        if (this.skipNextRenderRefresh) {
-          this.skipNextRenderRefresh = false;
-          return;
-        }
-        this.refresh();
-      }),
+      this.term.onWriteParsed(() => this.refresh()),
+      this.term.onRender(() => this.refresh()),
       this.term.onSelectionChange(() => this.refresh({ force: true })),
       this.term.onResize(() => this.refresh({ force: true })),
       this.term.buffer.onBufferChange(() => this.refresh({ force: true })),
