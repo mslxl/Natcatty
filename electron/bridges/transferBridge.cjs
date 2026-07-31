@@ -1516,7 +1516,9 @@ async function uploadFile(
         await createUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
         if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
         const sourceAfterBaseline = await fs.promises.stat(localPath);
-        assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+        assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize, {
+          contentVerifiedSeparately: true,
+        });
         if (typeof onBytesCommitted === "function") {
           await createVerifiedUploadSnapshot(
             localPath,
@@ -1550,7 +1552,9 @@ async function uploadFile(
       if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       if (digestPath && !snapshotPath) {
         const latestSource = await fs.promises.stat(localPath);
-        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+          contentVerifiedSeparately: true,
+        });
         await verifyUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
       }
       onBytesCommitted?.();
@@ -1587,7 +1591,10 @@ async function uploadFile(
     );
     if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
     const sourceAfterBaseline = await fs.promises.stat(originalLocalPath);
-    assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+    // Digest was just built + verified; only size/content matter from here.
+    assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize, {
+      contentVerifiedSeparately: true,
+    });
   }
 
   const cleanupSourceDigest = async () => {
@@ -1601,7 +1608,11 @@ async function uploadFile(
     try {
       if (initialSource) {
         const latestSource = await fs.promises.stat(originalLocalPath);
-        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+        // Prefer digest re-scan for same-size rewrites. Hard-failing on ctime
+        // alone false-positives long pause/resume uploads on macOS.
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+          contentVerifiedSeparately: Boolean(transfer.sourceDigestPath),
+        });
       }
       // Metadata alone cannot catch same-size rewrites with unchanged/coarse
       // timestamps (e.g. all ranges already verified before the rewrite).
@@ -2186,13 +2197,32 @@ async function readVerifiedUploadRange(
   return output;
 }
 
-function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize) {
+/**
+ * Reject when the source identity is no longer safe to trust.
+ *
+ * Size always fails hard. Timestamp / inode fields are only a *cheap early
+ * reject* when we have no separate content proof (e.g. remote download with no
+ * digest). When a digest baseline already verifies bytes — or every range was
+ * already verified against one — treat metadata as soft:
+ * macOS routinely bumps ctime for xattr / quarantine / Spotlight without
+ * rewriting file data, and repeated pause/resume makes long uploads much more
+ * likely to hit that drift right at the finish revalidation.
+ *
+ * @param {object|null|undefined} initialSource
+ * @param {object|null|undefined} latestSource
+ * @param {number} expectedSize
+ * @param {{ contentVerifiedSeparately?: boolean }} [options]
+ */
+function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, options = {}) {
   const latestSize = Number(latestSource?.size);
   if (latestSize !== expectedSize) {
     throw createSourceSizeChangedError(expectedSize, latestSize);
   }
-  // Soft signal only — content fingerprint is the durable check for same-size
-  // rewrites. Keep metadata as a cheap early reject when timestamps move.
+  if (options.contentVerifiedSeparately) {
+    return;
+  }
+  // No digest / per-range content proof: timestamps + inode are the durable
+  // same-size rewrite signal (remote SFTP download path).
   const versionFields = ["mtimeMs", "ctimeMs", "mtime", "ctime", "ino"];
   const changed = versionFields.some((field) => {
     const before = Number(initialSource?.[field]);
@@ -2488,7 +2518,9 @@ async function uploadFileConcurrent(
       await createUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
       if (transfer.cancelled) throw new Error("Transfer cancelled");
       const sourceAfterBaseline = await localHandle.stat();
-      assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize);
+      assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize, {
+        contentVerifiedSeparately: true,
+      });
       digestHandle = await fs.promises.open(ephemeralDigestPath, "r");
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
@@ -2529,9 +2561,12 @@ async function uploadFileConcurrent(
       // published at this point, so stop accepting cancellation before source
       // revalidation and handle cleanup; staged uploads pass no callback.
       options.onBytesCommitted?.();
+      const contentVerifiedSeparately = Boolean(digestHandle || ephemeralDigestPath || transfer.sourceDigestPath);
       if (initialSource) {
         const latestSource = await localHandle.stat();
-        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+          contentVerifiedSeparately,
+        });
       }
       if (ephemeralDigestPath) {
         await verifyUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
@@ -5033,4 +5068,5 @@ module.exports = {
   _getPendingCancelCountForTests: () => pendingCancelTransferIds.size,
   _getActiveTransferCountForTests: () => activeTransfers.size,
   _execSshCommandCancellableForTests: execSshCommandCancellable,
+  _assertSourceMetadataUnchangedForTests: assertSourceMetadataUnchanged,
 };
