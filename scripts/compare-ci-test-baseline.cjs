@@ -64,12 +64,13 @@ function parseTapResult(text, exitCode) {
   let testCount = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const succeeded = line.match(/^\s*ok \d+ - (.+?)(?:\s+#.*)?$/);
-    if (succeeded && !/\s+#\s*(?:SKIP|TODO)\b/i.test(line)) {
+    const succeeded = line.match(/^\s*ok \d+ - (.+)$/);
+    const tapDirective = /\s+#\s*(?:SKIP|TODO)\b/i;
+    if (succeeded && !tapDirective.test(line)) {
       successes.push(succeeded[1].trim());
     }
-    const failed = line.match(/^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/);
-    if (failed) {
+    const failed = line.match(/^\s*not ok \d+ - (.+)$/);
+    if (failed && !tapDirective.test(line)) {
       const name = failed[1].trim();
       const diagnostic = [];
       const errorDetails = [];

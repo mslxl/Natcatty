@@ -43,6 +43,16 @@ test('rejects replacing an existing successful test with an unrelated one', () =
   );
   assert.equal(result.passed, false);
   assert.equal(result.kind, 'unclassified_failure');
+
+  const issueNumberName = compareTapResults(
+    parseTapResult(tap({
+      successes: ['accepts packages that ship upstream #6055/#5987/#6043'],
+    }), 0),
+    parseTapResult(tap({
+      successes: ['accepts packages that ship upstream #9999'],
+    }), 0),
+  );
+  assert.equal(issueNumberName.passed, false);
 });
 
 test('rejects a clean candidate when the exact-base TAP summary is incomplete', () => {
