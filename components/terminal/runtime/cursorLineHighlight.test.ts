@@ -4,10 +4,16 @@ import assert from 'node:assert/strict';
 import { CursorLineHighlighter } from './cursorLineHighlight.ts';
 
 type Handler = () => void;
+type FakeElement = {
+  style: Record<string, string>;
+  attributes: Record<string, string>;
+  setAttribute: (name: string, value: string) => void;
+};
 const createFakeTerm = (cols = 80) => {
   let cursorY = 0;
   let baseY = 0;
   let bufferType: 'normal' | 'alternate' = 'normal';
+  let lineLength = cols;
   const coloredBackgrounds = new Set<number>();
   const coloredForegrounds = new Set<number>();
   const inverseCells = new Set<number>();
@@ -18,7 +24,9 @@ const createFakeTerm = (cols = 80) => {
   const decorations: Array<{
     options: Record<string, unknown>;
     disposed: boolean;
+    element: FakeElement;
     dispose: () => void;
+    onRender: (handler: (element: FakeElement) => void) => { dispose: () => void };
     onDispose: (handler: Handler) => { dispose: () => void };
   }> = [];
   const markers: Array<{ line: number; disposed: boolean }> = [];
@@ -38,6 +46,7 @@ const createFakeTerm = (cols = 80) => {
         },
         getLine() {
           return {
+            length: lineLength,
             getCell(x: number) {
               return {
                 isBgDefault: () => !coloredBackgrounds.has(x),
@@ -84,9 +93,17 @@ const createFakeTerm = (cols = 80) => {
     },
     registerDecoration(options: Record<string, unknown>) {
       const disposeHandlers = new Set<Handler>();
+      const element: FakeElement = {
+        style: {},
+        attributes: {},
+        setAttribute(name, value) {
+          this.attributes[name] = value;
+        },
+      };
       const decoration = {
         options,
         disposed: false,
+        element,
         dispose() {
           if (this.disposed) return;
           this.disposed = true;
@@ -96,6 +113,10 @@ const createFakeTerm = (cols = 80) => {
         onDispose(handler: Handler) {
           disposeHandlers.add(handler);
           return { dispose: () => disposeHandlers.delete(handler) };
+        },
+        onRender(handler: (element: FakeElement) => void) {
+          handler(element);
+          return { dispose() {} };
         },
       };
       decorations.push(decoration);
@@ -122,6 +143,10 @@ const createFakeTerm = (cols = 80) => {
     setColoredBackgrounds(columns: number[]) {
       coloredBackgrounds.clear();
       for (const column of columns) coloredBackgrounds.add(column);
+      for (const handler of writeParsedHandlers) handler();
+    },
+    setLineLength(nextLength: number) {
+      lineLength = nextLength;
       for (const handler of writeParsedHandlers) handler();
     },
     setColoredForegrounds(columns: number[]) {
@@ -179,6 +204,22 @@ test('CursorLineHighlighter leaves ANSI background cells untouched', () => {
   highlighter.dispose();
 });
 
+test('CursorLineHighlighter fills the blank tail after short output', () => {
+  const term = createFakeTerm(10);
+  term.setLineLength(4);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setBackgroundColor('#263449');
+  highlighter.setEnabled(true);
+
+  assert.equal(term.decorations.length, 2);
+  assert.equal(term.decorations[0]?.options.width, 4);
+  assert.equal(term.decorations[1]?.options.x, 4);
+  assert.equal(term.decorations[1]?.options.width, 6);
+  assert.equal(term.decorations[1]?.options.backgroundColor, undefined);
+  assert.equal(term.decorations[1]?.element.style.backgroundColor, '#263449');
+  highlighter.dispose();
+});
+
 test('CursorLineHighlighter leaves colored and inverse cells untouched', () => {
   const term = createFakeTerm(10);
   term.setColoredForegrounds([2, 3]);
@@ -226,11 +267,12 @@ test('CursorLineHighlighter recreates on resize and overlay color changes', () =
   assert.equal(term.decorations.at(-1)?.options.width, 40);
 
   term.setCols(120);
-  assert.equal(term.decorations.at(-1)?.options.width, 120);
+  assert.equal(term.decorations.at(-2)?.options.width, 40);
+  assert.equal(term.decorations.at(-1)?.options.width, 80);
 
   highlighter.setBackgroundColor('#445566');
   assert.equal(
-    term.decorations.at(-1)?.options.backgroundColor,
+    term.decorations.at(-2)?.options.backgroundColor,
     '#445566',
   );
   highlighter.dispose();

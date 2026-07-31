@@ -29,10 +29,12 @@ export class CursorLineHighlighter implements IDisposable {
   private marker: IMarker | null = null;
   private decorations: IDecoration[] = [];
   private decorationDisposeListeners: IDisposable[] = [];
+  private decorationRenderListeners: IDisposable[] = [];
   private activeLine: number | null = null;
   private activeCols: number | null = null;
   private activeColor: string | null = null;
   private activeRanges: HighlightRange[] = [];
+  private activeTailWidth: number | null = null;
   private readonly disposables: IDisposable[] = [];
   private disposed = false;
 
@@ -78,7 +80,10 @@ export class CursorLineHighlighter implements IDisposable {
     const absoluteLine = buffer.baseY + buffer.cursorY;
     const cols = Math.max(1, this.term.cols || 1);
     const color = this.backgroundColor;
-    const ranges = this.getDefaultBackgroundRanges(buffer.getLine(absoluteLine), cols, buffer.getNullCell());
+    const line = buffer.getLine(absoluteLine);
+    const lineLength = Math.min(line?.length ?? 0, cols);
+    const ranges = this.getDefaultBackgroundRanges(line, lineLength, buffer.getNullCell());
+    const tailWidth = cols - lineLength;
 
     if (
       !options.force &&
@@ -86,6 +91,7 @@ export class CursorLineHighlighter implements IDisposable {
       cols === this.activeCols &&
       color === this.activeColor &&
       rangesEqual(ranges, this.activeRanges) &&
+      tailWidth === this.activeTailWidth &&
       this.marker &&
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
@@ -109,6 +115,21 @@ export class CursorLineHighlighter implements IDisposable {
       });
       if (decoration) decorations.push(decoration);
     }
+    if (tailWidth > 0) {
+      const tailDecoration = this.term.registerDecoration({
+        marker,
+        x: lineLength,
+        width: tailWidth,
+      });
+      if (tailDecoration) {
+        this.decorationRenderListeners.push(tailDecoration.onRender((element) => {
+          element.style.backgroundColor = color;
+          element.style.pointerEvents = 'none';
+          element.setAttribute('aria-hidden', 'true');
+        }));
+        decorations.push(tailDecoration);
+      }
+    }
 
     this.marker = marker;
     this.decorations = decorations;
@@ -126,6 +147,7 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeCols = cols;
     this.activeColor = color;
     this.activeRanges = ranges;
+    this.activeTailWidth = tailWidth;
   }
 
   dispose(): void {
@@ -140,12 +162,12 @@ export class CursorLineHighlighter implements IDisposable {
 
   private getDefaultBackgroundRanges(
     line: ReturnType<CursorLineTerminal['buffer']['active']['getLine']>,
-    cols: number,
+    lineLength: number,
     cell: ReturnType<CursorLineTerminal['buffer']['active']['getNullCell']>,
   ): HighlightRange[] {
     const ranges: HighlightRange[] = [];
     let rangeStart: number | null = null;
-    for (let x = 0; x < cols; x += 1) {
+    for (let x = 0; x < lineLength; x += 1) {
       const currentCell = line?.getCell(x, cell);
       const isHighlightable =
         currentCell === undefined ||
@@ -153,8 +175,8 @@ export class CursorLineHighlighter implements IDisposable {
           currentCell.isFgDefault() &&
           !currentCell.isInverse());
       if (isHighlightable && rangeStart === null) rangeStart = x;
-      if ((!isHighlightable || x === cols - 1) && rangeStart !== null) {
-        const end = isHighlightable && x === cols - 1 ? x + 1 : x;
+      if ((!isHighlightable || x === lineLength - 1) && rangeStart !== null) {
+        const end = isHighlightable && x === lineLength - 1 ? x + 1 : x;
         ranges.push({ x: rangeStart, width: end - rangeStart });
         rangeStart = null;
       }
@@ -163,6 +185,8 @@ export class CursorLineHighlighter implements IDisposable {
   }
 
   private clear(): void {
+    for (const disposable of this.decorationRenderListeners) disposable.dispose();
+    this.decorationRenderListeners = [];
     for (const disposable of this.decorationDisposeListeners) disposable.dispose();
     this.decorationDisposeListeners = [];
     for (const decoration of this.decorations) decoration.dispose();
@@ -173,6 +197,7 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeCols = null;
     this.activeColor = null;
     this.activeRanges = [];
+    this.activeTailWidth = null;
   }
 }
 
