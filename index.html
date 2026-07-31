@@ -36,6 +36,9 @@
       --input: 220 16% 82%;
       --ring: 208 100% 50%;
       --radius: 0.65rem;
+      /* Boot default until index.css / Appearance setting update --font-sans.
+         Must stay on the CSS variable so portaled panels inherit the UI font (#2647). */
+      --font-sans: "Mona Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
     }
 
     .dark {
@@ -62,14 +65,16 @@
     }
 
     body {
-      font-family: 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      font-family: var(--font-sans);
       margin: 0;
       background: hsl(var(--background));
       color: hsl(var(--foreground));
     }
 
-    html.platform-win32 body {
-      font-family: 'Noto Color Emoji Flags', 'Space Grotesk', system-ui, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Segoe UI Emoji', 'Segoe UI Symbol';
+    /* Windows flag/emoji fallbacks live on --font-sans (not a body font-family
+       override) so Appearance UI font still reaches portaled panels (#2647). */
+    html.platform-win32 {
+      --font-sans: "Noto Color Emoji Flags", "Mona Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif, "Segoe UI Emoji", "Segoe UI Symbol";
     }
 
     /* Global Modern Scrollbar */

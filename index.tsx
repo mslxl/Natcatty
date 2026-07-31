@@ -28,7 +28,7 @@ function SettingsWindowFallback() {
         flexDirection: 'column',
         background: 'hsl(var(--background))',
         color: 'hsl(var(--foreground))',
-        fontFamily: 'Mona Sans, PingFang SC, system-ui, sans-serif',
+        fontFamily: 'var(--font-sans)',
       }}
     >
       <div
