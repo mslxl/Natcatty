@@ -13,7 +13,12 @@ const createFakeTerm = (cols = 80) => {
   const writeParsedHandlers: Handler[] = [];
   const resizeHandlers: Handler[] = [];
   const bufferChangeHandlers: Handler[] = [];
-  const decorations: Array<{ options: Record<string, unknown>; disposed: boolean }> = [];
+  const decorations: Array<{
+    options: Record<string, unknown>;
+    disposed: boolean;
+    dispose: () => void;
+    onDispose: (handler: Handler) => { dispose: () => void };
+  }> = [];
   const markers: Array<{ line: number; disposed: boolean }> = [];
 
   const term = {
@@ -62,11 +67,19 @@ const createFakeTerm = (cols = 80) => {
       return marker;
     },
     registerDecoration(options: Record<string, unknown>) {
+      const disposeHandlers = new Set<Handler>();
       const decoration = {
         options,
         disposed: false,
         dispose() {
+          if (this.disposed) return;
           this.disposed = true;
+          for (const handler of disposeHandlers) handler();
+          disposeHandlers.clear();
+        },
+        onDispose(handler: Handler) {
+          disposeHandlers.add(handler);
+          return { dispose: () => disposeHandlers.delete(handler) };
         },
       };
       decorations.push(decoration);
@@ -80,9 +93,18 @@ const createFakeTerm = (cols = 80) => {
       baseY += lines;
       for (const handler of writeParsedHandlers) handler();
     },
+    trimScrollback(lines: number) {
+      for (const marker of markers) {
+        if (!marker.disposed) marker.line -= lines;
+      }
+      for (const handler of writeParsedHandlers) handler();
+    },
     setBufferType(nextType: 'normal' | 'alternate') {
       bufferType = nextType;
       for (const handler of bufferChangeHandlers) handler();
+    },
+    resetDecorations() {
+      for (const decoration of decorations) decoration.dispose();
     },
     setCols(nextCols: number) {
       term.cols = nextCols;
@@ -150,6 +172,36 @@ test('CursorLineHighlighter follows bottom-row output when only baseY changes', 
   assert.equal(term.decorations.length, 2);
   assert.equal(term.decorations[0]?.disposed, true);
   assert.equal(term.markers.at(-1)?.line, 3);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter refreshes when saturated scrollback moves its marker', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  const originalMarker = term.markers.at(-1);
+  assert.equal(originalMarker?.line, 0);
+
+  term.trimScrollback(1);
+  assert.equal(originalMarker?.disposed, true);
+  assert.equal(term.decorations.length, 2);
+  assert.equal(term.markers.at(-1)?.line, 0);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter restores after the terminal resets its decorations', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  assert.equal(term.decorations.length, 1);
+
+  term.resetDecorations();
+  assert.equal(term.decorations[0]?.disposed, true);
+
+  term.scrollOutput(0);
+  assert.equal(term.decorations.length, 2);
   assert.equal(term.decorations.at(-1)?.disposed, false);
   highlighter.dispose();
 });

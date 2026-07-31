@@ -20,6 +20,7 @@ export class CursorLineHighlighter implements IDisposable {
   private backgroundColor = '#1a2332';
   private marker: IMarker | null = null;
   private decoration: IDecoration | null = null;
+  private decorationDisposeListener: IDisposable | null = null;
   private activeLine: number | null = null;
   private activeCols: number | null = null;
   private activeColor: string | null = null;
@@ -76,7 +77,8 @@ export class CursorLineHighlighter implements IDisposable {
       color === this.activeColor &&
       this.decoration &&
       this.marker &&
-      !this.marker.isDisposed
+      !this.marker.isDisposed &&
+      this.marker.line === absoluteLine
     ) {
       return;
     }
@@ -101,6 +103,14 @@ export class CursorLineHighlighter implements IDisposable {
 
     this.marker = marker;
     this.decoration = decoration;
+    this.decorationDisposeListener = decoration.onDispose(() => {
+      if (this.decoration !== decoration) return;
+      this.decoration = null;
+      this.decorationDisposeListener = null;
+      this.activeLine = null;
+      this.activeCols = null;
+      this.activeColor = null;
+    });
     this.activeLine = absoluteLine;
     this.activeCols = cols;
     this.activeColor = color;
@@ -117,6 +127,8 @@ export class CursorLineHighlighter implements IDisposable {
   }
 
   private clear(): void {
+    this.decorationDisposeListener?.dispose();
+    this.decorationDisposeListener = null;
     this.decoration?.dispose();
     this.decoration = null;
     this.marker?.dispose();
