@@ -163,7 +163,8 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
           className="flex-1 font-semibold"
         />
       ) : (
-        <span className="flex h-5 min-w-0 flex-1 translate-y-px items-center gap-1.5 leading-none">
+        // leading-5 (not leading-none): CJK fallbacks like PingFang paint outside a 1.0 em box and get clipped by truncate.
+        <span className="flex min-h-5 min-w-0 flex-1 items-center gap-1.5 leading-5">
           <span className="min-w-0 truncate">{name}</span>
           {labelActions}
         </span>
@@ -235,9 +236,10 @@ export const VaultTreeItemRow: React.FC<VaultTreeItemRowProps> = ({
             onCancel={onRenameCancel}
           />
         ) : (
-          <div className="flex min-w-0 items-center truncate leading-none">{label}</div>
+          // leading-5 keeps CJK glyphs inside the line box under truncate overflow.
+          <div className="min-w-0 truncate leading-5">{label}</div>
         )}
-        {detail && <div className="truncate text-xs text-muted-foreground">{detail}</div>}
+        {detail && <div className="truncate text-xs leading-4 text-muted-foreground">{detail}</div>}
       </div>
     )}
     {actions}

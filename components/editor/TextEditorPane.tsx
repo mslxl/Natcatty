@@ -350,20 +350,20 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
       <div className="h-9 px-3 py-1.5 border-b border-border/60 flex-shrink-0">
         <div className="flex h-full items-center justify-between gap-3">
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <span className="text-sm font-semibold leading-none truncate flex-shrink-0">
+            <span className="flex-shrink-0 truncate text-sm font-semibold leading-5">
               {fileName}
             </span>
             {subtitle && (
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="text-xs leading-none text-muted-foreground truncate cursor-default">
+                  <span className="cursor-default truncate text-xs leading-4 text-muted-foreground">
                     {subtitle}
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>{subtitle}</TooltipContent>
               </Tooltip>
             )}
-            {saveError && <span className="text-xs leading-none text-destructive truncate">{saveError}</span>}
+            {saveError && <span className="truncate text-xs leading-4 text-destructive">{saveError}</span>}
           </div>
           <div className="flex h-6 items-center gap-2 min-w-0">
             {/* Search button */}

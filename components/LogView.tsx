@@ -261,10 +261,10 @@ const LogViewComponent: React.FC<LogViewProps> = ({
                         <FileText size={14} />
                     </div>
                     <div className="flex min-w-0 flex-1 items-baseline gap-2">
-                        <div className="min-w-0 text-sm font-medium leading-none truncate">
+                        <div className="min-w-0 text-sm font-medium leading-5 truncate">
                             {isLocal ? t("logs.localTerminal") : log.hostname}
                         </div>
-                        <div className="text-xs leading-none text-muted-foreground truncate">
+                        <div className="text-xs leading-4 truncate text-muted-foreground">
                             {formattedDate} • {log.localUsername}@{log.localHostname}
                         </div>
                     </div>

@@ -192,6 +192,8 @@ html.platform-win32 {
   white-space: nowrap;
   vertical-align: middle;
   max-width: 4.5rem;
+  /* Avoid line-height:1 clipping CJK under overflow:hidden on h-7 tabs. */
+  line-height: 1.25rem;
   opacity: 1;
   transition:
     max-width 220ms cubic-bezier(0.4, 0, 0.2, 1),

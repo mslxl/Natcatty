@@ -67,6 +67,21 @@ test("VaultTreeItemRow exposes shared selected item state", () => {
   assert.match(markup, /Failover checklist/);
 });
 
+test("VaultTree labels use CJK-safe line-height under truncate", () => {
+  const groupMarkup = renderToStaticMarkup(
+    <VaultTreeGroupRow name="服务器配置" depth={0} count={1} />,
+  );
+  const itemMarkup = renderToStaticMarkup(
+    <VaultTreeItemRow label="机器安全检查报告" depth={0} />,
+  );
+
+  // leading-none clips CJK (PingFang etc.) when truncate applies overflow:hidden.
+  assert.match(groupMarkup, /leading-5/);
+  assert.doesNotMatch(groupMarkup, /leading-none/);
+  assert.match(itemMarkup, /leading-5/);
+  assert.doesNotMatch(itemMarkup, /leading-none/);
+});
+
 test("VaultTreeInlineRenameInput uses shared inline edit marker", () => {
   const markup = renderToStaticMarkup(
     <VaultTreeInlineRenameInput

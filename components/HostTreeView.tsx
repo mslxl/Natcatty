@@ -807,9 +807,9 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
             <DistroAvatar host={host} fallback={(host.os || "L")[0].toUpperCase()} size="tree" />
           )}
           content={(
-            <div className="min-w-0 flex-1 leading-tight">
-              <div className="flex items-center gap-1.5 truncate font-medium leading-4">
-                <span className="truncate">{host.label}</span>
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1.5 font-medium leading-5">
+                <span className="min-w-0 truncate">{host.label}</span>
                 <button
                   aria-label={`Edit ${host.label}`}
                   tabIndex={-1}
