@@ -91,7 +91,7 @@ export class CursorLineHighlighter implements IDisposable {
       buffer.getNullCell(),
       this.getProtectedRanges(absoluteLine),
     );
-    const tailRanges = this.getTailRanges(contentEnd, cols, buffer.cursorX);
+    const tailRanges = this.getTailRanges(contentEnd, cols);
 
     if (
       !options.force &&
@@ -209,20 +209,9 @@ export class CursorLineHighlighter implements IDisposable {
     };
   }
 
-  private getTailRanges(contentEnd: number, cols: number, cursorX: number): HighlightRange[] {
+  private getTailRanges(contentEnd: number, cols: number): HighlightRange[] {
     if (contentEnd >= cols) return [];
-    const cursorColumn = Math.min(Math.max(cursorX, 0), cols - 1);
-    if (cursorColumn < contentEnd) {
-      return [{ x: contentEnd, width: cols - contentEnd }];
-    }
-    return [
-      ...(cursorColumn > contentEnd
-        ? [{ x: contentEnd, width: cursorColumn - contentEnd }]
-        : []),
-      ...(cursorColumn + 1 < cols
-        ? [{ x: cursorColumn + 1, width: cols - cursorColumn - 1 }]
-        : []),
-    ];
+    return [{ x: contentEnd, width: cols - contentEnd }];
   }
 
   private clear(): void {

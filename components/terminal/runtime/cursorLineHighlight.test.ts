@@ -255,7 +255,7 @@ test('CursorLineHighlighter fills the blank tail after short output', () => {
   highlighter.dispose();
 });
 
-test('CursorLineHighlighter leaves the cursor cell above the blank tail', () => {
+test('CursorLineHighlighter fills the blank tail through the cursor cell', () => {
   const term = createFakeTerm(10);
   term.setLineLength(4);
   term.setCursorX(5);
@@ -267,14 +267,13 @@ test('CursorLineHighlighter leaves the cursor cell above the blank tail', () => 
     term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
     [
       { x: 0, width: 4 },
-      { x: 4, width: 1 },
-      { x: 6, width: 4 },
+      { x: 4, width: 6 },
     ],
   );
   highlighter.dispose();
 });
 
-test('CursorLineHighlighter clamps a wrap-pending cursor to the last cell', () => {
+test('CursorLineHighlighter fills a wrap-pending final cell', () => {
   const term = createFakeTerm(10);
   term.setLineLength(4);
   term.setCursorX(10);
@@ -286,7 +285,7 @@ test('CursorLineHighlighter clamps a wrap-pending cursor to the last cell', () =
     term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
     [
       { x: 0, width: 4 },
-      { x: 4, width: 5 },
+      { x: 4, width: 6 },
     ],
   );
   highlighter.dispose();
