@@ -137,14 +137,6 @@ function AppViewInner({ domains }: AppViewProps) {
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
 
-  // Stable no-arg wrapper: the top-bar terminal icon passes an onClick event we
-  // must not forward as handleCreateLocalTerminal's `shell` arg, and an inline
-  // arrow here would defeat the memoized TopTabs onCreateLocalTerminal check.
-  // Top-tabs shows this only when the host-tree toolbar is not available.
-  const handleCreateLocalTerminalNoArg = useCallback(() => {
-    handleCreateLocalTerminal();
-  }, [handleCreateLocalTerminal]);
-
   const handleTerminalCommandExecuted = useCallback((
     command: string,
     hostId: string,
@@ -286,7 +278,6 @@ function AppViewInner({ domains }: AppViewProps) {
         onCloseLogView={closeLogView}
         onCloseTabsBatch={closeTabsBatch}
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
-        onCreateLocalTerminal={handleCreateLocalTerminalNoArg}
         onThemeChange={settings.setTheme}
         onOpenSettings={handleOpenSettings}
         externalMcpEnabled={externalMcpToggle.enabled}
