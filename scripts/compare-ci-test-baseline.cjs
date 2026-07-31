@@ -56,6 +56,7 @@ function parseTapResult(text, exitCode) {
   const lines = normalized.split('\n');
   const failures = [];
   const failureRecords = [];
+  const successes = [];
   let failCount = null;
   let cancelledCount = null;
   let skippedCount = null;
@@ -63,6 +64,10 @@ function parseTapResult(text, exitCode) {
   let testCount = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    const succeeded = line.match(/^\s*ok \d+ - (.+?)(?:\s+#.*)?$/);
+    if (succeeded && !/\s+#\s*(?:SKIP|TODO)\b/i.test(line)) {
+      successes.push(succeeded[1].trim());
+    }
     const failed = line.match(/^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/);
     if (failed) {
       const name = failed[1].trim();
@@ -154,6 +159,7 @@ function parseTapResult(text, exitCode) {
     exitCode: Number(exitCode),
     failures,
     failureRecords,
+    successes,
     failCount,
     cancelledCount,
     skippedCount,
@@ -178,6 +184,14 @@ function countFailures(failures) {
 }
 
 function compareTapResults(baseline, candidate) {
+  const baselineSuccessCounts = countFailures(baseline.successes);
+  const candidateSuccessCounts = countFailures(candidate.successes);
+  const missingBaselineSuccesses = [];
+  for (const [success, count] of baselineSuccessCounts) {
+    const missing = count - (candidateSuccessCounts.get(success) || 0);
+    for (let i = 0; i < missing; i += 1) missingBaselineSuccesses.push(success);
+  }
+
   if (candidate.exitCode === 0) {
     const completeCleanRun =
       baseline.complete &&
@@ -186,7 +200,8 @@ function compareTapResults(baseline, candidate) {
       candidate.cancelledCount === 0 &&
       candidate.skippedCount <= baseline.skippedCount &&
       candidate.todoCount <= baseline.todoCount &&
-      candidate.testCount >= baseline.testCount;
+      candidate.testCount >= baseline.testCount &&
+      missingBaselineSuccesses.length === 0;
     return {
       passed: completeCleanRun,
       kind: completeCleanRun ? 'clean' : 'unclassified_failure',
@@ -213,6 +228,16 @@ function compareTapResults(baseline, candidate) {
       baselineFailures: baseline.failures,
       candidateFailures: candidate.failures,
       newFailures: candidate.failures,
+    };
+  }
+
+  if (missingBaselineSuccesses.length) {
+    return {
+      passed: false,
+      kind: 'unclassified_failure',
+      baselineFailures: baseline.failures,
+      candidateFailures: candidate.failures,
+      newFailures: missingBaselineSuccesses,
     };
   }
 

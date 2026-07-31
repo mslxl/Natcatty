@@ -7,9 +7,10 @@ const {
   parseTapResult,
 } = require('./compare-ci-test-baseline.cjs');
 
-const tap = ({ failures = [], fail = failures.length, cancelled = 0, skipped = 0, todo = 0, tests = 10 } = {}) => [
+const tap = ({ failures = [], successes = [], fail = failures.length, cancelled = 0, skipped = 0, todo = 0, tests = 10 } = {}) => [
   'TAP version 13',
   ...failures.map((name, index) => `not ok ${index + 1} - ${name}`),
+  ...successes.map((name, index) => `ok ${failures.length + index + 1} - ${name}`),
   `# fail ${fail}`,
   `# cancelled ${cancelled}`,
   `# skipped ${skipped}`,
@@ -30,6 +31,15 @@ test('rejects a zero-exit candidate without a complete clean TAP summary', () =>
   const result = compareTapResults(
     parseTapResult(tap(), 0),
     parseTapResult('custom test command completed', 0),
+  );
+  assert.equal(result.passed, false);
+  assert.equal(result.kind, 'unclassified_failure');
+});
+
+test('rejects replacing an existing successful test with an unrelated one', () => {
+  const result = compareTapResults(
+    parseTapResult(tap({ successes: ['kept test', 'removed test'] }), 0),
+    parseTapResult(tap({ successes: ['kept test', 'unrelated replacement'] }), 0),
   );
   assert.equal(result.passed, false);
   assert.equal(result.kind, 'unclassified_failure');
@@ -149,7 +159,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   ].join('\n');
   const dynamic = compareTapResults(
     parseTapResult(dynamicValues(41831, 'later test'), 1),
-    parseTapResult(dynamicValues(52942, 'renamed later test'), 1),
+    parseTapResult(dynamicValues(52942, 'later test'), 1),
   );
   assert.equal(dynamic.passed, true);
 
