@@ -7,12 +7,13 @@ const {
   parseTapResult,
 } = require('./compare-ci-test-baseline.cjs');
 
-const tap = ({ failures = [], fail = failures.length, cancelled = 0, skipped = 0, tests = 10 } = {}) => [
+const tap = ({ failures = [], fail = failures.length, cancelled = 0, skipped = 0, todo = 0, tests = 10 } = {}) => [
   'TAP version 13',
   ...failures.map((name, index) => `not ok ${index + 1} - ${name}`),
   `# fail ${fail}`,
   `# cancelled ${cancelled}`,
   `# skipped ${skipped}`,
+  `# todo ${todo}`,
   `# tests ${tests}`,
 ].join('\n');
 
@@ -78,6 +79,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '# fail 1',
     '# cancelled 0',
     '# skipped 0',
+    '# todo 0',
     '# tests 10',
   ].join('\n');
   const same = compareTapResults(
@@ -118,6 +120,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '# fail 1',
     '# cancelled 0',
     '# skipped 0',
+    '# todo 0',
     '# tests 2',
   ].join('\n');
   const dynamic = compareTapResults(
@@ -140,6 +143,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '# fail 1',
     '# cancelled 0',
     '# skipped 0',
+    '# todo 0',
     '# tests 10',
   ].join('\n');
   const changedMultilineError = compareTapResults(
@@ -166,6 +170,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '# fail 1',
     '# cancelled 0',
     '# skipped 0',
+    '# todo 0',
     '# tests 10',
   ].join('\n');
   const changedAssertionValue = compareTapResults(
@@ -197,7 +202,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   assert.equal(changedCustomError.passed, false);
 });
 
-test('rejects added duplicate failures, cancellations, and skipped tests', () => {
+test('rejects added duplicate failures, cancellations, skipped tests, and TODOs', () => {
   const duplicate = compareTapResults(
     parseTapResult(tap({ failures: ['same'] }), 1),
     parseTapResult(tap({ failures: ['same', 'same'] }), 1),
@@ -217,6 +222,13 @@ test('rejects added duplicate failures, cancellations, and skipped tests', () =>
   );
   assert.equal(skipped.passed, false);
   assert.equal(skipped.kind, 'unclassified_failure');
+
+  const todo = compareTapResults(
+    parseTapResult(tap({ todo: 1 }), 0),
+    parseTapResult(tap({ todo: 10 }), 0),
+  );
+  assert.equal(todo.passed, false);
+  assert.equal(todo.kind, 'unclassified_failure');
 });
 
 test('fails closed when a red run has no complete TAP summary', () => {

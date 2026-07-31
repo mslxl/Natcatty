@@ -1,5 +1,5 @@
 import type { DropEntry } from "./sftpFileUtils";
-import { getPathForFile } from "./sftpFileUtils";
+import { getDropEntryLocalPath } from "./sftpFileUtils";
 import type { Host } from "../types";
 
 const ZMODEM_RZ_MISSING_MARKER_PREFIX = "\x1b]1337;NetcattyRzMissing=";
@@ -63,7 +63,7 @@ export async function buildZmodemDragDropFiles(
     if (entry.isDirectory || !entry.file) continue;
 
     const remoteName = getZmodemRemoteName(entry.relativePath, entry.file.name);
-    const localPath = getPathForFile(entry.file);
+    const localPath = getDropEntryLocalPath(entry);
 
     if (localPath) {
       files.push({

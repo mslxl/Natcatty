@@ -24,6 +24,7 @@ function parseTapResult(text, exitCode) {
   let failCount = null;
   let cancelledCount = null;
   let skippedCount = null;
+  let todoCount = null;
   let testCount = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -38,7 +39,7 @@ function parseTapResult(text, exitCode) {
       let stackIndent = -1;
       for (let detailIndex = index + 1; detailIndex < lines.length; detailIndex += 1) {
         const detail = lines[detailIndex];
-        if (/^\s*(?:ok|not ok) \d+ - /.test(detail) || /^\s*# (?:tests|fail|cancelled) \d+\s*$/.test(detail)) {
+        if (/^\s*(?:ok|not ok) \d+ - /.test(detail) || /^\s*# (?:tests|fail|cancelled|skipped|todo) \d+\s*$/.test(detail)) {
           break;
         }
         if (/^\s*---\s*$/.test(detail)) {
@@ -99,6 +100,8 @@ function parseTapResult(text, exitCode) {
     if (cancelledSummary) cancelledCount = Number(cancelledSummary[1]);
     const skippedSummary = line.match(/^\s*# skipped (\d+)\s*$/);
     if (skippedSummary) skippedCount = Number(skippedSummary[1]);
+    const todoSummary = line.match(/^\s*# todo (\d+)\s*$/);
+    if (todoSummary) todoCount = Number(todoSummary[1]);
     const testSummary = line.match(/^\s*# tests (\d+)\s*$/);
     if (testSummary) testCount = Number(testSummary[1]);
   }
@@ -109,11 +112,13 @@ function parseTapResult(text, exitCode) {
     failCount,
     cancelledCount,
     skippedCount,
+    todoCount,
     testCount,
     complete:
       failCount !== null &&
       cancelledCount !== null &&
       skippedCount !== null &&
+      todoCount !== null &&
       testCount !== null,
   };
 }
@@ -134,6 +139,7 @@ function compareTapResults(baseline, candidate) {
       candidate.failCount === 0 &&
       candidate.cancelledCount === 0 &&
       candidate.skippedCount <= baseline.skippedCount &&
+      candidate.todoCount <= baseline.todoCount &&
       candidate.testCount >= baseline.testCount;
     return {
       passed: completeCleanRun,
@@ -176,7 +182,8 @@ function compareTapResults(baseline, candidate) {
 
   if (
     candidate.cancelledCount > 0 ||
-    candidate.skippedCount > baseline.skippedCount
+    candidate.skippedCount > baseline.skippedCount ||
+    candidate.todoCount > baseline.todoCount
   ) {
     return {
       passed: false,
