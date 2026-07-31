@@ -170,6 +170,16 @@ function compareTapResults(baseline, candidate) {
     };
   }
 
+  if (candidate.exitCode !== baseline.exitCode) {
+    return {
+      passed: false,
+      kind: 'unclassified_failure',
+      baselineFailures: baseline.failures,
+      candidateFailures: candidate.failures,
+      newFailures: candidate.failures,
+    };
+  }
+
   if (candidate.failCount === 0 || candidate.testCount < baseline.testCount) {
     return {
       passed: false,

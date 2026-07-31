@@ -64,6 +64,16 @@ test('rejects a different candidate failure even when both runs are red', () => 
   assert.deepEqual(result.newFailures, ['candidate regression']);
 });
 
+test('rejects an additional runner failure after comparable TAP output', () => {
+  const sameTap = tap({ failures: ['base failure'] });
+  const result = compareTapResults(
+    parseTapResult(sameTap, 1),
+    parseTapResult(`${sameTap}\nrunner crashed after tests`, 2),
+  );
+  assert.equal(result.passed, false);
+  assert.equal(result.kind, 'unclassified_failure');
+});
+
 test('distinguishes same-title failures by stable TAP diagnostics', () => {
   const withDiagnostic = (error, location = '/workspace/example.test.js:10:1') => [
     'TAP version 13',
