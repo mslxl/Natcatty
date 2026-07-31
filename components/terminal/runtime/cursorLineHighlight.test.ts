@@ -274,6 +274,24 @@ test('CursorLineHighlighter leaves the cursor cell above the blank tail', () => 
   highlighter.dispose();
 });
 
+test('CursorLineHighlighter clamps a wrap-pending cursor to the last cell', () => {
+  const term = createFakeTerm(10);
+  term.setLineLength(4);
+  term.setCursorX(10);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setBackgroundColor('#263449');
+  highlighter.setEnabled(true);
+
+  assert.deepEqual(
+    term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
+    [
+      { x: 0, width: 4 },
+      { x: 4, width: 5 },
+    ],
+  );
+  highlighter.dispose();
+});
+
 test('CursorLineHighlighter leaves colored and inverse cells untouched', () => {
   const term = createFakeTerm(10);
   term.setColoredForegrounds([2, 3]);

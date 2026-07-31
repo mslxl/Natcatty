@@ -217,8 +217,8 @@ export class CursorLineHighlighter implements IDisposable {
 
   private getTailRanges(contentEnd: number, cols: number, cursorX: number): HighlightRange[] {
     if (contentEnd >= cols) return [];
-    const cursorColumn = cursorX >= 0 && cursorX < cols ? cursorX : null;
-    if (cursorColumn === null || cursorColumn < contentEnd) {
+    const cursorColumn = Math.min(Math.max(cursorX, 0), cols - 1);
+    if (cursorColumn < contentEnd) {
       return [{ x: contentEnd, width: cols - contentEnd }];
     }
     return [
