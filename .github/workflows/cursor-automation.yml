@@ -1361,6 +1361,16 @@ jobs:
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const issueNumber = Number(process.env.ISSUE_NUMBER);
             const pullNumber = Number(process.env.PULL_NUMBER) || null;
+            const queuePullReadinessCheck = async () => {
+              if (!pullNumber) return;
+              await github.rest.actions.createWorkflowDispatch({
+                ...context.repo,
+                workflow_id: 'cursor-automation.yml',
+                ref: context.payload.repository.default_branch,
+                inputs: { pull_number: String(pullNumber) },
+              });
+              core.info(`Queued a readiness check for PR #${pullNumber}.`);
+            };
             const { data: issue } = await github.rest.issues.get({
               ...context.repo,
               issue_number: issueNumber,
@@ -1378,6 +1388,7 @@ jobs:
             const liveKind = auto.classifySimpleIssueFollowup(livePending);
             if (changed.length || !liveKind) {
               if (!livePending.length) {
+                await queuePullReadinessCheck();
                 core.info('The simple follow-up was removed before reply; nothing to process.');
                 return;
               }
@@ -1408,17 +1419,7 @@ jobs:
                 pullNumber,
               }),
             });
-            if (pullNumber) {
-              await github.rest.actions.createWorkflowDispatch({
-                ...context.repo,
-                workflow_id: 'cursor-automation.yml',
-                ref: context.payload.repository.default_branch,
-                inputs: { pull_number: String(pullNumber) },
-              });
-              core.info(
-                `Queued a readiness check for PR #${pullNumber} after the simple follow-up reply.`,
-              );
-            }
+            await queuePullReadinessCheck();
 
       - name: Pause linked pull request during follow-up review
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'

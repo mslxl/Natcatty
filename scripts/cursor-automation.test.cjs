@@ -877,10 +877,15 @@ test('simple follow-ups immediately recheck linked clean pull requests', () => {
     /- name: Handle simple resolution or acknowledgement[\s\S]*?(?=\n\s{6}- name:)/,
   )?.[0] || '';
   const recordReply = simpleStep.indexOf('await github.rest.issues.createComment');
-  const recheckPull = simpleStep.indexOf('await github.rest.actions.createWorkflowDispatch', recordReply);
+  const recheckPull = simpleStep.indexOf('await queuePullReadinessCheck()', recordReply);
+  const removedBranch = simpleStep.match(
+    /if \(!livePending\.length\) \{[\s\S]*?return;/,
+  )?.[0] || '';
 
   assert.ok(recordReply >= 0);
   assert.ok(recheckPull > recordReply);
+  assert.match(removedBranch, /await queuePullReadinessCheck\(\)/);
+  assert.match(simpleStep, /await github\.rest\.actions\.createWorkflowDispatch/);
   assert.match(simpleStep, /inputs: \{ pull_number: String\(pullNumber\) \}/);
   assert.match(simpleStep, /Queued a readiness check for PR/);
 });
