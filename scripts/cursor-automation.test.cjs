@@ -1734,6 +1734,25 @@ test('hasProtectedChangesInSources checks commit names', () => {
   ]);
 });
 
+test('generated changes may add tests but cannot alter existing test sources', () => {
+  const committed = auto.hasProtectedChangesInSources({
+    nameStatusText: [
+      'M\tcomponents/existing.test.ts',
+      'A\tcomponents/new-regression.test.ts',
+      'M\tcomponents/App.tsx',
+    ].join('\n'),
+  });
+  assert.deepEqual(committed, ['components/existing.test.ts']);
+
+  const workingTree = auto.hasProtectedChangesInSources({
+    gitStatusPorcelain: [
+      ' M components/other.test.ts',
+      '?? components/new-regression-2.test.ts',
+    ].join('\n'),
+  });
+  assert.deepEqual(workingTree, ['components/other.test.ts']);
+});
+
 test('hasProtectedChangesInSources blocks electron-builder configs', () => {
   const hits = auto.hasProtectedChangesInSources({
     changedFiles: ['electron-builder.config.cjs', 'components/App.tsx', 'nix/release.nix'],

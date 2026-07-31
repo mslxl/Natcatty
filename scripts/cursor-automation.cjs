@@ -2303,6 +2303,43 @@ function listProtectedPathHits(filePaths) {
   return hits;
 }
 
+function isTestSourcePath(filePath) {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  return (
+    /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/.test(normalized) ||
+    /(?:^|\/)__tests__\//.test(normalized)
+  );
+}
+
+function listModifiedExistingTestPaths({
+  gitStatusPorcelain = '',
+  nameStatusText = '',
+} = {}) {
+  const hits = [];
+  for (const line of String(gitStatusPorcelain || '').split('\n')) {
+    if (!line.trim()) continue;
+    const status = line.slice(0, 2);
+    if (status === '??' || status.includes('A')) continue;
+    const rest = line.slice(3).trim();
+    const paths = rest.includes(' -> ')
+      ? rest.split(' -> ').map((value) => unquoteGitPath(value.trim()))
+      : [unquoteGitPath(rest)];
+    hits.push(...paths.filter(isTestSourcePath));
+  }
+  for (const line of String(nameStatusText || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split(/\t/);
+    const status = parts[0] || '';
+    if (/^A\d*$/.test(status)) continue;
+    const paths = /^R\d*/.test(status) && parts.length >= 3
+      ? [parts[1], parts[2]]
+      : parts.slice(1, 2);
+    hits.push(...paths.map(unquoteGitPath).filter(isTestSourcePath));
+  }
+  return [...new Set(hits)];
+}
+
 function hasProtectedChanges(gitStatusPorcelain) {
   return listProtectedPathHits(pathsFromGitStatusPorcelain(gitStatusPorcelain));
 }
@@ -2316,11 +2353,15 @@ function hasProtectedChangesInSources({
   const fromStatus = pathsFromGitStatusPorcelain(gitStatusPorcelain);
   const fromCommits = (changedFiles || []).map(String);
   const fromNameStatus = pathsFromGitDiffNameStatus(nameStatusText);
-  return listProtectedPathHits([
+  const protectedHits = listProtectedPathHits([
     ...fromStatus,
     ...fromCommits,
     ...fromNameStatus,
   ]);
+  return [...new Set([
+    ...protectedHits,
+    ...listModifiedExistingTestPaths({ gitStatusPorcelain, nameStatusText }),
+  ])];
 }
 
 function getCodexRoundFromComments(comments = [], options = {}) {
