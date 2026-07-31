@@ -269,6 +269,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.cursor.style.bar': '豎線',
   'settings.terminal.cursor.style.underline': '下劃線',
   'settings.terminal.cursor.blink': '游標閃爍',
+  'settings.terminal.cursor.highlightLine': '高亮目前行',
+  'settings.terminal.cursor.highlightLine.desc': '為游標所在行加上淡色背景，方便定位目前輸入位置',
   'settings.terminal.keyboard.altAsMeta': '將 Option 作為 Meta 鍵',
   'settings.terminal.keyboard.altAsMeta.desc': '使用 Option (Alt) 作為 Meta 鍵，而不是用於輸入特殊字元',
   'settings.terminal.keyboard.optionArrowWordJump': 'Option+←/→ 按單字跳轉',

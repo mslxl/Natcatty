@@ -1461,6 +1461,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           if (payload.snapshot) {
             await new Promise<void>((resolve) => term.write(payload.snapshot, resolve));
           }
+          xtermRuntimeRef.current?.cursorLineHighlighter.refresh({ force: true });
           try { term.scrollToBottom?.(); } catch { /* ignore */ }
         } else if (hibernatedRef.current || softHiddenRef.current) {
           applyAuthoritativeHibernateSnapshot({

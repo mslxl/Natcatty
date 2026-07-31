@@ -518,6 +518,9 @@ Highlight the focused split pane:
   'settings.terminal.cursor.style.bar': 'Bar',
   'settings.terminal.cursor.style.underline': 'Underline',
   'settings.terminal.cursor.blink': 'Cursor blink',
+  'settings.terminal.cursor.highlightLine': 'Highlight current line',
+  'settings.terminal.cursor.highlightLine.desc':
+    'Shade the row under the cursor so the active line is easier to find',
   'settings.terminal.keyboard.altAsMeta': 'Use Option as Meta key',
   'settings.terminal.keyboard.altAsMeta.desc':
     'Use Option (Alt) as the Meta key instead of for special characters',

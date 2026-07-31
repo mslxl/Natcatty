@@ -269,6 +269,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.cursor.style.bar': '竖线',
   'settings.terminal.cursor.style.underline': '下划线',
   'settings.terminal.cursor.blink': '光标闪烁',
+  'settings.terminal.cursor.highlightLine': '高亮当前行',
+  'settings.terminal.cursor.highlightLine.desc': '为光标所在行加上淡色背景，方便定位当前输入位置',
   'settings.terminal.keyboard.altAsMeta': '将 Option 作为 Meta 键',
   'settings.terminal.keyboard.altAsMeta.desc': '使用 Option (Alt) 作为 Meta 键，而不是用于输入特殊字符',
   'settings.terminal.keyboard.optionArrowWordJump': 'Option+←/→ 按单词跳转',

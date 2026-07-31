@@ -70,6 +70,8 @@ export interface TerminalSettings {
   // Cursor
   cursorShape: CursorShape;
   cursorBlink: boolean;
+  /** Highlight the buffer row under the cursor (WindTerm-style decoration). */
+  highlightCursorLine: boolean;
 
   // Accessibility
   minimumContrastRatio: number; // Minimum contrast ratio (1-21)
@@ -417,6 +419,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fallbackFont: '',
   cursorShape: 'block',
   cursorBlink: true,
+  highlightCursorLine: false,
   minimumContrastRatio: 1,
   altAsMeta: false,
   optionArrowWordJump: false,

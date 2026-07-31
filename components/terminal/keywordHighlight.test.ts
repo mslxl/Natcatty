@@ -313,6 +313,40 @@ test("setRules immediately highlights a newly added rule against visible termina
   }
 });
 
+test("marker reindexing invalidates cursor-line protected ranges", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term } = createFakeTerminal("hello DEPLOY world");
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      decorationsVersion: number;
+      lineDecorations: Map<number, { marker: { line: number } }>;
+      reindexLineDecorationsFromMarkers: () => void;
+    };
+    const state = internals.lineDecorations.get(0);
+    assert.ok(state);
+    const previousVersion = internals.decorationsVersion;
+    state.marker.line = 1;
+
+    internals.reindexLineDecorationsFromMarkers();
+
+    assert.equal(internals.decorationsVersion, previousVersion + 1);
+    assert.equal(internals.lineDecorations.get(1), state);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("plugin rules use the RE2 matcher while saved user rules retain JavaScript regex behavior", () => {
   const raf = installAnimationFrameQueue();
   const originalError = console.error;

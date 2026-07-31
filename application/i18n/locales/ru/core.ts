@@ -490,6 +490,9 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.cursor.style.bar': 'Полоса',
   'settings.terminal.cursor.style.underline': 'Подчёркивание',
   'settings.terminal.cursor.blink': 'Мигание курсора',
+  'settings.terminal.cursor.highlightLine': 'Подсветка текущей строки',
+  'settings.terminal.cursor.highlightLine.desc':
+    'Затенять строку под курсором, чтобы активную строку было легче найти',
   'settings.terminal.keyboard.altAsMeta': 'Использовать Option как клавишу Meta',
   'settings.terminal.keyboard.altAsMeta.desc':
     'Использовать Option (Alt) как клавишу Meta вместо ввода специальных символов',

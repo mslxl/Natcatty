@@ -3,6 +3,14 @@ import assert from "node:assert/strict";
 
 import { normalizeTerminalSettings } from "./models";
 
+test("normalizeTerminalSettings disables cursor line highlight by default", () => {
+  assert.equal(normalizeTerminalSettings().highlightCursorLine, false);
+});
+
+test("normalizeTerminalSettings preserves enabled cursor line highlight", () => {
+  assert.equal(normalizeTerminalSettings({ highlightCursorLine: true }).highlightCursorLine, true);
+});
+
 test("normalizeTerminalSettings disables prompt line breaks by default", () => {
   const settings = normalizeTerminalSettings();
 

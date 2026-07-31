@@ -4,6 +4,12 @@ import test from "node:test";
 
 const source = readFileSync(new URL("./SettingsTerminalTab.tsx", import.meta.url), "utf8");
 
+test("terminal settings expose cursor line highlight toggle", () => {
+  assert.match(source, /settings\.terminal\.cursor\.highlightLine/);
+  assert.match(source, /checked=\{terminalSettings\.highlightCursorLine\}/);
+  assert.match(source, /updateTerminalSetting\("highlightCursorLine", v\)/);
+});
+
 test("terminal settings hide terminal theme pickers while following app theme", () => {
   assert.match(source, /\{!followAppTerminalTheme && \(/);
   assert.doesNotMatch(source, /settings\.terminal\.theme\.followingTheme/);
