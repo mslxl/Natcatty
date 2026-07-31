@@ -2,48 +2,43 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  CURSOR_LINE_HIGHLIGHT_BLEND,
-  resolveCursorLineHighlightBackground,
+  CURSOR_LINE_HIGHLIGHT_OPACITY,
+  resolveCursorLineHighlightOverlay,
 } from './cursorLineHighlight.ts';
 
-test('resolveCursorLineHighlightBackground blends selection into background', () => {
-  const color = resolveCursorLineHighlightBackground({
+test('resolveCursorLineHighlightOverlay creates a translucent selection overlay', () => {
+  const color = resolveCursorLineHighlightOverlay({
     background: '#0d1117',
     foreground: '#c9d1d9',
     selection: '#264f78',
   });
-  assert.match(color, /^#[0-9a-f]{6}$/i);
-
-  // Pure background and pure selection should not equal the blend.
-  assert.notEqual(color.toLowerCase(), '#0d1117');
-  assert.notEqual(color.toLowerCase(), '#264f78');
+  assert.equal(color, 'rgba(38, 79, 120, 0.18)');
 });
 
-test('resolveCursorLineHighlightBackground falls back to foreground when selection is invalid', () => {
-  const withSelection = resolveCursorLineHighlightBackground({
+test('resolveCursorLineHighlightOverlay falls back to foreground when selection is invalid', () => {
+  const withSelection = resolveCursorLineHighlightOverlay({
     background: '#000000',
     foreground: '#ffffff',
     selection: '#808080',
   });
-  const withoutSelection = resolveCursorLineHighlightBackground({
+  const withoutSelection = resolveCursorLineHighlightOverlay({
     background: '#000000',
     foreground: '#ffffff',
     selection: 'not-a-color',
   });
-  assert.match(withSelection, /^#[0-9a-f]{6}$/i);
-  assert.match(withoutSelection, /^#[0-9a-f]{6}$/i);
-  assert.notEqual(withSelection.toLowerCase(), withoutSelection.toLowerCase());
+  assert.equal(withSelection, 'rgba(128, 128, 128, 0.18)');
+  assert.equal(withoutSelection, 'rgba(255, 255, 255, 0.18)');
 });
 
-test('resolveCursorLineHighlightBackground expands short hex and strips alpha', () => {
-  const short = resolveCursorLineHighlightBackground({
+test('resolveCursorLineHighlightOverlay expands short hex and strips alpha', () => {
+  const short = resolveCursorLineHighlightOverlay({
     background: '#000',
     foreground: '#fff',
     selection: '#88888888',
   });
-  assert.match(short, /^#[0-9a-f]{6}$/i);
+  assert.equal(short, 'rgba(136, 136, 136, 0.18)');
 });
 
-test('CURSOR_LINE_HIGHLIGHT_BLEND stays a subtle fraction', () => {
-  assert.ok(CURSOR_LINE_HIGHLIGHT_BLEND > 0 && CURSOR_LINE_HIGHLIGHT_BLEND < 0.5);
+test('CURSOR_LINE_HIGHLIGHT_OPACITY stays a subtle fraction', () => {
+  assert.ok(CURSOR_LINE_HIGHLIGHT_OPACITY > 0 && CURSOR_LINE_HIGHLIGHT_OPACITY < 0.5);
 });

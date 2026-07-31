@@ -15,7 +15,7 @@ import {
 import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
 import { CursorLineHighlighter } from "./cursorLineHighlight";
-import { resolveCursorLineHighlightBackground } from "../../../domain/cursorLineHighlight";
+import { resolveCursorLineHighlightOverlay } from "../../../domain/cursorLineHighlight";
 import {
   registerPluginTerminalLinkProvider,
   type PluginTerminalLinkProviderHost,
@@ -2045,8 +2045,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   keywordHighlighter.setRules(keywordHighlightRules, keywordHighlightEnabled);
 
   const cursorLineHighlighter = new CursorLineHighlighter(term);
-  cursorLineHighlighter.setBackgroundColor(
-    resolveCursorLineHighlightBackground(ctx.terminalTheme.colors),
+  cursorLineHighlighter.setOverlayColor(
+    resolveCursorLineHighlightOverlay(ctx.terminalTheme.colors),
   );
   cursorLineHighlighter.setEnabled(settings?.highlightCursorLine ?? false);
 

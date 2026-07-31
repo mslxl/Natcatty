@@ -1,7 +1,7 @@
 /**
  * Pure helpers for the terminal cursor-line highlight (WindTerm-style).
- * xterm decorations only accept opaque `#RRGGBB` backgrounds, so we blend
- * theme colors into a single solid hex.
+ * The highlight is rendered as a translucent DOM overlay so existing ANSI
+ * cell backgrounds remain visible underneath it.
  */
 
 export type CursorLineHighlightColors = {
@@ -30,37 +30,24 @@ const parseHexRgb = (value: string): Rgb | null => {
   return { r, g, b };
 };
 
-const toHexChannel = (value: number): string =>
-  Math.round(Math.max(0, Math.min(255, value)))
-    .toString(16)
-    .padStart(2, '0');
-
-const mixRgb = (base: Rgb, overlay: Rgb, amount: number): Rgb => {
-  const t = Math.max(0, Math.min(1, amount));
-  return {
-    r: base.r + (overlay.r - base.r) * t,
-    g: base.g + (overlay.g - base.g) * t,
-    b: base.b + (overlay.b - base.b) * t,
-  };
-};
-
-const rgbToHex = ({ r, g, b }: Rgb): string =>
-  `#${toHexChannel(r)}${toHexChannel(g)}${toHexChannel(b)}`;
-
-/** Blend amount of selection/foreground into the terminal background. */
-export const CURSOR_LINE_HIGHLIGHT_BLEND = 0.18;
+/** Opacity of the selection/foreground overlay above the cursor row. */
+export const CURSOR_LINE_HIGHLIGHT_OPACITY = 0.18;
 
 /**
- * Resolve an opaque background color for the cursor line decoration.
+ * Resolve a translucent overlay color for the cursor line decoration.
  * Prefers selection over foreground so the highlight stays theme-aligned.
  */
-export const resolveCursorLineHighlightBackground = (
+export const resolveCursorLineHighlightOverlay = (
   colors: CursorLineHighlightColors,
 ): string => {
   const background = parseHexRgb(colors.background) ?? { r: 13, g: 17, b: 23 };
+  const backgroundLuminance =
+    background.r * 0.299 + background.g * 0.587 + background.b * 0.114;
   const overlay =
     parseHexRgb(colors.selection) ??
     parseHexRgb(colors.foreground) ??
-    { r: 201, g: 209, b: 217 };
-  return rgbToHex(mixRgb(background, overlay, CURSOR_LINE_HIGHLIGHT_BLEND));
+    (backgroundLuminance >= 128
+      ? { r: 0, g: 0, b: 0 }
+      : { r: 255, g: 255, b: 255 });
+  return `rgba(${overlay.r}, ${overlay.g}, ${overlay.b}, ${CURSOR_LINE_HIGHLIGHT_OPACITY})`;
 };

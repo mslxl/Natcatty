@@ -17,9 +17,10 @@ type CursorLineTerminal = Pick<
  */
 export class CursorLineHighlighter implements IDisposable {
   private enabled = false;
-  private backgroundColor = '#1a2332';
+  private overlayColor = 'rgba(201, 209, 217, 0.18)';
   private marker: IMarker | null = null;
   private decoration: IDecoration | null = null;
+  private decorationRenderListener: IDisposable | null = null;
   private decorationDisposeListener: IDisposable | null = null;
   private activeLine: number | null = null;
   private activeCols: number | null = null;
@@ -50,11 +51,11 @@ export class CursorLineHighlighter implements IDisposable {
     this.refresh({ force: true });
   }
 
-  setBackgroundColor(color: string): void {
+  setOverlayColor(color: string): void {
     if (this.disposed) return;
     const next = color.trim();
-    if (!next || next === this.backgroundColor) return;
-    this.backgroundColor = next;
+    if (!next || next === this.overlayColor) return;
+    this.overlayColor = next;
     if (this.enabled) this.refresh({ force: true });
   }
 
@@ -68,7 +69,7 @@ export class CursorLineHighlighter implements IDisposable {
     }
     const absoluteLine = buffer.baseY + buffer.cursorY;
     const cols = Math.max(1, this.term.cols || 1);
-    const color = this.backgroundColor;
+    const color = this.overlayColor;
 
     if (
       !options.force &&
@@ -92,8 +93,6 @@ export class CursorLineHighlighter implements IDisposable {
       marker,
       x: 0,
       width: cols,
-      backgroundColor: color,
-      layer: 'bottom',
     });
 
     if (!decoration) {
@@ -103,9 +102,15 @@ export class CursorLineHighlighter implements IDisposable {
 
     this.marker = marker;
     this.decoration = decoration;
+    this.decorationRenderListener = decoration.onRender((element) => {
+      element.style.backgroundColor = color;
+      element.style.pointerEvents = 'none';
+      element.setAttribute('aria-hidden', 'true');
+    });
     this.decorationDisposeListener = decoration.onDispose(() => {
       if (this.decoration !== decoration) return;
       this.decoration = null;
+      this.decorationRenderListener = null;
       this.decorationDisposeListener = null;
       this.activeLine = null;
       this.activeCols = null;
@@ -127,6 +132,8 @@ export class CursorLineHighlighter implements IDisposable {
   }
 
   private clear(): void {
+    this.decorationRenderListener?.dispose();
+    this.decorationRenderListener = null;
     this.decorationDisposeListener?.dispose();
     this.decorationDisposeListener = null;
     this.decoration?.dispose();
