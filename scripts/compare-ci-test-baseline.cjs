@@ -19,20 +19,30 @@ function normalizeAssertionDetail(detail) {
 function collectNonTapOutput(lines) {
   const output = [];
   let inDiagnostic = false;
+  let awaitingDiagnostic = false;
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (/^---$/.test(line)) {
-      inDiagnostic = true;
+    if (inDiagnostic) {
+      if (/^\s{2,}\.\.\.\s*$/.test(rawLine)) inDiagnostic = false;
       continue;
     }
-    if (inDiagnostic) {
-      if (/^\.\.\.$/.test(line)) inDiagnostic = false;
+    if (awaitingDiagnostic) {
+      if (!line) continue;
+      if (/^\s{2,}---\s*$/.test(rawLine)) {
+        inDiagnostic = true;
+        awaitingDiagnostic = false;
+        continue;
+      }
+      awaitingDiagnostic = false;
+    }
+    if (/^\s*not ok \d+ - /.test(rawLine)) {
+      awaitingDiagnostic = true;
       continue;
     }
     if (
       !line ||
       /^TAP version \d+$/.test(line) ||
-      /^(?:ok|not ok) \d+ - /.test(line) ||
+      /^ok \d+ - /.test(line) ||
       /^# (?:Subtest:|tests |suites |pass |fail |cancelled |skipped |todo |duration_ms )/.test(line) ||
       /^1\.\.\d+$/.test(line)
     ) {

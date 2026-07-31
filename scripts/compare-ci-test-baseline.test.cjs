@@ -130,6 +130,13 @@ test('rejects an additional runner failure after comparable TAP output', () => {
   assert.equal(crashWithoutFailureKeyword.passed, false);
   assert.equal(crashWithoutFailureKeyword.kind, 'unclassified_failure');
 
+  const crashInsideUnattachedYamlMarkers = compareTapResults(
+    parseTapResult(sameTap, 1),
+    parseTapResult(`${sameTap}\n---\nSegmentation fault (core dumped)\n...`, 1),
+  );
+  assert.equal(crashInsideUnattachedYamlMarkers.passed, false);
+  assert.equal(crashInsideUnattachedYamlMarkers.kind, 'unclassified_failure');
+
   const unchangedArbitraryOutput = compareTapResults(
     parseTapResult(`starting custom runner\n${sameTap}`, 1),
     parseTapResult(`starting custom runner\n${sameTap}`, 1),
