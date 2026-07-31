@@ -665,6 +665,7 @@ jobs:
           fi
 
       - name: Install build dependencies
+        shell: bash
         run: |
           set -euo pipefail
           apt-get -o Acquire::Retries=4 update

@@ -192,6 +192,10 @@ test("package downloads use bounded retries and reusable caches", () => {
     /curl -fsSL --retry 4 --retry-connrefused --connect-timeout 20 --max-time 300/g,
   );
   assert.match(linuxArm64, /apt-get -o Acquire::Retries=4 update/);
+  assert.match(
+    linuxArm64,
+    /name: Install build dependencies\s*\n\s*shell: bash\s*\n\s*run: \|\s*\n\s*set -euo pipefail/,
+  );
   assert.match(linuxArm64, /apt-get -o Acquire::Retries=4 install -y/);
   assert.match(
     linuxArm64,
