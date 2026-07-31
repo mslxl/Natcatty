@@ -10,7 +10,7 @@ on:
   # Route all PR lifecycle events through the default-branch workflow. This avoids
   # approval-blocked pull_request / pull_request_review runs from fork authors.
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, closed]
   # Reaction-only clean (👍 on @codex request) does not emit review events;
   # poll open automation PRs so the loop can observe and mark ready.
   schedule:
@@ -273,6 +273,16 @@ jobs:
                 ownActors,
                 repository: `${context.repo.owner}/${context.repo.repo}`,
               });
+              if (
+                sameRepo &&
+                context.payload.action === 'closed' &&
+                auto.shouldGatePullOnSourceIssueFollowups(pr)
+              ) {
+                return set('source_issue_cleanup', {
+                  pull_number: String(pr.number),
+                  reason: pr.merged ? 'automation PR merged' : 'automation PR closed',
+                });
+              }
               if (sameRepo) {
                 if (eligible) {
                   if (['opened', 'ready_for_review', 'reopened'].includes(context.payload.action)) {
@@ -317,6 +327,59 @@ jobs:
             }
 
             return set('skip', { reason: `unhandled ${event}` });
+
+  cleanup_source_issue:
+    name: Clean source issue state
+    needs: route
+    if: needs.route.outputs.kind == 'source_issue_cleanup'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout helpers
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Clear stale workflow labels
+        uses: actions/github-script@v9
+        env:
+          PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const pullNumber = Number(process.env.PULL_NUMBER);
+            const { data: pull } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: pullNumber,
+            });
+            const issueNumber = auto.extractSourceIssueNumber(pull);
+            if (!issueNumber) return;
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            const labels = auto.nextSourceIssueLabelsAfterPull(
+              issue.labels || [],
+              Boolean(pull.merged),
+            );
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: issueNumber,
+              labels,
+            });
+            const pullLabels = (pull.labels || [])
+              .map((label) => typeof label === 'string' ? label : label.name)
+              .filter((label) => !['automation:codex-loop', 'ready-for-human'].includes(label));
+            await github.rest.issues.update({
+              ...context.repo,
+              issue_number: pullNumber,
+              labels: pullLabels,
+            });
 
   classify:
     name: Classify issue
@@ -1159,11 +1222,13 @@ jobs:
           set -euo pipefail
           git fetch --depth=1 origin "$DEFAULT_BRANCH"
           git show "FETCH_HEAD:scripts/cursor-automation.cjs" > "$RUNNER_TEMP/cursor-automation.cjs"
+          git show "FETCH_HEAD:scripts/compare-ci-test-baseline.cjs" > "$RUNNER_TEMP/compare-ci-test-baseline.cjs"
           git show "FETCH_HEAD:scripts/prepare-cursor-research-input.sh" > "$RUNNER_TEMP/prepare-cursor-research-input.sh"
           git show "FETCH_HEAD:.github/cursor/prompts/followup.md" > "$RUNNER_TEMP/followup.md"
           git show "FETCH_HEAD:.github/cursor/prompts/research.md" > "$RUNNER_TEMP/research.md"
           chmod 0555 "$RUNNER_TEMP/prepare-cursor-research-input.sh"
           test -s "$RUNNER_TEMP/cursor-automation.cjs"
+          test -s "$RUNNER_TEMP/compare-ci-test-baseline.cjs"
           test -s "$RUNNER_TEMP/prepare-cursor-research-input.sh"
           test -s "$RUNNER_TEMP/followup.md"
           test -s "$RUNNER_TEMP/research.md"
@@ -1254,6 +1319,35 @@ jobs:
               }),
             });
 
+      - name: Handle simple resolution or acknowledgement
+        if: steps.prepare.outputs.simple_kind != ''
+        uses: actions/github-script@v9
+        env:
+          SIMPLE_KIND: ${{ steps.prepare.outputs.simple_kind }}
+          PENDING_IDS: ${{ steps.prepare.outputs.pending_ids }}
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: issueNumber,
+              body: auto.buildIssueFollowupReply({
+                commentIds: process.env.PENDING_IDS.split(',').filter(Boolean),
+                result: 'no_change',
+                reply: auto.buildSimpleIssueFollowupReply(
+                  issue,
+                  process.env.SIMPLE_KIND,
+                ),
+                pullNumber: Number(process.env.PULL_NUMBER) || null,
+              }),
+            });
+
       - name: Pause linked pull request during follow-up review
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
         uses: actions/github-script@v9
@@ -1295,6 +1389,17 @@ jobs:
       - name: Install dependencies
         if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
         run: npm ci
+
+      - name: Capture follow-up exact-base test baseline
+        if: steps.prepare.outputs.should_run == 'true' && steps.prepare.outputs.has_pull == 'true'
+        run: |
+          mkdir -p .cursor-runtime
+          set +e
+          npm test > .cursor-runtime/followup-base-tests.log 2>&1
+          status=$?
+          set -e
+          echo "$status" > .cursor-runtime/followup-base-tests.exit
+          tail -80 .cursor-runtime/followup-base-tests.log || true
 
       - name: Install Cursor CLI
         if: steps.prepare.outputs.should_run == 'true'
@@ -1591,22 +1696,41 @@ jobs:
         if: steps.decision.outputs.action == 'updated'
         id: verify
         run: |
+          mkdir -p .cursor-runtime
+          set -o pipefail
           set +e
-          npm run lint
+          npm run lint 2>&1 | tee .cursor-runtime/followup-candidate-lint.log
           lint=$?
-          npm test
+          npm test 2>&1 | tee .cursor-runtime/followup-candidate-tests.log
           tests=$?
-          npm run build
+          node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
+            --baseline-log .cursor-runtime/followup-base-tests.log \
+            --baseline-exit "$(cat .cursor-runtime/followup-base-tests.exit)" \
+            --candidate-log .cursor-runtime/followup-candidate-tests.log \
+            --candidate-exit "$tests" \
+            --output .cursor-runtime/followup-test-comparison.json
+          tests_compared=$?
+          npm run build 2>&1 | tee .cursor-runtime/followup-candidate-build.log
           build=$?
           set -e
-          if [[ "$lint" != "0" || "$tests" != "0" || "$build" != "0" ]]; then
+          node -e '
+            const fs = require("node:fs");
+            const result = {
+              lint: Number(process.argv[1]),
+              tests: Number(process.argv[2]),
+              testComparison: Number(process.argv[3]),
+              build: Number(process.argv[4]),
+            };
+            fs.writeFileSync(".cursor-runtime/followup-verify-result.json", JSON.stringify(result, null, 2) + "\n");
+          ' "$lint" "$tests" "$tests_compared" "$build"
+          if [[ "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            exit 1
+            exit 0
           fi
           echo "passed=true" >> "$GITHUB_OUTPUT"
 
       - name: Prepare follow-up patch
-        if: steps.decision.outputs.action == 'updated' && steps.verify.outputs.passed == 'true'
+        if: steps.decision.outputs.action == 'updated'
         id: patch
         env:
           BASE_SHA: ${{ steps.snapshot.outputs.base_sha }}
@@ -1640,10 +1764,11 @@ jobs:
           test -s .cursor-runtime/followup.patch
           printf '%s' "${{ steps.prepare.outputs.pending_ids }}" > .cursor-runtime/followup-pending-ids.txt
           printf '%s' '${{ steps.prepare.outputs.pending_snapshots }}' > .cursor-runtime/followup-pending-snapshots.json
-          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "artifact_ready=true" >> "$GITHUB_OUTPUT"
+          echo "should_publish=${{ steps.verify.outputs.passed == 'true' }}" >> "$GITHUB_OUTPUT"
 
       - name: Scan follow-up patch for secret leaks
-        if: steps.patch.outputs.should_publish == 'true'
+        if: steps.patch.outputs.artifact_ready == 'true'
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
@@ -1655,6 +1780,8 @@ jobs:
                 ".cursor-runtime/followup-reply.out.md",
                 ".cursor-runtime/followup-pending-ids.txt",
                 ".cursor-runtime/followup-pending-snapshots.json",
+                ".cursor-runtime/followup-verify-result.json",
+                ".cursor-runtime/followup-test-comparison.json",
               ],
               process.env.CURSOR_API_KEY,
               "issue-followup-publish",
@@ -1662,7 +1789,7 @@ jobs:
           '
 
       - name: Upload follow-up patch
-        if: steps.patch.outputs.should_publish == 'true'
+        if: steps.patch.outputs.artifact_ready == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: issue-followup-${{ github.run_id }}
@@ -1671,7 +1798,15 @@ jobs:
             .cursor-runtime/followup-reply.out.md
             .cursor-runtime/followup-pending-ids.txt
             .cursor-runtime/followup-pending-snapshots.json
+            .cursor-runtime/followup-verify-result.json
+            .cursor-runtime/followup-test-comparison.json
           if-no-files-found: error
+
+      - name: Fail after preserving rejected follow-up
+        if: steps.patch.outputs.artifact_ready == 'true' && steps.verify.outputs.passed != 'true'
+        run: |
+          echo "Follow-up patch was preserved, but candidate-specific verification failed." >&2
+          exit 1
 
       - name: Finish follow-up without code changes
         if: steps.decision.outputs.action == 'no_change' || steps.decision.outputs.action == 'blocked'
@@ -2525,7 +2660,9 @@ jobs:
           test -s scripts/cursor-automation.cjs
 
       - name: Freeze trusted helper
-        run: cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+        run: |
+          cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+          cp scripts/compare-ci-test-baseline.cjs "$RUNNER_TEMP/compare-ci-test-baseline.cjs"
 
       - name: Skip if bot PR already open
         id: existing
@@ -2572,6 +2709,17 @@ jobs:
       - name: Install dependencies
         if: steps.existing.outputs.exists != 'true'
         run: npm ci
+
+      - name: Capture exact-base test baseline
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          mkdir -p .cursor-runtime
+          set +e
+          npm test > .cursor-runtime/base-tests.log 2>&1
+          status=$?
+          set -e
+          echo "$status" > .cursor-runtime/base-tests.exit
+          tail -80 .cursor-runtime/base-tests.log || true
 
       - name: Install Cursor CLI
         if: steps.existing.outputs.exists != 'true'
@@ -2676,6 +2824,7 @@ jobs:
 
       - name: Check protected paths (tree + commits)
         if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
+        id: check_protected
         run: |
           status="$(git status --porcelain --untracked-files=all -- . ':(exclude).cursor-runtime' ':(exclude).cursor-runtime/**')"
           names="$(git diff --name-only "${{ steps.branch.outputs.base_sha }}" HEAD 2>/dev/null || true)"
@@ -2700,11 +2849,19 @@ jobs:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+            });
             await auto.markNeedsHuman({
               github,
               context,
               issueNumber: process.env.ISSUE_NUMBER,
-              message: 'The automatic implementation pass did not produce a safe focused change. A maintainer needs to take a look.',
+              message: auto.buildImplementationFailureMessage(issue, {
+                kind: 'no_changes',
+                workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              }),
+              dedupeMarker: `<!-- cursor-implement-failure:base=${{ steps.branch.outputs.base_sha }};kind=no_changes -->`,
             });
 
       - name: Install test shell dependencies
@@ -2718,22 +2875,43 @@ jobs:
         if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
         id: verify
         run: |
+          mkdir -p .cursor-runtime
+          set -o pipefail
           set +e
-          npm run lint
+          npm run lint 2>&1 | tee .cursor-runtime/candidate-lint.log
           lint=$?
-          npm test
+          npm test 2>&1 | tee .cursor-runtime/candidate-tests.log
           tests=$?
-          npm run build
+          node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
+            --baseline-log .cursor-runtime/base-tests.log \
+            --baseline-exit "$(cat .cursor-runtime/base-tests.exit)" \
+            --candidate-log .cursor-runtime/candidate-tests.log \
+            --candidate-exit "$tests" \
+            --output .cursor-runtime/test-comparison.json
+          tests_compared=$?
+          npm run build 2>&1 | tee .cursor-runtime/candidate-build.log
           build=$?
           set -e
-          if [[ "$lint" != "0" || "$tests" != "0" || "$build" != "0" ]]; then
+          node -e '
+            const fs = require("node:fs");
+            const result = {
+              lint: Number(process.argv[1]),
+              tests: Number(process.argv[2]),
+              testComparison: Number(process.argv[3]),
+              build: Number(process.argv[4]),
+            };
+            fs.writeFileSync(".cursor-runtime/verify-result.json", JSON.stringify(result, null, 2) + "\n");
+          ' "$lint" "$tests" "$tests_compared" "$build"
+          if [[ "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
             echo "passed=false" >> "$GITHUB_OUTPUT"
-            exit 1
+            echo "kind=candidate_verification" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "passed=true" >> "$GITHUB_OUTPUT"
+          echo "kind=clean_or_baseline_only" >> "$GITHUB_OUTPUT"
 
       - name: Prepare patch for isolated publish
-        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true' && steps.verify.outputs.passed == 'true'
+        if: steps.existing.outputs.exists != 'true' && steps.changes.outputs.present == 'true'
         id: patch
         # No CURSOR_API_KEY here: agent may have installed hooks. Git runs with hooks disabled.
         env:
@@ -2780,10 +2958,11 @@ jobs:
           else
             : > .cursor-runtime/implement-pr-body.out.md
           fi
-          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "artifact_ready=true" >> "$GITHUB_OUTPUT"
+          echo "should_publish=${{ steps.verify.outputs.passed == 'true' }}" >> "$GITHUB_OUTPUT"
 
       - name: Scan implement patch for secret leaks
-        if: steps.patch.outputs.should_publish == 'true'
+        if: steps.patch.outputs.artifact_ready == 'true'
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
@@ -2798,6 +2977,8 @@ jobs:
                 ".cursor-runtime/implement-status.txt",
                 ".cursor-runtime/implement-pr-body.out.md",
                 ".cursor-runtime/implement-pr-body.md",
+                ".cursor-runtime/verify-result.json",
+                ".cursor-runtime/test-comparison.json",
               ],
               process.env.CURSOR_API_KEY,
               "implement-publish",
@@ -2805,7 +2986,7 @@ jobs:
           '
 
       - name: Upload implement patch
-        if: steps.patch.outputs.should_publish == 'true'
+        if: steps.patch.outputs.artifact_ready == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: implement-patch-${{ github.run_id }}
@@ -2813,7 +2994,15 @@ jobs:
             .cursor-runtime/implement.patch
             .cursor-runtime/implement-status.out.txt
             .cursor-runtime/implement-pr-body.out.md
+            .cursor-runtime/verify-result.json
+            .cursor-runtime/test-comparison.json
           if-no-files-found: error
+
+      - name: Fail after preserving rejected implementation
+        if: steps.patch.outputs.artifact_ready == 'true' && steps.verify.outputs.passed != 'true'
+        run: |
+          echo "Candidate patch was preserved, but candidate-specific verification failed." >&2
+          exit 1
 
       - name: Mark needs human on implement failure
         if: failure() && steps.existing.outputs.exists != 'true'
@@ -2826,12 +3015,29 @@ jobs:
               ? `${process.env.RUNNER_TEMP}/cursor-automation.cjs`
               : `${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`;
             const auto = require(helper);
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const { data: issue } = await github.rest.issues.get({
+              ...context.repo,
+              issue_number: issueNumber,
+            });
+            const protectedFailure = '${{ steps.check_protected.outcome }}' === 'failure';
+            const artifactReady = '${{ steps.patch.outputs.artifact_ready }}' === 'true';
+            const verifyFailed = '${{ steps.verify.outputs.passed }}' === 'false';
+            const kind = protectedFailure
+              ? 'protected_path'
+              : artifactReady && verifyFailed
+                ? 'verification_failed'
+                : 'processing_failed';
             await auto.markNeedsHuman({
               github,
               context,
-              issueNumber: process.env.ISSUE_NUMBER,
-              message:
-                'Automatic implementation did not finish cleanly (agent, protected paths, or verification failed). A maintainer needs to take a look.',
+              issueNumber,
+              message: auto.buildImplementationFailureMessage(issue, {
+                kind,
+                workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                artifactName: artifactReady ? `implement-patch-${context.runId}` : '',
+              }),
+              dedupeMarker: `<!-- cursor-implement-failure:base=${{ steps.branch.outputs.base_sha }};kind=${kind} -->`,
             });
 
   publish_implement:
@@ -3297,7 +3503,9 @@ jobs:
           helper_supports_followups
 
       - name: Freeze trusted helper
-        run: cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+        run: |
+          cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+          cp scripts/compare-ci-test-baseline.cjs "$RUNNER_TEMP/compare-ci-test-baseline.cjs"
 
       - name: Inspect Codex outcome
         id: codex
@@ -3658,8 +3866,12 @@ jobs:
             gh api --method POST \
               "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/labels" \
               -f 'labels[]=ready-for-human' >/dev/null 2>&1 || true
-            gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body \
-              "Codex reported no major issues, but the automation token cannot change draft state. A maintainer can mark this PR ready." 2>/dev/null || true
+            blocked_marker="<!-- cursor-codex-ready-blocked:${live_head} -->"
+            existing_comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/comments" --jq '.[].body' 2>/dev/null || true)"
+            if ! grep -Fq "$blocked_marker" <<<"$existing_comments"; then
+              blocked_body="$(printf '%s\n\n%s' "$blocked_marker" 'Codex reported no major issues, but the automation token cannot change draft state. A maintainer can mark this PR ready.')"
+              gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$blocked_body" 2>/dev/null || true
+            fi
             exit 0
           fi
           # Re-check head after gh pr ready (another push could race).
@@ -3694,8 +3906,15 @@ jobs:
             echo "Failed to convert PR out of draft (token may lack draft permission); labels still applied." >&2
             exit 0
           fi
-          gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<'EOF'
+          clean_marker="<!-- cursor-codex-clean-head:${live_head} -->"
+          existing_comments="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${PULL_NUMBER}/comments" --jq '.[].body')"
+          if grep -Fq "$clean_marker" <<<"$existing_comments"; then
+            echo "Clean handoff already recorded for ${live_head}."
+            exit 0
+          fi
+          gh pr comment "$PULL_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$(cat <<EOF
           <!-- cursor-automation -->
+          ${clean_marker}
 
           Codex reported no major issues. This PR is marked ready for human review/merge.
           EOF
@@ -3885,6 +4104,17 @@ jobs:
         id: base
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Capture Codex-fix exact-base test baseline
+        if: steps.codex.outputs.action == 'fix'
+        run: |
+          mkdir -p .cursor-runtime
+          set +e
+          npm test > .cursor-runtime/fix-base-tests.log 2>&1
+          status=$?
+          set -e
+          echo "$status" > .cursor-runtime/fix-base-tests.exit
+          tail -80 .cursor-runtime/fix-base-tests.log || true
+
       - name: Stage Cursor API key for fixes
         if: steps.codex.outputs.action == 'fix'
         env:
@@ -3985,11 +4215,40 @@ jobs:
 
       - name: Verify fix
         if: steps.codex.outputs.action == 'fix'
+        id: fixverify
         run: |
+          mkdir -p .cursor-runtime
+          set -o pipefail
           set +e
-          npm run lint || exit 1
-          npm test || exit 1
-          npm run build || exit 1
+          npm run lint 2>&1 | tee .cursor-runtime/fix-candidate-lint.log
+          lint=$?
+          npm test 2>&1 | tee .cursor-runtime/fix-candidate-tests.log
+          tests=$?
+          node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
+            --baseline-log .cursor-runtime/fix-base-tests.log \
+            --baseline-exit "$(cat .cursor-runtime/fix-base-tests.exit)" \
+            --candidate-log .cursor-runtime/fix-candidate-tests.log \
+            --candidate-exit "$tests" \
+            --output .cursor-runtime/fix-test-comparison.json
+          tests_compared=$?
+          npm run build 2>&1 | tee .cursor-runtime/fix-candidate-build.log
+          build=$?
+          set -e
+          node -e '
+            const fs = require("node:fs");
+            const result = {
+              lint: Number(process.argv[1]),
+              tests: Number(process.argv[2]),
+              testComparison: Number(process.argv[3]),
+              build: Number(process.argv[4]),
+            };
+            fs.writeFileSync(".cursor-runtime/fix-verify-result.json", JSON.stringify(result, null, 2) + "\n");
+          ' "$lint" "$tests" "$tests_compared" "$build"
+          if [[ "$lint" != "0" || "$tests_compared" != "0" || "$build" != "0" ]]; then
+            echo "passed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "passed=true" >> "$GITHUB_OUTPUT"
 
       - name: Prepare fix patch for isolated publish
         if: steps.codex.outputs.action == 'fix'
@@ -4034,10 +4293,11 @@ jobs:
           $GITH format-patch --stdout "${BASE_SHA}" > .cursor-runtime/fix.patch
           test -s .cursor-runtime/fix.patch
           echo "empty=false" >> "$GITHUB_OUTPUT"
-          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "artifact_ready=true" >> "$GITHUB_OUTPUT"
+          echo "should_publish=${{ steps.fixverify.outputs.passed == 'true' }}" >> "$GITHUB_OUTPUT"
 
       - name: Scan fix patch for secret leaks
-        if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.should_publish == 'true'
+        if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.artifact_ready == 'true'
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
         run: |
@@ -4045,19 +4305,32 @@ jobs:
           node -e '
             const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
             auto.assertFilesDoNotContainSecret(
-              [".cursor-runtime/fix.patch"],
+              [
+                ".cursor-runtime/fix.patch",
+                ".cursor-runtime/fix-verify-result.json",
+                ".cursor-runtime/fix-test-comparison.json",
+              ],
               process.env.CURSOR_API_KEY,
               "fix-publish",
             );
           '
 
       - name: Upload fix patch
-        if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.should_publish == 'true'
+        if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.artifact_ready == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: codex-fix-patch-${{ github.run_id }}
-          path: .cursor-runtime/fix.patch
+          path: |
+            .cursor-runtime/fix.patch
+            .cursor-runtime/fix-verify-result.json
+            .cursor-runtime/fix-test-comparison.json
           if-no-files-found: error
+
+      - name: Fail after preserving rejected Codex fix
+        if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.artifact_ready == 'true' && steps.fixverify.outputs.passed != 'true'
+        run: |
+          echo "Codex fix patch was preserved, but candidate-specific verification failed." >&2
+          exit 1
 
       - name: Mark needs human when no fix produced
         if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.empty == 'true'

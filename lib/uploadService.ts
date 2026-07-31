@@ -196,12 +196,9 @@ export async function uploadFromFileList(
     const localPath = getPathForFile(file);
     // Use webkitRelativePath if available (folder upload), otherwise use file.name (regular file upload)
     const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-    if (localPath) {
-      // Set the path property on the file for stream transfer
-      (file as File & { path?: string }).path = localPath;
-    }
     return {
       file,
+      localPath,
       relativePath,
       isDirectory: false,
     };

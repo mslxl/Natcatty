@@ -92,6 +92,12 @@ permissions:
   pull-requests: read
 
 env:
+  # npm retries only transient registry fetches; deterministic install or
+  # postinstall failures still fail immediately.
+  NPM_CONFIG_FETCH_RETRIES: "4"
+  NPM_CONFIG_FETCH_RETRY_FACTOR: "2"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "1000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "10000"
   MOSH_BIN_RELEASE: ${{ github.event.inputs.mosh_bin_release || vars.MOSH_BIN_RELEASE || '' }}
   BUNDLE_MOSH: ${{ (startsWith(github.ref, 'refs/tags/v') && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release))) || (github.event_name == 'workflow_dispatch' && inputs.mosh_bin_release != '') }}
   ET_BIN_RELEASE: ${{ github.event.inputs.et_bin_release || vars.ET_BIN_RELEASE || '' }}
@@ -224,6 +230,8 @@ jobs:
             ~/Library/Caches/electron-builder
             ~/AppData/Local/electron-builder/Cache
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install deps
         run: npm ci
@@ -335,7 +343,10 @@ jobs:
       && (needs.resolve-et.result == 'success' || needs.resolve-et.result == 'skipped')
     runs-on: ubuntu-latest
     container:
-      image: almalinux:8
+      # The GitHub runner already retries container pulls three times. Use the
+      # official Quay mirror to avoid the Docker Hub endpoint that repeatedly
+      # timed out in package validation.
+      image: quay.io/almalinuxorg/almalinux:8
     env:
       MOSH_BIN_RELEASE: ${{ needs.resolve-mosh.outputs.mosh_bin_release }}
       ET_BIN_RELEASE: ${{ needs.resolve-et.outputs.et_bin_release }}
@@ -374,8 +385,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dnf -y install epel-release
-          dnf -y install \
+          dnf -y --setopt=retries=4 --setopt=timeout=30 install epel-release
+          dnf -y --setopt=retries=4 --setopt=timeout=30 install \
             curl ca-certificates \
             gcc-toolset-13-gcc gcc-toolset-13-gcc-c++ make \
             python3.11 python3.11-pip \
@@ -408,7 +419,8 @@ jobs:
             BSDTAR_DEB_OK=0
             for url in "${BSDTAR_DEB_URLS[@]}"; do
               echo "trying ${url}"
-              if curl -fsSL -o /tmp/libarchive-tools.deb "${url}"; then
+              if curl -fsSL --retry 4 --retry-connrefused --connect-timeout 20 --max-time 300 \
+                -o /tmp/libarchive-tools.deb "${url}"; then
                 BSDTAR_DEB_OK=1
                 break
               fi
@@ -497,7 +509,8 @@ jobs:
           rpmbuild --version
           bsdtar --version | head -n 1
           # Official Node 22 linux-x64 tarball (same major as other package jobs).
-          NODE_VERSION="$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
+          NODE_VERSION="$(curl -fsSL --retry 4 --retry-connrefused --connect-timeout 20 --max-time 300 \
+            https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt \
             | awk '/node-v[0-9.]+-linux-x64\.tar\.xz$/{print $2; exit}' \
             | sed -E 's/^node-(v[0-9.]+)-linux-x64\.tar\.xz$/\1/')"
           if [[ -z "${NODE_VERSION}" ]]; then
@@ -505,7 +518,8 @@ jobs:
             exit 1
           fi
           echo "Installing Node ${NODE_VERSION} from nodejs.org"
-          curl -fsSL "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" \
+          curl -fsSL --retry 4 --retry-connrefused --connect-timeout 20 --max-time 300 \
+            "https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" \
             | tar -xJ -C /usr/local --strip-components=1
           node -v
           npm -v
@@ -525,6 +539,8 @@ jobs:
             ~/.cache/electron
             ~/.cache/electron-builder
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install deps
         run: |
@@ -650,13 +666,15 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          apt-get update
-          apt-get install -y curl build-essential python3 git libfuse2 file rpm \
+          set -euo pipefail
+          apt-get -o Acquire::Retries=4 update
+          apt-get -o Acquire::Retries=4 install -y curl build-essential python3 git libfuse2 file rpm \
             libarchive-tools \
             libglib2.0-0 libgtk-3-0 libnss3 libxss1 libxtst6 libasound2 \
             libatk-bridge2.0-0 libdrm2 libgbm1 libx11-xcb1 libxcb-dri3-0
-          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-          apt-get install -y nodejs
+          curl -fsSL --retry 4 --retry-all-errors --connect-timeout 20 --max-time 300 \
+            https://deb.nodesource.com/setup_22.x | bash -
+          apt-get -o Acquire::Retries=4 install -y nodejs
 
       - name: Checkout
         uses: actions/checkout@v7
@@ -668,6 +686,8 @@ jobs:
             ~/.cache/electron
             ~/.cache/electron-builder
           key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            electron-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Install deps
         run: npm ci
@@ -866,7 +886,10 @@ jobs:
       - name: Propose Nix release metadata
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          # RELEASE_TOKEN remains the checkout credential for branch pushes.
+          # PR creation prefers the triage PAT, whose repository permissions
+          # include pull requests, and falls back to this job's scoped token.
+          GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REPO_OWNER: ${{ github.repository_owner }}
         run: |

@@ -62,7 +62,7 @@ test('workflow routes PR lifecycle events through pull_request_target', () => {
   );
   const triggers = workflow.match(/^on:\n[\s\S]*?^concurrency:/m)?.[0] || '';
 
-  assert.match(triggers, /pull_request_target:\n\s+types: \[opened, synchronize, reopened, ready_for_review\]/);
+  assert.match(triggers, /pull_request_target:\n\s+types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
   assert.doesNotMatch(triggers, /^  pull_request:/m);
   assert.doesNotMatch(triggers, /^  pull_request_review:/m);
 });
@@ -739,6 +739,84 @@ test('findPendingIssueFollowups falls back to PR creation time without watermark
   assert.deepEqual(pending.map((comment) => comment.id), [2]);
 });
 
+test('findPendingIssueFollowups preserves comments posted after triage but before PR creation', () => {
+  const pending = auto.findPendingIssueFollowups({
+    comments: [
+      {
+        id: 10,
+        user: { login: 'netcatty-bot', type: 'User' },
+        body: `${auto.TRIAGE_MARKER}\nThanks for the report.`,
+        created_at: '2026-07-24T09:00:00Z',
+      },
+      {
+        id: 11,
+        user: { login: 'alice', type: 'User' },
+        body: 'Keep history in the current session only.',
+        created_at: '2026-07-24T09:30:00Z',
+      },
+    ],
+    issueAuthorLogin: 'alice',
+    pull: {
+      body: `${auto.BOT_PR_MARKER}\nFixes #42`,
+      created_at: '2026-07-24T10:00:00Z',
+    },
+  });
+  assert.deepEqual(pending.map((comment) => comment.id), [11]);
+});
+
+test('simple issue follow-ups distinguish resolution and thanks from unresolved reports', () => {
+  assert.equal(
+    auto.classifySimpleIssueFollowup([{ body: '已解决，谢谢' }]),
+    'resolved',
+  );
+  assert.equal(
+    auto.classifySimpleIssueFollowup([{ body: '> previous reply\n收到，谢谢' }]),
+    'acknowledgement',
+  );
+  assert.equal(
+    auto.classifySimpleIssueFollowup([{ body: '还是没有解决，谢谢' }]),
+    null,
+  );
+});
+
+test('source issue labels clear stale agent state after PR completion', () => {
+  const existing = ['bug', 'triage', 'ready-for-agent', 'needs-info'];
+  assert.deepEqual(
+    auto.nextSourceIssueLabelsAfterPull(existing, true),
+    ['bug', 'triage'],
+  );
+  assert.deepEqual(
+    auto.nextSourceIssueLabelsAfterPull(existing, false),
+    ['bug', 'triage', 'ready-for-human'],
+  );
+});
+
+test('implementation failure messages report the real category and preserved artifact', () => {
+  const message = auto.buildImplementationFailureMessage(
+    { title: '[Bug] 上传失败' },
+    {
+      kind: 'verification_failed',
+      workflowUrl: 'https://github.example/run/1',
+      artifactName: 'implement-patch-1',
+    },
+  );
+  assert.match(message, /新增了验证失败/);
+  assert.match(message, /implement-patch-1/);
+  assert.match(message, /github\.example/);
+});
+
+test('workflow cleans source labels on automation PR close and dedupes clean notices', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
+  assert.match(workflow, /kind == 'source_issue_cleanup'/);
+  assert.match(workflow, /nextSourceIssueLabelsAfterPull/);
+  assert.match(workflow, /cursor-codex-clean-head:/);
+  assert.match(workflow, /Clean handoff already recorded/);
+});
+
 test('findPendingIssueFollowups coalesces rapid no-PR comments after bot triage', () => {
   const pending = auto.findPendingIssueFollowups({
     comments: [
@@ -1076,6 +1154,47 @@ test('prepareIssueFollowupContext uses the triggering comment when no PR exists'
     outputPath: path.join(dir, 'followup-with-pull.json'),
   });
   assert.deepEqual(withPull.pending.map((comment) => comment.id), [9]);
+});
+
+test('prepareIssueFollowupContext shortcuts simple resolved replies without Cursor', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-followup-simple-'));
+  const outputs = {};
+  const github = {
+    rest: {
+      issues: {
+        get: async () => ({
+          data: {
+            number: 42,
+            html_url: 'https://github.example/issues/42',
+            title: '[Bug] example',
+            body: 'details',
+            state: 'closed',
+            user: { login: 'alice' },
+            labels: [{ name: 'triage:admitted' }],
+          },
+        }),
+        listComments: Symbol('listComments'),
+      },
+    },
+    paginate: async () => [{
+      id: 9,
+      user: { login: 'alice', type: 'User' },
+      body: '已解决，谢谢',
+      created_at: '2026-07-24T10:00:00Z',
+    }],
+  };
+  const result = await auto.prepareIssueFollowupContext({
+    github,
+    context: { repo: { owner: 'o', repo: 'r' } },
+    core: { setOutput: (key, value) => { outputs[key] = String(value); } },
+    issueNumber: 42,
+    triggerCommentId: 9,
+    outputPath: path.join(dir, 'followup.json'),
+  });
+  assert.equal(result.shouldRun, false);
+  assert.equal(result.simpleKind, 'resolved');
+  assert.equal(outputs.simple_kind, 'resolved');
+  assert.equal(outputs.should_run, 'false');
 });
 
 test('prepareIssueFollowupContext hands off after the daily follow-up limit', async () => {
@@ -1596,6 +1715,59 @@ test('hasProtectedChanges flags workflow edits', () => {
     '.github/workflows/cursor-automation.yml',
     '.cursor/sandbox.json',
   ]);
+});
+
+test('protected paths allow ordinary electron-builder regression tests', () => {
+  assert.deepEqual(
+    auto.hasProtectedChanges(' M scripts/electron-builder-config.test.cjs\n'),
+    [],
+  );
+  assert.deepEqual(
+    auto.hasProtectedChanges(' M electron-builder.config.cjs\n'),
+    ['electron-builder.config.cjs'],
+  );
+});
+
+test('every code-writing Cursor path compares exact-base failures and preserves rejected patches', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const implement = workflow.match(
+    /\n  implement:\n[\s\S]*?(?=\n  publish_implement:\n)/,
+  )?.[0] || '';
+  const followup = workflow.match(
+    /\n  issue_followup:\n[\s\S]*?(?=\n  publish_issue_followup:\n)/,
+  )?.[0] || '';
+  const codex = workflow.match(
+    /\n  codex_loop:\n[\s\S]*?(?=\n  publish_codex_fix:\n)/,
+  )?.[0] || '';
+  assert.match(implement, /name: Capture exact-base test baseline/);
+  assert.match(implement, /compare-ci-test-baseline\.cjs/);
+  assert.match(implement, /set -o pipefail/);
+  assert.match(implement, /steps\.patch\.outputs\.artifact_ready == 'true'/);
+  assert.match(implement, /name: Fail after preserving rejected implementation/);
+  assert.match(implement, /\.cursor-runtime\/verify-result\.json/);
+  assert.match(implement, /\.cursor-runtime\/test-comparison\.json/);
+  assert.doesNotMatch(
+    implement,
+    /name: Prepare patch for isolated publish\n\s+if:[^\n]*steps\.verify\.outputs\.passed/,
+  );
+  assert.match(followup, /name: Capture follow-up exact-base test baseline/);
+  assert.match(followup, /\$RUNNER_TEMP\/compare-ci-test-baseline\.cjs/);
+  assert.match(followup, /set -o pipefail/);
+  assert.match(followup, /name: Fail after preserving rejected follow-up/);
+  assert.match(followup, /followup-test-comparison\.json/);
+  assert.doesNotMatch(
+    followup,
+    /name: Prepare follow-up patch\n\s+if:[^\n]*steps\.verify\.outputs\.passed/,
+  );
+  assert.match(codex, /name: Capture Codex-fix exact-base test baseline/);
+  assert.match(codex, /\$RUNNER_TEMP\/compare-ci-test-baseline\.cjs/);
+  assert.match(codex, /set -o pipefail/);
+  assert.match(codex, /name: Fail after preserving rejected Codex fix/);
+  assert.match(codex, /fix-test-comparison\.json/);
+  assert.match(codex, /steps\.fixpatch\.outputs\.artifact_ready == 'true'/);
 });
 
 test('classification failure handoff receives its issue number', () => {

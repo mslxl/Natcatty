@@ -170,11 +170,48 @@ test("Windows packaging reuses its dependency install for the ConPTY smoke test"
   assert.match(packageMatrix[0], /node electron\/bridges\/terminalBridge\.moshConpty\.integration\.cjs/);
 });
 
+test("package downloads use bounded retries and reusable caches", () => {
+  assert.match(buildWorkflow, /NPM_CONFIG_FETCH_RETRIES: "4"/);
+  assert.match(buildWorkflow, /NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "1000"/);
+  assert.match(buildWorkflow, /NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "10000"/);
+  assert.equal(
+    (buildWorkflow.match(/restore-keys:\s*\|\s*\n\s*electron-\$\{\{ runner\.os \}\}-\$\{\{ runner\.arch \}\}-/g) ?? [])
+      .length,
+    3,
+    "all package jobs must reuse compatible Electron downloads after lockfile changes",
+  );
+
+  const linuxX64 = buildWorkflow.match(/\n  build-linux-x64:\n[\s\S]*?(?=\n  build-linux-arm64:)/)?.[0];
+  const linuxArm64 = buildWorkflow.match(/\n  build-linux-arm64:\n[\s\S]*?(?=\n  release:)/)?.[0];
+  assert.ok(linuxX64, "Linux x64 package job must be readable");
+  assert.ok(linuxArm64, "Linux arm64 package job must be readable");
+  assert.match(linuxX64, /image: quay\.io\/almalinuxorg\/almalinux:8/);
+  assert.match(linuxX64, /dnf -y --setopt=retries=4 --setopt=timeout=30 install/);
+  assert.match(
+    linuxX64,
+    /curl -fsSL --retry 4 --retry-connrefused --connect-timeout 20 --max-time 300/g,
+  );
+  assert.match(linuxArm64, /apt-get -o Acquire::Retries=4 update/);
+  assert.match(linuxArm64, /apt-get -o Acquire::Retries=4 install -y/);
+  assert.match(
+    linuxArm64,
+    /curl -fsSL --retry 4 --retry-all-errors --connect-timeout 20 --max-time 300/,
+  );
+});
+
 test("stable releases propose Nix metadata through a pull request", () => {
   const nixJob = buildWorkflow.match(/\n  update-nix-release:\n[\s\S]*?(?=\n  homebrew-tap:)/);
   assert.ok(nixJob, "update-nix-release job must exist before homebrew-tap");
   assert.doesNotMatch(nixJob[0], /git push origin HEAD:\$\{\{ github\.event\.repository\.default_branch \}\}/);
   assert.match(nixJob[0], /gh pr create/);
+  assert.ok(
+    nixJob[0].includes("GH_TOKEN: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}"),
+    "Nix PR creation must prefer the triage-capable token and safely fall back to the job token",
+  );
+  assert.ok(
+    nixJob[0].includes("token: ${{ secrets.RELEASE_TOKEN }}"),
+    "Nix branch pushes must keep using the release token",
+  );
   assert.match(nixJob[0], /automation\/nix-release-/);
   assert.match(nixJob[0], /candidate_tree/);
   assert.match(nixJob[0], /remote_tree/);
