@@ -848,6 +848,27 @@ const activeTransfers = new Map();
 const admittedTransferQueue = [];
 const pausedAdmittedTransfers = new Map();
 const workerTransferLifecycleEpochs = new Map();
+
+/**
+ * Lift a worker-local transfer lifecycleEpoch into main-process space.
+ * Soft-resume/pause on main may advance the main epoch past the worker's;
+ * progress still carrying the lower worker epoch would be rejected as stale.
+ */
+function resolveWorkerTransferLifecycleEpoch(transferId, workerEpoch) {
+  if (!transferId) {
+    return Number.isFinite(Number(workerEpoch)) ? Number(workerEpoch) : undefined;
+  }
+  const entry = workerTransferLifecycleEpochs.get(transferId);
+  const mainEpoch = Math.max(0, Number(entry?.epoch) || 0);
+  const workerVal = Number(workerEpoch);
+  const hasWorker = Number.isFinite(workerVal);
+  if (!entry) {
+    return hasWorker ? workerVal : undefined;
+  }
+  const resolved = Math.max(mainEpoch, hasWorker ? workerVal : 0);
+  if (resolved > mainEpoch) entry.epoch = resolved;
+  return resolved;
+}
 /** Transfer ids cancelled before startTransferNow registered them (skipAdmission open window). */
 const pendingCancelTransferIds = new Map();
 const MAX_PENDING_CANCEL_TRANSFER_IDS = 4_096;
@@ -4991,6 +5012,7 @@ module.exports = {
   setGlobalTransferConcurrency,
   getGlobalTransferConcurrency,
   broadcastGlobalTransferEvent,
+  resolveWorkerTransferLifecycleEpoch,
   cleanupTransferArtifacts,
   sameHostCopyDirectory,
   // Test / integration helpers for session leases
@@ -5002,6 +5024,12 @@ module.exports = {
   _promoteLocalTransferForTests: promoteLocalTransfer,
   _stableLocalFileIdentityForTests: stableLocalFileIdentity,
   _getWorkerTransferLifecycleEpochCountForTests: () => workerTransferLifecycleEpochs.size,
+  _setWorkerTransferLifecycleEpochForTests: (transferId, epoch) => {
+    workerTransferLifecycleEpochs.set(transferId, { epoch: Math.max(0, Number(epoch) || 0) });
+  },
+  _clearWorkerTransferLifecycleEpochsForTests: () => {
+    workerTransferLifecycleEpochs.clear();
+  },
   _getPendingCancelCountForTests: () => pendingCancelTransferIds.size,
   _getActiveTransferCountForTests: () => activeTransfers.size,
   _execSshCommandCancellableForTests: execSshCommandCancellable,

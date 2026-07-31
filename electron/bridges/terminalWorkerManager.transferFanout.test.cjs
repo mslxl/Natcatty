@@ -37,6 +37,24 @@ test("mapWorkerTransferChannelToGlobalEvent maps progress for store ingest", () 
   assert.equal(event.resumable, undefined);
 });
 
+test("worker progress lifecycleEpoch is lifted into main-process space after soft-resume", () => {
+  const transferBridge = require("./transferBridge.cjs");
+  transferBridge._setWorkerTransferLifecycleEpochForTests("t-epoch", 5);
+  try {
+    // Worker still emits pre-resume local epoch 3; main advanced to 5 on resume.
+    const event = mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:progress", {
+      transferId: "t-epoch",
+      transferred: 10,
+      totalBytes: 100,
+      lifecycleEpoch: 3,
+      lifecycleState: "transferring",
+    });
+    assert.equal(event.lifecycleEpoch, 5, "must not emit below main control epoch");
+  } finally {
+    transferBridge._clearWorkerTransferLifecycleEpochsForTests();
+  }
+});
+
 test("worker transfer events are global-only and keep complete task metadata", () => {
   const started = mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:started", {
     type: "started",

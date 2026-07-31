@@ -68,6 +68,23 @@ function shouldForwardWorkerRendererEvent(channel) {
 }
 
 /**
+ * Lift worker-local lifecycleEpoch into main-process space when transferBridge
+ * has advanced the control epoch (pause rollback / soft-resume).
+ */
+function translateWorkerTransferLifecycleEpoch(transferId, workerEpoch) {
+  try {
+    // Lazy require avoids circular init with transferBridge.
+    const transferBridge = require("./transferBridge.cjs");
+    if (typeof transferBridge.resolveWorkerTransferLifecycleEpoch === "function") {
+      return transferBridge.resolveWorkerTransferLifecycleEpoch(transferId, workerEpoch);
+    }
+  } catch {
+    // transferBridge unavailable in pure unit fixtures
+  }
+  return workerEpoch;
+}
+
+/**
  * Map worker transfer IPC onto the global transfer-center channel.
  * The utilityProcess cannot call BrowserWindow; main must fan these out.
  * Exported for unit tests.
@@ -88,7 +105,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       downloadCheckpointBytes: payload.downloadCheckpointBytes,
       uploadCheckpointBytes: payload.uploadCheckpointBytes,
       sourceFingerprint: payload.sourceFingerprint,
-      lifecycleEpoch: payload.lifecycleEpoch,
+      lifecycleEpoch: translateWorkerTransferLifecycleEpoch(transferId, payload.lifecycleEpoch),
       lifecycleState: payload.lifecycleState,
       resumable: payload.resumable,
       pauseUnavailableReason: payload.pauseUnavailableReason,
@@ -102,6 +119,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       ...payload,
       type: channel.endsWith(":queued") ? "queued" : "started",
       transferId,
+      lifecycleEpoch: translateWorkerTransferLifecycleEpoch(transferId, payload.lifecycleEpoch),
     };
   }
   if (channel === "netcatty:transfer:complete") {
