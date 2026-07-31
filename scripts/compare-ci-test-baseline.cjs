@@ -16,6 +16,41 @@ function normalizeAssertionDetail(detail) {
     );
 }
 
+function collectNonTapFailures(lines) {
+  const failures = [];
+  let inDiagnostic = false;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (/^---$/.test(line)) {
+      inDiagnostic = true;
+      continue;
+    }
+    if (inDiagnostic) {
+      if (/^\.\.\.$/.test(line)) inDiagnostic = false;
+      continue;
+    }
+    if (
+      !line ||
+      /^TAP version \d+$/.test(line) ||
+      /^(?:ok|not ok) \d+ - /.test(line) ||
+      /^# (?:Subtest:|tests |suites |pass |fail |cancelled |skipped |todo |duration_ms )/.test(line) ||
+      /^1\.\.\d+$/.test(line)
+    ) {
+      continue;
+    }
+    if (!/\b(?:error|failed|failure|crash(?:ed)?|fatal|exception|unhandled|abort(?:ed)?)\b/i.test(line)) {
+      continue;
+    }
+    failures.push(
+      line
+        .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')
+        .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
+        .replace(/:\d+:\d+\b/g, ':<line>:<column>'),
+    );
+  }
+  return failures;
+}
+
 function parseTapResult(text, exitCode) {
   const normalized = String(text || '').replace(ANSI_RE, '').replace(/\r\n?/g, '\n');
   const lines = normalized.split('\n');
@@ -26,7 +61,6 @@ function parseTapResult(text, exitCode) {
   let skippedCount = null;
   let todoCount = null;
   let testCount = null;
-  let lastSummaryIndex = -1;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const failed = line.match(/^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/);
@@ -98,35 +132,24 @@ function parseTapResult(text, exitCode) {
     const failSummary = line.match(/^\s*# fail (\d+)\s*$/);
     if (failSummary) {
       failCount = Number(failSummary[1]);
-      lastSummaryIndex = index;
     }
     const cancelledSummary = line.match(/^\s*# cancelled (\d+)\s*$/);
     if (cancelledSummary) {
       cancelledCount = Number(cancelledSummary[1]);
-      lastSummaryIndex = index;
     }
     const skippedSummary = line.match(/^\s*# skipped (\d+)\s*$/);
     if (skippedSummary) {
       skippedCount = Number(skippedSummary[1]);
-      lastSummaryIndex = index;
     }
     const todoSummary = line.match(/^\s*# todo (\d+)\s*$/);
     if (todoSummary) {
       todoCount = Number(todoSummary[1]);
-      lastSummaryIndex = index;
     }
     const testSummary = line.match(/^\s*# tests (\d+)\s*$/);
     if (testSummary) {
       testCount = Number(testSummary[1]);
-      lastSummaryIndex = index;
-    }
-    if (/^\s*# duration_ms \d+(?:\.\d+)?\s*$/.test(line)) {
-      lastSummaryIndex = index;
     }
   }
-  const trailingOutput = lastSummaryIndex >= 0
-    ? lines.slice(lastSummaryIndex + 1).filter((line) => line.trim()).join('\n')
-    : '';
   return {
     exitCode: Number(exitCode),
     failures,
@@ -136,7 +159,7 @@ function parseTapResult(text, exitCode) {
     skippedCount,
     todoCount,
     testCount,
-    trailingOutput,
+    nonTapFailures: collectNonTapFailures(lines),
     complete:
       failCount !== null &&
       cancelledCount !== null &&
@@ -203,7 +226,12 @@ function compareTapResults(baseline, candidate) {
     };
   }
 
-  if (candidate.trailingOutput !== baseline.trailingOutput) {
+  const baselineNonTapCounts = countFailures(baseline.nonTapFailures);
+  const candidateNonTapCounts = countFailures(candidate.nonTapFailures);
+  const addedNonTapFailure = [...candidateNonTapCounts].some(
+    ([failure, count]) => count > (baselineNonTapCounts.get(failure) || 0),
+  );
+  if (addedNonTapFailure) {
     return {
       passed: false,
       kind: 'unclassified_failure',

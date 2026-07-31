@@ -3185,9 +3185,11 @@ async function prepareIssueFollowupContext({
     startOfDay.getTime(),
     botLogins,
   );
+  const simpleKind = classifySimpleIssueFollowup(pending);
   const rateLimited =
-    pending.length > 0 && followupsToday >= Math.max(1, Number(dailyLimit) || 20);
-  const simpleKind = rateLimited ? null : classifySimpleIssueFollowup(pending);
+    pending.length > 0 &&
+    !simpleKind &&
+    followupsToday >= Math.max(1, Number(dailyLimit) || 20);
   const labels = (issue.labels || []).map((label) =>
     typeof label === 'string' ? label : label.name,
   );

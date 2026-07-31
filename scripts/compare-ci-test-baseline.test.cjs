@@ -79,6 +79,13 @@ test('rejects an additional runner failure after comparable TAP output', () => {
   );
   assert.equal(sameExit.passed, false);
   assert.equal(sameExit.kind, 'unclassified_failure');
+
+  const preSummaryCrash = compareTapResults(
+    parseTapResult(sameTap, 1),
+    parseTapResult(`runner crashed before summary\n${sameTap}`, 1),
+  );
+  assert.equal(preSummaryCrash.passed, false);
+  assert.equal(preSummaryCrash.kind, 'unclassified_failure');
 });
 
 test('distinguishes same-title failures by stable TAP diagnostics', () => {

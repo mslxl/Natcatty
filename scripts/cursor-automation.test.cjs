@@ -1260,12 +1260,20 @@ test('prepareIssueFollowupContext shortcuts simple resolved replies without Curs
         listComments: Symbol('listComments'),
       },
     },
-    paginate: async () => [{
-      id: 9,
-      user: { login: 'alice', type: 'User' },
-      body: '已解决，谢谢',
-      created_at: '2026-07-24T10:00:00Z',
-    }],
+    paginate: async () => [
+      {
+        id: 8,
+        user: { login: 'netcatty-bot', type: 'Bot' },
+        body: '<!-- cursor-followup:comment-id=7;result=no_change -->',
+        created_at: '2026-07-24T09:00:00Z',
+      },
+      {
+        id: 9,
+        user: { login: 'alice', type: 'User' },
+        body: '已解决，谢谢',
+        created_at: '2026-07-24T10:00:00Z',
+      },
+    ],
   };
   const result = await auto.prepareIssueFollowupContext({
     github,
@@ -1274,11 +1282,14 @@ test('prepareIssueFollowupContext shortcuts simple resolved replies without Curs
     issueNumber: 42,
     triggerCommentId: 9,
     outputPath: path.join(dir, 'followup.json'),
+    dailyLimit: 1,
+    nowMs: Date.parse('2026-07-24T12:00:00Z'),
   });
   assert.equal(result.shouldRun, false);
   assert.equal(result.simpleKind, 'resolved');
   assert.equal(outputs.simple_kind, 'resolved');
   assert.equal(outputs.should_run, 'false');
+  assert.equal(outputs.rate_limited, 'false');
 });
 
 test('prepareIssueFollowupContext hands off after the daily follow-up limit', async () => {
