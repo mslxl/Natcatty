@@ -19,24 +19,39 @@ function normalizeAssertionDetail(detail) {
 function collectNonTapOutput(lines) {
   const output = [];
   let inDiagnostic = false;
-  let awaitingDiagnostic = false;
+  let diagnosticOwnerIndent = -1;
+  let awaitingDiagnosticIndent = null;
   for (const rawLine of lines) {
     const line = rawLine.trim();
     if (inDiagnostic) {
-      if (/^\s{2,}\.\.\.\s*$/.test(rawLine)) inDiagnostic = false;
-      continue;
-    }
-    if (awaitingDiagnostic) {
-      if (!line) continue;
-      if (/^\s{2,}---\s*$/.test(rawLine)) {
-        inDiagnostic = true;
-        awaitingDiagnostic = false;
+      const indent = rawLine.match(/^\s*/)?.[0].length || 0;
+      if (/^\s+\.\.\.\s*$/.test(rawLine) && indent > diagnosticOwnerIndent) {
+        inDiagnostic = false;
+        diagnosticOwnerIndent = -1;
         continue;
       }
-      awaitingDiagnostic = false;
+      const boundary = line.match(
+        /^(?:(?:ok|not ok) \d+ - |# (?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms) |1\.\.\d+$)/,
+      );
+      if (!boundary || indent > diagnosticOwnerIndent) continue;
+      output.push('<unterminated-tap-diagnostic>');
+      inDiagnostic = false;
+      diagnosticOwnerIndent = -1;
     }
-    if (/^\s*not ok \d+ - /.test(rawLine)) {
-      awaitingDiagnostic = true;
+    if (awaitingDiagnosticIndent !== null) {
+      if (!line) continue;
+      const indent = rawLine.match(/^\s*/)?.[0].length || 0;
+      if (/^\s+---\s*$/.test(rawLine) && indent > awaitingDiagnosticIndent) {
+        inDiagnostic = true;
+        diagnosticOwnerIndent = awaitingDiagnosticIndent;
+        awaitingDiagnosticIndent = null;
+        continue;
+      }
+      awaitingDiagnosticIndent = null;
+    }
+    const failed = rawLine.match(/^(\s*)not ok \d+ - /);
+    if (failed) {
+      awaitingDiagnosticIndent = failed[1].length;
       continue;
     }
     if (
@@ -55,6 +70,7 @@ function collectNonTapOutput(lines) {
         .replace(/:\d+:\d+\b/g, ':<line>:<column>'),
     );
   }
+  if (inDiagnostic) output.push('<unterminated-tap-diagnostic>');
   return output;
 }
 

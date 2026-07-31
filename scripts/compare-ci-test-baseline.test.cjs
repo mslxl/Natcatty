@@ -137,6 +137,26 @@ test('rejects an additional runner failure after comparable TAP output', () => {
   assert.equal(crashInsideUnattachedYamlMarkers.passed, false);
   assert.equal(crashInsideUnattachedYamlMarkers.kind, 'unclassified_failure');
 
+  const diagnosticTap = (closed) => [
+    'TAP version 13',
+    'not ok 1 - base failure',
+    '  ---',
+    "  error: 'existing failure'",
+    "  code: 'ERR_TEST_FAILURE'",
+    ...(closed ? ['  ...'] : []),
+    '# fail 1',
+    '# cancelled 0',
+    '# skipped 0',
+    '# todo 0',
+    '# tests 10',
+  ].join('\n');
+  const crashAfterUnterminatedDiagnostic = compareTapResults(
+    parseTapResult(diagnosticTap(true), 1),
+    parseTapResult(`${diagnosticTap(false)}\nSegmentation fault (core dumped)`, 1),
+  );
+  assert.equal(crashAfterUnterminatedDiagnostic.passed, false);
+  assert.equal(crashAfterUnterminatedDiagnostic.kind, 'unclassified_failure');
+
   const unchangedArbitraryOutput = compareTapResults(
     parseTapResult(`starting custom runner\n${sameTap}`, 1),
     parseTapResult(`starting custom runner\n${sameTap}`, 1),
