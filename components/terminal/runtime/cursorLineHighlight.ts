@@ -2,12 +2,18 @@ import type { IDecoration, IDisposable, IMarker, Terminal as XTerm } from '@xter
 
 type CursorLineTerminal = Pick<
   XTerm,
-  'cols' | 'buffer' | 'registerMarker' | 'registerDecoration' | 'onCursorMove' | 'onResize'
+  | 'cols'
+  | 'buffer'
+  | 'registerMarker'
+  | 'registerDecoration'
+  | 'onCursorMove'
+  | 'onResize'
+  | 'onWriteParsed'
 >;
 
 /**
  * Highlights the buffer row under the cursor with a full-width xterm decoration.
- * Hidden automatically on the alternate screen by xterm's decoration renderer.
+ * Hidden on the alternate screen so full-screen applications keep their own styling.
  */
 export class CursorLineHighlighter implements IDisposable {
   private enabled = false;
@@ -23,7 +29,9 @@ export class CursorLineHighlighter implements IDisposable {
   constructor(private readonly term: CursorLineTerminal) {
     this.disposables.push(
       this.term.onCursorMove(() => this.refresh()),
+      this.term.onWriteParsed(() => this.refresh()),
       this.term.onResize(() => this.refresh({ force: true })),
+      this.term.buffer.onBufferChange(() => this.refresh({ force: true })),
     );
   }
 
@@ -53,6 +61,10 @@ export class CursorLineHighlighter implements IDisposable {
     if (this.disposed || !this.enabled) return;
 
     const buffer = this.term.buffer.active;
+    if (buffer.type === 'alternate') {
+      this.clear();
+      return;
+    }
     const absoluteLine = buffer.baseY + buffer.cursorY;
     const cols = Math.max(1, this.term.cols || 1);
     const color = this.backgroundColor;

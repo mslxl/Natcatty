@@ -8,8 +8,11 @@ type Handler = () => void;
 const createFakeTerm = (cols = 80) => {
   let cursorY = 0;
   let baseY = 0;
+  let bufferType: 'normal' | 'alternate' = 'normal';
   const cursorMoveHandlers: Handler[] = [];
+  const writeParsedHandlers: Handler[] = [];
   const resizeHandlers: Handler[] = [];
+  const bufferChangeHandlers: Handler[] = [];
   const decorations: Array<{ options: Record<string, unknown>; disposed: boolean }> = [];
   const markers: Array<{ line: number; disposed: boolean }> = [];
 
@@ -17,12 +20,19 @@ const createFakeTerm = (cols = 80) => {
     cols,
     buffer: {
       active: {
+        get type() {
+          return bufferType;
+        },
         get baseY() {
           return baseY;
         },
         get cursorY() {
           return cursorY;
         },
+      },
+      onBufferChange(handler: Handler) {
+        bufferChangeHandlers.push(handler);
+        return { dispose() {} };
       },
     },
     onCursorMove(handler: Handler) {
@@ -31,6 +41,10 @@ const createFakeTerm = (cols = 80) => {
     },
     onResize(handler: Handler) {
       resizeHandlers.push(handler);
+      return { dispose() {} };
+    },
+    onWriteParsed(handler: Handler) {
+      writeParsedHandlers.push(handler);
       return { dispose() {} };
     },
     registerMarker(offset: number) {
@@ -61,6 +75,14 @@ const createFakeTerm = (cols = 80) => {
     moveCursor(nextY: number) {
       cursorY = nextY;
       for (const handler of cursorMoveHandlers) handler();
+    },
+    scrollOutput(lines: number) {
+      baseY += lines;
+      for (const handler of writeParsedHandlers) handler();
+    },
+    setBufferType(nextType: 'normal' | 'alternate') {
+      bufferType = nextType;
+      for (const handler of bufferChangeHandlers) handler();
     },
     setCols(nextCols: number) {
       term.cols = nextCols;
@@ -115,5 +137,39 @@ test('CursorLineHighlighter recreates on resize and theme color changes', () => 
 
   highlighter.setBackgroundColor('#445566');
   assert.equal(term.decorations.at(-1)?.options.backgroundColor, '#445566');
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter follows bottom-row output when only baseY changes', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  assert.equal(term.markers.at(-1)?.line, 0);
+
+  term.scrollOutput(3);
+  assert.equal(term.decorations.length, 2);
+  assert.equal(term.decorations[0]?.disposed, true);
+  assert.equal(term.markers.at(-1)?.line, 3);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter clears in the alternate buffer and restores in normal buffer', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+
+  term.setBufferType('alternate');
+  assert.equal(term.decorations.at(-1)?.disposed, true);
+
+  const decorationCount = term.decorations.length;
+  term.moveCursor(4);
+  term.scrollOutput(1);
+  assert.equal(term.decorations.length, decorationCount);
+
+  term.setBufferType('normal');
+  assert.equal(term.decorations.length, decorationCount + 1);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
   highlighter.dispose();
 });
