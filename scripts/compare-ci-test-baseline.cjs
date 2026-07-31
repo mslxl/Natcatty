@@ -37,7 +37,14 @@ function parseTapResult(text, exitCode) {
         }
         if (/^\s*(?:---|\.\.\.)\s*$/.test(detail)) continue;
         if (/^\s*duration_ms:/.test(detail)) continue;
-        if (detail.trim()) diagnostic.push(detail.trimEnd());
+        if (detail.trim()) {
+          diagnostic.push(
+            detail.trimEnd().replace(
+              /^(\s*location:\s*['"]?.*?):\d+:\d+(['"]?\s*)$/,
+              '$1$2',
+            ),
+          );
+        }
       }
       failures.push(name);
       failureRecords.push({

@@ -63,11 +63,11 @@ test('rejects a different candidate failure even when both runs are red', () => 
 });
 
 test('distinguishes same-title failures by stable TAP diagnostics', () => {
-  const withDiagnostic = (error) => [
+  const withDiagnostic = (error, location = '/workspace/example.test.js:10:1') => [
     'TAP version 13',
     'not ok 1 - duplicate title',
     '  ---',
-    "  location: '/workspace/example.test.js:10:1'",
+    `  location: '${location}'`,
     "  failureType: 'testCodeFailure'",
     `  error: '${error}'`,
     "  code: 'ERR_ASSERTION'",
@@ -83,6 +83,12 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     parseTapResult(withDiagnostic('old failure'), 1),
   );
   assert.equal(same.passed, true);
+
+  const moved = compareTapResults(
+    parseTapResult(withDiagnostic('old failure'), 1),
+    parseTapResult(withDiagnostic('old failure', '/workspace/example.test.js:11:1'), 1),
+  );
+  assert.equal(moved.passed, true);
 
   const changed = compareTapResults(
     parseTapResult(withDiagnostic('old failure'), 1),
