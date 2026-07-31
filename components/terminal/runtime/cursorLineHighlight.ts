@@ -146,10 +146,15 @@ export class CursorLineHighlighter implements IDisposable {
     const ranges: HighlightRange[] = [];
     let rangeStart: number | null = null;
     for (let x = 0; x < cols; x += 1) {
-      const isDefaultBackground = line?.getCell(x, cell)?.isBgDefault() ?? true;
-      if (isDefaultBackground && rangeStart === null) rangeStart = x;
-      if ((!isDefaultBackground || x === cols - 1) && rangeStart !== null) {
-        const end = isDefaultBackground && x === cols - 1 ? x + 1 : x;
+      const currentCell = line?.getCell(x, cell);
+      const isHighlightable =
+        currentCell === undefined ||
+        (currentCell.isBgDefault() &&
+          currentCell.isFgDefault() &&
+          !currentCell.isInverse());
+      if (isHighlightable && rangeStart === null) rangeStart = x;
+      if ((!isHighlightable || x === cols - 1) && rangeStart !== null) {
+        const end = isHighlightable && x === cols - 1 ? x + 1 : x;
         ranges.push({ x: rangeStart, width: end - rangeStart });
         rangeStart = null;
       }

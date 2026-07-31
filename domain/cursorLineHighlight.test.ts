@@ -27,7 +27,7 @@ test('resolveCursorLineHighlightBackground falls back to foreground when selecti
     selection: 'not-a-color',
   });
   assert.equal(withSelection, '#464646');
-  assert.equal(withoutSelection, '#8c8c8c');
+  assert.equal(withoutSelection, '#707070');
 });
 
 test('resolveCursorLineHighlightBackground expands short hex and strips alpha', () => {
@@ -41,4 +41,15 @@ test('resolveCursorLineHighlightBackground expands short hex and strips alpha', 
 
 test('CURSOR_LINE_HIGHLIGHT_BLEND stays a visible fraction', () => {
   assert.ok(CURSOR_LINE_HIGHLIGHT_BLEND > 0 && CURSOR_LINE_HIGHLIGHT_BLEND < 1);
+});
+
+test('resolveCursorLineHighlightBackground keeps white text readable', () => {
+  const color = resolveCursorLineHighlightBackground({
+    background: '#0d1117',
+    foreground: '#ffffff',
+    selection: '#ffffff',
+  });
+  const channel = Number.parseInt(color.slice(1, 3), 16) / 255;
+  const luminance = channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  assert.ok((1.05) / (luminance + 0.05) >= 4.5);
 });

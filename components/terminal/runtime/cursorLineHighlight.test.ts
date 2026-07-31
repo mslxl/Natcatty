@@ -9,6 +9,8 @@ const createFakeTerm = (cols = 80) => {
   let baseY = 0;
   let bufferType: 'normal' | 'alternate' = 'normal';
   const coloredBackgrounds = new Set<number>();
+  const coloredForegrounds = new Set<number>();
+  const inverseCells = new Set<number>();
   const cursorMoveHandlers: Handler[] = [];
   const writeParsedHandlers: Handler[] = [];
   const resizeHandlers: Handler[] = [];
@@ -37,7 +39,11 @@ const createFakeTerm = (cols = 80) => {
         getLine() {
           return {
             getCell(x: number) {
-              return { isBgDefault: () => !coloredBackgrounds.has(x) };
+              return {
+                isBgDefault: () => !coloredBackgrounds.has(x),
+                isFgDefault: () => !coloredForegrounds.has(x),
+                isInverse: () => (inverseCells.has(x) ? 1 : 0),
+              };
             },
           };
         },
@@ -118,6 +124,16 @@ const createFakeTerm = (cols = 80) => {
       for (const column of columns) coloredBackgrounds.add(column);
       for (const handler of writeParsedHandlers) handler();
     },
+    setColoredForegrounds(columns: number[]) {
+      coloredForegrounds.clear();
+      for (const column of columns) coloredForegrounds.add(column);
+      for (const handler of writeParsedHandlers) handler();
+    },
+    setInverseCells(columns: number[]) {
+      inverseCells.clear();
+      for (const column of columns) inverseCells.add(column);
+      for (const handler of writeParsedHandlers) handler();
+    },
     resetDecorations() {
       for (const decoration of decorations) decoration.dispose();
     },
@@ -148,6 +164,25 @@ test('CursorLineHighlighter paints an opaque background without changing text', 
 test('CursorLineHighlighter leaves ANSI background cells untouched', () => {
   const term = createFakeTerm(10);
   term.setColoredBackgrounds([2, 3, 7]);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setBackgroundColor('#263449');
+  highlighter.setEnabled(true);
+
+  assert.deepEqual(
+    term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
+    [
+      { x: 0, width: 2 },
+      { x: 4, width: 3 },
+      { x: 8, width: 2 },
+    ],
+  );
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter leaves colored and inverse cells untouched', () => {
+  const term = createFakeTerm(10);
+  term.setColoredForegrounds([2, 3]);
+  term.setInverseCells([7]);
   const highlighter = new CursorLineHighlighter(term as never);
   highlighter.setBackgroundColor('#263449');
   highlighter.setEnabled(true);
