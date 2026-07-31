@@ -389,13 +389,13 @@ export class KeywordHighlighter implements IDisposable {
     if (lineHint != null) {
       const hinted = this.lineDecorations.get(lineHint);
       if (hinted === target) {
-        this.lineDecorations.delete(lineHint);
+        if (this.lineDecorations.delete(lineHint)) this.decorationsVersion += 1;
         return lineHint;
       }
     }
     for (const [mappedLineY, mappedState] of this.lineDecorations) {
       if (mappedState === target) {
-        this.lineDecorations.delete(mappedLineY);
+        if (this.lineDecorations.delete(mappedLineY)) this.decorationsVersion += 1;
         return mappedLineY;
       }
     }
@@ -420,7 +420,7 @@ export class KeywordHighlighter implements IDisposable {
     const offset = lineY - cursorAbsoluteY;
     const marker = this.term.registerMarker(offset);
     if (!marker) {
-      this.lineDecorations.delete(lineY);
+      if (this.lineDecorations.delete(lineY)) this.decorationsVersion += 1;
       return;
     }
 
@@ -439,7 +439,7 @@ export class KeywordHighlighter implements IDisposable {
 
     if (decorations.length === 0) {
       marker.dispose();
-      this.lineDecorations.delete(lineY);
+      if (this.lineDecorations.delete(lineY)) this.decorationsVersion += 1;
       return;
     }
 

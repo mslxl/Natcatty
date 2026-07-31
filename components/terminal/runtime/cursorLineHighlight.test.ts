@@ -269,6 +269,32 @@ test('CursorLineHighlighter refreshes after hidden writes become visible', () =>
   highlighter.dispose();
 });
 
+test('CursorLineHighlighter refreshes after keyword ranges are removed', () => {
+  const term = createFakeTerm(10);
+  let protectedRanges: Array<{ x: number; width: number }> = [{ x: 0, width: 2 }];
+  let protectedRangesVersion = 1;
+  const highlighter = new CursorLineHighlighter(
+    term as never,
+    () => protectedRanges,
+    () => protectedRangesVersion,
+  );
+  highlighter.setEnabled(true);
+  assert.deepEqual(
+    term.decorations.filter(({ disposed }) => !disposed).map(({ options }) => options.width),
+    [8],
+  );
+
+  protectedRanges = [];
+  protectedRangesVersion += 1;
+  term.render();
+
+  assert.deepEqual(
+    term.decorations.filter(({ disposed }) => !disposed).map(({ options }) => options.width),
+    [10],
+  );
+  highlighter.dispose();
+});
+
 test('CursorLineHighlighter leaves keyword decoration ranges untouched', () => {
   const term = createFakeTerm(10);
   const highlighter = new CursorLineHighlighter(
