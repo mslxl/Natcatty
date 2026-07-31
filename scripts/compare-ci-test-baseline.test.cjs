@@ -324,6 +324,16 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     parseTapResult(customMultilineError('service rejected: new reason'), 1),
   );
   assert.equal(changedCustomError.passed, false);
+
+  const sameCustomErrorAcrossRuns = compareTapResults(
+    parseTapResult(customMultilineError(
+      'service failed at /tmp/run-A/result on 2026-07-31T10:00:00Z in worker.js:10:2',
+    ), 1),
+    parseTapResult(customMultilineError(
+      'service failed at /tmp/run-B/result on 2026-07-31T10:01:00Z in worker.js:11:3',
+    ), 1),
+  );
+  assert.equal(sameCustomErrorAcrossRuns.passed, true);
 });
 
 test('rejects added duplicate failures, cancellations, skipped tests, and TODOs', () => {

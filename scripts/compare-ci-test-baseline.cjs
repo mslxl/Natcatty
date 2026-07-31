@@ -4,22 +4,25 @@ const fs = require('node:fs');
 
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
-function normalizeAssertionDetail(detail) {
+function normalizeRuntimeDetail(detail) {
   return detail
-    .replace(
-      /\b(now|timestamp|pid|nonce|random(?:Value)?)\b(['"]?\s*[:=]\s*)[^,\s}\]]+/gi,
-      '$1$2<volatile>',
-    )
     .replace(
       /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g,
       '<timestamp>',
-    );
+    )
+    .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
+    .replace(/:\d+:\d+\b/g, ':<line>:<column>');
+}
+
+function normalizeAssertionDetail(detail) {
+  return normalizeRuntimeDetail(detail).replace(
+    /\b(now|timestamp|pid|nonce|random(?:Value)?)\b(['"]?\s*[:=]\s*)[^,\s}\]]+/gi,
+    '$1$2<volatile>',
+  );
 }
 
 function normalizeStableDiagnosticDetail(detail) {
-  return normalizeAssertionDetail(detail)
-    .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
-    .replace(/:\d+:\d+\b/g, ':<line>:<column>');
+  return normalizeAssertionDetail(detail);
 }
 
 function collectNonTapOutput(lines) {
@@ -152,7 +155,7 @@ function parseTapResult(text, exitCode) {
       );
       const stableErrorDetails = assertionFailure
         ? errorDetails.map(normalizeStableDiagnosticDetail)
-        : errorDetails;
+        : errorDetails.map(normalizeRuntimeDetail);
       diagnostic.push(...stableErrorDetails.map((detail) => `error-detail: ${detail}`));
       failures.push(name);
       failureRecords.push({
