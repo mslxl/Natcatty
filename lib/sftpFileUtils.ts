@@ -242,6 +242,9 @@ export interface DropEntry {
   isDirectory: boolean;
 }
 
+export const getDropEntryLocalPath = (entry: DropEntry): string | undefined =>
+  entry.localPath ?? (entry.file ? getPathForFile(entry.file) : undefined);
+
 const createDropEntriesFromFiles = (files: FileList | File[]): DropEntry[] => {
   const results: DropEntry[] = [];
   for (let i = 0; i < files.length; i++) {
