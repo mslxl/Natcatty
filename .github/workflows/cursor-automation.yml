@@ -1786,7 +1786,13 @@ jobs:
           ' "$BASE_SHA"
           script_guard=$?
           if [[ "$script_guard" == "0" ]]; then
-            npm run lint 2>&1 | tee .cursor-runtime/followup-candidate-lint.log
+            npm ci 2>&1 | tee .cursor-runtime/followup-candidate-lint.log
+            deps=$?
+          else
+            deps=2
+          fi
+          if [[ "$script_guard" == "0" && "$deps" == "0" ]]; then
+            npm run lint 2>&1 | tee -a .cursor-runtime/followup-candidate-lint.log
             lint=$?
             npm test 2>&1 | tee .cursor-runtime/followup-candidate-tests.log
             tests=$?
@@ -1796,7 +1802,13 @@ jobs:
             lint=2
             tests=2
             build=2
-            echo "Skipped because package.json changed a validation script." | tee .cursor-runtime/followup-candidate-lint.log .cursor-runtime/followup-candidate-tests.log .cursor-runtime/followup-candidate-build.log
+            if [[ "$script_guard" != "0" ]]; then
+              reason="Skipped because package.json changed a validation script."
+            else
+              reason="Skipped because restoring locked dependencies failed."
+            fi
+            echo "$reason" | tee -a .cursor-runtime/followup-candidate-lint.log
+            echo "$reason" | tee .cursor-runtime/followup-candidate-tests.log .cursor-runtime/followup-candidate-build.log
           fi
           node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
             --baseline-log .cursor-runtime/followup-base-tests.log \
@@ -3028,7 +3040,13 @@ jobs:
           ' "$BASE_SHA"
           script_guard=$?
           if [[ "$script_guard" == "0" ]]; then
-            npm run lint 2>&1 | tee .cursor-runtime/candidate-lint.log
+            npm ci 2>&1 | tee .cursor-runtime/candidate-lint.log
+            deps=$?
+          else
+            deps=2
+          fi
+          if [[ "$script_guard" == "0" && "$deps" == "0" ]]; then
+            npm run lint 2>&1 | tee -a .cursor-runtime/candidate-lint.log
             lint=$?
             npm test 2>&1 | tee .cursor-runtime/candidate-tests.log
             tests=$?
@@ -3038,7 +3056,13 @@ jobs:
             lint=2
             tests=2
             build=2
-            echo "Skipped because package.json changed a validation script." | tee .cursor-runtime/candidate-lint.log .cursor-runtime/candidate-tests.log .cursor-runtime/candidate-build.log
+            if [[ "$script_guard" != "0" ]]; then
+              reason="Skipped because package.json changed a validation script."
+            else
+              reason="Skipped because restoring locked dependencies failed."
+            fi
+            echo "$reason" | tee -a .cursor-runtime/candidate-lint.log
+            echo "$reason" | tee .cursor-runtime/candidate-tests.log .cursor-runtime/candidate-build.log
           fi
           node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
             --baseline-log .cursor-runtime/base-tests.log \
@@ -4402,7 +4426,13 @@ jobs:
           ' "$BASE_SHA"
           script_guard=$?
           if [[ "$script_guard" == "0" ]]; then
-            npm run lint 2>&1 | tee .cursor-runtime/fix-candidate-lint.log
+            npm ci 2>&1 | tee .cursor-runtime/fix-candidate-lint.log
+            deps=$?
+          else
+            deps=2
+          fi
+          if [[ "$script_guard" == "0" && "$deps" == "0" ]]; then
+            npm run lint 2>&1 | tee -a .cursor-runtime/fix-candidate-lint.log
             lint=$?
             npm test 2>&1 | tee .cursor-runtime/fix-candidate-tests.log
             tests=$?
@@ -4412,7 +4442,13 @@ jobs:
             lint=2
             tests=2
             build=2
-            echo "Skipped because package.json changed a validation script." | tee .cursor-runtime/fix-candidate-lint.log .cursor-runtime/fix-candidate-tests.log .cursor-runtime/fix-candidate-build.log
+            if [[ "$script_guard" != "0" ]]; then
+              reason="Skipped because package.json changed a validation script."
+            else
+              reason="Skipped because restoring locked dependencies failed."
+            fi
+            echo "$reason" | tee -a .cursor-runtime/fix-candidate-lint.log
+            echo "$reason" | tee .cursor-runtime/fix-candidate-tests.log .cursor-runtime/fix-candidate-build.log
           fi
           node "$RUNNER_TEMP/compare-ci-test-baseline.cjs" \
             --baseline-log .cursor-runtime/fix-base-tests.log \

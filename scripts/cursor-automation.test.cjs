@@ -1918,6 +1918,13 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
     codex.indexOf('name: Install test shell dependencies') <
       codex.indexOf('name: Capture Codex-fix exact-base test baseline'),
   );
+  for (const section of [implement, followup, codex]) {
+    const restoreDependencies = section.indexOf('npm ci 2>&1 | tee');
+    const lintCandidate = section.indexOf('npm run lint 2>&1 | tee -a');
+    assert.ok(restoreDependencies >= 0);
+    assert.ok(lintCandidate > restoreDependencies);
+    assert.match(section, /restoring locked dependencies failed/);
+  }
 });
 
 test('classification failure handoff receives its issue number', () => {
