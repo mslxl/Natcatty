@@ -853,9 +853,17 @@ test('workflow cleans source labels on automation PR close and dedupes clean not
   assert.match(workflow, /github\.rest\.issues\.removeLabel/);
   assert.match(workflow, /github\.rest\.issues\.addLabels/);
   assert.match(workflow, /not a trusted automation pull request; skipping source cleanup/);
+  assert.match(workflow, /is no longer closed; skipping source cleanup/);
+  assert.match(workflow, /source issue changed while queued; skipping cleanup/);
   assert.match(workflow, /Follow-up changed before the simple reply; dispatched a fresh review/);
   assert.match(workflow, /is merged; skipped stale follow-up handoff state changes/);
   assert.match(workflow, /trusted_comment_bodies/);
+  const classify = workflow.match(/\n  classify:\n[\s\S]*?(?=\n  cursor_smoke:|\n  issue_followup:)/)?.[0] || '';
+  const followup = workflow.match(/\n  issue_followup:\n[\s\S]*?(?=\n  publish_issue_followup:)/)?.[0] || '';
+  assert.match(classify, /actions: read/);
+  assert.doesNotMatch(classify, /actions: write/);
+  assert.match(followup, /actions: write/);
+  assert.match(followup, /createWorkflowDispatch/);
   assert.match(workflow, /cursor-codex-clean-head:/);
   assert.match(workflow, /Clean handoff already recorded/);
 });

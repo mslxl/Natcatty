@@ -355,6 +355,7 @@ jobs:
         uses: actions/github-script@v9
         env:
           PULL_NUMBER: ${{ needs.route.outputs.pull_number }}
+          SOURCE_ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
           OWN_ACTORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
@@ -365,6 +366,10 @@ jobs:
               ...context.repo,
               pull_number: pullNumber,
             });
+            if (pull.state !== 'closed') {
+              core.warning(`PR #${pullNumber} is no longer closed; skipping source cleanup.`);
+              return;
+            }
             if (!auto.shouldGatePullOnSourceIssueFollowups(pull, {
               ownActors: process.env.OWN_ACTORS,
               repository: `${context.repo.owner}/${context.repo.repo}`,
@@ -373,7 +378,11 @@ jobs:
               return;
             }
             const issueNumber = auto.extractSourceIssueNumber(pull);
-            if (!issueNumber) return;
+            const expectedIssueNumber = Number(process.env.SOURCE_ISSUE_NUMBER);
+            if (!issueNumber || issueNumber !== expectedIssueNumber) {
+              core.warning(`PR #${pullNumber} source issue changed while queued; skipping cleanup.`);
+              return;
+            }
             const removeLabel = async (issue_number, name) => {
               try {
                 await github.rest.issues.removeLabel({
@@ -415,7 +424,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-      actions: write
+      actions: read
     outputs:
       category: ${{ steps.apply.outputs.category }}
       should_implement: ${{ steps.apply.outputs.should_implement }}
@@ -1212,7 +1221,7 @@ jobs:
       contents: read
       issues: write
       pull-requests: write
-      actions: read
+      actions: write
     outputs:
       action: ${{ steps.decision.outputs.action }}
       should_publish: ${{ steps.patch.outputs.should_publish || 'false' }}
