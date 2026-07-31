@@ -75,7 +75,12 @@ import {
   recallSftpSidePanelPath,
   rememberSftpSidePanelPath,
 } from "./sftp/sftpSidePanelConnectionMemory";
-import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
+import {
+  listSftpConnectedHosts,
+  resolveSftpTransferSourceSessionId,
+  sftpHostEndpointsEqual,
+  sftpPickerSessionsEqual,
+} from "../domain/sftpConnectedHosts";
 import type { TerminalSession } from "../domain/models";
 
 interface SftpSidePanelProps {
@@ -181,6 +186,20 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     return resolveSftpTransferSourceSessionId(sessions, hostsById, hostId, host);
   }, [hosts, sessions]);
 
+  // Browse restore can run before the session list reflects the focused tab;
+  // prefer the active source when its visible endpoint matches the pane host.
+  const resolveBrowseSourceSessionId = useCallback((hostId: string, host?: Host) => {
+    if (
+      activeSessionId
+      && activeHost
+      && activeHost.id === hostId
+      && (!host || sftpHostEndpointsEqual(activeHost, host))
+    ) {
+      return activeSessionId;
+    }
+    return resolveTransferSourceSessionId(hostId, host);
+  }, [activeHost, activeSessionId, resolveTransferSourceSessionId]);
+
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
       const fileName = payload.remotePath.split('/').pop() || payload.remotePath;
@@ -221,6 +240,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
+    resolveBrowseSourceSessionId,
   }), [
     fileWatchHandlers,
     hasOwnedEditorTab,
@@ -232,6 +252,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     knownHosts,
     onAddKnownHost,
     resolveTransferSourceSessionId,
+    resolveBrowseSourceSessionId,
   ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);

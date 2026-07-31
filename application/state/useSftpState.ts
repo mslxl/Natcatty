@@ -305,6 +305,7 @@ export const useSftpState = (
     [hosts, identities, keys, transferKnownHosts, transferTerminalSettings],
   );
   const resolveTransferSourceSessionId = options?.resolveTransferSourceSessionId;
+  const resolveBrowseSourceSessionId = options?.resolveBrowseSourceSessionId;
 
   const openPoolSftpSession = useCallback(
     async (host: Host) => {
@@ -709,6 +710,7 @@ export const useSftpState = (
             connect,
             resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
             resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
+            resolveSourceSessionId: resolveBrowseSourceSessionId,
             probeSession: async (sftpId) => {
               const bridge = netcattyBridge.get();
               if (!bridge?.getSftpHomeDir) return true;
@@ -740,6 +742,7 @@ export const useSftpState = (
     getActivePane,
     hosts,
     lastConnectedHostRef,
+    resolveBrowseSourceSessionId,
     sftpSessionsRef,
     releaseConnection,
   ]);
