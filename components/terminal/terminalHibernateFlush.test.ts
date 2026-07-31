@@ -261,10 +261,22 @@ test("snapshot and handoff paths reject output that misses the settle deadline",
   const applyFailureIndex = source.indexOf("Terminal output did not settle before applying the snapshot", applyDrainIndex);
   const applyMetadataIndex = source.indexOf("setKittyKeyboardProtocolEnabled", applyHandlerIndex);
   const applyResetIndex = source.indexOf("term.reset()", applyHandlerIndex);
+  const applySnapshotWriteIndex = source.indexOf("term.write(payload.snapshot, resolve)", applyResetIndex);
+  const applyCursorHighlightRefreshIndex = source.indexOf(
+    "cursorLineHighlighter.refresh({ force: true })",
+    applyResetIndex,
+  );
+  const applyScrollIndex = source.indexOf("term.scrollToBottom?.()", applyResetIndex);
   assert.ok(applyHandlerIndex >= 0 && applyHandlerIndex < applyDrainIndex);
   assert.ok(applyDrainIndex < applyFailureIndex);
   assert.ok(applyFailureIndex < applyMetadataIndex, "failed drains must not mutate snapshot metadata");
   assert.ok(applyMetadataIndex < applyResetIndex);
+  assert.ok(applyResetIndex < applySnapshotWriteIndex);
+  assert.ok(
+    applySnapshotWriteIndex < applyCursorHighlightRefreshIndex,
+    "cursor-line highlighting must refresh after applying an optional snapshot",
+  );
+  assert.ok(applyCursorHighlightRefreshIndex < applyScrollIndex);
   assert.match(
     source,
     /const flushed = await flushPendingTerminalWritesBeforeHibernate\(snapshotTerm\);\s*if \(!flushed\) \{\s*throw new Error\("Terminal output did not settle before closing the attached display"\);\s*\}/,
