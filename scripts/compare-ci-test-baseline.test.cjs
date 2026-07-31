@@ -66,12 +66,19 @@ test('rejects a different candidate failure even when both runs are red', () => 
 
 test('rejects an additional runner failure after comparable TAP output', () => {
   const sameTap = tap({ failures: ['base failure'] });
-  const result = compareTapResults(
+  const differentExit = compareTapResults(
     parseTapResult(sameTap, 1),
     parseTapResult(`${sameTap}\nrunner crashed after tests`, 2),
   );
-  assert.equal(result.passed, false);
-  assert.equal(result.kind, 'unclassified_failure');
+  assert.equal(differentExit.passed, false);
+  assert.equal(differentExit.kind, 'unclassified_failure');
+
+  const sameExit = compareTapResults(
+    parseTapResult(sameTap, 1),
+    parseTapResult(`${sameTap}\nrunner crashed after tests`, 1),
+  );
+  assert.equal(sameExit.passed, false);
+  assert.equal(sameExit.kind, 'unclassified_failure');
 });
 
 test('distinguishes same-title failures by stable TAP diagnostics', () => {

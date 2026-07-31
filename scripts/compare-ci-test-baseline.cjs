@@ -26,6 +26,7 @@ function parseTapResult(text, exitCode) {
   let skippedCount = null;
   let todoCount = null;
   let testCount = null;
+  let lastSummaryIndex = -1;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const failed = line.match(/^\s*not ok \d+ - (.+?)(?:\s+#.*)?$/);
@@ -95,16 +96,37 @@ function parseTapResult(text, exitCode) {
       });
     }
     const failSummary = line.match(/^\s*# fail (\d+)\s*$/);
-    if (failSummary) failCount = Number(failSummary[1]);
+    if (failSummary) {
+      failCount = Number(failSummary[1]);
+      lastSummaryIndex = index;
+    }
     const cancelledSummary = line.match(/^\s*# cancelled (\d+)\s*$/);
-    if (cancelledSummary) cancelledCount = Number(cancelledSummary[1]);
+    if (cancelledSummary) {
+      cancelledCount = Number(cancelledSummary[1]);
+      lastSummaryIndex = index;
+    }
     const skippedSummary = line.match(/^\s*# skipped (\d+)\s*$/);
-    if (skippedSummary) skippedCount = Number(skippedSummary[1]);
+    if (skippedSummary) {
+      skippedCount = Number(skippedSummary[1]);
+      lastSummaryIndex = index;
+    }
     const todoSummary = line.match(/^\s*# todo (\d+)\s*$/);
-    if (todoSummary) todoCount = Number(todoSummary[1]);
+    if (todoSummary) {
+      todoCount = Number(todoSummary[1]);
+      lastSummaryIndex = index;
+    }
     const testSummary = line.match(/^\s*# tests (\d+)\s*$/);
-    if (testSummary) testCount = Number(testSummary[1]);
+    if (testSummary) {
+      testCount = Number(testSummary[1]);
+      lastSummaryIndex = index;
+    }
+    if (/^\s*# duration_ms \d+(?:\.\d+)?\s*$/.test(line)) {
+      lastSummaryIndex = index;
+    }
   }
+  const trailingOutput = lastSummaryIndex >= 0
+    ? lines.slice(lastSummaryIndex + 1).filter((line) => line.trim()).join('\n')
+    : '';
   return {
     exitCode: Number(exitCode),
     failures,
@@ -114,6 +136,7 @@ function parseTapResult(text, exitCode) {
     skippedCount,
     todoCount,
     testCount,
+    trailingOutput,
     complete:
       failCount !== null &&
       cancelledCount !== null &&
@@ -171,6 +194,16 @@ function compareTapResults(baseline, candidate) {
   }
 
   if (candidate.exitCode !== baseline.exitCode) {
+    return {
+      passed: false,
+      kind: 'unclassified_failure',
+      baselineFailures: baseline.failures,
+      candidateFailures: candidate.failures,
+      newFailures: candidate.failures,
+    };
+  }
+
+  if (candidate.trailingOutput !== baseline.trailingOutput) {
     return {
       passed: false,
       kind: 'unclassified_failure',

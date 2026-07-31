@@ -1704,12 +1704,16 @@ test('hasProtectedChangesInSources checks commit names', () => {
     gitStatusPorcelain: '',
     changedFiles: [
       '.github/workflows/x.yml',
+      'package-lock.json',
+      'scripts/compare-ci-test-baseline.cjs',
       'scripts/prepare-cursor-research-input.sh',
       'src/a.ts',
     ],
   });
   assert.deepEqual(hits, [
     '.github/workflows/x.yml',
+    'package-lock.json',
+    'scripts/compare-ci-test-baseline.cjs',
     'scripts/prepare-cursor-research-input.sh',
   ]);
 });

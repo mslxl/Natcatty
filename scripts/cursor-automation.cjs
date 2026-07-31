@@ -91,12 +91,15 @@ const PROTECTED_PATH_PREFIXES = Object.freeze([
   '.github/',
   '.cursor/',
   'scripts/cursor-automation',
+  'scripts/compare-ci-test-baseline',
   'scripts/prepare-cursor-research-input',
   'scripts/issue-triage',
   'scripts/release',
   'nix/',
   'signing/',
   'packaging/',
+  'package.json',
+  'package-lock.json',
 ]);
 
 /** Exact / basename-sensitive packaging and signing config files. */
