@@ -2473,6 +2473,142 @@ test("resumable concurrent uploads reject a source rewritten mid-transfer", asyn
   assert.equal(stagedDeleted, true);
 });
 
+test("assertSourceMetadataUnchanged ignores ctime drift when content is verified separately", () => {
+  const initial = {
+    size: 100,
+    mtimeMs: 1,
+    ctimeMs: 1,
+    mtime: 0.001,
+    ctime: 0.001,
+    ino: 42,
+  };
+  const drifted = {
+    ...initial,
+    ctimeMs: 999,
+    ctime: 0.999,
+  };
+  // Without a separate content proof, timestamp drift is a hard fail (download path).
+  assert.throws(
+    () => transferBridge._assertSourceMetadataUnchangedForTests(initial, drifted, 100),
+    /source content changed/i,
+  );
+  // With digest / per-range verification, macOS xattr ctime bumps must not abort.
+  assert.doesNotThrow(() => transferBridge._assertSourceMetadataUnchangedForTests(
+    initial,
+    drifted,
+    100,
+    { contentVerifiedSeparately: true },
+  ));
+  // Size still fails hard even when content is verified separately.
+  assert.throws(
+    () => transferBridge._assertSourceMetadataUnchangedForTests(
+      initial,
+      { ...drifted, size: 99 },
+      100,
+      { contentVerifiedSeparately: true },
+    ),
+    /source size changed/i,
+  );
+});
+
+test("resumable upload succeeds when only source ctime drifts (pause/resume false positive)", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-upload-ctime-drift-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  // Reproduce the user-facing finish-path false positive: content bytes are
+  // stable (digest matches) but ctime moved — common on macOS after long
+  // pause/resume cycles (Spotlight / quarantine / xattr).
+  const payload = Buffer.alloc(16 * 1024, 43);
+  const localPath = path.join(tempDir, "ChatGPT.dmg");
+  await fs.promises.writeFile(localPath, payload);
+  const baseline = await fs.promises.stat(localPath);
+  let allowCtimeDrift = false;
+  const driftedStat = () => {
+    if (!allowCtimeDrift) return baseline;
+    return {
+      ...baseline,
+      ctimeMs: baseline.ctimeMs + 60_000,
+      ctime: (baseline.ctimeMs + 60_000) / 1000,
+      // mtime intentionally stable — content not rewritten.
+    };
+  };
+  const realStat = fs.promises.stat.bind(fs.promises);
+  const realOpen = fs.promises.open.bind(fs.promises);
+  fs.promises.stat = async (p, ...args) => {
+    if (path.resolve(String(p)) === path.resolve(localPath)) return driftedStat();
+    return realStat(p, ...args);
+  };
+  fs.promises.open = async (p, flags, ...args) => {
+    const handle = await realOpen(p, flags, ...args);
+    if (path.resolve(String(p)) === path.resolve(localPath) && String(flags).includes("r")) {
+      handle.stat = async () => driftedStat();
+    }
+    return handle;
+  };
+  t.after(() => {
+    fs.promises.stat = realStat;
+    fs.promises.open = realOpen;
+  });
+
+  let remoteBytes = 0;
+  let promoted = false;
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    write(_handle, _buffer, _offset, length, position, callback) {
+      remoteBytes = Math.max(remoteBytes, position + length);
+      // After the first remote WRITE, simulate metadata-only drift as if the
+      // transfer had been pause/resumed for a long wall-clock time.
+      allowCtimeDrift = true;
+      callback(null);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({ size: remoteBytes });
+    },
+    rename() {
+      promoted = true;
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "upload-ctime-drift-ok",
+      sourcePath: localPath,
+      targetPath: "/tmp/ChatGPT.dmg",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(result.error, undefined, `expected success, got: ${result.error}`);
+  assert.equal(allowCtimeDrift, true);
+  assert.equal(promoted, true);
+  assert.equal(remoteBytes, payload.length);
+});
+
 test("non-resumable shared range uploads reject a same-size source rewrite", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonresume-source-change-"));
   t.after(async () => {
