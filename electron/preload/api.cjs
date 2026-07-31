@@ -1108,6 +1108,7 @@ function createPreloadApi(ctx) {
   githubStartDeviceFlow: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:start", options),
   githubPollDeviceFlowToken: (options) => ipcRenderer.invoke("netcatty:github:deviceFlow:poll", options),
   githubCancelDeviceFlowPoll: (pollId) => ipcRenderer.invoke("netcatty:github:deviceFlow:cancelPoll", pollId),
+  githubDownloadGistRawContent: (options) => ipcRenderer.invoke("netcatty:github:gistRawContent", options),
 
   // Google OAuth (proxied via main process to avoid CORS)
   googleExchangeCodeForTokens: (options) =>
