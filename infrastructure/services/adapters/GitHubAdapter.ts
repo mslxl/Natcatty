@@ -32,10 +32,19 @@ export interface GitHubUser {
   avatar_url: string;
 }
 
+export interface GitHubGistFile {
+  filename: string;
+  /** Embedded body from the Gist API. Truncated at ~1 MB when `truncated` is true. */
+  content?: string;
+  truncated?: boolean;
+  raw_url?: string;
+  size?: number;
+}
+
 export interface GitHubGist {
   id: string;
   description: string;
-  files: Record<string, { content: string; filename: string }>;
+  files: Record<string, GitHubGistFile>;
   created_at: string;
   updated_at: string;
   history?: Array<{
@@ -406,6 +415,72 @@ export const updateSyncGist = async (
 };
 
 /**
+ * GitHub's Gist REST API truncates each file's embedded `content` around 1 MB
+ * and sets `truncated: true`. Full bodies must be fetched from `raw_url`
+ * (issue #2643: JSON.parse on truncated content → "Unterminated string").
+ */
+const fetchGistRawContent = async (
+  accessToken: string,
+  rawUrl: string,
+): Promise<string> => {
+  const response = await fetch(rawUrl, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github.raw',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to download full gist content: ${response.statusText}`);
+  }
+
+  return response.text();
+};
+
+const gistFileNeedsRawFetch = (file: GitHubGistFile): boolean => {
+  if (file.truncated) return true;
+  if (
+    typeof file.size === 'number' &&
+    typeof file.content === 'string' &&
+    file.size > file.content.length
+  ) {
+    return true;
+  }
+  return false;
+};
+
+const parseSyncedFileFromGistFile = async (
+  accessToken: string,
+  file: GitHubGistFile | undefined,
+): Promise<SyncedFile | null> => {
+  if (!file) return null;
+
+  const tryParse = (raw: string): SyncedFile => JSON.parse(raw) as SyncedFile;
+
+  if (gistFileNeedsRawFetch(file)) {
+    if (!file.raw_url) {
+      throw new Error(
+        'GitHub Gist sync file is truncated and no raw URL is available. ' +
+          'The vault may exceed GitHub Gist size limits.',
+      );
+    }
+    return tryParse(await fetchGistRawContent(accessToken, file.raw_url));
+  }
+
+  if (!file.content) return null;
+
+  try {
+    return tryParse(file.content);
+  } catch (error) {
+    // Defensive path for incomplete embedded JSON without truncated=true (#2643).
+    if (error instanceof SyntaxError && file.raw_url) {
+      return tryParse(await fetchGistRawContent(accessToken, file.raw_url));
+    }
+    throw error;
+  }
+};
+
+/**
  * Download sync file from gist
  */
 export const downloadSyncGist = async (
@@ -427,13 +502,7 @@ export const downloadSyncGist = async (
   }
 
   const gist: GitHubGist = await response.json();
-  const file = gist.files[SYNC_CONSTANTS.SYNC_FILE_NAME];
-
-  if (!file?.content) {
-    return null;
-  }
-
-  return JSON.parse(file.content) as SyncedFile;
+  return parseSyncedFileFromGistFile(accessToken, gist.files[SYNC_CONSTANTS.SYNC_FILE_NAME]);
 };
 
 /**
@@ -509,10 +578,7 @@ export const downloadGistRevision = async (
   }
 
   const gist: GitHubGist = await response.json();
-  const file = gist.files[SYNC_CONSTANTS.SYNC_FILE_NAME];
-  if (!file?.content) return null;
-
-  return JSON.parse(file.content) as SyncedFile;
+  return parseSyncedFileFromGistFile(accessToken, gist.files[SYNC_CONSTANTS.SYNC_FILE_NAME]);
 };
 
 // ============================================================================
