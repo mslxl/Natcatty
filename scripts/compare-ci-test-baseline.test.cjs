@@ -7,11 +7,12 @@ const {
   parseTapResult,
 } = require('./compare-ci-test-baseline.cjs');
 
-const tap = ({ failures = [], fail = failures.length, cancelled = 0, tests = 10 } = {}) => [
+const tap = ({ failures = [], fail = failures.length, cancelled = 0, skipped = 0, tests = 10 } = {}) => [
   'TAP version 13',
   ...failures.map((name, index) => `not ok ${index + 1} - ${name}`),
   `# fail ${fail}`,
   `# cancelled ${cancelled}`,
+  `# skipped ${skipped}`,
   `# tests ${tests}`,
 ].join('\n');
 
@@ -76,6 +77,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '  ...',
     '# fail 1',
     '# cancelled 0',
+    '# skipped 0',
     '# tests 10',
   ].join('\n');
   const same = compareTapResults(
@@ -115,6 +117,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '1..2',
     '# fail 1',
     '# cancelled 0',
+    '# skipped 0',
     '# tests 2',
   ].join('\n');
   const dynamic = compareTapResults(
@@ -136,6 +139,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '  ...',
     '# fail 1',
     '# cancelled 0',
+    '# skipped 0',
     '# tests 10',
   ].join('\n');
   const changedMultilineError = compareTapResults(
@@ -145,7 +149,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   assert.equal(changedMultilineError.passed, false);
   assert.deepEqual(changedMultilineError.newFailures, ['duplicate title']);
 
-  const assertionDiff = (actual) => [
+  const assertionDiff = (field, actual) => [
     'TAP version 13',
     'not ok 1 - duplicate title',
     '  ---',
@@ -153,19 +157,28 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
     '  error: |-',
     '    Expected values to be strictly equal:',
     '',
-    `    ${actual} !== 1`,
+    '    {',
+    `      ${field}: ${actual}`,
+    '    }',
     "  code: 'ERR_ASSERTION'",
     "  operator: 'strictEqual'",
     '  ...',
     '# fail 1',
     '# cancelled 0',
+    '# skipped 0',
     '# tests 10',
   ].join('\n');
   const changedAssertionValue = compareTapResults(
-    parseTapResult(assertionDiff(111), 1),
-    parseTapResult(assertionDiff(222), 1),
+    parseTapResult(assertionDiff('now', 111), 1),
+    parseTapResult(assertionDiff('now', 222), 1),
   );
   assert.equal(changedAssertionValue.passed, true);
+
+  const changedStableAssertionValue = compareTapResults(
+    parseTapResult(assertionDiff('x', 1), 1),
+    parseTapResult(assertionDiff('x', 3), 1),
+  );
+  assert.equal(changedStableAssertionValue.passed, false);
 
   const customMultilineError = (reason) => multilineError(reason).replace(
     "code: 'ERR_ASSERTION'",
@@ -178,7 +191,7 @@ test('distinguishes same-title failures by stable TAP diagnostics', () => {
   assert.equal(changedCustomError.passed, false);
 });
 
-test('rejects added duplicate failures and cancelled tests', () => {
+test('rejects added duplicate failures, cancellations, and skipped tests', () => {
   const duplicate = compareTapResults(
     parseTapResult(tap({ failures: ['same'] }), 1),
     parseTapResult(tap({ failures: ['same', 'same'] }), 1),
@@ -191,6 +204,13 @@ test('rejects added duplicate failures and cancelled tests', () => {
   );
   assert.equal(cancelled.passed, false);
   assert.equal(cancelled.kind, 'cancelled_tests');
+
+  const skipped = compareTapResults(
+    parseTapResult(tap({ skipped: 1 }), 0),
+    parseTapResult(tap({ skipped: 10 }), 0),
+  );
+  assert.equal(skipped.passed, false);
+  assert.equal(skipped.kind, 'unclassified_failure');
 });
 
 test('fails closed when a red run has no complete TAP summary', () => {

@@ -4,6 +4,18 @@ const fs = require('node:fs');
 
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
+function normalizeAssertionDetail(detail) {
+  return detail
+    .replace(
+      /\b(now|timestamp|time|port|pid|nonce|random(?:Value)?)\b(['"]?\s*[:=]\s*)[^,\s}\]]+/gi,
+      '$1$2<volatile>',
+    )
+    .replace(
+      /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g,
+      '<timestamp>',
+    );
+}
+
 function parseTapResult(text, exitCode) {
   const normalized = String(text || '').replace(ANSI_RE, '').replace(/\r\n?/g, '\n');
   const lines = normalized.split('\n');
@@ -11,6 +23,7 @@ function parseTapResult(text, exitCode) {
   const failureRecords = [];
   let failCount = null;
   let cancelledCount = null;
+  let skippedCount = null;
   let testCount = null;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -71,9 +84,7 @@ function parseTapResult(text, exitCode) {
         /^\s*code:\s*['"]?ERR_ASSERTION['"]?\s*$/.test(detail),
       );
       const stableErrorDetails = assertionFailure
-        ? errorDetails.slice(0, 1).map((detail) =>
-            detail.replace(/\b\d+(?:\.\d+)?\b/g, '<number>'),
-          )
+        ? errorDetails.map(normalizeAssertionDetail)
         : errorDetails;
       diagnostic.push(...stableErrorDetails.map((detail) => `error-detail: ${detail}`));
       failures.push(name);
@@ -86,6 +97,8 @@ function parseTapResult(text, exitCode) {
     if (failSummary) failCount = Number(failSummary[1]);
     const cancelledSummary = line.match(/^\s*# cancelled (\d+)\s*$/);
     if (cancelledSummary) cancelledCount = Number(cancelledSummary[1]);
+    const skippedSummary = line.match(/^\s*# skipped (\d+)\s*$/);
+    if (skippedSummary) skippedCount = Number(skippedSummary[1]);
     const testSummary = line.match(/^\s*# tests (\d+)\s*$/);
     if (testSummary) testCount = Number(testSummary[1]);
   }
@@ -95,9 +108,13 @@ function parseTapResult(text, exitCode) {
     failureRecords,
     failCount,
     cancelledCount,
+    skippedCount,
     testCount,
     complete:
-      failCount !== null && cancelledCount !== null && testCount !== null,
+      failCount !== null &&
+      cancelledCount !== null &&
+      skippedCount !== null &&
+      testCount !== null,
   };
 }
 
@@ -116,6 +133,7 @@ function compareTapResults(baseline, candidate) {
       candidate.complete &&
       candidate.failCount === 0 &&
       candidate.cancelledCount === 0 &&
+      candidate.skippedCount <= baseline.skippedCount &&
       candidate.testCount >= baseline.testCount;
     return {
       passed: completeCleanRun,
@@ -156,7 +174,10 @@ function compareTapResults(baseline, candidate) {
     };
   }
 
-  if (candidate.cancelledCount > 0) {
+  if (
+    candidate.cancelledCount > 0 ||
+    candidate.skippedCount > baseline.skippedCount
+  ) {
     return {
       passed: false,
       kind: 'cancelled_tests',
