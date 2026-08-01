@@ -1,4 +1,4 @@
-import type { MiddleClickBehavior, TerminalSettings } from "../../../domain/models";
+import type { MiddleClickBehavior, RightClickBehavior, TerminalSettings } from "../../../domain/models";
 
 type MiddleClickSettings = Partial<Pick<TerminalSettings, "middleClickBehavior" | "middleClickPaste">>;
 const MIDDLE_CONTEXT_MENU_EVENT_KEY = "__netcattyMiddleContextMenu";
@@ -17,6 +17,10 @@ export interface MouseTrackingContextMenuCaptureState {
   event: MouseEvent;
   mouseTracking: boolean;
   status?: string | null;
+  /** The user's configured right-click action. */
+  rightClickBehavior?: RightClickBehavior;
+  /** When true, show the app context menu over fullscreen apps (tmux/vim). */
+  forceMenuInAlternateScreen?: boolean;
 }
 
 export interface ShiftMouseSelectionReplayState {
@@ -30,6 +34,10 @@ export interface ShiftRightClickMouseDownCaptureState {
   event: MouseEvent;
   mouseTracking: boolean;
   status?: string | null;
+  /** The user's configured right-click action. */
+  rightClickBehavior?: RightClickBehavior;
+  /** When true, show the app context menu over fullscreen apps (tmux/vim). */
+  forceMenuInAlternateScreen?: boolean;
 }
 
 export const resolveMiddleClickBehavior = (
@@ -69,15 +77,31 @@ export const markShiftSelectionReplayMouseEvent = (event: MouseEvent): MouseEven
 export const isShiftSelectionReplayMouseEvent = (event: MouseEvent): boolean =>
   (event as ShiftSelectionReplayMouseEvent)[SHIFT_SELECTION_REPLAY_EVENT_KEY] === true;
 
+// When the "show context menu over fullscreen apps" setting is on and the
+// right-click action is the context menu, an unmodified right-click should
+// behave like Shift+right-click: let the contextmenu event through so Radix
+// opens the app menu, and stop the button press from reaching the TUI. Paste /
+// select-word actions are unaffected — the setting is about the menu only.
+const forcesMenuOverMouseTracking = ({
+  rightClickBehavior,
+  forceMenuInAlternateScreen,
+}: {
+  rightClickBehavior?: RightClickBehavior;
+  forceMenuInAlternateScreen?: boolean;
+}): boolean => Boolean(forceMenuInAlternateScreen && rightClickBehavior === "context-menu");
+
 export const shouldInterceptMouseTrackingContextMenu = ({
   event,
   mouseTracking,
   status,
+  rightClickBehavior,
+  forceMenuInAlternateScreen,
 }: MouseTrackingContextMenuCaptureState): boolean =>
   mouseTracking
   && status === "connected"
   && !event.shiftKey
-  && !isMiddleClickContextMenuEvent(event);
+  && !isMiddleClickContextMenuEvent(event)
+  && !forcesMenuOverMouseTracking({ rightClickBehavior, forceMenuInAlternateScreen });
 
 export const shouldReplayShiftMouseSelectionAsMacOption = ({
   event,
@@ -99,11 +123,13 @@ export const shouldStopShiftRightClickMouseTrackingMouseDown = ({
   event,
   mouseTracking,
   status,
+  rightClickBehavior,
+  forceMenuInAlternateScreen,
 }: ShiftRightClickMouseDownCaptureState): boolean =>
   mouseTracking
   && status === "connected"
   && event.button === 2
-  && event.shiftKey;
+  && (event.shiftKey || forcesMenuOverMouseTracking({ rightClickBehavior, forceMenuInAlternateScreen }));
 
 export const createMacOptionForcedSelectionMouseEvent = (event: MouseEvent): MouseEvent =>
   markShiftSelectionReplayMouseEvent(new MouseEvent(event.type, {
