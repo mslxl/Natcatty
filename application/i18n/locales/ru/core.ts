@@ -507,6 +507,9 @@ export const ruCoreMessages: Messages = {
     'Подстраивать цвета под требования контрастности (1 = отключено, 21 = максимум)',
   'settings.terminal.behavior.rightClick': 'Поведение правой кнопки мыши',
   'settings.terminal.behavior.rightClick.desc': 'Действие при щелчке правой кнопкой в терминале',
+  'settings.terminal.behavior.rightClick.fullscreenMenu': 'Показывать меню поверх полноэкранных приложений',
+  'settings.terminal.behavior.rightClick.fullscreenMenu.desc':
+    'Показывать контекстное меню, даже когда tmux, vim или другие полноэкранные приложения перехватывают мышь. Когда выключено, правый щелчок передаётся приложению (Shift+правый щелчок всё равно открывает меню).',
   'settings.terminal.behavior.autoCloseOnExit': 'Автоматически закрывать терминал при выходе',
   'settings.terminal.behavior.autoCloseOnExit.desc':
     'Разрешить автоматическое закрытие вкладок и окон терминала после завершения сеанса. Отключите, чтобы сохранять их после любого выхода.',
