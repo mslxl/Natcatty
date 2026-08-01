@@ -922,7 +922,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
     [onCopyWorkspace, workspace.id],
   );
   const detachSessions = workspaceSessions ?? [];
-  const tabLabel = resolveWorkspaceTabLabel(workspace, detachSessions, dynamicTabTitleMode);
+  const tabLabel = resolveWorkspaceTabLabel(workspace, detachSessions);
 
   return (
     <ContextMenu>

@@ -15,10 +15,7 @@ export const getSessionConnectionLabel = (session: Pick<TerminalSession, 'custom
  */
 export const DEFAULT_WORKSPACE_TITLE = 'Workspace';
 
-type WorkspaceTabLabelSession = Pick<
-  TerminalSession,
-  'id' | 'customName' | 'hostLabel' | 'dynamicTitle' | 'codingCliProviderId'
->;
+type WorkspaceTabLabelSession = Pick<TerminalSession, 'id' | 'customName' | 'hostLabel'>;
 
 /**
  * Resolve the label shown on a split-workspace tab. When the user has renamed
@@ -27,11 +24,16 @@ type WorkspaceTabLabelSession = Pick<
  * tab reads as a concrete host instead of the generic "Workspace". If the
  * workspace holds sessions for more than one distinct host, the focused host is
  * shown with a "+N" suffix for the others.
+ *
+ * Uses the stable connection label (rename / host label) rather than the
+ * dynamic shell/agent title: those live titles are published only to the
+ * session presentation store (not the plain session records passed here), and
+ * they can differ per-pane on a single host — counting them would both go stale
+ * and produce a bogus "+N". The host identity is what this tab is about.
  */
 export const resolveWorkspaceTabLabel = (
   workspace: { title?: string; focusedSessionId?: string | null },
   sessions: readonly WorkspaceTabLabelSession[],
-  dynamicTabTitleMode: DynamicTabTitleMode = 'agent',
 ): string => {
   const title = workspace.title?.trim();
   if (title && title !== DEFAULT_WORKSPACE_TITLE) {
@@ -41,10 +43,8 @@ export const resolveWorkspaceTabLabel = (
     return title || DEFAULT_WORKSPACE_TITLE;
   }
   const focused = sessions.find((s) => s.id === workspace.focusedSessionId) ?? sessions[0];
-  const primary = resolveSessionTabTitle(focused, dynamicTabTitleMode);
-  const distinct = new Set(
-    sessions.map((s) => resolveSessionTabTitle(s, dynamicTabTitleMode)).filter(Boolean),
-  );
+  const primary = getSessionConnectionLabel(focused);
+  const distinct = new Set(sessions.map(getSessionConnectionLabel).filter(Boolean));
   if (distinct.size > 1) {
     return `${primary} +${distinct.size - 1}`;
   }
