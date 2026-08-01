@@ -228,6 +228,8 @@ export const createWorkspaceFromSessionIds = (
     title: string;
     viewMode?: WorkspaceViewMode;
     snippetId?: string;
+    /** false = the title is an explicit name; omit for an auto default title. */
+    autoTitle?: boolean;
   }
 ): Workspace => {
   if (sessionIds.length === 0) {
@@ -239,6 +241,7 @@ export const createWorkspaceFromSessionIds = (
     return {
       id: `ws-${crypto.randomUUID()}`,
       title: options.title,
+      autoTitle: options.autoTitle,
       viewMode: options.viewMode,
       snippetId: options.snippetId,
       focusedSessionId: sessionIds[0],
@@ -261,6 +264,7 @@ export const createWorkspaceFromSessionIds = (
   return {
     id: `ws-${crypto.randomUUID()}`,
     title: options.title,
+    autoTitle: options.autoTitle,
     viewMode: options.viewMode,
     snippetId: options.snippetId,
     focusedSessionId: sessionIds[0],

@@ -32,12 +32,17 @@ type WorkspaceTabLabelSession = Pick<TerminalSession, 'id' | 'customName' | 'hos
  * and produce a bogus "+N". The host identity is what this tab is about.
  */
 export const resolveWorkspaceTabLabel = (
-  workspace: { title?: string; focusedSessionId?: string | null },
+  workspace: { title?: string; focusedSessionId?: string | null; autoTitle?: boolean },
   sessions: readonly WorkspaceTabLabelSession[],
 ): string => {
   const title = workspace.title?.trim();
-  if (title && title !== DEFAULT_WORKSPACE_TITLE) {
-    return title;
+  // Derive a host label only for an auto-titled workspace. The `autoTitle` flag
+  // is authoritative when present (so a workspace a user explicitly named
+  // "Workspace" is kept, not overwritten); legacy workspaces without the flag
+  // fall back to matching the default-title string.
+  const isAutoTitle = workspace.autoTitle ?? (title === DEFAULT_WORKSPACE_TITLE);
+  if (!isAutoTitle) {
+    return title || DEFAULT_WORKSPACE_TITLE;
   }
   if (sessions.length === 0) {
     return title || DEFAULT_WORKSPACE_TITLE;

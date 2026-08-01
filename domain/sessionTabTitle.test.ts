@@ -171,6 +171,28 @@ test('resolveWorkspaceTabLabel shows the focused rename while counting hosts', (
   );
 });
 
+test('resolveWorkspaceTabLabel keeps a workspace explicitly named "Workspace"', () => {
+  // autoTitle:false marks the title as user-chosen even when it equals the
+  // default sentinel — it must not be replaced by a host label.
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: DEFAULT_WORKSPACE_TITLE, autoTitle: false, focusedSessionId: 's1' },
+      [{ id: 's1', hostLabel: 'web-01', hostId: 'host-web' }],
+    ),
+    'Workspace',
+  );
+});
+
+test('resolveWorkspaceTabLabel derives a label for an explicitly auto-titled workspace', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: DEFAULT_WORKSPACE_TITLE, autoTitle: true, focusedSessionId: 's1' },
+      [{ id: 's1', hostLabel: 'Localhost', hostId: 'local-terminal' }],
+    ),
+    'Localhost',
+  );
+});
+
 test('resolveWorkspaceTabLabel falls back to the default title with no sessions', () => {
   assert.equal(
     resolveWorkspaceTabLabel({ title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: null }, []),

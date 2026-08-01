@@ -626,7 +626,7 @@ export const useSessionState = ({
       
       setWorkspaceRenameTarget(prevTarget => {
         if (!prevTarget) return prevTarget;
-        setWorkspaces(prev => prev.map(w => w.id === prevTarget.id ? { ...w, title: name } : w));
+        setWorkspaces(prev => prev.map(w => w.id === prevTarget.id ? { ...w, title: name, autoTitle: false } : w));
         return null;
       });
       
@@ -652,6 +652,7 @@ export const useSessionState = ({
     // Create workspace
     const workspace = createWorkspaceFromSessionIds(sessionIds, {
       title: name,
+      autoTitle: false,
       viewMode: 'split',
     });
 
@@ -672,8 +673,12 @@ export const useSessionState = ({
     | { kind: 'local'; shellType?: TerminalSession['shellType']; shell?: string; shellArgs?: string[]; shellName?: string; shellIcon?: string }
     | { kind: 'host'; host: Host };
 
-  const createWorkspaceFromTargets = useCallback((targets: WorkspaceTarget[], name: string = DEFAULT_WORKSPACE_TITLE): string | null => {
+  const createWorkspaceFromTargets = useCallback((targets: WorkspaceTarget[], name?: string): string | null => {
     if (targets.length === 0) return null;
+    // A caller-provided name is an explicit title; without one the workspace is
+    // auto-titled and the tab derives a host-based label.
+    const explicitName = name?.trim();
+    const workspaceTitle = explicitName || DEFAULT_WORKSPACE_TITLE;
 
     const newSessions: TerminalSession[] = targets.map((target) => {
       if (target.kind === 'local') {
@@ -695,7 +700,8 @@ export const useSessionState = ({
     // count — matches the intent behind the QuickSwitcher "New
     // Workspace" flow, which the user expects to land in focus view.
     const workspace = createWorkspaceFromSessionIds(sessionIds, {
-      title: name,
+      title: workspaceTitle,
+      autoTitle: explicitName ? false : undefined,
       viewMode: 'focus',
     });
     const sessionsWithWorkspace = newSessions.map((s) => ({ ...s, workspaceId: workspace.id }));
@@ -1018,6 +1024,7 @@ export const useSessionState = ({
     // Create a focus mode workspace
     const workspace = createWorkspaceFromSessionIds(sessionIds, {
       title: snippet.label,
+      autoTitle: false,
       viewMode: 'focus',
       snippetId: snippet.id,
     });
