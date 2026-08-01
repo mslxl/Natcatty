@@ -109,7 +109,7 @@ test('resolveWorkspaceTabLabel keeps a user-renamed workspace title', () => {
   assert.equal(
     resolveWorkspaceTabLabel(
       { title: 'My Cluster', focusedSessionId: 's1' },
-      [{ id: 's1', hostLabel: 'web-01' }],
+      [{ id: 's1', hostLabel: 'web-01', hostId: 'host-web' }],
     ),
     'My Cluster',
   );
@@ -120,8 +120,8 @@ test('resolveWorkspaceTabLabel derives the focused host name from a default-titl
     resolveWorkspaceTabLabel(
       { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's2' },
       [
-        { id: 's1', hostLabel: 'Localhost' },
-        { id: 's2', hostLabel: 'prod-db' },
+        { id: 's1', hostLabel: 'Localhost', hostId: 'local-terminal' },
+        { id: 's2', hostLabel: 'prod-db', hostId: 'host-db' },
       ],
     ),
     // Two distinct hosts: focused host + "+1" for the other.
@@ -134,8 +134,9 @@ test('resolveWorkspaceTabLabel shows a single host name without a suffix', () =>
     resolveWorkspaceTabLabel(
       { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's1' },
       [
-        { id: 's1', hostLabel: 'Localhost' },
-        { id: 's2', hostLabel: 'Localhost' },
+        // Two local terminals share the stable local hostId.
+        { id: 's1', hostLabel: 'Localhost', hostId: 'local-terminal' },
+        { id: 's2', hostLabel: 'Localhost', hostId: 'local-terminal' },
       ],
     ),
     'Localhost',
@@ -147,9 +148,10 @@ test('resolveWorkspaceTabLabel does not add a suffix when a same-host pane is re
     resolveWorkspaceTabLabel(
       { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's1' },
       [
-        { id: 's1', hostLabel: 'web-01' },
-        // Same host, but this pane was renamed by the user.
-        { id: 's2', customName: 'logs', hostLabel: 'web-01' },
+        { id: 's1', hostLabel: 'web-01', hostId: 'host-web' },
+        // Same host (hostId), but a rename rewrote this pane's customName AND
+        // hostLabel — hostId still ties it to the same host, so no "+1".
+        { id: 's2', customName: 'logs', hostLabel: 'logs', hostId: 'host-web' },
       ],
     ),
     'web-01',
@@ -161,8 +163,8 @@ test('resolveWorkspaceTabLabel shows the focused rename while counting hosts', (
     resolveWorkspaceTabLabel(
       { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's1' },
       [
-        { id: 's1', customName: 'my-web', hostLabel: 'web-01' },
-        { id: 's2', hostLabel: 'db-02' },
+        { id: 's1', customName: 'my-web', hostLabel: 'my-web', hostId: 'host-web' },
+        { id: 's2', hostLabel: 'db-02', hostId: 'host-db' },
       ],
     ),
     'my-web +1',

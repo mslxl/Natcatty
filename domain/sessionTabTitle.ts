@@ -15,7 +15,7 @@ export const getSessionConnectionLabel = (session: Pick<TerminalSession, 'custom
  */
 export const DEFAULT_WORKSPACE_TITLE = 'Workspace';
 
-type WorkspaceTabLabelSession = Pick<TerminalSession, 'id' | 'customName' | 'hostLabel'>;
+type WorkspaceTabLabelSession = Pick<TerminalSession, 'id' | 'customName' | 'hostLabel' | 'hostId'>;
 
 /**
  * Resolve the label shown on a split-workspace tab. When the user has renamed
@@ -44,11 +44,13 @@ export const resolveWorkspaceTabLabel = (
   }
   const focused = sessions.find((s) => s.id === workspace.focusedSessionId) ?? sessions[0];
   const primary = getSessionConnectionLabel(focused);
-  // Count distinct HOSTS by the host label alone, not the connection label: a
-  // per-session rename (customName) must not make two panes on the same host
-  // look like two hosts and add a spurious "+1". The focused pane may still
-  // show its rename as the primary label.
-  const distinctHosts = new Set(sessions.map((s) => s.hostLabel).filter(Boolean));
+  // Count distinct HOSTS by hostId, the only stable host identity: a rename
+  // rewrites both customName and hostLabel (useSessionState.submitSessionRename),
+  // so neither is safe to count by — a renamed pane on the same host would add a
+  // spurious "+1". hostId is shared across all local terminals and per host
+  // config, and is untouched by renames. The focused pane may still show its
+  // rename as the primary label.
+  const distinctHosts = new Set(sessions.map((s) => s.hostId).filter(Boolean));
   if (distinctHosts.size > 1) {
     return `${primary} +${distinctHosts.size - 1}`;
   }
