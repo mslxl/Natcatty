@@ -44,9 +44,13 @@ export const resolveWorkspaceTabLabel = (
   }
   const focused = sessions.find((s) => s.id === workspace.focusedSessionId) ?? sessions[0];
   const primary = getSessionConnectionLabel(focused);
-  const distinct = new Set(sessions.map(getSessionConnectionLabel).filter(Boolean));
-  if (distinct.size > 1) {
-    return `${primary} +${distinct.size - 1}`;
+  // Count distinct HOSTS by the host label alone, not the connection label: a
+  // per-session rename (customName) must not make two panes on the same host
+  // look like two hosts and add a spurious "+1". The focused pane may still
+  // show its rename as the primary label.
+  const distinctHosts = new Set(sessions.map((s) => s.hostLabel).filter(Boolean));
+  if (distinctHosts.size > 1) {
+    return `${primary} +${distinctHosts.size - 1}`;
   }
   return primary || title || DEFAULT_WORKSPACE_TITLE;
 };

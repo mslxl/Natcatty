@@ -142,6 +142,33 @@ test('resolveWorkspaceTabLabel shows a single host name without a suffix', () =>
   );
 });
 
+test('resolveWorkspaceTabLabel does not add a suffix when a same-host pane is renamed', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's1' },
+      [
+        { id: 's1', hostLabel: 'web-01' },
+        // Same host, but this pane was renamed by the user.
+        { id: 's2', customName: 'logs', hostLabel: 'web-01' },
+      ],
+    ),
+    'web-01',
+  );
+});
+
+test('resolveWorkspaceTabLabel shows the focused rename while counting hosts', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's1' },
+      [
+        { id: 's1', customName: 'my-web', hostLabel: 'web-01' },
+        { id: 's2', hostLabel: 'db-02' },
+      ],
+    ),
+    'my-web +1',
+  );
+});
+
 test('resolveWorkspaceTabLabel falls back to the default title with no sessions', () => {
   assert.equal(
     resolveWorkspaceTabLabel({ title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: null }, []),
