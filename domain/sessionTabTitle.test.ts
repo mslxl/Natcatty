@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  DEFAULT_WORKSPACE_TITLE,
   getSessionConnectionLabel,
   resolveCodingCliProviderIconUpdate,
   resolveSessionTabTitle,
+  resolveWorkspaceTabLabel,
   shouldUpdateCodingCliTabIcon,
 } from './sessionTabTitle';
 
@@ -101,4 +103,48 @@ test('coding CLI icon updates stop without clearing the current icon when dynami
     currentProviderId: 'claude',
     nextProviderId: null,
   }), null);
+});
+
+test('resolveWorkspaceTabLabel keeps a user-renamed workspace title', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: 'My Cluster', focusedSessionId: 's1' },
+      [{ id: 's1', hostLabel: 'web-01' }],
+    ),
+    'My Cluster',
+  );
+});
+
+test('resolveWorkspaceTabLabel derives the focused host name from a default-title workspace', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's2' },
+      [
+        { id: 's1', hostLabel: 'Localhost' },
+        { id: 's2', hostLabel: 'prod-db' },
+      ],
+    ),
+    // Two distinct hosts: focused host + "+1" for the other.
+    'prod-db +1',
+  );
+});
+
+test('resolveWorkspaceTabLabel shows a single host name without a suffix', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel(
+      { title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: 's1' },
+      [
+        { id: 's1', hostLabel: 'Localhost' },
+        { id: 's2', hostLabel: 'Localhost' },
+      ],
+    ),
+    'Localhost',
+  );
+});
+
+test('resolveWorkspaceTabLabel falls back to the default title with no sessions', () => {
+  assert.equal(
+    resolveWorkspaceTabLabel({ title: DEFAULT_WORKSPACE_TITLE, focusedSessionId: null }, []),
+    DEFAULT_WORKSPACE_TITLE,
+  );
 });

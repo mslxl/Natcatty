@@ -59,6 +59,7 @@ import type { SessionRestorePayload } from '../../domain/sessionRestore';
 import { resolveRestorePreviousSessionSetting } from './sessionRestoreSettings';
 import type { CodingCliProviderId } from '../../domain/codingCliProviders';
 import { normalizeCodingCliDynamicTitleForStorage } from '../../domain/codingCliTitleParse';
+import { DEFAULT_WORKSPACE_TITLE } from '../../domain/sessionTabTitle';
 import { cleanupClosedTerminalSessions } from './aiStateSnapshots';
 
 export function addWorkspaceIfMissing(
@@ -671,7 +672,7 @@ export const useSessionState = ({
     | { kind: 'local'; shellType?: TerminalSession['shellType']; shell?: string; shellArgs?: string[]; shellName?: string; shellIcon?: string }
     | { kind: 'host'; host: Host };
 
-  const createWorkspaceFromTargets = useCallback((targets: WorkspaceTarget[], name: string = 'Workspace'): string | null => {
+  const createWorkspaceFromTargets = useCallback((targets: WorkspaceTarget[], name: string = DEFAULT_WORKSPACE_TITLE): string | null => {
     if (targets.length === 0) return null;
 
     const newSessions: TerminalSession[] = targets.map((target) => {

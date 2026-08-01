@@ -1,4 +1,5 @@
 import { Workspace,WorkspaceNode,WorkspaceViewMode } from './models';
+import { DEFAULT_WORKSPACE_TITLE } from './sessionTabTitle';
 
 export type SplitDirection = 'horizontal' | 'vertical';
 type SplitPosition = 'left' | 'right' | 'top' | 'bottom';
@@ -146,7 +147,7 @@ export const createWorkspaceFromSessions = (
 
   return {
     id: `ws-${crypto.randomUUID()}`,
-    title: 'Workspace',
+    title: DEFAULT_WORKSPACE_TITLE,
     focusedSessionId: baseSessionId, // Initialize with the base session focused
     focusSessionOrder: [baseSessionId, joiningSessionId],
     root: {
