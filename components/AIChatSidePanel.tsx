@@ -12,7 +12,6 @@ import type {
   DiscoveredAgent,
   ExternalAgentConfig,
 } from '../infrastructure/ai/types';
-import { resolveContextWindow } from '../infrastructure/ai/contextCompaction';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import {
   filterAgentModelPresetsForCliVersion,
@@ -640,17 +639,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     [currentAgentId, providers],
   );
 
-  const contextUsage = currentAgentId === 'catty' && activeSessionId
-    ? observedContextUsage ?? {
-        sessionId: activeSessionId,
-        inputTokens: 0,
-        contextWindow: resolveContextWindow({
-          provider: effectiveActiveProvider,
-          modelId: effectiveActiveModelId,
-        }),
-        estimated: true,
-      }
-    : null;
+  // Hide the ring until a real context_snapshot arrives. A synthetic 0% fallback
+  // misleads users when reopening long sessions (looks empty until the next turn).
+  const contextUsage = currentAgentId === 'catty' ? observedContextUsage : null;
+
+  const canCompact = currentAgentId === 'catty'
+    && Boolean(activeSessionId)
+    && !isStreaming
+    && Boolean(effectiveActiveProvider)
+    && Boolean(effectiveActiveModelId.trim());
 
   const handleAgentProviderModelSelect = useCallback(
     (providerId: string, modelId: string) => {
@@ -1464,6 +1461,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           activeCompaction?.sessionId === activeSessionId ? activeCompaction : null
         }
         contextUsage={contextUsage}
+        canCompact={canCompact}
         inputValue={inputValue}
         setInputValue={setInputValue}
         handleSend={handleSend}

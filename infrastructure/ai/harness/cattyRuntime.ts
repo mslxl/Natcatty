@@ -38,6 +38,8 @@ export interface CompactCattyMessagesInput {
   trigger?: 'pre-turn' | '413-retry' | 'force';
   force?: boolean;
   compressForRequestTooLargeRetry?: boolean;
+  /** Override protect-recent window (default: DEFAULT_PROTECT_RECENT_MESSAGES). */
+  protectRecentMessages?: number;
   maxOutputTokens?: number;
   onCompactionStart?: (trigger: 'pre-turn' | '413-retry' | 'force') => void;
   onCompaction?: (trace: CompactionTrace) => void;
@@ -210,7 +212,7 @@ export async function compactCattyMessages(
       trigger,
       force: input.force,
       compressForRequestTooLargeRetry: input.compressForRequestTooLargeRetry,
-      protectRecentMessages: DEFAULT_PROTECT_RECENT_MESSAGES,
+      protectRecentMessages: input.protectRecentMessages ?? DEFAULT_PROTECT_RECENT_MESSAGES,
       summarize,
       sessionId: input.sessionId,
       chatSessionId: input.chatSessionId,
@@ -241,7 +243,7 @@ export async function compactCattyMessages(
       trigger: 'force',
       force: true,
       compressForRequestTooLargeRetry: input.compressForRequestTooLargeRetry,
-      protectRecentMessages: DEFAULT_PROTECT_RECENT_MESSAGES,
+      protectRecentMessages: input.protectRecentMessages ?? DEFAULT_PROTECT_RECENT_MESSAGES,
       sessionId: input.sessionId,
       chatSessionId: input.chatSessionId,
       onEvent: undefined,

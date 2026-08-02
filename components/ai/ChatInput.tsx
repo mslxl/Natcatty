@@ -81,6 +81,8 @@ interface ChatInputProps {
   onChange: (value: string) => void;
   onSend: () => void;
   onCompact?: () => void;
+  /** When false, hide/ignore `/compact` so the composer is not cleared as a silent no-op. */
+  canCompact?: boolean;
   contextUsage?: AgentContextUsage | null;
   onSteer?: () => void;
   onStop?: () => void;
@@ -135,6 +137,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   onChange,
   onSend,
   onCompact,
+  canCompact = false,
   contextUsage,
   onSteer,
   onStop,
@@ -322,20 +325,31 @@ const ChatInput: React.FC<ChatInputProps> = ({
     [quickMessages, slashQuery, systemCommandSlugSet],
   );
 
+  const availableSystemCommands = useMemo(
+    () => SYSTEM_BUILTIN_SLASH_COMMANDS.filter((command) => (
+      command.slug !== 'compact' || canCompact
+    )),
+    [canCompact],
+  );
+
   const filteredSystemCommands = useMemo(
-    () => filterSystemSlashCommands(SYSTEM_BUILTIN_SLASH_COMMANDS, slashQuery),
-    [slashQuery],
+    () => filterSystemSlashCommands(availableSystemCommands, slashQuery),
+    [availableSystemCommands, slashQuery],
   );
 
   const filteredUserSkills = useMemo(
     () => filterUserSkillsForSlash(userSkillOptions, slashQuery)
-      .filter((skill) => !quickMessageSlugSet.has(skill.slug)),
-    [userSkillOptions, slashQuery, quickMessageSlugSet],
+      .filter((skill) => (
+        !quickMessageSlugSet.has(skill.slug)
+        && !systemCommandSlugSet.has(skill.slug)
+      )),
+    [userSkillOptions, slashQuery, quickMessageSlugSet, systemCommandSlugSet],
   );
 
   const slashCommandItems = useMemo(
-    () => buildSlashCommandItems(quickMessages, userSkillOptions, slashQuery, true),
-    [quickMessages, userSkillOptions, slashQuery],
+    () => buildSlashCommandItems(quickMessages, userSkillOptions, slashQuery, true)
+      .filter((item) => item.kind !== 'system' || item.command.slug !== 'compact' || canCompact),
+    [quickMessages, userSkillOptions, slashQuery, canCompact],
   );
 
   const isSlashCatalogEmpty = quickMessages.length === 0 && userSkills.length === 0 && filteredSystemCommands.length === 0;
@@ -381,7 +395,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const handleSelectSlashCommandItem = useCallback((item: SlashCommandItem) => {
     if (item.kind === 'system') {
       const command = item.command.slug;
-      if (command === 'compact') onCompact?.();
+      if (command === 'compact') {
+        if (!canCompact) {
+          closeAllMenus();
+          return;
+        }
+        onCompact?.();
+      }
       if (command === 'stop') onStop?.();
       onChange('');
       closeAllMenus();
@@ -392,7 +412,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       return;
     }
     insertUserSkillToken(item.skill);
-  }, [closeAllMenus, insertQuickMessage, insertUserSkillToken, onChange, onCompact, onStop]);
+  }, [canCompact, closeAllMenus, insertQuickMessage, insertUserSkillToken, onChange, onCompact, onStop]);
 
   // Reset active highlight when a menu opens or when the *identity* of the
   // visible items changes. Watching only `.length` misses cases where the
@@ -527,9 +547,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
     (_text: string, _event: FormEvent<HTMLFormElement>) => {
       const systemCommand = getSystemSlashCommand(value);
       if (systemCommand) {
-        if (systemCommand === 'compact') onCompact?.();
-        if (systemCommand === 'stop') onStop?.();
-        onChange('');
+        if (systemCommand === 'compact') {
+          if (!canCompact) return;
+          onCompact?.();
+          onChange('');
+          return;
+        }
+        if (systemCommand === 'stop') {
+          onStop?.();
+          onChange('');
+          return;
+        }
         return;
       }
       if (isStreaming && canSteer) {
@@ -538,7 +566,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       onSend();
     },
-    [canSteer, isStreaming, onCompact, onSend, onSteer, onStop, onChange, value],
+    [canCompact, canSteer, isStreaming, onCompact, onSend, onSteer, onStop, onChange, value],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';

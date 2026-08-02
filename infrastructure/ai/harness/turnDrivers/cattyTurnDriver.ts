@@ -263,6 +263,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       options: {
         force?: boolean;
         compressForRequestTooLargeRetry?: boolean;
+        protectRecentMessages?: number;
       },
     ) => {
       const pendingHandles = ctx.toolOutputStore.listPendingHandles(sessionId);
@@ -281,6 +282,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         trigger: options.force ? 'force' : options.compressForRequestTooLargeRetry ? '413-retry' : 'pre-turn',
         force: options.force,
         compressForRequestTooLargeRetry: options.compressForRequestTooLargeRetry,
+        protectRecentMessages: options.protectRecentMessages,
         onCompactionStart: (trigger) => {
           ctx.emit({
             id: `compaction-start-${Date.now()}`,
@@ -331,18 +333,39 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     };
 
     if (context.forceCompaction) {
-      const compactionBaseMessages = buildSdkMessages(currentSession?.messages ?? [], false);
-      const compacted = await compactMessages(compactionBaseMessages, { force: true });
-      const compactedMessageCount = currentSession?.messages.length
-        ? Math.max(0, currentSession.messages.length - DEFAULT_PROTECT_RECENT_MESSAGES)
-        : 0;
-      if (compacted.summary && compactedMessageCount > 0) {
-        ui.persistContextCompaction?.(sessionId, {
+      // Persist the UI-message boundary and summarize only that head slice so the
+      // durable compact coordinate system matches what buildCattySdkMessages applies.
+      const uiMessages = currentSession?.messages ?? [];
+      const compactedMessageCount = Math.max(0, uiMessages.length - DEFAULT_PROTECT_RECENT_MESSAGES);
+      if (compactedMessageCount <= 0) {
+        emitContextSnapshot(prepareMessagesForStream(buildSdkMessages(uiMessages, false)));
+        return;
+      }
+
+      const headSdkMessages = buildSdkMessages(
+        uiMessages.slice(0, compactedMessageCount),
+        false,
+        {},
+        undefined,
+      );
+      const compacted = await compactMessages(headSdkMessages, {
+        force: true,
+        // Summarize the entire head; the protected tail lives in UI messages.
+        protectRecentMessages: 0,
+      });
+      if (compacted.summary) {
+        const nextCompaction = {
           summary: compacted.summary,
           compactedMessageCount,
-        });
+        };
+        ui.persistContextCompaction?.(sessionId, nextCompaction);
+        emitContextSnapshot(prepareMessagesForStream(
+          buildSdkMessages(uiMessages, false, {}, nextCompaction),
+        ));
+      } else {
+        // Non-durable outcome: keep the meter honest (full current context).
+        emitContextSnapshot(prepareMessagesForStream(buildSdkMessages(uiMessages, false)));
       }
-      emitContextSnapshot(prepareMessagesForStream(compacted.messages));
       return;
     }
 

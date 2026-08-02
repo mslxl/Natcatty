@@ -780,25 +780,6 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
-  const clearSessionMessages = useCallback((sessionId: string) => {
-    getAgentRuntime().clearChatSession(sessionId);
-    void getAIBridge()?.deleteChatToolOutputsTemp?.(sessionId).catch(() => {});
-    if (persistTimerRef.current) {
-      clearTimeout(persistTimerRef.current);
-      persistTimerRef.current = null;
-    }
-    setSessionsRaw(prev => {
-      const next = prev.map(s => {
-        if (s.id !== sessionId) return s;
-        const { contextCompaction: _contextCompaction, ...sessionWithoutCompaction } = s;
-        return { ...sessionWithoutCompaction, messages: [], updatedAt: Date.now() };
-      });
-      setLatestAISessionsSnapshot(next);
-      persistSessions(next);
-      return next;
-    });
-  }, [persistSessions]);
-
   const ensureDraftForScope = useCallback((scopeKey: string, agentId: string): void => {
     let nextDraftsByScope: DraftsByScope | null = null;
 
@@ -1081,7 +1062,6 @@ export function useAIState() {
     updateLastMessage,
     updateMessageById,
     persistContextCompaction,
-    clearSessionMessages,
     cleanupOrphanedSessions,
   }), [
     providers,
@@ -1139,7 +1119,6 @@ export function useAIState() {
     updateLastMessage,
     updateMessageById,
     persistContextCompaction,
-    clearSessionMessages,
     cleanupOrphanedSessions,
   ]);
 }

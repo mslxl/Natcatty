@@ -129,3 +129,12 @@ test('renders the Catty context usage ring after the model chip', () => {
   assert.doesNotMatch(html, /text-\[7px\]/);
   assert.match(html, /aria-valuenow="50"/);
 });
+
+test('ChatInput wires /compact through getSystemSlashCommand and canCompact', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /getSystemSlashCommand/);
+  assert.match(source, /systemCommand === 'compact'/);
+  assert.match(source, /canCompact/);
+  assert.match(source, /onCompact\?\.\(\)/);
+  assert.match(source, /command\.slug !== 'compact' \|\| canCompact/);
+});
