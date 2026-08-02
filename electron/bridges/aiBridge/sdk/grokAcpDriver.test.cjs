@@ -524,6 +524,94 @@ test("runGrokAcpTurn drives initialize/authenticate/session/new/prompt via fixtu
   assert.ok(emitter.calls.some((c) => c[0] === "done"));
 });
 
+test("runGrokAcpTurn seeds history when resume/load fail and session/new is used", async () => {
+  const emitter = makeEmitter();
+  const methods = [];
+  const historySeed = [
+    "[Conversation context replay: the agent SDK may be starting from a fresh local session, so use these prior turns as context and answer only the latest user request.]",
+    "USER: earlier question",
+    "ASSISTANT: earlier answer",
+  ].join("\n");
+  await runGrokAcpTurn({
+    prompt: "latest only",
+    binPath: "/usr/bin/grok",
+    resumeSessionId: "stale-sess",
+    historySeed,
+    permissionMode: "auto",
+    emitter,
+    rpcClientFactory: () => ({
+      async request(method, params) {
+        methods.push([method, params]);
+        if (method === "initialize") {
+          return {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            agentCapabilities: {
+              loadSession: true,
+              sessionCapabilities: { resume: {} },
+            },
+            authMethods: [],
+          };
+        }
+        if (method === "session/resume") throw new Error("missing session");
+        if (method === "session/load") throw new Error("cannot load");
+        if (method === "session/new") return { sessionId: "fresh-sess" };
+        if (method === "session/prompt") {
+          assert.equal(params.sessionId, "fresh-sess");
+          const text = params.prompt?.[0]?.text || "";
+          assert.match(text, /Conversation context replay/);
+          assert.match(text, /earlier question/);
+          assert.match(text, /latest only$/);
+          return { stopReason: "end_turn" };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+    }),
+  });
+  assert.deepEqual(methods.map((m) => m[0]), [
+    "initialize",
+    "session/resume",
+    "session/load",
+    "session/new",
+    "session/prompt",
+  ]);
+  assert.ok(emitter.calls.some((c) => c[0] === "sessionId" && c[1] === "fresh-sess"));
+});
+
+test("runGrokAcpTurn does not seed history when session/resume succeeds", async () => {
+  const emitter = makeEmitter();
+  const historySeed = "USER: earlier\nASSISTANT: earlier answer";
+  await runGrokAcpTurn({
+    prompt: "latest only",
+    binPath: "/usr/bin/grok",
+    resumeSessionId: "live-sess",
+    historySeed,
+    permissionMode: "auto",
+    emitter,
+    rpcClientFactory: () => ({
+      async request(method, params) {
+        if (method === "initialize") {
+          return {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            agentCapabilities: {
+              loadSession: true,
+              sessionCapabilities: { resume: {} },
+            },
+            authMethods: [],
+          };
+        }
+        if (method === "session/resume") return {};
+        if (method === "session/prompt") {
+          const text = params.prompt?.[0]?.text || "";
+          assert.equal(text, "latest only");
+          assert.doesNotMatch(text, /earlier/);
+          return { stopReason: "end_turn" };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+    }),
+  });
+});
+
 test("runGrokAcpTurn prefers session/resume and keeps load history off the emitter", async () => {
   const emitter = makeEmitter();
   const methods = [];

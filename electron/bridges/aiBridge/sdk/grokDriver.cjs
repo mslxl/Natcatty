@@ -487,6 +487,24 @@ function resolveGrokRuntime(value) {
   return "acp";
 }
 
+/**
+ * After establish: only inject historySeed when we asked to resume but landed
+ * on session/new (stale/missing Grok session). Successful resume/load must not
+ * seed or prior turns duplicate into the current bubble.
+ */
+function resolveGrokTurnPrompt({
+  turnPrompt,
+  historySeed,
+  resumeSessionId,
+  establishMethod,
+} = {}) {
+  const prompt = String(turnPrompt || "");
+  const seed = String(historySeed || "").trim();
+  if (!resumeSessionId || !seed) return prompt;
+  if (String(establishMethod || "").toLowerCase() !== "new") return prompt;
+  return prompt ? `${seed}\n\n${prompt}` : seed;
+}
+
 function createLineBuffer(onLine, maxBufferBytes = MAX_GROK_LINE_BYTES) {
   let buffer = "";
   let bufferedBytes = 0;
@@ -851,6 +869,7 @@ module.exports = {
   resolveGrokPermissionFlags,
   resolveGrokRuntime,
   resolveGrokToolIntegrationFlags,
+  resolveGrokTurnPrompt,
   runGrokTurn,
   stripGrokMcpServerSection,
   translateGrokStreamEvent,

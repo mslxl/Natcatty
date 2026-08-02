@@ -324,6 +324,9 @@ const DRIVER_REGISTRY = {
         || "acp",
       ).toLowerCase();
       if (runtime === "streaming-json" || runtime === "cli" || runtime === "headless") {
+        // Headless cannot know if -r restored history before the prompt is sent.
+        // Prefer native -r without seed (common success path). Stale-id fallback
+        // is handled on ACP (default runtime) via historySeed + session/new.
         return grok.runGrokTurn({
           prompt: ctx.prompt,
           binPath: ctx.binPath,
@@ -348,6 +351,7 @@ const DRIVER_REGISTRY = {
         permissionMode: ctx.permissionMode,
         toolIntegrationMode: ctx.toolIntegrationMode,
         resumeSessionId: ctx.resumeSessionId,
+        historySeed: ctx.historySeed,
         injectedMcpServers: ctx.injectedMcpServers,
         emitter: ctx.emitter,
         signal: ctx.signal || ctx.abortController?.signal,

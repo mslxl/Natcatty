@@ -24,6 +24,7 @@ const {
   createLineBuffer,
   formatGrokErrorForUser,
   resolveGrokToolIntegrationFlags,
+  resolveGrokTurnPrompt,
 } = require("./grokDriver.cjs");
 
 const GROK_ACP_ABORT_GRACE_MS = 1_500;
@@ -650,6 +651,7 @@ async function runGrokAcpTurn({
   permissionMode,
   toolIntegrationMode,
   resumeSessionId,
+  historySeed,
   injectedMcpServers,
   emitter,
   signal,
@@ -704,11 +706,17 @@ async function runGrokAcpTurn({
       });
       state.sessionId = established.sessionId;
       emitter.sessionId?.(established.sessionId);
+      const effectivePrompt = resolveGrokTurnPrompt({
+        turnPrompt: prompt,
+        historySeed,
+        resumeSessionId,
+        establishMethod: established.method,
+      });
       // Only accept updates for this turn's prompt (not session/load replay).
       state.acceptUpdates = true;
       await client.request(
         "session/prompt",
-        buildGrokAcpPromptParams(state.sessionId, prompt),
+        buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
       );
       closeReasoning(state, emitter);
       if (!state.failed && !signal?.aborted) emitter.emitDone();
@@ -900,6 +908,12 @@ async function runGrokAcpTurn({
     });
     state.sessionId = established.sessionId;
     emitter.sessionId?.(established.sessionId);
+    const effectivePrompt = resolveGrokTurnPrompt({
+      turnPrompt: prompt,
+      historySeed,
+      resumeSessionId,
+      establishMethod: established.method,
+    });
 
     // Accept streamed updates only for this turn's prompt (not session/load replay).
     state.acceptUpdates = true;
@@ -908,7 +922,7 @@ async function runGrokAcpTurn({
     await Promise.race([
       rpc.request(
         "session/prompt",
-        buildGrokAcpPromptParams(state.sessionId, prompt),
+        buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
         { timeoutMs: 30 * 60_000 },
       ),
       promptDone,

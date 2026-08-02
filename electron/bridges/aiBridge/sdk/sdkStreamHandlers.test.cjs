@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   registerSdkStreamHandlers,
   buildSdkTurnPrompt,
+  formatSdkHistoryReplaySection,
   buildSdkModelCacheKey,
   getSdkModelCacheEntry,
   setSdkModelCacheEntry,
@@ -465,6 +466,26 @@ test("buildSdkTurnPrompt replays history only when requested", () => {
     historyMessages: [{ role: "user", content: "previous question" }],
   });
   assert.equal(steadyStatePrompt, "latest question");
+});
+
+test("formatSdkHistoryReplaySection matches buildSdkTurnPrompt history wording", () => {
+  const messages = [
+    { role: "user", content: "previous question" },
+    { role: "assistant", content: "previous answer" },
+  ];
+  const section = formatSdkHistoryReplaySection(messages);
+  assert.match(section, /Conversation context replay/);
+  assert.match(section, /USER: previous question/);
+  assert.match(section, /ASSISTANT: previous answer/);
+  // Same section is embedded when replayHistory is true.
+  const full = buildSdkTurnPrompt({
+    prompt: "latest",
+    replayHistory: true,
+    historyMessages: messages,
+  });
+  assert.ok(full.startsWith(section));
+  assert.equal(formatSdkHistoryReplaySection([]), "");
+  assert.equal(formatSdkHistoryReplaySection(undefined), "");
 });
 
 test("CodeBuddy does not replay renderer history when a persisted session can resume", () => {

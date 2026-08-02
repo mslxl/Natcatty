@@ -371,6 +371,19 @@ function defaultWriteAttachmentToTemp(attachment) {
   return target;
 }
 
+/**
+ * Format renderer history into the shared SDK conversation-context section.
+ * Used for normal replay and as a Grok resume-fallback seed (same wording).
+ */
+function formatSdkHistoryReplaySection(historyMessages) {
+  const history = normalizeHistoryMessages(historyMessages);
+  if (history.length === 0) return "";
+  return [
+    "[Conversation context replay: the agent SDK may be starting from a fresh local session, so use these prior turns as context and answer only the latest user request.]",
+    ...history.map((msg) => `${msg.role === "assistant" ? "ASSISTANT" : "USER"}: ${msg.content}`),
+  ].join("\n");
+}
+
 function buildSdkTurnPrompt({
   prompt,
   historyMessages,
@@ -381,14 +394,9 @@ function buildSdkTurnPrompt({
   onStagedAttachment,
 }) {
   const sections = [];
-  const history = replayHistory ? normalizeHistoryMessages(historyMessages) : [];
-  if (history.length > 0) {
-    sections.push(
-      [
-        "[Conversation context replay: the agent SDK may be starting from a fresh local session, so use these prior turns as context and answer only the latest user request.]",
-        ...history.map((msg) => `${msg.role === "assistant" ? "ASSISTANT" : "USER"}: ${msg.content}`),
-      ].join("\n"),
-    );
+  if (replayHistory) {
+    const historySection = formatSdkHistoryReplaySection(historyMessages);
+    if (historySection) sections.push(historySection);
   }
 
   if (Array.isArray(attachments) && attachments.length > 0) {
@@ -636,19 +644,25 @@ function registerSdkStreamHandlers(ctx) {
             hasConfiguredCommand,
           });
           const stagedAttachments = [];
+          const replayHistory = shouldReplaySdkHistory({
+            backendKey,
+            codexRuntime,
+            resumeSessionId,
+            hasInMemorySession,
+          });
           const turnPrompt = buildSdkTurnPrompt({
             prompt,
             historyMessages: payload?.historyMessages,
-            replayHistory: shouldReplaySdkHistory({
-              backendKey,
-              codexRuntime,
-              resumeSessionId,
-              hasInMemorySession,
-            }),
+            replayHistory,
             attachments: payload?.images,
             toolIntegrationMode: effectiveMode,
             onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
           });
+          // Grok may fall back to session/new when resume/load fails; keep a
+          // history seed so that path is not history-less (Codex review #2666).
+          const historySeed = backendKey === "grok" && resumeSessionId && !replayHistory
+            ? formatSdkHistoryReplaySection(payload?.historyMessages)
+            : "";
           mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
 
           const systemContext = buildExternalAgentSystemContext({
@@ -716,6 +730,7 @@ function registerSdkStreamHandlers(ctx) {
             cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
             cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
             grokRuntime: backendKey === "grok" ? grokRuntime : undefined,
+            historySeed: backendKey === "grok" ? historySeed : undefined,
             getTempDir: () => tempDirBridge.getTempDir(),
             injectedMcpServers,
             claudeSettings,
@@ -1165,6 +1180,7 @@ module.exports = {
   expireSiblingCursorCliModeSessions,
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
+  formatSdkHistoryReplaySection,
   buildSdkTurnPrompt,
   shouldReplaySdkHistory,
 };

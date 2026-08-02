@@ -13,6 +13,7 @@ const {
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
   resolveGrokToolIntegrationFlags,
+  resolveGrokTurnPrompt,
   runGrokTurn,
   stripGrokMcpServerSection,
   translateGrokStreamEvent,
@@ -137,6 +138,58 @@ test("formatGrokErrorForUser maps auth failures without over-matching bare login
   assert.equal(
     formatGrokErrorForUser("Failed to run login form validation"),
     "Failed to run login form validation",
+  );
+});
+
+test("resolveGrokTurnPrompt seeds history only when resume falls back to session/new", () => {
+  const seed = "[Conversation context replay]\nUSER: earlier";
+  const turn = "latest question";
+  assert.equal(
+    resolveGrokTurnPrompt({
+      turnPrompt: turn,
+      historySeed: seed,
+      resumeSessionId: "old-sess",
+      establishMethod: "new",
+    }),
+    `${seed}\n\n${turn}`,
+  );
+  // Successful resume/load must not inject seed (avoids stacked prior replies).
+  assert.equal(
+    resolveGrokTurnPrompt({
+      turnPrompt: turn,
+      historySeed: seed,
+      resumeSessionId: "old-sess",
+      establishMethod: "resume",
+    }),
+    turn,
+  );
+  assert.equal(
+    resolveGrokTurnPrompt({
+      turnPrompt: turn,
+      historySeed: seed,
+      resumeSessionId: "old-sess",
+      establishMethod: "load",
+    }),
+    turn,
+  );
+  // No resume attempt → never seed (first-turn replay is handled upstream).
+  assert.equal(
+    resolveGrokTurnPrompt({
+      turnPrompt: turn,
+      historySeed: seed,
+      resumeSessionId: undefined,
+      establishMethod: "new",
+    }),
+    turn,
+  );
+  assert.equal(
+    resolveGrokTurnPrompt({
+      turnPrompt: turn,
+      historySeed: "",
+      resumeSessionId: "old-sess",
+      establishMethod: "new",
+    }),
+    turn,
   );
 });
 
