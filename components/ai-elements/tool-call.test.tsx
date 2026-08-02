@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { extractDisplayCommand } from './tool-call';
+import {
+  extractDisplayCommand,
+  MAX_TOOL_COMMAND_TOOLTIP_CHARS,
+  truncateToolCommandTooltip,
+} from './tool-call';
 
 // Codex (SDK) emits command_execution.command as a STRING that wraps the real
 // command in `<shell> -lc '<full>'`. Under Skills + CLI the real command is a
@@ -53,6 +57,13 @@ test('array shell-wrap shape still unwraps (regression)', () => {
 
 test('plain command passes through unchanged', () => {
   assert.equal(extractDisplayCommand({ command: 'ls -la /tmp' }), 'ls -la /tmp');
+});
+
+test('limits long command tooltips to a compact single-line preview', () => {
+  const tooltip = truncateToolCommandTooltip(`  echo first\n${'x'.repeat(300)}  `);
+  assert.equal(tooltip.length, MAX_TOOL_COMMAND_TOOLTIP_CHARS);
+  assert.equal(tooltip.endsWith('…'), true);
+  assert.equal(tooltip.includes('\n'), false);
 });
 
 test('empty / missing args -> null', () => {
