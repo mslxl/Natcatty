@@ -871,16 +871,15 @@ async function runGrokAcpTurn({
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      // Do not treat teardown after a successful prompt as failure. Windows
-      // taskkill / forced exit often reports code 1; tool-only turns never set
-      // streamedAssistantText.
+      // Only ignore nonzero exit after session/prompt succeeded (turnCompleted).
+      // Partial text without prompt completion is a mid-turn crash — still error.
+      // Windows teardown after success often exits 1; turnCompleted covers that.
       if (
         !state.failed
         && !signal?.aborted
         && !state.turnCompleted
         && code
         && code !== 0
-        && !state.streamedAssistantText
       ) {
         const stderr = stderrText.trim();
         state.failed = true;

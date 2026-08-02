@@ -769,15 +769,15 @@ async function runGrokTurn({
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      // Same as ACP: ignore non-zero teardown codes after a completed turn
-      // (Windows kill often exits 1; tool-only turns have no assistant text).
+      // Only ignore nonzero exit after protocol completion (end event).
+      // Do NOT use streamedAssistantText: partial text + crash must still error.
+      // Windows kill after a completed turn often exits 1 — turnCompleted covers that.
       if (
         !state.failed
         && !signal?.aborted
         && !state.turnCompleted
         && code
         && code !== 0
-        && !state.streamedAssistantText
       ) {
         const stderr = stderrText.trim();
         const message = stderr || `Grok Build exited with code ${code}`;

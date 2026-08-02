@@ -1079,6 +1079,79 @@ test("runGrokAcpTurn still errors when process dies mid-turn with no completion"
   assert.ok(!emitter.calls.some((c) => c[0] === "done"));
 });
 
+test("runGrokAcpTurn errors when process dies after partial text without prompt result", async () => {
+  // Partial assistant text is not success — must not suppress exit failure.
+  const { EventEmitter } = require("node:events");
+  const emitter = makeEmitter();
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = {
+      destroyed: false,
+      write(line) {
+        let msg;
+        try { msg = JSON.parse(String(line).trim()); } catch { return; }
+        if (msg?.id == null) return;
+        queueMicrotask(() => {
+          if (msg.method === "initialize") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+            })}\n`));
+          } else if (msg.method === "session/new") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { sessionId: "s-partial" },
+            })}\n`));
+          } else if (msg.method === "session/prompt") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "s-partial",
+                update: {
+                  sessionUpdate: "agent_message_chunk",
+                  content: { text: "half…" },
+                },
+              },
+            })}\n`));
+            // Crash before session/prompt result (turnCompleted stays false).
+            queueMicrotask(() => child.emit("close", 1));
+          } else {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {},
+            })}\n`));
+          }
+        });
+      },
+      end() {},
+    };
+    child.pid = 2;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => { child.killed = true; };
+    return child;
+  }
+
+  await runGrokAcpTurn({
+    prompt: "long answer",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "half…"));
+  assert.ok(emitter.calls.some((c) => c[0] === "error"), "partial text + crash must error");
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+});
+
 test("registry grok backend defaults to ACP path and keeps streaming-json fallback", async () => {
   assert.ok(listBackends().includes("grok"));
   const driver = getDriver("grok");

@@ -490,6 +490,74 @@ test("runGrokTurn streams fixture lines and emits done", async () => {
   assert.ok(emitter.calls.some((c) => c[0] === "sessionId" && c[1] === "sess-xyz"));
 });
 
+test("runGrokTurn reports error when process dies after partial text without end", async () => {
+  // Mid-response crash: text already streamed, no end → must not emitDone.
+  const emitter = makeEmitter();
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 99;
+  child.kill = () => {};
+
+  const spawnImpl = () => {
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from('{"type":"text","data":"partial…"}\n'));
+      child.emit("close", 1);
+    });
+    return child;
+  };
+
+  await runGrokTurn({
+    prompt: "write a lot",
+    binPath: "/usr/bin/grok",
+    permissionMode: "auto",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl,
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "partial…"));
+  assert.ok(emitter.calls.some((c) => c[0] === "error"), "partial stream + exit 1 must emitError");
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"), "must not emitDone on mid-turn crash");
+});
+
+test("runGrokTurn ignores exit code 1 after end event (Windows teardown)", async () => {
+  const emitter = makeEmitter();
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 100;
+  child.kill = () => {};
+
+  const spawnImpl = () => {
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from(
+        [
+          '{"type":"text","data":"done"}',
+          '{"type":"end","sessionId":"s-end","stopReason":"end_turn"}',
+          "",
+        ].join("\n"),
+      ));
+      child.emit("close", 1);
+    });
+    return child;
+  };
+
+  await runGrokTurn({
+    prompt: "hi",
+    binPath: "/usr/bin/grok",
+    permissionMode: "auto",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl,
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "done"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"));
+});
+
 test("runGrokTurn reports missing CLI clearly", async () => {
   const emitter = makeEmitter();
   const result = await runGrokTurn({
