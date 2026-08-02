@@ -557,12 +557,60 @@ test("runGrokTurn fails when process is signal-killed mid-turn (code=null)", asy
   assert.ok(!emitter.calls.some((c) => c[0] === "done"));
 });
 
-test("shouldReportGrokProcessExitFailure covers signal and code cases", () => {
+test("runGrokTurn fails when process exits 0 after partial text without end", async () => {
+  // Quiet CLI death must not look like a successful turn.
+  const emitter = makeEmitter();
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 97;
+  child.kill = () => {};
+
+  const spawnImpl = () => {
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from('{"type":"text","data":"partial…"}\n'));
+      child.emit("close", 0);
+    });
+    return child;
+  };
+
+  await runGrokTurn({
+    prompt: "write a lot",
+    binPath: "/usr/bin/grok",
+    permissionMode: "auto",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl,
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "partial…"));
+  assert.ok(emitter.calls.some((c) => c[0] === "error"), "exit 0 without end must emitError");
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+});
+
+test("translateGrokStreamEvent emits toolResult when rawOutput present without status", () => {
+  const emitter = makeEmitter();
+  const state = {};
+  translateGrokStreamEvent({
+    type: "tool_call_update",
+    toolCallId: "t1",
+    toolName: "read",
+    rawOutput: { content: "file body" },
+  }, emitter, state);
+  assert.ok(emitter.calls.some((c) => c[0] === "toolCall" && c[3] === "t1"));
+  assert.ok(emitter.calls.some((c) => c[0] === "toolResult" && c[1] === "t1"));
+});
+
+test("shouldReportGrokProcessExitFailure fails any incomplete close (incl exit 0)", () => {
   assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, null, "SIGTERM"), true);
   assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 143, null), true);
+  // Exit 0 without protocol completion is still a failure (CLI can die quietly).
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 0, null), true);
   assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: true }, null, null, "SIGTERM"), false);
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: true }, null, 1, null), false);
   assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, { aborted: true }, null, "SIGKILL"), false);
-  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 0, null), false);
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false, failed: true }, null, 1, null), false);
 });
 
 test("runGrokTurn ignores exit code 1 after end event (Windows teardown)", async () => {

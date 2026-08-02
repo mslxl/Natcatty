@@ -541,21 +541,19 @@ function handleGrokAcpMessage(message, { emitter, state, pending, onPromptComple
         waiter.reject(new Error(
           message.error.message || message.error.data || JSON.stringify(message.error),
         ));
+        // Do NOT call onPromptComplete on error — that used to resolve a race
+        // peer and swallow the rejection (async request wrap + microtask hop).
       } else {
         // Mark turn completed + emit usage synchronously on successful
-        // session/prompt. Must not wait for Promise.race after await: onPromptComplete
-        // resolves promptDone in the same tick, so race often wins with "closed"
-        // and drops usage → UI falls back to estimated Token ~1.
+        // session/prompt so teardown/close cannot race past usage emission
+        // (UI would fall back to estimated Token ~1).
         if (state.promptRequestId != null && message.id === state.promptRequestId) {
           state.turnCompleted = true;
           emitGrokUsage(emitter, extractGrokAcpPromptUsage(message.result));
+          onPromptComplete?.(message);
         }
         waiter.resolve(message.result);
       }
-    }
-    // session/prompt resolves when the turn completes (unblocks race / teardown).
-    if (state.promptRequestId != null && message.id === state.promptRequestId) {
-      onPromptComplete?.(message);
     }
     return;
   }
@@ -811,7 +809,6 @@ async function runGrokAcpTurn({
   let settled = false;
   let forceKillTimer = null;
   let abortHandler = null;
-  let promptDoneResolve = null;
   /** @type {ReturnType<typeof createJsonRpcClient>|null} */
   let rpc = null;
 
@@ -828,7 +825,6 @@ async function runGrokAcpTurn({
     state.failed = true;
     emitter.emitError(formatGrokErrorForUser(err?.message || String(err)));
     try { rpc?.rejectAll?.(err || new Error("Grok ACP stdin error")); } catch { /* ignore */ }
-    promptDoneResolve?.();
   };
   if (typeof child.stdin?.on === "function") {
     child.stdin.on("error", (err) => {
@@ -856,10 +852,6 @@ async function runGrokAcpTurn({
     writeLine(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
   };
 
-  const promptDone = new Promise((resolve) => {
-    promptDoneResolve = resolve;
-  });
-
   rpc = createJsonRpcClient({
     write: writeLine,
     onMessage: (message, pending) => {
@@ -868,16 +860,16 @@ async function runGrokAcpTurn({
         emitter,
         state,
         pending,
-        onPromptComplete: () => {
-          promptDoneResolve?.();
-        },
       });
     },
   });
 
-  // Track prompt request id so completion is detected
+  // Track prompt request id so completion is detected.
+  // IMPORTANT: keep this wrapper synchronous — an `async` function adds a
+  // microtask hop that lets a concurrent promptDone resolve win Promise.race
+  // and swallow session/prompt rejections (silent success + unhandledRejection).
   const originalRequest = rpc.request.bind(rpc);
-  rpc.request = async (method, params, options) => {
+  rpc.request = (method, params, options) => {
     const idBefore = rpc.getNextId();
     if (method === "session/prompt") {
       state.promptRequestId = idBefore;
@@ -935,7 +927,6 @@ async function runGrokAcpTurn({
         emitter.emitError(formatGrokErrorForUser(err?.message || String(err)));
       }
       rpc.rejectAll(err || new Error("Grok ACP process error"));
-      promptDoneResolve?.();
       finish();
     });
     child.on("close", (code, exitSignal) => {
@@ -943,18 +934,18 @@ async function runGrokAcpTurn({
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      // Only ignore abnormal exit after session/prompt succeeded (turnCompleted).
-      // Signal kills report code=null — still fail if turn not completed.
+      // Only ignore exit after session/prompt succeeded (turnCompleted).
+      // Incomplete turns fail even on exit 0; signal kills report code=null.
       if (shouldReportGrokProcessExitFailure(state, signal, code, exitSignal)) {
         const stderr = stderrText.trim();
         const detail = code != null && code !== 0
           ? `exited with code ${code}`
-          : (exitSignal ? `terminated by signal ${exitSignal}` : "exited unexpectedly");
+          : (exitSignal ? `terminated by signal ${exitSignal}` : "exited before the turn completed");
         state.failed = true;
         emitter.emitError(formatGrokErrorForUser(stderr || `Grok ACP ${detail}`));
       }
+      // Unblock any in-flight RPC (initialize/prompt) so await rejects into catch.
       rpc.rejectAll(new Error("Grok ACP process closed"));
-      promptDoneResolve?.();
       finish();
     });
 
@@ -1012,16 +1003,14 @@ async function runGrokAcpTurn({
     // Accept streamed updates only for this turn's prompt (not session/load replay).
     state.acceptUpdates = true;
 
-    // session/prompt resolves when the turn finishes; also wait for process end.
-    // Usage is emitted inside handleGrokAcpMessage (must be sync — see above).
-    await Promise.race([
-      rpc.request(
-        "session/prompt",
-        buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
-        { timeoutMs: 30 * 60_000 },
-      ),
-      promptDone,
-    ]);
+    // Await the prompt RPC only (no race with promptDone). Process death
+    // rejects via rejectAll on close; success sets turnCompleted + usage in
+    // handleGrokAcpMessage before resolve.
+    await rpc.request(
+      "session/prompt",
+      buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
+      { timeoutMs: 30 * 60_000 },
+    );
   } catch (err) {
     if (!state.failed && !signal?.aborted) {
       state.failed = true;
@@ -1042,8 +1031,17 @@ async function runGrokAcpTurn({
   }
 
   closeReasoning(state, emitter);
-  if (!state.failed && !signal?.aborted) {
+  // Hard gate: incomplete protocol must not look like success (exit 0 / swallowed
+  // RPC error previously fell through to emitDone).
+  if (signal?.aborted) {
+    // User cancel.
+  } else if (state.failed) {
+    // Already reported.
+  } else if (state.turnCompleted) {
     emitter.emitDone();
+  } else {
+    state.failed = true;
+    emitter.emitError(formatGrokErrorForUser("Grok ACP ended before the turn completed"));
   }
 
   return { sessionId: state.sessionId, runtime: "acp" };

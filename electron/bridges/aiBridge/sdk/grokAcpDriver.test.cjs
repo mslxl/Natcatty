@@ -1346,7 +1346,7 @@ test("handleGrokAcpMessage permission reply uses real optionId from params.optio
   assert.equal(written[0][1].outcome.optionId, "allow-once");
 });
 
-test("shouldReportGrokProcessExitFailure treats signal kills before completion as failures", () => {
+test("shouldReportGrokProcessExitFailure treats any incomplete close as failure", () => {
   // Node close(null, "SIGTERM") when killed — must fail unfinished turns.
   assert.equal(
     shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, null, "SIGTERM"),
@@ -1354,6 +1354,11 @@ test("shouldReportGrokProcessExitFailure treats signal kills before completion a
   );
   assert.equal(
     shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 1, null),
+    true,
+  );
+  // Exit 0 without session/prompt success is still a failure.
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 0, null),
     true,
   );
   assert.equal(
@@ -1368,10 +1373,148 @@ test("shouldReportGrokProcessExitFailure treats signal kills before completion a
     shouldReportGrokProcessExitFailure({ turnCompleted: false, failed: true }, null, 1, null),
     false,
   );
-  assert.equal(
-    shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 0, null),
-    false,
-  );
+});
+
+test("runGrokAcpTurn fails on session/prompt JSON-RPC error (no silent done)", async () => {
+  // Regression: async request wrap + promptDone race used to swallow the reject
+  // and emitDone when the process later exited 0.
+  const emitter = makeEmitter();
+  const { EventEmitter } = require("node:events");
+  const unhandled = [];
+  const onUnhandled = (err) => unhandled.push(err);
+  process.on("unhandledRejection", onUnhandled);
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const stdin = new EventEmitter();
+    stdin.write = (chunk, cb) => {
+      const msg = JSON.parse(String(chunk).trim());
+      queueMicrotask(() => {
+        if (msg.method === "initialize") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+          })}\n`));
+        } else if (msg.method === "session/new") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { sessionId: "s-err" },
+          })}\n`));
+        } else if (msg.method === "session/prompt") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            error: { code: -32000, message: "model overloaded" },
+          })}\n`));
+          queueMicrotask(() => child.emit("close", 0));
+        } else {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {},
+          })}\n`));
+        }
+        if (typeof cb === "function") cb();
+      });
+      return true;
+    };
+    stdin.end = () => {};
+    child.stdin = stdin;
+    child.pid = 8;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => { child.killed = true; };
+    return child;
+  }
+
+  try {
+    await runGrokAcpTurn({
+      prompt: "hi",
+      binPath: "C:\\fake\\grok.exe",
+      permissionMode: "auto",
+      emitter,
+      spawnImpl: () => makeFakeChild(),
+    });
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+
+  const err = emitter.calls.find((c) => c[0] === "error");
+  assert.ok(err, "prompt JSON-RPC error must emitError");
+  assert.match(String(err[1]), /overloaded|error|fail/i);
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"), "must not emitDone on prompt error");
+  assert.equal(unhandled.length, 0, "must not leave unhandledRejection from swallowed race");
+});
+
+test("runGrokAcpTurn fails when process exits 0 mid-prompt without result", async () => {
+  const emitter = makeEmitter();
+  const { EventEmitter } = require("node:events");
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const stdin = new EventEmitter();
+    stdin.write = (chunk, cb) => {
+      const msg = JSON.parse(String(chunk).trim());
+      queueMicrotask(() => {
+        if (msg.method === "initialize") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+          })}\n`));
+        } else if (msg.method === "session/new") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { sessionId: "s-zero" },
+          })}\n`));
+        } else if (msg.method === "session/prompt") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "s-zero",
+              update: { sessionUpdate: "agent_message_chunk", content: { text: "half…" } },
+            },
+          })}\n`));
+          queueMicrotask(() => child.emit("close", 0));
+        } else {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {},
+          })}\n`));
+        }
+        if (typeof cb === "function") cb();
+      });
+      return true;
+    };
+    stdin.end = () => {};
+    child.stdin = stdin;
+    child.pid = 9;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => { child.killed = true; };
+    return child;
+  }
+
+  await runGrokAcpTurn({
+    prompt: "long",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "half…"));
+  assert.ok(emitter.calls.some((c) => c[0] === "error"), "exit 0 mid-prompt must emitError");
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
 });
 
 test("runGrokAcpTurn fails when process is signal-killed mid-turn (code=null)", async () => {

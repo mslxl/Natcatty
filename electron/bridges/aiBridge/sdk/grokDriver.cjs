@@ -398,7 +398,15 @@ function translateGrokStreamEvent(event, emitter, state = {}) {
         emitter.toolCall(name, args, id);
       }
 
-      if (status === "completed" || status === "failed" || status === "error" || status === "cancelled") {
+      // Align with ACP: emit result on terminal status OR when rawOutput is present
+      // (some CLI builds omit status on the final tool_call_update).
+      if (
+        status === "completed"
+        || status === "failed"
+        || status === "error"
+        || status === "cancelled"
+        || event.rawOutput != null
+      ) {
         if (!state.emittedToolResults.has(id)) {
           state.emittedToolResults.add(id);
           const output = event.rawOutput != null
@@ -548,16 +556,15 @@ function extractGrokAcpPromptUsage(promptResult) {
  * Whether a process close should fail the turn.
  * - turnCompleted: protocol finished (end / session/prompt) → ignore teardown noise
  * - user abort: not a failure
- * - nonzero code OR non-null exit signal before completion → failure
+ * - otherwise any close before completion is a failure — including exit 0
+ *   (CLI can die without an end/prompt result) and code=null + signal
  *   (Node reports code=null when killed by signal)
  */
-function shouldReportGrokProcessExitFailure(state, abortSignal, code, exitSignal) {
+function shouldReportGrokProcessExitFailure(state, abortSignal, _code, _exitSignal) {
   if (state?.failed) return false;
   if (abortSignal?.aborted) return false;
   if (state?.turnCompleted) return false;
-  if (code != null && code !== 0) return true;
-  if (exitSignal) return true;
-  return false;
+  return true;
 }
 
 /**
@@ -785,13 +792,13 @@ async function runGrokTurn({
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      // Only ignore abnormal exit after protocol completion (end event).
-      // Signal kills report code=null — still fail if turn not completed.
+      // Only ignore exit after protocol completion (end event).
+      // Incomplete turns fail even on exit 0; signal kills report code=null.
       if (shouldReportGrokProcessExitFailure(state, signal, code, exitSignal)) {
         const stderr = stderrText.trim();
         const detail = code != null && code !== 0
           ? `exited with code ${code}`
-          : (exitSignal ? `terminated by signal ${exitSignal}` : "exited unexpectedly");
+          : (exitSignal ? `terminated by signal ${exitSignal}` : "exited before the turn completed");
         const message = stderr || `Grok Build ${detail}`;
         state.failed = true;
         emitter.emitError(formatGrokErrorForUser(message));
@@ -821,8 +828,17 @@ async function runGrokTurn({
   cleanup();
   closeReasoning(state, emitter);
 
-  if (!state.failed && !signal?.aborted) {
+  // Hard gate: never treat an incomplete protocol turn as success (exit 0 without
+  // end/result used to fall through to emitDone).
+  if (signal?.aborted) {
+    // User cancel: no terminal success/error event.
+  } else if (state.failed) {
+    // Already reported.
+  } else if (state.turnCompleted) {
     emitter.emitDone();
+  } else {
+    state.failed = true;
+    emitter.emitError(formatGrokErrorForUser("Grok Build ended before the turn completed"));
   }
 
   return { sessionId: state.sessionId, runtime: "streaming-json" };
