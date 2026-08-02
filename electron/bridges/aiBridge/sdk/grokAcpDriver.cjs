@@ -3,19 +3,27 @@
 /**
  * Grok Build ACP turn runner — `grok agent … stdio` JSON-RPC client.
  *
- * Lifecycle (Agent Client Protocol):
- *   initialize → session/new (cwd + mcpServers) → session/prompt
+ * Lifecycle (Agent Client Protocol / xAI docs):
+ *   initialize → authenticate (when authMethods exist)
+ *   → session/resume | session/load | session/new
+ *   → session/prompt
  *   session/update notifications → canonical Netcatty emitter events
+ *
+ * Prefer session/resume (no history replay) over session/load when the agent
+ * advertises it; keep acceptUpdates=false until session/prompt so load replay
+ * never pollutes the current assistant bubble.
  *
  * Prefer session-level mcpServers over project `.grok/config.toml` merge.
  * Keep the headless streaming-json driver as an explicit fallback runtime.
  */
+const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
 const {
   GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
   createLineBuffer,
   formatGrokErrorForUser,
+  resolveGrokToolIntegrationFlags,
 } = require("./grokDriver.cjs");
 
 const GROK_ACP_ABORT_GRACE_MS = 1_500;
@@ -54,19 +62,35 @@ function signalProcessTree(child, signal, forceKillImpl) {
 }
 
 /**
- * Build argv for `grok agent [flags] stdio`.
+ * Resolve absolute cwd for ACP session lifecycle (protocol requires absolute path).
+ */
+function resolveGrokAcpCwd(cwd) {
+  const raw = String(cwd || process.cwd() || ".").trim() || ".";
+  try {
+    return path.resolve(raw);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Build argv for `grok --no-auto-update agent [flags] stdio`.
+ * MCP mode also passes --disallowed-tools when the CLI accepts common flags.
  */
 function buildGrokAcpSpawnArgs({
   model,
   permissionMode,
   toolIntegrationMode,
 } = {}) {
-  const args = ["agent"];
+  // Headless/ACP automation: skip background update checks (xAI headless docs).
+  const args = ["--no-auto-update", "agent"];
   const mode = String(permissionMode || "confirm").toLowerCase();
   // Non-interactive Netcatty turns cannot answer ACP permission prompts.
   if (mode !== "observer") {
     args.push("--always-approve");
   }
+  // Align with headless MCP lockdown when the agent CLI honors common flags.
+  args.push(...resolveGrokToolIntegrationFlags(toolIntegrationMode));
   const modelId = String(model || "").trim();
   if (modelId) {
     args.push("-m", modelId);
@@ -132,7 +156,7 @@ function buildGrokAcpSessionNewParams({
   const mode = String(permissionMode || "confirm").toLowerCase();
   const toolMode = String(toolIntegrationMode || "mcp").toLowerCase();
   const params = {
-    cwd: String(cwd || process.cwd() || "."),
+    cwd: resolveGrokAcpCwd(cwd),
     mcpServers: toAcpMcpServers(injectedMcpServers),
     _meta: {},
   };
@@ -176,6 +200,167 @@ function buildGrokAcpPromptParams(sessionId, prompt) {
     sessionId: String(sessionId || ""),
     prompt: [{ type: "text", text: String(prompt || "") }],
   };
+}
+
+/**
+ * Parse initialize result into resume/load capability flags.
+ * When the agent omits capability fields, treat them as "unknown" so we still
+ * try resume then load (Grok versions vary in what they advertise).
+ */
+function parseGrokAcpAgentCapabilities(initResult) {
+  const caps = initResult && typeof initResult === "object"
+    ? (initResult.agentCapabilities || {})
+    : {};
+  const sessionCaps = caps.sessionCapabilities && typeof caps.sessionCapabilities === "object"
+    ? caps.sessionCapabilities
+    : {};
+  const hasLoadField = Object.prototype.hasOwnProperty.call(caps, "loadSession");
+  const hasResumeField = Object.prototype.hasOwnProperty.call(sessionCaps, "resume");
+  return {
+    loadSession: caps.loadSession === true,
+    resume: sessionCaps.resume != null && sessionCaps.resume !== false,
+    hasCapabilityInfo: hasLoadField || hasResumeField,
+  };
+}
+
+/**
+ * Ordered session establish methods for this turn.
+ * Prefer session/resume (no history replay) → session/load → session/new.
+ */
+function planGrokAcpSessionEstablish({ resumeSessionId, agentCapabilities } = {}) {
+  if (!resumeSessionId) return ["new"];
+  const caps = agentCapabilities || parseGrokAcpAgentCapabilities(null);
+  const methods = [];
+  if (caps.resume || !caps.hasCapabilityInfo) methods.push("resume");
+  if (caps.loadSession || !caps.hasCapabilityInfo) methods.push("load");
+  methods.push("new");
+  return [...new Set(methods)];
+}
+
+/**
+ * Params for session/resume or session/load (same shape per ACP session-setup).
+ */
+function buildGrokAcpSessionResumeOrLoadParams({
+  sessionId,
+  cwd,
+  injectedMcpServers,
+} = {}) {
+  return {
+    sessionId: String(sessionId || ""),
+    cwd: resolveGrokAcpCwd(cwd),
+    mcpServers: toAcpMcpServers(injectedMcpServers),
+  };
+}
+
+/**
+ * Select authenticate methodId per xAI ACP sample:
+ * XAI_API_KEY + xai.api_key → xai.api_key; else cached_token; else null.
+ * Empty authMethods → skip (already authenticated / no gate).
+ */
+function selectGrokAcpAuthMethodId(initResult, env = {}) {
+  const methods = Array.isArray(initResult?.authMethods) ? initResult.authMethods : [];
+  if (methods.length === 0) return { methodId: null, required: false };
+  const ids = new Set(
+    methods.map((m) => (m && typeof m.id === "string" ? m.id : "")).filter(Boolean),
+  );
+  const hasApiKey = Boolean(String(env.XAI_API_KEY || process.env.XAI_API_KEY || "").trim());
+  if (hasApiKey && ids.has("xai.api_key")) {
+    return { methodId: "xai.api_key", required: true };
+  }
+  if (ids.has("cached_token")) {
+    return { methodId: "cached_token", required: true };
+  }
+  if (ids.has("xai.api_key")) {
+    // Advertised but no key in env — still attempt so Grok can read config;
+    // missing credentials surface as auth errors after authenticate fails.
+    return { methodId: "xai.api_key", required: true };
+  }
+  return { methodId: null, required: true };
+}
+
+/**
+ * Run authenticate when the agent advertises methods (xAI official ACP sample).
+ */
+async function authenticateGrokAcp(rpc, initResult, env = {}) {
+  const selected = selectGrokAcpAuthMethodId(initResult, env);
+  if (!selected.methodId) {
+    if (selected.required) {
+      throw new Error("Run `grok login` first, or set XAI_API_KEY.");
+    }
+    return { skipped: true, methodId: null };
+  }
+  await rpc.request(
+    "authenticate",
+    { methodId: selected.methodId, _meta: { headless: true } },
+    { timeoutMs: 60_000 },
+  );
+  return { skipped: false, methodId: selected.methodId };
+}
+
+/**
+ * Establish session: try plan methods until one succeeds.
+ * Caller MUST keep acceptUpdates=false until after this returns (load may replay).
+ */
+async function establishGrokAcpSession(rpc, {
+  resumeSessionId,
+  cwd,
+  injectedMcpServers,
+  permissionMode,
+  toolIntegrationMode,
+  systemContext,
+  agentCapabilities,
+} = {}) {
+  const methods = planGrokAcpSessionEstablish({ resumeSessionId, agentCapabilities });
+  let lastError = null;
+  for (const method of methods) {
+    try {
+      if (method === "new") {
+        const created = await rpc.request(
+          "session/new",
+          buildGrokAcpSessionNewParams({
+            cwd,
+            injectedMcpServers,
+            permissionMode,
+            toolIntegrationMode,
+            systemContext,
+          }),
+          { timeoutMs: 30_000 },
+        );
+        const sessionId = created?.sessionId || created?.session_id;
+        if (!sessionId) throw new Error("Grok ACP session/new did not return a sessionId");
+        return { sessionId, method: "new" };
+      }
+      if (method === "resume") {
+        const result = await rpc.request(
+          "session/resume",
+          buildGrokAcpSessionResumeOrLoadParams({
+            sessionId: resumeSessionId,
+            cwd,
+            injectedMcpServers,
+          }),
+          { timeoutMs: 30_000 },
+        );
+        const sessionId = result?.sessionId || result?.session_id || resumeSessionId;
+        return { sessionId, method: "resume" };
+      }
+      if (method === "load") {
+        const result = await rpc.request(
+          "session/load",
+          buildGrokAcpSessionResumeOrLoadParams({
+            sessionId: resumeSessionId,
+            cwd,
+            injectedMcpServers,
+          }),
+          { timeoutMs: 30_000 },
+        );
+        const sessionId = result?.sessionId || result?.session_id || resumeSessionId;
+        return { sessionId, method: "load" };
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError || new Error("Grok ACP session establish failed");
 }
 
 function resultToText(result) {
@@ -477,7 +662,7 @@ async function runGrokAcpTurn({
     return { sessionId: resumeSessionId || null, runtime: "acp" };
   }
 
-  const effectiveCwd = String(cwd || process.cwd() || "").trim() || process.cwd();
+  const effectiveCwd = resolveGrokAcpCwd(cwd);
   const childEnv = { ...(env || process.env) };
   const spawnArgs = buildGrokAcpSpawnArgs({
     model,
@@ -501,27 +686,20 @@ async function runGrokAcpTurn({
   if (typeof rpcClientFactory === "function") {
     const client = rpcClientFactory({ state, emitter });
     try {
-      await client.request("initialize", buildGrokAcpInitializeParams());
-      if (resumeSessionId) {
-        state.sessionId = resumeSessionId;
-        emitter.sessionId?.(resumeSessionId);
-      } else {
-        const created = await client.request(
-          "session/new",
-          buildGrokAcpSessionNewParams({
-            cwd: effectiveCwd,
-            injectedMcpServers,
-            permissionMode,
-            toolIntegrationMode,
-            systemContext: systemPrompt,
-          }),
-        );
-        const sessionId = created?.sessionId || created?.session_id;
-        if (sessionId) {
-          state.sessionId = sessionId;
-          emitter.sessionId?.(sessionId);
-        }
-      }
+      const initResult = await client.request("initialize", buildGrokAcpInitializeParams());
+      await authenticateGrokAcp(client, initResult, childEnv);
+      const established = await establishGrokAcpSession(client, {
+        resumeSessionId,
+        cwd: effectiveCwd,
+        injectedMcpServers,
+        permissionMode,
+        toolIntegrationMode,
+        systemContext: systemPrompt,
+        agentCapabilities: parseGrokAcpAgentCapabilities(initResult),
+      });
+      state.sessionId = established.sessionId;
+      emitter.sessionId?.(established.sessionId);
+      // Only accept updates for this turn's prompt (not session/load replay).
       state.acceptUpdates = true;
       await client.request(
         "session/prompt",
@@ -677,6 +855,12 @@ async function runGrokAcpTurn({
     abortHandler = () => {
       if (settled || terminationStarted) return;
       terminationStarted = true;
+      // Prefer protocol cancel when a session is active (ACP prompt-turn).
+      if (state.sessionId) {
+        try {
+          rpc.notify("session/cancel", { sessionId: state.sessionId });
+        } catch { /* ignore */ }
+      }
       forceKillTimer = setTimeout(() => {
         if (settled) return;
         signalProcessTree(child, "SIGKILL", forceKillImpl);
@@ -693,59 +877,24 @@ async function runGrokAcpTurn({
   });
 
   try {
-    await rpc.request("initialize", buildGrokAcpInitializeParams(), { timeoutMs: 30_000 });
+    const initResult = await rpc.request(
+      "initialize",
+      buildGrokAcpInitializeParams(),
+      { timeoutMs: 30_000 },
+    );
+    await authenticateGrokAcp(rpc, initResult, childEnv);
 
-    if (resumeSessionId) {
-      // Best-effort resume via session/load when supported; otherwise new session.
-      try {
-        const loaded = await rpc.request("session/load", {
-          sessionId: resumeSessionId,
-          cwd: effectiveCwd,
-          mcpServers: toAcpMcpServers(injectedMcpServers),
-        }, { timeoutMs: 30_000 });
-        const sessionId = loaded?.sessionId || loaded?.session_id || resumeSessionId;
-        state.sessionId = sessionId;
-        emitter.sessionId?.(sessionId);
-      } catch {
-        const created = await rpc.request(
-          "session/new",
-          buildGrokAcpSessionNewParams({
-            cwd: effectiveCwd,
-            injectedMcpServers,
-            permissionMode,
-            toolIntegrationMode,
-            systemContext: systemPrompt,
-          }),
-          { timeoutMs: 30_000 },
-        );
-        const sessionId = created?.sessionId || created?.session_id;
-        if (sessionId) {
-          state.sessionId = sessionId;
-          emitter.sessionId?.(sessionId);
-        }
-      }
-    } else {
-      const created = await rpc.request(
-        "session/new",
-        buildGrokAcpSessionNewParams({
-          cwd: effectiveCwd,
-          injectedMcpServers,
-          permissionMode,
-          toolIntegrationMode,
-          systemContext: systemPrompt,
-        }),
-        { timeoutMs: 30_000 },
-      );
-      const sessionId = created?.sessionId || created?.session_id;
-      if (sessionId) {
-        state.sessionId = sessionId;
-        emitter.sessionId?.(sessionId);
-      }
-    }
-
-    if (!state.sessionId) {
-      throw new Error("Grok ACP session/new did not return a sessionId");
-    }
+    const established = await establishGrokAcpSession(rpc, {
+      resumeSessionId,
+      cwd: effectiveCwd,
+      injectedMcpServers,
+      permissionMode,
+      toolIntegrationMode,
+      systemContext: systemPrompt,
+      agentCapabilities: parseGrokAcpAgentCapabilities(initResult),
+    });
+    state.sessionId = established.sessionId;
+    emitter.sessionId?.(established.sessionId);
 
     // Accept streamed updates only for this turn's prompt (not session/load replay).
     state.acceptUpdates = true;
@@ -788,13 +937,20 @@ async function runGrokAcpTurn({
 
 module.exports = {
   ACP_PROTOCOL_VERSION,
+  authenticateGrokAcp,
   buildGrokAcpInitializeParams,
   buildGrokAcpPromptParams,
   buildGrokAcpSessionNewParams,
+  buildGrokAcpSessionResumeOrLoadParams,
   buildGrokAcpSpawnArgs,
   createJsonRpcClient,
+  establishGrokAcpSession,
   handleGrokAcpMessage,
+  parseGrokAcpAgentCapabilities,
+  planGrokAcpSessionEstablish,
+  resolveGrokAcpCwd,
   runGrokAcpTurn,
+  selectGrokAcpAuthMethodId,
   toAcpMcpEnvPairs,
   toAcpMcpServers,
   translateGrokAcpUpdate,

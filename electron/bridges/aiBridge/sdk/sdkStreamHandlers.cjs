@@ -27,7 +27,11 @@ const MODEL_CACHE_MAX_ENTRIES = 32;
 const MODEL_LIST_TIMEOUT_MS = 10000;
 const sdkModelCache = new Map();
 const sdkModelInFlight = new Map();
-const { parseSdkSessionIdentity: parseSdkSessionIdentityPayload, SDK_SESSION_ID_PREFIX } = require("../../../shared/sdkSessionIdentity.cjs");
+const {
+  parseSdkSessionIdentity: parseSdkSessionIdentityPayload,
+  normalizeSdkRuntime,
+  SDK_SESSION_ID_PREFIX,
+} = require("../../../shared/sdkSessionIdentity.cjs");
 const { isPathLikeCommand } = require("../../../shared/pathLikeCommand.cjs");
 
 function parseSdkSessionIdentity(value) {
@@ -37,10 +41,17 @@ function parseSdkSessionIdentity(value) {
     sessionId: parsed.id,
     backendKey: parsed.backend,
     binPath: parsed.binPath || "",
-    runtime: parsed.runtime === "app-server" ? "app-server" : "sdk",
+    runtime: normalizeSdkRuntime(parsed.runtime),
     authMode: parsed.authMode === "cli-login" ? "cli-login" : parsed.authMode === "api-key" ? "api-key" : "",
     cliMode: parsed.cliMode === "ask" ? "ask" : parsed.cliMode === "agent" ? "agent" : "",
   };
+}
+
+/** Resolve Grok dual runtime from explicit ctx / agent env. */
+function resolveGrokRuntimeToken(env, explicit) {
+  return normalizeSdkRuntime(
+    explicit || env?.NETCATTY_GROK_RUNTIME || process.env.NETCATTY_GROK_RUNTIME || "acp",
+  );
 }
 
 function buildSdkSessionKey(chatSessionId, backendKey, binPath, runtime = "sdk", authMode = "", cliMode = "") {
@@ -568,9 +579,16 @@ function registerSdkStreamHandlers(ctx) {
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
+          // Grok ACP vs streaming-json must not share resume identity (like Codex dual runtime).
+          const grokRuntime = backendKey === "grok"
+            ? resolveGrokRuntimeToken(env, env?.NETCATTY_GROK_RUNTIME)
+            : "sdk";
+          const sessionRuntime = backendKey === "grok" ? grokRuntime : codexRuntime;
           sdkRequestRuntimes.set(requestId, {
             backendKey,
             codexRuntime,
+            grokRuntime,
+            sessionRuntime,
             binPath,
             toolIntegrationMode: effectiveMode,
           });
@@ -592,7 +610,7 @@ function registerSdkStreamHandlers(ctx) {
               chatSessionId,
               backendKey,
               binPath: sessionBinPath,
-              runtime: codexRuntime,
+              runtime: sessionRuntime,
               authMode: cursorSessionAuthMode,
               cliMode: cursorCliMode,
             });
@@ -601,7 +619,7 @@ function registerSdkStreamHandlers(ctx) {
             chatSessionId,
             backendKey,
             sessionBinPath,
-            codexRuntime,
+            sessionRuntime,
             cursorSessionAuthMode,
             cursorCliMode,
           );
@@ -612,7 +630,7 @@ function registerSdkStreamHandlers(ctx) {
             existingSessionId,
             backendKey,
             binPath: sessionBinPath,
-            runtime: codexRuntime,
+            runtime: sessionRuntime,
             authMode: cursorSessionAuthMode,
             cliMode: cursorCliMode,
             hasConfiguredCommand,
@@ -657,7 +675,7 @@ function registerSdkStreamHandlers(ctx) {
                   sessionId,
                   sdkBackend: backendKey,
                   binPath: sessionBinPath || "",
-                  runtime: codexRuntime,
+                  runtime: sessionRuntime,
                   ...(cursorSessionAuthMode ? { authMode: cursorSessionAuthMode } : {}),
                   ...(cursorCliMode ? { cliMode: cursorCliMode } : {}),
                 });
@@ -697,6 +715,7 @@ function registerSdkStreamHandlers(ctx) {
             binPath,
             cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
             cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
+            grokRuntime: backendKey === "grok" ? grokRuntime : undefined,
             getTempDir: () => tempDirBridge.getTempDir(),
             injectedMcpServers,
             claudeSettings,

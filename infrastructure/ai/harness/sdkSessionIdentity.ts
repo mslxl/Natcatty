@@ -2,13 +2,15 @@ export const SDK_SESSION_ID_PREFIX = 'netcatty-sdk-session:';
 
 export type CursorAuthModeIdentity = 'api-key' | 'cli-login';
 export type CursorCliModeIdentity = 'ask' | 'agent';
+/** Codex dual runtime + Grok dual runtime. */
+export type SdkRuntimeIdentity = 'sdk' | 'app-server' | 'acp' | 'streaming-json';
 
 export interface SdkSessionIdentityPayload {
   v: 1;
   id: string;
   backend: string;
   binPath: string;
-  runtime?: 'sdk' | 'app-server';
+  runtime?: SdkRuntimeIdentity;
   authMode?: CursorAuthModeIdentity;
   cliMode?: CursorCliModeIdentity;
 }
@@ -25,11 +27,21 @@ export function normalizeCursorCliMode(
   return cliMode === 'ask' ? 'ask' : cliMode === 'agent' ? 'agent' : undefined;
 }
 
+export function normalizeSdkRuntime(
+  runtime: string | undefined | null,
+): SdkRuntimeIdentity {
+  const raw = String(runtime || '').trim().toLowerCase();
+  if (raw === 'app-server') return 'app-server';
+  if (raw === 'acp') return 'acp';
+  if (raw === 'streaming-json' || raw === 'cli' || raw === 'headless') return 'streaming-json';
+  return 'sdk';
+}
+
 export function encodeSdkSessionIdentity(
   sessionId: string,
   sdkBackend?: string,
   binPath?: string,
-  runtime: 'sdk' | 'app-server' = 'sdk',
+  runtime: string = 'sdk',
   authMode?: string,
   cliMode?: string,
 ): string {
@@ -39,7 +51,7 @@ export function encodeSdkSessionIdentity(
     id: sessionId,
     backend: sdkBackend,
     binPath: binPath || '',
-    runtime,
+    runtime: normalizeSdkRuntime(runtime),
   };
   const normalizedAuthMode = normalizeCursorAuthMode(authMode);
   if (normalizedAuthMode) payload.authMode = normalizedAuthMode;
@@ -58,7 +70,7 @@ export function parseSdkSessionIdentity(value: string | undefined | null): SdkSe
     const cliMode = normalizeCursorCliMode(parsed.cliMode);
     return {
       ...parsed,
-      runtime: parsed.runtime === 'app-server' ? 'app-server' : 'sdk',
+      runtime: normalizeSdkRuntime(parsed.runtime),
       ...(authMode ? { authMode } : {}),
       ...(cliMode ? { cliMode } : {}),
     };

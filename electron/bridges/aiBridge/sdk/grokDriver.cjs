@@ -263,7 +263,9 @@ function buildGrokCliArgs({
   permissionMode,
   toolIntegrationMode,
 }) {
+  // Headless automation: skip background update checks (xAI headless docs).
   const args = [
+    "--no-auto-update",
     "-p",
     String(prompt || ""),
     "--output-format",
@@ -457,17 +459,32 @@ function translateGrokStreamEvent(event, emitter, state = {}) {
   }
 }
 
-function formatGrokErrorForUser(message) {
-  const text = String(message || "").trim();
+function isGrokAuthFailureMessage(message) {
+  const text = String(message || "");
   if (
-    /not authenticated|not logged in|please run .*login|unauthenticated|unauthorized|sign in/i.test(text)
+    /not authenticated|not logged in|please run .*login|unauthenticated|unauthorized|sign in|auth(?:entication)? (?:failed|required|missing)/i.test(text)
   ) {
-    return "Grok Build is not logged in. Run `grok login` or set XAI_API_KEY, then retry.";
+    return true;
   }
   if (/\bxai[_\s-]?api[_\s-]?key\b/i.test(text) && /invalid|missing|required|auth/i.test(text)) {
-    return "Grok Build authentication failed. Run `grok login` or set XAI_API_KEY in your environment.";
+    return true;
+  }
+  return false;
+}
+
+function formatGrokErrorForUser(message) {
+  const text = String(message || "").trim();
+  if (isGrokAuthFailureMessage(text)) {
+    return "Grok Build is not logged in. Run `grok login` or set XAI_API_KEY, then retry.";
   }
   return text || "Grok Build turn failed";
+}
+
+/** Normalize dual Grok runtime tokens (ACP vs headless streaming-json). */
+function resolveGrokRuntime(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (raw === "streaming-json" || raw === "cli" || raw === "headless") return "streaming-json";
+  return "acp";
 }
 
 function createLineBuffer(onLine, maxBufferBytes = MAX_GROK_LINE_BYTES) {
@@ -530,7 +547,7 @@ async function runGrokTurn({
     emitter.emitError(
       "Grok Build CLI not found. Install the Grok CLI (`grok`) and ensure it is on PATH, or set the path in Settings → AI.",
     );
-    return { sessionId: resumeSessionId || null };
+    return { sessionId: resumeSessionId || null, runtime: "streaming-json" };
   }
 
   const effectiveCwd = String(cwd || process.cwd() || "").trim() || process.cwd();
@@ -555,7 +572,7 @@ async function runGrokTurn({
         + `(cannot write project .grok/config.toml: ${err?.message || err}). `
         + "Terminal tools will be unavailable.",
       );
-      return { sessionId: resumeSessionId || null };
+      return { sessionId: resumeSessionId || null, runtime: "streaming-json" };
     }
   }
 
@@ -585,7 +602,7 @@ async function runGrokTurn({
   } catch (err) {
     cleanup();
     emitter.emitError(formatGrokErrorForUser(err?.message || String(err)));
-    return { sessionId: state.sessionId };
+    return { sessionId: state.sessionId, runtime: "streaming-json" };
   }
 
   const handleLine = (line) => {
@@ -686,7 +703,7 @@ async function runGrokTurn({
     emitter.emitDone();
   }
 
-  return { sessionId: state.sessionId };
+  return { sessionId: state.sessionId, runtime: "streaming-json" };
 }
 
 /**
@@ -826,11 +843,13 @@ module.exports = {
   buildGrokMcpServerTomlSection,
   createLineBuffer,
   formatGrokErrorForUser,
+  isGrokAuthFailureMessage,
   listGrokModels,
   mergeWorkspaceGrokMcpToml,
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
+  resolveGrokRuntime,
   resolveGrokToolIntegrationFlags,
   runGrokTurn,
   stripGrokMcpServerSection,

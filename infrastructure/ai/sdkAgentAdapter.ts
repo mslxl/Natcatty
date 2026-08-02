@@ -496,11 +496,13 @@ function handleStreamEvent(event: StreamEvent, callbacks: SdkAgentCallbacks): bo
     case 'session-id': {
       const sessionId = (event.sessionId as string) || '';
       if (sessionId) {
+        const runtimeRaw = String(event.runtime || 'sdk');
         callbacks.onSessionId?.(encodeSdkSessionIdentity(
           sessionId,
           event.sdkBackend as string | undefined,
           event.binPath as string | undefined,
-          event.runtime === 'app-server' ? 'app-server' : 'sdk',
+          // Preserve Codex + Grok dual-runtime tokens (do not collapse Grok to "sdk").
+          runtimeRaw,
           event.authMode as string | undefined,
           event.cliMode as string | undefined,
         ));

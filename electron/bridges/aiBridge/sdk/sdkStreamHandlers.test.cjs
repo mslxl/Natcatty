@@ -489,7 +489,8 @@ test("CodeBuddy does not replay renderer history when a persisted session can re
 });
 
 test("Grok does not replay renderer history when an ACP session can resume", () => {
-  // Mirrors CodeBuddy: session/load already restores Grok transcript.
+  // Mirrors CodeBuddy: session/load / resume already restores Grok transcript.
+  // Applies to both ACP and streaming-json once a resume id is present.
   assert.equal(shouldReplaySdkHistory({
     backendKey: "grok",
     codexRuntime: "sdk",
@@ -509,6 +510,83 @@ test("Grok does not replay renderer history when an ACP session can resume", () 
     resumeSessionId: "s1",
     hasInMemorySession: true,
   }), false);
+  // First turn (no resume) still seeds context even if in-memory key exists.
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: undefined,
+    hasInMemorySession: true,
+  }), true);
+});
+
+test("Grok ACP and streaming-json session identities never cross-resume", () => {
+  const acpIdentity = `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+    v: 1,
+    id: "grok-acp-thread",
+    backend: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+  }))}`;
+  const headlessIdentity = `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+    v: 1,
+    id: "grok-headless-thread",
+    backend: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "streaming-json",
+  }))}`;
+
+  // ACP identity must not resume onto streaming-json runtime.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "streaming-json"),
+    existingSessionId: acpIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "streaming-json",
+    hasConfiguredCommand: false,
+  }), undefined);
+
+  // streaming-json identity must not resume onto ACP runtime.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp"),
+    existingSessionId: headlessIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+    hasConfiguredCommand: false,
+  }), undefined);
+
+  // Matching runtime resumes.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp"),
+    existingSessionId: acpIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+    hasConfiguredCommand: false,
+  }), "grok-acp-thread");
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "streaming-json"),
+    existingSessionId: headlessIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "streaming-json",
+    hasConfiguredCommand: false,
+  }), "grok-headless-thread");
+
+  // Bare legacy ids are only safe for runtime "sdk" — not Grok dual runtimes.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp"),
+    existingSessionId: "legacy-bare-id",
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+    hasConfiguredCommand: false,
+  }), undefined);
 });
 
 test("buildSdkTurnPrompt stages attachments as local file hints", () => {

@@ -52,6 +52,7 @@ test("buildGrokCliArgs uses streaming-json and optional model/resume/cwd", () =>
       toolIntegrationMode: "skills",
     }),
     [
+      "--no-auto-update",
       "-p",
       "hi",
       "--output-format",
@@ -73,6 +74,7 @@ test("buildGrokCliArgs uses streaming-json and optional model/resume/cwd", () =>
     toolIntegrationMode: "skills",
   });
   assert.ok(autoArgs.includes("--always-approve"));
+  assert.ok(autoArgs.includes("--no-auto-update"));
   assert.ok(!autoArgs.includes("-m"));
 });
 

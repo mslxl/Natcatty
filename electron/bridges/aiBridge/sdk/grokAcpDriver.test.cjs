@@ -1,18 +1,29 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const {
   ACP_PROTOCOL_VERSION,
+  authenticateGrokAcp,
   buildGrokAcpInitializeParams,
   buildGrokAcpPromptParams,
   buildGrokAcpSessionNewParams,
+  buildGrokAcpSessionResumeOrLoadParams,
   buildGrokAcpSpawnArgs,
   createJsonRpcClient,
+  establishGrokAcpSession,
   handleGrokAcpMessage,
+  parseGrokAcpAgentCapabilities,
+  planGrokAcpSessionEstablish,
+  resolveGrokAcpCwd,
   runGrokAcpTurn,
+  selectGrokAcpAuthMethodId,
   toAcpMcpEnvPairs,
   toAcpMcpServers,
   translateGrokAcpUpdate,
 } = require("./grokAcpDriver.cjs");
+const {
+  GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
+} = require("./grokDriver.cjs");
 const { getDriver, listBackends } = require("./index.cjs");
 
 function makeEmitter() {
@@ -31,15 +42,48 @@ function makeEmitter() {
   };
 }
 
-test("buildGrokAcpSpawnArgs uses agent stdio and always-approve for non-observer", () => {
-  assert.deepEqual(
-    buildGrokAcpSpawnArgs({ model: "grok-4.5", permissionMode: "auto" }),
-    ["agent", "--always-approve", "-m", "grok-4.5", "stdio"],
-  );
-  assert.deepEqual(
-    buildGrokAcpSpawnArgs({ permissionMode: "observer" }),
-    ["agent", "stdio"],
-  );
+test("buildGrokAcpSpawnArgs uses agent stdio, no-auto-update, and always-approve for non-observer", () => {
+  const args = buildGrokAcpSpawnArgs({
+    model: "grok-4.5",
+    permissionMode: "auto",
+    toolIntegrationMode: "skills",
+  });
+  assert.deepEqual(args, [
+    "--no-auto-update",
+    "agent",
+    "--always-approve",
+    "-m",
+    "grok-4.5",
+    "stdio",
+  ]);
+  const observer = buildGrokAcpSpawnArgs({
+    permissionMode: "observer",
+    toolIntegrationMode: "skills",
+  });
+  assert.deepEqual(observer, ["--no-auto-update", "agent", "stdio"]);
+});
+
+test("buildGrokAcpSpawnArgs applies MCP-mode local-tool lockdown", () => {
+  const args = buildGrokAcpSpawnArgs({
+    permissionMode: "auto",
+    toolIntegrationMode: "mcp",
+  });
+  const denyIdx = args.indexOf("--disallowed-tools");
+  assert.ok(denyIdx >= 0, "MCP mode must pass --disallowed-tools on ACP spawn");
+  const denied = String(args[denyIdx + 1] || "");
+  assert.match(denied, /run_terminal_command/);
+  assert.match(denied, /search_replace/);
+  assert.match(denied, /write/);
+  assert.doesNotMatch(denied, /mcp|netcatty/i);
+  assert.ok(args.includes("--no-auto-update"));
+  assert.ok(args.includes("--always-approve"));
+  assert.equal(args[args.length - 1], "stdio");
+  // Skills mode: no lockdown list
+  const skills = buildGrokAcpSpawnArgs({
+    permissionMode: "auto",
+    toolIntegrationMode: "skills",
+  });
+  assert.ok(!skills.includes("--disallowed-tools"));
 });
 
 test("toAcpMcpEnvPairs keeps Grok session/new pair-array shape", () => {
@@ -102,7 +146,7 @@ test("buildGrokAcpSessionNewParams injects MCP servers and MCP-mode rules", () =
       env: [{ name: "NETCATTY_MCP_PORT", value: "1" }],
     }],
   });
-  assert.equal(params.cwd, "/repo");
+  assert.equal(params.cwd, resolveGrokAcpCwd("/repo"));
   assert.equal(params.mcpServers[0].name, "netcatty-remote-hosts");
   assert.equal(params.mcpServers[0].type, "stdio");
   assert.ok(Array.isArray(params.mcpServers[0].env));
@@ -112,6 +156,10 @@ test("buildGrokAcpSessionNewParams injects MCP servers and MCP-mode rules", () =
   assert.equal(params._meta.yoloMode, true);
   assert.match(String(params._meta.rules || ""), /netcatty-remote-hosts|MCP mode/i);
   assert.match(String(params._meta.rules || ""), /run_terminal_command|search_replace|write/);
+  // Soft rules list the same local tools as the hard CLI deny list.
+  for (const tool of GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS) {
+    assert.match(String(params._meta.rules || ""), new RegExp(tool));
+  }
 
   const skills = buildGrokAcpSessionNewParams({
     cwd: "/repo",
@@ -121,6 +169,155 @@ test("buildGrokAcpSessionNewParams injects MCP servers and MCP-mode rules", () =
   });
   assert.equal(skills._meta.yoloMode, true);
   assert.equal(skills._meta.rules, undefined);
+});
+
+test("planGrokAcpSessionEstablish prefers resume then load then new", () => {
+  assert.deepEqual(planGrokAcpSessionEstablish({ resumeSessionId: null }), ["new"]);
+  assert.deepEqual(planGrokAcpSessionEstablish({
+    resumeSessionId: "s1",
+    agentCapabilities: { resume: true, loadSession: true, hasCapabilityInfo: true },
+  }), ["resume", "load", "new"]);
+  assert.deepEqual(planGrokAcpSessionEstablish({
+    resumeSessionId: "s1",
+    agentCapabilities: { resume: true, loadSession: false, hasCapabilityInfo: true },
+  }), ["resume", "new"]);
+  assert.deepEqual(planGrokAcpSessionEstablish({
+    resumeSessionId: "s1",
+    agentCapabilities: { resume: false, loadSession: true, hasCapabilityInfo: true },
+  }), ["load", "new"]);
+  // Unknown capabilities: try resume + load then new (Grok versions vary).
+  assert.deepEqual(planGrokAcpSessionEstablish({
+    resumeSessionId: "s1",
+    agentCapabilities: { resume: false, loadSession: false, hasCapabilityInfo: false },
+  }), ["resume", "load", "new"]);
+});
+
+test("parseGrokAcpAgentCapabilities reads loadSession and sessionCapabilities.resume", () => {
+  assert.deepEqual(parseGrokAcpAgentCapabilities({
+    agentCapabilities: {
+      loadSession: true,
+      sessionCapabilities: { resume: {} },
+    },
+  }), { loadSession: true, resume: true, hasCapabilityInfo: true });
+  assert.deepEqual(parseGrokAcpAgentCapabilities({}), {
+    loadSession: false,
+    resume: false,
+    hasCapabilityInfo: false,
+  });
+});
+
+test("selectGrokAcpAuthMethodId follows xAI sample precedence", () => {
+  assert.deepEqual(
+    selectGrokAcpAuthMethodId({ authMethods: [] }, {}),
+    { methodId: null, required: false },
+  );
+  assert.deepEqual(
+    selectGrokAcpAuthMethodId({
+      authMethods: [{ id: "xai.api_key" }, { id: "cached_token" }],
+    }, { XAI_API_KEY: "xai-test" }),
+    { methodId: "xai.api_key", required: true },
+  );
+  assert.deepEqual(
+    selectGrokAcpAuthMethodId({
+      authMethods: [{ id: "xai.api_key" }, { id: "cached_token" }],
+    }, {}),
+    { methodId: "cached_token", required: true },
+  );
+  assert.deepEqual(
+    selectGrokAcpAuthMethodId({ authMethods: [{ id: "other" }] }, {}),
+    { methodId: null, required: true },
+  );
+});
+
+test("authenticateGrokAcp skips when no methods; errors when required method missing", async () => {
+  const calls = [];
+  const rpc = {
+    async request(method, params) {
+      calls.push([method, params]);
+      return {};
+    },
+  };
+  const skipped = await authenticateGrokAcp(rpc, { authMethods: [] }, {});
+  assert.equal(skipped.skipped, true);
+  assert.deepEqual(calls, []);
+
+  await assert.rejects(
+    () => authenticateGrokAcp(rpc, { authMethods: [{ id: "unknown" }] }, {}),
+    /grok login|XAI_API_KEY/i,
+  );
+
+  const ok = await authenticateGrokAcp(
+    rpc,
+    { authMethods: [{ id: "cached_token" }] },
+    {},
+  );
+  assert.equal(ok.methodId, "cached_token");
+  assert.equal(calls[0][0], "authenticate");
+  assert.equal(calls[0][1].methodId, "cached_token");
+  assert.equal(calls[0][1]._meta.headless, true);
+});
+
+test("establishGrokAcpSession tries resume then falls back to load then new", async () => {
+  const methods = [];
+  const rpc = {
+    async request(method, params) {
+      methods.push([method, params]);
+      if (method === "session/resume") throw new Error("resume unsupported");
+      if (method === "session/load") {
+        // Simulate history replay side-channel; caller keeps acceptUpdates false.
+        return { sessionId: "loaded-1" };
+      }
+      throw new Error(`unexpected ${method}`);
+    },
+  };
+  const result = await establishGrokAcpSession(rpc, {
+    resumeSessionId: "prev-1",
+    cwd: "/repo",
+    injectedMcpServers: [],
+    agentCapabilities: { resume: true, loadSession: true, hasCapabilityInfo: true },
+  });
+  assert.equal(result.method, "load");
+  assert.equal(result.sessionId, "loaded-1");
+  assert.deepEqual(methods.map((m) => m[0]), ["session/resume", "session/load"]);
+  assert.equal(methods[0][1].sessionId, "prev-1");
+  assert.equal(methods[0][1].cwd, resolveGrokAcpCwd("/repo"));
+});
+
+test("establishGrokAcpSession prefers resume when it succeeds", async () => {
+  const methods = [];
+  const rpc = {
+    async request(method, params) {
+      methods.push(method);
+      if (method === "session/resume") return {};
+      throw new Error(`unexpected ${method}`);
+    },
+  };
+  const result = await establishGrokAcpSession(rpc, {
+    resumeSessionId: "prev-2",
+    cwd: path.resolve("/repo"),
+    injectedMcpServers: [],
+    agentCapabilities: { resume: true, loadSession: true, hasCapabilityInfo: true },
+  });
+  assert.equal(result.method, "resume");
+  assert.equal(result.sessionId, "prev-2");
+  assert.deepEqual(methods, ["session/resume"]);
+});
+
+test("buildGrokAcpSessionResumeOrLoadParams keeps absolute cwd and MCP pairs", () => {
+  const params = buildGrokAcpSessionResumeOrLoadParams({
+    sessionId: "s1",
+    cwd: "relative-dir",
+    injectedMcpServers: [{
+      name: "netcatty-remote-hosts",
+      command: "node",
+      args: ["x"],
+      env: { A: "1" },
+    }],
+  });
+  assert.equal(params.sessionId, "s1");
+  assert.equal(params.cwd, resolveGrokAcpCwd("relative-dir"));
+  assert.ok(path.isAbsolute(params.cwd));
+  assert.deepEqual(params.mcpServers[0].env, [{ name: "A", value: "1" }]);
 });
 
 test("buildGrokAcpInitializeParams and prompt params follow ACP shapes", () => {
@@ -241,7 +438,7 @@ test("handleGrokAcpMessage suppresses session/load history until prompt accepts 
   assert.deepEqual(emitter.calls, [["text", "only this turn"]]);
 });
 
-test("runGrokAcpTurn drives initialize/session/new/prompt via fixture RPC", async () => {
+test("runGrokAcpTurn drives initialize/authenticate/session/new/prompt via fixture RPC", async () => {
   const emitter = makeEmitter();
   const methods = [];
   const result = await runGrokAcpTurn({
@@ -250,6 +447,7 @@ test("runGrokAcpTurn drives initialize/session/new/prompt via fixture RPC", asyn
     cwd: "/repo",
     permissionMode: "auto",
     toolIntegrationMode: "mcp",
+    env: { XAI_API_KEY: "xai-test" },
     injectedMcpServers: [{
       name: "netcatty-remote-hosts",
       command: "node",
@@ -260,9 +458,19 @@ test("runGrokAcpTurn drives initialize/session/new/prompt via fixture RPC", asyn
     rpcClientFactory: ({ emitter: em, state }) => ({
       async request(method, params) {
         methods.push([method, params]);
-        if (method === "initialize") return { protocolVersion: ACP_PROTOCOL_VERSION };
+        if (method === "initialize") {
+          return {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            authMethods: [{ id: "xai.api_key" }, { id: "cached_token" }],
+          };
+        }
+        if (method === "authenticate") {
+          assert.equal(params.methodId, "xai.api_key");
+          assert.equal(params._meta.headless, true);
+          return {};
+        }
         if (method === "session/new") {
-          assert.equal(params.cwd, "/repo");
+          assert.equal(params.cwd, resolveGrokAcpCwd("/repo"));
           assert.equal(params.mcpServers[0].name, "netcatty-remote-hosts");
           assert.equal(params.mcpServers[0].type, "stdio");
           assert.ok(Array.isArray(params.mcpServers[0].env));
@@ -287,10 +495,162 @@ test("runGrokAcpTurn drives initialize/session/new/prompt via fixture RPC", asyn
 
   assert.equal(result.runtime, "acp");
   assert.equal(result.sessionId, "acp-sess-1");
-  assert.deepEqual(methods.map((m) => m[0]), ["initialize", "session/new", "session/prompt"]);
+  assert.deepEqual(
+    methods.map((m) => m[0]),
+    ["initialize", "authenticate", "session/new", "session/prompt"],
+  );
   assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "hello-acp"));
   assert.ok(emitter.calls.some((c) => c[0] === "sessionId" && c[1] === "acp-sess-1"));
   assert.ok(emitter.calls.some((c) => c[0] === "done"));
+});
+
+test("runGrokAcpTurn prefers session/resume and keeps load history off the emitter", async () => {
+  const emitter = makeEmitter();
+  const methods = [];
+  const result = await runGrokAcpTurn({
+    prompt: "follow up",
+    binPath: "/usr/bin/grok",
+    cwd: "/repo",
+    resumeSessionId: "prior-sess",
+    permissionMode: "auto",
+    toolIntegrationMode: "mcp",
+    emitter,
+    rpcClientFactory: ({ emitter: em, state }) => ({
+      async request(method, params) {
+        methods.push(method);
+        if (method === "initialize") {
+          return {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            agentCapabilities: {
+              loadSession: true,
+              sessionCapabilities: { resume: {} },
+            },
+            authMethods: [],
+          };
+        }
+        if (method === "session/resume") {
+          assert.equal(params.sessionId, "prior-sess");
+          // Resume must not replay; even if a rogue update arrives pre-prompt, suppress it.
+          handleGrokAcpMessage({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "prior-sess",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { text: "SHOULD NOT APPEAR" },
+              },
+            },
+          }, { emitter: em, state, pending: new Map() });
+          return {};
+        }
+        if (method === "session/prompt") {
+          assert.equal(state.acceptUpdates, true);
+          translateGrokAcpUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: { text: "only this turn" },
+          }, em, state);
+          return { stopReason: "end_turn" };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+    }),
+  });
+
+  assert.equal(result.sessionId, "prior-sess");
+  assert.deepEqual(methods, ["initialize", "session/resume", "session/prompt"]);
+  assert.deepEqual(
+    emitter.calls.filter((c) => c[0] === "text"),
+    [["text", "only this turn"]],
+  );
+  assert.ok(!emitter.calls.some((c) => c[0] === "text" && String(c[1]).includes("SHOULD NOT")));
+});
+
+test("runGrokAcpTurn falls back to session/load and suppresses history replay text", async () => {
+  const emitter = makeEmitter();
+  const methods = [];
+  const result = await runGrokAcpTurn({
+    prompt: "follow up",
+    binPath: "/usr/bin/grok",
+    resumeSessionId: "prior-load",
+    permissionMode: "auto",
+    emitter,
+    rpcClientFactory: ({ emitter: em, state }) => ({
+      async request(method) {
+        methods.push(method);
+        if (method === "initialize") {
+          return {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            agentCapabilities: {
+              loadSession: true,
+              sessionCapabilities: { resume: {} },
+            },
+            authMethods: [],
+          };
+        }
+        if (method === "session/resume") throw new Error("resume not available");
+        if (method === "session/load") {
+          assert.equal(state.acceptUpdates, false);
+          // Load-style history replay must not hit the current bubble.
+          handleGrokAcpMessage({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "prior-load",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { text: "previous turn reply" },
+              },
+            },
+          }, { emitter: em, state, pending: new Map() });
+          return { sessionId: "prior-load" };
+        }
+        if (method === "session/prompt") {
+          translateGrokAcpUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: { text: "fresh reply" },
+          }, em, state);
+          return { stopReason: "end_turn" };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+    }),
+  });
+
+  assert.equal(result.sessionId, "prior-load");
+  assert.deepEqual(methods, [
+    "initialize",
+    "session/resume",
+    "session/load",
+    "session/prompt",
+  ]);
+  assert.deepEqual(
+    emitter.calls.filter((c) => c[0] === "text"),
+    [["text", "fresh reply"]],
+  );
+});
+
+test("runGrokAcpTurn maps missing auth methods to a clear user error", async () => {
+  const emitter = makeEmitter();
+  await runGrokAcpTurn({
+    prompt: "hi",
+    binPath: "/usr/bin/grok",
+    emitter,
+    rpcClientFactory: () => ({
+      async request(method) {
+        if (method === "initialize") {
+          return {
+            protocolVersion: ACP_PROTOCOL_VERSION,
+            authMethods: [{ id: "weird-method" }],
+          };
+        }
+        throw new Error(`unexpected method ${method}`);
+      },
+    }),
+  });
+  const err = emitter.calls.find((c) => c[0] === "error");
+  assert.ok(err);
+  assert.match(String(err[1]), /not logged in|grok login|XAI_API_KEY/i);
 });
 
 test("runGrokAcpTurn reports missing CLI clearly", async () => {
