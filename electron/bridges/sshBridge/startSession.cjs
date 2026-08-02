@@ -17,6 +17,7 @@ const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
 const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
+const { annotateMacLocalNetworkErrorMessage } = require("../macLocalNetworkAccess.cjs");
 
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
@@ -84,6 +85,12 @@ function isSshAuthFailure(err) {
     message.includes("too many authentication failures") ||
     /permission denied\s*\(/.test(message) ||
     message.includes("no authentication methods available");
+}
+
+function userVisibleSshErrorMessage(err, options = {}) {
+  return annotateMacLocalNetworkErrorMessage(err?.message || String(err || ""), {
+    hostname: options.hostname || options.host,
+  });
 }
 
 function hasSelectedAgentIdentity(options) {
@@ -1895,7 +1902,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
               });
             }
 
-            sendProgress(totalHops, totalHops, options.hostname, 'error', err.message);
+            const visibleError = userVisibleSshErrorMessage(err, options);
+            sendProgress(totalHops, totalHops, options.hostname, 'error', visibleError);
             const suppressPreShellAuthExit = Boolean(options._suppressPreShellAuthExit && isAuthError);
             if (suppressPreShellAuthExit) {
               log("suppressing pre-shell auth exit for wrapper-managed retry", {
@@ -1903,7 +1911,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 hostname: options.hostname,
               });
             } else {
-              safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: err.message, reason: "error" });
+              safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: visibleError, reason: "error" });
             }
             sessionLogStreamManager.stopStream(sessionId, ownerLogStreamToken);
             if (detachX11Forwarding) {
@@ -2110,7 +2118,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
         const suppressPreShellAuthExit = Boolean(options._suppressPreShellAuthExit && isAuthError);
         if (!suppressPreShellAuthExit) {
           const contents = event.sender;
-          safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, { sessionId, exitCode: 1, error: err.message });
+          safeSendSessionExit(
+            { safeSend, electronModule, sessions },
+            contents,
+            sessionId,
+            { sessionId, exitCode: 1, error: userVisibleSshErrorMessage(err, options) },
+          );
         }
         throw err;
       }

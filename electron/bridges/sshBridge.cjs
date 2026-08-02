@@ -67,6 +67,7 @@ const {
   createStartSessionApi,
   resolveSshConnectionTimeouts,
 } = require("./sshBridge/startSession.cjs");
+const { ensureMacLocalNetworkAccess } = require("./macLocalNetworkAccess.cjs");
 
 function quoteShellArg(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'";
@@ -1299,6 +1300,9 @@ async function startSSHSessionWithRetries(event, options, pendingDialState) {
 async function startSSHSessionWrapper(event, options) {
   const pendingDialState = { coordination: null };
   try {
+    // Main-process LAN probe so macOS Local Network TCC attributes to Netcatty
+    // before the (possibly worker-hosted) SSH dial. See #2663 / TN3179.
+    await ensureMacLocalNetworkAccess(options);
     return await startSSHSessionWithRetries(event, options, pendingDialState);
   } catch (err) {
     if (pendingDialState.coordination) {
@@ -1371,7 +1375,13 @@ const {
  * Register IPC handlers for SSH operations
  */
 function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
-  ipcMain.handle(channel, (event, payload) => {
+  ipcMain.handle(channel, async (event, payload) => {
+    // SSH sessions run in utilityProcess; probe LAN access from the main
+    // process first so macOS can show the Local Network privacy alert for
+    // the Netcatty app bundle instead of silently denying the helper (#2663).
+    if (channel === "netcatty:start") {
+      await ensureMacLocalNetworkAccess(payload);
+    }
     return terminalWorkerManager.request(channel, payload, {
       webContentsId: event?.sender?.id,
     });
