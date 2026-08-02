@@ -361,6 +361,15 @@ function handleGrokAcpMessage(message, { emitter, state, pending, onPromptComple
   const params = message.params && typeof message.params === "object" ? message.params : {};
 
   if (method === "session/update" || method === "x.ai/session/update") {
+    // session/load may re-broadcast historical agent_message_chunk events for
+    // client UI rebuild. Those must not be written into the *current* Netcatty
+    // assistant bubble — only accept updates after session/prompt is in flight.
+    if (state.acceptUpdates === false) {
+      if (params.sessionId && !state.sessionId) {
+        state.sessionId = params.sessionId;
+      }
+      return;
+    }
     const update = params.update || params.sessionUpdate || params;
     // Nested: params.update.sessionUpdate
     const payload = update?.sessionUpdate || update?.type
@@ -481,6 +490,8 @@ async function runGrokAcpTurn({
     reasoningOpen: false,
     streamedAssistantText: false,
     failed: false,
+    // Suppress session/load history replay until session/prompt starts.
+    acceptUpdates: false,
     autoAllowPermissions: String(permissionMode || "confirm").toLowerCase() !== "observer",
     promptRequestId: null,
     writeResponse: null,
@@ -511,6 +522,7 @@ async function runGrokAcpTurn({
           emitter.sessionId?.(sessionId);
         }
       }
+      state.acceptUpdates = true;
       await client.request(
         "session/prompt",
         buildGrokAcpPromptParams(state.sessionId, prompt),
@@ -734,6 +746,9 @@ async function runGrokAcpTurn({
     if (!state.sessionId) {
       throw new Error("Grok ACP session/new did not return a sessionId");
     }
+
+    // Accept streamed updates only for this turn's prompt (not session/load replay).
+    state.acceptUpdates = true;
 
     // session/prompt resolves when the turn finishes; also wait for process end.
     await Promise.race([

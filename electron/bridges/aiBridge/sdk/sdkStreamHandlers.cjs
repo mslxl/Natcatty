@@ -426,10 +426,15 @@ function shouldReplaySdkHistory({
   resumeSessionId,
   hasInMemorySession,
 }) {
-  // CodeBuddy and Codex App Server resumes restore their own conversation
-  // history. Replaying renderer history as well duplicates every prior turn
-  // after the main-process session map is recreated.
-  if (backendKey === "codebuddy" || codexRuntime === "app-server") {
+  // CodeBuddy, Codex App Server, and Grok ACP resumes restore their own
+  // conversation history. Replaying renderer history as well duplicates every
+  // prior turn (Grok also re-hydrates via session/load on a fresh agent stdio
+  // process each turn).
+  if (
+    backendKey === "codebuddy"
+    || backendKey === "grok"
+    || codexRuntime === "app-server"
+  ) {
     return !resumeSessionId;
   }
   return !hasInMemorySession;

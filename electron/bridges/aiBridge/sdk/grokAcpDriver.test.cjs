@@ -187,7 +187,7 @@ test("createJsonRpcClient correlates request ids and parses lines", async () => 
 
 test("handleGrokAcpMessage routes session/update notifications", () => {
   const emitter = makeEmitter();
-  const state = {};
+  const state = { acceptUpdates: true };
   const pending = new Map();
   handleGrokAcpMessage({
     jsonrpc: "2.0",
@@ -205,6 +205,40 @@ test("handleGrokAcpMessage routes session/update notifications", () => {
     ["text", "ok"],
     ["sessionId", "s1"],
   ]);
+});
+
+test("handleGrokAcpMessage suppresses session/load history until prompt accepts updates", () => {
+  const emitter = makeEmitter();
+  const state = { acceptUpdates: false };
+  const pending = new Map();
+  // Historical replay during session/load must not pollute the current turn.
+  handleGrokAcpMessage({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: "s1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { text: "previous turn reply" },
+      },
+    },
+  }, { emitter, state, pending });
+  assert.equal(state.sessionId, "s1");
+  assert.deepEqual(emitter.calls, []);
+
+  state.acceptUpdates = true;
+  handleGrokAcpMessage({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: "s1",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { text: "only this turn" },
+      },
+    },
+  }, { emitter, state, pending });
+  assert.deepEqual(emitter.calls, [["text", "only this turn"]]);
 });
 
 test("runGrokAcpTurn drives initialize/session/new/prompt via fixture RPC", async () => {

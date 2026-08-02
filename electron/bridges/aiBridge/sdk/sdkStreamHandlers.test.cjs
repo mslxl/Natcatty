@@ -488,6 +488,29 @@ test("CodeBuddy does not replay renderer history when a persisted session can re
   }), true);
 });
 
+test("Grok does not replay renderer history when an ACP session can resume", () => {
+  // Mirrors CodeBuddy: session/load already restores Grok transcript.
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: "resumed-grok",
+    hasInMemorySession: false,
+  }), false);
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: undefined,
+    hasInMemorySession: false,
+  }), true);
+  // Even with an in-memory map miss, resume id alone must suppress replay.
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: "s1",
+    hasInMemorySession: true,
+  }), false);
+});
+
 test("buildSdkTurnPrompt stages attachments as local file hints", () => {
   const staged = [];
   const prompt = buildSdkTurnPrompt({
