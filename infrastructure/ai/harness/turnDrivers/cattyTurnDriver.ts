@@ -4,6 +4,7 @@ import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
   DEFAULT_PROTECT_RECENT_MESSAGES,
   estimateUnknownTokens,
+  findSafeChatMessageCompactionSplitIndex,
   resolveContextWindow,
 } from '../../contextCompaction';
 import { buildSystemPrompt } from '../../cattyAgent/systemPrompt';
@@ -333,10 +334,13 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     };
 
     if (context.forceCompaction) {
-      // Persist the UI-message boundary and summarize only that head slice so the
-      // durable compact coordinate system matches what buildCattySdkMessages applies.
+      // Persist a tool-safe UI-message boundary and summarize only that head
+      // slice so the durable compact coordinate system matches buildCattySdkMessages.
       const uiMessages = currentSession?.messages ?? [];
-      const compactedMessageCount = Math.max(0, uiMessages.length - DEFAULT_PROTECT_RECENT_MESSAGES);
+      const compactedMessageCount = findSafeChatMessageCompactionSplitIndex(
+        uiMessages,
+        DEFAULT_PROTECT_RECENT_MESSAGES,
+      );
       if (compactedMessageCount <= 0) {
         emitContextSnapshot(prepareMessagesForStream(buildSdkMessages(uiMessages, false)));
         return;

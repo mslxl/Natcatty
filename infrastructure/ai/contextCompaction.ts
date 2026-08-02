@@ -115,6 +115,33 @@ export function findSafeCompactionSplitIndex(
   return splitAt;
 }
 
+/**
+ * UI-message equivalent of findSafeCompactionSplitIndex.
+ * Persisted force-compact boundaries use ChatMessage indices; never cut between
+ * an assistant toolCalls message and its following tool result messages.
+ */
+export function findSafeChatMessageCompactionSplitIndex(
+  messages: Array<{ role: string; toolCalls?: readonly unknown[] | null }>,
+  protectRecentMessages = DEFAULT_PROTECT_RECENT_MESSAGES,
+): number {
+  let splitAt = Math.max(0, messages.length - protectRecentMessages);
+
+  while (splitAt > 0 && messages[splitAt]?.role === "tool") {
+    splitAt -= 1;
+  }
+
+  while (
+    splitAt > 0
+    && messages[splitAt - 1]?.role === "assistant"
+    && Array.isArray(messages[splitAt - 1]?.toolCalls)
+    && (messages[splitAt - 1]?.toolCalls?.length ?? 0) > 0
+  ) {
+    splitAt -= 1;
+  }
+
+  return splitAt;
+}
+
 export function buildCompactedMessages({
   summary,
   recentMessages,

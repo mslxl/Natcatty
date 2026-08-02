@@ -19,6 +19,7 @@ import {
   resolveAgentCliVersion,
   resolveAgentModelSelection,
 } from '../infrastructure/ai/types';
+import { findSafeChatMessageCompactionSplitIndex } from '../infrastructure/ai/contextCompaction';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
@@ -647,7 +648,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     && Boolean(activeSessionId)
     && !isStreaming
     && Boolean(effectiveActiveProvider)
-    && Boolean(effectiveActiveModelId.trim());
+    && Boolean(effectiveActiveModelId.trim())
+    && findSafeChatMessageCompactionSplitIndex(activeSession?.messages ?? []) > 0;
 
   const handleAgentProviderModelSelect = useCallback(
     (providerId: string, modelId: string) => {
