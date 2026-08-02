@@ -16,6 +16,7 @@ const cursor = require("./cursorDriver.cjs");
 const cursorCli = require("./cursorCliDriver.cjs");
 const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
+const grok = require("./grokDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -308,6 +309,30 @@ const DRIVER_REGISTRY = {
         binPath: ctx.binPath,
         abortController: ctx.abortController,
         signal: ctx.abortController?.signal || ctx.signal,
+      });
+    },
+  },
+  grok: {
+    async runTurn(ctx) {
+      return grok.runGrokTurn({
+        prompt: ctx.prompt,
+        binPath: ctx.binPath,
+        cwd: ctx.cwd,
+        model: ctx.model,
+        env: ctx.env,
+        permissionMode: ctx.permissionMode,
+        resumeSessionId: ctx.resumeSessionId,
+        injectedMcpServers: ctx.injectedMcpServers,
+        emitter: ctx.emitter,
+        signal: ctx.signal || ctx.abortController?.signal,
+      });
+    },
+    async listModels(ctx) {
+      return grok.listGrokModels({
+        binPath: ctx.binPath,
+        env: ctx.env,
+        abortController: ctx.abortController,
+        signal: ctx.signal || ctx.abortController?.signal,
       });
     },
   },
