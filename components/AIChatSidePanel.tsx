@@ -265,7 +265,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   updateLastMessage,
   updateMessageById,
   persistContextCompaction,
-  clearSessionMessages,
   providers,
   activeProviderId,
   activeModelId,
@@ -1149,7 +1148,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
   ]);
 
-  const handleCompress = useCallback(async () => {
+  const handleCompact = useCallback(async () => {
     const session = activeSessionRef.current;
     if (
       currentAgentId !== 'catty'
@@ -1289,30 +1288,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       abortControllersRef.current.delete(sessionId);
     }
   }, [setStreamingForScope, updateLastMessage, abortControllersRef]);
-
-  const handleClear = useCallback(async () => {
-    const session = activeSessionRef.current;
-    if (!session) {
-      clearScopeDraft();
-      showScopeDraftView();
-      return;
-    }
-    if (streamingSessionIds.has(session.id)) {
-      await stopStreamingForSession(session.id);
-    }
-    clearSessionMessages(session.id);
-    clearScopeDraft();
-    showScopeSessionView(session.id);
-    setActiveSessionId(session.id);
-  }, [
-    clearSessionMessages,
-    clearScopeDraft,
-    setActiveSessionId,
-    showScopeDraftView,
-    showScopeSessionView,
-    stopStreamingForSession,
-    streamingSessionIds,
-  ]);
 
   const { addGrant } = useAIPermissionGrantsState();
 
@@ -1492,8 +1467,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         inputValue={inputValue}
         setInputValue={setInputValue}
         handleSend={handleSend}
-        handleCompress={handleCompress}
-        handleClear={handleClear}
+        handleCompact={handleCompact}
         handleSteer={handleSteer}
         handleStop={handleStop}
         canSteer={canSteerCurrentTurn}
@@ -1556,7 +1530,6 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'updateLastMessage',
   'updateMessageById',
   'persistContextCompaction',
-  'clearSessionMessages',
   'providers',
   'activeProviderId',
   'activeModelId',

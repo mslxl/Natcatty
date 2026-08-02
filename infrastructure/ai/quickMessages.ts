@@ -17,7 +17,7 @@ export interface UserSkillSlashOption {
   description: string;
 }
 
-export type SystemSlashCommandSlug = 'stop' | 'compress' | 'clear';
+export type SystemSlashCommandSlug = 'stop' | 'compact';
 
 export interface SystemSlashCommand {
   slug: SystemSlashCommandSlug;
@@ -122,8 +122,7 @@ export function filterUserSkillsForSlash(
 }
 
 export const SYSTEM_BUILTIN_SLASH_COMMANDS: SystemSlashCommand[] = [
-  { slug: 'compress', name: 'Compress context', descriptionKey: 'ai.chat.slashCompressDesc' },
-  { slug: 'clear', name: 'Clear conversation', descriptionKey: 'ai.chat.slashClearDesc' },
+  { slug: 'compact', name: 'Compact context', descriptionKey: 'ai.chat.slashCompactDesc' },
   { slug: 'stop', name: 'Stop', descriptionKey: 'ai.chat.slashStopDesc' },
 ];
 
@@ -202,7 +201,6 @@ export function isSystemStopSlashCommand(input: string): boolean {
 export function getSystemSlashCommand(input: string): SystemSlashCommandSlug | null {
   const trimmed = input.trim().toLowerCase();
   if (/^\/stop(?:\s|$)/.test(trimmed)) return 'stop';
-  if (trimmed === '/compress') return 'compress';
-  if (trimmed === '/clear') return 'clear';
+  if (trimmed === '/compact') return 'compact';
   return null;
 }

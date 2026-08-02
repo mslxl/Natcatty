@@ -80,8 +80,7 @@ interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
-  onCompress?: () => void;
-  onClear?: () => void;
+  onCompact?: () => void;
   contextUsage?: AgentContextUsage | null;
   onSteer?: () => void;
   onStop?: () => void;
@@ -135,8 +134,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   value,
   onChange,
   onSend,
-  onCompress,
-  onClear,
+  onCompact,
   contextUsage,
   onSteer,
   onStop,
@@ -383,8 +381,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const handleSelectSlashCommandItem = useCallback((item: SlashCommandItem) => {
     if (item.kind === 'system') {
       const command = item.command.slug;
-      if (command === 'compress') onCompress?.();
-      if (command === 'clear') onClear?.();
+      if (command === 'compact') onCompact?.();
       if (command === 'stop') onStop?.();
       onChange('');
       closeAllMenus();
@@ -395,7 +392,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       return;
     }
     insertUserSkillToken(item.skill);
-  }, [closeAllMenus, insertQuickMessage, insertUserSkillToken, onChange, onClear, onCompress, onStop]);
+  }, [closeAllMenus, insertQuickMessage, insertUserSkillToken, onChange, onCompact, onStop]);
 
   // Reset active highlight when a menu opens or when the *identity* of the
   // visible items changes. Watching only `.length` misses cases where the
@@ -530,8 +527,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     (_text: string, _event: FormEvent<HTMLFormElement>) => {
       const systemCommand = getSystemSlashCommand(value);
       if (systemCommand) {
-        if (systemCommand === 'compress') onCompress?.();
-        if (systemCommand === 'clear') onClear?.();
+        if (systemCommand === 'compact') onCompact?.();
         if (systemCommand === 'stop') onStop?.();
         onChange('');
         return;
@@ -542,7 +538,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       onSend();
     },
-    [canSteer, isStreaming, onClear, onCompress, onSend, onSteer, onStop, onChange, value],
+    [canSteer, isStreaming, onCompact, onSend, onSteer, onStop, onChange, value],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';

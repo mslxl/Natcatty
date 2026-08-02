@@ -52,8 +52,7 @@ interface AIChatPanelContentProps {
   inputValue: string;
   setInputValue: (value: string) => void;
   handleSend: () => void;
-  handleCompress: () => void;
-  handleClear: () => void;
+  handleCompact: () => void;
   handleSteer: () => void;
   handleStop: () => void;
   canSteer: boolean;
@@ -115,8 +114,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   inputValue,
   setInputValue,
   handleSend,
-  handleCompress,
-  handleClear,
+  handleCompact,
   handleSteer,
   handleStop,
   canSteer,
@@ -288,8 +286,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   value={inputValue}
                   onChange={setInputValue}
                   onSend={handleSend}
-                  onCompress={handleCompress}
-                  onClear={handleClear}
+                  onCompact={handleCompact}
                   onSteer={handleSteer}
                   onStop={handleStop}
                   isStreaming={isStreaming}
