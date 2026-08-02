@@ -9,6 +9,7 @@ const {
   createJsonRpcClient,
   handleGrokAcpMessage,
   runGrokAcpTurn,
+  toAcpMcpEnvPairs,
   toAcpMcpServers,
   translateGrokAcpUpdate,
 } = require("./grokAcpDriver.cjs");
@@ -41,7 +42,24 @@ test("buildGrokAcpSpawnArgs uses agent stdio and always-approve for non-observer
   );
 });
 
-test("toAcpMcpServers maps injectMcp env pairs for session/new", () => {
+test("toAcpMcpEnvPairs keeps Grok session/new pair-array shape", () => {
+  // Live Grok rejects plain object env (Invalid params / McpServer enum).
+  assert.deepEqual(
+    toAcpMcpEnvPairs([{ name: "NETCATTY_MCP_PORT", value: "9" }]),
+    [{ name: "NETCATTY_MCP_PORT", value: "9" }],
+  );
+  // If a plain object sneaks in, still emit pairs (not a map).
+  assert.deepEqual(
+    toAcpMcpEnvPairs({ NETCATTY_MCP_PORT: "9", NETCATTY_MCP_TOKEN: "t" }),
+    [
+      { name: "NETCATTY_MCP_PORT", value: "9" },
+      { name: "NETCATTY_MCP_TOKEN", value: "t" },
+    ],
+  );
+  assert.deepEqual(toAcpMcpEnvPairs(undefined), []);
+});
+
+test("toAcpMcpServers maps injectMcp env as name/value pairs for session/new", () => {
   assert.deepEqual(
     toAcpMcpServers([{
       name: "netcatty-remote-hosts",
@@ -51,11 +69,25 @@ test("toAcpMcpServers maps injectMcp env pairs for session/new", () => {
     }]),
     [{
       name: "netcatty-remote-hosts",
+      type: "stdio",
       command: "node",
       args: ["mcp.cjs"],
-      env: { NETCATTY_MCP_PORT: "9", NETCATTY_MCP_TOKEN: "t" },
+      env: [
+        { name: "NETCATTY_MCP_PORT", value: "9" },
+        { name: "NETCATTY_MCP_TOKEN", value: "t" },
+      ],
     }],
   );
+  // Must never emit object-map env (Grok session/new rejects it).
+  const mapped = toAcpMcpServers([{
+    name: "x",
+    command: "node",
+    args: [],
+    env: { A: "1" },
+  }]);
+  assert.ok(Array.isArray(mapped[0].env));
+  assert.equal(mapped[0].type, "stdio");
+  assert.deepEqual(mapped[0].env, [{ name: "A", value: "1" }]);
 });
 
 test("buildGrokAcpSessionNewParams injects MCP servers and MCP-mode rules", () => {
@@ -72,6 +104,11 @@ test("buildGrokAcpSessionNewParams injects MCP servers and MCP-mode rules", () =
   });
   assert.equal(params.cwd, "/repo");
   assert.equal(params.mcpServers[0].name, "netcatty-remote-hosts");
+  assert.equal(params.mcpServers[0].type, "stdio");
+  assert.ok(Array.isArray(params.mcpServers[0].env));
+  assert.deepEqual(params.mcpServers[0].env, [{ name: "NETCATTY_MCP_PORT", value: "1" }]);
+  // Explicitly forbid the broken object-map shape in the shipped builder output.
+  assert.equal(typeof params.mcpServers[0].env.NETCATTY_MCP_PORT, "undefined");
   assert.equal(params._meta.yoloMode, true);
   assert.match(String(params._meta.rules || ""), /netcatty-remote-hosts|MCP mode/i);
   assert.match(String(params._meta.rules || ""), /run_terminal_command|search_replace|write/);
@@ -193,7 +230,12 @@ test("runGrokAcpTurn drives initialize/session/new/prompt via fixture RPC", asyn
         if (method === "session/new") {
           assert.equal(params.cwd, "/repo");
           assert.equal(params.mcpServers[0].name, "netcatty-remote-hosts");
-          assert.equal(params.mcpServers[0].env.NETCATTY_MCP_PORT, "7");
+          assert.equal(params.mcpServers[0].type, "stdio");
+          assert.ok(Array.isArray(params.mcpServers[0].env));
+          assert.deepEqual(
+            params.mcpServers[0].env,
+            [{ name: "NETCATTY_MCP_PORT", value: "7" }],
+          );
           return { sessionId: "acp-sess-1" };
         }
         if (method === "session/prompt") {

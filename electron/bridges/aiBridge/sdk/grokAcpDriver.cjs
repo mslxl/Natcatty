@@ -12,7 +12,6 @@
  */
 const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
-const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 const {
   GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
   createLineBuffer,
@@ -77,7 +76,31 @@ function buildGrokAcpSpawnArgs({
 }
 
 /**
+ * Normalize injectMcp env ([{name,value}] or plain object) into Grok ACP's
+ * required pair-array shape. A plain {KEY:VALUE} object is rejected by
+ * `session/new` (`Invalid params` / McpServer enum).
+ */
+function toAcpMcpEnvPairs(env) {
+  if (Array.isArray(env)) {
+    return env
+      .filter((pair) => pair && typeof pair.name === "string" && typeof pair.value === "string")
+      .map((pair) => ({ name: pair.name, value: pair.value }));
+  }
+  if (env && typeof env === "object") {
+    const out = [];
+    for (const [name, value] of Object.entries(env)) {
+      if (typeof name === "string" && typeof value === "string") {
+        out.push({ name, value });
+      }
+    }
+    return out;
+  }
+  return [];
+}
+
+/**
  * Convert Netcatty injectMcp configs into ACP session/new mcpServers entries.
+ * Grok agent stdio expects stdio servers with env as [{name,value}, ...].
  */
 function toAcpMcpServers(injectedMcpServers) {
   const out = [];
@@ -85,9 +108,11 @@ function toAcpMcpServers(injectedMcpServers) {
     if (!cfg || !cfg.name || !cfg.command) continue;
     const entry = {
       name: String(cfg.name),
+      // Optional for Grok, but documents stdio transport for the McpServer enum.
+      type: "stdio",
       command: String(cfg.command),
       args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
-      env: mcpEnvPairsToObject(cfg.env),
+      env: toAcpMcpEnvPairs(cfg.env),
     };
     out.push(entry);
   }
@@ -755,6 +780,7 @@ module.exports = {
   createJsonRpcClient,
   handleGrokAcpMessage,
   runGrokAcpTurn,
+  toAcpMcpEnvPairs,
   toAcpMcpServers,
   translateGrokAcpUpdate,
 };
