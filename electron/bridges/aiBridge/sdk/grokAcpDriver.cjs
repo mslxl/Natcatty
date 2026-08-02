@@ -539,6 +539,12 @@ function handleGrokAcpMessage(message, { emitter, state, pending, onPromptComple
           message.error.message || message.error.data || JSON.stringify(message.error),
         ));
       } else {
+        // Mark turn completed synchronously on successful session/prompt so a
+        // same-tick process "close" (forced teardown) does not race ahead of
+        // promise .then() and mis-classify the exit as a mid-turn failure.
+        if (state.promptRequestId != null && message.id === state.promptRequestId) {
+          state.turnCompleted = true;
+        }
         waiter.resolve(message.result);
       }
     }
@@ -683,6 +689,10 @@ async function runGrokAcpTurn({
     reasoningOpen: false,
     streamedAssistantText: false,
     failed: false,
+    // True after session/prompt resolves successfully. Process teardown (SIGTERM /
+    // taskkill) often yields a non-zero exit on Windows; that must not flip a
+    // completed tool-only turn into emitError (no assistant text).
+    turnCompleted: false,
     // Suppress session/load history replay until session/prompt starts.
     acceptUpdates: false,
     autoAllowPermissions: String(permissionMode || "confirm").toLowerCase() !== "observer",
@@ -719,6 +729,7 @@ async function runGrokAcpTurn({
         "session/prompt",
         buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
       );
+      state.turnCompleted = true;
       closeReasoning(state, emitter);
       if (!state.failed && !signal?.aborted) emitter.emitDone();
     } catch (err) {
@@ -854,7 +865,17 @@ async function runGrokAcpTurn({
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      if (!state.failed && !signal?.aborted && code && code !== 0 && !state.streamedAssistantText) {
+      // Do not treat teardown after a successful prompt as failure. Windows
+      // taskkill / forced exit often reports code 1; tool-only turns never set
+      // streamedAssistantText.
+      if (
+        !state.failed
+        && !signal?.aborted
+        && !state.turnCompleted
+        && code
+        && code !== 0
+        && !state.streamedAssistantText
+      ) {
         const stderr = stderrText.trim();
         state.failed = true;
         emitter.emitError(formatGrokErrorForUser(stderr || `Grok ACP exited with code ${code}`));
@@ -919,6 +940,8 @@ async function runGrokAcpTurn({
     state.acceptUpdates = true;
 
     // session/prompt resolves when the turn finishes; also wait for process end.
+    // turnCompleted is set in handleGrokAcpMessage on successful prompt result
+    // (must be sync before any teardown close event).
     await Promise.race([
       rpc.request(
         "session/prompt",

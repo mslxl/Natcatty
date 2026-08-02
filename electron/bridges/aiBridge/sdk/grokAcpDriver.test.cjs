@@ -773,6 +773,164 @@ test("runGrokAcpTurn reports missing CLI clearly", async () => {
   assert.match(String(emitter.calls[0]?.[1] || ""), /not found/i);
 });
 
+test("runGrokAcpTurn does not treat post-prompt exit code 1 as failure for tool-only turns", async () => {
+  // Repro: successful session/prompt (tools only, no assistant text) then
+  // process teardown with code 1 (Windows taskkill). Must emitDone, not error.
+  const { EventEmitter } = require("node:events");
+  const emitter = makeEmitter();
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = {
+      destroyed: false,
+      write(line) {
+        let msg;
+        try { msg = JSON.parse(String(line).trim()); } catch { return; }
+        if (msg?.id == null) return;
+        queueMicrotask(() => {
+          if (msg.method === "initialize") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+            })}\n`));
+          } else if (msg.method === "session/new") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { sessionId: "s-tool" },
+            })}\n`));
+          } else if (msg.method === "session/prompt") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "s-tool",
+                update: {
+                  sessionUpdate: "tool_call",
+                  toolCallId: "t1",
+                  toolName: "read_file",
+                  rawInput: {},
+                },
+              },
+            })}\n`));
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              method: "session/update",
+              params: {
+                sessionId: "s-tool",
+                update: {
+                  sessionUpdate: "tool_call_update",
+                  toolCallId: "t1",
+                  status: "completed",
+                  rawOutput: "ok",
+                },
+              },
+            })}\n`));
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { stopReason: "end_turn" },
+            })}\n`));
+            queueMicrotask(() => child.emit("close", 1));
+          } else {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {},
+            })}\n`));
+          }
+        });
+      },
+      end() {},
+    };
+    child.pid = 4242;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => {
+      child.killed = true;
+      queueMicrotask(() => child.emit("close", 1));
+    };
+    return child;
+  }
+
+  const result = await runGrokAcpTurn({
+    prompt: "tool only",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+    forceKillImpl: (child) => { child.kill(); },
+  });
+
+  assert.equal(result.sessionId, "s-tool");
+  assert.ok(emitter.calls.some((c) => c[0] === "toolCall"));
+  assert.ok(emitter.calls.some((c) => c[0] === "done"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"), "post-prompt exit 1 must not emitError");
+});
+
+test("runGrokAcpTurn still errors when process dies mid-turn with no completion", async () => {
+  const { EventEmitter } = require("node:events");
+  const emitter = makeEmitter();
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = {
+      destroyed: false,
+      write(line) {
+        let msg;
+        try { msg = JSON.parse(String(line).trim()); } catch { return; }
+        if (msg?.id == null) return;
+        queueMicrotask(() => {
+          if (msg.method === "initialize") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+            })}\n`));
+          } else if (msg.method === "session/new") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: { sessionId: "s-die" },
+            })}\n`));
+          } else if (msg.method === "session/prompt") {
+            // Die before answering prompt — turn never completed.
+            queueMicrotask(() => child.emit("close", 1));
+          } else {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {},
+            })}\n`));
+          }
+        });
+      },
+      end() {},
+    };
+    child.pid = 1;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => { child.killed = true; };
+    return child;
+  }
+
+  await runGrokAcpTurn({
+    prompt: "die mid turn",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "error"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+});
+
 test("registry grok backend defaults to ACP path and keeps streaming-json fallback", async () => {
   assert.ok(listBackends().includes("grok"));
   const driver = getDriver("grok");

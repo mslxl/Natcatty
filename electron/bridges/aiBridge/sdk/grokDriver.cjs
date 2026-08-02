@@ -447,6 +447,7 @@ function translateGrokStreamEvent(event, emitter, state = {}) {
 
     case "end": {
       closeReasoning(state, emitter);
+      state.turnCompleted = true;
       if (event.sessionId || event.session_id) {
         const sessionId = event.sessionId || event.session_id;
         state.sessionId = sessionId;
@@ -624,6 +625,9 @@ async function runGrokTurn({
     reasoningOpen: false,
     streamedAssistantText: false,
     failed: false,
+    // True after a terminal stream event (end/result). Avoid treating forced
+    // process teardown exit codes as failures on tool-only turns.
+    turnCompleted: false,
   };
 
   let child = null;
@@ -710,7 +714,16 @@ async function runGrokTurn({
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      if (!state.failed && !signal?.aborted && code && code !== 0 && !state.streamedAssistantText) {
+      // Same as ACP: ignore non-zero teardown codes after a completed turn
+      // (Windows kill often exits 1; tool-only turns have no assistant text).
+      if (
+        !state.failed
+        && !signal?.aborted
+        && !state.turnCompleted
+        && code
+        && code !== 0
+        && !state.streamedAssistantText
+      ) {
         const stderr = stderrText.trim();
         const message = stderr || `Grok Build exited with code ${code}`;
         state.failed = true;
