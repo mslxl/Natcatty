@@ -2,7 +2,9 @@ import type { ModelMessage } from 'ai';
 import type { OpenAIChatAssistantFields } from '../../providerContinuation';
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_PROTECT_RECENT_MESSAGES,
   estimateUnknownTokens,
+  findSafeChatMessageCompactionSplitIndex,
   resolveContextWindow,
 } from '../../contextCompaction';
 import { buildSystemPrompt } from '../../cattyAgent/systemPrompt';
@@ -15,7 +17,7 @@ import {
   compactCattyMessages,
   prepareCattyMessagesForStream,
 } from '../cattyRuntime';
-import { DEFAULT_MAX_OUTPUT_TOKENS } from '../contextBudget';
+import { computeTotalInputTokens, DEFAULT_MAX_OUTPUT_TOKENS } from '../contextBudget';
 import { clearChatSessionCancelled } from '../agentStop';
 import { isRequestTooLargeError } from '../../errorClassifier';
 import { getNetcattyBridge, generateId, resolveUserSkillsContext } from '../../../../components/ai/hooks/aiChatStreamingSupport';
@@ -203,8 +205,10 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       allMessages: import('../../types').ChatMessage[],
       includeCurrentUserMessage: boolean,
       options: { preserveTerminalToolResults?: ReadonlySet<import('../../types').ToolResult> } = {},
+      sessionContextCompaction = currentSession?.contextCompaction,
     ) => buildCattySdkMessages({
       allMessages,
+      contextCompaction: sessionContextCompaction,
       includeCurrentUserMessage,
       trimmed: modelUserText,
       attachments: includeCurrentUserMessage ? attachments : undefined,
@@ -260,8 +264,9 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       options: {
         force?: boolean;
         compressForRequestTooLargeRetry?: boolean;
+        protectRecentMessages?: number;
       },
-    ): Promise<ModelMessage[]> => {
+    ) => {
       const pendingHandles = ctx.toolOutputStore.listPendingHandles(sessionId);
       const sessionStateText = ctx.sessionStateStore.toReinjectionText(sessionId);
       const result = await compactCattyMessages({
@@ -278,6 +283,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         trigger: options.force ? 'force' : options.compressForRequestTooLargeRetry ? '413-retry' : 'pre-turn',
         force: options.force,
         compressForRequestTooLargeRetry: options.compressForRequestTooLargeRetry,
+        protectRecentMessages: options.protectRecentMessages,
         onCompactionStart: (trigger) => {
           ctx.emit({
             id: `compaction-start-${Date.now()}`,
@@ -307,12 +313,70 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
             : undefined,
         },
       });
-      return result.messages;
+      return result;
     };
 
+    const emitContextSnapshot = (messages: ModelMessage[]) => {
+      ctx.emit({
+        id: `context-snapshot-${Date.now()}-${ctx.turnId}`,
+        type: 'context_snapshot',
+        snapshot: {
+          ...promptContext,
+          contextWindow,
+          estimatedInputTokens: computeTotalInputTokens({
+            messages,
+            providerId,
+            systemPrompt,
+            toolNames: Object.keys(tools),
+          }),
+        },
+      } as import('../types').AgentEvent);
+    };
+
+    if (context.forceCompaction) {
+      // Persist a tool-safe UI-message boundary and summarize only that head
+      // slice so the durable compact coordinate system matches buildCattySdkMessages.
+      const uiMessages = currentSession?.messages ?? [];
+      const compactedMessageCount = findSafeChatMessageCompactionSplitIndex(
+        uiMessages,
+        DEFAULT_PROTECT_RECENT_MESSAGES,
+      );
+      if (compactedMessageCount <= 0) {
+        emitContextSnapshot(prepareMessagesForStream(buildSdkMessages(uiMessages, false)));
+        return;
+      }
+
+      const headSdkMessages = buildSdkMessages(
+        uiMessages.slice(0, compactedMessageCount),
+        false,
+        {},
+        undefined,
+      );
+      const compacted = await compactMessages(headSdkMessages, {
+        force: true,
+        // Summarize the entire head; the protected tail lives in UI messages.
+        protectRecentMessages: 0,
+      });
+      if (compacted.summary) {
+        const nextCompaction = {
+          summary: compacted.summary,
+          compactedMessageCount,
+        };
+        ui.persistContextCompaction?.(sessionId, nextCompaction);
+        emitContextSnapshot(prepareMessagesForStream(
+          buildSdkMessages(uiMessages, false, {}, nextCompaction),
+        ));
+      } else {
+        // Non-durable outcome: keep the meter honest (full current context).
+        emitContextSnapshot(prepareMessagesForStream(buildSdkMessages(uiMessages, false)));
+      }
+      return;
+    }
+
     let messagesForStream = buildSdkMessages(currentSession?.messages ?? [], true);
-    messagesForStream = await compactMessages(messagesForStream, {});
+    messagesForStream = (await compactMessages(messagesForStream, {})).messages;
     messagesForStream = prepareMessagesForStream(messagesForStream);
+    emitContextSnapshot(messagesForStream);
 
     const runtimeContext = createInitialCattyRuntimeContext({
       chatSessionId: sessionId,
@@ -365,6 +429,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
             runtimeContext: stepRuntimeContext,
             onEvent: (event) => ctx.emit(event),
           });
+          emitContextSnapshot(prepared.messages);
           return {
             messages: prepared.messages,
             runtimeContext: prepared.runtimeContext,
@@ -402,7 +467,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
               latestSession.messages,
               assistantMsgId,
             ),
-          });
+          }, latestSession.contextCompaction);
         }
         retryAssistantMsgId = generateId();
         ui.addMessageToSession(sessionId, {
@@ -427,10 +492,11 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         }));
       }
       ctx.toolResultDedup.enableWriteReplay(preservedWriteFingerprints);
-      const retryMessages = prepareMessagesForStream(await compactMessages(retryBaseMessages, {
+      const retryMessages = prepareMessagesForStream((await compactMessages(retryBaseMessages, {
         force: true,
         compressForRequestTooLargeRetry: true,
-      }));
+      })).messages);
+      emitContextSnapshot(retryMessages);
       await runStream(retryMessages, retryAssistantMsgId);
     }
   } catch (err) {

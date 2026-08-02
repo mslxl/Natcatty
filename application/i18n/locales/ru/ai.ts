@@ -1,6 +1,7 @@
 import type { Messages } from '../types';
 
 export const ruAiMessages: Messages = {
+  'ai.chat.contextUsage': 'Контекст: {used} / {max} токенов',
   // AI Settings
   'ai.agentSettings': 'Настройки агента',
   'ai.chat.preparing': 'Подготовка…',
@@ -333,6 +334,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.approveOnce': 'Разрешить один раз',
   'ai.chat.alwaysAllow': 'Всегда разрешать',
   'ai.chat.slashStopDesc': 'Остановить текущий ход AI и отменить выполняющиеся инструменты',
+  'ai.chat.slashCompactDesc': 'Сжать ранний контекст разговора',
   'ai.chat.reject': 'Отклонить',
   'ai.chat.toolLabel': 'Инструмент',
   'ai.chat.targetLabel': 'Цель',
@@ -388,6 +390,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.menuUserSkills': 'Пользовательские навыки',
   'ai.chat.menuSlashCommands': 'Команды /',
   'ai.chat.slashCommands': 'Команды /',
+  'ai.chat.slashSystemCommands': 'Системные команды',
   'ai.chat.slashQuickMessages': 'Быстрые сообщения',
   'ai.chat.slashUserSkills': 'Пользовательские навыки',
   'ai.chat.quickMessages': 'Команды /',

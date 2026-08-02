@@ -7,6 +7,18 @@ import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { useI18n } from '../../application/i18n/I18nProvider';
 
+export const MAX_TOOL_COMMAND_TOOLTIP_CHARS = 240;
+
+export function truncateToolCommandTooltip(
+  command: string,
+  maxChars = MAX_TOOL_COMMAND_TOOLTIP_CHARS,
+): string {
+  const normalized = command.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) return normalized;
+  if (maxChars <= 1) return '…'.slice(0, maxChars);
+  return `${normalized.slice(0, maxChars - 1).trimEnd()}…`;
+}
+
 /**
  * Pull the user-meaningful shell command out of the tool-call args.
  *
@@ -251,7 +263,14 @@ export const ToolCall = ({
                     <span className="text-muted-foreground/40">$ </span>{displayCmd}
                   </span>
                 </TooltipTrigger>
-                <TooltipContent>{displayCmd}</TooltipContent>
+                <TooltipContent
+                  side="top"
+                  align="start"
+                  collisionPadding={12}
+                  className="w-[calc(100vw-24px)] max-w-[420px] whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed [overflow-wrap:anywhere]"
+                >
+                  {truncateToolCommandTooltip(displayCmd)}
+                </TooltipContent>
               </Tooltip>
             );
           }

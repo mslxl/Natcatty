@@ -60,6 +60,10 @@ export interface UseAIChatStreamingParams {
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;
   updateLastMessage: (sessionId: string, updater: (msg: ChatMessage) => ChatMessage) => void;
   updateMessageById: (sessionId: string, messageId: string, updater: (msg: ChatMessage) => ChatMessage) => void;
+  persistContextCompaction?: (
+    sessionId: string,
+    compaction: import('../../../infrastructure/ai/types').AISessionContextCompaction,
+  ) => void;
 }
 
 export interface UseAIChatStreamingReturn {
@@ -106,6 +110,7 @@ export interface SendToCattyContext {
   titleText?: string;
   selectedUserSkillSlugs?: string[];
   permissionMode?: AIPermissionMode;
+  forceCompaction?: boolean;
 }
 
 export interface SendToExternalContext {
@@ -126,6 +131,7 @@ export function useAIChatStreaming({
   addMessageToSession,
   updateLastMessage,
   updateMessageById,
+  persistContextCompaction,
 }: UseAIChatStreamingParams): UseAIChatStreamingReturn {
   const [streamingSessionIds, setStreamingSessions] = useState<Set<string>>(
     () => new Set(sharedStreamingSessionIds),
@@ -187,7 +193,8 @@ export function useAIChatStreaming({
     reportStreamError,
     setStreamingForScope,
     getLatestSession: (sessionId: string) => latestAISessionsSnapshot?.find(s => s.id === sessionId),
-  }), [addMessageToSession, updateLastMessage, updateMessageById, reportStreamError, setStreamingForScope]);
+    persistContextCompaction,
+  }), [addMessageToSession, updateLastMessage, updateMessageById, reportStreamError, setStreamingForScope, persistContextCompaction]);
 
   const sendToExternalAgent = useCallback(async (
     sessionId: string,

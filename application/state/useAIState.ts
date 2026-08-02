@@ -23,6 +23,7 @@ import type { AIQuickMessage } from '../../infrastructure/ai/quickMessages';
 import { sanitizeQuickMessages } from '../../infrastructure/ai/quickMessages';
 import type {
   AIDraft,
+  AISessionContextCompaction,
   AISession,
   AIPermissionMode,
   AIToolIntegrationMode,
@@ -49,8 +50,6 @@ import {
 } from './aiDraftState';
 import { convertFilesToUploads } from './useFileUpload';
 import { removeProviderReferences } from './aiProviderCleanup';
-import { getAgentRuntime } from '../../infrastructure/ai/harness/globalAgentRuntime';
-
 import {
   AI_STATE_CHANGED_DRAFTS_BY_SCOPE,
   AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE,
@@ -765,15 +764,14 @@ export function useAIState() {
     });
   }, [debouncedPersistSessions]);
 
-  const clearSessionMessages = useCallback((sessionId: string) => {
-    getAgentRuntime().clearChatSession(sessionId);
-    void getAIBridge()?.deleteChatToolOutputsTemp?.(sessionId).catch(() => {});
-    if (persistTimerRef.current) {
-      clearTimeout(persistTimerRef.current);
-      persistTimerRef.current = null;
-    }
+  const persistContextCompaction = useCallback((
+    sessionId: string,
+    contextCompaction: AISessionContextCompaction,
+  ) => {
     setSessionsRaw(prev => {
-      const next = prev.map(s => s.id === sessionId ? { ...s, messages: [], updatedAt: Date.now() } : s);
+      const next = prev.map(s => s.id === sessionId
+        ? { ...s, contextCompaction, updatedAt: Date.now() }
+        : s);
       setLatestAISessionsSnapshot(next);
       persistSessions(next);
       return next;
@@ -1061,7 +1059,7 @@ export function useAIState() {
     addMessageToSession,
     updateLastMessage,
     updateMessageById,
-    clearSessionMessages,
+    persistContextCompaction,
     cleanupOrphanedSessions,
   }), [
     providers,
@@ -1118,7 +1116,7 @@ export function useAIState() {
     addMessageToSession,
     updateLastMessage,
     updateMessageById,
-    clearSessionMessages,
+    persistContextCompaction,
     cleanupOrphanedSessions,
   ]);
 }

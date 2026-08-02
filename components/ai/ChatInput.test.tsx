@@ -103,3 +103,38 @@ test('allows terminal-selection-only steering submissions', () => {
     /<button[^>]*disabled=""[^>]*aria-label="ai\.codex\.steer\.addInstruction"/,
   );
 });
+
+test('renders the Catty context usage ring after the model chip', () => {
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Catty Agent"
+        contextUsage={{
+          sessionId: 'session-1',
+          inputTokens: 64_000,
+          contextWindow: 128_000,
+          estimated: true,
+        }}
+      />
+    </TooltipProvider>,
+  );
+
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /stroke-dasharray=/);
+  assert.match(html, /stroke-dashoffset=/);
+  assert.match(html, /class="h-4 w-4"/);
+  assert.doesNotMatch(html, /text-\[7px\]/);
+  assert.match(html, /aria-valuenow="50"/);
+});
+
+test('ChatInput wires /compact through getSystemSlashCommand and canCompact', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /getSystemSlashCommand/);
+  assert.match(source, /systemCommand === 'compact'/);
+  assert.match(source, /canCompact/);
+  assert.match(source, /onCompact\?\.\(\)/);
+  assert.match(source, /command\.slug !== 'compact' \|\| canCompact/);
+});

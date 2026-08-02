@@ -7,7 +7,18 @@
  */
 
 import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
-import { filterQuickMessages, buildSlashCommandItems, filterUserSkillsForSlash, getSlashCommandItemKey, isSystemStopSlashCommand, type AIQuickMessage, type SlashCommandItem, type UserSkillSlashOption } from '../../infrastructure/ai/quickMessages';
+import {
+  buildSlashCommandItems,
+  filterQuickMessages,
+  filterSystemSlashCommands,
+  filterUserSkillsForSlash,
+  getSlashCommandItemKey,
+  getSystemSlashCommand,
+  SYSTEM_BUILTIN_SLASH_COMMANDS,
+  type AIQuickMessage,
+  type SlashCommandItem,
+  type UserSkillSlashOption,
+} from '../../infrastructure/ai/quickMessages';
 import { SlashCommandPicker } from './SlashCommandPicker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
@@ -26,12 +37,23 @@ import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile }
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import type { AgentContextUsage } from './hooks/useAgentCompactionUi';
 
 // Keep in sync with the popover's Tailwind max-width below.
 const MODEL_PICKER_MAX_WIDTH = 360;
 // Slightly wider for the provider picker so the per-row default-model
 // caption doesn't truncate.
 const PROVIDER_PICKER_MAX_WIDTH = 320;
+const PERMISSION_PICKER_WIDTH = 250;
+const MENU_VIEWPORT_GUTTER = 8;
+const CONTEXT_USAGE_RING_RADIUS = 10;
+const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
+
+function formatContextTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(tokens >= 100_000 ? 0 : 1)}K`;
+  return String(Math.max(0, Math.round(tokens)));
+}
 
 /**
  * Provider picker payload used by Catty Agent. When set, the model chip
@@ -58,6 +80,10 @@ interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  onCompact?: () => void;
+  /** When false, hide/ignore `/compact` so the composer is not cleared as a silent no-op. */
+  canCompact?: boolean;
+  contextUsage?: AgentContextUsage | null;
   onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
@@ -110,6 +136,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
   value,
   onChange,
   onSend,
+  onCompact,
+  canCompact = false,
+  contextUsage,
   onSteer,
   onStop,
   isStreaming = false,
@@ -285,24 +314,45 @@ const ChatInput: React.FC<ChatInputProps> = ({
     () => new Set(quickMessages.map((message) => message.slug)),
     [quickMessages],
   );
+  const systemCommandSlugSet = useMemo(
+    () => new Set<string>(SYSTEM_BUILTIN_SLASH_COMMANDS.map((command) => command.slug)),
+    [],
+  );
 
   const filteredQuickMessages = useMemo(
-    () => filterQuickMessages(quickMessages, slashQuery),
-    [quickMessages, slashQuery],
+    () => filterQuickMessages(quickMessages, slashQuery)
+      .filter((message) => !systemCommandSlugSet.has(message.slug)),
+    [quickMessages, slashQuery, systemCommandSlugSet],
+  );
+
+  const availableSystemCommands = useMemo(
+    () => SYSTEM_BUILTIN_SLASH_COMMANDS.filter((command) => (
+      command.slug !== 'compact' || canCompact
+    )),
+    [canCompact],
+  );
+
+  const filteredSystemCommands = useMemo(
+    () => filterSystemSlashCommands(availableSystemCommands, slashQuery),
+    [availableSystemCommands, slashQuery],
   );
 
   const filteredUserSkills = useMemo(
     () => filterUserSkillsForSlash(userSkillOptions, slashQuery)
-      .filter((skill) => !quickMessageSlugSet.has(skill.slug)),
-    [userSkillOptions, slashQuery, quickMessageSlugSet],
+      .filter((skill) => (
+        !quickMessageSlugSet.has(skill.slug)
+        && !systemCommandSlugSet.has(skill.slug)
+      )),
+    [userSkillOptions, slashQuery, quickMessageSlugSet, systemCommandSlugSet],
   );
 
   const slashCommandItems = useMemo(
-    () => buildSlashCommandItems(quickMessages, userSkillOptions, slashQuery),
-    [quickMessages, userSkillOptions, slashQuery],
+    () => buildSlashCommandItems(quickMessages, userSkillOptions, slashQuery, true)
+      .filter((item) => item.kind !== 'system' || item.command.slug !== 'compact' || canCompact),
+    [quickMessages, userSkillOptions, slashQuery, canCompact],
   );
 
-  const isSlashCatalogEmpty = quickMessages.length === 0 && userSkills.length === 0;
+  const isSlashCatalogEmpty = quickMessages.length === 0 && userSkills.length === 0 && filteredSystemCommands.length === 0;
   const slashPickerNoResultsLabel = isSlashCatalogEmpty
     ? t('ai.chat.slashEmptyHint')
     : t('ai.chat.slashNoResults');
@@ -343,12 +393,26 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [closeAllMenus, onChange, slashRange, value]);
 
   const handleSelectSlashCommandItem = useCallback((item: SlashCommandItem) => {
+    if (item.kind === 'system') {
+      const command = item.command.slug;
+      if (command === 'compact') {
+        if (!canCompact) {
+          closeAllMenus();
+          return;
+        }
+        onCompact?.();
+      }
+      if (command === 'stop') onStop?.();
+      onChange('');
+      closeAllMenus();
+      return;
+    }
     if (item.kind === 'quickMessage') {
       insertQuickMessage(item.message);
       return;
     }
     insertUserSkillToken(item.skill);
-  }, [insertQuickMessage, insertUserSkillToken]);
+  }, [canCompact, closeAllMenus, insertQuickMessage, insertUserSkillToken, onChange, onCompact, onStop]);
 
   // Reset active highlight when a menu opens or when the *identity* of the
   // visible items changes. Watching only `.length` misses cases where the
@@ -481,9 +545,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSubmit = useCallback(
     (_text: string, _event: FormEvent<HTMLFormElement>) => {
-      if (isSystemStopSlashCommand(value)) {
-        onStop?.();
-        onChange('');
+      const systemCommand = getSystemSlashCommand(value);
+      if (systemCommand) {
+        if (systemCommand === 'compact') {
+          if (!canCompact) return;
+          onCompact?.();
+          onChange('');
+          return;
+        }
+        if (systemCommand === 'stop') {
+          onStop?.();
+          onChange('');
+          return;
+        }
         return;
       }
       if (isStreaming && canSteer) {
@@ -492,7 +566,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       onSend();
     },
-    [canSteer, isStreaming, onSend, onSteer, onStop, onChange, value],
+    [canCompact, canSteer, isStreaming, onCompact, onSend, onSteer, onStop, onChange, value],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';
@@ -546,6 +620,21 @@ const ChatInput: React.FC<ChatInputProps> = ({
     ? 'max-w-[180px]'
     : (selectedThinking ? 'max-w-[148px]' : 'max-w-[82px]');
   const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
+  const contextUsagePercent = contextUsage
+    ? Math.min(100, Math.max(0, (contextUsage.inputTokens / contextUsage.contextWindow) * 100))
+    : 0;
+  const contextUsageRingColor = contextUsagePercent >= 80
+    ? 'stroke-red-400'
+    : contextUsagePercent >= 50
+      ? 'stroke-amber-400'
+      : 'stroke-emerald-400';
+  const contextUsageRingOffset = CONTEXT_USAGE_RING_CIRCUMFERENCE
+    * (1 - contextUsagePercent / 100);
+  const contextUsageLabel = contextUsage
+    ? `${contextUsage.estimated ? '~' : ''}${t('ai.chat.contextUsage')}`
+      .replace('{used}', formatContextTokens(contextUsage.inputTokens))
+      .replace('{max}', formatContextTokens(contextUsage.contextWindow))
+    : '';
   const popoverMaxWidth = hasProviderSwitcher ? PROVIDER_PICKER_MAX_WIDTH : MODEL_PICKER_MAX_WIDTH;
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';
@@ -740,13 +829,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
               listRef={slashPickerListRef}
               listboxId={slashPickerListboxId}
               ariaLabel={t('ai.chat.slashCommands')}
+              systemCommands={filteredSystemCommands}
               quickMessages={filteredQuickMessages}
               userSkills={filteredUserSkills}
               slashCommandItems={slashCommandItems}
               activeMenuIndex={activeMenuIndex}
               onActiveIndexChange={setActiveMenuIndex}
               onSelectQuickMessage={insertQuickMessage}
+              onSelectSystemCommand={(command) => handleSelectSlashCommandItem({ kind: 'system', command })}
               onSelectSkill={insertUserSkillToken}
+              systemCommandsSectionLabel={t('ai.chat.slashSystemCommands')}
+              systemCommandDescription={(command) => t(command.descriptionKey)}
               quickMessagesSectionLabel={t('ai.chat.slashQuickMessages')}
               userSkillsSectionLabel={t('ai.chat.slashUserSkills')}
               noResultsLabel={slashPickerNoResultsLabel}
@@ -888,6 +981,48 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <span className={`truncate min-w-0 ${modelChipMaxWidth}`}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
+            {contextUsage && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    role="progressbar"
+                    aria-label={contextUsageLabel}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(contextUsagePercent)}
+                    className="relative flex h-4 w-4 shrink-0 items-center justify-center"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      className="h-4 w-4"
+                      viewBox="0 0 28 28"
+                    >
+                      <circle
+                        className="stroke-muted/40"
+                        cx="14"
+                        cy="14"
+                        fill="none"
+                        r={CONTEXT_USAGE_RING_RADIUS}
+                        strokeWidth="3.5"
+                      />
+                      <circle
+                        className={`${contextUsageRingColor} transition-[stroke-dashoffset] duration-300`}
+                        cx="14"
+                        cy="14"
+                        fill="none"
+                        r={CONTEXT_USAGE_RING_RADIUS}
+                        strokeDasharray={CONTEXT_USAGE_RING_CIRCUMFERENCE}
+                        strokeDashoffset={contextUsageRingOffset}
+                        strokeLinecap="round"
+                        strokeWidth="3.5"
+                        transform="rotate(-90 14 14)"
+                      />
+                    </svg>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>{contextUsageLabel}</TooltipContent>
+              </Tooltip>
+            )}
             {showModelPicker && hasModelPicker && menuPos && createPortal(
 <>
             <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
@@ -1040,7 +1175,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         if (lockTurnConfiguration) return;
                         if (!showPermPicker) {
                           const rect = permBtnRef.current?.getBoundingClientRect();
-                          if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                          if (rect) {
+                            const left = Math.max(
+                              MENU_VIEWPORT_GUTTER,
+                              Math.min(
+                                rect.left,
+                                window.innerWidth - PERMISSION_PICKER_WIDTH - MENU_VIEWPORT_GUTTER,
+                              ),
+                            );
+                            setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
+                          }
                           setActiveMenu('perm');
                         } else {
                           closeAllMenus();
@@ -1070,7 +1214,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     <div
                       role="listbox"
                       aria-label="Permission mode"
-                      className="fixed z-[1000] min-w-[180px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                      className="fixed z-[1000] w-[250px] max-w-[calc(100vw-16px)] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                       style={{ left: menuPos.left, bottom: menuPos.bottom }}
                     >
                       {([

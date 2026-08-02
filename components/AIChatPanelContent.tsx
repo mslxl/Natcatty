@@ -48,9 +48,12 @@ interface AIChatPanelContentProps {
   messages: ChatMessage[];
   isStreaming: boolean;
   activeCompaction?: import('./ai/hooks/useAgentCompactionUi').ActiveCompactionUi | null;
+  contextUsage?: import('./ai/hooks/useAgentCompactionUi').AgentContextUsage | null;
   inputValue: string;
   setInputValue: (value: string) => void;
   handleSend: () => void;
+  handleCompact: () => void;
+  canCompact?: boolean;
   handleSteer: () => void;
   handleStop: () => void;
   canSteer: boolean;
@@ -108,9 +111,12 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   messages,
   isStreaming,
   activeCompaction = null,
+  contextUsage = null,
   inputValue,
   setInputValue,
   handleSend,
+  handleCompact,
+  canCompact = false,
   handleSteer,
   handleStop,
   canSteer,
@@ -282,6 +288,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   value={inputValue}
                   onChange={setInputValue}
                   onSend={handleSend}
+                  onCompact={handleCompact}
+                  canCompact={canCompact}
                   onSteer={handleSteer}
                   onStop={handleStop}
                   isStreaming={isStreaming}
@@ -316,6 +324,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   onRemoveUserSkill={removeSelectedUserSkill}
                   permissionMode={globalPermissionMode}
                   onPermissionModeChange={setGlobalPermissionMode}
+                  contextUsage={contextUsage}
                 />
               </div>
             </React.Profiler>
