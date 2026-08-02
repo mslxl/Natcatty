@@ -19,7 +19,6 @@ import {
   resolveAgentCliVersion,
   resolveAgentModelSelection,
 } from '../infrastructure/ai/types';
-import { findSafeChatMessageCompactionSplitIndex } from '../infrastructure/ai/contextCompaction';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
@@ -644,12 +643,14 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   // misleads users when reopening long sessions (looks empty until the next turn).
   const contextUsage = currentAgentId === 'catty' ? observedContextUsage : null;
 
+  // Catty-only manual compact. External agents own their own compaction.
+  // No minimum message count: short sessions may still run /compact (even if
+  // there is little to summarize).
   const canCompact = currentAgentId === 'catty'
     && Boolean(activeSessionId)
     && !isStreaming
     && Boolean(effectiveActiveProvider)
-    && Boolean(effectiveActiveModelId.trim())
-    && findSafeChatMessageCompactionSplitIndex(activeSession?.messages ?? []) > 0;
+    && Boolean(effectiveActiveModelId.trim());
 
   const handleAgentProviderModelSelect = useCallback(
     (providerId: string, modelId: string) => {
