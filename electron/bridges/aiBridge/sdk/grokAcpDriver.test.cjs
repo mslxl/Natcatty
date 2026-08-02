@@ -792,14 +792,22 @@ test("runGrokAcpTurn forwards usage from session/prompt result", async () => {
             sessionUpdate: "agent_message_chunk",
             content: { text: "ok" },
           }, em, state);
+          // Live Grok shape under _meta.usage (camelCase + cachedReadTokens).
           return {
             stopReason: "end_turn",
-            usage: {
-              input_tokens: 11,
-              output_tokens: 7,
-              cache_read_input_tokens: 2,
-              reasoning_tokens: 3,
-              total_tokens: 23,
+            _meta: {
+              inputTokens: 27144,
+              outputTokens: 29,
+              totalTokens: 27174,
+              cachedReadTokens: 2560,
+              reasoningTokens: 24,
+              usage: {
+                inputTokens: 27144,
+                outputTokens: 29,
+                totalTokens: 27173,
+                cachedReadTokens: 2560,
+                reasoningTokens: 24,
+              },
             },
           };
         }
@@ -810,13 +818,107 @@ test("runGrokAcpTurn forwards usage from session/prompt result", async () => {
   const usage = emitter.calls.find((c) => c[0] === "usage");
   assert.ok(usage);
   assert.deepEqual(usage[1], {
-    inputTokens: 11,
-    cachedInputTokens: 2,
-    outputTokens: 7,
-    reasoningTokens: 3,
-    totalTokens: 23,
+    inputTokens: 27144,
+    cachedInputTokens: 2560,
+    outputTokens: 29,
+    reasoningTokens: 24,
+    totalTokens: 27173,
   });
   assert.ok(emitter.calls.some((c) => c[0] === "done"));
+});
+
+test("runGrokAcpTurn emits usage on prompt response even when process closes same tick", async () => {
+  // Repro of Token ~1: onPromptComplete resolves promptDone in the same turn as
+  // the prompt RPC result; Promise.race often returns "closed" and used to skip usage.
+  const { EventEmitter } = require("node:events");
+  const emitter = makeEmitter();
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = {
+      destroyed: false,
+      write(line) {
+        let msg;
+        try { msg = JSON.parse(String(line).trim()); } catch { return; }
+        if (msg?.id == null) return;
+        queueMicrotask(() => {
+          if (msg.method === "initialize") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0", id: msg.id,
+              result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+            })}\n`));
+          } else if (msg.method === "session/new") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0", id: msg.id, result: { sessionId: "s-race" },
+            })}\n`));
+          } else if (msg.method === "session/prompt") {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0", method: "session/update",
+              params: {
+                sessionId: "s-race",
+                update: { sessionUpdate: "agent_message_chunk", content: { text: "long reply…" } },
+              },
+            })}\n`));
+            // Prompt result with real Grok usage, then same-tick process close
+            // (simulates onPromptComplete → promptDone racing the await).
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0",
+              id: msg.id,
+              result: {
+                stopReason: "end_turn",
+                _meta: {
+                  usage: {
+                    inputTokens: 1200,
+                    outputTokens: 800,
+                    totalTokens: 2000,
+                    cachedReadTokens: 100,
+                    reasoningTokens: 50,
+                  },
+                },
+              },
+            })}\n`));
+            queueMicrotask(() => child.emit("close", 1));
+          } else {
+            child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+              jsonrpc: "2.0", id: msg.id, result: {},
+            })}\n`));
+          }
+        });
+      },
+      end() {},
+    };
+    child.pid = 7;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => {
+      child.killed = true;
+      queueMicrotask(() => child.emit("close", 1));
+    };
+    return child;
+  }
+
+  await runGrokAcpTurn({
+    prompt: "write a long essay",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+    forceKillImpl: (c) => { c.kill(); },
+  });
+
+  const usage = emitter.calls.find((c) => c[0] === "usage");
+  assert.ok(usage, "usage must be emitted even if process closes in the same tick");
+  assert.deepEqual(usage[1], {
+    inputTokens: 1200,
+    cachedInputTokens: 100,
+    outputTokens: 800,
+    reasoningTokens: 50,
+    totalTokens: 2000,
+  });
+  assert.ok(emitter.calls.some((c) => c[0] === "done"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"));
 });
 
 test("runGrokAcpTurn does not treat post-prompt exit code 1 as failure for tool-only turns", async () => {

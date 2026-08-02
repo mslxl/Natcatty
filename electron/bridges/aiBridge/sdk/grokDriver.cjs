@@ -516,16 +516,72 @@ function resolveGrokTurnPrompt({
 }
 
 /**
- * Forward Grok/ACP usage objects onto the canonical emitter (snake or camel).
+ * Pick usage from a Grok ACP session/prompt result.
+ * Live Grok 0.2.x shape (verified):
+ *   { stopReason, _meta: { inputTokens, outputTokens, cachedReadTokens,
+ *     reasoningTokens, totalTokens, usage: { …same camelCase… } } }
+ * There is no top-level result.usage.
+ */
+function extractGrokAcpPromptUsage(promptResult) {
+  if (!promptResult || typeof promptResult !== "object") return null;
+  const meta = promptResult._meta && typeof promptResult._meta === "object"
+    ? promptResult._meta
+    : (promptResult.meta && typeof promptResult.meta === "object" ? promptResult.meta : null);
+  if (promptResult.usage && typeof promptResult.usage === "object") return promptResult.usage;
+  if (meta?.usage && typeof meta.usage === "object") return meta.usage;
+  if (
+    meta
+    && (
+      meta.inputTokens != null
+      || meta.outputTokens != null
+      || meta.totalTokens != null
+      || meta.input_tokens != null
+      || meta.output_tokens != null
+    )
+  ) {
+    return meta;
+  }
+  return null;
+}
+
+/**
+ * Forward Grok/ACP usage onto the canonical emitter.
+ * Supports Anthropic snake_case and Grok ACP camelCase (cachedReadTokens).
  */
 function emitGrokUsage(emitter, usage) {
   if (!usage || typeof usage !== "object" || typeof emitter?.usage !== "function") return false;
+  const inputTokens = Number(
+    usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens ?? usage.promptTokens,
+  ) || 0;
+  const outputTokens = Number(
+    usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens ?? usage.completionTokens,
+  ) || 0;
+  const cachedInputTokens = Number(
+    usage.cache_read_input_tokens
+    ?? usage.cached_input_tokens
+    ?? usage.cachedInputTokens
+    ?? usage.cachedReadTokens
+    ?? usage.cached_read_tokens
+  ) || 0;
+  const reasoningTokens = Number(
+    usage.reasoning_tokens
+    ?? usage.reasoningTokens
+    ?? usage.reasoning_output_tokens
+    ?? usage.reasoningOutputTokens
+  ) || 0;
+  let totalTokens = Number(usage.total_tokens ?? usage.totalTokens) || 0;
+  if (!totalTokens && (inputTokens || outputTokens)) {
+    totalTokens = inputTokens + outputTokens;
+  }
+  if (!inputTokens && !outputTokens && !totalTokens && !cachedInputTokens && !reasoningTokens) {
+    return false;
+  }
   emitter.usage({
-    inputTokens: usage.input_tokens ?? usage.inputTokens,
-    cachedInputTokens: usage.cache_read_input_tokens ?? usage.cachedInputTokens,
-    outputTokens: usage.output_tokens ?? usage.outputTokens,
-    reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens,
-    totalTokens: usage.total_tokens ?? usage.totalTokens,
+    inputTokens,
+    cachedInputTokens,
+    outputTokens,
+    reasoningTokens,
+    totalTokens,
   });
   return true;
 }
@@ -906,6 +962,7 @@ module.exports = {
   resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
+  extractGrokAcpPromptUsage,
   emitGrokUsage,
   runGrokTurn,
   spawnGrokProcess,

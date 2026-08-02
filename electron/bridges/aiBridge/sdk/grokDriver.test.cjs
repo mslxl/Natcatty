@@ -15,6 +15,8 @@ const {
   resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
+  extractGrokAcpPromptUsage,
+  emitGrokUsage,
   runGrokTurn,
   spawnGrokProcess,
   stripGrokMcpServerSection,
@@ -197,6 +199,37 @@ test("spawnGrokProcess forwards shell from prepareCommandForSpawn into spawnImpl
   }
 });
 
+test("extractGrokAcpPromptUsage maps live Grok _meta.usage and cachedReadTokens", () => {
+  const promptResult = {
+    stopReason: "end_turn",
+    _meta: {
+      inputTokens: 27144,
+      outputTokens: 29,
+      totalTokens: 27174,
+      cachedReadTokens: 2560,
+      reasoningTokens: 24,
+      usage: {
+        inputTokens: 27144,
+        outputTokens: 29,
+        totalTokens: 27173,
+        cachedReadTokens: 2560,
+        reasoningTokens: 24,
+      },
+    },
+  };
+  const extracted = extractGrokAcpPromptUsage(promptResult);
+  assert.equal(extracted.cachedReadTokens, 2560);
+  const calls = [];
+  emitGrokUsage({ usage: (u) => calls.push(u) }, extracted);
+  assert.deepEqual(calls[0], {
+    inputTokens: 27144,
+    cachedInputTokens: 2560,
+    outputTokens: 29,
+    reasoningTokens: 24,
+    totalTokens: 27173,
+  });
+});
+
 test("resolveGrokTurnPrompt seeds history only when resume falls back to session/new", () => {
   const seed = "[Conversation context replay]\nUSER: earlier";
   const turn = "latest question";
@@ -301,9 +334,9 @@ test("translateGrokStreamEvent maps thought, text, tools, usage, end", () => {
     ["sessionId", "s1"],
     ["usage", {
       inputTokens: 10,
-      cachedInputTokens: undefined,
+      cachedInputTokens: 0,
       outputTokens: 3,
-      reasoningTokens: undefined,
+      reasoningTokens: 0,
       totalTokens: 13,
     }],
   ]);

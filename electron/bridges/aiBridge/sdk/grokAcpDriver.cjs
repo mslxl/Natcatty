@@ -25,6 +25,7 @@ const {
   formatGrokErrorForUser,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
+  extractGrokAcpPromptUsage,
   emitGrokUsage,
   spawnGrokProcess,
 } = require("./grokDriver.cjs");
@@ -540,16 +541,18 @@ function handleGrokAcpMessage(message, { emitter, state, pending, onPromptComple
           message.error.message || message.error.data || JSON.stringify(message.error),
         ));
       } else {
-        // Mark turn completed synchronously on successful session/prompt so a
-        // same-tick process "close" (forced teardown) does not race ahead of
-        // promise .then() and mis-classify the exit as a mid-turn failure.
+        // Mark turn completed + emit usage synchronously on successful
+        // session/prompt. Must not wait for Promise.race after await: onPromptComplete
+        // resolves promptDone in the same tick, so race often wins with "closed"
+        // and drops usage → UI falls back to estimated Token ~1.
         if (state.promptRequestId != null && message.id === state.promptRequestId) {
           state.turnCompleted = true;
+          emitGrokUsage(emitter, extractGrokAcpPromptUsage(message.result));
         }
         waiter.resolve(message.result);
       }
     }
-    // session/prompt resolves when the turn completes
+    // session/prompt resolves when the turn completes (unblocks race / teardown).
     if (state.promptRequestId != null && message.id === state.promptRequestId) {
       onPromptComplete?.(message);
     }
@@ -731,12 +734,8 @@ async function runGrokAcpTurn({
         buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
       );
       state.turnCompleted = true;
-      emitGrokUsage(
-        emitter,
-        promptResult?.usage
-        ?? promptResult?._meta?.usage
-        ?? promptResult?.meta?.usage,
-      );
+      // Fixture/RPC inject path has no process race; still emit from the result.
+      emitGrokUsage(emitter, extractGrokAcpPromptUsage(promptResult));
       closeReasoning(state, emitter);
       if (!state.failed && !signal?.aborted) emitter.emitDone();
     } catch (err) {
@@ -947,23 +946,15 @@ async function runGrokAcpTurn({
     state.acceptUpdates = true;
 
     // session/prompt resolves when the turn finishes; also wait for process end.
-    // turnCompleted is set in handleGrokAcpMessage on successful prompt result
-    // (must be sync before any teardown close event).
-    const promptOutcome = await Promise.race([
+    // Usage is emitted inside handleGrokAcpMessage (must be sync — see above).
+    await Promise.race([
       rpc.request(
         "session/prompt",
         buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
         { timeoutMs: 30 * 60_000 },
-      ).then((result) => ({ kind: "prompt", result })),
-      promptDone.then(() => ({ kind: "closed" })),
+      ),
+      promptDone,
     ]);
-    // ACP may return optional usage on the prompt result (not only as stream updates).
-    if (promptOutcome?.kind === "prompt") {
-      const usage = promptOutcome.result?.usage
-        ?? promptOutcome.result?._meta?.usage
-        ?? promptOutcome.result?.meta?.usage;
-      emitGrokUsage(emitter, usage);
-    }
   } catch (err) {
     if (!state.failed && !signal?.aborted) {
       state.failed = true;
