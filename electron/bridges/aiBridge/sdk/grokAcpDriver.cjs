@@ -769,13 +769,44 @@ async function runGrokAcpTurn({
   let settled = false;
   let forceKillTimer = null;
   let abortHandler = null;
+  let promptDoneResolve = null;
+  /** @type {ReturnType<typeof createJsonRpcClient>|null} */
+  let rpc = null;
+
+  // Match processErrorGuards / terminalBridge: EPIPE after peer exit is benign.
+  // Without a listener, Node treats async stdin errors as unhandled and can
+  // take down the Electron main process.
+  const isBenignStdinError = (err) => {
+    const code = err?.code;
+    return code === "EPIPE" || code === "ERR_STREAM_DESTROYED";
+  };
+  const failTurnFromStdin = (err) => {
+    if (settled || state.failed || signal?.aborted || state.turnCompleted) return;
+    if (isBenignStdinError(err)) return;
+    state.failed = true;
+    emitter.emitError(formatGrokErrorForUser(err?.message || String(err)));
+    try { rpc?.rejectAll?.(err || new Error("Grok ACP stdin error")); } catch { /* ignore */ }
+    promptDoneResolve?.();
+  };
+  if (typeof child.stdin?.on === "function") {
+    child.stdin.on("error", (err) => {
+      // Benign teardown races (peer closed): ignore, same as processErrorGuards.
+      if (isBenignStdinError(err) || settled || state.failed || signal?.aborted || state.turnCompleted) {
+        return;
+      }
+      failTurnFromStdin(err);
+    });
+  }
 
   const writeLine = (line) => {
-    if (!child?.stdin || child.stdin.destroyed) return;
+    const stdin = child?.stdin;
+    if (!stdin || stdin.destroyed || stdin.writable === false) return;
     try {
-      child.stdin.write(line);
-    } catch {
-      /* ignore */
+      stdin.write(line, (err) => {
+        if (err) failTurnFromStdin(err);
+      });
+    } catch (err) {
+      failTurnFromStdin(err);
     }
   };
 
@@ -783,12 +814,11 @@ async function runGrokAcpTurn({
     writeLine(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
   };
 
-  let promptDoneResolve;
   const promptDone = new Promise((resolve) => {
     promptDoneResolve = resolve;
   });
 
-  const rpc = createJsonRpcClient({
+  rpc = createJsonRpcClient({
     write: writeLine,
     onMessage: (message, pending) => {
       if (signal?.aborted) return;

@@ -774,6 +774,101 @@ test("runGrokAcpTurn reports missing CLI clearly", async () => {
   assert.match(String(emitter.calls[0]?.[1] || ""), /not found/i);
 });
 
+test("runGrokAcpTurn ignores benign stdin EPIPE after turn completes", async () => {
+  // Matches processErrorGuards: EPIPE must not crash main or fail a completed turn.
+  const { EventEmitter } = require("node:events");
+  const emitter = makeEmitter();
+  let stdinRef = null;
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.writable = true;
+    stdin.write = (line, cb) => {
+      let msg;
+      try { msg = JSON.parse(String(line).trim()); } catch {
+        if (typeof cb === "function") cb();
+        return true;
+      }
+      if (msg?.id == null) {
+        if (typeof cb === "function") cb();
+        return true;
+      }
+      queueMicrotask(() => {
+        if (msg.method === "initialize") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+          })}\n`));
+        } else if (msg.method === "session/new") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { sessionId: "s-epipe" },
+          })}\n`));
+        } else if (msg.method === "session/prompt") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "s-epipe",
+              update: { sessionUpdate: "agent_message_chunk", content: { text: "ok" } },
+            },
+          })}\n`));
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { stopReason: "end_turn" },
+          })}\n`));
+          // Teardown race: peer closed stdin after prompt success.
+          queueMicrotask(() => {
+            const err = new Error("write EPIPE");
+            err.code = "EPIPE";
+            stdin.emit("error", err);
+            child.emit("close", 1);
+          });
+        } else {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {},
+          })}\n`));
+        }
+        if (typeof cb === "function") cb();
+      });
+      return true;
+    };
+    stdin.end = () => {};
+    child.stdin = stdin;
+    stdinRef = stdin;
+    child.pid = 3;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => {
+      child.killed = true;
+      queueMicrotask(() => child.emit("close", 1));
+    };
+    return child;
+  }
+
+  await runGrokAcpTurn({
+    prompt: "hi",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+    forceKillImpl: (c) => { c.kill(); },
+  });
+
+  assert.ok(stdinRef, "stdin must have been wired");
+  assert.ok(emitter.calls.some((c) => c[0] === "done"));
+  assert.ok(!emitter.calls.some((c) => c[0] === "error"), "post-completion EPIPE is benign");
+});
+
 test("runGrokAcpTurn forwards usage from session/prompt result", async () => {
   const emitter = makeEmitter();
   await runGrokAcpTurn({
