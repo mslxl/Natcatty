@@ -394,12 +394,34 @@ async function hashRemoteFile(client, sftpId, filePath, encoding, options = {}) 
 }
 
 async function computeSourceFingerprint(
-  { sourceType, sourcePath, sourceSftpId, sourceEncoding },
+  { sourceType, sourcePath, sourceSftpId, sourceEncoding, prefixBytes },
   options = {},
 ) {
-  if (sourceType === "local") return `sha256:${await hashLocalFile(sourcePath, options)}`;
+  const boundedPrefix = Number.isFinite(prefixBytes) && prefixBytes > 0
+    ? Math.floor(prefixBytes)
+    : 0;
+  if (sourceType === "local") {
+    if (boundedPrefix > 0) {
+      const digest = await hashLocalPrefix(sourcePath, boundedPrefix, options);
+      return digest ? `sha256:${digest}` : null;
+    }
+    return `sha256:${await hashLocalFile(sourcePath, options)}`;
+  }
   const client = sftpClients.get(sourceSftpId);
   if (!client) throw new Error("Source SFTP session not found");
+  // Remote downloads transfer a fixed snapshot size. Hash only that prefix so
+  // append-only growth (e.g. live log files) does not invalidate resume identity.
+  if (boundedPrefix > 0) {
+    const digest = await hashRemotePrefix(
+      client,
+      sourceSftpId,
+      sourcePath,
+      sourceEncoding,
+      boundedPrefix,
+      options,
+    );
+    return digest ? `sha256:${digest}` : null;
+  }
   const digest = await hashRemoteFile(client, sourceSftpId, sourcePath, sourceEncoding, options);
   return digest ? `sha256:${digest}` : null;
 }
@@ -2200,10 +2222,12 @@ async function readVerifiedUploadRange(
 /**
  * Reject when the source identity is no longer safe to trust.
  *
- * Size always fails hard. Timestamp / inode fields are only a *cheap early
- * reject* when we have no separate content proof (e.g. remote download with no
- * digest). When a digest baseline already verifies bytes — or every range was
- * already verified against one — treat metadata as soft:
+ * Size always fails hard for shrinks. Growth is optional for download snapshots:
+ * append-only files (live logs) grow while we still hold a valid [0, N) copy.
+ * Timestamp / inode fields are only a *cheap early reject* when we have no
+ * separate content proof (e.g. remote download with no digest). When a digest
+ * baseline already verifies bytes — or every range was already verified against
+ * one — treat metadata as soft:
  * macOS routinely bumps ctime for xattr / quarantine / Spotlight without
  * rewriting file data, and repeated pause/resume makes long uploads much more
  * likely to hit that drift right at the finish revalidation.
@@ -2211,12 +2235,23 @@ async function readVerifiedUploadRange(
  * @param {object|null|undefined} initialSource
  * @param {object|null|undefined} latestSource
  * @param {number} expectedSize
- * @param {{ contentVerifiedSeparately?: boolean }} [options]
+ * @param {{ contentVerifiedSeparately?: boolean, allowSourceGrowth?: boolean }} [options]
  */
 function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, options = {}) {
   const latestSize = Number(latestSource?.size);
-  if (latestSize !== expectedSize) {
+  if (!Number.isFinite(latestSize)) {
     throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize < expectedSize) {
+    throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize > expectedSize) {
+    if (!options.allowSourceGrowth) {
+      throw createSourceSizeChangedError(expectedSize, latestSize);
+    }
+    // Append growth: the transferred prefix is still the snapshot we requested.
+    // Skip mtime/ctime checks — writers always bump them when appending.
+    return;
   }
   if (options.contentVerifiedSeparately) {
     return;
@@ -2786,7 +2821,10 @@ async function downloadFile(
             sendProgress,
           );
           const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+          // Downloads capture a fixed snapshot; remote appends (live logs) are OK.
+          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+            allowSourceGrowth: true,
+          });
           releaseIsolatedDownloadChannel(client, fastSftp);
           return;
         }
@@ -2843,7 +2881,9 @@ async function downloadFile(
         if (err?.noTransferFallback) throw err;
         if (err?.completedWithUnhealthyChannel) {
           const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+            allowSourceGrowth: true,
+          });
           return;
         }
         // Concurrent ranges may leave sparse tails past the contiguous
@@ -2871,7 +2911,16 @@ async function downloadFile(
   // Fallback: sequential stream piping
   await new Promise((resolve, reject) => {
     const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-    const readStream = sftp.createReadStream(remotePath, { highWaterMark: TRANSFER_CHUNK_SIZE, start: checkpoint });
+    // Bound the stream to the preflight snapshot so live appends (logs) cannot
+    // push transferred bytes past the planned size and fail the finish check.
+    const streamOptions = {
+      highWaterMark: TRANSFER_CHUNK_SIZE,
+      start: checkpoint,
+    };
+    if (Number.isFinite(fileSize) && fileSize > 0 && fileSize > checkpoint) {
+      streamOptions.end = fileSize - 1;
+    }
+    const readStream = sftp.createReadStream(remotePath, streamOptions);
     const writeStream = fs.createWriteStream(localPath, {
       highWaterMark: TRANSFER_CHUNK_SIZE,
       flags: checkpoint > 0 ? "r+" : "w",
@@ -2926,7 +2975,9 @@ async function downloadFile(
   });
   if (initialSource) {
     const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-    assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+    assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+      allowSourceGrowth: true,
+    });
   }
 }
 
@@ -3247,12 +3298,22 @@ async function startTransferNow(event, payload, onProgress) {
     transfer.phase = "verifying";
     transfer.publishCurrentProgress?.();
     try {
+      // Remote downloads transfer a fixed snapshot. Fingerprint only that prefix
+      // so append-only growth does not break pause/resume identity.
+      const snapshotBytes = sourceType === "sftp"
+        ? Math.max(
+          0,
+          Number(transfer.totalBytes) || 0,
+          Number(lastObservedTotal) || 0,
+        )
+        : 0;
       return await runTransferAbortableOperation(transfer, (signal) => computeSourceFingerprint(
         {
           sourceType,
           sourcePath,
           sourceSftpId,
           sourceEncoding,
+          ...(snapshotBytes > 0 ? { prefixBytes: snapshotBytes } : {}),
         },
         {
           signal,
@@ -3353,23 +3414,39 @@ async function startTransferNow(event, payload, onProgress) {
       Number(lastObservedTotal) || 0,
     );
     const current = await readSourceSoftIdentity();
-    if (expectedSize > 0 && current.size !== expectedSize) {
-      throw new Error("Resume safety check failed: the source file has changed");
+    // Remote sources may grow append-only (live logs). Local upload sources must
+    // stay exact — growth means the remaining payload changed.
+    const allowSourceGrowth = sourceType === "sftp";
+    if (expectedSize > 0) {
+      if (current.size < expectedSize) {
+        throw new Error("Resume safety check failed: the source file has changed");
+      }
+      if (current.size > expectedSize && !allowSourceGrowth) {
+        throw new Error("Resume safety check failed: the source file has changed");
+      }
     }
-    const expectedMtime = transfer.sourceSoftIdentity?.mtimeMs;
-    if (
-      Number.isFinite(expectedMtime)
-      && Number.isFinite(current.mtimeMs)
-      && current.mtimeMs !== expectedMtime
-    ) {
-      throw new Error("Resume safety check failed: the source file has changed");
+    // Append growth always bumps mtime; only enforce mtime when size is stable.
+    if (!(allowSourceGrowth && expectedSize > 0 && current.size > expectedSize)) {
+      const expectedMtime = transfer.sourceSoftIdentity?.mtimeMs;
+      if (
+        Number.isFinite(expectedMtime)
+        && Number.isFinite(current.mtimeMs)
+        && current.mtimeMs !== expectedMtime
+      ) {
+        throw new Error("Resume safety check failed: the source file has changed");
+      }
     }
     const expectedSample = transfer.sourceSoftIdentity?.sample;
     if (expectedSample && current.sample && current.sample !== expectedSample) {
       throw new Error("Resume safety check failed: the source file has changed");
     }
     // Refresh baseline for a later pause/resume cycle in this same stream.
-    transfer.sourceSoftIdentity = current;
+    // Keep the original snapshot size so later growth still compares to the
+    // transfer plan, not the expanded remote size.
+    transfer.sourceSoftIdentity = {
+      ...current,
+      size: expectedSize > 0 ? expectedSize : current.size,
+    };
   };
 
   transfer.captureSourceFingerprint = () => {
@@ -3519,6 +3596,9 @@ async function startTransferNow(event, payload, onProgress) {
         }
       }
     }
+    // Keep the planned snapshot size on the transfer so pause-time fingerprints
+    // and soft resume compare against the original plan, not a grown remote.
+    transfer.totalBytes = fileSize;
 
     // Baseline for soft resume (size + mtime + head sample). Full SHA-256 remains
     // for hard reconnect / crash recovery.

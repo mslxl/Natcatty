@@ -664,10 +664,13 @@ async function resumeSingleFileWithDedicatedSession(
               : null;
           if (!sourceStat) throw new Error("Source is unavailable");
           {
+            // Remote download sources may grow append-only (live logs); keep the
+            // planned snapshot size and existing checkpoint instead of restarting.
+            const allowSourceGrowth = sourceType === "sftp";
             const validationError = validateTransferResumeSource(task, {
               size: sourceStat.size,
               lastModified: sourceStat.lastModified,
-            });
+            }, { allowSourceGrowth });
             const classified = classifyResumeSourceValidationError(validationError);
             if (classified.kind === "modified") {
               const err = new Error(classified.message || validationError || "Source modified");
@@ -1168,10 +1171,11 @@ async function resumeDirectoryWithDedicatedSession(
               if (!sourceStat) {
                 throw new Error("Source is unavailable");
               }
+              const allowSourceGrowth = sourceType === "sftp";
               const validationError = validateTransferResumeSource(childBase, {
                 size: sourceStat.size,
                 lastModified: sourceStat.lastModified,
-              });
+              }, { allowSourceGrowth });
               const classified = classifyResumeSourceValidationError(validationError);
               if (classified.kind === "restart") {
                 childBase = {
@@ -1196,10 +1200,16 @@ async function resumeDirectoryWithDedicatedSession(
               } else if (classified.kind === "fatal") {
                 throw new Error(classified.message || validationError || "Resume validation failed");
               } else {
+                // Keep the planned snapshot size for growing remote downloads so
+                // we do not re-plan the whole file mid-resume.
                 childBase = {
                   ...childBase,
-                  totalBytes: sourceStat.size || childBase.totalBytes,
-                  sourceLastModified: sourceStat.lastModified ?? childBase.sourceLastModified,
+                  totalBytes: allowSourceGrowth
+                    ? (childBase.totalBytes || sourceStat.size)
+                    : (sourceStat.size || childBase.totalBytes),
+                  sourceLastModified: allowSourceGrowth && sourceStat.size > (childBase.totalBytes || 0)
+                    ? (childBase.sourceLastModified ?? sourceStat.lastModified)
+                    : (sourceStat.lastModified ?? childBase.sourceLastModified),
                 };
               }
 

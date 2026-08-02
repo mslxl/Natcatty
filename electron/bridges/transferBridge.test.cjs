@@ -2509,6 +2509,31 @@ test("assertSourceMetadataUnchanged ignores ctime drift when content is verified
     ),
     /source size changed/i,
   );
+  // Append-only growth is rejected unless the download snapshot opts in.
+  assert.throws(
+    () => transferBridge._assertSourceMetadataUnchangedForTests(
+      initial,
+      { ...initial, size: 150, mtimeMs: 2 },
+      100,
+    ),
+    /source size changed/i,
+  );
+  assert.doesNotThrow(() => transferBridge._assertSourceMetadataUnchangedForTests(
+    initial,
+    { ...initial, size: 150, mtimeMs: 2, ctimeMs: 2 },
+    100,
+    { allowSourceGrowth: true },
+  ));
+  // Growth still cannot cover a shrink.
+  assert.throws(
+    () => transferBridge._assertSourceMetadataUnchangedForTests(
+      initial,
+      { ...initial, size: 80 },
+      100,
+      { allowSourceGrowth: true },
+    ),
+    /source size changed/i,
+  );
 });
 
 test("resumable upload succeeds when only source ctime drifts (pause/resume false positive)", async (t) => {
@@ -3653,6 +3678,81 @@ test("resumable fast downloads clear staged data after a same-second source chan
 
   assert.match(result.error || "", /source.*changed/);
   assert.equal(await fs.promises.readFile(targetPath, "utf8"), "original");
+  await assert.rejects(fs.promises.stat(stagedPath), { code: "ENOENT" });
+});
+
+test("resumable SFTP downloads succeed when the remote source only grows (live logs)", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-download-growth-"));
+  const transferId = "download-source-growth";
+  const targetPath = path.join(tempDir, "download.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(stagedPath, { force: true }).catch(() => {});
+  });
+
+  // Snapshot at transfer start; remote appends more bytes while ranges run.
+  const snapshot = Buffer.alloc(64 * 1024, 71);
+  const grownTail = Buffer.alloc(8 * 1024, 72);
+  let remoteSize = snapshot.length;
+  let mtimeMs = 1_000;
+  const remotePayload = () => Buffer.concat([snapshot, Buffer.alloc(Math.max(0, remoteSize - snapshot.length), 72)]);
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      // First range completion simulates an append-only log writer.
+      if (remoteSize === snapshot.length) {
+        remoteSize = snapshot.length + grownTail.length;
+        mtimeMs += 1;
+      }
+      const current = remotePayload();
+      current.copy(buffer, offset, position, position + length);
+      callback(null, length, buffer, position);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+  });
+  const client = {
+    sftp: createFastSftp({}),
+    stat() {
+      return Promise.resolve({
+        size: remoteSize,
+        mtimeMs,
+        ctimeMs: mtimeMs,
+        mtime: mtimeMs / 1000,
+        ctime: mtimeMs / 1000,
+      });
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/var/log/app.log",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: snapshot.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(remoteSize, snapshot.length + grownTail.length);
+  const downloaded = await fs.promises.readFile(targetPath);
+  assert.equal(downloaded.length, snapshot.length);
+  assert.deepEqual(downloaded, snapshot);
   await assert.rejects(fs.promises.stat(stagedPath), { code: "ENOENT" });
 });
 
