@@ -44,6 +44,8 @@ export interface TerminalContextMenuProps {
   keyBindings?: KeyBinding[];
   rightClickBehavior?: RightClickBehavior;
   isAlternateScreen?: boolean;
+  /** When true, show the app context menu even while a fullscreen app (tmux/vim) holds mouse tracking. */
+  showContextMenuOverFullscreenApps?: boolean;
   onCopy?: () => void;
   onPaste?: () => void;
   onUploadClipboardImage?: () => void;
@@ -74,10 +76,12 @@ export const shouldShowReconnectAction = ({
 export const shouldSuppressMouseTrackingContextMenu = ({
   isAlternateScreen,
   showReconnectAction,
+  forceMenuInAlternateScreen,
 }: {
   isAlternateScreen?: boolean;
   showReconnectAction?: boolean;
-}): boolean => Boolean(isAlternateScreen && !showReconnectAction);
+  forceMenuInAlternateScreen?: boolean;
+}): boolean => Boolean(isAlternateScreen && !showReconnectAction && !forceMenuInAlternateScreen);
 
 export const shouldShowAddSelectionToAIContextMenuAction = (
   onAddSelectionToAI?: () => void,
@@ -91,36 +95,42 @@ export const shouldRenderTerminalContextMenuContent = ({
   isAlternateScreen,
   showReconnectAction,
   allowSuppressedMenuContent,
+  forceMenuInAlternateScreen,
 }: {
   isAlternateScreen?: boolean;
   showReconnectAction?: boolean;
   allowSuppressedMenuContent?: boolean;
+  forceMenuInAlternateScreen?: boolean;
 }): boolean =>
   allowSuppressedMenuContent ||
-  !shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction });
+  !shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction, forceMenuInAlternateScreen });
 
 export const shouldAllowSuppressedTerminalContextMenuContent = ({
   event,
   isAlternateScreen,
   showReconnectAction,
+  forceMenuInAlternateScreen,
 }: {
   event: { shiftKey?: boolean; nativeEvent: MouseEvent };
   isAlternateScreen?: boolean;
   showReconnectAction?: boolean;
+  forceMenuInAlternateScreen?: boolean;
 }): boolean =>
   isMiddleClickContextMenuEvent(event.nativeEvent)
-  || Boolean(event.shiftKey && shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction }));
+  || Boolean(event.shiftKey && shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction, forceMenuInAlternateScreen }));
 
 export const shouldOpenTerminalContextMenu = ({
   event,
   rightClickBehavior = 'context-menu',
   isAlternateScreen,
   showReconnectAction,
+  forceMenuInAlternateScreen,
 }: {
   event: { shiftKey?: boolean; nativeEvent: MouseEvent };
   rightClickBehavior?: RightClickBehavior;
   isAlternateScreen?: boolean;
   showReconnectAction?: boolean;
+  forceMenuInAlternateScreen?: boolean;
 }): boolean => {
   if (isMiddleClickContextMenuEvent(event.nativeEvent)) {
     return true;
@@ -130,7 +140,7 @@ export const shouldOpenTerminalContextMenu = ({
     return true;
   }
 
-  if (shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction })) {
+  if (shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction, forceMenuInAlternateScreen })) {
     return false;
   }
 
@@ -149,6 +159,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   keyBindings,
   rightClickBehavior = 'context-menu',
   isAlternateScreen = false,
+  showContextMenuOverFullscreenApps = false,
   onCopy,
   onPaste,
   onUploadClipboardImage,
@@ -235,9 +246,10 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
         rightClickBehavior,
         isAlternateScreen,
         showReconnectAction,
+        forceMenuInAlternateScreen: showContextMenuOverFullscreenApps,
       });
 
-      if (!shouldOpenMenu && shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction })) {
+      if (!shouldOpenMenu && shouldSuppressMouseTrackingContextMenu({ isAlternateScreen, showReconnectAction, forceMenuInAlternateScreen: showContextMenuOverFullscreenApps })) {
         e.preventDefault();
         return;
       }
@@ -254,6 +266,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
           event: e,
           isAlternateScreen,
           showReconnectAction,
+          forceMenuInAlternateScreen: showContextMenuOverFullscreenApps,
         }));
         return;
       }
@@ -266,7 +279,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
         onSelectWord?.();
       }
     },
-    [rightClickBehavior, onPaste, onSelectWord, isAlternateScreen, showReconnectAction],
+    [rightClickBehavior, onPaste, onSelectWord, isAlternateScreen, showReconnectAction, showContextMenuOverFullscreenApps],
   );
 
   // Always use ContextMenu wrapper to maintain consistent React tree structure
@@ -283,6 +296,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
         isAlternateScreen,
         showReconnectAction,
         allowSuppressedMenuContent,
+        forceMenuInAlternateScreen: showContextMenuOverFullscreenApps,
       }) && (
         <ContextMenuContent className="w-max">
           <ContextMenuItem onClick={onCopy} disabled={!hasSelection}>

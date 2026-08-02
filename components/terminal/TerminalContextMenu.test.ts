@@ -21,6 +21,7 @@ const shouldSuppressMouseTrackingContextMenu = (
     shouldSuppressMouseTrackingContextMenu?: (options: {
       isAlternateScreen?: boolean;
       showReconnectAction?: boolean;
+      forceMenuInAlternateScreen?: boolean;
     }) => boolean;
   }
 ).shouldSuppressMouseTrackingContextMenu;
@@ -41,6 +42,7 @@ const shouldOpenTerminalContextMenu = (
       rightClickBehavior?: "context-menu" | "paste" | "select-word";
       isAlternateScreen?: boolean;
       showReconnectAction?: boolean;
+      forceMenuInAlternateScreen?: boolean;
     }) => boolean;
   }
 ).shouldOpenTerminalContextMenu;
@@ -190,6 +192,47 @@ test("allows reconnect menu while stale mouse tracking is still active", () => {
     shouldSuppressMouseTrackingContextMenu({
       isAlternateScreen: true,
       showReconnectAction: false,
+    }),
+    true,
+  );
+});
+
+test("forceMenuInAlternateScreen opts out of alternate-screen suppression", () => {
+  assert.equal(typeof shouldSuppressMouseTrackingContextMenu, "function");
+  assert.equal(typeof shouldOpenTerminalContextMenu, "function");
+  if (
+    typeof shouldSuppressMouseTrackingContextMenu !== "function" ||
+    typeof shouldOpenTerminalContextMenu !== "function"
+  ) {
+    return;
+  }
+
+  // Setting on: no suppression, right-click opens the app menu in tmux/vim.
+  assert.equal(
+    shouldSuppressMouseTrackingContextMenu({
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      forceMenuInAlternateScreen: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOpenTerminalContextMenu({
+      event: { shiftKey: false, nativeEvent: {} as MouseEvent },
+      rightClickBehavior: "context-menu",
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      forceMenuInAlternateScreen: true,
+    }),
+    true,
+  );
+
+  // Setting off (default): alternate screen still suppresses the menu.
+  assert.equal(
+    shouldSuppressMouseTrackingContextMenu({
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      forceMenuInAlternateScreen: false,
     }),
     true,
   );

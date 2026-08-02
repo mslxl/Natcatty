@@ -1573,6 +1573,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         event: e,
         mouseTracking: mouseTrackingRef.current,
         status: statusRef.current,
+        rightClickBehavior: terminalSettingsRef.current?.rightClickBehavior,
+        forceMenuInAlternateScreen: terminalSettingsRef.current?.showContextMenuOverFullscreenApps,
       })) {
         return;
       }
@@ -1603,6 +1605,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         event: e,
         mouseTracking: mouseTrackingRef.current,
         status: statusRef.current,
+        rightClickBehavior: terminalSettingsRef.current?.rightClickBehavior,
+        forceMenuInAlternateScreen: terminalSettingsRef.current?.showContextMenuOverFullscreenApps,
       })) {
         e.stopImmediatePropagation();
         return;

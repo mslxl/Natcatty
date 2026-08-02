@@ -66,6 +66,16 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          label={t("settings.terminal.behavior.rightClick.fullscreenMenu")}
+          description={t("settings.terminal.behavior.rightClick.fullscreenMenu.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.showContextMenuOverFullscreenApps}
+            onChange={(v) => updateTerminalSetting("showContextMenuOverFullscreenApps", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
           label={t("settings.terminal.behavior.copyOnSelect")}
           description={t("settings.terminal.behavior.copyOnSelect.desc")}
         >

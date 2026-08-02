@@ -418,6 +418,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
       keyBindings={keyBindings}
       rightClickBehavior={terminalSettings?.rightClickBehavior}
       isAlternateScreen={hasMouseTracking}
+      showContextMenuOverFullscreenApps={terminalSettings?.showContextMenuOverFullscreenApps}
       onCopy={terminalContextActions.onCopy}
       onPaste={terminalContextActions.onPaste}
       onUploadClipboardImage={status === "connected" ? terminalContextActions.onUploadClipboardImage : undefined}

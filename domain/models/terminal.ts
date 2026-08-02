@@ -91,6 +91,8 @@ export interface TerminalSettings {
 
   // Mouse
   rightClickBehavior: RightClickBehavior;
+  // Show the app context menu even when a fullscreen app (tmux/vim) holds mouse tracking
+  showContextMenuOverFullscreenApps: boolean;
   middleClickBehavior: MiddleClickBehavior;
   copyOnSelect: boolean; // Automatically copy selected text
   /**
@@ -432,6 +434,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   scrollOnPaste: true,
   smoothScrolling: false,
   rightClickBehavior: 'context-menu',
+  showContextMenuOverFullscreenApps: false,
   middleClickBehavior: 'paste',
   copyOnSelect: false,
   normalizeTextOnCopy: true, // Clean soft wraps + padding on copy (opt-out available)

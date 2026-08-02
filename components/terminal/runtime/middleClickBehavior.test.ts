@@ -68,6 +68,42 @@ test("mouse-tracking context menu capture lets Shift-modified mouse events pass 
   );
 });
 
+test("mouse-tracking context menu capture yields to the fullscreen-apps menu setting for context-menu clicks", () => {
+  // Setting on + context-menu behavior: do NOT intercept, so Radix opens the menu.
+  assert.equal(
+    shouldInterceptMouseTrackingContextMenu({
+      event: { shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "context-menu",
+      forceMenuInAlternateScreen: true,
+    }),
+    false,
+  );
+  // Setting on but paste behavior: still intercept (setting is menu-only).
+  assert.equal(
+    shouldInterceptMouseTrackingContextMenu({
+      event: { shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "paste",
+      forceMenuInAlternateScreen: true,
+    }),
+    true,
+  );
+  // Setting off (default): still intercept even for context-menu behavior.
+  assert.equal(
+    shouldInterceptMouseTrackingContextMenu({
+      event: { shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "context-menu",
+      forceMenuInAlternateScreen: false,
+    }),
+    true,
+  );
+});
+
 test("Shift selection replay events are identifiable", () => {
   const event = {} as MouseEvent;
 
@@ -189,6 +225,31 @@ test("Shift right-click mousedown is stopped while connected mouse tracking is a
       status: "connected",
     }),
     true,
+  );
+});
+
+test("right-click mousedown is stopped when the fullscreen-apps menu setting forces the context menu", () => {
+  // Unmodified right-click + setting on + context-menu behavior: stop it, like Shift+right-click.
+  assert.equal(
+    shouldStopShiftRightClickMouseTrackingMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "context-menu",
+      forceMenuInAlternateScreen: true,
+    }),
+    true,
+  );
+  // Setting on but paste behavior: do not stop (menu-only setting).
+  assert.equal(
+    shouldStopShiftRightClickMouseTrackingMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "paste",
+      forceMenuInAlternateScreen: true,
+    }),
+    false,
   );
 });
 

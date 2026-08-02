@@ -546,6 +546,9 @@ Highlight the focused split pane:
     'Adjust colors to meet contrast requirements (1 = disabled, 21 = max)',
   'settings.terminal.behavior.rightClick': 'Right-click behavior',
   'settings.terminal.behavior.rightClick.desc': 'Action when right-clicking in terminal',
+  'settings.terminal.behavior.rightClick.fullscreenMenu': 'Show menu over fullscreen apps',
+  'settings.terminal.behavior.rightClick.fullscreenMenu.desc':
+    'Show the context menu even when tmux, vim or other fullscreen apps take over the mouse. When off, right-click is passed to the app (Shift+Right-Click still opens the menu).',
   'settings.terminal.behavior.autoCloseOnExit': 'Auto-close terminal on exit',
   'settings.terminal.behavior.autoCloseOnExit.desc':
     'Allow terminal tabs and windows to close automatically after session exit. Turn this off to keep them open after every exit.',
