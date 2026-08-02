@@ -256,7 +256,14 @@ export async function runSdkAgentTurn(
     return true;
   };
 
-  const agentEnv = await buildAgentEnvWithStoredApiKey(sdkBackend, config);
+  const baseAgentEnv = await buildAgentEnvWithStoredApiKey(sdkBackend, config);
+  // Grok dual runtime: prefer Settings grokRuntime; env override still works in main.
+  const agentEnv = sdkBackend === 'grok'
+    ? {
+        ...baseAgentEnv,
+        NETCATTY_GROK_RUNTIME: config.grokRuntime === 'streaming-json' ? 'streaming-json' : 'acp',
+      }
+    : baseAgentEnv;
   const agentCommand = getManualAgentCommand(config);
 
   // Set up event listeners before starting stream

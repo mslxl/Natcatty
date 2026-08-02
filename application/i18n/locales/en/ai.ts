@@ -268,6 +268,12 @@ export const enAiMessages: Messages = {
   'ai.grok.customPathPlaceholder': 'e.g. /usr/local/bin/grok',
   'ai.grok.check': 'Check',
   'ai.grok.resetPath': 'Reset',
+  'ai.grok.runtime.acp.title': 'Use Grok ACP (agent stdio)',
+  'ai.grok.runtime.acp.default': 'Default',
+  'ai.grok.runtime.acp.description':
+    'Talk to Grok over Agent Client Protocol (grok agent stdio). Injects Netcatty MCP on session/new. Turn off to use the original headless streaming-json CLI path.',
+  'ai.grok.runtime.streamingJson.hint':
+    'Using headless streaming-json (grok -p --output-format streaming-json). Project .grok/config.toml is used for MCP injection.',
 
   // AI Default Agent
   'ai.defaultAgent': 'Default Agent',

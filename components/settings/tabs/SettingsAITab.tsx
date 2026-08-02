@@ -37,6 +37,7 @@ import type {
   UserSkillsStatusResult,
 } from "./ai/types";
 import {
+  AGENT_DEFAULTS,
   getBridge,
   isCursorAvailableForMode,
   normalizeCodexBridgeError,
@@ -703,6 +704,30 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     )));
   }, [setExternalAgents]);
 
+  const handleGrokRuntimeChange = useCallback((runtime: 'acp' | 'streaming-json') => {
+    setExternalAgents((agents) => {
+      const managedId = "discovered_grok";
+      const existing = agents.find((agent) => agent.id === managedId);
+      if (existing) {
+        return agents.map((agent) => (
+          agent.id === managedId ? { ...agent, grokRuntime: runtime } : agent
+        ));
+      }
+      // Path not yet resolved: still persist preference on a disabled placeholder.
+      return [
+        ...agents,
+        {
+          ...AGENT_DEFAULTS.grok,
+          id: managedId,
+          command: "grok",
+          enabled: false,
+          available: false,
+          grokRuntime: runtime,
+        },
+      ];
+    });
+  }, [setExternalAgents]);
+
   // Validate a custom path for an agent.
   const handleCheckCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
     const customPath = agentKey === "codex"
@@ -1148,6 +1173,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onRecheckPath={() => void handleCheckCustomPath("grok")}
               onResetPath={() => void handleResetCustomPath("grok")}
               i18nPrefix="ai.grok"
+              grokRuntime={
+                externalAgents.find((a) => a.id === "discovered_grok")?.grokRuntime === "streaming-json"
+                  ? "streaming-json"
+                  : "acp"
+              }
+              onGrokRuntimeChange={handleGrokRuntimeChange}
             />
           </SettingsSection>
 

@@ -221,6 +221,12 @@ export const ruAiMessages: Messages = {
   'ai.grok.customPathPlaceholder': 'например, /usr/local/bin/grok',
   'ai.grok.check': 'Проверить',
   'ai.grok.resetPath': 'Сбросить',
+  'ai.grok.runtime.acp.title': 'Использовать Grok ACP (agent stdio)',
+  'ai.grok.runtime.acp.default': 'По умолчанию',
+  'ai.grok.runtime.acp.description':
+    'Подключение к Grok через Agent Client Protocol (grok agent stdio). Netcatty MCP внедряется в session/new. Выключите, чтобы использовать исходный headless streaming-json CLI.',
+  'ai.grok.runtime.streamingJson.hint':
+    'Режим headless streaming-json (grok -p --output-format streaming-json). MCP внедряется через .grok/config.toml проекта.',
 
   // AI Default Agent
   'ai.defaultAgent': 'Агент по умолчанию',

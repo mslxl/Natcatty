@@ -231,6 +231,8 @@ export interface AgentInfo {
 
 // External agent config. Managed agents route through official SDK backends.
 export type CodexRuntime = 'sdk' | 'app-server';
+/** Grok Build turn transport: ACP (`grok agent stdio`) or headless streaming-json. */
+export type GrokRuntime = 'acp' | 'streaming-json';
 export type CursorAuthMode = 'api-key' | 'cli-login';
 
 export interface ExternalAgentConfig {
@@ -249,6 +251,11 @@ export interface ExternalAgentConfig {
   cursorAuthMode?: CursorAuthMode;
   /** Experimental Codex transport. Missing values keep the existing SDK behavior. */
   codexRuntime?: CodexRuntime;
+  /**
+   * Grok Build transport. Missing values default to ACP (`grok agent stdio`).
+   * `streaming-json` is the original headless `grok -p --output-format streaming-json` path.
+   */
+  grokRuntime?: GrokRuntime;
   /** Internal: whether the managed command was set manually or auto-detected. */
   commandSource?: "manual" | "auto";
   /**

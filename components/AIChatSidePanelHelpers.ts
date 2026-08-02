@@ -83,6 +83,7 @@ export function buildSdkRuntimeModelCacheKey(agent: {
   acpCommand?: string;
   env?: Record<string, string>;
   codexRuntime?: 'sdk' | 'app-server';
+  grokRuntime?: 'acp' | 'streaming-json';
   cursorAuthMode?: 'cli-login' | 'api-key';
 }): string {
   const sdkBackend = agent.sdkBackend || agent.acpCommand || '';
@@ -92,7 +93,10 @@ export function buildSdkRuntimeModelCacheKey(agent: {
   const cursorAuth = sdkBackend === 'cursor'
     ? (agent.cursorAuthMode === 'cli-login' ? 'cli-login' : 'api-key')
     : '';
-  return [agent.id, sdkBackend, agent.command ?? '', agent.codexRuntime ?? 'sdk', cursorAuth, ...envHints].join('\u0000');
+  const grokRuntime = sdkBackend === 'grok'
+    ? (agent.grokRuntime === 'streaming-json' ? 'streaming-json' : 'acp')
+    : '';
+  return [agent.id, sdkBackend, agent.command ?? '', agent.codexRuntime ?? 'sdk', grokRuntime, cursorAuth, ...envHints].join('\u0000');
 }
 
 export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions = {}) {

@@ -268,6 +268,12 @@ export const zhCNAiMessages: Messages = {
   'ai.grok.customPathPlaceholder': '例如 /usr/local/bin/grok',
   'ai.grok.check': '检查',
   'ai.grok.resetPath': '重置',
+  'ai.grok.runtime.acp.title': '使用 Grok ACP（agent stdio）',
+  'ai.grok.runtime.acp.default': '默认',
+  'ai.grok.runtime.acp.description':
+    '通过 Agent Client Protocol（grok agent stdio）接入 Grok。在 session/new 注入 Netcatty MCP。关闭后使用原始 headless streaming-json CLI 路径。',
+  'ai.grok.runtime.streamingJson.hint':
+    '当前为 headless streaming-json（grok -p --output-format streaming-json）。MCP 通过项目 .grok/config.toml 注入。',
 
   // AI Default Agent
   'ai.defaultAgent': '默认 Agent',
