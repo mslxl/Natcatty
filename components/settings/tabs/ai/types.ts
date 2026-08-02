@@ -206,6 +206,12 @@ export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "co
     icon: "opencode",
     sdkBackend: "opencode",
   },
+  grok: {
+    name: "Grok Build",
+    args: [],
+    icon: "grok",
+    sdkBackend: "grok",
+  },
 };
 
 // ---------------------------------------------------------------------------

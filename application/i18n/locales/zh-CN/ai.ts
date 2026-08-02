@@ -257,6 +257,18 @@ export const zhCNAiMessages: Messages = {
   'ai.opencode.check': '检查',
   'ai.opencode.resetPath': '重置',
 
+  // AI Grok Build（应用内托管 Agent，与 External MCP「添加到 Grok」不同）
+  'ai.grok.title': 'Grok Build',
+  'ai.grok.description': 'xAI 的 Grok Build 编程 Agent CLI。安装 Grok CLI，使用 `grok login` 登录或设置 XAI_API_KEY 后，即可作为外部 Agent 选择。',
+  'ai.grok.detecting': '检测中...',
+  'ai.grok.detected': '已检测到',
+  'ai.grok.notFound': '未找到',
+  'ai.grok.path': '路径：',
+  'ai.grok.notFoundHint': '在 PATH 中未找到 grok。请安装 Grok Build CLI 或在下方指定可执行文件路径。',
+  'ai.grok.customPathPlaceholder': '例如 /usr/local/bin/grok',
+  'ai.grok.check': '检查',
+  'ai.grok.resetPath': '重置',
+
   // AI Default Agent
   'ai.defaultAgent': '默认 Agent',
   'ai.defaultAgent.description': '创建新 AI 会话时使用的 Agent',

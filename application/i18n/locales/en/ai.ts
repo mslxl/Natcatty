@@ -257,6 +257,18 @@ export const enAiMessages: Messages = {
   'ai.opencode.check': 'Check',
   'ai.opencode.resetPath': 'Reset',
 
+  // AI Grok Build (in-app managed agent — distinct from External MCP client install)
+  'ai.grok.title': 'Grok Build',
+  'ai.grok.description': "xAI's Grok Build coding agent CLI. Install the Grok CLI, sign in with `grok login` or set XAI_API_KEY, then select it as an external agent.",
+  'ai.grok.detecting': 'Detecting...',
+  'ai.grok.detected': 'Detected',
+  'ai.grok.notFound': 'Not found',
+  'ai.grok.path': 'Path:',
+  'ai.grok.notFoundHint': 'Could not find grok in PATH. Install Grok Build CLI or specify the executable path below.',
+  'ai.grok.customPathPlaceholder': 'e.g. /usr/local/bin/grok',
+  'ai.grok.check': 'Check',
+  'ai.grok.resetPath': 'Reset',
+
   // AI Default Agent
   'ai.defaultAgent': 'Default Agent',
   'ai.defaultAgent.description': 'Agent to use when starting a new AI session',

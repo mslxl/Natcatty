@@ -218,6 +218,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     cursor: string;
     codebuddy: string;
     opencode: string;
+    grok: string;
   } | null>(null);
   if (!initialManagedPathsRef.current) {
     initialManagedPathsRef.current = getInitialManagedAgentPaths(externalAgents);
@@ -283,6 +284,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [opencodeCustomPath, setOpencodeCustomPath] = useState(() => initialManagedPathsRef.current?.opencode ?? "");
   const [isResolvingOpencode, setIsResolvingOpencode] = useState(false);
 
+  const [grokPathInfo, setGrokPathInfo] = useState<AgentPathInfo | null>(
+    () => getSavedManagedAgentPathInfo(externalAgents, "grok"),
+  );
+  const [grokCustomPath, setGrokCustomPath] = useState(() => initialManagedPathsRef.current?.grok ?? "");
+  const [isResolvingGrok, setIsResolvingGrok] = useState(false);
+
   const codebuddyManagedAgent = useMemo(
     () => externalAgents.find((a) => a.id === "discovered_codebuddy"),
     [externalAgents],
@@ -330,7 +337,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   useEffect(() => () => {
     mountedRef.current = false;
     codexRequestIdRef.current += 1;
-    for (const key of ["codex", "claude", "copilot", "cursor", "codebuddy", "opencode"] as ManagedAgentKey[]) {
+    for (const key of ["codex", "claude", "copilot", "cursor", "codebuddy", "opencode", "grok"] as ManagedAgentKey[]) {
       agentPathRequestIdRef.current[key] = (agentPathRequestIdRef.current[key] ?? 0) + 1;
     }
   }, []);
@@ -350,7 +357,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             ? setCursorPathInfo
             : agentKey === "codebuddy"
               ? setCodebuddyPathInfo
-              : setOpencodePathInfo;
+              : agentKey === "opencode"
+                ? setOpencodePathInfo
+                : setGrokPathInfo;
 
     setInfo(result);
 
@@ -391,7 +400,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             ? setIsResolvingCursor
             : agentKey === "codebuddy"
               ? setIsResolvingCodebuddy
-              : setIsResolvingOpencode;
+              : agentKey === "opencode"
+                ? setIsResolvingOpencode
+                : setIsResolvingGrok;
 
     setResolving(true);
     const requestId = (agentPathRequestIdRef.current[agentKey] ?? 0) + 1;
@@ -430,7 +441,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                 ? setCursorPathInfo
                 : agentKey === "codebuddy"
                   ? setCodebuddyPathInfo
-                  : setOpencodePathInfo;
+                  : agentKey === "opencode"
+                    ? setOpencodePathInfo
+                    : setGrokPathInfo;
         setInfo(result);
         return result;
       }
@@ -468,6 +481,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       },
       { key: "codebuddy", delayMs: 1280, path: initialPaths?.codebuddy ?? "" },
       { key: "opencode", delayMs: 1560, path: initialPaths?.opencode ?? "" },
+      { key: "grok", delayMs: 1840, path: initialPaths?.grok ?? "" },
     ];
     const cancelTasks = tasks
       .filter((task) => !autoResolvedAgentStateRef.current[task.key])
@@ -701,7 +715,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             ? codebuddyCustomPath
             : agentKey === "opencode"
               ? opencodeCustomPath
-              : "";
+              : agentKey === "grok"
+                ? grokCustomPath
+                : "";
     const result = await resolveAgentPath(agentKey, customPath, {
       refreshShellEnv: true,
       commandSource: customPath.trim() ? "manual" : "auto",
@@ -713,7 +729,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         codexPath: result?.path || customPath.trim() || undefined,
       });
     }
-  }, [claudeCustomPath, codexCustomPath, copilotCustomPath, codebuddyCustomPath, opencodeCustomPath, resolveAgentPath, refreshCodexIntegration]);
+  }, [claudeCustomPath, codexCustomPath, copilotCustomPath, codebuddyCustomPath, opencodeCustomPath, grokCustomPath, resolveAgentPath, refreshCodexIntegration]);
 
   const handleResetCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
     if (agentKey === "codex") {
@@ -726,6 +742,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       setCodebuddyCustomPath("");
     } else if (agentKey === "opencode") {
       setOpencodeCustomPath("");
+    } else if (agentKey === "grok") {
+      setGrokCustomPath("");
     }
 
     const result = await resolveAgentPath(agentKey, "", {
@@ -1115,6 +1133,21 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               onRecheckPath={() => void handleCheckCustomPath("opencode")}
               onResetPath={() => void handleResetCustomPath("opencode")}
               i18nPrefix="ai.opencode"
+            />
+          </SettingsSection>
+
+          <SettingsSection
+            title={t('ai.grok.title')}
+            leading={<AgentIconBadge agent={{ id: "grok", icon: "grok", name: "Grok Build" }} variant="plain" className="h-5 w-5 text-muted-foreground/90" />}
+          >
+            <CopilotCliCard
+              pathInfo={grokPathInfo}
+              isResolvingPath={isResolvingGrok}
+              customPath={grokCustomPath}
+              onCustomPathChange={setGrokCustomPath}
+              onRecheckPath={() => void handleCheckCustomPath("grok")}
+              onResetPath={() => void handleResetCustomPath("grok")}
+              i18nPrefix="ai.grok"
             />
           </SettingsSection>
 
