@@ -17,6 +17,7 @@ const {
   resolveGrokTurnPrompt,
   extractGrokAcpPromptUsage,
   emitGrokUsage,
+  shouldReportGrokProcessExitFailure,
   runGrokTurn,
   spawnGrokProcess,
   stripGrokMcpServerSection,
@@ -520,6 +521,48 @@ test("runGrokTurn reports error when process dies after partial text without end
   assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "partial…"));
   assert.ok(emitter.calls.some((c) => c[0] === "error"), "partial stream + exit 1 must emitError");
   assert.ok(!emitter.calls.some((c) => c[0] === "done"), "must not emitDone on mid-turn crash");
+});
+
+test("runGrokTurn fails when process is signal-killed mid-turn (code=null)", async () => {
+  // Node close(null, "SIGTERM") — previously skipped because code was not a nonzero number.
+  const emitter = makeEmitter();
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.pid = 98;
+  child.kill = () => {};
+
+  const spawnImpl = () => {
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from('{"type":"text","data":"partial…"}\n'));
+      child.emit("close", null, "SIGTERM");
+    });
+    return child;
+  };
+
+  await runGrokTurn({
+    prompt: "write a lot",
+    binPath: "/usr/bin/grok",
+    permissionMode: "auto",
+    injectedMcpServers: [],
+    emitter,
+    spawnImpl,
+    mergeMcp: () => ({ restore() {} }),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "partial…"));
+  const err = emitter.calls.find((c) => c[0] === "error");
+  assert.ok(err, "signal kill mid-turn must emitError");
+  assert.match(String(err[1]), /SIGTERM|signal/i);
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
+});
+
+test("shouldReportGrokProcessExitFailure covers signal and code cases", () => {
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, null, "SIGTERM"), true);
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 143, null), true);
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: true }, null, null, "SIGTERM"), false);
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, { aborted: true }, null, "SIGKILL"), false);
+  assert.equal(shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 0, null), false);
 });
 
 test("runGrokTurn ignores exit code 1 after end event (Windows teardown)", async () => {

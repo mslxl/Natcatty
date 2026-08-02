@@ -5,6 +5,7 @@ const {
   ACP_PROTOCOL_VERSION,
   authenticateGrokAcp,
   buildGrokAcpInitializeParams,
+  buildGrokAcpPermissionResponse,
   buildGrokAcpPromptParams,
   buildGrokAcpSessionNewParams,
   buildGrokAcpSessionResumeOrLoadParams,
@@ -23,6 +24,7 @@ const {
 } = require("./grokAcpDriver.cjs");
 const {
   GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
+  shouldReportGrokProcessExitFailure,
 } = require("./grokDriver.cjs");
 const { getDriver, listBackends } = require("./index.cjs");
 
@@ -1274,4 +1276,171 @@ test("registry grok backend defaults to ACP path and keeps streaming-json fallba
   });
   assert.equal(acp.runtime, "acp");
   assert.match(String(emitter2.calls[0]?.[1] || ""), /not found/i);
+});
+
+test("buildGrokAcpPermissionResponse selects offered optionId, never invents allow-once", () => {
+  // Live ACP uses optionId values like "allow-once" / "allow-always" / "reject".
+  const allowOnce = buildGrokAcpPermissionResponse({
+    options: [
+      { optionId: "allow-once", kind: "allow_once", name: "Allow once" },
+      { optionId: "allow-always", kind: "allow_always", name: "Allow always" },
+      { optionId: "reject", kind: "reject_once", name: "Reject" },
+    ],
+  }, true);
+  assert.deepEqual(allowOnce, {
+    outcome: { outcome: "selected", optionId: "allow-always" },
+  });
+
+  const allowOnlyOnce = buildGrokAcpPermissionResponse({
+    options: [
+      { optionId: "allow-once", name: "Allow once" },
+      { optionId: "reject", name: "Reject" },
+    ],
+  }, true);
+  assert.deepEqual(allowOnlyOnce, {
+    outcome: { outcome: "selected", optionId: "allow-once" },
+  });
+
+  const deny = buildGrokAcpPermissionResponse({
+    options: [
+      { optionId: "allow-once", kind: "allow_once" },
+      { optionId: "reject", kind: "reject_once" },
+    ],
+  }, false);
+  assert.deepEqual(deny, {
+    outcome: { outcome: "selected", optionId: "reject" },
+  });
+
+  // No options offered: deny cancels; allow falls back to underscore form only as last resort.
+  assert.deepEqual(
+    buildGrokAcpPermissionResponse({}, false),
+    { outcome: { outcome: "cancelled" } },
+  );
+  assert.deepEqual(
+    buildGrokAcpPermissionResponse({ options: [] }, true),
+    { outcome: { outcome: "selected", optionId: "allow_once" } },
+  );
+});
+
+test("handleGrokAcpMessage permission reply uses real optionId from params.options", () => {
+  const written = [];
+  const state = {
+    autoAllowPermissions: true,
+    writeResponse: (id, result) => written.push([id, result]),
+  };
+  handleGrokAcpMessage({
+    jsonrpc: "2.0",
+    id: 42,
+    method: "session/request_permission",
+    params: {
+      options: [
+        { optionId: "allow-once", kind: "allow_once" },
+        { optionId: "reject", kind: "reject_once" },
+      ],
+    },
+  }, { emitter: makeEmitter(), state, pending: new Map() });
+
+  assert.equal(written.length, 1);
+  assert.equal(written[0][0], 42);
+  // Must echo the offered id (hyphen form), not invent underscore "allow_once".
+  assert.equal(written[0][1].outcome.optionId, "allow-once");
+});
+
+test("shouldReportGrokProcessExitFailure treats signal kills before completion as failures", () => {
+  // Node close(null, "SIGTERM") when killed — must fail unfinished turns.
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, null, "SIGTERM"),
+    true,
+  );
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 1, null),
+    true,
+  );
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: true }, null, 1, "SIGTERM"),
+    false,
+  );
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: false }, { aborted: true }, null, "SIGTERM"),
+    false,
+  );
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: false, failed: true }, null, 1, null),
+    false,
+  );
+  assert.equal(
+    shouldReportGrokProcessExitFailure({ turnCompleted: false }, null, 0, null),
+    false,
+  );
+});
+
+test("runGrokAcpTurn fails when process is signal-killed mid-turn (code=null)", async () => {
+  // Node reports close(null, "SIGTERM") for signal kills — must not silently succeed.
+  const emitter = makeEmitter();
+  const { EventEmitter } = require("node:events");
+
+  function makeFakeChild() {
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    const stdin = new EventEmitter();
+    stdin.write = (chunk, cb) => {
+      const msg = JSON.parse(String(chunk).trim());
+      queueMicrotask(() => {
+        if (msg.method === "initialize") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] },
+          })}\n`));
+        } else if (msg.method === "session/new") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { sessionId: "s-sig" },
+          })}\n`));
+        } else if (msg.method === "session/prompt") {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "s-sig",
+              update: { sessionUpdate: "agent_message_chunk", content: { text: "half…" } },
+            },
+          })}\n`));
+          // Crash mid-prompt: signal kill, code=null (Node convention).
+          queueMicrotask(() => child.emit("close", null, "SIGTERM"));
+        } else {
+          child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {},
+          })}\n`));
+        }
+        if (typeof cb === "function") cb();
+      });
+      return true;
+    };
+    stdin.end = () => {};
+    child.stdin = stdin;
+    child.pid = 7;
+    child.killed = false;
+    child.exitCode = null;
+    child.kill = () => { child.killed = true; };
+    return child;
+  }
+
+  await runGrokAcpTurn({
+    prompt: "long",
+    binPath: "C:\\fake\\grok.exe",
+    permissionMode: "auto",
+    emitter,
+    spawnImpl: () => makeFakeChild(),
+  });
+
+  assert.ok(emitter.calls.some((c) => c[0] === "text" && c[1] === "half…"));
+  const err = emitter.calls.find((c) => c[0] === "error");
+  assert.ok(err, "signal kill mid-turn must emitError");
+  assert.match(String(err[1]), /SIGTERM|signal/i);
+  assert.ok(!emitter.calls.some((c) => c[0] === "done"));
 });

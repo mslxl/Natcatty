@@ -27,6 +27,7 @@ const {
   resolveGrokTurnPrompt,
   extractGrokAcpPromptUsage,
   emitGrokUsage,
+  shouldReportGrokProcessExitFailure,
   spawnGrokProcess,
 } = require("./grokDriver.cjs");
 
@@ -587,18 +588,59 @@ function handleGrokAcpMessage(message, { emitter, state, pending, onPromptComple
 
   if (method === "session/request_permission" || method === "request_permission") {
     // Non-interactive: auto-allow when yolo was requested; otherwise deny.
+    // optionId MUST come from params.options (ACP); do not invent ids.
     const id = message.id;
     if (id == null) return;
     const allow = state.autoAllowPermissions !== false;
-    const result = allow
-      ? { outcome: { outcome: "selected", optionId: "allow-once" } }
-      : { outcome: { outcome: "cancelled" } };
+    const result = buildGrokAcpPermissionResponse(params, allow);
     // Caller writes responses via pending write hook
     if (typeof state.writeResponse === "function") {
       state.writeResponse(id, result);
     }
     return;
   }
+}
+
+/**
+ * Build ACP permission result using an offered option's real optionId.
+ * Prefers allow_always / allow_once kinds when allowing; reject/cancel when denying.
+ */
+function buildGrokAcpPermissionResponse(params, allow) {
+  const options = Array.isArray(params?.options) ? params.options : [];
+  const optionKey = (opt) => {
+    const optionId = String(opt?.optionId ?? opt?.id ?? "").trim();
+    const kind = String(opt?.kind ?? opt?.name ?? "").trim();
+    return { optionId, kind, blob: `${optionId} ${kind}`.toLowerCase() };
+  };
+  if (allow) {
+    let best = null;
+    let bestScore = 0;
+    for (const opt of options) {
+      if (!opt || typeof opt !== "object") continue;
+      const { optionId, blob } = optionKey(opt);
+      if (!optionId) continue;
+      let score = 0;
+      if (/allow[_-]?always|always[_-]?allow|allow_for_session|allow-session/.test(blob)) score = 3;
+      else if (/allow[_-]?once|once|allow_this|allow-this/.test(blob)) score = 2;
+      else if (/\ballow\b/.test(blob)) score = 1;
+      if (score > bestScore) {
+        bestScore = score;
+        best = optionId;
+      }
+    }
+    if (best) return { outcome: { outcome: "selected", optionId: best } };
+    // Agent omitted options: last-resort ACP-ish id (prefer underscore form).
+    return { outcome: { outcome: "selected", optionId: "allow_once" } };
+  }
+  for (const opt of options) {
+    if (!opt || typeof opt !== "object") continue;
+    const { optionId, blob } = optionKey(opt);
+    if (!optionId) continue;
+    if (/reject|cancel|deny|refuse|disallow/.test(blob)) {
+      return { outcome: { outcome: "selected", optionId } };
+    }
+  }
+  return { outcome: { outcome: "cancelled" } };
 }
 
 function createJsonRpcClient({ write, onMessage }) {
@@ -896,24 +938,20 @@ async function runGrokAcpTurn({
       promptDoneResolve?.();
       finish();
     });
-    child.on("close", (code) => {
+    child.on("close", (code, exitSignal) => {
       if (!stderrEnded) {
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      // Only ignore nonzero exit after session/prompt succeeded (turnCompleted).
-      // Partial text without prompt completion is a mid-turn crash — still error.
-      // Windows teardown after success often exits 1; turnCompleted covers that.
-      if (
-        !state.failed
-        && !signal?.aborted
-        && !state.turnCompleted
-        && code
-        && code !== 0
-      ) {
+      // Only ignore abnormal exit after session/prompt succeeded (turnCompleted).
+      // Signal kills report code=null — still fail if turn not completed.
+      if (shouldReportGrokProcessExitFailure(state, signal, code, exitSignal)) {
         const stderr = stderrText.trim();
+        const detail = code != null && code !== 0
+          ? `exited with code ${code}`
+          : (exitSignal ? `terminated by signal ${exitSignal}` : "exited unexpectedly");
         state.failed = true;
-        emitter.emitError(formatGrokErrorForUser(stderr || `Grok ACP exited with code ${code}`));
+        emitter.emitError(formatGrokErrorForUser(stderr || `Grok ACP ${detail}`));
       }
       rpc.rejectAll(new Error("Grok ACP process closed"));
       promptDoneResolve?.();
@@ -1015,6 +1053,7 @@ module.exports = {
   ACP_PROTOCOL_VERSION,
   authenticateGrokAcp,
   buildGrokAcpInitializeParams,
+  buildGrokAcpPermissionResponse,
   buildGrokAcpPromptParams,
   buildGrokAcpSessionNewParams,
   buildGrokAcpSessionResumeOrLoadParams,

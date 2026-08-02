@@ -545,6 +545,22 @@ function extractGrokAcpPromptUsage(promptResult) {
 }
 
 /**
+ * Whether a process close should fail the turn.
+ * - turnCompleted: protocol finished (end / session/prompt) → ignore teardown noise
+ * - user abort: not a failure
+ * - nonzero code OR non-null exit signal before completion → failure
+ *   (Node reports code=null when killed by signal)
+ */
+function shouldReportGrokProcessExitFailure(state, abortSignal, code, exitSignal) {
+  if (state?.failed) return false;
+  if (abortSignal?.aborted) return false;
+  if (state?.turnCompleted) return false;
+  if (code != null && code !== 0) return true;
+  if (exitSignal) return true;
+  return false;
+}
+
+/**
  * Forward Grok/ACP usage onto the canonical emitter.
  * Supports Anthropic snake_case and Grok ACP camelCase (cachedReadTokens).
  */
@@ -764,23 +780,19 @@ async function runGrokTurn({
       }
       finish();
     });
-    child.on("close", (code) => {
+    child.on("close", (code, exitSignal) => {
       if (!stderrEnded) {
         stderrEnded = true;
         if (!stderrTruncated || stderrDecoder.lastNeed === 0) stderrText += stderrDecoder.end();
       }
-      // Only ignore nonzero exit after protocol completion (end event).
-      // Do NOT use streamedAssistantText: partial text + crash must still error.
-      // Windows kill after a completed turn often exits 1 — turnCompleted covers that.
-      if (
-        !state.failed
-        && !signal?.aborted
-        && !state.turnCompleted
-        && code
-        && code !== 0
-      ) {
+      // Only ignore abnormal exit after protocol completion (end event).
+      // Signal kills report code=null — still fail if turn not completed.
+      if (shouldReportGrokProcessExitFailure(state, signal, code, exitSignal)) {
         const stderr = stderrText.trim();
-        const message = stderr || `Grok Build exited with code ${code}`;
+        const detail = code != null && code !== 0
+          ? `exited with code ${code}`
+          : (exitSignal ? `terminated by signal ${exitSignal}` : "exited unexpectedly");
+        const message = stderr || `Grok Build ${detail}`;
         state.failed = true;
         emitter.emitError(formatGrokErrorForUser(message));
       }
@@ -964,6 +976,7 @@ module.exports = {
   resolveGrokTurnPrompt,
   extractGrokAcpPromptUsage,
   emitGrokUsage,
+  shouldReportGrokProcessExitFailure,
   runGrokTurn,
   spawnGrokProcess,
   stripGrokMcpServerSection,
