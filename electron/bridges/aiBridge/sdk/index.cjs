@@ -321,6 +321,7 @@ const DRIVER_REGISTRY = {
         model: ctx.model,
         env: ctx.env,
         permissionMode: ctx.permissionMode,
+        toolIntegrationMode: ctx.toolIntegrationMode,
         resumeSessionId: ctx.resumeSessionId,
         injectedMcpServers: ctx.injectedMcpServers,
         emitter: ctx.emitter,

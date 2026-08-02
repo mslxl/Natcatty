@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const {
+  GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
   buildGrokCliArgs,
   buildGrokMcpServerTomlSection,
   createLineBuffer,
@@ -11,6 +12,7 @@ const {
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
+  resolveGrokToolIntegrationFlags,
   runGrokTurn,
   stripGrokMcpServerSection,
   translateGrokStreamEvent,
@@ -47,6 +49,7 @@ test("buildGrokCliArgs uses streaming-json and optional model/resume/cwd", () =>
       cwd: "/repo",
       resumeSessionId: "sess-1",
       permissionMode: "observer",
+      toolIntegrationMode: "skills",
     }),
     [
       "-p",
@@ -67,9 +70,49 @@ test("buildGrokCliArgs uses streaming-json and optional model/resume/cwd", () =>
   const autoArgs = buildGrokCliArgs({
     prompt: "go",
     permissionMode: "auto",
+    toolIntegrationMode: "skills",
   });
   assert.ok(autoArgs.includes("--always-approve"));
   assert.ok(!autoArgs.includes("-m"));
+});
+
+test("resolveGrokToolIntegrationFlags locks local side-effect tools only in MCP mode", () => {
+  assert.deepEqual(resolveGrokToolIntegrationFlags("skills"), []);
+  assert.deepEqual(resolveGrokToolIntegrationFlags("mcp"), [
+    "--disallowed-tools",
+    GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.join(","),
+  ]);
+  // Default/unknown → MCP lockdown (align with Claude MCP-mode empty local tools).
+  assert.deepEqual(resolveGrokToolIntegrationFlags(undefined), [
+    "--disallowed-tools",
+    GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.join(","),
+  ]);
+  assert.ok(GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.includes("run_terminal_command"));
+  assert.ok(GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.includes("search_replace"));
+  assert.ok(GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.includes("write"));
+});
+
+test("buildGrokCliArgs applies MCP-mode local-tool lockdown via real builder", () => {
+  const mcpArgs = buildGrokCliArgs({
+    prompt: "list sessions",
+    permissionMode: "auto",
+    toolIntegrationMode: "mcp",
+  });
+  const denyIdx = mcpArgs.indexOf("--disallowed-tools");
+  assert.ok(denyIdx >= 0, "MCP mode must pass --disallowed-tools");
+  const denied = String(mcpArgs[denyIdx + 1] || "");
+  assert.match(denied, /run_terminal_command/);
+  assert.match(denied, /search_replace/);
+  assert.match(denied, /write/);
+  // MCP meta-tools must not appear in the deny list (Netcatty remote path).
+  assert.doesNotMatch(denied, /mcp|netcatty/i);
+
+  const skillsArgs = buildGrokCliArgs({
+    prompt: "list sessions",
+    permissionMode: "auto",
+    toolIntegrationMode: "skills",
+  });
+  assert.ok(!skillsArgs.includes("--disallowed-tools"), "skills mode must not apply MCP lockdown");
 });
 
 test("createLineBuffer rejects and releases an unterminated oversized message", () => {

@@ -226,12 +226,42 @@ function resolveGrokPermissionFlags(permissionMode) {
   return ["--always-approve"];
 }
 
+/**
+ * Local Grok built-ins that must not run side effects on the desktop machine
+ * when Tool Access is MCP. Remote session work goes through injected Netcatty
+ * MCP (meta-tools remain available under --disallowed-tools per Grok docs).
+ * Both historical (`run_terminal_cmd`) and current (`run_terminal_command`)
+ * shell IDs are listed so older/newer CLIs stay covered.
+ */
+const GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS = [
+  "run_terminal_command",
+  "run_terminal_cmd",
+  "search_replace",
+  "write",
+  "Agent",
+];
+
+/**
+ * Build --disallowed-tools flags for the active tool-integration mode.
+ * - mcp (default): strip local shell/edit/write so Claude-style MCP path is used.
+ * - skills: no lockdown here; Netcatty CLI skill needs local shell.
+ */
+function resolveGrokToolIntegrationFlags(toolIntegrationMode) {
+  const mode = String(toolIntegrationMode || "mcp").toLowerCase();
+  if (mode === "skills") return [];
+  return [
+    "--disallowed-tools",
+    GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.join(","),
+  ];
+}
+
 function buildGrokCliArgs({
   prompt,
   model,
   cwd,
   resumeSessionId,
   permissionMode,
+  toolIntegrationMode,
 }) {
   const args = [
     "-p",
@@ -250,6 +280,7 @@ function buildGrokCliArgs({
     args.push("-r", String(resumeSessionId));
   }
   args.push(...resolveGrokPermissionFlags(permissionMode));
+  args.push(...resolveGrokToolIntegrationFlags(toolIntegrationMode));
   return args;
 }
 
@@ -484,6 +515,7 @@ async function runGrokTurn({
   model,
   env,
   permissionMode,
+  toolIntegrationMode,
   resumeSessionId,
   injectedMcpServers,
   emitter,
@@ -509,6 +541,7 @@ async function runGrokTurn({
     cwd: effectiveCwd,
     resumeSessionId,
     permissionMode,
+    toolIntegrationMode,
   });
 
   const doMerge = mergeMcp || mergeWorkspaceGrokMcpToml;
@@ -788,6 +821,7 @@ async function listGrokModels({
 module.exports = {
   NETCATTY_MCP_NAME,
   MAX_GROK_LINE_BYTES,
+  GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
   buildGrokCliArgs,
   buildGrokMcpServerTomlSection,
   createLineBuffer,
@@ -797,6 +831,7 @@ module.exports = {
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
+  resolveGrokToolIntegrationFlags,
   runGrokTurn,
   stripGrokMcpServerSection,
   translateGrokStreamEvent,
