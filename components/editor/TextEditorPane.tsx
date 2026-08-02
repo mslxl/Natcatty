@@ -25,6 +25,7 @@ loader.config({ paths: { vs: monacoBasePath } });
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useClipboardBackend } from '../../application/state/useClipboardBackend';
 import { HotkeyScheme, KeyBinding, matchesKeyBinding } from '../../domain/models';
+import { pasteForMonacoEditorCommand } from '../../infrastructure/monaco/monacoClipboardPaste';
 import { useNetcattyMonacoTheme } from '../../infrastructure/monaco/useNetcattyMonacoTheme';
 import { getLanguageName, getSupportedLanguages } from '../../lib/sftpFileUtils';
 import { Button } from '../ui/button';
@@ -277,31 +278,13 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
     });
 
     // Fallback paste path for Electron environments where Monaco paste can fail.
-    // Skip custom paste when focus is inside the find/replace widget so that
-    // its input fields receive the pasted text via default browser behavior.
+    // When focus is in the find/replace widget, paste into that input instead of the body.
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
-      const active = document.activeElement;
-      if (active?.closest('.find-widget')) {
-        // Read clipboard and insert into the find/replace input field.
-        void (async () => {
-          try {
-            const text = await readClipboardTextRef.current();
-            if (!text) return;
-            // Monaco find widget inputs are <textarea> elements inside .monaco-inputbox
-            if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) {
-              const start = active.selectionStart ?? active.value.length;
-              const end = active.selectionEnd ?? active.value.length;
-              active.focus();
-              active.setSelectionRange(start, end);
-              document.execCommand('insertText', false, text);
-            }
-          } catch {
-            // Ignore – paste simply won't work
-          }
-        })();
-        return;
-      }
-      void handlePasteRef.current();
+      void pasteForMonacoEditorCommand({
+        activeElement: document.activeElement,
+        readClipboardText: () => readClipboardTextRef.current(),
+        pasteIntoEditor: () => handlePasteRef.current(),
+      });
     });
 
     editor.focus();
