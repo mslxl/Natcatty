@@ -7,6 +7,7 @@ import {
   CODEX_GPT_5_6_MIN_CLI_VERSION,
   CODEX_MODEL_PRESETS,
   CURSOR_MODEL_PRESETS,
+  GROK_MODEL_PRESETS,
   extractCliSemver,
   filterAgentModelPresetsForCliVersion,
   getAgentModelPresets,
@@ -34,6 +35,21 @@ test('getAgentModelPresets returns Cursor presets for cursor-agent paths and sdk
 test('getAgentModelPresets keeps Codex presets separate from CodeBuddy presets', () => {
   assert.deepEqual(getAgentModelPresets('codex'), CODEX_MODEL_PRESETS);
   assert.notDeepEqual(CODEBUDDY_MODEL_PRESETS, CODEX_MODEL_PRESETS);
+});
+
+test('getAgentModelPresets returns curated Grok fallback when runtime catalog is empty', () => {
+  assert.ok(GROK_MODEL_PRESETS.length > 0);
+  assert.deepEqual(getAgentModelPresets(undefined, 'grok'), GROK_MODEL_PRESETS);
+  assert.deepEqual(getAgentModelPresets('/usr/local/bin/grok'), GROK_MODEL_PRESETS);
+  assert.deepEqual(getAgentModelPresets('C:\\\\Tools\\\\grok.exe', 'grok'), GROK_MODEL_PRESETS);
+  assert.equal(getAgentModelPresets(undefined, 'grok')[0]?.id, 'grok-4.5');
+  // Empty/failed runtime catalog path: shared resolver still yields a non-empty list.
+  const runtimeCatalog: Array<{ id: string; name: string }> = [];
+  const resolved = runtimeCatalog.length > 0
+    ? runtimeCatalog
+    : getAgentModelPresets('grok', 'grok');
+  assert.ok(resolved.length > 0);
+  assert.deepEqual(resolved, GROK_MODEL_PRESETS);
 });
 
 test('CODEX_MODEL_PRESETS lists GPT-5.6 Sol/Terra/Luna with official reasoning levels', () => {

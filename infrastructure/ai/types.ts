@@ -690,6 +690,14 @@ export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'ollama/llama3.3', name: 'Ollama Llama 3.3' },
 ];
 
+// Curated Grok Build models when `grok models` is unavailable. IDs mirror the
+// public Grok Build / xAI coding agent lineup; live discovery still overrides.
+export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'grok-4.5', name: 'Grok 4.5', description: 'Default' },
+  { id: 'grok-4.5-build', name: 'Grok 4.5 Build', description: 'Coding agent' },
+  { id: 'grok-code-fast', name: 'Grok Code Fast', description: 'Faster coding' },
+];
+
 export function getAgentModelPresets(
   agentCommand?: string,
   sdkBackend?: string,
@@ -702,6 +710,7 @@ export function getAgentModelPresets(
   if (backend === 'cursor') return CURSOR_MODEL_PRESETS;
   if (backend === 'codebuddy') return CODEBUDDY_MODEL_PRESETS;
   if (backend === 'opencode') return OPENCODE_MODEL_PRESETS;
+  if (backend === 'grok') return GROK_MODEL_PRESETS;
 
   if (!agentCommand) return [];
   // Split on both POSIX (/) and Windows (\) separators so command paths like
@@ -720,6 +729,7 @@ export function getAgentModelPresets(
   }
   if (basename.startsWith('codebuddy')) return CODEBUDDY_MODEL_PRESETS;
   if (basename.startsWith('opencode')) return OPENCODE_MODEL_PRESETS;
+  if (basename.startsWith('grok')) return GROK_MODEL_PRESETS;
   return [];
 }
 
