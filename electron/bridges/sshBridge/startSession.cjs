@@ -17,7 +17,10 @@ const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
 const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
-const { annotateMacLocalNetworkErrorMessage } = require("../macLocalNetworkAccess.cjs");
+const {
+  annotateMacLocalNetworkErrorMessage,
+  resolveFirstTcpEndpoint,
+} = require("../macLocalNetworkAccess.cjs");
 
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
@@ -88,8 +91,10 @@ function isSshAuthFailure(err) {
 }
 
 function userVisibleSshErrorMessage(err, options = {}) {
+  const firstHop = resolveFirstTcpEndpoint(options);
   return annotateMacLocalNetworkErrorMessage(err?.message || String(err || ""), {
     hostname: options.hostname || options.host,
+    firstHopHostname: firstHop.hostname,
   });
 }
 

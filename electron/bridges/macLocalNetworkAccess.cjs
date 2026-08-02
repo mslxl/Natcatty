@@ -17,7 +17,10 @@
  * bundle and can present the system alert.
  */
 
-const DEFAULT_PROBE_TIMEOUT_MS = 60_000;
+const net = require("node:net");
+
+/** Keep the pre-SSH LAN probe short so dead hosts do not stall the dial. */
+const DEFAULT_PROBE_TIMEOUT_MS = 3_000;
 const LOCAL_NETWORK_HINT =
   "macOS may be blocking Local Network access. Open System Settings → Privacy & Security → Local Network, enable Netcatty, then reconnect.";
 
@@ -25,40 +28,84 @@ function stripIpBrackets(value) {
   return String(value || "").replace(/^\[|\]$/g, "").trim();
 }
 
+function isIpv4LocalNetworkAddress(hostname) {
+  const parts = hostname.split(".");
+  if (parts.length !== 4 || !parts.every((part) => /^\d+$/.test(part))) return false;
+  const octets = parts.map(Number);
+  if (octets.some((n) => n < 0 || n > 255)) return false;
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT / Tailscale
+  return false;
+}
+
+/**
+ * First hextet of an IPv6 address (handles leading "::" compression).
+ * Returns null when the address is not a usable IPv6 form for prefix checks.
+ */
+function ipv6FirstHextet(address) {
+  const lower = String(address || "").toLowerCase();
+  if (!lower) return null;
+  if (lower.startsWith("::ffff:")) return null;
+  if (lower.startsWith("::")) return 0;
+  const first = lower.split(":")[0];
+  if (!/^[0-9a-f]{1,4}$/.test(first)) return null;
+  return Number.parseInt(first, 16);
+}
+
+function isIpv6LocalNetworkAddress(hostname) {
+  if (net.isIP(hostname) !== 6) return false;
+  const lower = hostname.toLowerCase();
+  if (lower.startsWith("::ffff:")) {
+    // IPv4-mapped IPv6 — classify the embedded v4 address.
+    return isLocalNetworkHostname(lower.slice("::ffff:".length));
+  }
+  const hextet = ipv6FirstHextet(lower);
+  if (hextet == null || Number.isNaN(hextet)) return false;
+  // fc00::/7 unique local
+  if (hextet >= 0xfc00 && hextet <= 0xfdff) return true;
+  // fe80::/10 link-local
+  if (hextet >= 0xfe80 && hextet <= 0xfebf) return true;
+  return false;
+}
+
+/**
+ * True only for literal private IP forms. Hostnames (including ones that
+ * merely start with "fc"/"fd") are never treated as LAN without resolution.
+ */
 function isLocalNetworkHostname(hostname) {
   if (hostname == null) return false;
   const cleaned = stripIpBrackets(hostname);
   if (!cleaned) return false;
 
-  const lower = cleaned.toLowerCase();
-  if (lower.startsWith("fc") || lower.startsWith("fd")) return true; // fc00::/7 ULA
-  if (
-    lower.startsWith("fe8") ||
-    lower.startsWith("fe9") ||
-    lower.startsWith("fea") ||
-    lower.startsWith("feb")
-  ) {
-    return true; // fe80::/10 link-local
-  }
-  if (lower.startsWith("::ffff:")) {
-    return isLocalNetworkHostname(lower.slice(7));
-  }
-
-  const parts = cleaned.split(".");
-  if (parts.length === 4 && parts.every((part) => /^\d+$/.test(part))) {
-    const [a, b] = parts.map(Number);
-    if (a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT / Tailscale
-    return false;
-  }
-
+  const ipVersion = net.isIP(cleaned);
+  if (ipVersion === 4) return isIpv4LocalNetworkAddress(cleaned);
+  if (ipVersion === 6) return isIpv6LocalNetworkAddress(cleaned);
   return false;
 }
 
+/**
+ * First TCP hop the local process will open for this SSH dial.
+ * Prefer HTTP/SOCKS proxy host when configured, else first jump host, else target.
+ */
 function resolveFirstTcpEndpoint(options = {}) {
+  const proxy = options.proxy && typeof options.proxy === "object" ? options.proxy : null;
+  if (
+    proxy
+    && proxy.type !== "command"
+    && String(proxy.host || proxy.hostname || "").trim()
+  ) {
+    const hostname = String(proxy.host || proxy.hostname || "").trim();
+    const port = Number(proxy.port);
+    return {
+      hostname,
+      port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 1080,
+    };
+  }
+
   const jumpHosts = Array.isArray(options.jumpHosts) ? options.jumpHosts : [];
   if (jumpHosts.length > 0) {
     const first = jumpHosts[0] || {};
@@ -85,23 +132,29 @@ function looksLikeHostUnreachableMessage(message) {
 
 function annotateMacLocalNetworkErrorMessage(message, options = {}) {
   const platform = options.platform || process.platform;
-  const hostname = options.hostname || "";
   const text = String(message || "");
   if (platform !== "darwin") return text;
-  if (!isLocalNetworkHostname(hostname)) return text;
   if (!looksLikeHostUnreachableMessage(text)) return text;
   if (text.includes("Local Network")) return text;
+
+  const candidates = [
+    options.hostname,
+    options.host,
+    options.firstHopHostname,
+  ].filter((value) => value != null && String(value).trim() !== "");
+  const touchesLan = candidates.some((value) => isLocalNetworkHostname(value));
+  if (!touchesLan) return text;
   return `${text}\n\n${LOCAL_NETWORK_HINT}`;
 }
 
 function createMacLocalNetworkAccessGate(options = {}) {
   const platform = options.platform || process.platform;
   const versions = options.versions || process.versions;
-  const net = options.net || require("node:net");
+  const netModule = options.net || net;
   const probedKeys = options.probedKeys || new Set();
   const inFlight = options.inFlight || new Map();
   const probeTimeoutMs = Number.isFinite(options.probeTimeoutMs)
-    ? Math.max(1_000, Math.round(options.probeTimeoutMs))
+    ? Math.max(500, Math.round(options.probeTimeoutMs))
     : DEFAULT_PROBE_TIMEOUT_MS;
   const setTimer = options.setTimer || setTimeout;
   const clearTimer = options.clearTimer || clearTimeout;
@@ -129,7 +182,7 @@ function createMacLocalNetworkAccessGate(options = {}) {
       };
 
       try {
-        socket = net.connect({ host: hostname, port }, finish);
+        socket = netModule.connect({ host: hostname, port }, finish);
         socket.once?.("error", finish);
         if (typeof socket.setTimeout === "function") {
           socket.setTimeout(probeTimeoutMs, finish);
@@ -173,11 +226,13 @@ function createMacLocalNetworkAccessGate(options = {}) {
     ensureAccess,
     isLocalNetworkHostname,
     resolveFirstTcpEndpoint,
+    getProbeTimeoutMs: () => probeTimeoutMs,
     annotateErrorMessage(message, connectOptions = {}) {
       const endpoint = resolveFirstTcpEndpoint(connectOptions);
       return annotateMacLocalNetworkErrorMessage(message, {
         platform,
-        hostname: endpoint.hostname || connectOptions.hostname || connectOptions.host,
+        hostname: connectOptions.hostname || connectOptions.host,
+        firstHopHostname: endpoint.hostname,
       });
     },
   };
