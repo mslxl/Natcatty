@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useImperativeHandle, useRef } from 'reac
 import { useClipboardBackend } from '@/application/state/useClipboardBackend';
 import {
   buildMonacoPasteEdits,
+  pasteForMonacoEditorCommand,
   readClipboardTextWithFallbacks,
 } from '@/infrastructure/monaco/monacoClipboardPaste';
 import { useNetcattyMonacoTheme } from '@/infrastructure/monaco/useNetcattyMonacoTheme';
@@ -64,6 +65,7 @@ export const ScriptCodeEditor = React.forwardRef<ScriptCodeEditorHandle, ScriptC
   const onSubmitShortcutRef = useRef(onSubmitShortcut);
   onSubmitShortcutRef.current = onSubmitShortcut;
   const handlePasteRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const readClipboardTextRef = useRef<() => Promise<string | null>>(() => Promise.resolve(null));
 
   useImperativeHandle(forwardedRef, () => ({
     focus: () => editorRef.current?.focus(),
@@ -82,16 +84,24 @@ export const ScriptCodeEditor = React.forwardRef<ScriptCodeEditorHandle, ScriptC
     return () => cancelAnimationFrame(frame);
   }, [active, fill, height]);
 
-  const handlePaste = useCallback(async () => {
-    const editor = editorRef.current;
-    if (!editor) return;
-
-    const text = await readClipboardTextWithFallbacks({
+  const readClipboardText = useCallback(async (): Promise<string | null> => (
+    readClipboardTextWithFallbacks({
       readNavigator: navigator.clipboard?.readText
         ? () => navigator.clipboard.readText()
         : undefined,
       readBridge: readClipboardTextFromBridge,
-    });
+    })
+  ), [readClipboardTextFromBridge]);
+
+  useEffect(() => {
+    readClipboardTextRef.current = readClipboardText;
+  }, [readClipboardText]);
+
+  const handlePaste = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const text = await readClipboardText();
 
     if (text === null) {
       // Clipboard read unavailable; fall back to Monaco's native paste.
@@ -105,7 +115,7 @@ export const ScriptCodeEditor = React.forwardRef<ScriptCodeEditorHandle, ScriptC
 
     editor.executeEdits('netcatty-paste', buildMonacoPasteEdits(text, selections));
     editor.focus();
-  }, [readClipboardTextFromBridge]);
+  }, [readClipboardText]);
 
   useEffect(() => {
     handlePasteRef.current = handlePaste;
@@ -124,10 +134,15 @@ export const ScriptCodeEditor = React.forwardRef<ScriptCodeEditorHandle, ScriptC
       );
     }
     // Fallback paste path for Electron where Monaco clipboardPasteAction can fail.
+    // When focus is in the find/replace widget, paste into that input instead of the body.
     editor.addCommand(
       monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyV,
       () => {
-        void handlePasteRef.current();
+        void pasteForMonacoEditorCommand({
+          activeElement: document.activeElement,
+          readClipboardText: () => readClipboardTextRef.current(),
+          pasteIntoEditor: () => handlePasteRef.current(),
+        });
       },
     );
     requestAnimationFrame(() => editor.layout());

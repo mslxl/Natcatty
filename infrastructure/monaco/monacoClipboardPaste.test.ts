@@ -3,8 +3,40 @@ import test from 'node:test';
 
 import {
   buildMonacoPasteEdits,
+  isMonacoFindWidgetFocused,
+  pasteForMonacoEditorCommand,
+  pasteTextIntoFocusedInput,
   readClipboardTextWithFallbacks,
+  type FocusedTextInput,
 } from './monacoClipboardPaste.ts';
+
+function createMockTextInput(initialValue = ''): FocusedTextInput & {
+  selectionStart: number;
+  selectionEnd: number;
+} {
+  let selectionStart = initialValue.length;
+  let selectionEnd = initialValue.length;
+  return {
+    value: initialValue,
+    get selectionStart() {
+      return selectionStart;
+    },
+    set selectionStart(value: number) {
+      selectionStart = value;
+    },
+    get selectionEnd() {
+      return selectionEnd;
+    },
+    set selectionEnd(value: number) {
+      selectionEnd = value;
+    },
+    focus() {},
+    setSelectionRange(start: number, end: number) {
+      selectionStart = start;
+      selectionEnd = end;
+    },
+  };
+}
 
 test('buildMonacoPasteEdits pastes full text at a single cursor', () => {
   const edits = buildMonacoPasteEdits('hello\nworld', [
@@ -72,4 +104,60 @@ test('readClipboardTextWithFallbacks returns null when both paths fail', async (
     },
   });
   assert.equal(text, null);
+});
+
+test('isMonacoFindWidgetFocused detects elements inside .find-widget', () => {
+  const findInput = {
+    closest: (selector: string) => (selector === '.find-widget' ? {} : null),
+  };
+  const otherInput = {
+    closest: () => null,
+  };
+  assert.equal(isMonacoFindWidgetFocused(findInput), true);
+  assert.equal(isMonacoFindWidgetFocused(otherInput), false);
+  assert.equal(isMonacoFindWidgetFocused(null), false);
+});
+
+test('pasteTextIntoFocusedInput replaces the current selection', () => {
+  const input = createMockTextInput('hello');
+  input.setSelectionRange(0, 5);
+  assert.equal(pasteTextIntoFocusedInput(input, 'world'), true);
+  assert.equal(input.value, 'world');
+  assert.equal(input.selectionStart, 5);
+  assert.equal(input.selectionEnd, 5);
+});
+
+test('pasteTextIntoFocusedInput rejects non-input targets', () => {
+  assert.equal(pasteTextIntoFocusedInput({ closest: () => ({}) }, 'x'), false);
+});
+
+test('pasteForMonacoEditorCommand pastes into find widget and skips editor body', async () => {
+  const input = Object.assign(createMockTextInput(''), {
+    closest: (selector: string) => (selector === '.find-widget' ? {} : null),
+  });
+  let bodyPasteCount = 0;
+  await pasteForMonacoEditorCommand({
+    activeElement: input,
+    readClipboardText: async () => 'search-me',
+    pasteIntoEditor: () => {
+      bodyPasteCount += 1;
+    },
+  });
+
+  assert.equal(input.value, 'search-me');
+  assert.equal(bodyPasteCount, 0);
+});
+
+test('pasteForMonacoEditorCommand falls through to editor body outside find widget', async () => {
+  let bodyPasteCount = 0;
+  await pasteForMonacoEditorCommand({
+    activeElement: null,
+    readClipboardText: async () => {
+      throw new Error('should not read clipboard for body path');
+    },
+    pasteIntoEditor: () => {
+      bodyPasteCount += 1;
+    },
+  });
+  assert.equal(bodyPasteCount, 1);
 });

@@ -54,3 +54,9 @@ test('script code editor restores Electron clipboard paste for Cmd/Ctrl+V and na
   assert.match(codeEditorSource, /contextmenu:\s*false/);
   assert.match(codeEditorSource, /editor\.action\.clipboardPasteAction/);
 });
+
+test('script code editor pastes into Monaco find widget instead of script body', () => {
+  assert.match(codeEditorSource, /pasteForMonacoEditorCommand/);
+  assert.match(codeEditorSource, /activeElement:\s*document\.activeElement/);
+  assert.match(codeEditorSource, /pasteIntoEditor:\s*\(\)\s*=>\s*handlePasteRef\.current\(\)/);
+});
