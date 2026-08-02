@@ -74,23 +74,28 @@ function resolveGrokAcpCwd(cwd) {
 }
 
 /**
- * Build argv for `grok --no-auto-update agent [flags] stdio`.
- * MCP mode also passes --disallowed-tools when the CLI accepts common flags.
+ * Build argv for `grok [global flags] agent [agent flags] stdio`.
+ *
+ * Live CLI (grok 0.2.x): `--disallowed-tools` and `--no-auto-update` are
+ * top-level options. Placing them after `agent` fails with:
+ *   unexpected argument '--disallowed-tools' found
+ * Agent-local flags (`--always-approve`, `-m`) stay after `agent`.
  */
 function buildGrokAcpSpawnArgs({
   model,
   permissionMode,
   toolIntegrationMode,
 } = {}) {
-  // Headless/ACP automation: skip background update checks (xAI headless docs).
-  const args = ["--no-auto-update", "agent"];
+  // Global top-level flags MUST precede the `agent` subcommand.
+  const args = ["--no-auto-update"];
+  // MCP lockdown is a top-level flag (same as headless `grok -p ...`).
+  args.push(...resolveGrokToolIntegrationFlags(toolIntegrationMode));
+  args.push("agent");
   const mode = String(permissionMode || "confirm").toLowerCase();
   // Non-interactive Netcatty turns cannot answer ACP permission prompts.
   if (mode !== "observer") {
     args.push("--always-approve");
   }
-  // Align with headless MCP lockdown when the agent CLI honors common flags.
-  args.push(...resolveGrokToolIntegrationFlags(toolIntegrationMode));
   const modelId = String(model || "").trim();
   if (modelId) {
     args.push("-m", modelId);

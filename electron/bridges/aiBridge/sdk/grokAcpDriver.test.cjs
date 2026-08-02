@@ -63,27 +63,47 @@ test("buildGrokAcpSpawnArgs uses agent stdio, no-auto-update, and always-approve
   assert.deepEqual(observer, ["--no-auto-update", "agent", "stdio"]);
 });
 
-test("buildGrokAcpSpawnArgs applies MCP-mode local-tool lockdown", () => {
+test("buildGrokAcpSpawnArgs places global MCP lockdown before agent subcommand", () => {
   const args = buildGrokAcpSpawnArgs({
+    model: "grok-4.5",
     permissionMode: "auto",
     toolIntegrationMode: "mcp",
   });
+  const agentIdx = args.indexOf("agent");
   const denyIdx = args.indexOf("--disallowed-tools");
+  const noUpdateIdx = args.indexOf("--no-auto-update");
+  const alwaysIdx = args.indexOf("--always-approve");
+  const modelIdx = args.indexOf("-m");
+  assert.ok(agentIdx >= 0, "must include agent subcommand");
   assert.ok(denyIdx >= 0, "MCP mode must pass --disallowed-tools on ACP spawn");
+  // Live grok rejects --disallowed-tools AFTER `agent` (unexpected argument).
+  assert.ok(noUpdateIdx < agentIdx, "--no-auto-update must be before agent");
+  assert.ok(denyIdx < agentIdx, "--disallowed-tools must be before agent");
+  assert.ok(alwaysIdx > agentIdx, "--always-approve is agent-local (after agent)");
+  assert.ok(modelIdx > agentIdx, "-m is agent-local (after agent)");
+  assert.equal(args[args.length - 1], "stdio");
+  assert.deepEqual(args, [
+    "--no-auto-update",
+    "--disallowed-tools",
+    GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS.join(","),
+    "agent",
+    "--always-approve",
+    "-m",
+    "grok-4.5",
+    "stdio",
+  ]);
   const denied = String(args[denyIdx + 1] || "");
   assert.match(denied, /run_terminal_command/);
   assert.match(denied, /search_replace/);
   assert.match(denied, /write/);
   assert.doesNotMatch(denied, /mcp|netcatty/i);
-  assert.ok(args.includes("--no-auto-update"));
-  assert.ok(args.includes("--always-approve"));
-  assert.equal(args[args.length - 1], "stdio");
-  // Skills mode: no lockdown list
+  // Skills mode: no lockdown list; global flags still precede agent.
   const skills = buildGrokAcpSpawnArgs({
     permissionMode: "auto",
     toolIntegrationMode: "skills",
   });
   assert.ok(!skills.includes("--disallowed-tools"));
+  assert.ok(skills.indexOf("--no-auto-update") < skills.indexOf("agent"));
 });
 
 test("toAcpMcpEnvPairs keeps Grok session/new pair-array shape", () => {
