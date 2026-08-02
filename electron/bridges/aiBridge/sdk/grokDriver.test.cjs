@@ -17,6 +17,7 @@ const {
   resolveGrokTurnPrompt,
   extractGrokAcpPromptUsage,
   emitGrokUsage,
+  normalizeGrokPlanUpdate,
   shouldReportGrokProcessExitFailure,
   runGrokTurn,
   spawnGrokProcess,
@@ -600,6 +601,58 @@ test("translateGrokStreamEvent emits toolResult when rawOutput present without s
   }, emitter, state);
   assert.ok(emitter.calls.some((c) => c[0] === "toolCall" && c[3] === "t1"));
   assert.ok(emitter.calls.some((c) => c[0] === "toolResult" && c[1] === "t1"));
+});
+
+test("normalizeGrokPlanUpdate maps to shared { text, completed } activity shape", () => {
+  assert.deepEqual(
+    normalizeGrokPlanUpdate([
+      { content: "Explore", status: "completed" },
+      { text: "Edit", status: "pending" },
+      "Ship it",
+    ]),
+    {
+      items: [
+        { text: "Explore", completed: true },
+        { text: "Edit", completed: false },
+        { text: "Ship it", completed: false },
+      ],
+      status: "running",
+    },
+  );
+  assert.deepEqual(
+    normalizeGrokPlanUpdate([
+      { content: "A", status: "done" },
+      { content: "B", completed: true },
+    ]),
+    {
+      items: [
+        { text: "A", completed: true },
+        { text: "B", completed: true },
+      ],
+      status: "completed",
+    },
+  );
+  assert.equal(normalizeGrokPlanUpdate([]), null);
+});
+
+test("translateGrokStreamEvent plan uses text/completed and running|completed status", () => {
+  const emitter = makeEmitter();
+  translateGrokStreamEvent({
+    type: "plan",
+    entries: [
+      { content: "Step one", status: "completed" },
+      { content: "Step two", status: "in_progress" },
+    ],
+  }, emitter, {});
+  const planCall = emitter.calls.find((c) => c[0] === "planUpdate");
+  assert.ok(planCall);
+  assert.equal(planCall[1], "grok-plan");
+  assert.deepEqual(planCall[2], [
+    { text: "Step one", completed: true },
+    { text: "Step two", completed: false },
+  ]);
+  assert.equal(planCall[3], "running");
+  assert.notEqual(planCall[3], "updated");
 });
 
 test("shouldReportGrokProcessExitFailure fails any incomplete close (incl exit 0)", () => {

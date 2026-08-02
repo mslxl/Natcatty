@@ -386,6 +386,26 @@ test("translateGrokAcpUpdate maps text, thought, tools to canonical emitter even
   ]);
 });
 
+test("translateGrokAcpUpdate plan uses shared { text, completed } shape not content/status", () => {
+  const emitter = makeEmitter();
+  translateGrokAcpUpdate({
+    sessionUpdate: "plan",
+    entries: [
+      { content: "Map APIs", status: "completed" },
+      { text: "Write tests", status: "pending" },
+    ],
+  }, emitter, {});
+  const planCall = emitter.calls.find((c) => c[0] === "planUpdate");
+  assert.ok(planCall, "plan must emit planUpdate");
+  assert.deepEqual(planCall[2], [
+    { text: "Map APIs", completed: true },
+    { text: "Write tests", completed: false },
+  ]);
+  assert.equal(planCall[3], "running");
+  // Adapter only treats top-level "completed" as done; "updated" stuck as running forever.
+  assert.notEqual(planCall[3], "updated");
+});
+
 test("createJsonRpcClient correlates request ids and parses lines", async () => {
   const written = [];
   const client = createJsonRpcClient({

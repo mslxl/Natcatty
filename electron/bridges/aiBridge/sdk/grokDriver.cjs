@@ -332,6 +332,41 @@ function closeReasoning(state, emitter) {
 }
 
 /**
+ * Normalize Grok/ACP plan entries to the shared activity shape:
+ *   items: [{ text, completed }], status: "running" | "completed"
+ * (see domain/agentActivity.ts, emit.planUpdate, Codex App Server turn/plan/updated).
+ */
+function normalizeGrokPlanUpdate(entries) {
+  const items = [];
+  for (let index = 0; index < (entries || []).length; index += 1) {
+    const entry = entries[index];
+    let text = "";
+    let statusRaw = "";
+    if (typeof entry === "string") {
+      text = entry;
+    } else if (entry && typeof entry === "object") {
+      text = String(entry.content || entry.text || entry.title || entry.step || "");
+      statusRaw = String(entry.status || entry.state || "");
+    } else if (entry != null) {
+      text = String(entry);
+    }
+    text = text.trim();
+    if (!text) continue;
+    const status = statusRaw.toLowerCase();
+    const completed = status === "completed"
+      || status === "complete"
+      || status === "done"
+      || status === "finished"
+      || status === "success"
+      || entry?.completed === true;
+    items.push({ text, completed: Boolean(completed) });
+  }
+  if (items.length === 0) return null;
+  const status = items.every((item) => item.completed) ? "completed" : "running";
+  return { items, status };
+}
+
+/**
  * Map one Grok streaming-json event into canonical emitter calls.
  * Returns true when the stream should stop (terminal error).
  */
@@ -419,22 +454,9 @@ function translateGrokStreamEvent(event, emitter, state = {}) {
     }
 
     case "plan": {
-      const entries = Array.isArray(event.entries) ? event.entries : [];
-      const items = entries.map((entry, index) => {
-        if (typeof entry === "string") {
-          return { id: `plan-${index}`, content: entry, status: "pending" };
-        }
-        if (entry && typeof entry === "object") {
-          return {
-            id: String(entry.id || `plan-${index}`),
-            content: String(entry.content || entry.text || entry.title || ""),
-            status: String(entry.status || "pending"),
-          };
-        }
-        return { id: `plan-${index}`, content: String(entry ?? ""), status: "pending" };
-      }).filter((item) => item.content);
-      if (items.length > 0 && typeof emitter.planUpdate === "function") {
-        emitter.planUpdate(event.itemId || "grok-plan", items, "updated");
+      const plan = normalizeGrokPlanUpdate(Array.isArray(event.entries) ? event.entries : []);
+      if (plan && typeof emitter.planUpdate === "function") {
+        emitter.planUpdate(event.itemId || "grok-plan", plan.items, plan.status);
       }
       return false;
     }
@@ -992,6 +1014,7 @@ module.exports = {
   resolveGrokTurnPrompt,
   extractGrokAcpPromptUsage,
   emitGrokUsage,
+  normalizeGrokPlanUpdate,
   shouldReportGrokProcessExitFailure,
   runGrokTurn,
   spawnGrokProcess,

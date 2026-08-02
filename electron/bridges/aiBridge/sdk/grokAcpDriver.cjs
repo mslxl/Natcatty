@@ -27,6 +27,7 @@ const {
   resolveGrokTurnPrompt,
   extractGrokAcpPromptUsage,
   emitGrokUsage,
+  normalizeGrokPlanUpdate,
   shouldReportGrokProcessExitFailure,
   spawnGrokProcess,
 } = require("./grokDriver.cjs");
@@ -494,22 +495,11 @@ function translateGrokAcpUpdate(update, emitter, state = {}) {
     }
 
     case "plan": {
-      const entries = Array.isArray(update.entries) ? update.entries : [];
-      if (entries.length && typeof emitter.planUpdate === "function") {
-        const items = entries.map((entry, index) => {
-          if (typeof entry === "string") {
-            return { id: `plan-${index}`, content: entry, status: "pending" };
-          }
-          if (entry && typeof entry === "object") {
-            return {
-              id: String(entry.id || `plan-${index}`),
-              content: String(entry.content || entry.text || entry.title || ""),
-              status: String(entry.status || "pending"),
-            };
-          }
-          return { id: `plan-${index}`, content: String(entry ?? ""), status: "pending" };
-        }).filter((item) => item.content);
-        if (items.length) emitter.planUpdate("grok-plan", items, "updated");
+      // Canonical activity shape: [{ text, completed }] + "running"|"completed"
+      // (sdkAgentAdapter / AgentActivityGroup read text+completed, not content+status).
+      const plan = normalizeGrokPlanUpdate(Array.isArray(update.entries) ? update.entries : []);
+      if (plan && typeof emitter.planUpdate === "function") {
+        emitter.planUpdate("grok-plan", plan.items, plan.status);
       }
       return false;
     }
