@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildMonacoPasteEdits,
   isMonacoFindWidgetFocused,
+  isStillFocusedFindPasteTarget,
   pasteForMonacoEditorCommand,
   pasteTextIntoFocusedInput,
   readClipboardTextWithFallbacks,
@@ -160,4 +161,48 @@ test('pasteForMonacoEditorCommand falls through to editor body outside find widg
     },
   });
   assert.equal(bodyPasteCount, 1);
+});
+
+test('isStillFocusedFindPasteTarget rejects targets no longer inside the find widget', () => {
+  const leftFind = {
+    closest: () => null,
+  };
+  assert.equal(isStillFocusedFindPasteTarget(leftFind), false);
+  assert.equal(isStillFocusedFindPasteTarget(null), false);
+});
+
+test('pasteForMonacoEditorCommand aborts if focus leaves the find field mid clipboard read', async () => {
+  const input = Object.assign(createMockTextInput('keep'), {
+    closest: (selector: string) => (selector === '.find-widget' ? {} : null),
+  });
+  // Simulate a browser document where focus moved away during the await.
+  const previousDocument = (globalThis as { document?: Document }).document;
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { activeElement: { id: 'editor-body' } },
+  });
+
+  let bodyPasteCount = 0;
+  try {
+    await pasteForMonacoEditorCommand({
+      activeElement: input,
+      readClipboardText: async () => 'should-not-apply',
+      pasteIntoEditor: () => {
+        bodyPasteCount += 1;
+      },
+    });
+  } finally {
+    if (previousDocument === undefined) {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+      delete (globalThis as { document?: Document }).document;
+    } else {
+      Object.defineProperty(globalThis, 'document', {
+        configurable: true,
+        value: previousDocument,
+      });
+    }
+  }
+
+  assert.equal(input.value, 'keep');
+  assert.equal(bodyPasteCount, 0);
 });

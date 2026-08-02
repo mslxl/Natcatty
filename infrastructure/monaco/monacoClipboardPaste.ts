@@ -132,6 +132,32 @@ export function pasteTextIntoFocusedInput(
 }
 
 /**
+ * After an async clipboard read, confirm the find input is still the live
+ * focus target so we do not steal focus back into a closed/hidden widget or
+ * paste via execCommand into a different field.
+ */
+export function isStillFocusedFindPasteTarget(
+  active: ClosableElement | null | undefined,
+): boolean {
+  if (!active || !isMonacoFindWidgetFocused(active)) return false;
+
+  if (typeof document !== 'undefined' && document.activeElement !== active) {
+    return false;
+  }
+
+  if (
+    typeof Element !== 'undefined'
+    && active instanceof Element
+    && 'isConnected' in active
+    && !(active as Element).isConnected
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * When focus is in Monaco's find widget, paste there; otherwise call body paste.
  * Used by Electron Ctrl/Cmd+V command handlers that override native paste.
  */
@@ -146,6 +172,8 @@ export async function pasteForMonacoEditorCommand(options: {
     try {
       const text = await options.readClipboardText();
       if (!text) return;
+      // Clipboard I/O is async; abort if the user left the find field meanwhile.
+      if (!isStillFocusedFindPasteTarget(active)) return;
       pasteTextIntoFocusedInput(active, text);
     } catch {
       // Clipboard or insert failed; leave the find field unchanged.
