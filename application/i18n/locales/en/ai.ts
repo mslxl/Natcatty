@@ -258,6 +258,24 @@ export const enAiMessages: Messages = {
   'ai.opencode.check': 'Check',
   'ai.opencode.resetPath': 'Reset',
 
+  // AI Grok Build (in-app managed agent — distinct from External MCP client install)
+  'ai.grok.title': 'Grok Build',
+  'ai.grok.description': "xAI's Grok Build coding agent CLI. Install the Grok CLI, sign in with `grok login` or set XAI_API_KEY, then select it as an external agent.",
+  'ai.grok.detecting': 'Detecting...',
+  'ai.grok.detected': 'Detected',
+  'ai.grok.notFound': 'Not found',
+  'ai.grok.path': 'Path:',
+  'ai.grok.notFoundHint': 'Could not find grok in PATH. Install Grok Build CLI or specify the executable path below.',
+  'ai.grok.customPathPlaceholder': 'e.g. /usr/local/bin/grok',
+  'ai.grok.check': 'Check',
+  'ai.grok.resetPath': 'Reset',
+  'ai.grok.runtime.acp.title': 'Use Grok ACP (agent stdio)',
+  'ai.grok.runtime.acp.default': 'Default',
+  'ai.grok.runtime.acp.description':
+    'Talk to Grok over Agent Client Protocol (grok agent stdio). Injects Netcatty MCP on session/new. Turn off to use the original headless streaming-json CLI path.',
+  'ai.grok.runtime.streamingJson.hint':
+    'Using headless streaming-json (grok -p --output-format streaming-json). Project .grok/config.toml is used for MCP injection.',
+
   // AI Default Agent
   'ai.defaultAgent': 'Default Agent',
   'ai.defaultAgent.description': 'Agent to use when starting a new AI session',

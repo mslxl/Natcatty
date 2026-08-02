@@ -27,7 +27,11 @@ const MODEL_CACHE_MAX_ENTRIES = 32;
 const MODEL_LIST_TIMEOUT_MS = 10000;
 const sdkModelCache = new Map();
 const sdkModelInFlight = new Map();
-const { parseSdkSessionIdentity: parseSdkSessionIdentityPayload, SDK_SESSION_ID_PREFIX } = require("../../../shared/sdkSessionIdentity.cjs");
+const {
+  parseSdkSessionIdentity: parseSdkSessionIdentityPayload,
+  normalizeSdkRuntime,
+  SDK_SESSION_ID_PREFIX,
+} = require("../../../shared/sdkSessionIdentity.cjs");
 const { isPathLikeCommand } = require("../../../shared/pathLikeCommand.cjs");
 
 function parseSdkSessionIdentity(value) {
@@ -37,10 +41,17 @@ function parseSdkSessionIdentity(value) {
     sessionId: parsed.id,
     backendKey: parsed.backend,
     binPath: parsed.binPath || "",
-    runtime: parsed.runtime === "app-server" ? "app-server" : "sdk",
+    runtime: normalizeSdkRuntime(parsed.runtime),
     authMode: parsed.authMode === "cli-login" ? "cli-login" : parsed.authMode === "api-key" ? "api-key" : "",
     cliMode: parsed.cliMode === "ask" ? "ask" : parsed.cliMode === "agent" ? "agent" : "",
   };
+}
+
+/** Resolve Grok dual runtime from explicit ctx / agent env. */
+function resolveGrokRuntimeToken(env, explicit) {
+  return normalizeSdkRuntime(
+    explicit || env?.NETCATTY_GROK_RUNTIME || process.env.NETCATTY_GROK_RUNTIME || "acp",
+  );
 }
 
 function buildSdkSessionKey(chatSessionId, backendKey, binPath, runtime = "sdk", authMode = "", cliMode = "") {
@@ -174,6 +185,36 @@ function expireSiblingCursorCliModeSessions(sdkSessionIds, {
     runtime,
     authMode,
     siblingCliMode,
+  );
+  if (!sdkSessionIds.has(siblingKey)) return false;
+  sdkSessionIds.delete(siblingKey);
+  return true;
+}
+
+/**
+ * Grok ACP vs streaming-json sessions must not resume across each other.
+ * When the active runtime flips without restarting Netcatty, drop the inactive
+ * runtime's in-memory session so a switch-back cannot revive a pre-switch
+ * thread and skip renderer history for intervening turns (same idea as Cursor
+ * CLI ask/agent isolation).
+ */
+function expireSiblingGrokRuntimeSessions(sdkSessionIds, {
+  chatSessionId,
+  backendKey,
+  binPath,
+  runtime = "acp",
+} = {}) {
+  if (!sdkSessionIds || backendKey !== "grok") return false;
+  const activeRuntime = normalizeSdkRuntime(runtime);
+  if (activeRuntime !== "acp" && activeRuntime !== "streaming-json") return false;
+  const siblingRuntime = activeRuntime === "acp" ? "streaming-json" : "acp";
+  const siblingKey = buildSdkSessionKey(
+    chatSessionId,
+    backendKey,
+    binPath,
+    siblingRuntime,
+    "",
+    "",
   );
   if (!sdkSessionIds.has(siblingKey)) return false;
   sdkSessionIds.delete(siblingKey);
@@ -360,6 +401,19 @@ function defaultWriteAttachmentToTemp(attachment) {
   return target;
 }
 
+/**
+ * Format renderer history into the shared SDK conversation-context section.
+ * Used for normal replay and as a Grok resume-fallback seed (same wording).
+ */
+function formatSdkHistoryReplaySection(historyMessages) {
+  const history = normalizeHistoryMessages(historyMessages);
+  if (history.length === 0) return "";
+  return [
+    "[Conversation context replay: the agent SDK may be starting from a fresh local session, so use these prior turns as context and answer only the latest user request.]",
+    ...history.map((msg) => `${msg.role === "assistant" ? "ASSISTANT" : "USER"}: ${msg.content}`),
+  ].join("\n");
+}
+
 function buildSdkTurnPrompt({
   prompt,
   historyMessages,
@@ -370,14 +424,9 @@ function buildSdkTurnPrompt({
   onStagedAttachment,
 }) {
   const sections = [];
-  const history = replayHistory ? normalizeHistoryMessages(historyMessages) : [];
-  if (history.length > 0) {
-    sections.push(
-      [
-        "[Conversation context replay: the agent SDK may be starting from a fresh local session, so use these prior turns as context and answer only the latest user request.]",
-        ...history.map((msg) => `${msg.role === "assistant" ? "ASSISTANT" : "USER"}: ${msg.content}`),
-      ].join("\n"),
-    );
+  if (replayHistory) {
+    const historySection = formatSdkHistoryReplaySection(historyMessages);
+    if (historySection) sections.push(historySection);
   }
 
   if (Array.isArray(attachments) && attachments.length > 0) {
@@ -426,10 +475,15 @@ function shouldReplaySdkHistory({
   resumeSessionId,
   hasInMemorySession,
 }) {
-  // CodeBuddy and Codex App Server resumes restore their own conversation
-  // history. Replaying renderer history as well duplicates every prior turn
-  // after the main-process session map is recreated.
-  if (backendKey === "codebuddy" || codexRuntime === "app-server") {
+  // CodeBuddy, Codex App Server, and Grok ACP resumes restore their own
+  // conversation history. Replaying renderer history as well duplicates every
+  // prior turn (Grok also re-hydrates via session/load on a fresh agent stdio
+  // process each turn).
+  if (
+    backendKey === "codebuddy"
+    || backendKey === "grok"
+    || codexRuntime === "app-server"
+  ) {
     return !resumeSessionId;
   }
   return !hasInMemorySession;
@@ -563,9 +617,16 @@ function registerSdkStreamHandlers(ctx) {
           const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
             ? "app-server"
             : "sdk";
+          // Grok ACP vs streaming-json must not share resume identity (like Codex dual runtime).
+          const grokRuntime = backendKey === "grok"
+            ? resolveGrokRuntimeToken(env, env?.NETCATTY_GROK_RUNTIME)
+            : "sdk";
+          const sessionRuntime = backendKey === "grok" ? grokRuntime : codexRuntime;
           sdkRequestRuntimes.set(requestId, {
             backendKey,
             codexRuntime,
+            grokRuntime,
+            sessionRuntime,
             binPath,
             toolIntegrationMode: effectiveMode,
           });
@@ -587,16 +648,26 @@ function registerSdkStreamHandlers(ctx) {
               chatSessionId,
               backendKey,
               binPath: sessionBinPath,
-              runtime: codexRuntime,
+              runtime: sessionRuntime,
               authMode: cursorSessionAuthMode,
               cliMode: cursorCliMode,
+            });
+          }
+          // ACP ↔ streaming-json: drop the other Grok runtime's in-memory id so
+          // switch-back does not resume a pre-switch session without intervening turns.
+          if (backendKey === "grok") {
+            expireSiblingGrokRuntimeSessions(sdkSessionIds, {
+              chatSessionId,
+              backendKey,
+              binPath: sessionBinPath,
+              runtime: sessionRuntime,
             });
           }
           const sdkSessionKey = buildSdkSessionKey(
             chatSessionId,
             backendKey,
             sessionBinPath,
-            codexRuntime,
+            sessionRuntime,
             cursorSessionAuthMode,
             cursorCliMode,
           );
@@ -607,25 +678,31 @@ function registerSdkStreamHandlers(ctx) {
             existingSessionId,
             backendKey,
             binPath: sessionBinPath,
-            runtime: codexRuntime,
+            runtime: sessionRuntime,
             authMode: cursorSessionAuthMode,
             cliMode: cursorCliMode,
             hasConfiguredCommand,
           });
           const stagedAttachments = [];
+          const replayHistory = shouldReplaySdkHistory({
+            backendKey,
+            codexRuntime,
+            resumeSessionId,
+            hasInMemorySession,
+          });
           const turnPrompt = buildSdkTurnPrompt({
             prompt,
             historyMessages: payload?.historyMessages,
-            replayHistory: shouldReplaySdkHistory({
-              backendKey,
-              codexRuntime,
-              resumeSessionId,
-              hasInMemorySession,
-            }),
+            replayHistory,
             attachments: payload?.images,
             toolIntegrationMode: effectiveMode,
             onStagedAttachment: (attachment) => stagedAttachments.push(attachment),
           });
+          // Grok may fall back to session/new when resume/load fails; keep a
+          // history seed so that path is not history-less (Codex review #2666).
+          const historySeed = backendKey === "grok" && resumeSessionId && !replayHistory
+            ? formatSdkHistoryReplaySection(payload?.historyMessages)
+            : "";
           mcpServerBridge.updateAttachmentMetadata?.(stagedAttachments, chatSessionId);
 
           const systemContext = buildExternalAgentSystemContext({
@@ -652,7 +729,7 @@ function registerSdkStreamHandlers(ctx) {
                   sessionId,
                   sdkBackend: backendKey,
                   binPath: sessionBinPath || "",
-                  runtime: codexRuntime,
+                  runtime: sessionRuntime,
                   ...(cursorSessionAuthMode ? { authMode: cursorSessionAuthMode } : {}),
                   ...(cursorCliMode ? { cliMode: cursorCliMode } : {}),
                 });
@@ -692,6 +769,8 @@ function registerSdkStreamHandlers(ctx) {
             binPath,
             cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
             cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
+            grokRuntime: backendKey === "grok" ? grokRuntime : undefined,
+            historySeed: backendKey === "grok" ? historySeed : undefined,
             getTempDir: () => tempDirBridge.getTempDir(),
             injectedMcpServers,
             claudeSettings,
@@ -1139,8 +1218,10 @@ module.exports = {
   resolveSdkPromptPlacement,
   resolveSdkResumeSessionId,
   expireSiblingCursorCliModeSessions,
+  expireSiblingGrokRuntimeSessions,
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
+  formatSdkHistoryReplaySection,
   buildSdkTurnPrompt,
   shouldReplaySdkHistory,
 };

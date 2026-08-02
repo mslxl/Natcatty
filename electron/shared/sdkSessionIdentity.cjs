@@ -10,6 +10,15 @@ function normalizeCursorCliMode(cliMode) {
   return cliMode === "ask" ? "ask" : cliMode === "agent" ? "agent" : undefined;
 }
 
+/** Codex app-server | Grok acp/streaming-json | default sdk. */
+function normalizeSdkRuntime(runtime) {
+  const raw = String(runtime || "").trim().toLowerCase();
+  if (raw === "app-server") return "app-server";
+  if (raw === "acp") return "acp";
+  if (raw === "streaming-json" || raw === "cli" || raw === "headless") return "streaming-json";
+  return "sdk";
+}
+
 function encodeSdkSessionIdentity(sessionId, sdkBackend, binPath, runtime = "sdk", authMode, cliMode) {
   if (!sessionId || !sdkBackend) return sessionId;
   const payload = {
@@ -17,7 +26,7 @@ function encodeSdkSessionIdentity(sessionId, sdkBackend, binPath, runtime = "sdk
     id: sessionId,
     backend: sdkBackend,
     binPath: binPath || "",
-    runtime: runtime === "app-server" ? "app-server" : "sdk",
+    runtime: normalizeSdkRuntime(runtime),
   };
   const normalizedAuthMode = normalizeCursorAuthMode(authMode);
   if (normalizedAuthMode) payload.authMode = normalizedAuthMode;
@@ -36,7 +45,7 @@ function parseSdkSessionIdentity(value) {
     const cliMode = normalizeCursorCliMode(parsed.cliMode);
     return {
       ...parsed,
-      runtime: parsed.runtime === "app-server" ? "app-server" : "sdk",
+      runtime: normalizeSdkRuntime(parsed.runtime),
       ...(authMode ? { authMode } : {}),
       ...(cliMode ? { cliMode } : {}),
     };
@@ -50,5 +59,6 @@ module.exports = {
   encodeSdkSessionIdentity,
   normalizeCursorAuthMode,
   normalizeCursorCliMode,
+  normalizeSdkRuntime,
   parseSdkSessionIdentity,
 };

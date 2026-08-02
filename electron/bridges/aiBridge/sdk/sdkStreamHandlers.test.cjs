@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   registerSdkStreamHandlers,
   buildSdkTurnPrompt,
+  formatSdkHistoryReplaySection,
   buildSdkModelCacheKey,
   getSdkModelCacheEntry,
   setSdkModelCacheEntry,
@@ -12,6 +13,7 @@ const {
   resolveSdkResumeSessionId,
   shouldReplaySdkHistory,
   expireSiblingCursorCliModeSessions,
+  expireSiblingGrokRuntimeSessions,
   resolveBackendKey,
   resolveSdkBackendBinPath,
   shouldCacheSdkRuntimeModels,
@@ -467,6 +469,26 @@ test("buildSdkTurnPrompt replays history only when requested", () => {
   assert.equal(steadyStatePrompt, "latest question");
 });
 
+test("formatSdkHistoryReplaySection matches buildSdkTurnPrompt history wording", () => {
+  const messages = [
+    { role: "user", content: "previous question" },
+    { role: "assistant", content: "previous answer" },
+  ];
+  const section = formatSdkHistoryReplaySection(messages);
+  assert.match(section, /Conversation context replay/);
+  assert.match(section, /USER: previous question/);
+  assert.match(section, /ASSISTANT: previous answer/);
+  // Same section is embedded when replayHistory is true.
+  const full = buildSdkTurnPrompt({
+    prompt: "latest",
+    replayHistory: true,
+    historyMessages: messages,
+  });
+  assert.ok(full.startsWith(section));
+  assert.equal(formatSdkHistoryReplaySection([]), "");
+  assert.equal(formatSdkHistoryReplaySection(undefined), "");
+});
+
 test("CodeBuddy does not replay renderer history when a persisted session can resume", () => {
   assert.equal(shouldReplaySdkHistory({
     backendKey: "codebuddy",
@@ -486,6 +508,173 @@ test("CodeBuddy does not replay renderer history when a persisted session can re
     resumeSessionId: "resumed-claude",
     hasInMemorySession: false,
   }), true);
+});
+
+test("Grok does not replay renderer history when an ACP session can resume", () => {
+  // Mirrors CodeBuddy: session/load / resume already restores Grok transcript.
+  // Applies to both ACP and streaming-json once a resume id is present.
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: "resumed-grok",
+    hasInMemorySession: false,
+  }), false);
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: undefined,
+    hasInMemorySession: false,
+  }), true);
+  // Even with an in-memory map miss, resume id alone must suppress replay.
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: "s1",
+    hasInMemorySession: true,
+  }), false);
+  // First turn (no resume) still seeds context even if in-memory key exists.
+  assert.equal(shouldReplaySdkHistory({
+    backendKey: "grok",
+    codexRuntime: "sdk",
+    resumeSessionId: undefined,
+    hasInMemorySession: true,
+  }), true);
+});
+
+test("expireSiblingGrokRuntimeSessions drops the inactive Grok runtime", () => {
+  const acpKey = buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp");
+  const headlessKey = buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "streaming-json");
+  const otherChatAcpKey = buildSdkSessionKey("chat-2", "grok", "/usr/bin/grok", "acp");
+  const sessions = new Map([
+    [acpKey, "acp-session"],
+    [headlessKey, "json-session"],
+    [otherChatAcpKey, "other-acp"],
+  ]);
+
+  // Switch to streaming-json: expire ACP so switch-back cannot revive it.
+  assert.equal(
+    expireSiblingGrokRuntimeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "grok",
+      binPath: "/usr/bin/grok",
+      runtime: "streaming-json",
+    }),
+    true,
+  );
+  assert.equal(sessions.has(acpKey), false);
+  assert.equal(sessions.get(headlessKey), "json-session");
+  assert.equal(sessions.get(otherChatAcpKey), "other-acp");
+
+  // Switch back to ACP: expire headless; ACP was already gone → fresh resume.
+  sessions.set(headlessKey, "json-session-2");
+  assert.equal(
+    expireSiblingGrokRuntimeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "grok",
+      binPath: "/usr/bin/grok",
+      runtime: "acp",
+    }),
+    true,
+  );
+  assert.equal(sessions.has(headlessKey), false);
+  assert.equal(
+    resolveSdkResumeSessionId({
+      sdkSessionIds: sessions,
+      sdkSessionKey: acpKey,
+      existingSessionId: `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+        v: 1,
+        id: "json-session-2",
+        backend: "grok",
+        binPath: "/usr/bin/grok",
+        runtime: "streaming-json",
+      }))}`,
+      backendKey: "grok",
+      binPath: "/usr/bin/grok",
+      runtime: "acp",
+      hasConfiguredCommand: false,
+    }),
+    undefined,
+  );
+  // Non-grok backends no-op.
+  assert.equal(
+    expireSiblingGrokRuntimeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "claude",
+      binPath: "/usr/bin/claude",
+      runtime: "sdk",
+    }),
+    false,
+  );
+});
+
+test("Grok ACP and streaming-json session identities never cross-resume", () => {
+  const acpIdentity = `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+    v: 1,
+    id: "grok-acp-thread",
+    backend: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+  }))}`;
+  const headlessIdentity = `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+    v: 1,
+    id: "grok-headless-thread",
+    backend: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "streaming-json",
+  }))}`;
+
+  // ACP identity must not resume onto streaming-json runtime.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "streaming-json"),
+    existingSessionId: acpIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "streaming-json",
+    hasConfiguredCommand: false,
+  }), undefined);
+
+  // streaming-json identity must not resume onto ACP runtime.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp"),
+    existingSessionId: headlessIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+    hasConfiguredCommand: false,
+  }), undefined);
+
+  // Matching runtime resumes.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp"),
+    existingSessionId: acpIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+    hasConfiguredCommand: false,
+  }), "grok-acp-thread");
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "streaming-json"),
+    existingSessionId: headlessIdentity,
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "streaming-json",
+    hasConfiguredCommand: false,
+  }), "grok-headless-thread");
+
+  // Bare legacy ids are only safe for runtime "sdk" — not Grok dual runtimes.
+  assert.equal(resolveSdkResumeSessionId({
+    sdkSessionIds: new Map(),
+    sdkSessionKey: buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp"),
+    existingSessionId: "legacy-bare-id",
+    backendKey: "grok",
+    binPath: "/usr/bin/grok",
+    runtime: "acp",
+    hasConfiguredCommand: false,
+  }), undefined);
 });
 
 test("buildSdkTurnPrompt stages attachments as local file hints", () => {

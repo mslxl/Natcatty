@@ -239,6 +239,8 @@ export interface AgentInfo {
 
 // External agent config. Managed agents route through official SDK backends.
 export type CodexRuntime = 'sdk' | 'app-server';
+/** Grok Build turn transport: ACP (`grok agent stdio`) or headless streaming-json. */
+export type GrokRuntime = 'acp' | 'streaming-json';
 export type CursorAuthMode = 'api-key' | 'cli-login';
 
 export interface ExternalAgentConfig {
@@ -251,12 +253,17 @@ export interface ExternalAgentConfig {
   icon?: string;
   enabled: boolean;
   available?: boolean;
-  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode). */
+  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode|grok). */
   sdkBackend?: string;
   /** Cursor only: mutually exclusive auth — API key vs local `cursor-agent` CLI login. */
   cursorAuthMode?: CursorAuthMode;
   /** Experimental Codex transport. Missing values keep the existing SDK behavior. */
   codexRuntime?: CodexRuntime;
+  /**
+   * Grok Build transport. Missing values default to ACP (`grok agent stdio`).
+   * `streaming-json` is the original headless `grok -p --output-format streaming-json` path.
+   */
+  grokRuntime?: GrokRuntime;
   /** Internal: whether the managed command was set manually or auto-detected. */
   commandSource?: "manual" | "auto";
   /**
@@ -304,8 +311,8 @@ export interface DiscoveredAgent {
   /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
-  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode) — the routing value. */
-  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode';
+  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode|grok) — the routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok';
   /** Absolute resolved CLI path (preferred over `path`). */
   binPath?: string;
   installed?: boolean;
@@ -698,6 +705,12 @@ export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'ollama/llama3.3', name: 'Ollama Llama 3.3' },
 ];
 
+// Curated Grok Build models when `grok models` is unavailable. IDs mirror the
+// public Grok Build / xAI coding agent lineup; live discovery still overrides.
+export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
+  { id: 'grok-4.5', name: 'Grok 4.5', description: 'Default' },
+];
+
 export function getAgentModelPresets(
   agentCommand?: string,
   sdkBackend?: string,
@@ -710,6 +723,7 @@ export function getAgentModelPresets(
   if (backend === 'cursor') return CURSOR_MODEL_PRESETS;
   if (backend === 'codebuddy') return CODEBUDDY_MODEL_PRESETS;
   if (backend === 'opencode') return OPENCODE_MODEL_PRESETS;
+  if (backend === 'grok') return GROK_MODEL_PRESETS;
 
   if (!agentCommand) return [];
   // Split on both POSIX (/) and Windows (\) separators so command paths like
@@ -728,6 +742,7 @@ export function getAgentModelPresets(
   }
   if (basename.startsWith('codebuddy')) return CODEBUDDY_MODEL_PRESETS;
   if (basename.startsWith('opencode')) return OPENCODE_MODEL_PRESETS;
+  if (basename.startsWith('grok')) return GROK_MODEL_PRESETS;
   return [];
 }
 

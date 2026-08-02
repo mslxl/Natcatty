@@ -211,6 +211,24 @@ export const ruAiMessages: Messages = {
   'ai.codebuddy.elicitation.validation.format': 'Поле «{field}» должно соответствовать формату {format}.',
   'ai.codebuddy.elicitation.validation.option': 'Выберите допустимый вариант для «{field}».',
 
+  // AI Grok Build (in-app managed agent — distinct from External MCP client install)
+  'ai.grok.title': 'Grok Build',
+  'ai.grok.description': 'Агент программирования Grok Build от xAI (CLI). Установите Grok CLI, выполните `grok login` или задайте XAI_API_KEY, затем выберите его как внешнего агента.',
+  'ai.grok.detecting': 'Обнаружение...',
+  'ai.grok.detected': 'Обнаружен',
+  'ai.grok.notFound': 'Не найден',
+  'ai.grok.path': 'Путь:',
+  'ai.grok.notFoundHint': 'Не удалось найти grok в PATH. Установите Grok Build CLI или укажите путь к исполняемому файлу ниже.',
+  'ai.grok.customPathPlaceholder': 'например, /usr/local/bin/grok',
+  'ai.grok.check': 'Проверить',
+  'ai.grok.resetPath': 'Сбросить',
+  'ai.grok.runtime.acp.title': 'Использовать Grok ACP (agent stdio)',
+  'ai.grok.runtime.acp.default': 'По умолчанию',
+  'ai.grok.runtime.acp.description':
+    'Подключение к Grok через Agent Client Protocol (grok agent stdio). Netcatty MCP внедряется в session/new. Выключите, чтобы использовать исходный headless streaming-json CLI.',
+  'ai.grok.runtime.streamingJson.hint':
+    'Режим headless streaming-json (grok -p --output-format streaming-json). MCP внедряется через .grok/config.toml проекта.',
+
   // AI Default Agent
   'ai.defaultAgent': 'Агент по умолчанию',
   'ai.defaultAgent.description': 'Агент, который будет использоваться при запуске новой AI-сессии',

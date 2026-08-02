@@ -16,6 +16,8 @@ const cursor = require("./cursorDriver.cjs");
 const cursorCli = require("./cursorCliDriver.cjs");
 const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
+const grok = require("./grokDriver.cjs");
+const grokAcp = require("./grokAcpDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -308,6 +310,59 @@ const DRIVER_REGISTRY = {
         binPath: ctx.binPath,
         abortController: ctx.abortController,
         signal: ctx.abortController?.signal || ctx.signal,
+      });
+    },
+  },
+  grok: {
+    async runTurn(ctx) {
+      // Default: ACP (`grok agent stdio`) with session-level mcpServers.
+      // Explicit fallback: NETCATTY_GROK_RUNTIME=streaming-json or ctx.grokRuntime.
+      const runtime = String(
+        ctx.grokRuntime
+        || ctx.env?.NETCATTY_GROK_RUNTIME
+        || process.env.NETCATTY_GROK_RUNTIME
+        || "acp",
+      ).toLowerCase();
+      if (runtime === "streaming-json" || runtime === "cli" || runtime === "headless") {
+        // Headless cannot know if -r restored history before the prompt is sent.
+        // Prefer native -r without seed (common success path). Stale-id fallback
+        // is handled on ACP (default runtime) via historySeed + session/new.
+        return grok.runGrokTurn({
+          prompt: ctx.prompt,
+          binPath: ctx.binPath,
+          cwd: ctx.cwd,
+          model: ctx.model,
+          env: ctx.env,
+          permissionMode: ctx.permissionMode,
+          toolIntegrationMode: ctx.toolIntegrationMode,
+          resumeSessionId: ctx.resumeSessionId,
+          injectedMcpServers: ctx.injectedMcpServers,
+          emitter: ctx.emitter,
+          signal: ctx.signal || ctx.abortController?.signal,
+        });
+      }
+      return grokAcp.runGrokAcpTurn({
+        prompt: ctx.prompt,
+        systemPrompt: ctx.systemPrompt,
+        binPath: ctx.binPath,
+        cwd: ctx.cwd,
+        model: ctx.model,
+        env: ctx.env,
+        permissionMode: ctx.permissionMode,
+        toolIntegrationMode: ctx.toolIntegrationMode,
+        resumeSessionId: ctx.resumeSessionId,
+        historySeed: ctx.historySeed,
+        injectedMcpServers: ctx.injectedMcpServers,
+        emitter: ctx.emitter,
+        signal: ctx.signal || ctx.abortController?.signal,
+      });
+    },
+    async listModels(ctx) {
+      return grok.listGrokModels({
+        binPath: ctx.binPath,
+        env: ctx.env,
+        abortController: ctx.abortController,
+        signal: ctx.signal || ctx.abortController?.signal,
       });
     },
   },

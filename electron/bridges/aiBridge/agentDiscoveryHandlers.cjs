@@ -82,6 +82,8 @@ function registerAgentDiscoveryHandlers(ctx) {
         description: "Tencent's coding agent CLI (Agent SDK)", sdkBackend: "codebuddy", args: [] },
       { command: "opencode", name: "OpenCode", icon: "opencode",
         description: "Open source coding agent via the official OpenCode SDK", sdkBackend: "opencode", args: [] },
+      { command: "grok", name: "Grok Build", icon: "grok",
+        description: "xAI's Grok Build coding agent CLI", sdkBackend: "grok", args: [] },
     ];
 
     const shellEnv = await getShellEnv();
@@ -130,6 +132,8 @@ function registerAgentDiscoveryHandlers(ctx) {
           auth = probeCodebuddyAuth({ env: shellEnv });
         } else if (agent.command === "opencode") {
           auth = { authenticated: true, authSource: "opencode-config" };
+        } else if (agent.command === "grok") {
+          auth = probeGrokAuth({ env: shellEnv });
         }
       } catch { /* auth probe is best-effort */ }
 

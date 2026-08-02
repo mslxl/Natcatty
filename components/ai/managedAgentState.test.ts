@@ -126,6 +126,26 @@ test('buildManagedAgentState preserves the experimental Codex runtime across pat
   assert.equal(state.agents[0].command, '/new/codex');
 });
 
+test('buildManagedAgentState preserves Grok runtime across path refreshes', () => {
+  const state = buildManagedAgentState(
+    [{
+      id: 'discovered_grok',
+      name: 'Grok Build',
+      command: '/old/grok',
+      enabled: true,
+      sdkBackend: 'grok',
+      grokRuntime: 'streaming-json',
+    }],
+    'discovered_grok',
+    'grok',
+    { path: '/new/grok', version: '0.2.118', available: true },
+  );
+
+  assert.equal(state.agents[0].grokRuntime, 'streaming-json');
+  assert.equal(state.agents[0].command, '/new/grok');
+  assert.equal(state.agents[0].sdkBackend, 'grok');
+});
+
 test('getInitialManagedAgentPaths ignores auto-detected command paths', () => {
   const state = buildManagedAgentState(
     [],

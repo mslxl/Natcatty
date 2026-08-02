@@ -1,7 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
-  probeClaudeAuth, probeCopilotAuth, probeCodexAuth, probeCodebuddyAuth, probeCursorCliAuth,
+  probeClaudeAuth, probeCopilotAuth, probeCodexAuth, probeCodebuddyAuth, probeCursorCliAuth, probeGrokAuth,
 } = require("./agentAuthProbes.cjs");
 
 test("probeClaudeAuth: env ANTHROPIC_API_KEY -> authenticated env", () => {
@@ -206,6 +206,40 @@ test("probeCursorCliAuth: does not fall back to bare agent binary", () => {
   assert.deepEqual(statusCalls, []);
   assert.equal(r.authenticated, false);
   assert.equal(r.binPath, null);
+});
+
+// ── Grok Build ──
+test("probeGrokAuth: env XAI_API_KEY -> authenticated env", () => {
+  const r = probeGrokAuth({
+    env: { XAI_API_KEY: "xai-test" },
+    fileExists: () => false,
+    homeDir: "/home/user",
+  });
+  assert.equal(r.authenticated, true);
+  assert.equal(r.authSource, "env");
+});
+
+test("probeGrokAuth: auth.json fallback -> authenticated auth-file", () => {
+  const path = require("node:path");
+  const homeDir = path.join("home", "user");
+  const authPath = path.join(homeDir, ".grok", "auth.json");
+  const r = probeGrokAuth({
+    env: {},
+    homeDir,
+    fileExists: (p) => p === authPath,
+  });
+  assert.equal(r.authenticated, true);
+  assert.equal(r.authSource, "auth-file");
+});
+
+test("probeGrokAuth: nothing -> not authenticated", () => {
+  const r = probeGrokAuth({
+    env: {},
+    homeDir: "/home/user",
+    fileExists: () => false,
+  });
+  assert.equal(r.authenticated, false);
+  assert.equal(r.authSource, null);
 });
 
 test("probeCursorCliAuth: unauthenticated JSON -> not authenticated but keeps binPath", () => {

@@ -231,12 +231,32 @@ function probeCursorCliAuth({ env, resolveBinary, runStatus } = {}) {
   };
 }
 
+// ── Grok Build ──
+function probeGrokAuth({ env, fileExists, homeDir } = {}) {
+  const e = env || process.env;
+  const fx = fileExists || defaultFileExists;
+  const home = homeDir || os.homedir();
+
+  const apiKey = typeof e.XAI_API_KEY === "string" ? e.XAI_API_KEY.trim() : "";
+  if (apiKey) return { authenticated: true, authSource: "env" };
+
+  // OAuth / account login persists under ~/.grok/auth.json (or GROK_CONFIG_DIR).
+  const configDir = typeof e.GROK_CONFIG_DIR === "string" && e.GROK_CONFIG_DIR.trim()
+    ? e.GROK_CONFIG_DIR.trim()
+    : path.join(home, ".grok");
+  if (fx(path.join(configDir, "auth.json"))) {
+    return { authenticated: true, authSource: "auth-file" };
+  }
+  return { authenticated: false, authSource: null };
+}
+
 module.exports = {
   probeClaudeAuth,
   probeCopilotAuth,
   probeCodexAuth,
   probeCodebuddyAuth,
   probeCursorCliAuth,
+  probeGrokAuth,
   CURSOR_CLI_BINARY_CANDIDATES,
   defaultRunSecurity,
   defaultRunGhAuthStatus,

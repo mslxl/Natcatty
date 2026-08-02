@@ -38,3 +38,32 @@ test('SDK session identities preserve Cursor auth mode', () => {
     cliMode: 'agent',
   });
 });
+
+test('SDK session identities preserve Grok ACP and streaming-json runtimes', () => {
+  const acp = encodeSdkSessionIdentity('sess-acp', 'grok', '/usr/bin/grok', 'acp');
+  assert.deepEqual(parseSdkSessionIdentity(acp), {
+    v: 1,
+    id: 'sess-acp',
+    backend: 'grok',
+    binPath: '/usr/bin/grok',
+    runtime: 'acp',
+  });
+
+  const headless = encodeSdkSessionIdentity(
+    'sess-json',
+    'grok',
+    '/usr/bin/grok',
+    'streaming-json',
+  );
+  assert.deepEqual(parseSdkSessionIdentity(headless), {
+    v: 1,
+    id: 'sess-json',
+    backend: 'grok',
+    binPath: '/usr/bin/grok',
+    runtime: 'streaming-json',
+  });
+
+  // Aliases normalize to streaming-json.
+  const alias = encodeSdkSessionIdentity('sess-cli', 'grok', '/usr/bin/grok', 'headless');
+  assert.equal(parseSdkSessionIdentity(alias)?.runtime, 'streaming-json');
+});
