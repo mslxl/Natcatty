@@ -14,6 +14,7 @@ const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
 const fs = require("node:fs");
 const path = require("node:path");
+const { prepareCommandForSpawn } = require("../../ai/shellUtils.cjs");
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 
 const NETCATTY_MCP_NAME = "netcatty-remote-hosts";
@@ -21,6 +22,30 @@ const GROK_ABORT_GRACE_MS = 1_500;
 const MAX_GROK_STDERR_CHARS = 64 * 1024;
 const MAX_GROK_MODEL_STDOUT_CHARS = 1024 * 1024;
 const MAX_GROK_LINE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Resolve Grok CLI spawn target for Windows .cmd/.bat shims.
+ * Matches other managed agents (agentCliHelpers / Codex login).
+ */
+function resolveGrokSpawnSpec(cliPath, args) {
+  return prepareCommandForSpawn(String(cliPath || "").trim(), Array.isArray(args) ? args : []);
+}
+
+/**
+ * Spawn grok via prepareCommandForSpawn so Windows npm/installer shims work.
+ * @param {Function|undefined} spawnImpl
+ * @param {string} cliPath
+ * @param {string[]} args
+ * @param {import('node:child_process').SpawnOptionsWithoutStdio & object} options
+ */
+function spawnGrokProcess(spawnImpl, cliPath, args, options = {}) {
+  const spawnFn = spawnImpl || spawn;
+  const spawnSpec = resolveGrokSpawnSpec(cliPath, args);
+  return spawnFn(spawnSpec.command, spawnSpec.args, {
+    ...options,
+    shell: spawnSpec.shell,
+  });
+}
 
 function signalGrokProcessTree(child, signal, forceKillImpl) {
   if (!child) return;
@@ -601,7 +626,6 @@ async function runGrokTurn({
     failed: false,
   };
 
-  const spawnFn = spawnImpl || spawn;
   let child = null;
   let settled = false;
 
@@ -610,7 +634,7 @@ async function runGrokTurn({
   };
 
   try {
-    child = spawnFn(cliPath, args, {
+    child = spawnGrokProcess(spawnImpl, cliPath, args, {
       cwd: effectiveCwd,
       env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
@@ -784,7 +808,6 @@ async function listGrokModels({
   if (abortSignal?.aborted) return { currentModelId: null, models: [] };
 
   const childEnv = { ...(env || process.env) };
-  const spawnFn = spawnImpl || spawn;
 
   return await new Promise((resolve) => {
     let stdout = "";
@@ -807,7 +830,7 @@ async function listGrokModels({
 
     let child;
     try {
-      child = spawnFn(cliPath, ["models"], {
+      child = spawnGrokProcess(spawnImpl, cliPath, ["models"], {
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -868,9 +891,11 @@ module.exports = {
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
   resolveGrokRuntime,
+  resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
   runGrokTurn,
+  spawnGrokProcess,
   stripGrokMcpServerSection,
   translateGrokStreamEvent,
 };

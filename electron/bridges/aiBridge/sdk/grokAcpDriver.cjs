@@ -25,6 +25,7 @@ const {
   formatGrokErrorForUser,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
+  spawnGrokProcess,
 } = require("./grokDriver.cjs");
 
 const GROK_ACP_ABORT_GRACE_MS = 1_500;
@@ -729,10 +730,9 @@ async function runGrokAcpTurn({
     return { sessionId: state.sessionId, runtime: "acp" };
   }
 
-  const spawnFn = spawnImpl || spawn;
   let child;
   try {
-    child = spawnFn(cliPath, spawnArgs, {
+    child = spawnGrokProcess(spawnImpl, cliPath, spawnArgs, {
       cwd: effectiveCwd,
       env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],

@@ -12,9 +12,11 @@ const {
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
+  resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
   runGrokTurn,
+  spawnGrokProcess,
   stripGrokMcpServerSection,
   translateGrokStreamEvent,
 } = require("./grokDriver.cjs");
@@ -139,6 +141,60 @@ test("formatGrokErrorForUser maps auth failures without over-matching bare login
     formatGrokErrorForUser("Failed to run login form validation"),
     "Failed to run login form validation",
   );
+});
+
+test("resolveGrokSpawnSpec matches prepareCommandForSpawn for cmd shims and exes", () => {
+  const { prepareCommandForSpawn } = require("../../ai/shellUtils.cjs");
+  // On win32, .cmd needs shell (or native-exe rewrite). Elsewhere shell stays false.
+  const shim = "C:\\Users\\me\\AppData\\Roaming\\npm\\grok.cmd";
+  const expected = prepareCommandForSpawn(shim, ["agent", "stdio"]);
+  const actual = resolveGrokSpawnSpec(shim, ["agent", "stdio"]);
+  assert.deepEqual(actual, expected);
+  if (process.platform === "win32") {
+    assert.equal(actual.shell, true);
+    assert.equal(actual.args.length, 0);
+  } else {
+    assert.equal(actual.shell, false);
+  }
+
+  const exePath = process.platform === "win32" ? "C:\\Tools\\grok.exe" : "/usr/bin/grok";
+  const exe = resolveGrokSpawnSpec(exePath, ["-p", "hi"]);
+  assert.equal(exe.shell, false);
+  assert.equal(exe.command, exePath);
+  assert.deepEqual(exe.args, ["-p", "hi"]);
+});
+
+test("spawnGrokProcess forwards shell from prepareCommandForSpawn into spawnImpl", () => {
+  const calls = [];
+  const fakeChild = {
+    stdout: { on() {} },
+    stderr: { on() {} },
+    stdin: null,
+    on() {},
+    kill() {},
+  };
+  const shim = "C:\\Users\\me\\AppData\\Roaming\\npm\\grok.cmd";
+  const child = spawnGrokProcess(
+    (command, args, options) => {
+      calls.push({ command, args, options });
+      return fakeChild;
+    },
+    shim,
+    ["agent", "stdio"],
+    { cwd: "D:\\repo", windowsHide: true },
+  );
+  assert.equal(child, fakeChild);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.cwd, "D:\\repo");
+  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.shell, process.platform === "win32");
+  if (process.platform === "win32") {
+    assert.match(String(calls[0].command), /grok\.cmd/i);
+    assert.deepEqual(calls[0].args, []);
+  } else {
+    assert.equal(calls[0].command, shim);
+    assert.deepEqual(calls[0].args, ["agent", "stdio"]);
+  }
 });
 
 test("resolveGrokTurnPrompt seeds history only when resume falls back to session/new", () => {
