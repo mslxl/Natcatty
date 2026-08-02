@@ -44,6 +44,8 @@ const MODEL_PICKER_MAX_WIDTH = 360;
 // Slightly wider for the provider picker so the per-row default-model
 // caption doesn't truncate.
 const PROVIDER_PICKER_MAX_WIDTH = 320;
+const PERMISSION_PICKER_WIDTH = 250;
+const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
 
@@ -1149,7 +1151,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         if (lockTurnConfiguration) return;
                         if (!showPermPicker) {
                           const rect = permBtnRef.current?.getBoundingClientRect();
-                          if (rect) setMenuPos({ left: rect.left, bottom: window.innerHeight - rect.top + 6 });
+                          if (rect) {
+                            const left = Math.max(
+                              MENU_VIEWPORT_GUTTER,
+                              Math.min(
+                                rect.left,
+                                window.innerWidth - PERMISSION_PICKER_WIDTH - MENU_VIEWPORT_GUTTER,
+                              ),
+                            );
+                            setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
+                          }
                           setActiveMenu('perm');
                         } else {
                           closeAllMenus();
@@ -1179,7 +1190,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     <div
                       role="listbox"
                       aria-label="Permission mode"
-                      className="fixed z-[1000] min-w-[180px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                      className="fixed z-[1000] w-[250px] max-w-[calc(100vw-16px)] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                       style={{ left: menuPos.left, bottom: menuPos.bottom }}
                     >
                       {([
