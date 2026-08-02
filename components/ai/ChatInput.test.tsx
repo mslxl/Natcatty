@@ -104,7 +104,7 @@ test('allows terminal-selection-only steering submissions', () => {
   );
 });
 
-test('renders the Catty context usage ring before the model chip', () => {
+test('renders the Catty context usage ring after the model chip', () => {
   const html = renderToStaticMarkup(
     <TooltipProvider>
       <ChatInput

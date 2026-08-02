@@ -44,7 +44,7 @@ const MODEL_PICKER_MAX_WIDTH = 360;
 // Slightly wider for the provider picker so the per-row default-model
 // caption doesn't truncate.
 const PROVIDER_PICKER_MAX_WIDTH = 320;
-const CONTEXT_USAGE_RING_RADIUS = 14;
+const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
 
 function formatContextTokens(tokens: number): string {
@@ -920,48 +920,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
               </>,
               document.body,
             )}
-            {contextUsage && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    role="progressbar"
-                    aria-label={contextUsageLabel}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(contextUsagePercent)}
-                    className="relative flex h-6 w-6 shrink-0 items-center justify-center"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      className="h-6 w-6"
-                      viewBox="0 0 36 36"
-                    >
-                      <circle
-                        className="stroke-muted/40"
-                        cx="18"
-                        cy="18"
-                        fill="none"
-                        r={CONTEXT_USAGE_RING_RADIUS}
-                        strokeWidth="3"
-                      />
-                      <circle
-                        className={`${contextUsageRingColor} transition-[stroke-dashoffset] duration-300`}
-                        cx="18"
-                        cy="18"
-                        fill="none"
-                        r={CONTEXT_USAGE_RING_RADIUS}
-                        strokeDasharray={CONTEXT_USAGE_RING_CIRCUMFERENCE}
-                        strokeDashoffset={contextUsageRingOffset}
-                        strokeLinecap="round"
-                        strokeWidth="3"
-                        transform="rotate(-90 18 18)"
-                      />
-                    </svg>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>{contextUsageLabel}</TooltipContent>
-              </Tooltip>
-            )}
             <button
               ref={modelBtnRef}
               type="button"
@@ -997,6 +955,48 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <span className={`truncate min-w-0 ${modelChipMaxWidth}`}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
+            {contextUsage && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    role="progressbar"
+                    aria-label={contextUsageLabel}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(contextUsagePercent)}
+                    className="relative flex h-5 w-5 shrink-0 items-center justify-center"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      className="h-5 w-5"
+                      viewBox="0 0 28 28"
+                    >
+                      <circle
+                        className="stroke-muted/40"
+                        cx="14"
+                        cy="14"
+                        fill="none"
+                        r={CONTEXT_USAGE_RING_RADIUS}
+                        strokeWidth="2.5"
+                      />
+                      <circle
+                        className={`${contextUsageRingColor} transition-[stroke-dashoffset] duration-300`}
+                        cx="14"
+                        cy="14"
+                        fill="none"
+                        r={CONTEXT_USAGE_RING_RADIUS}
+                        strokeDasharray={CONTEXT_USAGE_RING_CIRCUMFERENCE}
+                        strokeDashoffset={contextUsageRingOffset}
+                        strokeLinecap="round"
+                        strokeWidth="2.5"
+                        transform="rotate(-90 14 14)"
+                      />
+                    </svg>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>{contextUsageLabel}</TooltipContent>
+              </Tooltip>
+            )}
             {showModelPicker && hasModelPicker && menuPos && createPortal(
 <>
             <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
