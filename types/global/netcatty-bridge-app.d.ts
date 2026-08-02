@@ -39,6 +39,8 @@ declare global {
     onJmsDeepLink?(cb: (payload: { url?: string }) => void): () => void;
     setJmsDeepLinkEnabled?(enabled: boolean): Promise<boolean | { success: boolean; enabled: boolean }>;
     getJmsDeepLinkEnabled?(): Promise<boolean>;
+    setExplorerContextMenuEnabled?(enabled: boolean): Promise<boolean | { success: boolean; enabled: boolean; supported?: boolean }>;
+    getExplorerContextMenuEnabled?(): Promise<boolean | { enabled: boolean; supported?: boolean }>;
 
     // Global Toggle Hotkey (Quake Mode)
     registerGlobalHotkey?(hotkey: string): Promise<{ success: boolean; enabled?: boolean; error?: string; accelerator?: string }>;

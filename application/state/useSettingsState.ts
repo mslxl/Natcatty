@@ -48,6 +48,7 @@ import {
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SSH_DEEP_LINK_ENABLED,
   STORAGE_KEY_JMS_DEEP_LINK_ENABLED,
+  STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_CLOSE_TO_TRAY,
   STORAGE_KEY_HTTP_NETWORK_PROXY,
@@ -112,6 +113,7 @@ import {
   DEFAULT_SSH_DEBUG_LOGS_ENABLED,
   DEFAULT_SSH_DEEP_LINK_ENABLED,
   DEFAULT_JMS_DEEP_LINK_ENABLED,
+  DEFAULT_EXPLORER_CONTEXT_MENU_ENABLED,
   DEFAULT_TERMINAL_THEME,
   DEFAULT_THEME,
   DEFAULT_WINDOW_OPACITY,
@@ -379,6 +381,14 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_JMS_DEEP_LINK_ENABLED);
     return stored ?? DEFAULT_JMS_DEEP_LINK_ENABLED;
   });
+  const [explorerContextMenuEnabled, setExplorerContextMenuEnabledState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED);
+    return stored ?? DEFAULT_EXPLORER_CONTEXT_MENU_ENABLED;
+  });
+  const [explorerContextMenuSupported, setExplorerContextMenuSupported] = useState<boolean>(() => {
+    if (typeof navigator === 'undefined') return false;
+    return /Win/i.test(navigator.platform) || /Windows/i.test(navigator.userAgent);
+  });
 
   // Global Toggle Window Settings (Quake Mode)
   const [toggleWindowHotkey, setToggleWindowHotkey] = useState<string>(() => {
@@ -475,6 +485,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const jmsDeepLinkMutationSourceRef = useRef<'local' | 'incoming'>('local');
   const jmsDeepLinkEnabledRef = useRef(jmsDeepLinkEnabled);
   const jmsDeepLinkSetRequestIdRef = useRef(0);
+  const explorerContextMenuMutationSourceRef = useRef<'local' | 'incoming'>('local');
+  const explorerContextMenuEnabledRef = useRef(explorerContextMenuEnabled);
+  const explorerContextMenuSetRequestIdRef = useRef(0);
 
   // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
   // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
@@ -590,6 +603,15 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setJmsDeepLinkEnabledState((prev) => {
       if (prev === enabled) return prev;
       jmsDeepLinkMutationSourceRef.current = 'incoming';
+      return enabled;
+    });
+  }, []);
+
+  const applyIncomingExplorerContextMenuEnabled = useCallback((enabled: boolean) => {
+    explorerContextMenuSetRequestIdRef.current += 1;
+    setExplorerContextMenuEnabledState((prev) => {
+      if (prev === enabled) return prev;
+      explorerContextMenuMutationSourceRef.current = 'incoming';
       return enabled;
     });
   }, []);
@@ -744,6 +766,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     applyIncomingSshDeepLinkEnabled(storedSshDeepLinkEnabled ?? DEFAULT_SSH_DEEP_LINK_ENABLED);
     const storedJmsDeepLinkEnabled = localStorageAdapter.readBoolean(STORAGE_KEY_JMS_DEEP_LINK_ENABLED);
     applyIncomingJmsDeepLinkEnabled(storedJmsDeepLinkEnabled ?? DEFAULT_JMS_DEEP_LINK_ENABLED);
+    const storedExplorerContextMenuEnabled = localStorageAdapter.readBoolean(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED);
+    applyIncomingExplorerContextMenuEnabled(storedExplorerContextMenuEnabled ?? DEFAULT_EXPLORER_CONTEXT_MENU_ENABLED);
 
     // SFTP
     const storedDblClick = readStoredString(STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR);
@@ -913,6 +937,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSshDebugLogsEnabled,
     setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled,
     setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled,
+    setExplorerContextMenuEnabledState: applyIncomingExplorerContextMenuEnabled,
     setHotkeyScheme,
     applyIncomingCustomKeyBindings,
     setIsHotkeyRecordingState,
@@ -961,7 +986,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
-    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled,
+    editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
@@ -970,7 +995,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
     setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
-    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled,
+    setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled, setExplorerContextMenuEnabledState: applyIncomingExplorerContextMenuEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, setSshTransportIdleTtlMsState,
     applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
@@ -1346,6 +1371,74 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     notifySettingsChanged(STORAGE_KEY_JMS_DEEP_LINK_ENABLED, jmsDeepLinkEnabled);
   }, [jmsDeepLinkEnabled, notifySettingsChanged]);
 
+  useEffect(() => {
+    explorerContextMenuEnabledRef.current = explorerContextMenuEnabled;
+  }, [explorerContextMenuEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const requestIdAtStart = explorerContextMenuSetRequestIdRef.current;
+    const bridge = netcattyBridge.get();
+    if (!bridge?.getExplorerContextMenuEnabled) return;
+    void bridge.getExplorerContextMenuEnabled().then((result) => {
+      if (cancelled) return;
+      if (explorerContextMenuSetRequestIdRef.current !== requestIdAtStart) return;
+      const enabled = typeof result === 'object' && result
+        ? result.enabled
+        : result;
+      const supported = typeof result === 'object' && result
+        ? result.supported === true
+        : false;
+      setExplorerContextMenuSupported(supported);
+      if (typeof enabled !== 'boolean') return;
+      explorerContextMenuMutationSourceRef.current = 'incoming';
+      setExplorerContextMenuEnabledState((prev) => (prev === enabled ? prev : enabled));
+      localStorageAdapter.writeBoolean(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED, enabled);
+    }).catch(() => {
+      // Keep the cached renderer value when the bridge is unavailable.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const setExplorerContextMenuEnabled = useCallback((enabled: boolean) => {
+    const previous = explorerContextMenuEnabledRef.current;
+    const requestId = explorerContextMenuSetRequestIdRef.current + 1;
+    explorerContextMenuSetRequestIdRef.current = requestId;
+    explorerContextMenuMutationSourceRef.current = 'local';
+    setExplorerContextMenuEnabledState(enabled);
+
+    const bridge = netcattyBridge.get();
+    if (!bridge?.setExplorerContextMenuEnabled) return;
+    void bridge.setExplorerContextMenuEnabled(enabled).then((result) => {
+      if (explorerContextMenuSetRequestIdRef.current !== requestId) return;
+      const success = typeof result === 'object' ? result.success : result;
+      if (success !== false) return;
+      const finalEnabled = typeof result === 'object' && typeof result.enabled === 'boolean'
+        ? result.enabled
+        : previous;
+      explorerContextMenuMutationSourceRef.current = 'incoming';
+      setExplorerContextMenuEnabledState(finalEnabled);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED, finalEnabled);
+    }).catch(() => {
+      if (explorerContextMenuSetRequestIdRef.current !== requestId) return;
+      explorerContextMenuMutationSourceRef.current = 'incoming';
+      setExplorerContextMenuEnabledState(previous);
+      localStorageAdapter.writeBoolean(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED, previous);
+    });
+  }, []);
+
+  useEffect(() => {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED, explorerContextMenuEnabled);
+    if (explorerContextMenuMutationSourceRef.current === 'incoming') {
+      explorerContextMenuMutationSourceRef.current = 'local';
+      return;
+    }
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED, explorerContextMenuEnabled);
+  }, [explorerContextMenuEnabled, notifySettingsChanged]);
+
   useSystemSettingsEffects({
     enabled: enableSystemEffects,
     toggleWindowHotkey,
@@ -1545,6 +1638,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSshDeepLinkEnabled,
     jmsDeepLinkEnabled,
     setJmsDeepLinkEnabled,
+    explorerContextMenuEnabled,
+    setExplorerContextMenuEnabled,
+    explorerContextMenuSupported,
     // Global Toggle Window (Quake Mode)
     toggleWindowHotkey,
     setToggleWindowHotkey,
@@ -1574,7 +1670,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
       showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
-      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled,
+      customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     ]),
   };
 };

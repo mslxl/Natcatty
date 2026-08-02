@@ -1030,6 +1030,11 @@ function createPreloadApi(ctx) {
   getJmsDeepLinkEnabled: () =>
     ipcRenderer.invoke("netcatty:deepLink:jms:getEnabled"),
 
+  setExplorerContextMenuEnabled: (enabled) =>
+    ipcRenderer.invoke("netcatty:explorerContextMenu:setEnabled", { enabled }),
+  getExplorerContextMenuEnabled: () =>
+    ipcRenderer.invoke("netcatty:explorerContextMenu:getEnabled"),
+
   // Quit guard: main process asks whether any editor tabs have unsaved changes.
   // Returns an unsubscribe function so React effects can clean up on unmount.
   onCheckDirtyEditors: (listener) => {

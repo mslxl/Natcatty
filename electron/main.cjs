@@ -97,6 +97,13 @@ const {
   resolveOpenTerminalPath,
   resolveOpenTerminalPathsFromArgs,
 } = require("./openTerminalPath.cjs");
+const {
+  applyExplorerContextMenuPreference,
+  applyInitialExplorerContextMenuPreference,
+  resolveExplorerContextMenuEnabled,
+  updateExplorerContextMenuEnabledPreference,
+  writeExplorerContextMenuEnabledPreference,
+} = require("./explorerContextMenu.cjs");
 
 try {
   protocol?.registerSchemesAsPrivileged?.([
@@ -580,6 +587,8 @@ const pendingJmsDeepLinkUrls = jmsDeepLinkEnabled ? collectJmsDeepLinkUrls(proce
 let flushingJmsDeepLinks = false;
 let jmsDeepLinkDeliveryGeneration = 0;
 
+let explorerContextMenuEnabled = resolveExplorerContextMenuEnabled({ app }).enabled === true;
+
 function queueSshDeepLink(rawUrl) {
   if (!sshDeepLinkEnabled) return;
   if (!isSshDeepLinkUrl(rawUrl)) return;
@@ -660,6 +669,29 @@ ipcMain?.handle?.("netcatty:deepLink:jms:setEnabled", async (_event, payload) =>
 });
 
 ipcMain?.handle?.("netcatty:deepLink:jms:getEnabled", async () => jmsDeepLinkEnabled);
+
+ipcMain?.handle?.("netcatty:explorerContextMenu:setEnabled", async (_event, payload) => {
+  const enabled = payload?.enabled !== false;
+  const result = updateExplorerContextMenuEnabledPreference({
+    currentEnabled: explorerContextMenuEnabled,
+    enabled,
+    applyPreference: (nextEnabled) => applyExplorerContextMenuPreference({
+      enabled: nextEnabled,
+      executablePath: process.execPath,
+    }),
+    writePreference: (nextEnabled) => writeExplorerContextMenuEnabledPreference({
+      app,
+      enabled: nextEnabled,
+    }),
+  });
+  explorerContextMenuEnabled = result.enabled === true;
+  return result;
+});
+
+ipcMain?.handle?.("netcatty:explorerContextMenu:getEnabled", async () => ({
+  enabled: explorerContextMenuEnabled,
+  supported: process.platform === "win32",
+}));
 
 async function deliverJmsDeepLink(rawUrl, expectedGeneration = jmsDeepLinkDeliveryGeneration) {
   if (!shouldDeliverJmsDeepLink({
@@ -926,7 +958,18 @@ if (!gotLock) {
     if (collectOpenTerminalPathArgs(argv).length > 0) {
       const baseDirectory = typeof workingDirectory === "string" ? workingDirectory : undefined;
       const openTerminalPaths = resolveOpenTerminalPathsFromArgs(argv, { baseDirectory });
-      queueResolvedOpenTerminalPaths(openTerminalPaths);
+      if (openTerminalPaths.length > 0) {
+        queueResolvedOpenTerminalPaths(openTerminalPaths);
+      } else {
+        // Still bring the app forward when Explorer launched us but the path
+        // failed validation — silent no-op feels like a broken menu item.
+        console.warn("[Main] Open-terminal-path args present but no valid path resolved:", argv);
+        if (!focusMainWindow()) {
+          void createAndShowMainWindow().catch((err) => {
+            console.error("[Main] Failed to recreate window on open-terminal-path:", err);
+          });
+        }
+      }
       return;
     }
     if (!focusMainWindow()) {
@@ -964,6 +1007,12 @@ if (!gotLock) {
       },
     });
     jmsDeepLinkEnabled = initialJmsDeepLinkPreference.enabled;
+
+    const initialExplorerContextMenuPreference = applyInitialExplorerContextMenuPreference({
+      app,
+      executablePath: process.execPath,
+    });
+    explorerContextMenuEnabled = initialExplorerContextMenuPreference.enabled === true;
 
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app
