@@ -17,6 +17,7 @@ const cursorCli = require("./cursorCliDriver.cjs");
 const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
 const grok = require("./grokDriver.cjs");
+const grokAcp = require("./grokAcpDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -314,8 +315,32 @@ const DRIVER_REGISTRY = {
   },
   grok: {
     async runTurn(ctx) {
-      return grok.runGrokTurn({
+      // Default: ACP (`grok agent stdio`) with session-level mcpServers.
+      // Explicit fallback: NETCATTY_GROK_RUNTIME=streaming-json or ctx.grokRuntime.
+      const runtime = String(
+        ctx.grokRuntime
+        || ctx.env?.NETCATTY_GROK_RUNTIME
+        || process.env.NETCATTY_GROK_RUNTIME
+        || "acp",
+      ).toLowerCase();
+      if (runtime === "streaming-json" || runtime === "cli" || runtime === "headless") {
+        return grok.runGrokTurn({
+          prompt: ctx.prompt,
+          binPath: ctx.binPath,
+          cwd: ctx.cwd,
+          model: ctx.model,
+          env: ctx.env,
+          permissionMode: ctx.permissionMode,
+          toolIntegrationMode: ctx.toolIntegrationMode,
+          resumeSessionId: ctx.resumeSessionId,
+          injectedMcpServers: ctx.injectedMcpServers,
+          emitter: ctx.emitter,
+          signal: ctx.signal || ctx.abortController?.signal,
+        });
+      }
+      return grokAcp.runGrokAcpTurn({
         prompt: ctx.prompt,
+        systemPrompt: ctx.systemPrompt,
         binPath: ctx.binPath,
         cwd: ctx.cwd,
         model: ctx.model,
