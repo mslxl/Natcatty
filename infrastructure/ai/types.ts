@@ -243,7 +243,7 @@ export interface ExternalAgentConfig {
   icon?: string;
   enabled: boolean;
   available?: boolean;
-  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode). */
+  /** SDK backend key for managed agents (claude|codex|copilot|cursor|codebuddy|opencode|grok). */
   sdkBackend?: string;
   /** Cursor only: mutually exclusive auth — API key vs local `cursor-agent` CLI login. */
   cursorAuthMode?: CursorAuthMode;
@@ -296,8 +296,8 @@ export interface DiscoveredAgent {
   /** @deprecated Legacy discovery field from the pre-SDK migration. */
   acpCommand?: string;
   acpArgs?: string[];
-  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode) — the routing value. */
-  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode';
+  /** SDK backend key (claude|codex|copilot|cursor|codebuddy|opencode|grok) — the routing value. */
+  sdkBackend?: 'claude' | 'codex' | 'copilot' | 'cursor' | 'codebuddy' | 'opencode' | 'grok';
   /** Absolute resolved CLI path (preferred over `path`). */
   binPath?: string;
   installed?: boolean;

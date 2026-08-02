@@ -150,6 +150,10 @@ function loadBridgeWithMocks(options = {}) {
         typeof options.probeCursorCliAuth === "function"
           ? options.probeCursorCliAuth(...args)
           : { authenticated: false, authSource: null, email: null, binPath: null },
+      probeGrokAuth: (...args) =>
+        typeof options.probeGrokAuth === "function"
+          ? options.probeGrokAuth(...args)
+          : { authenticated: false, authSource: null },
     },
     "./ai/ptyExec.cjs": {
       execViaPty: async () => {
