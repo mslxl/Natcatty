@@ -44,6 +44,8 @@ const MODEL_PICKER_MAX_WIDTH = 360;
 // Slightly wider for the provider picker so the per-row default-model
 // caption doesn't truncate.
 const PROVIDER_PICKER_MAX_WIDTH = 320;
+const CONTEXT_USAGE_RING_RADIUS = 14;
+const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
 
 function formatContextTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
@@ -595,11 +597,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const contextUsagePercent = contextUsage
     ? Math.min(100, Math.max(0, (contextUsage.inputTokens / contextUsage.contextWindow) * 100))
     : 0;
-  const contextUsageBarColor = contextUsagePercent >= 80
-    ? 'bg-red-400'
+  const contextUsageRingColor = contextUsagePercent >= 80
+    ? 'stroke-red-400'
     : contextUsagePercent >= 50
-      ? 'bg-amber-400'
-      : 'bg-emerald-400';
+      ? 'stroke-amber-400'
+      : 'stroke-emerald-400';
+  const contextUsageRingOffset = CONTEXT_USAGE_RING_CIRCUMFERENCE
+    * (1 - contextUsagePercent / 100);
   const contextUsageLabel = contextUsage
     ? `${contextUsage.estimated ? '~' : ''}${t('ai.chat.contextUsage')}`
       .replace('{used}', formatContextTokens(contextUsage.inputTokens))
@@ -916,6 +920,48 @@ const ChatInput: React.FC<ChatInputProps> = ({
               </>,
               document.body,
             )}
+            {contextUsage && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    role="progressbar"
+                    aria-label={contextUsageLabel}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(contextUsagePercent)}
+                    className="relative flex h-6 w-6 shrink-0 items-center justify-center"
+                  >
+                    <svg
+                      aria-hidden="true"
+                      className="h-6 w-6"
+                      viewBox="0 0 36 36"
+                    >
+                      <circle
+                        className="stroke-muted/40"
+                        cx="18"
+                        cy="18"
+                        fill="none"
+                        r={CONTEXT_USAGE_RING_RADIUS}
+                        strokeWidth="3"
+                      />
+                      <circle
+                        className={`${contextUsageRingColor} transition-[stroke-dashoffset] duration-300`}
+                        cx="18"
+                        cy="18"
+                        fill="none"
+                        r={CONTEXT_USAGE_RING_RADIUS}
+                        strokeDasharray={CONTEXT_USAGE_RING_CIRCUMFERENCE}
+                        strokeDashoffset={contextUsageRingOffset}
+                        strokeLinecap="round"
+                        strokeWidth="3"
+                        transform="rotate(-90 18 18)"
+                      />
+                    </svg>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>{contextUsageLabel}</TooltipContent>
+              </Tooltip>
+            )}
             <button
               ref={modelBtnRef}
               type="button"
@@ -951,31 +997,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <span className={`truncate min-w-0 ${modelChipMaxWidth}`}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
-            {contextUsage && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div
-                    role="progressbar"
-                    aria-label={contextUsageLabel}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={Math.round(contextUsagePercent)}
-                    className="flex w-[72px] shrink-0 flex-col gap-0.5 px-1 py-1"
-                  >
-                    <div className="h-1 w-full overflow-hidden rounded-full bg-muted/45">
-                      <div
-                        className={`h-full rounded-full transition-[width] duration-300 ${contextUsageBarColor}`}
-                        style={{ width: `${contextUsagePercent}%` }}
-                      />
-                    </div>
-                    <span className="text-[9px] leading-none text-muted-foreground/60 tabular-nums">
-                      {contextUsage.estimated ? '~' : ''}{formatContextTokens(contextUsage.inputTokens)} / {formatContextTokens(contextUsage.contextWindow)}
-                    </span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>{contextUsageLabel}</TooltipContent>
-              </Tooltip>
-            )}
             {showModelPicker && hasModelPicker && menuPos && createPortal(
 <>
             <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />

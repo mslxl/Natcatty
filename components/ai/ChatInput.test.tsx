@@ -104,7 +104,7 @@ test('allows terminal-selection-only steering submissions', () => {
   );
 });
 
-test('renders the Catty context usage meter after the model chip', () => {
+test('renders the Catty context usage ring before the model chip', () => {
   const html = renderToStaticMarkup(
     <TooltipProvider>
       <ChatInput
@@ -123,6 +123,8 @@ test('renders the Catty context usage meter after the model chip', () => {
   );
 
   assert.match(html, /role="progressbar"/);
-  assert.match(html, /~64\.0K \/ 128K/);
+  assert.match(html, /stroke-dasharray=/);
+  assert.match(html, /stroke-dashoffset=/);
+  assert.doesNotMatch(html, /text-\[7px\]/);
   assert.match(html, /aria-valuenow="50"/);
 });
