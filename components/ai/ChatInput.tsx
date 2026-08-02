@@ -964,11 +964,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={Math.round(contextUsagePercent)}
-                    className="relative flex h-5 w-5 shrink-0 items-center justify-center"
+                    className="relative flex h-4 w-4 shrink-0 items-center justify-center"
                   >
                     <svg
                       aria-hidden="true"
-                      className="h-5 w-5"
+                      className="h-4 w-4"
                       viewBox="0 0 28 28"
                     >
                       <circle
@@ -977,7 +977,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         cy="14"
                         fill="none"
                         r={CONTEXT_USAGE_RING_RADIUS}
-                        strokeWidth="2.5"
+                        strokeWidth="3.5"
                       />
                       <circle
                         className={`${contextUsageRingColor} transition-[stroke-dashoffset] duration-300`}
@@ -988,7 +988,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                         strokeDasharray={CONTEXT_USAGE_RING_CIRCUMFERENCE}
                         strokeDashoffset={contextUsageRingOffset}
                         strokeLinecap="round"
-                        strokeWidth="2.5"
+                        strokeWidth="3.5"
                         transform="rotate(-90 14 14)"
                       />
                     </svg>

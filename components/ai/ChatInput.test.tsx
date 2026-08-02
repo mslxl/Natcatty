@@ -125,6 +125,7 @@ test('renders the Catty context usage ring after the model chip', () => {
   assert.match(html, /role="progressbar"/);
   assert.match(html, /stroke-dasharray=/);
   assert.match(html, /stroke-dashoffset=/);
+  assert.match(html, /class="h-4 w-4"/);
   assert.doesNotMatch(html, /text-\[7px\]/);
   assert.match(html, /aria-valuenow="50"/);
 });
