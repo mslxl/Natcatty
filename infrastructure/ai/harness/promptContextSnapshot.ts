@@ -21,6 +21,9 @@ export interface PromptContextSnapshot {
   }>;
   webSearchEnabled: boolean;
   hostSessionIds: string[];
+  /** Dynamic request estimate used by the Catty context meter. */
+  contextWindow?: number;
+  estimatedInputTokens?: number;
   builtAt: number;
 }
 

@@ -90,6 +90,8 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   addMessageToSession: () => undefined,
   updateLastMessage: () => undefined,
   updateMessageById: () => undefined,
+  persistContextCompaction: () => undefined,
+  clearSessionMessages: () => undefined,
   providers: [],
   activeProviderId: '',
   activeModelId: '',

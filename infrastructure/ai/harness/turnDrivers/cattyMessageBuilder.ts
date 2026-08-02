@@ -1,5 +1,10 @@
 import type { ModelMessage } from 'ai';
-import type { ChatMessage, ChatMessageAttachment, ToolResult } from '../../types';
+import type {
+  AISessionContextCompaction,
+  ChatMessage,
+  ChatMessageAttachment,
+  ToolResult,
+} from '../../types';
 import { buildTerminalWriteFingerprint } from '../toolResultDedup';
 import {
   buildHistoricalToolReplayMaps,
@@ -72,6 +77,7 @@ export function collectOpenAIChatAssistantFieldsForMessages(
 
 export interface BuildCattySdkMessagesInput {
   allMessages: ChatMessage[];
+  contextCompaction?: AISessionContextCompaction;
   includeCurrentUserMessage: boolean;
   trimmed: string;
   attachments?: ChatMessageAttachment[];
@@ -85,6 +91,7 @@ export interface BuildCattySdkMessagesInput {
 export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelMessage[] {
   const {
     allMessages,
+    contextCompaction,
     includeCurrentUserMessage,
     trimmed,
     attachments,
@@ -100,7 +107,22 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
   const sdkMessages: ModelMessage[] = [];
   let previousHistoryMessageWasToolResult = false;
 
-  for (const m of allMessages) {
+  const compactedMessageCount = Math.min(
+    allMessages.length,
+    Math.max(0, contextCompaction?.compactedMessageCount ?? 0),
+  );
+  if (contextCompaction?.summary && compactedMessageCount > 0) {
+    sdkMessages.push({
+      role: 'user',
+      content: `[Previous conversation summary]\n\n${contextCompaction.summary}\n\n[Continue with the recent messages below.]`,
+    });
+    sdkMessages.push({
+      role: 'assistant',
+      content: 'I understand the previous conversation summary and will continue from the recent messages.',
+    });
+  }
+
+  for (const m of allMessages.slice(compactedMessageCount)) {
     const currentMessageFollowsToolResult = previousHistoryMessageWasToolResult;
     if (m.role === 'user') {
       const messageAttachments = m.attachments ?? m.images;

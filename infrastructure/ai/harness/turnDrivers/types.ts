@@ -45,6 +45,10 @@ export interface TurnUiCallbacks {
   reportStreamError: (sessionId: string, abortSignal: AbortSignal, err: unknown) => void;
   setStreamingForScope: (key: string, val: boolean) => void;
   getLatestSession?: (sessionId: string) => AISession | undefined;
+  persistContextCompaction?: (
+    sessionId: string,
+    compaction: import('../../types').AISessionContextCompaction,
+  ) => void;
 }
 
 export interface CattyTurnContext {
@@ -63,6 +67,7 @@ export interface CattyTurnContext {
   autoTitleSession: (sessionId: string, text: string) => void;
   titleText?: string;
   selectedUserSkillSlugs?: string[];
+  forceCompaction?: boolean;
 }
 
 export interface ExternalTurnContext {

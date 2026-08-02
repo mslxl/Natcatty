@@ -64,3 +64,29 @@ test('a large user message remains bounded with the same handle on the next turn
   assert.ok(replayContent.length < input.length);
   assert.equal(store.listPendingHandles('chat-1').length, 1);
 });
+
+test('a persisted compaction boundary replaces older history with its summary', () => {
+  const store = new ToolOutputStore();
+  const messages = buildCattySdkMessages({
+    allMessages: [
+      { id: 'old-1', role: 'user', content: 'old secret question', timestamp: 1 },
+      { id: 'old-2', role: 'assistant', content: 'old answer', timestamp: 2 },
+      { id: 'recent-1', role: 'user', content: 'recent question', timestamp: 3 },
+    ],
+    contextCompaction: {
+      summary: 'The earlier question was answered.',
+      compactedMessageCount: 2,
+    },
+    includeCurrentUserMessage: false,
+    trimmed: '',
+    continuationContext: createContinuationContext('provider-1', 'openai', 'model-1'),
+    chatSessionId: 'chat-1',
+    toolOutputStore: store,
+    fieldsByMessage: new Map(),
+  });
+
+  assert.equal(messages.length, 3);
+  assert.match(String(messages[0]?.content), /The earlier question was answered/);
+  assert.doesNotMatch(JSON.stringify(messages), /old secret question|old answer/);
+  assert.match(JSON.stringify(messages), /recent question/);
+});

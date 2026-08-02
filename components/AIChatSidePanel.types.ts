@@ -50,6 +50,11 @@ export interface AIChatSidePanelProps {
     messageId: string,
     updater: (msg: ChatMessage) => ChatMessage,
   ) => void;
+  persistContextCompaction: (
+    sessionId: string,
+    compaction: import('../infrastructure/ai/types').AISessionContextCompaction,
+  ) => void;
+  clearSessionMessages: (sessionId: string) => void;
   // Provider config
   providers: ProviderConfig[];
   activeProviderId: string;

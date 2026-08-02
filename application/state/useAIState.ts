@@ -23,6 +23,7 @@ import type { AIQuickMessage } from '../../infrastructure/ai/quickMessages';
 import { sanitizeQuickMessages } from '../../infrastructure/ai/quickMessages';
 import type {
   AIDraft,
+  AISessionContextCompaction,
   AISession,
   AIPermissionMode,
   AIToolIntegrationMode,
@@ -765,6 +766,20 @@ export function useAIState() {
     });
   }, [debouncedPersistSessions]);
 
+  const persistContextCompaction = useCallback((
+    sessionId: string,
+    contextCompaction: AISessionContextCompaction,
+  ) => {
+    setSessionsRaw(prev => {
+      const next = prev.map(s => s.id === sessionId
+        ? { ...s, contextCompaction, updatedAt: Date.now() }
+        : s);
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+  }, [persistSessions]);
+
   const clearSessionMessages = useCallback((sessionId: string) => {
     getAgentRuntime().clearChatSession(sessionId);
     void getAIBridge()?.deleteChatToolOutputsTemp?.(sessionId).catch(() => {});
@@ -773,7 +788,11 @@ export function useAIState() {
       persistTimerRef.current = null;
     }
     setSessionsRaw(prev => {
-      const next = prev.map(s => s.id === sessionId ? { ...s, messages: [], updatedAt: Date.now() } : s);
+      const next = prev.map(s => {
+        if (s.id !== sessionId) return s;
+        const { contextCompaction: _contextCompaction, ...sessionWithoutCompaction } = s;
+        return { ...sessionWithoutCompaction, messages: [], updatedAt: Date.now() };
+      });
       setLatestAISessionsSnapshot(next);
       persistSessions(next);
       return next;
@@ -1061,6 +1080,7 @@ export function useAIState() {
     addMessageToSession,
     updateLastMessage,
     updateMessageById,
+    persistContextCompaction,
     clearSessionMessages,
     cleanupOrphanedSessions,
   }), [
@@ -1118,6 +1138,7 @@ export function useAIState() {
     addMessageToSession,
     updateLastMessage,
     updateMessageById,
+    persistContextCompaction,
     clearSessionMessages,
     cleanupOrphanedSessions,
   ]);

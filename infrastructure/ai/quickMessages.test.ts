@@ -66,6 +66,11 @@ test('buildSlashCommandItems excludes skills whose slug matches any quick messag
   assert.equal(items.length, 0);
 });
 
+test('buildSlashCommandItems includes built-in commands for the composer picker', () => {
+  const items = buildSlashCommandItems([], [], 'com', true);
+  assert.deepEqual(items.map((item) => item.kind === 'system' ? item.command.slug : item.kind), ['compress']);
+});
+
 test('sanitizeQuickMessages returns empty array for non-array input', () => {
   assert.deepEqual(sanitizeQuickMessages(null), []);
   assert.deepEqual(sanitizeQuickMessages({}), []);

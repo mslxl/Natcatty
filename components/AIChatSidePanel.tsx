@@ -12,6 +12,7 @@ import type {
   DiscoveredAgent,
   ExternalAgentConfig,
 } from '../infrastructure/ai/types';
+import { resolveContextWindow } from '../infrastructure/ai/contextCompaction';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import {
   filterAgentModelPresetsForCliVersion,
@@ -60,6 +61,7 @@ import { stopAgentTurn } from '../infrastructure/ai/harness/agentStop';
 import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
 import { useAIPermissionGrantsState } from '../application/state/useAIPermissionGrantsState';
 import { useConversationExport } from './ai/hooks/useConversationExport';
+import { useAgentContextUsage } from './ai/hooks/useAgentCompactionUi';
 import type { AIChatSidePanelProps } from './AIChatSidePanel.types';
 import {
   buildCursorListModelsAgentEnv,
@@ -262,6 +264,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   addMessageToSession,
   updateLastMessage,
   updateMessageById,
+  persistContextCompaction,
+  clearSessionMessages,
   providers,
   activeProviderId,
   activeModelId,
@@ -325,6 +329,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     addMessageToSession,
     updateLastMessage,
     updateMessageById,
+    persistContextCompaction,
   });
 
   const setActiveSessionId = useCallback((id: string | null) => {
@@ -372,6 +377,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const isStreaming = activeSessionId ? streamingSessionIds.has(activeSessionId) : false;
   const isSteering = activeSessionId != null && steeringSessionId === activeSessionId;
   const currentAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? defaultAgentId;
+  const observedContextUsage = useAgentContextUsage(activeSessionId);
   const inputValue = currentDraft?.text ?? '';
   const files = currentDraft?.attachments ?? [];
   const panelViewRef = useRef(normalizedPanelView);
@@ -634,6 +640,18 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     () => (currentAgentId === 'catty' ? providers : []),
     [currentAgentId, providers],
   );
+
+  const contextUsage = currentAgentId === 'catty' && activeSessionId
+    ? observedContextUsage ?? {
+        sessionId: activeSessionId,
+        inputTokens: 0,
+        contextWindow: resolveContextWindow({
+          provider: effectiveActiveProvider,
+          modelId: effectiveActiveModelId,
+        }),
+        estimated: true,
+      }
+    : null;
 
   const handleAgentProviderModelSelect = useCallback(
     (providerId: string, modelId: string) => {
@@ -1131,6 +1149,76 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
   ]);
 
+  const handleCompress = useCallback(async () => {
+    const session = activeSessionRef.current;
+    if (
+      currentAgentId !== 'catty'
+      || !session
+      || isStreaming
+      || !effectiveActiveProvider
+      || !effectiveActiveModelId.trim()
+    ) {
+      return;
+    }
+
+    const controller = new AbortController();
+    abortControllersRef.current.set(session.id, controller);
+    setStreamingForScope(session.id, true);
+    try {
+      await sendToCattyAgent(
+        session.id,
+        scopeKey,
+        '',
+        controller,
+        session,
+        '',
+        {
+          activeProvider: effectiveActiveProvider,
+          activeModelId: effectiveActiveModelId,
+          scopeType,
+          scopeTargetId,
+          scopeLabel,
+          globalPermissionMode,
+          commandBlocklist,
+          commandTimeout,
+          terminalSessions,
+          webSearchConfig,
+          getExecutorContext: () => buildExecutorContextForScope({
+            type: scopeType,
+            targetId: scopeTargetId,
+            label: scopeLabel,
+          }),
+          autoTitleSession: () => {},
+          selectedUserSkillSlugs: [],
+          forceCompaction: true,
+        },
+      );
+    } finally {
+      setStreamingForScope(session.id, false);
+      if (abortControllersRef.current.get(session.id) === controller) {
+        abortControllersRef.current.delete(session.id);
+      }
+    }
+  }, [
+    abortControllersRef,
+    buildExecutorContextForScope,
+    commandBlocklist,
+    commandTimeout,
+    currentAgentId,
+    effectiveActiveModelId,
+    effectiveActiveProvider,
+    globalPermissionMode,
+    isStreaming,
+    scopeKey,
+    scopeLabel,
+    scopeTargetId,
+    scopeType,
+    sendToCattyAgent,
+    setStreamingForScope,
+    terminalSessions,
+    webSearchConfig,
+  ]);
+
   const handleSteer = useCallback(async () => {
     const sessionId = activeSessionRef.current?.id;
     const draft = currentDraftRef.current;
@@ -1201,6 +1289,30 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       abortControllersRef.current.delete(sessionId);
     }
   }, [setStreamingForScope, updateLastMessage, abortControllersRef]);
+
+  const handleClear = useCallback(async () => {
+    const session = activeSessionRef.current;
+    if (!session) {
+      clearScopeDraft();
+      showScopeDraftView();
+      return;
+    }
+    if (streamingSessionIds.has(session.id)) {
+      await stopStreamingForSession(session.id);
+    }
+    clearSessionMessages(session.id);
+    clearScopeDraft();
+    showScopeSessionView(session.id);
+    setActiveSessionId(session.id);
+  }, [
+    clearSessionMessages,
+    clearScopeDraft,
+    setActiveSessionId,
+    showScopeDraftView,
+    showScopeSessionView,
+    stopStreamingForSession,
+    streamingSessionIds,
+  ]);
 
   const { addGrant } = useAIPermissionGrantsState();
 
@@ -1376,9 +1488,12 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         activeCompaction={
           activeCompaction?.sessionId === activeSessionId ? activeCompaction : null
         }
+        contextUsage={contextUsage}
         inputValue={inputValue}
         setInputValue={setInputValue}
         handleSend={handleSend}
+        handleCompress={handleCompress}
+        handleClear={handleClear}
         handleSteer={handleSteer}
         handleStop={handleStop}
         canSteer={canSteerCurrentTurn}
@@ -1440,6 +1555,8 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'addMessageToSession',
   'updateLastMessage',
   'updateMessageById',
+  'persistContextCompaction',
+  'clearSessionMessages',
   'providers',
   'activeProviderId',
   'activeModelId',

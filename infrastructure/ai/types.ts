@@ -111,6 +111,13 @@ export interface AIDraft {
   updatedAt: number;
 }
 
+export interface AISessionContextCompaction {
+  /** Summary sent in place of the older conversation on later Catty turns. */
+  summary: string;
+  /** Number of persisted messages covered by the summary. */
+  compactedMessageCount: number;
+}
+
 export type AIPanelView =
   | { mode: 'draft' }
   | { mode: 'session'; sessionId: string };
@@ -193,6 +200,7 @@ export interface AISession {
   agentId: string;
   scope: AISessionScope;
   messages: ChatMessage[];
+  contextCompaction?: AISessionContextCompaction;
   externalSessionId?: string;
   createdAt: number;
   updatedAt: number;

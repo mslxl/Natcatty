@@ -52,6 +52,7 @@ export interface CompactCattyMessagesInput {
 export interface CompactCattyMessagesResult {
   messages: ModelMessage[];
   trace?: CompactionTrace;
+  summary?: string;
 }
 
 export function buildCompactionFailureArchiveNotice(
@@ -80,6 +81,7 @@ export async function compactCattyMessages(
   let archiveChars: number | undefined;
   let twoPassCacheHit = false;
   let twoPassPrefixMessages: number | undefined;
+  let compactionSummary: string | undefined;
   const reservedTokens = input.reservedTokens?.() ?? 0;
   const threshold = computeCompactionThreshold({ contextWindow, maxOutputTokens });
   const estimatedInput = computeTotalInputTokens({
@@ -192,7 +194,8 @@ export async function compactCattyMessages(
     const archiveNotice = archiveHandleId
       ? `\n\n[${archiveSourceTruncated ? 'Bounded conversation snapshot (source exceeded the local archive cap)' : 'Exact conversation snapshot'} archived locally: handleId=${archiveHandleId}. Use tool_output_read search/range only when the summary lacks a needed exact detail.]`
       : '';
-    return `${result.text}${archiveNotice}`;
+    compactionSummary = `${result.text}${archiveNotice}`;
+    return compactionSummary;
   };
 
   const trigger = input.trigger ?? (input.force ? 'force' : 'pre-turn');
@@ -227,7 +230,7 @@ export async function compactCattyMessages(
       twoPassPrefixMessages,
     } : undefined;
     if (trace) input.onCompaction?.(trace);
-    return { messages: prepared.messages, trace };
+    return { messages: prepared.messages, trace, summary: compactionSummary };
   } catch (err) {
     if (input.abortSignal.aborted) throw err;
     console.warn('[Harness] Context compaction failed; falling back to recent messages only:', err);
@@ -260,7 +263,7 @@ export async function compactCattyMessages(
       twoPassPrefixMessages,
     } : undefined;
     if (trace) input.onCompaction?.(trace);
-    return { messages: fallback.messages, trace };
+    return { messages: fallback.messages, trace, summary: compactionSummary };
   }
 }
 

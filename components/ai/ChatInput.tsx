@@ -7,7 +7,18 @@
  */
 
 import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
-import { filterQuickMessages, buildSlashCommandItems, filterUserSkillsForSlash, getSlashCommandItemKey, isSystemStopSlashCommand, type AIQuickMessage, type SlashCommandItem, type UserSkillSlashOption } from '../../infrastructure/ai/quickMessages';
+import {
+  buildSlashCommandItems,
+  filterQuickMessages,
+  filterSystemSlashCommands,
+  filterUserSkillsForSlash,
+  getSlashCommandItemKey,
+  getSystemSlashCommand,
+  SYSTEM_BUILTIN_SLASH_COMMANDS,
+  type AIQuickMessage,
+  type SlashCommandItem,
+  type UserSkillSlashOption,
+} from '../../infrastructure/ai/quickMessages';
 import { SlashCommandPicker } from './SlashCommandPicker';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
@@ -26,12 +37,19 @@ import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile }
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import type { AgentContextUsage } from './hooks/useAgentCompactionUi';
 
 // Keep in sync with the popover's Tailwind max-width below.
 const MODEL_PICKER_MAX_WIDTH = 360;
 // Slightly wider for the provider picker so the per-row default-model
 // caption doesn't truncate.
 const PROVIDER_PICKER_MAX_WIDTH = 320;
+
+function formatContextTokens(tokens: number): string {
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
+  if (tokens >= 1_000) return `${(tokens / 1_000).toFixed(tokens >= 100_000 ? 0 : 1)}K`;
+  return String(Math.max(0, Math.round(tokens)));
+}
 
 /**
  * Provider picker payload used by Catty Agent. When set, the model chip
@@ -58,6 +76,9 @@ interface ChatInputProps {
   value: string;
   onChange: (value: string) => void;
   onSend: () => void;
+  onCompress?: () => void;
+  onClear?: () => void;
+  contextUsage?: AgentContextUsage | null;
   onSteer?: () => void;
   onStop?: () => void;
   isStreaming?: boolean;
@@ -110,6 +131,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
   value,
   onChange,
   onSend,
+  onCompress,
+  onClear,
+  contextUsage,
   onSteer,
   onStop,
   isStreaming = false,
@@ -285,10 +309,20 @@ const ChatInput: React.FC<ChatInputProps> = ({
     () => new Set(quickMessages.map((message) => message.slug)),
     [quickMessages],
   );
+  const systemCommandSlugSet = useMemo(
+    () => new Set<string>(SYSTEM_BUILTIN_SLASH_COMMANDS.map((command) => command.slug)),
+    [],
+  );
 
   const filteredQuickMessages = useMemo(
-    () => filterQuickMessages(quickMessages, slashQuery),
-    [quickMessages, slashQuery],
+    () => filterQuickMessages(quickMessages, slashQuery)
+      .filter((message) => !systemCommandSlugSet.has(message.slug)),
+    [quickMessages, slashQuery, systemCommandSlugSet],
+  );
+
+  const filteredSystemCommands = useMemo(
+    () => filterSystemSlashCommands(SYSTEM_BUILTIN_SLASH_COMMANDS, slashQuery),
+    [slashQuery],
   );
 
   const filteredUserSkills = useMemo(
@@ -298,11 +332,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
   );
 
   const slashCommandItems = useMemo(
-    () => buildSlashCommandItems(quickMessages, userSkillOptions, slashQuery),
+    () => buildSlashCommandItems(quickMessages, userSkillOptions, slashQuery, true),
     [quickMessages, userSkillOptions, slashQuery],
   );
 
-  const isSlashCatalogEmpty = quickMessages.length === 0 && userSkills.length === 0;
+  const isSlashCatalogEmpty = quickMessages.length === 0 && userSkills.length === 0 && filteredSystemCommands.length === 0;
   const slashPickerNoResultsLabel = isSlashCatalogEmpty
     ? t('ai.chat.slashEmptyHint')
     : t('ai.chat.slashNoResults');
@@ -343,12 +377,21 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [closeAllMenus, onChange, slashRange, value]);
 
   const handleSelectSlashCommandItem = useCallback((item: SlashCommandItem) => {
+    if (item.kind === 'system') {
+      const command = item.command.slug;
+      if (command === 'compress') onCompress?.();
+      if (command === 'clear') onClear?.();
+      if (command === 'stop') onStop?.();
+      onChange('');
+      closeAllMenus();
+      return;
+    }
     if (item.kind === 'quickMessage') {
       insertQuickMessage(item.message);
       return;
     }
     insertUserSkillToken(item.skill);
-  }, [insertQuickMessage, insertUserSkillToken]);
+  }, [closeAllMenus, insertQuickMessage, insertUserSkillToken, onChange, onClear, onCompress, onStop]);
 
   // Reset active highlight when a menu opens or when the *identity* of the
   // visible items changes. Watching only `.length` misses cases where the
@@ -481,8 +524,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSubmit = useCallback(
     (_text: string, _event: FormEvent<HTMLFormElement>) => {
-      if (isSystemStopSlashCommand(value)) {
-        onStop?.();
+      const systemCommand = getSystemSlashCommand(value);
+      if (systemCommand) {
+        if (systemCommand === 'compress') onCompress?.();
+        if (systemCommand === 'clear') onClear?.();
+        if (systemCommand === 'stop') onStop?.();
         onChange('');
         return;
       }
@@ -492,7 +538,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       onSend();
     },
-    [canSteer, isStreaming, onSend, onSteer, onStop, onChange, value],
+    [canSteer, isStreaming, onClear, onCompress, onSend, onSteer, onStop, onChange, value],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';
@@ -546,6 +592,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
     ? 'max-w-[180px]'
     : (selectedThinking ? 'max-w-[148px]' : 'max-w-[82px]');
   const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
+  const contextUsagePercent = contextUsage
+    ? Math.min(100, Math.max(0, (contextUsage.inputTokens / contextUsage.contextWindow) * 100))
+    : 0;
+  const contextUsageBarColor = contextUsagePercent >= 80
+    ? 'bg-red-400'
+    : contextUsagePercent >= 50
+      ? 'bg-amber-400'
+      : 'bg-emerald-400';
+  const contextUsageLabel = contextUsage
+    ? `${contextUsage.estimated ? '~' : ''}${t('ai.chat.contextUsage')}`
+      .replace('{used}', formatContextTokens(contextUsage.inputTokens))
+      .replace('{max}', formatContextTokens(contextUsage.contextWindow))
+    : '';
   const popoverMaxWidth = hasProviderSwitcher ? PROVIDER_PICKER_MAX_WIDTH : MODEL_PICKER_MAX_WIDTH;
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';
@@ -740,13 +799,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
               listRef={slashPickerListRef}
               listboxId={slashPickerListboxId}
               ariaLabel={t('ai.chat.slashCommands')}
+              systemCommands={filteredSystemCommands}
               quickMessages={filteredQuickMessages}
               userSkills={filteredUserSkills}
               slashCommandItems={slashCommandItems}
               activeMenuIndex={activeMenuIndex}
               onActiveIndexChange={setActiveMenuIndex}
               onSelectQuickMessage={insertQuickMessage}
+              onSelectSystemCommand={(command) => handleSelectSlashCommandItem({ kind: 'system', command })}
               onSelectSkill={insertUserSkillToken}
+              systemCommandsSectionLabel={t('ai.chat.slashSystemCommands')}
+              systemCommandDescription={(command) => t(command.descriptionKey)}
               quickMessagesSectionLabel={t('ai.chat.slashQuickMessages')}
               userSkillsSectionLabel={t('ai.chat.slashUserSkills')}
               noResultsLabel={slashPickerNoResultsLabel}
@@ -888,6 +951,31 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <span className={`truncate min-w-0 ${modelChipMaxWidth}`}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
+            {contextUsage && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    role="progressbar"
+                    aria-label={contextUsageLabel}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(contextUsagePercent)}
+                    className="flex w-[72px] shrink-0 flex-col gap-0.5 px-1 py-1"
+                  >
+                    <div className="h-1 w-full overflow-hidden rounded-full bg-muted/45">
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-300 ${contextUsageBarColor}`}
+                        style={{ width: `${contextUsagePercent}%` }}
+                      />
+                    </div>
+                    <span className="text-[9px] leading-none text-muted-foreground/60 tabular-nums">
+                      {contextUsage.estimated ? '~' : ''}{formatContextTokens(contextUsage.inputTokens)} / {formatContextTokens(contextUsage.contextWindow)}
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>{contextUsageLabel}</TooltipContent>
+              </Tooltip>
+            )}
             {showModelPicker && hasModelPicker && menuPos && createPortal(
 <>
             <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />

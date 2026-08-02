@@ -8,6 +8,13 @@ export interface ActiveCompactionUi {
   trigger: ContextPrepareTrigger;
 }
 
+export interface AgentContextUsage {
+  sessionId: string;
+  inputTokens: number;
+  contextWindow: number;
+  estimated: boolean;
+}
+
 function statusKeyForTrigger(trigger: ContextPrepareTrigger): string {
   switch (trigger) {
     case 'step':
@@ -53,4 +60,36 @@ export function resolveCompactionStatusText(
   if (!statusText) return undefined;
   if (statusText.startsWith('ai.')) return translate(statusText);
   return statusText;
+}
+
+export function useAgentContextUsage(sessionId: string | null | undefined): AgentContextUsage | null {
+  const [usage, setUsage] = useState<AgentContextUsage | null>(null);
+
+  useEffect(() => {
+    if (!sessionId) {
+      setUsage(null);
+      return undefined;
+    }
+
+    const unsubscribe = getAgentRuntime().subscribe((event) => {
+      const eventSessionId = event.chatSessionId ?? event.sessionId;
+      if (eventSessionId !== sessionId || event.type !== 'context_snapshot') return;
+      const snapshot = event.snapshot;
+      if (
+        typeof snapshot.contextWindow !== 'number'
+        || typeof snapshot.estimatedInputTokens !== 'number'
+      ) {
+        return;
+      }
+      setUsage({
+        sessionId,
+        inputTokens: Math.max(0, snapshot.estimatedInputTokens),
+        contextWindow: Math.max(1, snapshot.contextWindow),
+        estimated: true,
+      });
+    });
+    return unsubscribe;
+  }, [sessionId]);
+
+  return usage?.sessionId === sessionId ? usage : null;
 }

@@ -103,3 +103,26 @@ test('allows terminal-selection-only steering submissions', () => {
     /<button[^>]*disabled=""[^>]*aria-label="ai\.codex\.steer\.addInstruction"/,
   );
 });
+
+test('renders the Catty context usage meter after the model chip', () => {
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Catty Agent"
+        contextUsage={{
+          sessionId: 'session-1',
+          inputTokens: 64_000,
+          contextWindow: 128_000,
+          estimated: true,
+        }}
+      />
+    </TooltipProvider>,
+  );
+
+  assert.match(html, /role="progressbar"/);
+  assert.match(html, /~64\.0K \/ 128K/);
+  assert.match(html, /aria-valuenow="50"/);
+});

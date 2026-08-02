@@ -2,6 +2,7 @@ import type { ModelMessage } from 'ai';
 import type { OpenAIChatAssistantFields } from '../../providerContinuation';
 import {
   DEFAULT_CONTEXT_WINDOW_TOKENS,
+  DEFAULT_PROTECT_RECENT_MESSAGES,
   estimateUnknownTokens,
   resolveContextWindow,
 } from '../../contextCompaction';
@@ -15,7 +16,7 @@ import {
   compactCattyMessages,
   prepareCattyMessagesForStream,
 } from '../cattyRuntime';
-import { DEFAULT_MAX_OUTPUT_TOKENS } from '../contextBudget';
+import { computeTotalInputTokens, DEFAULT_MAX_OUTPUT_TOKENS } from '../contextBudget';
 import { clearChatSessionCancelled } from '../agentStop';
 import { isRequestTooLargeError } from '../../errorClassifier';
 import { getNetcattyBridge, generateId, resolveUserSkillsContext } from '../../../../components/ai/hooks/aiChatStreamingSupport';
@@ -203,8 +204,10 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       allMessages: import('../../types').ChatMessage[],
       includeCurrentUserMessage: boolean,
       options: { preserveTerminalToolResults?: ReadonlySet<import('../../types').ToolResult> } = {},
+      sessionContextCompaction = currentSession?.contextCompaction,
     ) => buildCattySdkMessages({
       allMessages,
+      contextCompaction: sessionContextCompaction,
       includeCurrentUserMessage,
       trimmed: modelUserText,
       attachments: includeCurrentUserMessage ? attachments : undefined,
@@ -261,7 +264,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         force?: boolean;
         compressForRequestTooLargeRetry?: boolean;
       },
-    ): Promise<ModelMessage[]> => {
+    ) => {
       const pendingHandles = ctx.toolOutputStore.listPendingHandles(sessionId);
       const sessionStateText = ctx.sessionStateStore.toReinjectionText(sessionId);
       const result = await compactCattyMessages({
@@ -307,12 +310,46 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
             : undefined,
         },
       });
-      return result.messages;
+      return result;
     };
 
+    const emitContextSnapshot = (messages: ModelMessage[]) => {
+      ctx.emit({
+        id: `context-snapshot-${Date.now()}-${ctx.turnId}`,
+        type: 'context_snapshot',
+        snapshot: {
+          ...promptContext,
+          contextWindow,
+          estimatedInputTokens: computeTotalInputTokens({
+            messages,
+            providerId,
+            systemPrompt,
+            toolNames: Object.keys(tools),
+          }),
+        },
+      } as import('../types').AgentEvent);
+    };
+
+    if (context.forceCompaction) {
+      const compactionBaseMessages = buildSdkMessages(currentSession?.messages ?? [], false);
+      const compacted = await compactMessages(compactionBaseMessages, { force: true });
+      const compactedMessageCount = currentSession?.messages.length
+        ? Math.max(0, currentSession.messages.length - DEFAULT_PROTECT_RECENT_MESSAGES)
+        : 0;
+      if (compacted.summary && compactedMessageCount > 0) {
+        ui.persistContextCompaction?.(sessionId, {
+          summary: compacted.summary,
+          compactedMessageCount,
+        });
+      }
+      emitContextSnapshot(prepareMessagesForStream(compacted.messages));
+      return;
+    }
+
     let messagesForStream = buildSdkMessages(currentSession?.messages ?? [], true);
-    messagesForStream = await compactMessages(messagesForStream, {});
+    messagesForStream = (await compactMessages(messagesForStream, {})).messages;
     messagesForStream = prepareMessagesForStream(messagesForStream);
+    emitContextSnapshot(messagesForStream);
 
     const runtimeContext = createInitialCattyRuntimeContext({
       chatSessionId: sessionId,
@@ -365,6 +402,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
             runtimeContext: stepRuntimeContext,
             onEvent: (event) => ctx.emit(event),
           });
+          emitContextSnapshot(prepared.messages);
           return {
             messages: prepared.messages,
             runtimeContext: prepared.runtimeContext,
@@ -402,7 +440,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
               latestSession.messages,
               assistantMsgId,
             ),
-          });
+          }, latestSession.contextCompaction);
         }
         retryAssistantMsgId = generateId();
         ui.addMessageToSession(sessionId, {
@@ -427,10 +465,11 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         }));
       }
       ctx.toolResultDedup.enableWriteReplay(preservedWriteFingerprints);
-      const retryMessages = prepareMessagesForStream(await compactMessages(retryBaseMessages, {
+      const retryMessages = prepareMessagesForStream((await compactMessages(retryBaseMessages, {
         force: true,
         compressForRequestTooLargeRetry: true,
-      }));
+      })).messages);
+      emitContextSnapshot(retryMessages);
       await runStream(retryMessages, retryAssistantMsgId);
     }
   } catch (err) {
