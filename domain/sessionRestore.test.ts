@@ -301,6 +301,51 @@ test("sanitizeSessionRestorePayload prunes invalid workspace panes and drops emp
   assert.equal(sanitized.activeTabId, "ws-1");
 });
 
+test("sanitizeSessionRestorePayload preserves explicit workspace autoTitle across restore", () => {
+  const workspace: Workspace = {
+    id: "ws-1",
+    title: "Workspace",
+    // User explicitly named this workspace "Workspace"; must not be relabeled.
+    autoTitle: false,
+    root: { id: "pane-1", type: "pane", sessionId: "s1" },
+    focusedSessionId: "s1",
+    focusSessionOrder: ["s1"],
+  };
+
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "ws-1",
+    tabOrder: ["ws-1"],
+    sessions: [session("s1", "ws-1")],
+    workspaces: [workspace],
+  });
+
+  assert.equal(sanitized.workspaces.length, 1);
+  assert.equal(sanitized.workspaces[0].autoTitle, false);
+});
+
+test("sanitizeSessionRestorePayload leaves legacy workspaces without an autoTitle flag", () => {
+  const workspace: Workspace = {
+    id: "ws-1",
+    title: "Workspace",
+    root: { id: "pane-1", type: "pane", sessionId: "s1" },
+    focusedSessionId: "s1",
+    focusSessionOrder: ["s1"],
+  };
+
+  const sanitized = sanitizeSessionRestorePayload({
+    version: 1,
+    savedAt: 1,
+    activeTabId: "ws-1",
+    tabOrder: ["ws-1"],
+    sessions: [session("s1", "ws-1")],
+    workspaces: [workspace],
+  });
+
+  assert.equal(sanitized.workspaces[0].autoTitle, undefined);
+});
+
 test("sanitizeSessionRestorePayload drops malformed session and workspace records", () => {
   const sanitized = sanitizeSessionRestorePayload({
     version: 1,

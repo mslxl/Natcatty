@@ -355,6 +355,9 @@ const restoreWorkspace = (workspace: Workspace, root: WorkspaceNode, sessionIds:
       : sessionIds[0],
     focusSessionOrder: uniqueStrings(workspace.focusSessionOrder ?? []).filter((id) => sessionIdSet.has(id)),
     ...(workspace.snippetId ? { snippetId: workspace.snippetId } : {}),
+    // Preserve explicit-title state across restore; the boolean guard keeps a
+    // deliberate `autoTitle: false` (a user-named workspace) from being dropped.
+    ...(typeof workspace.autoTitle === "boolean" ? { autoTitle: workspace.autoTitle } : {}),
   };
 };
 

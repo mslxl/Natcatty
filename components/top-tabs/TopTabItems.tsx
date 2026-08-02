@@ -19,7 +19,7 @@ import { resolveHostIconAppearance, resolveHostIconColorAppearance } from '../..
 import { resolveSessionCodingCliProvider } from '../../domain/codingCliProviderMatch';
 import type { CodingCliProvider } from '../../domain/codingCliProviders';
 import { resolveCodingCliActivityPhase, type CodingCliActivityPhase } from '../../domain/codingCliTitleParse';
-import { resolveSessionTabTitle } from '../../domain/sessionTabTitle';
+import { resolveSessionTabTitle, resolveWorkspaceTabLabel } from '../../domain/sessionTabTitle';
 import type { DynamicTabTitleMode } from '../../domain/models';
 import { CodingCliProviderIcon } from '../icons/CodingCliProviderIcon';
 import { cn } from '../../lib/utils';
@@ -922,6 +922,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
     [onCopyWorkspace, workspace.id],
   );
   const detachSessions = workspaceSessions ?? [];
+  const tabLabel = resolveWorkspaceTabLabel(workspace, detachSessions);
 
   return (
     <ContextMenu>
@@ -986,7 +987,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
               className="shrink-0"
               style={{ color: isActive ? 'var(--top-tabs-accent, hsl(var(--accent)))' : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))' }}
             />
-            <span className="truncate leading-5">{workspace.title}</span>
+            <span className="truncate leading-5" title={tabLabel}>{tabLabel}</span>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
             {hasActivity && sessionStatusDot('connected', true)}
