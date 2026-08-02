@@ -37,6 +37,7 @@ function makeEmitter() {
     toolResult: (id, result, name) => calls.push(["toolResult", id, result, name]),
     sessionId: (id) => calls.push(["sessionId", id]),
     planUpdate: (itemId, items, status) => calls.push(["planUpdate", itemId, items, status]),
+    usage: (usage) => calls.push(["usage", usage]),
     emitDone: () => calls.push(["done"]),
     emitError: (message) => calls.push(["error", message]),
   };
@@ -771,6 +772,51 @@ test("runGrokAcpTurn reports missing CLI clearly", async () => {
   assert.equal(result.sessionId, null);
   assert.equal(result.runtime, "acp");
   assert.match(String(emitter.calls[0]?.[1] || ""), /not found/i);
+});
+
+test("runGrokAcpTurn forwards usage from session/prompt result", async () => {
+  const emitter = makeEmitter();
+  await runGrokAcpTurn({
+    prompt: "hi",
+    binPath: "/usr/bin/grok",
+    permissionMode: "auto",
+    emitter,
+    rpcClientFactory: ({ emitter: em, state }) => ({
+      async request(method) {
+        if (method === "initialize") {
+          return { protocolVersion: ACP_PROTOCOL_VERSION, authMethods: [] };
+        }
+        if (method === "session/new") return { sessionId: "s-usage" };
+        if (method === "session/prompt") {
+          translateGrokAcpUpdate({
+            sessionUpdate: "agent_message_chunk",
+            content: { text: "ok" },
+          }, em, state);
+          return {
+            stopReason: "end_turn",
+            usage: {
+              input_tokens: 11,
+              output_tokens: 7,
+              cache_read_input_tokens: 2,
+              reasoning_tokens: 3,
+              total_tokens: 23,
+            },
+          };
+        }
+        throw new Error(`unexpected ${method}`);
+      },
+    }),
+  });
+  const usage = emitter.calls.find((c) => c[0] === "usage");
+  assert.ok(usage);
+  assert.deepEqual(usage[1], {
+    inputTokens: 11,
+    cachedInputTokens: 2,
+    outputTokens: 7,
+    reasoningTokens: 3,
+    totalTokens: 23,
+  });
+  assert.ok(emitter.calls.some((c) => c[0] === "done"));
 });
 
 test("runGrokAcpTurn does not treat post-prompt exit code 1 as failure for tool-only turns", async () => {

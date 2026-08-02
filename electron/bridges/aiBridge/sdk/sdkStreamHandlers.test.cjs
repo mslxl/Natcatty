@@ -13,6 +13,7 @@ const {
   resolveSdkResumeSessionId,
   shouldReplaySdkHistory,
   expireSiblingCursorCliModeSessions,
+  expireSiblingGrokRuntimeSessions,
   resolveBackendKey,
   resolveSdkBackendBinPath,
   shouldCacheSdkRuntimeModels,
@@ -538,6 +539,72 @@ test("Grok does not replay renderer history when an ACP session can resume", () 
     resumeSessionId: undefined,
     hasInMemorySession: true,
   }), true);
+});
+
+test("expireSiblingGrokRuntimeSessions drops the inactive Grok runtime", () => {
+  const acpKey = buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "acp");
+  const headlessKey = buildSdkSessionKey("chat-1", "grok", "/usr/bin/grok", "streaming-json");
+  const otherChatAcpKey = buildSdkSessionKey("chat-2", "grok", "/usr/bin/grok", "acp");
+  const sessions = new Map([
+    [acpKey, "acp-session"],
+    [headlessKey, "json-session"],
+    [otherChatAcpKey, "other-acp"],
+  ]);
+
+  // Switch to streaming-json: expire ACP so switch-back cannot revive it.
+  assert.equal(
+    expireSiblingGrokRuntimeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "grok",
+      binPath: "/usr/bin/grok",
+      runtime: "streaming-json",
+    }),
+    true,
+  );
+  assert.equal(sessions.has(acpKey), false);
+  assert.equal(sessions.get(headlessKey), "json-session");
+  assert.equal(sessions.get(otherChatAcpKey), "other-acp");
+
+  // Switch back to ACP: expire headless; ACP was already gone → fresh resume.
+  sessions.set(headlessKey, "json-session-2");
+  assert.equal(
+    expireSiblingGrokRuntimeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "grok",
+      binPath: "/usr/bin/grok",
+      runtime: "acp",
+    }),
+    true,
+  );
+  assert.equal(sessions.has(headlessKey), false);
+  assert.equal(
+    resolveSdkResumeSessionId({
+      sdkSessionIds: sessions,
+      sdkSessionKey: acpKey,
+      existingSessionId: `netcatty-sdk-session:${encodeURIComponent(JSON.stringify({
+        v: 1,
+        id: "json-session-2",
+        backend: "grok",
+        binPath: "/usr/bin/grok",
+        runtime: "streaming-json",
+      }))}`,
+      backendKey: "grok",
+      binPath: "/usr/bin/grok",
+      runtime: "acp",
+      hasConfiguredCommand: false,
+    }),
+    undefined,
+  );
+  // Non-grok backends no-op.
+  assert.equal(
+    expireSiblingGrokRuntimeSessions(sessions, {
+      chatSessionId: "chat-1",
+      backendKey: "claude",
+      binPath: "/usr/bin/claude",
+      runtime: "sdk",
+    }),
+    false,
+  );
 });
 
 test("Grok ACP and streaming-json session identities never cross-resume", () => {

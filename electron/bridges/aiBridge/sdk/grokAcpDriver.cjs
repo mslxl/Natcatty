@@ -25,6 +25,7 @@ const {
   formatGrokErrorForUser,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
+  emitGrokUsage,
   spawnGrokProcess,
 } = require("./grokDriver.cjs");
 
@@ -725,11 +726,17 @@ async function runGrokAcpTurn({
       });
       // Only accept updates for this turn's prompt (not session/load replay).
       state.acceptUpdates = true;
-      await client.request(
+      const promptResult = await client.request(
         "session/prompt",
         buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
       );
       state.turnCompleted = true;
+      emitGrokUsage(
+        emitter,
+        promptResult?.usage
+        ?? promptResult?._meta?.usage
+        ?? promptResult?.meta?.usage,
+      );
       closeReasoning(state, emitter);
       if (!state.failed && !signal?.aborted) emitter.emitDone();
     } catch (err) {
@@ -942,14 +949,21 @@ async function runGrokAcpTurn({
     // session/prompt resolves when the turn finishes; also wait for process end.
     // turnCompleted is set in handleGrokAcpMessage on successful prompt result
     // (must be sync before any teardown close event).
-    await Promise.race([
+    const promptOutcome = await Promise.race([
       rpc.request(
         "session/prompt",
         buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
         { timeoutMs: 30 * 60_000 },
-      ),
-      promptDone,
+      ).then((result) => ({ kind: "prompt", result })),
+      promptDone.then(() => ({ kind: "closed" })),
     ]);
+    // ACP may return optional usage on the prompt result (not only as stream updates).
+    if (promptOutcome?.kind === "prompt") {
+      const usage = promptOutcome.result?.usage
+        ?? promptOutcome.result?._meta?.usage
+        ?? promptOutcome.result?.meta?.usage;
+      emitGrokUsage(emitter, usage);
+    }
   } catch (err) {
     if (!state.failed && !signal?.aborted) {
       state.failed = true;

@@ -433,15 +433,7 @@ function translateGrokStreamEvent(event, emitter, state = {}) {
 
     case "usage": {
       const usage = event.usage && typeof event.usage === "object" ? event.usage : event;
-      if (usage && typeof emitter.usage === "function") {
-        emitter.usage({
-          inputTokens: usage.input_tokens ?? usage.inputTokens,
-          cachedInputTokens: usage.cache_read_input_tokens ?? usage.cachedInputTokens,
-          outputTokens: usage.output_tokens ?? usage.outputTokens,
-          reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens,
-          totalTokens: usage.total_tokens ?? usage.totalTokens,
-        });
-      }
+      emitGrokUsage(emitter, usage);
       return false;
     }
 
@@ -454,15 +446,7 @@ function translateGrokStreamEvent(event, emitter, state = {}) {
         emitter.sessionId?.(sessionId);
       }
       const usage = event.usage && typeof event.usage === "object" ? event.usage : null;
-      if (usage && typeof emitter.usage === "function") {
-        emitter.usage({
-          inputTokens: usage.input_tokens ?? usage.inputTokens,
-          cachedInputTokens: usage.cache_read_input_tokens ?? usage.cachedInputTokens,
-          outputTokens: usage.output_tokens ?? usage.outputTokens,
-          reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens,
-          totalTokens: usage.total_tokens ?? usage.totalTokens,
-        });
-      }
+      emitGrokUsage(emitter, usage);
       return false;
     }
 
@@ -529,6 +513,21 @@ function resolveGrokTurnPrompt({
   if (!resumeSessionId || !seed) return prompt;
   if (String(establishMethod || "").toLowerCase() !== "new") return prompt;
   return prompt ? `${seed}\n\n${prompt}` : seed;
+}
+
+/**
+ * Forward Grok/ACP usage objects onto the canonical emitter (snake or camel).
+ */
+function emitGrokUsage(emitter, usage) {
+  if (!usage || typeof usage !== "object" || typeof emitter?.usage !== "function") return false;
+  emitter.usage({
+    inputTokens: usage.input_tokens ?? usage.inputTokens,
+    cachedInputTokens: usage.cache_read_input_tokens ?? usage.cachedInputTokens,
+    outputTokens: usage.output_tokens ?? usage.outputTokens,
+    reasoningTokens: usage.reasoning_tokens ?? usage.reasoningTokens,
+    totalTokens: usage.total_tokens ?? usage.totalTokens,
+  });
+  return true;
 }
 
 function createLineBuffer(onLine, maxBufferBytes = MAX_GROK_LINE_BYTES) {
@@ -907,6 +906,7 @@ module.exports = {
   resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
+  emitGrokUsage,
   runGrokTurn,
   spawnGrokProcess,
   stripGrokMcpServerSection,

@@ -191,6 +191,36 @@ function expireSiblingCursorCliModeSessions(sdkSessionIds, {
   return true;
 }
 
+/**
+ * Grok ACP vs streaming-json sessions must not resume across each other.
+ * When the active runtime flips without restarting Netcatty, drop the inactive
+ * runtime's in-memory session so a switch-back cannot revive a pre-switch
+ * thread and skip renderer history for intervening turns (same idea as Cursor
+ * CLI ask/agent isolation).
+ */
+function expireSiblingGrokRuntimeSessions(sdkSessionIds, {
+  chatSessionId,
+  backendKey,
+  binPath,
+  runtime = "acp",
+} = {}) {
+  if (!sdkSessionIds || backendKey !== "grok") return false;
+  const activeRuntime = normalizeSdkRuntime(runtime);
+  if (activeRuntime !== "acp" && activeRuntime !== "streaming-json") return false;
+  const siblingRuntime = activeRuntime === "acp" ? "streaming-json" : "acp";
+  const siblingKey = buildSdkSessionKey(
+    chatSessionId,
+    backendKey,
+    binPath,
+    siblingRuntime,
+    "",
+    "",
+  );
+  if (!sdkSessionIds.has(siblingKey)) return false;
+  sdkSessionIds.delete(siblingKey);
+  return true;
+}
+
 function resolveSdkResumeSessionId({
   sdkSessionIds,
   sdkSessionKey,
@@ -621,6 +651,16 @@ function registerSdkStreamHandlers(ctx) {
               runtime: sessionRuntime,
               authMode: cursorSessionAuthMode,
               cliMode: cursorCliMode,
+            });
+          }
+          // ACP ↔ streaming-json: drop the other Grok runtime's in-memory id so
+          // switch-back does not resume a pre-switch session without intervening turns.
+          if (backendKey === "grok") {
+            expireSiblingGrokRuntimeSessions(sdkSessionIds, {
+              chatSessionId,
+              backendKey,
+              binPath: sessionBinPath,
+              runtime: sessionRuntime,
             });
           }
           const sdkSessionKey = buildSdkSessionKey(
@@ -1178,6 +1218,7 @@ module.exports = {
   resolveSdkPromptPlacement,
   resolveSdkResumeSessionId,
   expireSiblingCursorCliModeSessions,
+  expireSiblingGrokRuntimeSessions,
   shouldCacheSdkRuntimeModels,
   normalizeHistoryMessages,
   formatSdkHistoryReplaySection,
