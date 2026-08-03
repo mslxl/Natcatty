@@ -8,6 +8,7 @@ import {
   TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
 } from '../../application/state/terminalSidePanelTabs.ts';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection.tsx';
+import { resolveSidePanelPortalTarget } from './terminalLayerSidePanelSlots.tsx';
 
 test('AI side panel shell can be force-hidden for layout isolation', () => {
   assert.equal(getTerminalSidePanelShellWidth({
@@ -128,4 +129,34 @@ test('side panel content scopes app color utilities to the resolved terminal the
 
   assert.match(sectionSource, /buildTerminalSidePanelCssVars/);
   assert.match(sectionSource, /\.\.\.sidePanelCssVars/);
+});
+
+test('a visible tool without a ready pane host stays in the hidden parking host', () => {
+  const parkingHost = { id: 'parking' };
+  const paneHost = { id: 'pane' };
+
+  assert.equal(resolveSidePanelPortalTarget(true, paneHost, parkingHost), paneHost);
+  assert.equal(resolveSidePanelPortalTarget(true, null, parkingHost), parkingHost);
+  assert.equal(resolveSidePanelPortalTarget(false, paneHost, parkingHost), parkingHost);
+  assert.equal(resolveSidePanelPortalTarget(true, null, null), null);
+});
+
+test('split pane hosts strictly clip each tool and do not use the side panel root as a portal fallback', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+  const slotsSource = readFileSync(new URL('./terminalLayerSidePanelSlots.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /terminal-side-panel-pane-content/);
+  assert.match(sectionSource, /overflow-hidden \[contain:strict\]/);
+  assert.match(sectionSource, /terminal-side-panel-parking/);
+  assert.match(slotsSource, /paneHosts\.get\(tool\)/);
+  assert.doesNotMatch(slotsSource, /document\.querySelector\([^)]*terminal-side-panel/);
+});
+
+test('the shared toolbar owns split controls while panes only render minimal chrome', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /<SidePanelSplitMenu[\s\S]*direction="horizontal"/);
+  assert.match(sectionSource, /<SidePanelSplitMenu[\s\S]*direction="vertical"/);
+  assert.match(sectionSource, /data-section="terminal-side-panel-pane"/);
+  assert.match(sectionSource, /paneCount > 1/);
 });

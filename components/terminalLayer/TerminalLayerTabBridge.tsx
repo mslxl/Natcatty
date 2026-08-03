@@ -21,6 +21,10 @@ import { sidePanelLiveStore, type SidePanelLiveSnapshot } from '../../applicatio
 import { terminalCwdStore } from '../../application/state/terminalCwdStore';
 import { useTerminalWorkspaceLayout } from './useTerminalWorkspaceLayout';
 import type { SidePanelTab } from './TerminalLayerSupport';
+import {
+  collectSidePanelPanes,
+  type SidePanelLayout,
+} from '../../domain/sidePanelLayout';
 
 type StableRef = React.MutableRefObject<Record<string, any>>;
 
@@ -44,6 +48,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   const sessionHostsMap = s.sessionHostsMap as Map<string, Host>;
   const sftpHostForTab = s.sftpHostForTab as Map<string, Host>;
   const sidePanelOpenTabs = s.sidePanelOpenTabs as Map<string, SidePanelTab>;
+  const sidePanelLayouts = s.sidePanelLayouts as Map<string, SidePanelLayout>;
   const showHostTreeSidebar = s.showHostTreeSidebar as boolean | undefined;
 
   const activeWorkspace = useMemo(
@@ -112,7 +117,12 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
 
   const isSidePanelOpenForCurrentTab = activeTabId ? sidePanelOpenTabs.has(activeTabId) : false;
   const activeSidePanelTab = activeTabId ? sidePanelOpenTabs.get(activeTabId) ?? null : null;
-  const isSftpOpenForCurrentTab = activeSidePanelTab === 'sftp';
+  const activeSidePanelLayout = activeTabId ? sidePanelLayouts.get(activeTabId) ?? null : null;
+  const activeSidePanelTools = useMemo(
+    () => new Set(activeSidePanelLayout ? collectSidePanelPanes(activeSidePanelLayout.root).map((pane) => pane.tool) : []),
+    [activeSidePanelLayout],
+  );
+  const isSftpOpenForCurrentTab = activeSidePanelTools.has('sftp');
 
   const activeHostIdForSidebar = useMemo(() => {
     const sessionId = activeWorkspace ? focusedSessionId : activeSession?.id;
@@ -182,11 +192,11 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   }, [activeTerminalSessionForSystem?.id, sessionHostsMap]);
 
   const systemWarmupSessionIds = useMemo(() => {
-    if (!activeTabId || activeSidePanelTab !== 'system') return [];
+    if (!activeTabId || !activeSidePanelTools.has('system')) return [];
     const session = activeTerminalSessionForSystem;
     if (!session || session.status !== 'connected') return [];
     return [session.id];
-  }, [activeSidePanelTab, activeTabId, activeTerminalSessionForSystem]);
+  }, [activeSidePanelTools, activeTabId, activeTerminalSessionForSystem]);
 
   useSystemCapabilitiesWarmup(
     systemWarmupSessionIds,
@@ -207,7 +217,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   const themeState = useTerminalThemePanelState({
     accentMode: s.accentMode,
     activeSession,
-    activeSidePanelTab,
+    activeSidePanelTab: activeSidePanelTools.has('theme') ? 'theme' : activeSidePanelTab,
     activeWorkspace,
     customAccent: s.customAccent,
     followAppTerminalTheme: s.followAppTerminalTheme,
@@ -310,6 +320,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
 
   useTerminalLayerEffects({
     activeSidePanelTab,
+    activeSidePanelLayout,
     activeTabId,
     activeTabIdRef: s.activeTabIdRef,
     activeWorkspace,
@@ -388,6 +399,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     activeHostIdForSidebar,
     activeResizers,
     activeSidePanelTab,
+    activeSidePanelLayout,
     activeTabId,
     activeTerminalCwd,
     activeTerminalSessionIdForSftp,
@@ -420,6 +432,10 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     followAppTerminalTheme: s.followAppTerminalTheme,
     handleHistoryPaste: s.handleHistoryPaste,
     handleHistoryRun: s.handleHistoryRun,
+    handleFocusSidePanelPane: s.handleFocusSidePanelPane,
+    handleSplitSidePanelPane: s.handleSplitSidePanelPane,
+    handleCloseSidePanelPane: s.handleCloseSidePanelPane,
+    handleResizeSidePanelSplit: s.handleResizeSidePanelSplit,
     fontSize: s.fontSize,
     getTerminalCwd: s.getTerminalCwd,
     handleAddKnownHost: s.handleAddKnownHost,
@@ -572,6 +588,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     sidePanelPosition: s.sidePanelPosition,
     sidePanelWidth: s.sidePanelWidth,
     sidePanelOpenTabs,
+    sidePanelLayouts,
     snippetPackages: s.snippetPackages,
     snippets: s.snippets,
     updateSnippetPackages: s.updateSnippetPackages,
@@ -610,6 +627,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   }), [
     activeHostIdForSidebar,
     activeResizers,
+    activeSidePanelLayout,
     activeSidePanelTab,
     activeTabId,
     activeTerminalCwd,
@@ -633,6 +651,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     resizing,
     resolveAIExecutorContext,
     sessionHostsMap,
+    sidePanelLayouts,
     s.resolvedSessionHostIds,
     sessions,
     s.terminalSettings,

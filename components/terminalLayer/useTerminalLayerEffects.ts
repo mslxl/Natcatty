@@ -11,6 +11,7 @@ import {
   resolveSftpTransferNavigationPath,
   resolveSftpTransferNavigationTarget,
 } from '../../domain/sftpTransferNavigation';
+import { collectSidePanelPanes, sidePanelLayoutHasTool } from '../../domain/sidePanelLayout';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import { toast } from '../ui/toast';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection';
@@ -92,7 +93,7 @@ export function pruneTerminalTabMemoryState(
 
 export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const { openPath } = useSftpBackend();
-  const { activeSidePanelTab, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
+  const { activeSidePanelTab, activeSidePanelLayout, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
 
   const activeWorkspaceId = activeWorkspace?.id;
   const activeWorkspaceViewMode = activeWorkspace?.viewMode;
@@ -100,7 +101,8 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const isSidePanelOpenForCurrentTab = activeTabId ? sidePanelOpenTabs.has(activeTabId) : false;
   const sidePanelShellWidth = getTerminalSidePanelShellWidth({
     activeSidePanelTab,
-    forceHideAiShell: AI_PANEL_FORCE_HIDE_SHELL,
+    forceHideAiShell: AI_PANEL_FORCE_HIDE_SHELL
+      && (!activeSidePanelLayout || collectSidePanelPanes(activeSidePanelLayout.root).length <= 1),
     isSidePanelOpenForCurrentTab,
     resizePreviewWidth: null,
     sidePanelWidth,
@@ -296,7 +298,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     // so that the toggle check uses the currently displayed host.
     useEffect(() => {
       if (!activeTabId || !sftpActiveHost) return;
-      if (sidePanelOpenTabs.get(activeTabId) !== 'sftp') return;
+      if (!sidePanelLayoutHasTool(activeSidePanelLayout, 'sftp')) return;
       const stored = sftpHostForTab.get(activeTabId);
       if (stored?.id === sftpActiveHost.id
         && stored?.hostname === sftpActiveHost.hostname
@@ -307,7 +309,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
         next.set(activeTabId, sftpActiveHost);
         return next;
       });
-    }, [activeTabId, sftpActiveHost, sidePanelOpenTabs, sftpHostForTab]);
+    }, [activeSidePanelLayout, activeTabId, sftpActiveHost, sftpHostForTab]);
   
   useEffect(() => {
       if (!toggleScriptsSidePanelRef) return;

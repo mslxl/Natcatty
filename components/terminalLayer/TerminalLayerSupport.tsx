@@ -42,8 +42,9 @@ import {
 } from '../terminalPaneVisibility';
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
+import type { SidePanelTool } from '../../domain/sidePanelLayout';
 
-export type SidePanelTab = 'sftp' | 'scripts' | 'history' | 'theme' | 'ai' | 'system' | 'notes';
+export type SidePanelTab = SidePanelTool;
 
 const LazyAIChatSidePanel = lazy(() =>
   import('../AIChatSidePanel').then((module) => ({ default: module.AIChatSidePanel })),
