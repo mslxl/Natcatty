@@ -25,29 +25,40 @@ test("buildExplorerContextMenuCommand puts path args after -- for Electron", () 
   );
 });
 
-test("isExplorerContextMenuRegistered checks HKCU and HKLM shell keys", () => {
+test("isExplorerContextMenuRegistered requires both folder and background verbs", () => {
   const queries = [];
+  const commandByKey = {
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command":
+      '"C:\\\\Apps\\\\Netcatty.exe" -- --open-terminal-path="%1."',
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command":
+      '"C:\\\\Apps\\\\Netcatty.exe" -- --open-terminal-path="%V."',
+  };
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
     queries.push(args.slice());
-    // Value queries (e.g. ProgrammaticAccessOnly) are not present on a real install.
     if (args.includes("/v") && !args.includes("/ve")) {
       return { status: 1, stdout: "", stderr: "value not found" };
     }
-    if (args.includes("/ve") && args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command") {
-      return {
-        status: 0,
-        stdout: '    (Default)    REG_SZ    "C:\\\\Apps\\\\Netcatty.exe" -- --open-terminal-path="%1."\n',
-        stderr: "",
-      };
+    if (args.includes("/ve")) {
+      const command = commandByKey[args[1]];
+      if (command) {
+        return {
+          status: 0,
+          stdout: `    (Default)    REG_SZ    ${command}\n`,
+          stderr: "",
+        };
+      }
+      return { status: 1, stdout: "", stderr: "value not found" };
     }
-    if (
-      args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"
-      || args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command"
-    ) {
-      return { status: 0, stdout: "ok", stderr: "" };
-    }
-    return { status: 1, stdout: "", stderr: "not found" };
+    return present.has(args[1])
+      ? { status: 0, stdout: "ok", stderr: "" }
+      : { status: 1, stdout: "", stderr: "not found" };
   };
 
   assert.equal(
@@ -55,6 +66,15 @@ test("isExplorerContextMenuRegistered checks HKCU and HKLM shell keys", () => {
     true,
   );
   assert.ok(queries.some((args) => args[0] === "query"));
+
+  // Missing background verb => not fully registered.
+  present.delete("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty");
+  present.delete("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command");
+  delete commandByKey["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command"];
+  assert.equal(
+    isExplorerContextMenuRegistered({ platform: "win32", spawnSyncImpl, logWarn: () => {} }),
+    false,
+  );
 });
 
 test("isExplorerContextMenuRegistered ignores bare verb keys without command", () => {
@@ -477,6 +497,70 @@ test("applyInitialExplorerContextMenuPreference skips reg.exe on current schema 
   });
   assert.deepEqual(result, { enabled: true, success: true, supported: true });
   assert.equal(regCalls, 0);
+});
+
+test("applyInitialExplorerContextMenuPreference re-suppresses when preference is disabled", () => {
+  let wrote = null;
+  const present = new Set([
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+  ]);
+  const suppressed = new Set();
+  const fsModule = {
+    existsSync: () => true,
+    readFileSync: () => JSON.stringify({
+      enabled: false,
+      schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+      executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    }),
+    mkdirSync: () => {},
+    writeFileSync: (_path, data) => {
+      wrote = JSON.parse(String(data));
+    },
+  };
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v")) {
+        if (args.includes(SUPPRESSION_VALUE) && suppressed.has(args[1])) {
+          return { status: 0, stdout: "ok", stderr: "" };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1]) || suppressed.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "delete") {
+      present.delete(args[1]);
+      suppressed.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "add") {
+      const valueIdx = args.indexOf("/v");
+      if (valueIdx >= 0 && args[valueIdx + 1] === SUPPRESSION_VALUE) {
+        suppressed.add(args[1]);
+        present.add(args[1]);
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected add" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = applyInitialExplorerContextMenuPreference({
+    app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    platform: "win32",
+    fsModule,
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, false);
+  assert.equal(wrote?.enabled, false);
+  assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"));
+  assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
 });
 
 test("applyInitialExplorerContextMenuPreference re-applies when portable path changes", () => {

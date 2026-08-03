@@ -296,6 +296,14 @@ function hasActiveShellKey(hive, keyPath, options = {}) {
   return typeof command === "string" && command.trim().length > 0;
 }
 
+function isHiveFullyRegistered(hive, options = {}) {
+  // Both folder and folder-background verbs are required for a complete install.
+  return (
+    hasActiveShellKey(hive, DIRECTORY_SHELL_KEY, options)
+    && hasActiveShellKey(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options)
+  );
+}
+
 function isExplorerContextMenuRegistered({
   platform = process.platform,
   spawnSyncImpl = spawnSync,
@@ -305,15 +313,7 @@ function isExplorerContextMenuRegistered({
   const options = { spawnSyncImpl, logWarn };
   // Per-user suppression hides machine registration for this user.
   if (isUserSuppressed(options)) return false;
-  for (const hive of ["HKCU", "HKLM"]) {
-    if (
-      hasActiveShellKey(hive, DIRECTORY_SHELL_KEY, options)
-      || hasActiveShellKey(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options)
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return isHiveFullyRegistered("HKCU", options) || isHiveFullyRegistered("HKLM", options);
 }
 
 function removeExplorerContextMenu({
@@ -395,10 +395,11 @@ function installExplorerContextMenu({
     if (!folderOk || !backgroundOk) writesOk = false;
   }
 
-  // Machine keys that we could not refresh still show the menu (installer path).
-  // Treat that as success so the Settings toggle can stay enabled without elevation.
+  // Success requires both folder and background verbs to be runnable. A partial
+  // machine registration must not be treated as complete, or startup would
+  // persist schemaVersion and never retry the missing verb.
   const enabled = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
-  const success = enabled && (writesOk || machineRegistered);
+  const success = enabled && (writesOk || (machineRegistered && enabled));
 
   return {
     success,
@@ -553,12 +554,14 @@ function applyInitialExplorerContextMenuPreference({
     || !currentExe
     || record.executablePath === currentExe;
 
-  // Healthy warm start: schema + executable path still match last apply.
-  if (schemaCurrent && executableCurrent) {
-    return { enabled: preferred, success: true, supported: true };
+  // Healthy warm start for enabled installs: schema + executable path match.
+  // Disabled preference is never short-circuited: NSIS updates re-create shell
+  // verbs unconditionally, so we must re-assert per-user suppression each launch.
+  if (preferred === true && schemaCurrent && executableCurrent) {
+    return { enabled: true, success: true, supported: true };
   }
 
-  // Schema bump or portable path change: re-apply once and rewrite preference.
+  // Schema bump, portable path change, or disabled preference: re-apply.
   const applied = applyExplorerContextMenuPreference({
     enabled: preferred,
     executablePath: currentExe,
@@ -569,7 +572,8 @@ function applyInitialExplorerContextMenuPreference({
   if (applied.success === true) {
     writeExplorerContextMenuEnabledPreference({
       app,
-      enabled: applied.enabled === true,
+      // Keep the user's intended preference as source of truth.
+      enabled: preferred,
       executablePath: currentExe,
       fsModule,
       pathModule,
@@ -577,7 +581,11 @@ function applyInitialExplorerContextMenuPreference({
     });
   }
   return {
-    enabled: applied.enabled === true,
+    // UI follows the saved preference when apply succeeds; on failure fall back
+    // to the live registry so the toggle stays honest about residual menus.
+    enabled: applied.success === true
+      ? preferred === true
+      : applied.enabled === true,
     success: applied.success === true,
     supported: true,
   };
