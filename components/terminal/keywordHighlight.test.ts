@@ -720,12 +720,16 @@ test("large output delays keyword highlight scans until output quiets", async ()
   }
 });
 
-test("Enter cancels queued scroll pruning before large-output deferral", async () => {
+test("Enter cancels queued scroll work before large-output deferral", async () => {
   const raf = installAnimationFrameQueue();
   try {
-    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
-      lineCount: 40,
-    });
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
     term.buffer.active.viewportY = 20;
     term.buffer.active.baseY = 20;
     term.buffer.active.cursorY = 2;
@@ -740,6 +744,7 @@ test("Enter cancels queued scroll pruning before large-output deferral", async (
     raf.flush();
     const existingDecorations = [...decorationStates];
     assert.ok(existingDecorations.length > 0);
+    resetTranslateCount();
 
     handlers.data?.("\r");
     term.buffer.active.viewportY += 1;
@@ -754,6 +759,7 @@ test("Enter cancels queued scroll pruning before large-output deferral", async (
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
     const disposedDecorationCount = existingDecorations.filter(({ isDisposed }) => isDisposed).length;
+    const translateCountBeforeQuiet = getTranslateCount();
     highlighter.dispose();
     resetTerminalOutputPressure(term as never);
     assert.equal(
@@ -761,6 +767,45 @@ test("Enter cancels queued scroll pruning before large-output deferral", async (
       0,
       "large Enter output should not leave a queued scroll prune behind",
     );
+    assert.equal(translateCountBeforeQuiet, 0, "large output should wait for the quiet catch-up scan");
+  } finally {
+    raf.restore();
+  }
+});
+
+test("continuous Enter output still refreshes highlights periodically", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("no match", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    assert.equal(decorationStates.filter(({ isDisposed }) => !isDisposed).length, 0);
+
+    handlers.data?.("\r");
+    setLineText(22, "DEPLOY");
+    for (let index = 0; index < 20; index += 1) {
+      handlers.writeParsed?.();
+      raf.flush();
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+    }
+
+    assert.ok(
+      decorationStates.some(({ isDisposed }) => !isDisposed),
+      "ongoing output should not postpone new highlights until the stream stops",
+    );
+    highlighter.dispose();
   } finally {
     raf.restore();
   }

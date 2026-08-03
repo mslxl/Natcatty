@@ -174,6 +174,7 @@ export class KeywordHighlighter implements IDisposable {
         if (this.enterInputPending || outputDrivenPendingScroll) {
           this.cancelScrollRefresh();
           if (this.pendingRefreshReason === "scroll") {
+            this.cancelQueuedRefreshSchedule();
             this.pendingRefreshReason = "write";
           }
         }
@@ -210,7 +211,7 @@ export class KeywordHighlighter implements IDisposable {
             this.updateWriteBurst();
             this.markVisibleRangeDirty();
           }
-          this.triggerRefresh("debounced", "write");
+          this.triggerRefresh(inputProtectionActive ? "debounced" : "immediate", "write");
           return;
         }
         this.markDirtyFromWrite();
@@ -1279,6 +1280,9 @@ export class KeywordHighlighter implements IDisposable {
   ): boolean {
     if (mode !== "immediate") return false;
     if (!this.isWriteBurstActive(now)) return false;
+    if (now - this.lastRefreshTime >= KeywordHighlighter.WRITE_BURST_HIGHLIGHT_PAUSE_MS) {
+      return false;
+    }
     return reason === "write";
   }
 
@@ -1419,6 +1423,17 @@ export class KeywordHighlighter implements IDisposable {
   private cancelScrollRefresh() {
     this.scrollRefreshJob = null;
     this.scrollRefreshGeneration += 1;
+  }
+
+  private cancelQueuedRefreshSchedule() {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
   }
 
   private clearLineDecorationsOutsideRange(start: number, end: number) {
