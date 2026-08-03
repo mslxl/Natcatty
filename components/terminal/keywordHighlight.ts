@@ -765,6 +765,9 @@ export class KeywordHighlighter implements IDisposable {
       } else {
         this.lastViewportRange = { start: viewportStart, end: viewportEnd };
         this.lastRenderRange = { start: rangeStart, end: rangeEnd };
+        if (reason === "full" && this.enterViewportScanInProgress) {
+          this.triggerRefresh("debounced", "write");
+        }
       }
     } finally {
       this.flushTerminalRefresh();

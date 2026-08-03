@@ -828,6 +828,49 @@ test("Enter replaces a queued write refresh with input-quiet work", () => {
   }
 });
 
+test("Enter dirty work continues after a queued full refresh", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      setLineText,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const originalDecoration = decorationStates.find(({ line }) => line === 22);
+    assert.ok(originalDecoration);
+
+    handlers.resize?.();
+    handlers.data?.("\r");
+    setLineText(22, "redrawn without a keyword");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 340); });
+    raf.flush();
+
+    const originalDisposed = originalDecoration.isDisposed;
+    highlighter.dispose();
+    assert.equal(
+      originalDisposed,
+      true,
+      "Enter changes should be consumed after a queued full refresh completes",
+    );
+  } finally {
+    raf.restore();
+  }
+});
+
 test("continuous Enter output lets multi-frame refreshes finish", () => {
   const raf = installAnimationFrameQueue();
   try {
