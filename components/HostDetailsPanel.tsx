@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
-import { useApplicationBackend } from "../application/state/useApplicationBackend";
+import { useApplicationBackend, type SshAgentStatus } from "../application/state/useApplicationBackend";
 import { applyGroupDefaults, resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
 import {
   getEffectiveHostDistro,
@@ -192,20 +192,14 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const [newGroupName, setNewGroupName] = useState("");
   const [newGroupParent, setNewGroupParent] = useState("");
 
-  const [sshAgentStatus, setSshAgentStatus] = useState<{
-    running: boolean;
-    startupType: string | null;
-    error: string | null;
-  } | null>(null);
+  const [sshAgentStatus, setSshAgentStatus] = useState<SshAgentStatus | null>(null);
+  const [sshForwardingAgentStatus, setSshForwardingAgentStatus] = useState<SshAgentStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    if (form.agentForwarding || form.useSshAgent === true) {
+    if (form.useSshAgent === true) {
       void checkSshAgent({
-        identityAgent: form.useSshAgent === true || form.agentForwarding
-          ? form.identityAgent
-          : undefined,
-        agentForwarding: form.agentForwarding,
+        identityAgent: form.identityAgent,
         hostname: form.hostname,
         port: form.port,
         username: form.username,
@@ -218,7 +212,27 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     return () => {
       cancelled = true;
     };
-  }, [form.agentForwarding, form.useSshAgent, form.identityAgent, form.hostname, form.port, form.username, checkSshAgent]);
+  }, [form.useSshAgent, form.identityAgent, form.hostname, form.port, form.username, checkSshAgent]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (form.agentForwarding) {
+      void checkSshAgent({
+        identityAgent: form.identityAgent,
+        agentForwarding: true,
+        hostname: form.hostname,
+        port: form.port,
+        username: form.username,
+      }).then((status) => {
+        if (!cancelled) setSshForwardingAgentStatus(status);
+      });
+    } else {
+      setSshForwardingAgentStatus(null);
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [form.agentForwarding, form.identityAgent, form.hostname, form.port, form.username, checkSshAgent]);
 
   const [groupInputValue, setGroupInputValue] = useState(form.group || "");
 
@@ -1053,6 +1067,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           effectiveFontSize={effectiveFontSize}
           hasEffectiveFontSizeOverride={hasEffectiveFontSizeOverride}
           sshAgentStatus={sshAgentStatus}
+          sshForwardingAgentStatus={sshForwardingAgentStatus}
           effectiveGroupDefaults={effectiveGroupDefaults}
           effectiveAuthMethod={effectiveAuthMethod}
           showAlgorithmOverrides={showAlgorithmOverrides}
