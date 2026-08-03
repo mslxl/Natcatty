@@ -353,7 +353,8 @@ async function hashReadable(readable, options = {}) {
 }
 
 function hashLocalPrefix(filePath, bytes, options) {
-  if (!bytes) return Promise.resolve(null);
+  if (!Number.isFinite(bytes) || bytes < 0) return Promise.resolve(null);
+  if (bytes === 0) return Promise.resolve(EMPTY_SHA256_HEX);
   return hashReadable(fs.createReadStream(filePath, { start: 0, end: bytes - 1 }), options);
 }
 
@@ -393,23 +394,72 @@ async function hashRemoteFile(client, sftpId, filePath, encoding, options = {}) 
   );
 }
 
+const EMPTY_SHA256_HEX = crypto.createHash("sha256").update("").digest("hex");
+
+/** @param {number|null|undefined} prefixBytes null = full file; >=0 = bounded prefix (incl. empty). */
+function formatSourceFingerprint(digest, prefixBytes) {
+  if (!digest) return null;
+  if (Number.isFinite(prefixBytes) && prefixBytes >= 0) {
+    return `sha256:p${Math.floor(prefixBytes)}:${digest}`;
+  }
+  return `sha256:${digest}`;
+}
+
+/** Extract the hex digest from legacy `sha256:hex` or versioned `sha256:pN:hex`. */
+function sourceFingerprintDigest(fingerprint) {
+  if (!fingerprint) return null;
+  const match = String(fingerprint).match(/^sha256:(?:p\d+:)?([a-f0-9]{64})$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function isLegacyFullSourceFingerprint(fingerprint) {
+  return /^sha256:[a-f0-9]{64}$/i.test(String(fingerprint || ""));
+}
+
 async function computeSourceFingerprint(
-  { sourceType, sourcePath, sourceSftpId, sourceEncoding },
+  { sourceType, sourcePath, sourceSftpId, sourceEncoding, prefixBytes },
   options = {},
 ) {
-  if (sourceType === "local") return `sha256:${await hashLocalFile(sourcePath, options)}`;
+  // Finite prefixBytes (including 0) means a planned snapshot prefix. Omit / NaN
+  // means hash the whole current source (uploads and legacy full-file paths).
+  const hasBoundedPrefix = Number.isFinite(prefixBytes) && prefixBytes >= 0;
+  const boundedPrefix = hasBoundedPrefix ? Math.floor(prefixBytes) : null;
+  if (sourceType === "local") {
+    if (hasBoundedPrefix) {
+      const digest = await hashLocalPrefix(sourcePath, boundedPrefix, options);
+      return formatSourceFingerprint(digest, boundedPrefix);
+    }
+    return formatSourceFingerprint(await hashLocalFile(sourcePath, options), null);
+  }
   const client = sftpClients.get(sourceSftpId);
   if (!client) throw new Error("Source SFTP session not found");
+  // Remote downloads transfer a fixed snapshot size. Hash only that prefix so
+  // append-only growth (e.g. live log files) does not invalidate resume identity.
+  if (hasBoundedPrefix) {
+    const digest = await hashRemotePrefix(
+      client,
+      sourceSftpId,
+      sourcePath,
+      sourceEncoding,
+      boundedPrefix,
+      options,
+    );
+    return formatSourceFingerprint(digest, boundedPrefix);
+  }
   const digest = await hashRemoteFile(client, sourceSftpId, sourcePath, sourceEncoding, options);
-  return digest ? `sha256:${digest}` : null;
+  return formatSourceFingerprint(digest, null);
 }
 
 function sourceFingerprintsMatch(storedFingerprint, currentFingerprint) {
-  return Boolean(storedFingerprint && currentFingerprint && storedFingerprint === currentFingerprint);
+  const stored = sourceFingerprintDigest(storedFingerprint);
+  const current = sourceFingerprintDigest(currentFingerprint);
+  return Boolean(stored && current && stored === current);
 }
 
 async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes, options) {
-  if (!bytes) return null;
+  if (!Number.isFinite(bytes) || bytes < 0) return null;
+  // Empty planned snapshot: fixed empty digest (no stream open required).
+  if (bytes === 0) return EMPTY_SHA256_HEX;
   if (isScpModeClient(client)) return null;
   await requireSftpChannel(client, { signal: options?.signal });
   const encodedPath = encodePathForSession(sftpId, filePath, encoding);
@@ -2200,10 +2250,15 @@ async function readVerifiedUploadRange(
 /**
  * Reject when the source identity is no longer safe to trust.
  *
- * Size always fails hard. Timestamp / inode fields are only a *cheap early
- * reject* when we have no separate content proof (e.g. remote download with no
- * digest). When a digest baseline already verifies bytes — or every range was
- * already verified against one — treat metadata as soft:
+ * Size always fails hard for shrinks. Growth is optional for download snapshots:
+ * append-only files (live logs) grow while we still hold a valid [0, N) copy.
+ * Growth alone is *not* proof of append-only — an in-place rewrite/rotate can
+ * also enlarge the file. Callers must verify the planned prefix (or pass
+ * contentVerifiedSeparately) before accepting growth.
+ * Timestamp / inode fields are only a *cheap early reject* when we have no
+ * separate content proof (e.g. remote download with no digest). When a digest
+ * baseline already verifies bytes — or every range was already verified against
+ * one — treat metadata as soft:
  * macOS routinely bumps ctime for xattr / quarantine / Spotlight without
  * rewriting file data, and repeated pause/resume makes long uploads much more
  * likely to hit that drift right at the finish revalidation.
@@ -2211,12 +2266,28 @@ async function readVerifiedUploadRange(
  * @param {object|null|undefined} initialSource
  * @param {object|null|undefined} latestSource
  * @param {number} expectedSize
- * @param {{ contentVerifiedSeparately?: boolean }} [options]
+ * @param {{ contentVerifiedSeparately?: boolean, allowSourceGrowth?: boolean }} [options]
  */
 function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, options = {}) {
   const latestSize = Number(latestSource?.size);
-  if (latestSize !== expectedSize) {
+  if (!Number.isFinite(latestSize)) {
     throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize < expectedSize) {
+    throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize > expectedSize) {
+    if (!options.allowSourceGrowth) {
+      throw createSourceSizeChangedError(expectedSize, latestSize);
+    }
+    // Growth without a separate prefix proof is indistinguishable from an
+    // in-place rewrite that also enlarged the file. Callers must hash the
+    // planned [0, expectedSize) range first, then pass contentVerifiedSeparately.
+    if (!options.contentVerifiedSeparately) {
+      throw createSourceContentChangedError();
+    }
+    // Append writers always bump mtime/ctime; skip soft metadata after content proof.
+    return;
   }
   if (options.contentVerifiedSeparately) {
     return;
@@ -2232,6 +2303,87 @@ function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize
   if (changed) {
     throw createSourceContentChangedError();
   }
+}
+
+/**
+ * Prove the staged local download still matches remote [0, prefixBytes).
+ * Required before accepting remote source growth as append-only.
+ *
+ * @param {string} localPath
+ * @param {object} client
+ * @param {string} remotePath session-encoded remote path used by the download
+ * @param {number} prefixBytes planned snapshot size
+ * @param {{ signal?: AbortSignal, onProgress?: (n: number) => void }} [options]
+ */
+async function assertLocalDownloadMatchesRemotePrefix(
+  localPath,
+  client,
+  remotePath,
+  prefixBytes,
+  options = {},
+) {
+  if (!(prefixBytes > 0)) return;
+  if (isScpModeClient(client)) {
+    // SCP cannot range-hash portably; fail closed when growth needs proof.
+    throw createSourceContentChangedError();
+  }
+  await requireSftpChannel(client, { signal: options.signal });
+  if (typeof client.sftp?.createReadStream !== "function") {
+    throw createSourceContentChangedError();
+  }
+  const [localHash, remoteHash] = await Promise.all([
+    hashLocalFile(localPath, options),
+    hashReadable(
+      client.sftp.createReadStream(remotePath, {
+        start: 0,
+        end: prefixBytes - 1,
+      }),
+      options,
+    ),
+  ]);
+  if (!localHash || !remoteHash || localHash !== remoteHash) {
+    throw createSourceContentChangedError();
+  }
+}
+
+/**
+ * Finish-path source check for downloads. Accepts append-only growth only after
+ * the full planned prefix is proven intact against the staged local file.
+ */
+async function assertDownloadSourceAfterTransfer(
+  initialSource,
+  latestSource,
+  expectedSize,
+  {
+    localPath,
+    client,
+    remotePath,
+    signal,
+  } = {},
+) {
+  if (!initialSource) return;
+  const latestSize = Number(latestSource?.size);
+  if (!Number.isFinite(latestSize)) {
+    throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize < expectedSize) {
+    throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize > expectedSize) {
+    await assertLocalDownloadMatchesRemotePrefix(
+      localPath,
+      client,
+      remotePath,
+      expectedSize,
+      { signal },
+    );
+    assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, {
+      allowSourceGrowth: true,
+      contentVerifiedSeparately: true,
+    });
+    return;
+  }
+  assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize);
 }
 
 async function runPausableConcurrentRanges({
@@ -2786,7 +2938,14 @@ async function downloadFile(
             sendProgress,
           );
           const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+          // Downloads capture a fixed snapshot; remote appends (live logs) are OK
+          // only when the full planned prefix still matches the staged file.
+          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+            localPath,
+            client,
+            remotePath,
+            signal: transfer.signal,
+          });
           releaseIsolatedDownloadChannel(client, fastSftp);
           return;
         }
@@ -2843,7 +3002,12 @@ async function downloadFile(
         if (err?.noTransferFallback) throw err;
         if (err?.completedWithUnhealthyChannel) {
           const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+            localPath,
+            client,
+            remotePath,
+            signal: transfer.signal,
+          });
           return;
         }
         // Concurrent ranges may leave sparse tails past the contiguous
@@ -2869,64 +3033,87 @@ async function downloadFile(
   }
 
   // Fallback: sequential stream piping
-  await new Promise((resolve, reject) => {
-    const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-    const readStream = sftp.createReadStream(remotePath, { highWaterMark: TRANSFER_CHUNK_SIZE, start: checkpoint });
-    const writeStream = fs.createWriteStream(localPath, {
-      highWaterMark: TRANSFER_CHUNK_SIZE,
-      flags: checkpoint > 0 ? "r+" : "w",
-      start: checkpoint,
-    });
-    let transferred = checkpoint;
-    let finished = false;
-
-    transfer.readStream = readStream;
-    transfer.writeStream = writeStream;
-    if (transfer.paused) {
-      try { readStream.pause(); } catch { }
-      transfer.streamsUnpiped = true;
-    } else {
-      readStream.pipe(writeStream);
-      transfer.streamsUnpiped = false;
+  const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  if (checkpoint >= fileSize) {
+    // Planned snapshot is already fully staged (including zero-byte snapshots).
+    // Do not open a source stream at EOF — an unbounded read would pull any
+    // append tail and fail the transferred === fileSize finish check.
+    if (fileSize === 0) {
+      await fs.promises.writeFile(localPath, Buffer.alloc(0));
     }
+    sendProgress(fileSize, fileSize, { force: true, checkpointBytes: fileSize });
+  } else {
+    await new Promise((resolve, reject) => {
+      // Bound the stream to the preflight snapshot so live appends (logs) cannot
+      // push transferred bytes past the planned size and fail the finish check.
+      // fileSize > checkpoint here, so end is always defined for a non-empty plan.
+      const streamOptions = {
+        highWaterMark: TRANSFER_CHUNK_SIZE,
+        start: checkpoint,
+        end: fileSize - 1,
+      };
+      const readStream = sftp.createReadStream(remotePath, streamOptions);
+      const writeStream = fs.createWriteStream(localPath, {
+        highWaterMark: TRANSFER_CHUNK_SIZE,
+        flags: checkpoint > 0 ? "r+" : "w",
+        start: checkpoint,
+      });
+      let transferred = checkpoint;
+      let finished = false;
 
-    const cleanup = (err) => {
-      if (finished) return;
-      finished = true;
-      readStream.removeAllListeners();
-      writeStream.removeAllListeners();
-      if (err) {
-        try { readStream.destroy(); } catch { }
-        try { writeStream.destroy(); } catch { }
-        reject(err);
+      transfer.readStream = readStream;
+      transfer.writeStream = writeStream;
+      if (transfer.paused) {
+        try { readStream.pause(); } catch { }
+        transfer.streamsUnpiped = true;
       } else {
-        resolve();
+        readStream.pipe(writeStream);
+        transfer.streamsUnpiped = false;
       }
-    };
 
-    readStream.on('data', (chunk) => {
-      if (transfer.cancelled) { cleanup(new Error('Transfer cancelled')); return; }
-      transferred += chunk.length;
-      sendProgress(transferred, fileSize);
+      const cleanup = (err) => {
+        if (finished) return;
+        finished = true;
+        readStream.removeAllListeners();
+        writeStream.removeAllListeners();
+        if (err) {
+          try { readStream.destroy(); } catch { }
+          try { writeStream.destroy(); } catch { }
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      readStream.on('data', (chunk) => {
+        if (transfer.cancelled) { cleanup(new Error('Transfer cancelled')); return; }
+        transferred += chunk.length;
+        sendProgress(transferred, fileSize);
+      });
+      readStream.on('error', cleanup);
+      writeStream.on('error', cleanup);
+      writeStream.on('finish', () => {
+        if (transfer.cancelled) {
+          cleanup(new Error('Transfer cancelled'));
+        } else if (!readStream.readableEnded || transferred !== fileSize) {
+          cleanup(new Error('Download stream finished before the full source was received'));
+        } else {
+          cleanup(null);
+        }
+      });
+      writeStream.on('close', () => {
+        if (transfer.cancelled) cleanup(new Error('Transfer cancelled'));
+      });
     });
-    readStream.on('error', cleanup);
-    writeStream.on('error', cleanup);
-    writeStream.on('finish', () => {
-      if (transfer.cancelled) {
-        cleanup(new Error('Transfer cancelled'));
-      } else if (!readStream.readableEnded || transferred !== fileSize) {
-        cleanup(new Error('Download stream finished before the full source was received'));
-      } else {
-        cleanup(null);
-      }
-    });
-    writeStream.on('close', () => {
-      if (transfer.cancelled) cleanup(new Error('Transfer cancelled'));
-    });
-  });
+  }
   if (initialSource) {
     const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-    assertSourceMetadataUnchanged(initialSource, latestSource, fileSize);
+    await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+      localPath,
+      client,
+      remotePath,
+      signal: transfer.signal,
+    });
   }
 }
 
@@ -3247,12 +3434,22 @@ async function startTransferNow(event, payload, onProgress) {
     transfer.phase = "verifying";
     transfer.publishCurrentProgress?.();
     try {
+      // Remote downloads transfer a fixed snapshot (including empty). Fingerprint
+      // only that prefix so append-only growth does not break pause/resume identity.
+      const plannedRemoteBytes = sourceType === "sftp"
+        ? Math.max(
+          0,
+          Number.isFinite(transfer.totalBytes) ? Number(transfer.totalBytes) : 0,
+          Number.isFinite(lastObservedTotal) ? Number(lastObservedTotal) : 0,
+        )
+        : null;
       return await runTransferAbortableOperation(transfer, (signal) => computeSourceFingerprint(
         {
           sourceType,
           sourcePath,
           sourceSftpId,
           sourceEncoding,
+          ...(plannedRemoteBytes !== null ? { prefixBytes: plannedRemoteBytes } : {}),
         },
         {
           signal,
@@ -3278,9 +3475,26 @@ async function startTransferNow(event, payload, onProgress) {
 
   transfer.verifySourceFingerprint = async (storedFingerprint) => {
     const currentFingerprint = await computeVisibleSourceFingerprint();
-    if (!sourceFingerprintsMatch(storedFingerprint, currentFingerprint)) {
-      throw new Error("Resume safety check failed: the source file has changed");
+    if (sourceFingerprintsMatch(storedFingerprint, currentFingerprint)) return;
+    // Older builds stored full-file digests as bare `sha256:<hex>` even after the
+    // remote had already grown past the planned snapshot. Prefer the planned
+    // prefix above; fall back to a full-file check so those tasks still resume
+    // when the entire remote content still matches the saved digest.
+    if (sourceType === "sftp" && isLegacyFullSourceFingerprint(storedFingerprint)) {
+      const fullFingerprint = await runTransferAbortableOperation(transfer, (signal) => (
+        computeSourceFingerprint(
+          {
+            sourceType,
+            sourcePath,
+            sourceSftpId,
+            sourceEncoding,
+          },
+          { signal },
+        )
+      ));
+      if (sourceFingerprintsMatch(storedFingerprint, fullFingerprint)) return;
     }
+    throw new Error("Resume safety check failed: the source file has changed");
   };
 
   /**
@@ -3353,23 +3567,39 @@ async function startTransferNow(event, payload, onProgress) {
       Number(lastObservedTotal) || 0,
     );
     const current = await readSourceSoftIdentity();
-    if (expectedSize > 0 && current.size !== expectedSize) {
-      throw new Error("Resume safety check failed: the source file has changed");
+    // Remote sources may grow append-only (live logs). Local upload sources must
+    // stay exact — growth means the remaining payload changed.
+    const allowSourceGrowth = sourceType === "sftp";
+    if (expectedSize > 0) {
+      if (current.size < expectedSize) {
+        throw new Error("Resume safety check failed: the source file has changed");
+      }
+      if (current.size > expectedSize && !allowSourceGrowth) {
+        throw new Error("Resume safety check failed: the source file has changed");
+      }
     }
-    const expectedMtime = transfer.sourceSoftIdentity?.mtimeMs;
-    if (
-      Number.isFinite(expectedMtime)
-      && Number.isFinite(current.mtimeMs)
-      && current.mtimeMs !== expectedMtime
-    ) {
-      throw new Error("Resume safety check failed: the source file has changed");
+    // Append growth always bumps mtime; only enforce mtime when size is stable.
+    if (!(allowSourceGrowth && expectedSize > 0 && current.size > expectedSize)) {
+      const expectedMtime = transfer.sourceSoftIdentity?.mtimeMs;
+      if (
+        Number.isFinite(expectedMtime)
+        && Number.isFinite(current.mtimeMs)
+        && current.mtimeMs !== expectedMtime
+      ) {
+        throw new Error("Resume safety check failed: the source file has changed");
+      }
     }
     const expectedSample = transfer.sourceSoftIdentity?.sample;
     if (expectedSample && current.sample && current.sample !== expectedSample) {
       throw new Error("Resume safety check failed: the source file has changed");
     }
     // Refresh baseline for a later pause/resume cycle in this same stream.
-    transfer.sourceSoftIdentity = current;
+    // Keep the original snapshot size so later growth still compares to the
+    // transfer plan, not the expanded remote size.
+    transfer.sourceSoftIdentity = {
+      ...current,
+      size: expectedSize > 0 ? expectedSize : current.size,
+    };
   };
 
   transfer.captureSourceFingerprint = () => {
@@ -3494,9 +3724,13 @@ async function startTransferNow(event, payload, onProgress) {
   };
 
   try {
-    let fileSize = totalBytes || 0;
+    // Explicit 0 is a valid empty-snapshot plan (e.g. download of an empty log
+    // that may grow later). Do not treat it as "size unknown" and re-stat into
+    // a grown remote size.
+    const hasExplicitTotal = Number.isFinite(totalBytes) && totalBytes >= 0;
+    let fileSize = hasExplicitTotal ? Math.max(0, Number(totalBytes)) : 0;
 
-    if (!fileSize) {
+    if (!hasExplicitTotal) {
       if (sourceType === 'local') {
         const stat = await fs.promises.stat(sourcePath);
         fileSize = stat.size;
@@ -3519,6 +3753,9 @@ async function startTransferNow(event, payload, onProgress) {
         }
       }
     }
+    // Keep the planned snapshot size on the transfer so pause-time fingerprints
+    // and soft resume compare against the original plan, not a grown remote.
+    transfer.totalBytes = fileSize;
 
     // Baseline for soft resume (size + mtime + head sample). Full SHA-256 remains
     // for hard reconnect / crash recovery.
@@ -5069,4 +5306,6 @@ module.exports = {
   _getActiveTransferCountForTests: () => activeTransfers.size,
   _execSshCommandCancellableForTests: execSshCommandCancellable,
   _assertSourceMetadataUnchangedForTests: assertSourceMetadataUnchanged,
+  _assertDownloadSourceAfterTransferForTests: assertDownloadSourceAfterTransfer,
+  _assertLocalDownloadMatchesRemotePrefixForTests: assertLocalDownloadMatchesRemotePrefix,
 };

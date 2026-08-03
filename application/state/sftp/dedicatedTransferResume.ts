@@ -664,10 +664,13 @@ async function resumeSingleFileWithDedicatedSession(
               : null;
           if (!sourceStat) throw new Error("Source is unavailable");
           {
+            // Remote download sources may grow append-only (live logs); keep the
+            // planned snapshot size and existing checkpoint instead of restarting.
+            const allowSourceGrowth = sourceType === "sftp";
             const validationError = validateTransferResumeSource(task, {
               size: sourceStat.size,
               lastModified: sourceStat.lastModified,
-            });
+            }, { allowSourceGrowth });
             const classified = classifyResumeSourceValidationError(validationError);
             if (classified.kind === "modified") {
               const err = new Error(classified.message || validationError || "Source modified");
@@ -693,7 +696,9 @@ async function resumeSingleFileWithDedicatedSession(
             targetSftpId,
             sourceHostId: endpoints.sourceHost?.id,
             targetHostId: endpoints.targetHost?.id,
-            totalBytes: task.totalBytes || undefined,
+            totalBytes: Number.isFinite(task.totalBytes)
+              ? task.totalBytes
+              : undefined,
             resumable: task.resumable !== false,
             checkpointBytes: task.checkpointBytes ?? task.transferredBytes ?? 0,
             resumeStage: task.resumeStage,
@@ -1032,6 +1037,9 @@ async function resumeDirectoryWithDedicatedSession(
         const planned = traversal.files;
         totalFiles = planned.length;
         const hasCompactCheckpoint = isValidDirectoryResumeCheckpoint(parent.directoryResumeCheckpoint);
+        // Compact identities keep size+mtime so a rewrite/truncate fails closed.
+        // Append-only growth of an already-covered remote file invalidates the
+        // prefix and retransfers those entries — safer than path-only proofs.
         const compactCheckpointValid = hasCompactCheckpoint
           && await validateDirectoryResumeCheckpoint(parent, planned);
         if (
@@ -1110,6 +1118,15 @@ async function resumeDirectoryWithDedicatedSession(
             const childId = persisted?.id ?? crypto.randomUUID();
             const resetPersistedCheckpoint = resetReplaceStage
               || (hasCompactCheckpoint && !compactCheckpointValid);
+            // Prefer the original planned snapshot size for interrupted download
+            // children. Fresh traversal `file.size` may already include appends
+            // (live logs); re-planning to the grown size breaks growth-aware
+            // resume validation and restarts the file incorrectly.
+            const plannedTotalBytes = !resetPersistedCheckpoint
+              && endpoints.isDownload
+              && Number.isFinite(persisted?.totalBytes)
+              ? Math.max(0, Number(persisted?.totalBytes) || 0)
+              : (file.size || persisted?.totalBytes || 0);
             let childBase: TransferTask = {
               ...parent,
               ...persisted,
@@ -1123,7 +1140,7 @@ async function resumeDirectoryWithDedicatedSession(
               progressMode: "bytes",
               ownerId: "dedicated-resume",
               status: "transferring",
-              totalBytes: file.size || persisted?.totalBytes || 0,
+              totalBytes: plannedTotalBytes,
               transferredBytes: resetPersistedCheckpoint
                 ? 0
                 : (persisted?.checkpointBytes ?? persisted?.transferredBytes ?? 0),
@@ -1168,10 +1185,11 @@ async function resumeDirectoryWithDedicatedSession(
               if (!sourceStat) {
                 throw new Error("Source is unavailable");
               }
+              const allowSourceGrowth = sourceType === "sftp";
               const validationError = validateTransferResumeSource(childBase, {
                 size: sourceStat.size,
                 lastModified: sourceStat.lastModified,
-              });
+              }, { allowSourceGrowth });
               const classified = classifyResumeSourceValidationError(validationError);
               if (classified.kind === "restart") {
                 childBase = {
@@ -1196,10 +1214,21 @@ async function resumeDirectoryWithDedicatedSession(
               } else if (classified.kind === "fatal") {
                 throw new Error(classified.message || validationError || "Resume validation failed");
               } else {
+                // Keep the planned snapshot size for growing remote downloads so
+                // we do not re-plan the whole file mid-resume. Preserve explicit
+                // zero-byte plans (`||` would incorrectly promote to grown size).
+                const plannedBytes = Number(childBase.totalBytes);
+                const hasPlannedBytes = Number.isFinite(plannedBytes) && plannedBytes >= 0;
                 childBase = {
                   ...childBase,
-                  totalBytes: sourceStat.size || childBase.totalBytes,
-                  sourceLastModified: sourceStat.lastModified ?? childBase.sourceLastModified,
+                  totalBytes: allowSourceGrowth
+                    ? (hasPlannedBytes ? plannedBytes : sourceStat.size)
+                    : (sourceStat.size || childBase.totalBytes),
+                  sourceLastModified: allowSourceGrowth
+                    && hasPlannedBytes
+                    && sourceStat.size > plannedBytes
+                    ? (childBase.sourceLastModified ?? sourceStat.lastModified)
+                    : (sourceStat.lastModified ?? childBase.sourceLastModified),
                 };
               }
 
@@ -1217,7 +1246,9 @@ async function resumeDirectoryWithDedicatedSession(
                 targetSftpId,
                 sourceHostId: endpoints.sourceHost?.id,
                 targetHostId: endpoints.targetHost?.id,
-                totalBytes: childBase.totalBytes || file.size || undefined,
+                totalBytes: Number.isFinite(childBase.totalBytes)
+                  ? childBase.totalBytes
+                  : (file.size || undefined),
                 resumable: parent.resumable !== false,
                 checkpointBytes: childBase.checkpointBytes ?? 0,
                 resumeStage: childBase.resumeStage,
@@ -1235,7 +1266,9 @@ async function resumeDirectoryWithDedicatedSession(
               options?.onChildUpdate?.({
                 ...childBase,
                 status: "completed",
-                transferredBytes: childBase.totalBytes || file.size || childBase.transferredBytes,
+                transferredBytes: Number.isFinite(childBase.totalBytes)
+                  ? childBase.totalBytes
+                  : (file.size || childBase.transferredBytes),
                 speed: 0,
                 endTime: Date.now(),
                 error: undefined,

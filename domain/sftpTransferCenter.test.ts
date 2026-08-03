@@ -150,6 +150,49 @@ test("resume rejects changed or shortened source files", () => {
   assert.match(validateTransferResumeSource(resumable, { size: 90, lastModified: 50 }) ?? "", /size changed/);
   assert.match(validateTransferResumeSource(resumable, { size: 100, lastModified: 51 }) ?? "", /modified/);
   assert.match(validateTransferResumeSource(resumable, { size: 40, lastModified: 50 }) ?? "", /checkpoint/);
+  // Upload sources still reject growth.
+  assert.match(validateTransferResumeSource(resumable, { size: 120, lastModified: 50 }) ?? "", /size changed/);
+  // Download snapshots of append-only files may grow; mtime drift is then expected.
+  assert.equal(
+    validateTransferResumeSource(
+      resumable,
+      { size: 120, lastModified: 51 },
+      { allowSourceGrowth: true },
+    ),
+    null,
+  );
+  // Shrink remains unsafe even when growth is allowed.
+  assert.match(
+    validateTransferResumeSource(
+      resumable,
+      { size: 90, lastModified: 50 },
+      { allowSourceGrowth: true },
+    ) ?? "",
+    /size changed/,
+  );
+  // Explicit zero-byte download snapshots may also grow (empty log → first lines).
+  const emptyPlan = {
+    ...task("empty", "interrupted", 1),
+    totalBytes: 0,
+    sourceLastModified: 50,
+    checkpointBytes: 0,
+  };
+  assert.equal(
+    validateTransferResumeSource(
+      emptyPlan,
+      { size: 40, lastModified: 51 },
+      { allowSourceGrowth: true },
+    ),
+    null,
+  );
+  assert.match(
+    validateTransferResumeSource(
+      emptyPlan,
+      { size: 0, lastModified: 51 },
+      { allowSourceGrowth: true },
+    ) ?? "",
+    /modified/,
+  );
 });
 
 test("prune upgrades legacy completed children into the parent checkpoint", () => {
