@@ -353,7 +353,8 @@ async function hashReadable(readable, options = {}) {
 }
 
 function hashLocalPrefix(filePath, bytes, options) {
-  if (!bytes) return Promise.resolve(null);
+  if (!Number.isFinite(bytes) || bytes < 0) return Promise.resolve(null);
+  if (bytes === 0) return Promise.resolve(EMPTY_SHA256_HEX);
   return hashReadable(fs.createReadStream(filePath, { start: 0, end: bytes - 1 }), options);
 }
 
@@ -393,25 +394,48 @@ async function hashRemoteFile(client, sftpId, filePath, encoding, options = {}) 
   );
 }
 
+const EMPTY_SHA256_HEX = crypto.createHash("sha256").update("").digest("hex");
+
+/** @param {number|null|undefined} prefixBytes null = full file; >=0 = bounded prefix (incl. empty). */
+function formatSourceFingerprint(digest, prefixBytes) {
+  if (!digest) return null;
+  if (Number.isFinite(prefixBytes) && prefixBytes >= 0) {
+    return `sha256:p${Math.floor(prefixBytes)}:${digest}`;
+  }
+  return `sha256:${digest}`;
+}
+
+/** Extract the hex digest from legacy `sha256:hex` or versioned `sha256:pN:hex`. */
+function sourceFingerprintDigest(fingerprint) {
+  if (!fingerprint) return null;
+  const match = String(fingerprint).match(/^sha256:(?:p\d+:)?([a-f0-9]{64})$/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+function isLegacyFullSourceFingerprint(fingerprint) {
+  return /^sha256:[a-f0-9]{64}$/i.test(String(fingerprint || ""));
+}
+
 async function computeSourceFingerprint(
   { sourceType, sourcePath, sourceSftpId, sourceEncoding, prefixBytes },
   options = {},
 ) {
-  const boundedPrefix = Number.isFinite(prefixBytes) && prefixBytes > 0
-    ? Math.floor(prefixBytes)
-    : 0;
+  // Finite prefixBytes (including 0) means a planned snapshot prefix. Omit / NaN
+  // means hash the whole current source (uploads and legacy full-file paths).
+  const hasBoundedPrefix = Number.isFinite(prefixBytes) && prefixBytes >= 0;
+  const boundedPrefix = hasBoundedPrefix ? Math.floor(prefixBytes) : null;
   if (sourceType === "local") {
-    if (boundedPrefix > 0) {
+    if (hasBoundedPrefix) {
       const digest = await hashLocalPrefix(sourcePath, boundedPrefix, options);
-      return digest ? `sha256:${digest}` : null;
+      return formatSourceFingerprint(digest, boundedPrefix);
     }
-    return `sha256:${await hashLocalFile(sourcePath, options)}`;
+    return formatSourceFingerprint(await hashLocalFile(sourcePath, options), null);
   }
   const client = sftpClients.get(sourceSftpId);
   if (!client) throw new Error("Source SFTP session not found");
   // Remote downloads transfer a fixed snapshot size. Hash only that prefix so
   // append-only growth (e.g. live log files) does not invalidate resume identity.
-  if (boundedPrefix > 0) {
+  if (hasBoundedPrefix) {
     const digest = await hashRemotePrefix(
       client,
       sourceSftpId,
@@ -420,18 +444,22 @@ async function computeSourceFingerprint(
       boundedPrefix,
       options,
     );
-    return digest ? `sha256:${digest}` : null;
+    return formatSourceFingerprint(digest, boundedPrefix);
   }
   const digest = await hashRemoteFile(client, sourceSftpId, sourcePath, sourceEncoding, options);
-  return digest ? `sha256:${digest}` : null;
+  return formatSourceFingerprint(digest, null);
 }
 
 function sourceFingerprintsMatch(storedFingerprint, currentFingerprint) {
-  return Boolean(storedFingerprint && currentFingerprint && storedFingerprint === currentFingerprint);
+  const stored = sourceFingerprintDigest(storedFingerprint);
+  const current = sourceFingerprintDigest(currentFingerprint);
+  return Boolean(stored && current && stored === current);
 }
 
 async function hashRemotePrefix(client, sftpId, filePath, encoding, bytes, options) {
-  if (!bytes) return null;
+  if (!Number.isFinite(bytes) || bytes < 0) return null;
+  // Empty planned snapshot: fixed empty digest (no stream open required).
+  if (bytes === 0) return EMPTY_SHA256_HEX;
   if (isScpModeClient(client)) return null;
   await requireSftpChannel(client, { signal: options?.signal });
   const encodedPath = encodePathForSession(sftpId, filePath, encoding);
@@ -3406,22 +3434,22 @@ async function startTransferNow(event, payload, onProgress) {
     transfer.phase = "verifying";
     transfer.publishCurrentProgress?.();
     try {
-      // Remote downloads transfer a fixed snapshot. Fingerprint only that prefix
-      // so append-only growth does not break pause/resume identity.
-      const snapshotBytes = sourceType === "sftp"
+      // Remote downloads transfer a fixed snapshot (including empty). Fingerprint
+      // only that prefix so append-only growth does not break pause/resume identity.
+      const plannedRemoteBytes = sourceType === "sftp"
         ? Math.max(
           0,
-          Number(transfer.totalBytes) || 0,
-          Number(lastObservedTotal) || 0,
+          Number.isFinite(transfer.totalBytes) ? Number(transfer.totalBytes) : 0,
+          Number.isFinite(lastObservedTotal) ? Number(lastObservedTotal) : 0,
         )
-        : 0;
+        : null;
       return await runTransferAbortableOperation(transfer, (signal) => computeSourceFingerprint(
         {
           sourceType,
           sourcePath,
           sourceSftpId,
           sourceEncoding,
-          ...(snapshotBytes > 0 ? { prefixBytes: snapshotBytes } : {}),
+          ...(plannedRemoteBytes !== null ? { prefixBytes: plannedRemoteBytes } : {}),
         },
         {
           signal,
@@ -3447,9 +3475,26 @@ async function startTransferNow(event, payload, onProgress) {
 
   transfer.verifySourceFingerprint = async (storedFingerprint) => {
     const currentFingerprint = await computeVisibleSourceFingerprint();
-    if (!sourceFingerprintsMatch(storedFingerprint, currentFingerprint)) {
-      throw new Error("Resume safety check failed: the source file has changed");
+    if (sourceFingerprintsMatch(storedFingerprint, currentFingerprint)) return;
+    // Older builds stored full-file digests as bare `sha256:<hex>` even after the
+    // remote had already grown past the planned snapshot. Prefer the planned
+    // prefix above; fall back to a full-file check so those tasks still resume
+    // when the entire remote content still matches the saved digest.
+    if (sourceType === "sftp" && isLegacyFullSourceFingerprint(storedFingerprint)) {
+      const fullFingerprint = await runTransferAbortableOperation(transfer, (signal) => (
+        computeSourceFingerprint(
+          {
+            sourceType,
+            sourcePath,
+            sourceSftpId,
+            sourceEncoding,
+          },
+          { signal },
+        )
+      ));
+      if (sourceFingerprintsMatch(storedFingerprint, fullFingerprint)) return;
     }
+    throw new Error("Resume safety check failed: the source file has changed");
   };
 
   /**

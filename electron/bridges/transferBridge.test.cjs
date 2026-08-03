@@ -1611,7 +1611,9 @@ test("remote pause identity rejects a same-size source rewrite", async (t) => {
 
   const paused = await transferBridge.pauseTransfer(null, { transferId: "download-modifytime-id" });
   assert.equal(paused.success, true);
-  const expectedFingerprint = `sha256:${crypto.createHash("sha256").update(payload).digest("hex")}`;
+  const digest = crypto.createHash("sha256").update(payload).digest("hex");
+  // Remote download fingerprints are versioned with planned prefix coverage.
+  const expectedFingerprint = `sha256:p${payload.length}:${digest}`;
   const fingerprintPublished = await waitUntil(() => sender.sent.some((entry) => (
     entry.channel === "netcatty:transfer:progress"
     && entry.payload.sourceFingerprint === expectedFingerprint
