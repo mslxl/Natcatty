@@ -18,20 +18,28 @@ import {
 type RafCallback = (time: number) => void;
 
 function installAnimationFrameQueue() {
-  const callbacks: RafCallback[] = [];
+  const callbacks = new Map<number, RafCallback>();
+  let nextId = 1;
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
   globalThis.requestAnimationFrame = ((callback: RafCallback) => {
-    callbacks.push(callback);
-    return callbacks.length;
+    const id = nextId;
+    nextId += 1;
+    callbacks.set(id, callback);
+    return id;
   }) as typeof requestAnimationFrame;
-  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number) => {
+    callbacks.delete(id);
+  }) as typeof cancelAnimationFrame;
 
   return {
     flush() {
-      while (callbacks.length > 0) {
-        callbacks.shift()?.(performance.now());
+      while (callbacks.size > 0) {
+        const next = callbacks.entries().next().value as [number, RafCallback] | undefined;
+        if (!next) break;
+        callbacks.delete(next[0]);
+        next[1](performance.now());
       }
     },
     restore() {
@@ -768,6 +776,48 @@ test("Enter cancels queued scroll work before large-output deferral", async () =
       "large Enter output should not leave a queued scroll prune behind",
     );
     assert.equal(translateCountBeforeQuiet, 0, "large output should wait for the quiet catch-up scan");
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter replaces a queued write refresh with input-quiet work", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetTranslateCount();
+
+    const internals = highlighter as unknown as { lastRefreshTime: number };
+    internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+    handlers.writeParsed?.();
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    resetTranslateCount();
+    raf.flush();
+
+    assert.equal(
+      getTranslateCount(),
+      0,
+      "the pre-Enter write frame should not scan during the input quiet window",
+    );
+    highlighter.dispose();
   } finally {
     raf.restore();
   }

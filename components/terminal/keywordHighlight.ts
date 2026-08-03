@@ -173,11 +173,16 @@ export class KeywordHighlighter implements IDisposable {
           && (
             this.hasOutputPositionChangedSinceLastSnapshot()
             || this.hasDecorationMarkerShiftSinceLastRefresh()
-          );
+        );
         if (this.enterInputPending || outputDrivenPendingScroll) {
           this.cancelScrollRefresh();
-          if (this.pendingRefreshReason === "scroll") {
+          if (
+            this.pendingRefreshReason === "scroll"
+            || (this.enterInputPending && this.pendingRefreshReason === "write")
+          ) {
             this.cancelQueuedRefreshSchedule();
+          }
+          if (this.pendingRefreshReason === "scroll") {
             this.pendingRefreshReason = "write";
           }
         }
