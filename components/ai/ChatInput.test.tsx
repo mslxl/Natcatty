@@ -62,6 +62,13 @@ test('expanded composer grows the text area while keeping controls at the bottom
   assert.doesNotMatch(source, /setExpanded/);
 });
 
+test('composer resizing also ends when pointer capture is unexpectedly lost', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /resizeStartRef\.current = null;[\s\S]*releasePointerCapture/);
+  assert.match(source, /onLostPointerCapture=\{handleComposerResizeEnd\}/);
+});
+
 test('virtualizes the host mention list without changing its option contract', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
 

@@ -90,6 +90,7 @@ import {
   listInvalidSftpPanelTabIds,
   listTerminalTabIdsWithRetainingTransfers,
   resolveSftpActiveTransfersCount,
+  shouldCloseSftpSidePanel,
   shouldClearSftpPanelAfterTransferChange,
   shouldKeepSftpMountedAfterClose,
   shouldScheduleSftpRetainedPanelCleanup,
@@ -107,6 +108,7 @@ import { shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
 import {
+  collectSidePanelPanes,
   sidePanelLayoutHasTool,
   type SidePanelSplitDirection,
 } from '../domain/sidePanelLayout';
@@ -720,7 +722,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       && currentHost.sftpSudo === host.sftpSudo
       && (currentHost.sftpFileProtocol || "auto") === (host.sftpFileProtocol || "auto");
 
-    const isClosing = !shouldKeepOpen && isOpen && isSameEndpoint;
+    const currentLayout = sidePanelLayoutsRef.current.get(tabId);
+    const paneCount = currentLayout
+      ? collectSidePanelPanes(currentLayout.root).length
+      : 1;
+    const isClosing = shouldCloseSftpSidePanel({
+      shouldKeepOpen,
+      isOpen,
+      isSameEndpoint: !!isSameEndpoint,
+      paneCount,
+    });
     const activeTransfersCount = resolveTabActiveTransfersCount(tabId);
     const keepSftpMounted = isClosing
       && shouldKeepSftpMountedAfterClose(activeTransfersCount);
@@ -796,7 +807,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       }
       return next;
     });
-  }, [resolveSftpOpenTarget, resolveTabActiveTransfersCount, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
+  }, [resolveSftpOpenTarget, resolveTabActiveTransfersCount, setSidePanelOpenTabs, sidePanelLayoutsRef, sidePanelOpenTabsRef]);
 
   const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
     setSftpPendingUploadsForTab(prev => {

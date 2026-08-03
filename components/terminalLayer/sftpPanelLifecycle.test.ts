@@ -10,11 +10,27 @@ import {
   listInvalidSftpPanelTabIds,
   listTerminalTabIdsWithRetainingTransfers,
   resolveSftpActiveTransfersCount,
+  shouldCloseSftpSidePanel,
   shouldClearSftpPanelAfterTransferChange,
   shouldKeepSftpMountedAfterClose,
   shouldScheduleSftpRetainedPanelCleanup,
   terminalSftpTransferOwnerId,
 } from "./sftpPanelLifecycle.ts";
+
+test("reopening focused SFTP does not close the other split panes", () => {
+  assert.equal(shouldCloseSftpSidePanel({
+    shouldKeepOpen: false,
+    isOpen: true,
+    isSameEndpoint: true,
+    paneCount: 2,
+  }), false);
+  assert.equal(shouldCloseSftpSidePanel({
+    shouldKeepOpen: false,
+    isOpen: true,
+    isSameEndpoint: true,
+    paneCount: 1,
+  }), true);
+});
 
 function task(
   partial: Partial<TransferTask> & Pick<TransferTask, "id" | "status">,

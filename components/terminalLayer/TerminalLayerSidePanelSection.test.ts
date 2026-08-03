@@ -53,7 +53,7 @@ test('closed side panel shell has no width', () => {
   }), 0);
 });
 
-test('native events from portaled tool content focus the owning pane', () => {
+test('pointer and keyboard focus from portaled tool content focus the owning pane', () => {
   const host = new EventTarget();
   let focusCount = 0;
   const stopListening = listenForSidePanelPaneFocus(host, () => {
@@ -62,10 +62,13 @@ test('native events from portaled tool content focus the owning pane', () => {
 
   host.dispatchEvent(new Event('pointerdown'));
   assert.equal(focusCount, 1);
+  host.dispatchEvent(new Event('focusin'));
+  assert.equal(focusCount, 2);
 
   stopListening();
   host.dispatchEvent(new Event('pointerdown'));
-  assert.equal(focusCount, 1);
+  host.dispatchEvent(new Event('focusin'));
+  assert.equal(focusCount, 2);
 });
 
 test('side panel tab order falls back to the default order', () => {

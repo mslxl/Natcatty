@@ -70,7 +70,11 @@ export function listenForSidePanelPaneFocus(
   onFocus: () => void,
 ): () => void {
   target.addEventListener('pointerdown', onFocus);
-  return () => target.removeEventListener('pointerdown', onFocus);
+  target.addEventListener('focusin', onFocus);
+  return () => {
+    target.removeEventListener('pointerdown', onFocus);
+    target.removeEventListener('focusin', onFocus);
+  };
 }
 
 function SidePanelPaneHost({
@@ -121,6 +125,7 @@ function SidePanelPaneHost({
       data-pane-tool={node.tool}
       data-focused={focused ? 'true' : 'false'}
       onMouseDown={() => onFocus(node.id)}
+      onFocusCapture={() => onFocus(node.id)}
     >
       {paneCount > 1 && (
         <div

@@ -257,11 +257,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
       cancelAnimationFrame(resizeStart.frame);
       applyPendingComposerResize();
     }
+    resizeStartRef.current = null;
+    document.body.style.userSelect = resizeStart.previousUserSelect;
     if (target && pointerId != null && target.hasPointerCapture(pointerId)) {
       target.releasePointerCapture(pointerId);
     }
-    document.body.style.userSelect = resizeStart.previousUserSelect;
-    resizeStartRef.current = null;
   }, [applyPendingComposerResize]);
 
   const handleComposerResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -798,6 +798,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
         onPointerMove={handleComposerResizeMove}
         onPointerUp={handleComposerResizeEnd}
         onPointerCancel={handleComposerResizeEnd}
+        onLostPointerCapture={handleComposerResizeEnd}
         onKeyDown={handleComposerResizeKeyDown}
         onDoubleClick={() => {
           composerDesiredHeightRef.current = null;
