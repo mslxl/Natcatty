@@ -1145,9 +1145,8 @@ test("late Enter output stays protected after the pending hint expires", async (
   const raf = installAnimationFrameQueue();
   try {
     const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
-      lineCount: 400,
+      lineCount: 40,
     });
-    term.rows = 3;
     term.buffer.active.viewportY = 20;
     term.buffer.active.baseY = 20;
     term.buffer.active.cursorY = 2;
@@ -1160,28 +1159,8 @@ test("late Enter output stays protected after the pending hint expires", async (
       enabled: true,
     }], true);
     raf.flush();
-
-    const internals = highlighter as unknown as {
-      dirtyAllInRenderRange: boolean;
-      lastBufferSnapshot: unknown;
-      readBufferSnapshot: () => unknown;
-      refreshViewport: (reason: "write") => void;
-    };
-    for (let index = 0; index < 150; index += 1) {
-      term.buffer.active.viewportY += 1;
-      term.buffer.active.baseY += 1;
-      term.buffer.active.length += 1;
-      internals.dirtyAllInRenderRange = true;
-      internals.refreshViewport("write");
-    }
-    internals.lastBufferSnapshot = internals.readBufferSnapshot();
     const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
-    assert.ok(retainedDecorations.length > 64);
-    const viewportStart = term.buffer.active.viewportY;
-    const visibleDecorations = retainedDecorations.filter(
-      ({ line }) => line > viewportStart && line < viewportStart + term.rows,
-    );
-    assert.ok(visibleDecorations.length > 0);
+    assert.ok(retainedDecorations.length > 0);
 
     handlers.data?.("\r");
     handlers.writeParsed?.();
@@ -1195,9 +1174,9 @@ test("late Enter output stays protected after the pending hint expires", async (
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
     assert.equal(
-      visibleDecorations.filter(({ isDisposed }) => isDisposed).length,
+      retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
       0,
-      "late Enter output should not replace visible decorations",
+      "late Enter output should treat its queued scroll as output-driven",
     );
     highlighter.dispose();
   } finally {

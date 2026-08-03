@@ -167,6 +167,11 @@ export class KeywordHighlighter implements IDisposable {
       this.term.onWriteParsed(() => {
         if (this.enterInputPending) {
           this.scheduleEnterInputIdleClear();
+        }
+        const outputDrivenPendingScroll =
+          this.pendingRefreshReason === "scroll"
+          && this.hasOutputPositionChangedSinceLastSnapshot();
+        if (this.enterInputPending || outputDrivenPendingScroll) {
           this.cancelScrollRefresh();
           if (this.pendingRefreshReason === "scroll") {
             this.pendingRefreshReason = "write";
@@ -209,6 +214,9 @@ export class KeywordHighlighter implements IDisposable {
           return;
         }
         this.markDirtyFromWrite();
+        if (outputDrivenPendingScroll) {
+          this.markVisibleRangeDirty();
+        }
         this.triggerRefresh(
           "immediate",
           "write",
@@ -940,6 +948,17 @@ export class KeywordHighlighter implements IDisposable {
       cursorAbsoluteY: buffer.baseY + buffer.cursorY,
       viewportProbe: includeViewportProbe ? this.buildViewportProbe(buffer, this.term.rows) : [],
     };
+  }
+
+  private hasOutputPositionChangedSinceLastSnapshot(): boolean {
+    const previous = this.lastBufferSnapshot;
+    const current = this.readBufferSnapshot({ includeViewportProbe: false });
+    if (!previous || !current) return false;
+    return (
+      current.length !== previous.length
+      || current.baseY !== previous.baseY
+      || current.cursorAbsoluteY !== previous.cursorAbsoluteY
+    );
   }
 
   private buildViewportProbe(buffer: IBuffer, rows: number): readonly ViewportProbeSample[] {
