@@ -880,12 +880,14 @@ test("multi-command Enter protection survives earlier buffer movement until idle
     assert.ok(retainedDecorations.length > 64);
 
     handlers.data?.("\u001b[200~echo one\r\necho two\r\n\u001b[201~");
-    term.buffer.active.viewportY += 1;
-    term.buffer.active.baseY += 1;
-    term.buffer.active.length += 1;
-    handlers.scroll?.();
-    handlers.writeParsed?.();
-    await new Promise((resolve) => { setTimeout(resolve, 220); });
+    for (let index = 0; index < 12; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      handlers.scroll?.();
+      handlers.writeParsed?.();
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+    }
 
     term.buffer.active.viewportY += 1;
     term.buffer.active.baseY += 1;
@@ -897,7 +899,7 @@ test("multi-command Enter protection survives earlier buffer movement until idle
     assert.equal(
       retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
       0,
-      "an earlier moving write should not consume protection for later Enter output",
+      "continuous Enter output should postpone decoration pruning until idle",
     );
     assert.equal(internals.enterInputPending, true);
 

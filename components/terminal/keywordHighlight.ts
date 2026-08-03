@@ -883,8 +883,15 @@ export class KeywordHighlighter implements IDisposable {
       if (!this.enabled || this.compiledRules.length === 0) return;
       const now = performance.now();
       if (
-        this.lastUserInputAt > 0
-        && now - this.lastUserInputAt < KeywordHighlighter.WRITE_PRUNE_IDLE_MS
+        (
+          this.lastUserInputAt > 0
+          && now - this.lastUserInputAt < KeywordHighlighter.WRITE_PRUNE_IDLE_MS
+        )
+        || (
+          this.enterInputPending
+          && this.lastWriteAt > 0
+          && now - this.lastWriteAt < KeywordHighlighter.WRITE_PRUNE_IDLE_MS
+        )
       ) {
         this.scheduleDeferredWritePrune();
         return;
