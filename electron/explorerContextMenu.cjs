@@ -811,11 +811,16 @@ function applyInitialExplorerContextMenuPreference({
     || !currentExe
     || record.executablePath === currentExe;
 
-  // Healthy warm start for enabled installs: schema + executable path match.
+  // Healthy warm start for enabled installs: schema + executable path match
+  // *and* both Explorer verbs still look registered. An interrupted installer
+  // rewrite or partial cleanup can leave a current preference while one verb
+  // is missing; re-apply in that case instead of short-circuiting forever.
   // Disabled preference is never short-circuited: NSIS updates re-create shell
   // verbs unconditionally, so we must re-assert per-user suppression each launch.
   if (preferred === true && schemaCurrent && executableCurrent) {
-    return { enabled: true, success: true, supported: true };
+    if (isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })) {
+      return { enabled: true, success: true, supported: true };
+    }
   }
 
   // Schema bump, portable path change, or disabled preference: re-apply.
