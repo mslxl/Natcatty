@@ -1290,7 +1290,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
             order,
             authPhase,
             undefined,
-            { username: connectOpts.username, agent: authAgent },
+            authAgent !== connectOpts.agent
+              ? { username: connectOpts.username, agent: authAgent }
+              : undefined,
           );
           connectOpts._shouldRetryKeyboardInteractiveFirst = () => Boolean(authPhase.retryKeyboardInteractiveFirst);
           log("Auth order (agent mode)", { order, skipPasswordMethod: !!options._skipPasswordMethod });
@@ -1539,11 +1541,13 @@ printf '%s\n' '${scanCompleteMarker}'`;
                   } else if (matchingMethod.type === "agent") {
                     const agentType = typeof matchingMethod.agent === "string" ? "path" : "NetcattyAgent";
                     log("Trying agent auth (partial success)", { id: matchingMethod.id, agentType });
-                    return callback({
-                      type: "agent",
-                      username: connectOpts.username,
-                      agent: matchingMethod.agent,
-                    });
+                    return matchingMethod.agent === connectOpts.agent
+                      ? callback("agent")
+                      : callback({
+                        type: "agent",
+                        username: connectOpts.username,
+                        agent: matchingMethod.agent,
+                      });
                   } else if (matchingMethod.type === "publickey") {
                     log("Trying publickey auth (partial success)", { id: matchingMethod.id });
                     return callback({
@@ -1585,11 +1589,13 @@ printf '%s\n' '${scanCompleteMarker}'`;
                   const agentType = typeof method.agent === "string" ? "path" : "NetcattyAgent";
                   log("Trying agent auth", { id: method.id, agentType });
                   sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'SSH agent');
-                  return callback({
-                    type: "agent",
-                    username: connectOpts.username,
-                    agent: method.agent,
-                  });
+                  return method.agent === connectOpts.agent
+                    ? callback("agent")
+                    : callback({
+                      type: "agent",
+                      username: connectOpts.username,
+                      agent: method.agent,
+                    });
                 } else if (method.type === "publickey") {
                   log("Trying publickey auth", { id: method.id, isDefault: method.isDefault || false });
                   const keyLabel = method.id.startsWith("publickey-default-")
@@ -2136,7 +2142,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
               dedupedAuthMethods,
               createAuthPhase(),
               undefined,
-              { username: connectOpts.username, agent: loginAgent },
+              loginAgent !== connectOpts.agent
+                ? { username: connectOpts.username, agent: loginAgent }
+                : undefined,
             );
             log("Using simple array authHandler", {
               authMethods: dedupedAuthMethods,
