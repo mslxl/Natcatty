@@ -58,6 +58,20 @@ test("forwarding keeps an explicitly configured agent authoritative", async () =
   assert.equal(identityChecks, 0);
 });
 
+test("IdentityAgent none disables login but still allows forwarding discovery", async () => {
+  const inheritedSocket = "/private/tmp/com.apple.launchd.test/Listeners";
+  const bitwardenSocket = "/Users/alice/.bitwarden-ssh-agent.sock";
+  const result = await getAvailableForwardingAgentSocket("none", {
+    platform: "darwin",
+    localEnv: { SSH_AUTH_SOCK: inheritedSocket },
+    homedir: "/Users/alice",
+    getAvailableAgentSocketImpl: async (candidate) => candidate,
+    socketAgentIdentityCount: async (candidate) => candidate === bitwardenSocket ? 1 : 0,
+  });
+
+  assert.equal(result, bitwardenSocket);
+});
+
 test("macOS forwarding preserves the inherited agent when discovered providers are empty", async () => {
   const inheritedSocket = "/private/tmp/com.apple.launchd.test/Listeners";
   const result = await getAvailableForwardingAgentSocket(undefined, {

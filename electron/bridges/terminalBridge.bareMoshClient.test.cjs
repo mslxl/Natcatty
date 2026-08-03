@@ -292,21 +292,23 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
   );
   assert.deepEqual(forwardingAuth.sshArgs, [
     "-o", "IdentityAgent=none",
-    "-o", "ForwardAgent=${SSH_AUTH_SOCK}",
     "-o", "StrictHostKeyChecking=ask",
   ]);
-  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, undefined);
 });
 
-test("Mosh forwarding replaces an empty inherited agent with the discovered agent", async () => {
+test("Mosh keeps its login agent separate from the discovered forwarding agent", async () => {
+  const localAgent = "/private/tmp/com.apple.launchd.test/Listeners";
+  const forwardingAgent = "/Users/alice/.bitwarden-ssh-agent.sock";
   const api = createMoshSessionApi({
     os,
     path,
     fs,
-    process,
+    process: { ...process, env: { SSH_AUTH_SOCK: localAgent } },
     randomUUID: () => "fixed",
     prepareSystemSshAgentForAuth: async () => {},
-    getAvailableForwardingAgentSocket: async () => "/Users/alice/.bitwarden-ssh-agent.sock",
+    getAvailableAgentSocket: async () => localAgent,
+    getAvailableForwardingAgentSocket: async () => forwardingAgent,
   });
 
   for (const useSshAgent of [false, undefined, true]) {
@@ -315,14 +317,15 @@ test("Mosh forwarding replaces an empty inherited agent with the discovered agen
       agentForwarding: true,
     });
     const env = api.applyMoshSshAgentEnvironment(
-      { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
+      { SSH_AUTH_SOCK: "/tmp/remote-agent.sock" },
       prepared,
     );
     const auth = await api.buildMoshSshAuthArgs(prepared, `session-forwarding-${String(useSshAgent)}`);
 
-    assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
-    assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
-    assert.ok(auth.sshArgs.includes("ForwardAgent=${SSH_AUTH_SOCK}"));
+    assert.equal(prepared._resolvedSshAgentSocket, useSshAgent === true ? localAgent : undefined);
+    assert.equal(prepared._resolvedForwardingAgentSocket, forwardingAgent);
+    assert.equal(env.SSH_AUTH_SOCK, useSshAgent === false ? undefined : localAgent);
+    assert.ok(auth.sshArgs.includes(`ForwardAgent=${forwardingAgent}`));
   }
 });
 

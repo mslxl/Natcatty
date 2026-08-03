@@ -583,8 +583,8 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
     { useSshAgent: false, agentForwarding: true },
   );
   assert.match(forwardingConfig, /IdentityAgent none/);
-  assert.match(forwardingConfig, /ForwardAgent \$\{SSH_AUTH_SOCK\}/);
-  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+  assert.doesNotMatch(forwardingConfig, /ForwardAgent/);
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, undefined);
 
   const automaticJumpEnv = api.applyEtSshAgentEnvironment(
     { SSH_AUTH_SOCK: "/tmp/jump-agent.sock" },
@@ -594,13 +594,17 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
       jumpHosts: [{ authMethod: "auto" }],
     },
   );
-  assert.equal(automaticJumpEnv.SSH_AUTH_SOCK, "/tmp/jump-agent.sock");
+  assert.equal(automaticJumpEnv.SSH_AUTH_SOCK, process.env.SSH_AUTH_SOCK);
 });
 
-test("ET forwarding replaces an empty inherited agent with the discovered agent", async (t) => {
+test("ET keeps its login agent separate from the discovered forwarding agent", async (t) => {
+  const localAgent = "/private/tmp/com.apple.launchd.test/Listeners";
+  const forwardingAgent = "/Users/alice/.bitwarden-ssh-agent.sock";
   const { api } = makeApi(t, {
     prepareSystemSshAgentForAuth: async () => {},
-    getAvailableForwardingAgentSocket: async () => "/Users/alice/.bitwarden-ssh-agent.sock",
+    getAvailableAgentSocket: async () => localAgent,
+    getAvailableForwardingAgentSocket: async () => forwardingAgent,
+    process: { ...process, env: { SSH_AUTH_SOCK: localAgent } },
   });
 
   for (const useSshAgent of [false, undefined, true]) {
@@ -611,7 +615,7 @@ test("ET forwarding replaces an empty inherited agent with the discovered agent"
       agentForwarding: true,
     });
     const env = api.applyEtSshAgentEnvironment(
-      { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
+      { SSH_AUTH_SOCK: "/tmp/remote-agent.sock" },
       prepared,
     );
     const preparedEnvironment = api.prepareEtSshEnvironment(
@@ -620,9 +624,10 @@ test("ET forwarding replaces an empty inherited agent with the discovered agent"
     );
     const config = fs.readFileSync(path.join(preparedEnvironment.env.HOME, ".ssh", "config"), "utf8");
 
-    assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
-    assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
-    assert.match(config, /ForwardAgent \$\{SSH_AUTH_SOCK\}/);
+    assert.equal(prepared._resolvedSshAgentSocket, useSshAgent === true ? localAgent : undefined);
+    assert.equal(prepared._resolvedForwardingAgentSocket, forwardingAgent);
+    assert.equal(env.SSH_AUTH_SOCK, useSshAgent === false ? undefined : localAgent);
+    assert.match(config, new RegExp(`ForwardAgent "${forwardingAgent}"`));
   }
 });
 

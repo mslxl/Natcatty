@@ -802,8 +802,12 @@ async function getAvailableAgentSocket(identityAgent, injected = {}) {
 async function getAvailableForwardingAgentSocket(identityAgent, injected = {}) {
   const resolveAvailable = injected.getAvailableAgentSocketImpl || getAvailableAgentSocket;
   const platform = injected.platform || process.platform;
-  if (identityAgent || platform !== "darwin") {
-    return resolveAvailable(identityAgent, injected);
+  const forwardingIdentityAgent = typeof identityAgent === "string"
+    && identityAgent.trim().replace(/^["']|["']$/g, "").trim().toLowerCase() === "none"
+    ? undefined
+    : identityAgent;
+  if (forwardingIdentityAgent || platform !== "darwin") {
+    return resolveAvailable(forwardingIdentityAgent, injected);
   }
 
   const env = injected.localEnv || process.env;
@@ -861,10 +865,7 @@ async function getNativeOpenSshForwardingAgentSocket(identityAgent, injected = {
 
 async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
   if (options?.useSshAgent !== true) return null;
-  const resolveSocket = options.agentForwarding
-    ? getAvailableForwardingAgentSocket
-    : getAvailableAgentSocket;
-  const socketPath = await resolveSocket(options.identityAgent, {
+  const socketPath = await getAvailableAgentSocket(options.identityAgent, {
     hostname: options.hostname,
     port: options.port,
     username: options.username,
@@ -1587,9 +1588,11 @@ function shouldSkipKiPasswordAutoFill(authPhase) {
  * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean, keyboardInteractiveSuccessCount?: number }} authPhase
  * @param {(label: string) => void} [onAuthAttempt] - optional progress callback
  *   (jump/SFTP connection logs). Mirrors the dynamic authHandler's onAuthAttempt.
+ * @param {{ username?: string, agent?: unknown }} [agentAuth] - optional
+ *   login-only agent override when the connection's agent is reserved for forwarding.
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
  */
-function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
+function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt, agentAuth = {}) {
   // Methods we actually offered (server got a chance to accept/reject).
   let attempted = new Set();
   // Methods that contributed a successful factor; never retried.
@@ -1605,6 +1608,13 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
     if (method === "agent") return "SSH agent";
     return method;
   };
+  const resolveAttempt = (method) => method === "agent" && agentAuth.agent
+    ? {
+      type: "agent",
+      username: agentAuth.username,
+      agent: agentAuth.agent,
+    }
+    : method;
 
   return (methodsLeft, partialSuccess, callback) => {
     if (partialSuccess) {
@@ -1674,7 +1684,7 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
         );
       }
       onAuthAttempt?.(attemptLabel(method));
-      return callback(method);
+      return callback(resolveAttempt(method));
     }
     onAuthAttempt?.("all methods exhausted");
     return callback(false);

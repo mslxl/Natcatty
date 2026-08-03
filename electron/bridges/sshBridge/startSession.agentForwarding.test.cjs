@@ -43,7 +43,7 @@ test("agent forwarding replaces an automatically discovered empty login agent", 
   assert.equal(connectOptions.agentForward, true);
 });
 
-test("agent forwarding preserves an explicitly prepared login agent", async () => {
+test("agent forwarding configures ssh2 separately from an explicitly prepared login agent", async () => {
   const explicitAgent = { kind: "selected-agent" };
   const connectOptions = { agent: explicitAgent };
   let resolutions = 0;
@@ -57,9 +57,9 @@ test("agent forwarding preserves an explicitly prepared login agent", async () =
     },
   );
 
-  assert.equal(connectOptions.agent, explicitAgent);
+  assert.equal(connectOptions.agent, "/tmp/other-agent.sock");
   assert.equal(connectOptions.agentForward, true);
-  assert.equal(resolutions, 0);
+  assert.equal(resolutions, 1);
 });
 
 test("agent forwarding does not enable agent login after an explicit opt-out", () => {

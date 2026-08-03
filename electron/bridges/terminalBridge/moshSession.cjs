@@ -134,37 +134,30 @@ function createMoshSessionApi(ctx) {
 
     async function prepareMoshSshAgentOptions(options) {
       if (options?.useSshAgent !== true && !options?.agentForwarding) return options;
+      let prepared = options;
       if (options.useSshAgent === true) {
         await prepareSystemSshAgentForAuth(options, "[Mosh]");
-      }
-      const resolveSocket = options.agentForwarding
-        ? getAvailableForwardingAgentSocket
-        : getAvailableAgentSocket;
-      const socketPath = await resolveSocket(options.identityAgent, options);
-      if (!socketPath) {
-        if (options.useSshAgent === true) {
+        const loginSocketPath = await getAvailableAgentSocket(options.identityAgent, options);
+        if (!loginSocketPath) {
           throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
         }
-        return options;
+        prepared = { ...prepared, _resolvedSshAgentSocket: loginSocketPath };
       }
-      return { ...options, _resolvedSshAgentSocket: socketPath };
+      if (options.agentForwarding) {
+        const forwardingSocketPath = await getAvailableForwardingAgentSocket(options.identityAgent, options);
+        if (forwardingSocketPath) {
+          prepared = { ...prepared, _resolvedForwardingAgentSocket: forwardingSocketPath };
+        }
+      }
+      return prepared;
     }
 
     function applyMoshSshAgentEnvironment(env, options) {
+      delete env.SSH_AUTH_SOCK;
       if (options?.useSshAgent === false) {
-        if (options.agentForwarding) {
-          if (options._resolvedSshAgentSocket) {
-            env.SSH_AUTH_SOCK = options._resolvedSshAgentSocket;
-          } else if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
-            env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
-          }
-        } else {
-          delete env.SSH_AUTH_SOCK;
-        }
         return env;
       }
-      const socketPath = options?._resolvedSshAgentSocket
-        || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
+      const socketPath = options?._resolvedSshAgentSocket || process.env.SSH_AUTH_SOCK;
       if (socketPath) env.SSH_AUTH_SOCK = socketPath;
       return env;
     }
@@ -356,8 +349,8 @@ function createMoshSessionApi(ctx) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
         }
-        if (options.agentForwarding) {
-          sshArgs.push("-o", "ForwardAgent=${SSH_AUTH_SOCK}");
+        if (options.agentForwarding && options._resolvedForwardingAgentSocket) {
+          sshArgs.push("-o", `ForwardAgent=${options._resolvedForwardingAgentSocket}`);
         }
 
         if (options.authMethod === "password") {

@@ -208,6 +208,19 @@ test("resolveBridgeSshAgentAuth keeps an explicit forwarding agent separate from
   );
 });
 
+test("resolveBridgeSshAgentAuth does not forward the login-only IdentityAgent none directive", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      authMethod: "password",
+      useSshAgent: false,
+      agentForwarding: true,
+      identityAgent: "none",
+    }, undefined, "password"),
+    { useSshAgent: false },
+  );
+});
+
 test("resolveBridgeSshAgentAuth lets explicit auth override a stale agent toggle", () => {
   const staleAgentHost = { ...autofillBaseHost, useSshAgent: true };
   assert.deepEqual(

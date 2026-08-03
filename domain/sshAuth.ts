@@ -263,7 +263,9 @@ export const resolveBridgeSshAgentAuth = (
   useKeychain?: boolean;
   agentPublicKeys?: string[];
 } => {
-  const forwardingAgent = host.agentForwarding && host.identityAgent !== undefined
+  const forwardingAgent = host.agentForwarding
+    && host.identityAgent !== undefined
+    && !isSshAgentNoneValue(host.identityAgent)
     ? { identityAgent: host.identityAgent }
     : {};
   if (authMethod === "password" || authMethod === "certificate" || key?.certificate?.trim()) {

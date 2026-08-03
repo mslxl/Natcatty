@@ -594,6 +594,26 @@ test("createOrderedStringAuthHandler sets hadPartialSuccess on partialSuccess", 
   assert.equal(authPhase.hadPartialSuccess, true);
 });
 
+test("createOrderedStringAuthHandler can use a login agent that differs from forwarding", () => {
+  const loginAgent = { kind: "login-agent" };
+  const authPhase = createAuthPhase();
+  const handler = createOrderedStringAuthHandler(
+    ["none", "agent"],
+    authPhase,
+    undefined,
+    { username: "alice", agent: loginAgent },
+  );
+
+  const offered = [];
+  handler(null, false, (method) => offered.push(method));
+  handler(["publickey"], false, (method) => offered.push(method));
+
+  assert.deepEqual(offered, [
+    "none",
+    { type: "agent", username: "alice", agent: loginAgent },
+  ]);
+});
+
 test("createOrderedStringAuthHandler re-offers methods skipped as unavailable after partialSuccess (#2151 P2)", () => {
   // Server first only advertises publickey. password sits in our order before
   // publickey but is not advertised yet — it must NOT be permanently skipped.
