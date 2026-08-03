@@ -19,6 +19,7 @@ import {
   type TerminalSidePanelTabId,
   useTerminalSidePanelTabOrder,
 } from '../../application/state/terminalSidePanelTabs';
+import { clampTerminalSidePanelWidth } from '../../application/state/terminalSidePanelWidth';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 
@@ -230,8 +231,8 @@ function SidePanelSplitView({
           {index < children.length - 1 && (
             <div
               className={node.direction === 'vertical'
-                ? 'group relative w-1 shrink-0 cursor-ew-resize z-20'
-                : 'group relative h-1 shrink-0 cursor-ns-resize z-20'}
+                ? "group relative w-px shrink-0 cursor-ew-resize z-20 after:content-[''] after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2"
+                : "group relative h-px shrink-0 cursor-ns-resize z-20 after:content-[''] after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2"}
               data-section="terminal-side-panel-split-resizer"
               onMouseDown={(event) => startResize(event, index)}
             >
@@ -344,8 +345,8 @@ function SidePanelSplitMenu({
               aria-label={label}
             >
               {direction === 'horizontal'
-                ? <SplitSquareHorizontal size={15} />
-                : <SplitSquareVertical size={15} />}
+                ? <SplitSquareVertical size={15} />
+                : <SplitSquareHorizontal size={15} />}
             </button>
           </PopoverTrigger>
         </TooltipTrigger>
@@ -544,13 +545,16 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
   const isAiShellForceHidden = AI_PANEL_FORCE_HIDE_SHELL
     && activeSidePanelTab === 'ai'
     && activePaneCount <= 1;
-  const shellWidth = getTerminalSidePanelShellWidth({
+  const requestedShellWidth = getTerminalSidePanelShellWidth({
     activeSidePanelTab,
     forceHideAiShell: AI_PANEL_FORCE_HIDE_SHELL && activePaneCount <= 1,
     isSidePanelOpenForCurrentTab,
     resizePreviewWidth,
     sidePanelWidth,
   });
+  const shellWidth = requestedShellWidth > 0
+    ? clampTerminalSidePanelWidth(requestedShellWidth, window.innerWidth)
+    : 0;
 
   const handleSidePanelResizeStart = useCallback((event: React.MouseEvent) => {
     if (!isSidePanelOpenForCurrentTab) return;
@@ -563,9 +567,9 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
 
     const onMouseMove = (moveEvent: MouseEvent) => {
       const delta = moveEvent.clientX - startX;
-      lastWidth = Math.max(
-        280,
-        Math.min(800, startWidth + (sidePanelPosition === 'left' ? delta : -delta)),
+      lastWidth = clampTerminalSidePanelWidth(
+        startWidth + (sidePanelPosition === 'left' ? delta : -delta),
+        window.innerWidth,
       );
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {

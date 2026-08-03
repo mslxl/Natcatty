@@ -164,10 +164,49 @@ test('the shared toolbar owns split controls while panes only render minimal chr
   assert.match(sectionSource, /paneCount > 1/);
 });
 
+test('split icons depict the same pane arrangement as their actions', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(
+    sectionSource,
+    /direction === 'horizontal'\s*\? <SplitSquareVertical size=\{15\} \/>\s*: <SplitSquareHorizontal size=\{15\} \/>/,
+  );
+});
+
+test('side panel layout state is initialized before callbacks read it', () => {
+  const layerSource = readFileSync(new URL('../TerminalLayer.tsx', import.meta.url), 'utf8');
+  const layoutStateIndex = layerSource.indexOf('} = useTerminalSidePanelLayoutState();');
+  const statusCallbackIndex = layerSource.indexOf('const handleStatusChange = useCallback');
+
+  assert.notEqual(layoutStateIndex, -1);
+  assert.notEqual(statusCallbackIndex, -1);
+  assert.ok(layoutStateIndex < statusCallbackIndex);
+});
+
 test('split dragging cleans up on mouseup, window blur, and pane unmount', () => {
   const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
 
   assert.match(sectionSource, /window\.addEventListener\('blur', cleanup\)/);
   assert.match(sectionSource, /resizeCleanupRef\.current\?\.\(\)/);
   assert.match(sectionSource, /terminalLayoutSuppressStore\.end\(\)/);
+});
+
+test('split resizers do not consume visible gutter space', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /group relative w-px shrink-0 cursor-ew-resize/);
+  assert.match(sectionSource, /group relative h-px shrink-0 cursor-ns-resize/);
+  assert.match(sectionSource, /after:w-2/);
+  assert.match(sectionSource, /after:h-2/);
+  assert.doesNotMatch(sectionSource, /group relative w-1 shrink-0 cursor-ew-resize/);
+  assert.doesNotMatch(sectionSource, /group relative h-1 shrink-0 cursor-ns-resize/);
+});
+
+test('side panel resize uses the expanded width limit and protects terminal space', () => {
+  const layerSource = readFileSync(new URL('../TerminalLayer.tsx', import.meta.url), 'utf8');
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(layerSource, /TERMINAL_SIDE_PANEL_MAX_WIDTH/);
+  assert.match(sectionSource, /clampTerminalSidePanelWidth/);
+  assert.doesNotMatch(sectionSource, /Math\.min\(800,/);
 });

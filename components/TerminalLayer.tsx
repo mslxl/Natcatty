@@ -111,6 +111,10 @@ import {
   type SidePanelSplitDirection,
 } from '../domain/sidePanelLayout';
 import { useTerminalSidePanelLayoutState } from '../application/state/useTerminalSidePanelLayoutState';
+import {
+  TERMINAL_SIDE_PANEL_MAX_WIDTH,
+  TERMINAL_SIDE_PANEL_MIN_WIDTH,
+} from '../application/state/terminalSidePanelWidth';
 
 import {
   AIChatPanelsHost,
@@ -258,6 +262,19 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onRemoveSessionFromWorkspace,
 }) => {
   const { t } = useI18n();
+  // Side panel state must be initialized before any callbacks reference its
+  // setters or refs in their dependency arrays.
+  const {
+    sidePanelOpenTabs,
+    setSidePanelOpenTabs,
+    sidePanelOpenTabsRef,
+    sidePanelLayouts,
+    sidePanelLayoutsRef,
+    focusPane: focusSidePanelPaneForTab,
+    splitPane: splitSidePanelPaneForTab,
+    closePane: closeSidePanelPaneForTab,
+    resizeSplit: resizeSidePanelSplitForTab,
+  } = useTerminalSidePanelLayoutState();
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
   const activeTabIdRef = useRef(activeTabStore.getActiveTabId());
@@ -523,19 +540,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const onSetWorkspaceFocusedSessionRef = useRef(onSetWorkspaceFocusedSession);
   onSetWorkspaceFocusedSessionRef.current = onSetWorkspaceFocusedSession;
 
-  // Side panel state - per-tab tracking of which sub-panel is active
-  // Maps tab IDs to the active sub-panel type (sftp/scripts/theme), absent = closed
-  const {
-    sidePanelOpenTabs,
-    setSidePanelOpenTabs,
-    sidePanelOpenTabsRef,
-    sidePanelLayouts,
-    sidePanelLayoutsRef,
-    focusPane: focusSidePanelPaneForTab,
-    splitPane: splitSidePanelPaneForTab,
-    closePane: closeSidePanelPaneForTab,
-    resizeSplit: resizeSidePanelSplitForTab,
-  } = useTerminalSidePanelLayoutState();
   // Keep AI/scripts/theme panels mounted while switching sub-tabs (like SFTP).
   const [aiMountedTabIds, setAiMountedTabIds] = useState<string[]>([]);
   const [scriptsMountedTabIds, setScriptsMountedTabIds] = useState<string[]>([]);
@@ -543,7 +547,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const [themeMountedTabIds, setThemeMountedTabIds] = useState<string[]>([]);
   const [notesMountedTabIds, setNotesMountedTabIds] = useState<string[]>([]);
   const [sidePanelWidth, setSidePanelWidth, persistSidePanelWidth] = useStoredNumber(
-    STORAGE_KEY_SIDE_PANEL_WIDTH, 420, { min: 280, max: 800 },
+    STORAGE_KEY_SIDE_PANEL_WIDTH,
+    420,
+    { min: TERMINAL_SIDE_PANEL_MIN_WIDTH, max: TERMINAL_SIDE_PANEL_MAX_WIDTH },
   );
   const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
     'netcatty_side_panel_position',
