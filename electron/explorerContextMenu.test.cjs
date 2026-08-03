@@ -11,6 +11,7 @@ const {
   removeExplorerContextMenu,
   resolveExplorerContextMenuEnabled,
   resolveExplorerContextMenuExecutablePath,
+  resolveExplorerContextMenuLaunchSpec,
   updateExplorerContextMenuEnabledPreference,
 } = require("./explorerContextMenu.cjs");
 
@@ -22,6 +23,14 @@ test("buildExplorerContextMenuCommand puts path args after -- for Electron", () 
   assert.equal(
     buildExplorerContextMenuCommand("C:\\Netcatty\\Netcatty.exe", "%V"),
     '"C:\\Netcatty\\Netcatty.exe" -- --open-terminal-path="%V."',
+  );
+  assert.equal(
+    buildExplorerContextMenuCommand(
+      "C:\\dev\\node_modules\\electron\\dist\\electron.exe",
+      "%1",
+      { appArgs: ["C:\\dev\\netcatty"] },
+    ),
+    '"C:\\dev\\node_modules\\electron\\dist\\electron.exe" "C:\\dev\\netcatty" -- --open-terminal-path="%1."',
   );
 });
 
@@ -868,13 +877,13 @@ test("installExplorerContextMenu reports partial single HKLM verb as still enabl
   assert.equal(result.enabled, true);
 });
 
-test("applyInitialExplorerContextMenuPreference caches default-off when no verbs exist", () => {
-  let wrote = null;
+test("applyInitialExplorerContextMenuPreference caches default-off via probe marker only", () => {
+  const wrote = [];
   const fsModule = {
     existsSync: () => false,
     mkdirSync: () => {},
-    writeFileSync: (_path, data) => {
-      wrote = JSON.parse(String(data));
+    writeFileSync: (filePath, data) => {
+      wrote.push({ filePath: String(filePath), data: JSON.parse(String(data)) });
     },
   };
   const result = applyInitialExplorerContextMenuPreference({
@@ -886,9 +895,27 @@ test("applyInitialExplorerContextMenuPreference caches default-off when no verbs
     logWarn: () => {},
   });
   assert.deepEqual(result, { enabled: false, success: true, supported: true });
-  assert.equal(wrote.enabled, false);
-  assert.equal(wrote.schemaVersion, EXPLORER_CONTEXT_MENU_SCHEMA_VERSION);
-  assert.equal(wrote.executablePath, "D:\\Tools\\NetcattyPortable.exe");
+  assert.equal(wrote.length, 1);
+  assert.match(wrote[0].filePath, /explorer-context-menu-probe\.json$/);
+  assert.equal(wrote[0].data.schemaVersion, EXPLORER_CONTEXT_MENU_SCHEMA_VERSION);
+  assert.equal(Object.hasOwn(wrote[0].data, "enabled"), false);
+});
+
+test("resolveExplorerContextMenuLaunchSpec includes dev app entry for electron.exe", () => {
+  const spec = resolveExplorerContextMenuLaunchSpec({
+    execPath: "C:\\dev\\node_modules\\electron\\dist\\electron.exe",
+    env: {},
+    argv: [
+      "C:\\dev\\node_modules\\electron\\dist\\electron.exe",
+      "C:\\dev\\netcatty",
+    ],
+    defaultApp: true,
+    pathModule: {
+      resolve: (value) => value,
+    },
+  });
+  assert.equal(spec.executablePath, "C:\\dev\\node_modules\\electron\\dist\\electron.exe");
+  assert.deepEqual(spec.appArgs, ["C:\\dev\\netcatty"]);
 });
 
 test("non-windows platforms report unsupported explorer context menu", () => {

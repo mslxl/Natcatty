@@ -101,7 +101,7 @@ const {
   applyExplorerContextMenuPreference,
   applyInitialExplorerContextMenuPreference,
   resolveExplorerContextMenuEnabled,
-  resolveExplorerContextMenuExecutablePath,
+  resolveExplorerContextMenuLaunchSpec,
   updateExplorerContextMenuEnabledPreference,
   writeExplorerContextMenuEnabledPreference,
 } = require("./explorerContextMenu.cjs");
@@ -673,18 +673,19 @@ ipcMain?.handle?.("netcatty:deepLink:jms:getEnabled", async () => jmsDeepLinkEna
 
 ipcMain?.handle?.("netcatty:explorerContextMenu:setEnabled", async (_event, payload) => {
   const enabled = payload?.enabled !== false;
-  const executablePath = resolveExplorerContextMenuExecutablePath();
+  const launchSpec = resolveExplorerContextMenuLaunchSpec();
   const result = updateExplorerContextMenuEnabledPreference({
     currentEnabled: explorerContextMenuEnabled,
     enabled,
     applyPreference: (nextEnabled) => applyExplorerContextMenuPreference({
       enabled: nextEnabled,
-      executablePath,
+      executablePath: launchSpec.executablePath,
+      appArgs: launchSpec.appArgs,
     }),
     writePreference: (nextEnabled) => writeExplorerContextMenuEnabledPreference({
       app,
       enabled: nextEnabled,
-      executablePath,
+      executablePath: launchSpec.executablePath,
     }),
   });
   explorerContextMenuEnabled = result.enabled === true;
@@ -1011,9 +1012,11 @@ if (!gotLock) {
     });
     jmsDeepLinkEnabled = initialJmsDeepLinkPreference.enabled;
 
+    const explorerLaunchSpec = resolveExplorerContextMenuLaunchSpec();
     const initialExplorerContextMenuPreference = applyInitialExplorerContextMenuPreference({
       app,
-      executablePath: resolveExplorerContextMenuExecutablePath(),
+      executablePath: explorerLaunchSpec.executablePath,
+      appArgs: explorerLaunchSpec.appArgs,
     });
     explorerContextMenuEnabled = initialExplorerContextMenuPreference.enabled === true;
 

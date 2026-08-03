@@ -3,10 +3,15 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const EXPLORER_CONTEXT_MENU_PREFERENCES_FILE = "explorer-context-menu-preferences.json";
+// Separate from the user preference: records that a no-verb default-off probe
+// completed. Must not be treated as an intentional "disable" choice, because
+// ZIP/portable builds can share AppData with a later NSIS install.
+const EXPLORER_CONTEXT_MENU_PROBE_FILE = "explorer-context-menu-probe.json";
 // Bump when the shell verb command/label/icon contract changes so warm starts
 // re-apply registry entries once after upgrade, then stay query-free again.
 // v2: prefer PORTABLE_EXECUTABLE_FILE over process.execPath for registry cmds.
-const EXPLORER_CONTEXT_MENU_SCHEMA_VERSION = 2;
+// v3: include development app entry path after electron.exe.
+const EXPLORER_CONTEXT_MENU_SCHEMA_VERSION = 3;
 const SHELL_VERB = "Netcatty";
 const DIRECTORY_SHELL_KEY = `Software\\Classes\\Directory\\shell\\${SHELL_VERB}`;
 const DIRECTORY_BACKGROUND_SHELL_KEY = `Software\\Classes\\Directory\\Background\\shell\\${SHELL_VERB}`;
@@ -30,9 +35,31 @@ function resolveExplorerContextMenuExecutablePath({
   execPath = process.execPath,
   env = process.env,
 } = {}) {
+  return resolveExplorerContextMenuLaunchSpec({ execPath, env }).executablePath;
+}
+
+/**
+ * Resolve executable + optional app entry args for shell registration.
+ * In development (`electron.exe .`), include the absolute app path so Explorer
+ * launches Netcatty rather than a bare Electron binary.
+ */
+function resolveExplorerContextMenuLaunchSpec({
+  execPath = process.execPath,
+  env = process.env,
+  argv = process.argv,
+  defaultApp = process.defaultApp,
+  pathModule = path,
+} = {}) {
   const portable = String(env?.PORTABLE_EXECUTABLE_FILE || "").trim();
-  if (portable) return portable;
-  return String(execPath || "").trim();
+  if (portable) {
+    return { executablePath: portable, appArgs: [] };
+  }
+  const exe = String(execPath || "").trim();
+  if (defaultApp && typeof argv?.[1] === "string" && argv[1].trim()) {
+    const appEntry = pathModule.resolve(argv[1].trim());
+    return { executablePath: exe, appArgs: [appEntry] };
+  }
+  return { executablePath: exe, appArgs: [] };
 }
 
 function getExplorerContextMenuPreferencePath({
@@ -44,6 +71,65 @@ function getExplorerContextMenuPreferencePath({
     return pathModule.join(app.getPath("userData"), EXPLORER_CONTEXT_MENU_PREFERENCES_FILE);
   } catch {
     return null;
+  }
+}
+
+function getExplorerContextMenuProbePath({
+  app,
+  pathModule = path,
+} = {}) {
+  if (!app || typeof app.getPath !== "function") return null;
+  try {
+    return pathModule.join(app.getPath("userData"), EXPLORER_CONTEXT_MENU_PROBE_FILE);
+  } catch {
+    return null;
+  }
+}
+
+function readExplorerContextMenuProbeRecord({
+  app,
+  fsModule = fs,
+  pathModule = path,
+  logWarn = console.warn,
+} = {}) {
+  const filePath = getExplorerContextMenuProbePath({ app, pathModule });
+  if (!filePath) return null;
+  try {
+    if (!fsModule.existsSync(filePath)) return null;
+    const parsed = JSON.parse(fsModule.readFileSync(filePath, "utf8"));
+    const schemaVersion = Number.isInteger(parsed?.schemaVersion)
+      ? parsed.schemaVersion
+      : 0;
+    return { schemaVersion };
+  } catch (err) {
+    logWarn?.("[Main] Failed to read Explorer context menu probe marker:", err);
+    return null;
+  }
+}
+
+function isExplorerContextMenuProbeCurrent(options = {}) {
+  const record = readExplorerContextMenuProbeRecord(options);
+  return Boolean(record && record.schemaVersion === EXPLORER_CONTEXT_MENU_SCHEMA_VERSION);
+}
+
+function writeExplorerContextMenuProbeMarker({
+  app,
+  fsModule = fs,
+  pathModule = path,
+  logWarn = console.warn,
+} = {}) {
+  const filePath = getExplorerContextMenuProbePath({ app, pathModule });
+  if (!filePath) return false;
+  try {
+    fsModule.mkdirSync(pathModule.dirname(filePath), { recursive: true });
+    fsModule.writeFileSync(
+      filePath,
+      JSON.stringify({ schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION }, null, 2),
+    );
+    return true;
+  } catch (err) {
+    logWarn?.("[Main] Failed to write Explorer context menu probe marker:", err);
+    return false;
   }
 }
 
@@ -117,14 +203,25 @@ function writeExplorerContextMenuEnabledPreference({
   }
 }
 
-function buildExplorerContextMenuCommand(executablePath, pathPlaceholder) {
+function quoteWindowsCmdArg(value) {
+  return `"${String(value).replace(/"/g, '\\"')}"`;
+}
+
+function buildExplorerContextMenuCommand(executablePath, pathPlaceholder, {
+  appArgs = [],
+} = {}) {
   const exe = String(executablePath || "").trim();
   const placeholder = String(pathPlaceholder || "").trim();
   if (!exe || !placeholder) return null;
+  const prefixArgs = Array.isArray(appArgs)
+    ? appArgs.map((arg) => String(arg || "").trim()).filter(Boolean).map(quoteWindowsCmdArg)
+    : [];
+  const launchPrefix = [quoteWindowsCmdArg(exe), ...prefixArgs].join(" ");
   // Put app args after `--` so Chromium does not consume them, and keep the
   // path in the same token (`=`) so spaces survive CommandLineToArgvW.
   // Trailing `.` avoids the classic `"C:\"` quote-escape bug for drive roots.
-  return `"${exe}" -- ${OPEN_TERMINAL_PATH_ARG}="${placeholder}."`;
+  // Development: `"electron.exe" "C:\\...\\app" -- --open-terminal-path="%1."`
+  return `${launchPrefix} -- ${OPEN_TERMINAL_PATH_ARG}="${placeholder}."`;
 }
 
 function runReg(args, {
@@ -203,12 +300,13 @@ function shellVerbIsCurrent(hive, keyPath, {
   executablePath,
   pathPlaceholder,
   iconPath,
+  appArgs = [],
 }, options = {}) {
   if (!regKeyExists(hive, keyPath, options)) return false;
   // Suppression keys are not a real install even if the path exists.
   if (hive === "HKCU" && isSuppressionKey(hive, keyPath, options)) return false;
 
-  const expectedCommand = buildExplorerContextMenuCommand(executablePath, pathPlaceholder);
+  const expectedCommand = buildExplorerContextMenuCommand(executablePath, pathPlaceholder, { appArgs });
   if (!expectedCommand) return false;
   const expectedIcon = `${iconPath || executablePath},0`;
 
@@ -228,11 +326,17 @@ function writeShellVerb(hive, keyPath, {
   executablePath,
   pathPlaceholder,
   iconPath,
+  appArgs = [],
 }, options = {}) {
-  const command = buildExplorerContextMenuCommand(executablePath, pathPlaceholder);
+  const command = buildExplorerContextMenuCommand(executablePath, pathPlaceholder, { appArgs });
   if (!command) return false;
   // Skip reg.exe writes when the verb is already current (common warm-start path).
-  if (shellVerbIsCurrent(hive, keyPath, { executablePath, pathPlaceholder, iconPath }, options)) {
+  if (shellVerbIsCurrent(hive, keyPath, {
+    executablePath,
+    pathPlaceholder,
+    iconPath,
+    appArgs,
+  }, options)) {
     return true;
   }
   const icon = `${iconPath || executablePath},0`;
@@ -405,6 +509,7 @@ function removeExplorerContextMenu({
 
 function installExplorerContextMenu({
   executablePath = process.execPath,
+  appArgs = [],
   platform = process.platform,
   spawnSyncImpl = spawnSync,
   logWarn = console.warn,
@@ -419,6 +524,9 @@ function installExplorerContextMenu({
   }
 
   const options = { spawnSyncImpl, logWarn };
+  const normalizedAppArgs = Array.isArray(appArgs)
+    ? appArgs.map((arg) => String(arg || "").trim()).filter(Boolean)
+    : [];
 
   // Enable path. For machine installs, refresh HKLM *before* clearing any
   // working HKCU verbs/suppressions: an unelevated process may fail to rewrite
@@ -426,8 +534,18 @@ function installExplorerContextMenu({
   // Explorer integration.
   const wasSuppressed = isUserSuppressed(options);
   const machineRegistered = hasMachineRegistration(options);
-  const folderSpec = { executablePath: exe, pathPlaceholder: "%1", iconPath: exe };
-  const backgroundSpec = { executablePath: exe, pathPlaceholder: "%V", iconPath: exe };
+  const folderSpec = {
+    executablePath: exe,
+    pathPlaceholder: "%1",
+    iconPath: exe,
+    appArgs: normalizedAppArgs,
+  };
+  const backgroundSpec = {
+    executablePath: exe,
+    pathPlaceholder: "%V",
+    iconPath: exe,
+    appArgs: normalizedAppArgs,
+  };
 
   if (machineRegistered) {
     // Refresh per-machine verbs only. Do NOT mirror into HKCU: NSIS uninstall
@@ -506,6 +624,7 @@ function installExplorerContextMenu({
 function applyExplorerContextMenuPreference({
   enabled,
   executablePath = process.execPath,
+  appArgs = [],
   platform = process.platform,
   spawnSyncImpl = spawnSync,
   logWarn = console.warn,
@@ -518,6 +637,7 @@ function applyExplorerContextMenuPreference({
   }
   return installExplorerContextMenu({
     executablePath,
+    appArgs,
     platform,
     spawnSyncImpl,
     logWarn,
@@ -587,8 +707,18 @@ function resolveExplorerContextMenuEnabled({
     return { enabled: preferred, supported: true };
   }
 
+  // Probe-only default-off (no user choice). Skip live registry when no machine
+  // registration appeared since the last clean probe.
+  if (
+    isExplorerContextMenuProbeCurrent({ app, fsModule, pathModule, logWarn })
+    && !hasMachineRegistration({ spawnSyncImpl, logWarn })
+  ) {
+    return { enabled: false, supported: true };
+  }
+
   return {
-    enabled: isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn }),
+    enabled: isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })
+      || hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
     supported: true,
   };
 }
@@ -596,6 +726,7 @@ function resolveExplorerContextMenuEnabled({
 function applyInitialExplorerContextMenuPreference({
   app,
   executablePath = process.execPath,
+  appArgs = [],
   platform = process.platform,
   spawnSyncImpl = spawnSync,
   fsModule = fs,
@@ -614,16 +745,29 @@ function applyInitialExplorerContextMenuPreference({
   });
 
   const currentExe = String(executablePath || "").trim();
+  const normalizedAppArgs = Array.isArray(appArgs)
+    ? appArgs.map((arg) => String(arg || "").trim()).filter(Boolean)
+    : [];
 
   // No saved preference: keep installer/portable state, but repair when any
   // residual verb remains (complete or partial). A single leftover verb would
   // otherwise leave the toggle off while Explorer still shows one entry.
   if (record === null) {
+    // Fast path for ZIP/portable defaults already probed clean: avoid repeated
+    // residual scans unless a machine install later appears under shared AppData.
+    if (
+      isExplorerContextMenuProbeCurrent({ app, fsModule, pathModule, logWarn })
+      && !hasMachineRegistration({ spawnSyncImpl, logWarn })
+    ) {
+      return { enabled: false, success: true, supported: true };
+    }
+
     const residual = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })
       || hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn });
     if (residual) {
       const refreshed = installExplorerContextMenu({
         executablePath: currentExe,
+        appArgs: normalizedAppArgs,
         platform,
         spawnSyncImpl,
         logWarn,
@@ -647,12 +791,11 @@ function applyInitialExplorerContextMenuPreference({
         supported: true,
       };
     }
-    // ZIP / portable default: no verbs and no preference. Persist enabled:false
-    // so warm starts skip repeated reg.exe probes before the main window opens.
-    writeExplorerContextMenuEnabledPreference({
+    // ZIP / portable default: no verbs and no preference. Record a probe marker
+    // only — never write enabled:false as a durable user choice (shared AppData
+    // with a later NSIS install would otherwise suppress installer verbs).
+    writeExplorerContextMenuProbeMarker({
       app,
-      enabled: false,
-      executablePath: currentExe,
       fsModule,
       pathModule,
       logWarn,
@@ -679,6 +822,7 @@ function applyInitialExplorerContextMenuPreference({
   const applied = applyExplorerContextMenuPreference({
     enabled: preferred,
     executablePath: currentExe,
+    appArgs: normalizedAppArgs,
     platform,
     spawnSyncImpl,
     logWarn,
@@ -709,6 +853,7 @@ module.exports = {
   DIRECTORY_BACKGROUND_SHELL_KEY,
   DIRECTORY_SHELL_KEY,
   EXPLORER_CONTEXT_MENU_PREFERENCES_FILE,
+  EXPLORER_CONTEXT_MENU_PROBE_FILE,
   EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
   MENU_LABEL,
   SUPPRESSION_VALUE,
@@ -723,6 +868,7 @@ module.exports = {
   removeExplorerContextMenu,
   resolveExplorerContextMenuEnabled,
   resolveExplorerContextMenuExecutablePath,
+  resolveExplorerContextMenuLaunchSpec,
   updateExplorerContextMenuEnabledPreference,
   writeExplorerContextMenuEnabledPreference,
 };
