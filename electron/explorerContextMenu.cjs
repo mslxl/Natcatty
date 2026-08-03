@@ -284,6 +284,12 @@ function deleteRegKey(hive, keyPath, options = {}) {
   return result.status === 0;
 }
 
+function deleteRegValue(hive, keyPath, valueName, options = {}) {
+  if (!regValueExists(hive, keyPath, valueName, options)) return true;
+  const result = runReg(["delete", `${hive}\\${keyPath}`, "/v", valueName, "/f"], options);
+  return result.status === 0;
+}
+
 function writeRegStr(hive, keyPath, valueName, value, options = {}) {
   const args = ["add", `${hive}\\${keyPath}`, "/f"];
   if (valueName) {
@@ -366,6 +372,14 @@ function writeUserSuppression(options = {}) {
   // ProgrammaticAccessOnly hides it in Explorer for this user without elevation.
   // Both writes must succeed; roll back a partial pair so disable never leaves
   // only one Explorer entry hidden while the other remains visible.
+  //
+  // Important: when rolling back, only remove the suppression value (or a key
+  // we newly created). Never deleteRegKey a pre-existing portable/user install
+  // verb — that would destroy the only working Explorer command if one of the
+  // two suppression writes fails.
+  const folderExisted = regKeyExists("HKCU", DIRECTORY_SHELL_KEY, options);
+  const backgroundExisted = regKeyExists("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options);
+
   const folderOk = writeRegStr("HKCU", DIRECTORY_SHELL_KEY, SUPPRESSION_VALUE, "", options);
   const backgroundOk = writeRegStr(
     "HKCU",
@@ -375,8 +389,21 @@ function writeUserSuppression(options = {}) {
     options,
   );
   if (folderOk && backgroundOk) return true;
-  if (folderOk) deleteRegKey("HKCU", DIRECTORY_SHELL_KEY, options);
-  if (backgroundOk) deleteRegKey("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options);
+
+  if (folderOk) {
+    if (folderExisted) {
+      deleteRegValue("HKCU", DIRECTORY_SHELL_KEY, SUPPRESSION_VALUE, options);
+    } else {
+      deleteRegKey("HKCU", DIRECTORY_SHELL_KEY, options);
+    }
+  }
+  if (backgroundOk) {
+    if (backgroundExisted) {
+      deleteRegValue("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, SUPPRESSION_VALUE, options);
+    } else {
+      deleteRegKey("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options);
+    }
+  }
   return false;
 }
 

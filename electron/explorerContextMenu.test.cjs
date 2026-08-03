@@ -280,6 +280,89 @@ test("removeExplorerContextMenu never deletes HKLM; suppresses per-user instead"
   assert.ok(deleted.every((key) => key.startsWith("HKCU\\")));
 });
 
+test("writeUserSuppression rollback preserves pre-existing portable HKCU commands", () => {
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."'],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%V."'],
+  ]);
+  let folderSuppressWrites = 0;
+  const deletedKeys = [];
+  const deletedValues = [];
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      const key = args[1];
+      const valueIdx = args.indexOf("/v");
+      if (valueIdx >= 0 && args[valueIdx + 1] === SUPPRESSION_VALUE) {
+        // First suppression succeeds; second fails so rollback must run.
+        if (key.includes("Directory\\shell\\Netcatty") && !key.includes("Background")) {
+          folderSuppressWrites += 1;
+          values.set(`${key}::${SUPPRESSION_VALUE}`, "");
+          return { status: 0, stdout: "", stderr: "" };
+        }
+        return { status: 1, stdout: "", stderr: "access denied" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected add" };
+    }
+    if (args[0] === "delete") {
+      if (args.includes("/v")) {
+        const key = args[1];
+        const valueName = args[args.indexOf("/v") + 1];
+        deletedValues.push(`${key}::${valueName}`);
+        values.delete(`${key}::${valueName}`);
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      deletedKeys.push(args[1]);
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = removeExplorerContextMenu({
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, false);
+  assert.equal(folderSuppressWrites, 1);
+  assert.equal(deletedKeys.length, 0);
+  assert.ok(deletedValues.some((entry) => entry.includes(SUPPRESSION_VALUE)));
+  assert.equal(
+    present.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"),
+    true,
+  );
+  assert.equal(
+    values.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::"),
+    true,
+  );
+});
+
 test("removeExplorerContextMenu keeps portable HKCU when machine suppression fails", () => {
   const present = new Set([
     "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
