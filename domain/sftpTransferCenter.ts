@@ -92,6 +92,12 @@ export function sanitizeSftpTransferTask(value: unknown): TransferTask | null {
     // progress after dedicated reconnect.
     task.lifecycleEpoch = undefined;
   }
+  // Terminal rows must not keep conflict payloads. Older Skip paths cancelled the
+  // task without clearing conflict, so SFTP remount reopened the conflict dialog
+  // while the transfer center looked empty (no attention bucket row).
+  if (TERMINAL_STATUSES.has(task.status) && task.conflict) {
+    task.conflict = undefined;
+  }
   return task;
 }
 

@@ -123,6 +123,39 @@ test("restoring a paused task also marks it interrupted after restart", () => {
   assert.equal(restored.tasks[0]?.lifecycleEpoch, undefined);
 });
 
+test("restoring terminal tasks strips stale conflict payloads (skip-without-clear legacy)", () => {
+  const conflict = {
+    transferId: "css-dir",
+    fileName: "css",
+    sourcePath: "/src/css",
+    targetPath: "/dst/css",
+    isDirectory: true,
+    existingType: "directory" as const,
+    existingSize: 8192,
+    newSize: 0,
+    existingModified: 1,
+    newModified: 2,
+  };
+  const restored = deserializeSftpTransferCenter(JSON.stringify({
+    version: 1,
+    tasks: [{
+      ...task("css-dir", "cancelled", 1),
+      isDirectory: true,
+      conflict,
+      endTime: Date.now(),
+    }, {
+      ...task("still-open", "attention", 2),
+      isDirectory: true,
+      conflict: { ...conflict, transferId: "still-open" },
+    }],
+  }));
+
+  assert.equal(restored.tasks[0]?.status, "cancelled");
+  assert.equal(restored.tasks[0]?.conflict, undefined);
+  assert.equal(restored.tasks[1]?.status, "attention");
+  assert.equal(restored.tasks[1]?.conflict?.fileName, "css");
+});
+
 test("history keeps unfinished tasks and caps terminal tasks by age and count", () => {
   const now = Date.UTC(2026, 6, 23);
   const old = now - 31 * 24 * 60 * 60 * 1000;

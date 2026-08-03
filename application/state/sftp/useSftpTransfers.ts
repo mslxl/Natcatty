@@ -178,10 +178,12 @@ export const useSftpTransfers = ({
   const surfaceVisibleRef = useRef(surfaceVisible);
   surfaceVisibleRef.current = surfaceVisible;
   const [transfers, setTransfersState] = useState<TransferTask[]>(() => sftpTransferCenterStore.getOwnerTasks(ownerId));
+  // Only re-surface live attention conflicts. Terminal rows may still carry a
+  // stale conflict payload after older Skip paths — those must not reopen the dialog.
   const [conflicts, setConflicts] = useState<FileConflict[]>(() => sftpTransferCenterStore
     .getOwnerTasks(ownerId)
-    .map((task) => task.conflict)
-    .filter((conflict): conflict is FileConflict => !!conflict));
+    .filter((task) => task.status === "attention" && !!task.conflict)
+    .map((task) => task.conflict as FileConflict));
 
   // Track cancelled task IDs. has() also sees process-global cancel flags set by
   // the transfer center after the React owner unmounts.
@@ -1393,8 +1395,20 @@ export const useSftpTransfers = ({
 
       const task = transfersRef.current.find((t) => t.id === conflictId);
       if (!task) {
+        // Dialog can show a store-owned conflict before the panel adopts the row.
+        // Clearing only React state leaves attention+conflict in localStorage and
+        // the prompt returns on the next SFTP open (issue #2636).
         conflictsRef.current = conflictsRef.current.filter((c) => c.transferId !== conflictId);
         setConflicts(conflictsRef.current);
+        if (action === "stop" || action === "skip") {
+          sftpTransferCenterStore.patchTask(conflictId, {
+            status: "cancelled",
+            conflict: undefined,
+            endTime: Date.now(),
+            speed: 0,
+            error: undefined,
+          });
+        }
         return;
       }
 
@@ -1436,9 +1450,18 @@ export const useSftpTransfers = ({
         for (const affectedTask of affectedTasks) {
           cancelledTasksRef.current.add(affectedTask.id);
         }
+        // Drop conflict so remount / restart cannot rehydrate the dialog from a
+        // cancelled row that still carries conflict metadata.
         setTransfers((prev) =>
           prev.map((t) => affectedConflictIds.has(t.id)
-              ? { ...t, status: "cancelled" as TransferStatus, endTime: Date.now() }
+              ? {
+                  ...t,
+                  status: "cancelled" as TransferStatus,
+                  endTime: Date.now(),
+                  conflict: undefined,
+                  error: undefined,
+                  speed: 0,
+                }
               : t,
           ),
         );
