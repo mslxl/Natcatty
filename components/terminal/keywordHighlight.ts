@@ -103,6 +103,7 @@ export class KeywordHighlighter implements IDisposable {
   private debounceTimer: NodeJS.Timeout | null = null;
   /** Single quiet-window catch-up after bulk dumps (no per-write schedule). */
   private bulkPressureCatchUpTimer: NodeJS.Timeout | null = null;
+  private writePruneTimer: NodeJS.Timeout | null = null;
   private animationFrameId: number | null = null;
   private lastRefreshTime: number = 0;
   private matchCache = new Map<string, CachedDecorationRange[]>();
@@ -123,6 +124,7 @@ export class KeywordHighlighter implements IDisposable {
   private lastBurstDecayAt = 0;
   private lastUserInputAt = 0;
   private lastUserInputWasEnter = false;
+  private writePruningDeferred = false;
   private scrollRefreshJob: ScrollRefreshJob | null = null;
   private scrollRefreshGeneration = 0;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -137,6 +139,7 @@ export class KeywordHighlighter implements IDisposable {
   private static readonly WRITE_BURST_DEBOUNCE_MS = 180;
   private static readonly WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS = 48;
   private static readonly WRITE_BURST_HIGHLIGHT_PAUSE_MS = 260;
+  private static readonly WRITE_PRUNE_IDLE_MS = 600;
 
   constructor(term: XTerm) {
     this.term = term;
@@ -182,6 +185,9 @@ export class KeywordHighlighter implements IDisposable {
         if (this.isInputProtectionActive(performance.now())) {
           if (this.lastUserInputWasEnter) {
             this.markDirtyFromWrite({ includeViewportProbe: false });
+            const buffer = this.term.buffer.active;
+            this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
+            this.writePruningDeferred = true;
           } else {
             this.updateWriteBurst();
             this.markVisibleRangeDirty();
@@ -293,6 +299,10 @@ export class KeywordHighlighter implements IDisposable {
     if (this.bulkPressureCatchUpTimer) {
       clearTimeout(this.bulkPressureCatchUpTimer);
       this.bulkPressureCatchUpTimer = null;
+    }
+    if (this.writePruneTimer) {
+      clearTimeout(this.writePruneTimer);
+      this.writePruneTimer = null;
     }
     if (this.animationFrameId !== null) {
       cancelAnimationFrame(this.animationFrameId);
@@ -647,6 +657,7 @@ export class KeywordHighlighter implements IDisposable {
     const rangeEnd = viewportEnd + overscan;
 
     const previousRange = this.lastRenderRange;
+    const deferWritePruning = reason === "write" && this.writePruningDeferred;
     this.beginTerminalRefreshTracking(viewportStart, viewportEnd);
     try {
       this.reindexLineDecorationsFromMarkers();
@@ -668,7 +679,7 @@ export class KeywordHighlighter implements IDisposable {
       }
 
       if (reason === "write") {
-        this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd);
+        this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd, deferWritePruning);
       } else {
         for (const [lineY, state] of this.lineDecorations) {
           if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
@@ -688,6 +699,7 @@ export class KeywordHighlighter implements IDisposable {
         this.lastRenderRange = { start: rangeStart, end: rangeEnd };
       }
     } finally {
+      if (reason === "write") this.writePruningDeferred = false;
       this.flushTerminalRefresh();
     }
   }
@@ -810,10 +822,18 @@ export class KeywordHighlighter implements IDisposable {
     }
   }
 
-  private pruneWriteDecorationsIfNeeded(rangeStart: number, rangeEnd: number): void {
+  private pruneWriteDecorationsIfNeeded(
+    rangeStart: number,
+    rangeEnd: number,
+    deferUntilIdle = false,
+  ): void {
     const renderLineCount = Math.max(1, rangeEnd - rangeStart + 1);
     const highWaterMark = Math.max(64, renderLineCount * 2);
     if (this.lineDecorations.size <= highWaterMark) return;
+    if (deferUntilIdle) {
+      this.scheduleDeferredWritePrune();
+      return;
+    }
 
     // Decoration registration/removal makes xterm repaint the full viewport.
     // Prune in batches so ordinary one-line output keeps existing highlights
@@ -823,6 +843,27 @@ export class KeywordHighlighter implements IDisposable {
         this.disposeLineDecorations(lineY, state);
       }
     }
+  }
+
+  private scheduleDeferredWritePrune(): void {
+    if (this.writePruneTimer) clearTimeout(this.writePruneTimer);
+    this.writePruneTimer = setTimeout(() => {
+      this.writePruneTimer = null;
+      if (!this.enabled || this.compiledRules.length === 0) return;
+      const now = performance.now();
+      if (
+        this.lastUserInputAt > 0
+        && now - this.lastUserInputAt < KeywordHighlighter.WRITE_PRUNE_IDLE_MS
+      ) {
+        this.scheduleDeferredWritePrune();
+        return;
+      }
+      const buffer = this.term.buffer.active;
+      const overscan = this.getOverscanLines("write");
+      const rangeStart = Math.max(0, buffer.viewportY - overscan);
+      const rangeEnd = buffer.viewportY + this.term.rows - 1 + overscan;
+      this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd);
+    }, KeywordHighlighter.WRITE_PRUNE_IDLE_MS);
   }
 
   private mergeRefreshReason(current: RefreshReason, next: RefreshReason): RefreshReason {

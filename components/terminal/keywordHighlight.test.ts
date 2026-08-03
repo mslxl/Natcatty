@@ -214,6 +214,7 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
   );
   const decorations: Array<{ x: number; width: number; foregroundColor: string }> = [];
   const decorationStates: Array<{
+    readonly line: number;
     isDisposed: boolean;
     dispose: () => void;
   }> = [];
@@ -275,9 +276,17 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
       markers.push(marker);
       return marker;
     },
-    registerDecoration(options: { x: number; width: number; foregroundColor: string }) {
+    registerDecoration(options: {
+      marker?: { line: number };
+      x: number;
+      width: number;
+      foregroundColor: string;
+    }) {
       decorations.push(options);
       const state = {
+        get line() {
+          return options.marker?.line ?? -1;
+        },
         isDisposed: false,
         dispose() {
           this.isDisposed = true;
@@ -788,7 +797,7 @@ test("pressing Enter keeps unchanged keyword decorations mounted", async () => {
   }
 });
 
-test("pressing Enter rescans only the cursor neighborhood", async () => {
+test("pressing Enter avoids rescanning overscan edges", async () => {
   const raf = installAnimationFrameQueue();
   try {
     const {
@@ -831,7 +840,7 @@ test("pressing Enter rescans only the cursor neighborhood", async () => {
 test("non-Enter input still detects redraws away from the cursor", async () => {
   const raf = installAnimationFrameQueue();
   try {
-    const { term, handlers, setLineText } = createFakeTerminal("hello DEPLOY world", {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("hello DEPLOY world", {
       lineCount: 60,
     });
     term.rows = 10;
@@ -847,14 +856,49 @@ test("non-Enter input still detects redraws away from the cursor", async () => {
       enabled: true,
     }], true);
     raf.flush();
-    assert.notDeepEqual(highlighter.getForegroundRanges(20), []);
+    const originalDecoration = decorationStates.find(({ line }) => line === 20);
+    assert.ok(originalDecoration);
 
     handlers.data?.("a");
     setLineText(20, "redrawn without a keyword");
     handlers.writeParsed?.();
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
-    assert.deepEqual(highlighter.getForegroundRanges(20), []);
+    assert.equal(originalDecoration.isDisposed, true);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter input still detects redraws away from the cursor", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 60,
+    });
+    term.rows = 10;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 9;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const originalDecoration = decorationStates.find(({ line }) => line === 20);
+    assert.ok(originalDecoration);
+
+    handlers.data?.("\r");
+    setLineText(20, "redrawn without a keyword");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(originalDecoration.isDisposed, true);
     highlighter.dispose();
   } finally {
     raf.restore();
@@ -902,7 +946,56 @@ test("write-only scrolling keeps retained decorations bounded", () => {
   }
 });
 
-test("pressing Enter limits marker-move repaint to the cursor row", async () => {
+test("Enter defers batched decoration pruning until input is idle", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      writePruningDeferred: boolean;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 250; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.writePruningDeferred = true;
+      internals.refreshViewport("write");
+    }
+
+    assert.equal(
+      decorationStates.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "Enter refreshes should not remove decorations while input is settling",
+    );
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.ok(
+      decorationStates.filter(({ isDisposed }) => !isDisposed).length <= 64,
+      "idle cleanup should return retained decorations to the bounded range",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter does not repaint after keyword markers move", async () => {
   const raf = installAnimationFrameQueue();
   try {
     const {
@@ -934,7 +1027,7 @@ test("pressing Enter limits marker-move repaint to the cursor row", async () => 
     handlers.writeParsed?.();
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
-    assert.deepEqual(refreshCalls, [{ start: 2, end: 2 }]);
+    assert.deepEqual(refreshCalls, []);
     highlighter.dispose();
   } finally {
     raf.restore();
