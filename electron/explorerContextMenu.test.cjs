@@ -390,6 +390,62 @@ test("installExplorerContextMenu does not duplicate HKLM verbs into HKCU", () =>
   assert.ok(!writes.some((args) => String(args[1]).startsWith("HKCU\\")));
 });
 
+test("installExplorerContextMenu fails when unelevated HKLM verbs are stale", () => {
+  const present = new Set([
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", "C:\\Old\\Netcatty.exe,0"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Old\\Netcatty.exe" --open-terminal-path "%1"'],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", "C:\\Old\\Netcatty.exe,0"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", '"C:\\Old\\Netcatty.exe" --open-terminal-path "%V"'],
+  ]);
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      // Unelevated process cannot rewrite HKLM.
+      return { status: 1, stdout: "", stderr: "access denied" };
+    }
+    if (args[0] === "delete") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, false);
+  // Menu still visible with stale commands, but install must not claim success.
+  assert.equal(result.enabled, true);
+});
+
 test("installExplorerContextMenu skips reg writes when shell verbs are already current", () => {
   const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
   const folderCmd = buildExplorerContextMenuCommand(exe, "%1");

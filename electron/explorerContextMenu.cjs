@@ -397,11 +397,21 @@ function installExplorerContextMenu({
     if (!folderOk || !backgroundOk) writesOk = false;
   }
 
-  // Success requires both folder and background verbs to be runnable. A partial
-  // machine registration must not be treated as complete, or startup would
-  // persist schemaVersion and never retry the missing verb.
-  const enabled = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
-  const success = enabled && (writesOk || (machineRegistered && enabled));
+  // Success requires a complete, current registration. Unelevated all-users
+  // installs may leave stale HKLM commands in place when writeShellVerb fails;
+  // do not treat "some non-empty command exists" as success, or schemaVersion
+  // would stick and never retry the upgrade path.
+  const folderSpec = { executablePath: exe, pathPlaceholder: "%1", iconPath: exe };
+  const backgroundSpec = { executablePath: exe, pathPlaceholder: "%V", iconPath: exe };
+  const machineCurrent = machineRegistered
+    && shellVerbIsCurrent("HKLM", DIRECTORY_SHELL_KEY, folderSpec, options)
+    && shellVerbIsCurrent("HKLM", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
+  const userCurrent = !machineRegistered
+    && shellVerbIsCurrent("HKCU", DIRECTORY_SHELL_KEY, folderSpec, options)
+    && shellVerbIsCurrent("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
+  const success = writesOk || machineCurrent || userCurrent;
+  const enabled = success
+    || isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
 
   return {
     success,
