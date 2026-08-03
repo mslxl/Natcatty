@@ -720,6 +720,52 @@ test("large output delays keyword highlight scans until output quiets", async ()
   }
 });
 
+test("Enter cancels queued scroll pruning before large-output deferral", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    noteTerminalOutputPressureData(
+      term as never,
+      "x\n".repeat(Math.ceil(TERMINAL_LONG_LINE_PRESSURE_BYTES / 2)),
+    );
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    const disposedDecorationCount = existingDecorations.filter(({ isDisposed }) => isDisposed).length;
+    highlighter.dispose();
+    resetTerminalOutputPressure(term as never);
+    assert.equal(
+      disposedDecorationCount,
+      0,
+      "large Enter output should not leave a queued scroll prune behind",
+    );
+  } finally {
+    raf.restore();
+  }
+});
+
 test("recent user input delays keyword highlight scans until typing is quiet", async () => {
   const raf = installAnimationFrameQueue();
   try {

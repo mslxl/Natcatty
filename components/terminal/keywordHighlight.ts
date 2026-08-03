@@ -167,6 +167,10 @@ export class KeywordHighlighter implements IDisposable {
       this.term.onWriteParsed(() => {
         if (this.enterInputPending) {
           this.scheduleEnterInputIdleClear();
+          this.cancelScrollRefresh();
+          if (this.pendingRefreshReason === "scroll") {
+            this.pendingRefreshReason = "write";
+          }
         }
         const pressure = getTerminalOutputPressure(this.term);
         if (pressure.background) {
@@ -194,10 +198,6 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            this.cancelScrollRefresh();
-            if (this.pendingRefreshReason === "scroll") {
-              this.pendingRefreshReason = "write";
-            }
             this.markDirtyFromWrite({ includeViewportProbe: false });
             const buffer = this.term.buffer.active;
             this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
