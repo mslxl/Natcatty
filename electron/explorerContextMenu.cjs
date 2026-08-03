@@ -151,10 +151,14 @@ function readExplorerContextMenuPreferenceRecord({
     const executablePath = typeof parsed.executablePath === "string"
       ? parsed.executablePath.trim()
       : "";
+    const appArgs = Array.isArray(parsed.appArgs)
+      ? parsed.appArgs.map((arg) => String(arg || "").trim()).filter(Boolean)
+      : [];
     return {
       enabled: parsed.enabled,
       schemaVersion,
       executablePath,
+      appArgs,
     };
   } catch (err) {
     logWarn?.("[Main] Failed to read Explorer context menu preference:", err);
@@ -177,10 +181,24 @@ function readExplorerContextMenuEnabledPreference({
   return record ? record.enabled : null;
 }
 
+function normalizeAppArgs(appArgs = []) {
+  return Array.isArray(appArgs)
+    ? appArgs.map((arg) => String(arg || "").trim()).filter(Boolean)
+    : [];
+}
+
+function appArgsEqual(left = [], right = []) {
+  const a = normalizeAppArgs(left);
+  const b = normalizeAppArgs(right);
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
 function writeExplorerContextMenuEnabledPreference({
   app,
   enabled,
   executablePath = "",
+  appArgs = [],
   fsModule = fs,
   pathModule = path,
   logWarn = console.warn,
@@ -195,6 +213,8 @@ function writeExplorerContextMenuEnabledPreference({
     };
     const exe = String(executablePath || "").trim();
     if (exe) payload.executablePath = exe;
+    const normalizedArgs = normalizeAppArgs(appArgs);
+    if (normalizedArgs.length > 0) payload.appArgs = normalizedArgs;
     fsModule.writeFileSync(filePath, JSON.stringify(payload, null, 2));
     return true;
   } catch (err) {
@@ -786,9 +806,7 @@ function applyInitialExplorerContextMenuPreference({
   });
 
   const currentExe = String(executablePath || "").trim();
-  const normalizedAppArgs = Array.isArray(appArgs)
-    ? appArgs.map((arg) => String(arg || "").trim()).filter(Boolean)
-    : [];
+  const normalizedAppArgs = normalizeAppArgs(appArgs);
 
   // No saved preference: keep installer/portable state, but repair when any
   // residual verb remains (complete or partial). A single leftover verb would
@@ -812,6 +830,7 @@ function applyInitialExplorerContextMenuPreference({
           app,
           enabled: true,
           executablePath: currentExe,
+          appArgs: normalizedAppArgs,
           fsModule,
           pathModule,
           logWarn,
@@ -842,25 +861,27 @@ function applyInitialExplorerContextMenuPreference({
 
   const preferred = record.enabled;
   const schemaCurrent = record.schemaVersion === EXPLORER_CONTEXT_MENU_SCHEMA_VERSION;
-  // Portable builds can be moved/renamed; re-apply when the launcher path that
-  // was last written into the shell verbs no longer matches.
+  // Portable builds / dev checkouts can move; re-apply when the launcher path
+  // or development app entry that was last written into the shell verbs no
+  // longer matches.
   const executableCurrent = !preferred
     || !currentExe
     || record.executablePath === currentExe;
+  const appArgsCurrent = !preferred || appArgsEqual(record.appArgs, normalizedAppArgs);
 
-  // Healthy warm start for enabled installs: schema + executable path match
+  // Healthy warm start for enabled installs: schema + launch identity match
   // *and* both Explorer verbs still look registered. An interrupted installer
   // rewrite or partial cleanup can leave a current preference while one verb
   // is missing; re-apply in that case instead of short-circuiting forever.
   // Disabled preference is never short-circuited: NSIS updates re-create shell
   // verbs unconditionally, so we must re-assert per-user suppression each launch.
-  if (preferred === true && schemaCurrent && executableCurrent) {
+  if (preferred === true && schemaCurrent && executableCurrent && appArgsCurrent) {
     if (isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })) {
       return { enabled: true, success: true, supported: true };
     }
   }
 
-  // Schema bump, portable path change, or disabled preference: re-apply.
+  // Schema bump, portable path change, dev app path change, or disabled preference: re-apply.
   const applied = applyExplorerContextMenuPreference({
     enabled: preferred,
     executablePath: currentExe,
@@ -875,6 +896,7 @@ function applyInitialExplorerContextMenuPreference({
       // Keep the user's intended preference as source of truth.
       enabled: preferred,
       executablePath: currentExe,
+      appArgs: normalizedAppArgs,
       fsModule,
       pathModule,
       logWarn,

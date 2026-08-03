@@ -1436,6 +1436,86 @@ test("applyInitialExplorerContextMenuPreference re-suppresses when preference is
   assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
 });
 
+test("applyInitialExplorerContextMenuPreference re-applies when development appArgs change", () => {
+  const electronExe = "C:\\dev\\node_modules\\electron\\dist\\electron.exe";
+  const oldApp = "C:\\old\\netcatty";
+  const newApp = "C:\\new\\netcatty";
+  let wrote = null;
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", buildExplorerContextMenuCommand(electronExe, "%1", { appArgs: [oldApp] })],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", buildExplorerContextMenuCommand(electronExe, "%V", { appArgs: [oldApp] })],
+  ]);
+  const fsModule = {
+    existsSync: () => true,
+    readFileSync: () => JSON.stringify({
+      enabled: true,
+      schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+      executablePath: electronExe,
+      appArgs: [oldApp],
+    }),
+    mkdirSync: () => {},
+    writeFileSync: (_p, data) => {
+      wrote = JSON.parse(String(data));
+    },
+  };
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      const key = args[1];
+      const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+      const dataIdx = args.indexOf("/d");
+      if (dataIdx >= 0) values.set(`${key}::${valueName}`, args[dataIdx + 1]);
+      present.add(key);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "delete") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = applyInitialExplorerContextMenuPreference({
+    app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    executablePath: electronExe,
+    appArgs: [newApp],
+    platform: "win32",
+    fsModule,
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
+  assert.deepEqual(wrote?.appArgs, [newApp]);
+  assert.equal(
+    values.get("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::"),
+    buildExplorerContextMenuCommand(electronExe, "%1", { appArgs: [newApp] }),
+  );
+});
+
 test("applyInitialExplorerContextMenuPreference re-applies when portable path changes", () => {
   let wrote = null;
   const present = new Set();

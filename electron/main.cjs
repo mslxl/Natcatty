@@ -686,6 +686,7 @@ ipcMain?.handle?.("netcatty:explorerContextMenu:setEnabled", async (_event, payl
       app,
       enabled: nextEnabled,
       executablePath: launchSpec.executablePath,
+      appArgs: launchSpec.appArgs,
     }),
   });
   explorerContextMenuEnabled = result.enabled === true;
