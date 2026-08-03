@@ -1229,6 +1229,49 @@ test("late Enter output stays protected after the pending hint expires", async (
   }
 });
 
+test("late Enter output detects content shifts after scrollback saturates", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, markers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
+    assert.ok(retainedDecorations.length > 0);
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 650); });
+
+    for (const marker of markers) {
+      if (!marker.isDisposed) marker.line -= 1;
+    }
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "marker shifts should identify delayed output when buffer positions are saturated",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("write pruning enforces a hard bound and delays soft cleanup until idle", async () => {
   const raf = installAnimationFrameQueue();
   try {

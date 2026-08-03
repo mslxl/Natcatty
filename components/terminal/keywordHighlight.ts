@@ -170,7 +170,10 @@ export class KeywordHighlighter implements IDisposable {
         }
         const outputDrivenPendingScroll =
           this.pendingRefreshReason === "scroll"
-          && this.hasOutputPositionChangedSinceLastSnapshot();
+          && (
+            this.hasOutputPositionChangedSinceLastSnapshot()
+            || this.hasDecorationMarkerShiftSinceLastRefresh()
+          );
         if (this.enterInputPending || outputDrivenPendingScroll) {
           this.cancelScrollRefresh();
           if (this.pendingRefreshReason === "scroll") {
@@ -960,6 +963,13 @@ export class KeywordHighlighter implements IDisposable {
       || current.baseY !== previous.baseY
       || current.cursorAbsoluteY !== previous.cursorAbsoluteY
     );
+  }
+
+  private hasDecorationMarkerShiftSinceLastRefresh(): boolean {
+    for (const [lineY, state] of this.lineDecorations) {
+      if (state.marker.isDisposed || state.marker.line !== lineY) return true;
+    }
+    return false;
   }
 
   private buildViewportProbe(buffer: IBuffer, rows: number): readonly ViewportProbeSample[] {
