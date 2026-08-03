@@ -1261,6 +1261,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     setDeleteTarget({ type: 'selection', ids });
   };
 
+  const existingDeleteSelectionIds = deleteTarget?.type === 'selection'
+    ? deleteTarget.ids.filter((id) => snippets.some((snippet) => snippet.id === id))
+    : [];
+
   const confirmDeleteTarget = () => {
     if (!deleteTarget) return;
 
@@ -1269,12 +1273,17 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     } else if (deleteTarget.type === 'selection') {
       const deletedIds = new Set(deleteTarget.ids);
       const result = deleteSelectedSnippetsFromVault(snippets, hosts, deletedIds);
+      if (result.deletedCount === 0) {
+        clearSnippetSelection();
+        setDeleteTarget(null);
+        return;
+      }
       onBulkSave(result.snippets);
       onUpdateHosts?.(result.hosts);
       if (editingSnippet.id && deletedIds.has(editingSnippet.id)) {
         handleClosePanel();
       }
-      toast.success(t('snippets.selection.deleteSuccess', { count: deletedIds.size }));
+      toast.success(t('snippets.selection.deleteSuccess', { count: result.deletedCount }));
       clearSnippetSelection();
     } else {
       onDelete(deleteTarget.id);
@@ -2168,7 +2177,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       <VaultDeleteConfirmDialog
         open={Boolean(deleteTarget)}
         title={deleteTarget?.type === 'selection'
-          ? t('snippets.selection.deleteConfirmTitle', { count: deleteTarget.ids.length })
+          ? t('snippets.selection.deleteConfirmTitle', { count: existingDeleteSelectionIds.length })
           : t('vault.deleteConfirm.title', { name: deleteTarget?.name ?? '' })}
         description={
           deleteTarget?.type === 'package'

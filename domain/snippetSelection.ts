@@ -5,9 +5,10 @@ export function deleteSelectedSnippetsFromVault(
   snippets: Snippet[],
   hosts: Host[],
   selectedSnippetIds: ReadonlySet<string>,
-): { snippets: Snippet[]; hosts: Host[] } {
+): { snippets: Snippet[]; hosts: Host[]; deletedCount: number } {
   let nextSnippets = [...snippets];
   let nextHosts = [...hosts];
+  let deletedCount = 0;
 
   for (const snippet of snippets) {
     if (!snippet.id || !selectedSnippetIds.has(snippet.id)) continue;
@@ -15,7 +16,8 @@ export function deleteSelectedSnippetsFromVault(
     if ('error' in result) continue;
     nextSnippets = result.snippets;
     nextHosts = result.hosts;
+    deletedCount += 1;
   }
 
-  return { snippets: nextSnippets, hosts: nextHosts };
+  return { snippets: nextSnippets, hosts: nextHosts, deletedCount };
 }

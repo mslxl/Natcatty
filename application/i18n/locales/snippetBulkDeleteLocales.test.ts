@@ -20,13 +20,13 @@ test('snippet bulk-delete copy exists in every locale', () => {
   }
 });
 
-test('English bulk-delete copy is grammatical for one selected script', () => {
+test('English bulk-delete copy is entity-neutral and grammatical for one item', () => {
   assert.equal(
     en['snippets.selection.deleteConfirmTitle'].replace('{count}', '1'),
-    'Delete selected scripts (1)?',
+    'Delete selected items (1)?',
   );
   assert.equal(
     en['snippets.selection.deleteSuccess'].replace('{count}', '1'),
-    'Deleted selected scripts: 1.',
+    'Deleted selected items: 1.',
   );
 });

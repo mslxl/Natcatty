@@ -50,6 +50,7 @@ test('deleteSelectedSnippetsFromVault removes host bindings for every selected s
   );
 
   assert.deepEqual(result.snippets.map((snippet) => snippet.id), ['keep']);
+  assert.equal(result.deletedCount, 2);
   assert.equal(result.hosts[0].loginScriptId, undefined);
   assert.deepEqual(result.hosts[0].connectScriptIds, ['keep']);
   assert.deepEqual(result.hosts[1].connectScriptIds, []);
