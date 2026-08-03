@@ -696,7 +696,9 @@ async function resumeSingleFileWithDedicatedSession(
             targetSftpId,
             sourceHostId: endpoints.sourceHost?.id,
             targetHostId: endpoints.targetHost?.id,
-            totalBytes: task.totalBytes || undefined,
+            totalBytes: Number.isFinite(task.totalBytes)
+              ? task.totalBytes
+              : undefined,
             resumable: task.resumable !== false,
             checkpointBytes: task.checkpointBytes ?? task.transferredBytes ?? 0,
             resumeStage: task.resumeStage,
