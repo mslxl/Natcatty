@@ -658,12 +658,18 @@ export class KeywordHighlighter implements IDisposable {
 
     const previousRange = this.lastRenderRange;
     const deferWritePruning = reason === "write" && this.writePruningDeferred;
+    let writeContinuationScheduled = false;
     this.beginTerminalRefreshTracking(viewportStart, viewportEnd);
     try {
       this.reindexLineDecorationsFromMarkers();
 
       if (reason === "write") {
-        this.processDirtyLinesInRange(rangeStart, rangeEnd, cursorAbsoluteY, "write");
+        writeContinuationScheduled = this.processDirtyLinesInRange(
+          rangeStart,
+          rangeEnd,
+          cursorAbsoluteY,
+          "write",
+        );
       } else if (reason === "scroll") {
         this.startScrollRefresh(viewportStart, viewportEnd, cursorAbsoluteY);
         return;
@@ -699,7 +705,9 @@ export class KeywordHighlighter implements IDisposable {
         this.lastRenderRange = { start: rangeStart, end: rangeEnd };
       }
     } finally {
-      if (reason === "write") this.writePruningDeferred = false;
+      if (reason === "write" && !writeContinuationScheduled) {
+        this.writePruningDeferred = false;
+      }
       this.flushTerminalRefresh();
     }
   }
@@ -773,7 +781,7 @@ export class KeywordHighlighter implements IDisposable {
     rangeEnd: number,
     cursorAbsoluteY: number,
     continuationReason: RefreshReason
-  ) {
+  ): boolean {
     if (this.dirtyAllInRenderRange) {
       this.dirtySegments = [{ start: rangeStart, end: rangeEnd }];
       this.rebuildDirtyLineCount();
@@ -781,7 +789,7 @@ export class KeywordHighlighter implements IDisposable {
     }
 
     if (this.dirtySegments.length === 0) {
-      return;
+      return false;
     }
 
     const dirtyInRange: DirtyLineSegment[] = [];
@@ -795,7 +803,7 @@ export class KeywordHighlighter implements IDisposable {
     }
 
     if (dirtyInRange.length === 0) {
-      return;
+      return false;
     }
 
     const { writeRefreshBudgetMs, dirtySegmentChunkSize } = this.getAdaptiveHighlightingProfile();
@@ -812,14 +820,18 @@ export class KeywordHighlighter implements IDisposable {
 
         if (chunkStart <= segment.end && performance.now() - startTime >= writeRefreshBudgetMs) {
           this.triggerRefresh("continuation", continuationReason);
-          return;
+          return true;
         }
       }
-      if (performance.now() - startTime >= writeRefreshBudgetMs) {
+      if (
+        this.dirtySegments.length > 0
+        && performance.now() - startTime >= writeRefreshBudgetMs
+      ) {
         this.triggerRefresh("continuation", continuationReason);
-        return;
+        return true;
       }
     }
+    return false;
   }
 
   private pruneWriteDecorationsIfNeeded(

@@ -984,6 +984,37 @@ test("Enter defers batched decoration pruning until input is idle", async () => 
       0,
       "Enter refreshes should not remove decorations while input is settling",
     );
+
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => {
+          simulatedNow += 5;
+          return simulatedNow;
+        },
+      },
+    });
+    try {
+      term.rows = 30;
+      internals.dirtyAllInRenderRange = true;
+      internals.writePruningDeferred = true;
+      internals.refreshViewport("write");
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+    raf.flush();
+    term.rows = 3;
+
+    assert.equal(
+      decorationStates.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "continuation scans should preserve Enter pruning deferral",
+    );
     await new Promise((resolve) => { setTimeout(resolve, 700); });
     assert.ok(
       decorationStates.filter(({ isDisposed }) => !isDisposed).length <= 64,
