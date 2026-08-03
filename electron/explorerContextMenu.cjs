@@ -444,10 +444,12 @@ function installExplorerContextMenu({
       && shellVerbIsCurrent("HKLM", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
 
     if (!machineCurrent) {
-      // Keep existing HKCU portable verbs / suppression intact.
+      // Keep existing HKCU portable verbs / suppression intact. Report any
+      // surviving runnable verb (including a partial single HKLM entry) so the
+      // Settings toggle stays aligned with what Explorer still shows.
       return {
         success: false,
-        enabled: isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn }),
+        enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
         supported: true,
       };
     }
@@ -461,7 +463,7 @@ function installExplorerContextMenu({
       if (wasSuppressed) writeUserSuppression(options);
       return {
         success: false,
-        enabled: isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn }),
+        enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
         supported: true,
       };
     }
@@ -492,7 +494,7 @@ function installExplorerContextMenu({
   }
 
   const enabled = success
-    || isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
+    || hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn });
 
   return {
     success,
@@ -637,11 +639,24 @@ function applyInitialExplorerContextMenuPreference({
         });
       }
       return {
-        enabled: refreshed.enabled === true,
+        // Prefer live residual state when repair fails so a single surviving
+        // verb still lights the toggle and can be disabled from Settings.
+        enabled: refreshed.enabled === true
+          || hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
         success: refreshed.success === true,
         supported: true,
       };
     }
+    // ZIP / portable default: no verbs and no preference. Persist enabled:false
+    // so warm starts skip repeated reg.exe probes before the main window opens.
+    writeExplorerContextMenuEnabledPreference({
+      app,
+      enabled: false,
+      executablePath: currentExe,
+      fsModule,
+      pathModule,
+      logWarn,
+    });
     return { enabled: false, success: true, supported: true };
   }
 

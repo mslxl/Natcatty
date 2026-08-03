@@ -821,6 +821,76 @@ test("installExplorerContextMenu fails when suppression cleanup fails on user-sc
   assert.equal(result.success, false);
 });
 
+test("installExplorerContextMenu reports partial single HKLM verb as still enabled", () => {
+  const present = new Set([
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Old\\Netcatty.exe" --open-terminal-path "%1"'],
+  ]);
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      return { status: 1, stdout: "", stderr: "access denied" };
+    }
+    if (args[0] === "delete") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.enabled, true);
+});
+
+test("applyInitialExplorerContextMenuPreference caches default-off when no verbs exist", () => {
+  let wrote = null;
+  const fsModule = {
+    existsSync: () => false,
+    mkdirSync: () => {},
+    writeFileSync: (_path, data) => {
+      wrote = JSON.parse(String(data));
+    },
+  };
+  const result = applyInitialExplorerContextMenuPreference({
+    app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    executablePath: "D:\\Tools\\NetcattyPortable.exe",
+    platform: "win32",
+    fsModule,
+    spawnSyncImpl: () => ({ status: 1, stdout: "", stderr: "missing" }),
+    logWarn: () => {},
+  });
+  assert.deepEqual(result, { enabled: false, success: true, supported: true });
+  assert.equal(wrote.enabled, false);
+  assert.equal(wrote.schemaVersion, EXPLORER_CONTEXT_MENU_SCHEMA_VERSION);
+  assert.equal(wrote.executablePath, "D:\\Tools\\NetcattyPortable.exe");
+});
+
 test("non-windows platforms report unsupported explorer context menu", () => {
   assert.equal(
     isExplorerContextMenuRegistered({ platform: "darwin", spawnSyncImpl: () => {
