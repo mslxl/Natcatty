@@ -1,9 +1,21 @@
-import type { Snippet } from './models';
+import type { Host, Snippet } from './models';
+import { deleteSnippetFromVault } from './snippetAgentOps.ts';
 
-export function removeSelectedSnippets(
-  snippets: readonly Snippet[],
+export function deleteSelectedSnippetsFromVault(
+  snippets: Snippet[],
+  hosts: Host[],
   selectedSnippetIds: ReadonlySet<string>,
-): Snippet[] {
-  if (selectedSnippetIds.size === 0) return [...snippets];
-  return snippets.filter((snippet) => !selectedSnippetIds.has(snippet.id));
+): { snippets: Snippet[]; hosts: Host[] } {
+  let nextSnippets = [...snippets];
+  let nextHosts = [...hosts];
+
+  for (const snippet of snippets) {
+    if (!snippet.id || !selectedSnippetIds.has(snippet.id)) continue;
+    const result = deleteSnippetFromVault(nextSnippets, nextHosts, snippet.id);
+    if ('error' in result) continue;
+    nextSnippets = result.snippets;
+    nextHosts = result.hosts;
+  }
+
+  return { snippets: nextSnippets, hosts: nextHosts };
 }

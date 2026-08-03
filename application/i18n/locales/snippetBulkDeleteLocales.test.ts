@@ -19,3 +19,14 @@ test('snippet bulk-delete copy exists in every locale', () => {
     assert.deepEqual(missing, [], `${locale} is missing snippet bulk-delete copy`);
   }
 });
+
+test('English bulk-delete copy is grammatical for one selected script', () => {
+  assert.equal(
+    en['snippets.selection.deleteConfirmTitle'].replace('{count}', '1'),
+    'Delete selected scripts (1)?',
+  );
+  assert.equal(
+    en['snippets.selection.deleteSuccess'].replace('{count}', '1'),
+    'Deleted selected scripts: 1.',
+  );
+});

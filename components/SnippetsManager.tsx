@@ -21,7 +21,7 @@ import {
 import { getRunnableHostsForSnippet, snippetHasRunTargets } from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
-import { removeSelectedSnippets } from '../domain/snippetSelection.ts';
+import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
 import { DEFAULT_SCRIPT_TEMPLATE, isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
 import { Button } from './ui/button';
@@ -1268,7 +1268,9 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       performDeletePackage(deleteTarget.id);
     } else if (deleteTarget.type === 'selection') {
       const deletedIds = new Set(deleteTarget.ids);
-      onBulkSave(removeSelectedSnippets(snippets, deletedIds));
+      const result = deleteSelectedSnippetsFromVault(snippets, hosts, deletedIds);
+      onBulkSave(result.snippets);
+      onUpdateHosts?.(result.hosts);
       if (editingSnippet.id && deletedIds.has(editingSnippet.id)) {
         handleClosePanel();
       }
