@@ -28,6 +28,13 @@ test('AI chat preparing state keeps the same compact header height', () => {
   assert.match(preparingSource, /className="h-6 w-32/);
 });
 
+test('agent selector menu stays compact with restrained corners', () => {
+  assert.match(selectorSource, /w-\[256px\].*rounded-md/);
+  assert.match(selectorSource, /flex h-9 w-full items-center gap-2\.5 px-3/);
+  assert.doesNotMatch(selectorSource, /rounded-lg/);
+  assert.doesNotMatch(selectorSource, /rounded-2xl/);
+});
+
 test('terminal side panel tools share one primary toolbar height', () => {
   for (const source of primaryToolbarSources) {
     assert.match(source, /TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS/);
