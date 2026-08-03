@@ -125,6 +125,9 @@ export class KeywordHighlighter implements IDisposable {
   private lastBurstDecayAt = 0;
   private lastUserInputAt = 0;
   private enterInputPending = false;
+  private enterQueuedWriteCancellationPending = false;
+  private enterViewportScanInProgress = false;
+  private enterViewportScanNeedsRepeat = false;
   private scrollRefreshJob: ScrollRefreshJob | null = null;
   private scrollRefreshGeneration = 0;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -156,6 +159,7 @@ export class KeywordHighlighter implements IDisposable {
         this.lastUserInputAt = performance.now();
         if (data.includes("\r") || data.includes("\n")) {
           this.enterInputPending = true;
+          this.enterQueuedWriteCancellationPending = true;
           if (this.enterInputIdleTimer) {
             clearTimeout(this.enterInputIdleTimer);
             this.enterInputIdleTimer = null;
@@ -173,12 +177,15 @@ export class KeywordHighlighter implements IDisposable {
           && (
             this.hasOutputPositionChangedSinceLastSnapshot()
             || this.hasDecorationMarkerShiftSinceLastRefresh()
-        );
+          );
+        const cancelQueuedWriteForEnter =
+          this.enterQueuedWriteCancellationPending
+          && this.pendingRefreshReason === "write";
         if (this.enterInputPending || outputDrivenPendingScroll) {
           this.cancelScrollRefresh();
           if (
             this.pendingRefreshReason === "scroll"
-            || (this.enterInputPending && this.pendingRefreshReason === "write")
+            || cancelQueuedWriteForEnter
           ) {
             this.cancelQueuedRefreshSchedule();
           }
@@ -186,6 +193,7 @@ export class KeywordHighlighter implements IDisposable {
             this.pendingRefreshReason = "write";
           }
         }
+        this.enterQueuedWriteCancellationPending = false;
         const pressure = getTerminalOutputPressure(this.term);
         if (pressure.background) {
           // Hidden panes: avoid immediate scans that fight xterm, but still arm a
@@ -212,9 +220,15 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            this.markDirtyFromWrite({ includeViewportProbe: false });
-            const buffer = this.term.buffer.active;
-            this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
+            if (this.enterViewportScanInProgress) {
+              this.updateWriteBurst();
+              this.enterViewportScanNeedsRepeat = true;
+            } else {
+              this.markDirtyFromWrite({ includeViewportProbe: false });
+              const buffer = this.term.buffer.active;
+              this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
+              this.enterViewportScanInProgress = true;
+            }
           } else {
             this.updateWriteBurst();
             this.markVisibleRangeDirty();
@@ -406,6 +420,9 @@ export class KeywordHighlighter implements IDisposable {
     this.lastRenderRange = null;
     this.clearDirtySegments();
     this.dirtyAllInRenderRange = false;
+    this.enterQueuedWriteCancellationPending = false;
+    this.enterViewportScanInProgress = false;
+    this.enterViewportScanNeedsRepeat = false;
     if (hadDecorations) {
       this.term.refresh(0, this.term.rows - 1);
     }
@@ -692,11 +709,12 @@ export class KeywordHighlighter implements IDisposable {
 
     const previousRange = this.lastRenderRange;
     this.beginTerminalRefreshTracking(viewportStart, viewportEnd);
+    let writeContinuationPending = false;
     try {
       this.reindexLineDecorationsFromMarkers();
 
       if (reason === "write") {
-        this.processDirtyLinesInRange(
+        writeContinuationPending = this.processDirtyLinesInRange(
           rangeStart,
           rangeEnd,
           cursorAbsoluteY,
@@ -718,6 +736,11 @@ export class KeywordHighlighter implements IDisposable {
 
       if (reason === "write") {
         this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd, true);
+        this.finishEnterViewportScan(
+          writeContinuationPending,
+          viewportStart,
+          viewportEnd,
+        );
       } else {
         for (const [lineY, state] of this.lineDecorations) {
           if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
@@ -739,6 +762,21 @@ export class KeywordHighlighter implements IDisposable {
     } finally {
       this.flushTerminalRefresh();
     }
+  }
+
+  private finishEnterViewportScan(
+    continuationPending: boolean,
+    viewportStart: number,
+    viewportEnd: number,
+  ): void {
+    if (!this.enterViewportScanInProgress || continuationPending) return;
+    this.enterViewportScanInProgress = false;
+    if (!this.enterViewportScanNeedsRepeat) return;
+
+    this.enterViewportScanNeedsRepeat = false;
+    this.addDirtyRange(viewportStart, viewportEnd);
+    this.enterViewportScanInProgress = true;
+    this.triggerRefresh("continuation", "write");
   }
 
   private beginTerminalRefreshTracking(viewportStart: number, viewportEnd: number) {

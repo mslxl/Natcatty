@@ -33,13 +33,18 @@ function installAnimationFrameQueue() {
     callbacks.delete(id);
   }) as typeof cancelAnimationFrame;
 
+  const flushOne = () => {
+    const next = callbacks.entries().next().value as [number, RafCallback] | undefined;
+    if (!next) return;
+    callbacks.delete(next[0]);
+    next[1](performance.now());
+  };
+
   return {
+    flushOne,
     flush() {
       while (callbacks.size > 0) {
-        const next = callbacks.entries().next().value as [number, RafCallback] | undefined;
-        if (!next) break;
-        callbacks.delete(next[0]);
-        next[1](performance.now());
+        flushOne();
       }
     },
     restore() {
@@ -818,6 +823,69 @@ test("Enter replaces a queued write refresh with input-quiet work", () => {
       "the pre-Enter write frame should not scan during the input quiet window",
     );
     highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("continuous Enter output lets multi-frame refreshes finish", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 140 });
+    term.rows = 100;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetTranslateCount();
+
+    const internals = highlighter as unknown as {
+      lastRefreshTime: number;
+      lastUserInputAt: number;
+    };
+    handlers.data?.("\r");
+    internals.lastUserInputAt = Number.NEGATIVE_INFINITY;
+
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => {
+          simulatedNow += 5;
+          return simulatedNow;
+        },
+      },
+    });
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+        handlers.writeParsed?.();
+        raf.flushOne();
+      }
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+
+    const reachedViewportEnd = getTranslatedLineIndexes().includes(98);
+    highlighter.dispose();
+    assert.ok(
+      reachedViewportEnd,
+      "continuation work should reach the end of a large viewport during ongoing output",
+    );
   } finally {
     raf.restore();
   }
