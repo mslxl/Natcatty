@@ -211,6 +211,16 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
     })
   );
   const decorations: Array<{ x: number; width: number; foregroundColor: string }> = [];
+  const decorationStates: Array<{
+    isDisposed: boolean;
+    dispose: () => void;
+  }> = [];
+  const markers: Array<{
+    line: number;
+    isDisposed: boolean;
+    dispose: () => void;
+  }> = [];
+  const refreshCalls: Array<{ start: number; end: number }> = [];
   const noopDisposable = { dispose() {} };
   const handlers: {
     scroll?: () => void;
@@ -253,35 +263,47 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
       return noopDisposable;
     },
     registerMarker(offset: number) {
-      return {
-        line: offset,
+      const marker = {
+        line: term.buffer.active.baseY + term.buffer.active.cursorY + offset,
         isDisposed: false,
         dispose() {
           this.isDisposed = true;
         },
       };
+      markers.push(marker);
+      return marker;
     },
     registerDecoration(options: { x: number; width: number; foregroundColor: string }) {
       decorations.push(options);
-      return {
+      const state = {
         isDisposed: false,
         dispose() {
           this.isDisposed = true;
         },
       };
+      decorationStates.push(state);
+      return state;
     },
-    refresh() {},
+    refresh(start: number, end: number) {
+      refreshCalls.push({ start, end });
+    },
   };
 
   return {
     term,
     decorations,
+    decorationStates,
+    markers,
+    refreshCalls,
     handlers,
     getTranslateCount: () => translateCount,
     getTranslatedLineIndexes: () => [...translatedLineIndexes],
     resetTranslateCount: () => {
       translateCount = 0;
       translatedLineIndexes.length = 0;
+    },
+    resetRefreshCalls: () => {
+      refreshCalls.length = 0;
     },
   };
 }
@@ -716,6 +738,124 @@ test("recent user input delays keyword highlight scans until typing is quiet", a
 
     await new Promise((resolve) => { setTimeout(resolve, 100); });
     assert.ok(getTranslateCount() > 0);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter keeps unchanged keyword decorations mounted", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "unchanged decorations should remain mounted while Enter output settles",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter rescans only the cursor neighborhood", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetTranslateCount();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    const scannedLines = getTranslatedLineIndexes();
+    assert.ok(scannedLines.includes(22));
+    assert.equal(scannedLines.includes(15), false);
+    assert.equal(scannedLines.includes(29), false);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter does not force an extra repaint after markers move", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      markers,
+      refreshCalls,
+      handlers,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetRefreshCalls();
+
+    for (const marker of markers) marker.line += 1;
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.deepEqual(refreshCalls, []);
     highlighter.dispose();
   } finally {
     raf.restore();

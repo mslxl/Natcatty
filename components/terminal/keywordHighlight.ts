@@ -178,8 +178,7 @@ export class KeywordHighlighter implements IDisposable {
           return;
         }
         if (this.isInputProtectionActive(performance.now())) {
-          this.updateWriteBurst();
-          this.markVisibleRangeDirty();
+          this.markDirtyFromWrite({ includeViewportProbe: false });
           this.triggerRefresh("debounced", "write");
           return;
         }
@@ -661,9 +660,11 @@ export class KeywordHighlighter implements IDisposable {
         this.processLineRange(rangeStart, rangeEnd, cursorAbsoluteY);
       }
 
-      for (const [lineY, state] of this.lineDecorations) {
-        if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
-          this.disposeLineDecorations(lineY, state);
+      if (reason !== "write") {
+        for (const [lineY, state] of this.lineDecorations) {
+          if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
+            this.disposeLineDecorations(lineY, state);
+          }
         }
       }
 
@@ -716,7 +717,6 @@ export class KeywordHighlighter implements IDisposable {
     if (this.lineDecorations.size === 0) return;
     const nextLineDecorations = new Map<number, LineDecorationState>();
     const staleStates = new Set<LineDecorationState>();
-    const changedLines = new Set<number>();
 
     for (const state of this.lineDecorations.values()) {
       if (state.marker.isDisposed || state.marker.line < 0) {
@@ -735,16 +735,7 @@ export class KeywordHighlighter implements IDisposable {
       staleStates.delete(state);
     }
 
-    for (const [lineY, state] of this.lineDecorations) {
-      if (nextLineDecorations.get(lineY) !== state) {
-        changedLines.add(lineY);
-      }
-    }
-    for (const [lineY, state] of nextLineDecorations) {
-      if (this.lineDecorations.get(lineY) !== state) changedLines.add(lineY);
-    }
     this.lineDecorations = nextLineDecorations;
-    for (const lineY of changedLines) this.markTerminalRefreshNeeded(lineY);
 
     for (const state of staleStates) {
       const markerLineBeforeDispose = state.marker.isDisposed ? -1 : state.marker.line;
@@ -968,9 +959,9 @@ export class KeywordHighlighter implements IDisposable {
     return Math.min(maxDirtyLines, Math.max(minDirtyLines, dynamicDirtyLines));
   }
 
-  private markDirtyFromWrite() {
+  private markDirtyFromWrite({ includeViewportProbe = true }: { includeViewportProbe?: boolean } = {}) {
     this.updateWriteBurst();
-    const snapshot = this.readBufferSnapshot();
+    const snapshot = this.readBufferSnapshot({ includeViewportProbe });
     if (!snapshot) {
       this.markVisibleRangeDirty();
       return;
