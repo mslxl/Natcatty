@@ -606,8 +606,9 @@ function installExplorerContextMenu({
   };
 
   if (machineRegistered) {
-    // Refresh per-machine verbs only. Do NOT mirror into HKCU: NSIS uninstall
-    // only cleans SHCTX (HKLM in all-users mode).
+    // Prefer refreshing per-machine verbs. Do NOT mirror into HKCU while the
+    // machine registration is fully current: NSIS uninstall only cleans SHCTX
+    // (HKLM in all-users mode).
     let writesOk = true;
     for (const [keyPath, spec] of [
       [DIRECTORY_SHELL_KEY, folderSpec],
@@ -619,42 +620,35 @@ function installExplorerContextMenu({
     const machineCurrent = shellVerbIsCurrent("HKLM", DIRECTORY_SHELL_KEY, folderSpec, options)
       && shellVerbIsCurrent("HKLM", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
 
-    if (!machineCurrent) {
-      // Cannot refresh HKLM. If we were only hiding via suppression (including
-      // on top of portable install verbs), clear that hide so a failed enable /
-      // preference-write rollback does not leave the only working verbs suppressed.
-      if (wasSuppressed) {
-        clearUserSuppression(options);
+    if (machineCurrent) {
+      // HKLM is current — now safe to drop stale portable HKCU verbs and any
+      // ProgrammaticAccessOnly hide so Explorer uses the machine path.
+      const userKeysCleared = clearUserShellKeys(options) && !hasResidualUserShellKeys(options);
+      if (!userKeysCleared) {
+        // HKLM is good but residual HKCU still shadows it. Re-hide if the user
+        // previously disabled, so we do not leave a half-migrated state.
+        if (wasSuppressed) writeUserSuppression(options);
+        return {
+          success: false,
+          enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
+          supported: true,
+        };
       }
+
       return {
-        success: false,
-        enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
+        success: writesOk || machineCurrent,
+        enabled: true,
         supported: true,
       };
     }
 
-    // HKLM is current — now safe to drop stale portable HKCU verbs and any
-    // ProgrammaticAccessOnly hide so Explorer uses the machine path.
-    const userKeysCleared = clearUserShellKeys(options) && !hasResidualUserShellKeys(options);
-    if (!userKeysCleared) {
-      // HKLM is good but residual HKCU still shadows it. Re-hide if the user
-      // previously disabled, so we do not leave a half-migrated state.
-      if (wasSuppressed) writeUserSuppression(options);
-      return {
-        success: false,
-        enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
-        supported: true,
-      };
-    }
-
-    return {
-      success: writesOk || machineCurrent,
-      enabled: true,
-      supported: true,
-    };
+    // Residual/stale/partial HKLM keys cannot be repaired without elevation.
+    // Fall through to a per-user HKCU registration so ZIP/portable and unelevated
+    // Settings toggles still work; HKCU takes precedence over the broken HKLM
+    // entries for this user.
   }
 
-  // User-scope install (no HKLM verbs): clear suppressions first, then write HKCU.
+  // User-scope install (no usable machine registration): clear suppressions, then write HKCU.
   const userKeysCleared = clearUserSuppression(options);
   let writesOk = true;
   for (const [keyPath, spec] of [

@@ -540,7 +540,8 @@ test("installExplorerContextMenu does not duplicate HKLM verbs into HKCU", () =>
   assert.ok(!writes.some((args) => String(args[1]).startsWith("HKCU\\")));
 });
 
-test("installExplorerContextMenu fails when unelevated HKLM verbs are stale", () => {
+test("installExplorerContextMenu falls back to HKCU when unelevated HKLM verbs are stale", () => {
+  const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
   const present = new Set([
     "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
     "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
@@ -576,8 +577,16 @@ test("installExplorerContextMenu fails when unelevated HKLM verbs are stale", ()
         : { status: 1, stdout: "", stderr: "missing" };
     }
     if (args[0] === "add") {
-      // Unelevated process cannot rewrite HKLM.
-      return { status: 1, stdout: "", stderr: "access denied" };
+      const key = args[1];
+      // Unelevated process cannot rewrite HKLM; HKCU fallback must succeed.
+      if (String(key).startsWith("HKLM\\")) {
+        return { status: 1, stdout: "", stderr: "access denied" };
+      }
+      present.add(key);
+      const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+      const dataIdx = args.indexOf("/d");
+      if (dataIdx >= 0) values.set(`${key}::${valueName}`, args[dataIdx + 1]);
+      return { status: 0, stdout: "", stderr: "" };
     }
     if (args[0] === "delete") {
       return { status: 0, stdout: "", stderr: "" };
@@ -586,14 +595,17 @@ test("installExplorerContextMenu fails when unelevated HKLM verbs are stale", ()
   };
 
   const result = installExplorerContextMenu({
-    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    executablePath: exe,
     platform: "win32",
     spawnSyncImpl,
     logWarn: () => {},
   });
-  assert.equal(result.success, false);
-  // Menu still visible with stale commands, but install must not claim success.
+  assert.equal(result.success, true);
   assert.equal(result.enabled, true);
+  assert.equal(
+    values.get("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::"),
+    buildExplorerContextMenuCommand(exe, "%1"),
+  );
 });
 
 test("installExplorerContextMenu skips reg writes when shell verbs are already current", () => {
@@ -1043,7 +1055,8 @@ test("installExplorerContextMenu fails when suppression cleanup fails on user-sc
   assert.equal(result.success, false);
 });
 
-test("installExplorerContextMenu reports partial single HKLM verb as still enabled", () => {
+test("installExplorerContextMenu falls back to HKCU when only a partial HKLM verb remains", () => {
+  const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
   const present = new Set([
     "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
     "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
@@ -1072,7 +1085,15 @@ test("installExplorerContextMenu reports partial single HKLM verb as still enabl
         : { status: 1, stdout: "", stderr: "missing" };
     }
     if (args[0] === "add") {
-      return { status: 1, stdout: "", stderr: "access denied" };
+      const key = args[1];
+      if (String(key).startsWith("HKLM\\")) {
+        return { status: 1, stdout: "", stderr: "access denied" };
+      }
+      present.add(key);
+      const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+      const dataIdx = args.indexOf("/d");
+      if (dataIdx >= 0) values.set(`${key}::${valueName}`, args[dataIdx + 1]);
+      return { status: 0, stdout: "", stderr: "" };
     }
     if (args[0] === "delete") {
       return { status: 0, stdout: "", stderr: "" };
@@ -1081,13 +1102,17 @@ test("installExplorerContextMenu reports partial single HKLM verb as still enabl
   };
 
   const result = installExplorerContextMenu({
-    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    executablePath: exe,
     platform: "win32",
     spawnSyncImpl,
     logWarn: () => {},
   });
-  assert.equal(result.success, false);
+  assert.equal(result.success, true);
   assert.equal(result.enabled, true);
+  assert.equal(
+    values.get("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::"),
+    buildExplorerContextMenuCommand(exe, "%1"),
+  );
 });
 
 test("applyInitialExplorerContextMenuPreference caches default-off via probe marker only", () => {
