@@ -112,6 +112,24 @@ function regValueExists(hive, keyPath, valueName, options = {}) {
   return result.status === 0;
 }
 
+function parseRegSzValue(stdout) {
+  const lines = String(stdout || "").split(/\r?\n/);
+  for (const line of lines) {
+    const match = line.match(/\bREG_SZ\s+(.*)$/i);
+    if (match) return match[1];
+  }
+  return null;
+}
+
+function readRegStr(hive, keyPath, valueName, options = {}) {
+  const args = valueName
+    ? ["query", `${hive}\\${keyPath}`, "/v", valueName]
+    : ["query", `${hive}\\${keyPath}`, "/ve"];
+  const result = runReg(args, options);
+  if (result.status !== 0) return null;
+  return parseRegSzValue(result.stdout);
+}
+
 function deleteRegKey(hive, keyPath, options = {}) {
   if (!regKeyExists(hive, keyPath, options)) return true;
   const result = runReg(["delete", `${hive}\\${keyPath}`, "/f"], options);
@@ -130,6 +148,31 @@ function writeRegStr(hive, keyPath, valueName, value, options = {}) {
   return result.status === 0;
 }
 
+function shellVerbIsCurrent(hive, keyPath, {
+  executablePath,
+  pathPlaceholder,
+  iconPath,
+}, options = {}) {
+  if (!regKeyExists(hive, keyPath, options)) return false;
+  // Suppression keys are not a real install even if the path exists.
+  if (hive === "HKCU" && isSuppressionKey(hive, keyPath, options)) return false;
+
+  const expectedCommand = buildExplorerContextMenuCommand(executablePath, pathPlaceholder);
+  if (!expectedCommand) return false;
+  const expectedIcon = `${iconPath || executablePath},0`;
+
+  const currentCommand = readRegStr(hive, `${keyPath}\\command`, "", options);
+  if (currentCommand !== expectedCommand) return false;
+
+  const currentLabel = readRegStr(hive, keyPath, "MUIVerb", options);
+  if (currentLabel !== MENU_LABEL) return false;
+
+  const currentIcon = readRegStr(hive, keyPath, "Icon", options);
+  if (currentIcon !== expectedIcon) return false;
+
+  return true;
+}
+
 function writeShellVerb(hive, keyPath, {
   executablePath,
   pathPlaceholder,
@@ -137,6 +180,10 @@ function writeShellVerb(hive, keyPath, {
 }, options = {}) {
   const command = buildExplorerContextMenuCommand(executablePath, pathPlaceholder);
   if (!command) return false;
+  // Skip reg.exe writes when the verb is already current (common warm-start path).
+  if (shellVerbIsCurrent(hive, keyPath, { executablePath, pathPlaceholder, iconPath }, options)) {
+    return true;
+  }
   const icon = `${iconPath || executablePath},0`;
   return (
     writeRegStr(hive, keyPath, "MUIVerb", MENU_LABEL, options)

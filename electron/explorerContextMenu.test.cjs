@@ -169,10 +169,21 @@ test("removeExplorerContextMenu suppresses leftover HKLM when delete is denied",
 test("installExplorerContextMenu writes HKCU shell command entries", () => {
   const writes = [];
   const present = new Set();
+  const values = new Map();
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
     if (args[0] === "query") {
-      if (args.includes("/v")) {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
         return { status: 1, stdout: "", stderr: "no value" };
       }
       return present.has(args[1])
@@ -182,10 +193,16 @@ test("installExplorerContextMenu writes HKCU shell command entries", () => {
     if (args[0] === "add") {
       writes.push(args.slice());
       present.add(args[1]);
+      const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+      const dataIdx = args.indexOf("/d");
+      if (dataIdx >= 0) values.set(`${args[1]}::${valueName}`, args[dataIdx + 1]);
       return { status: 0, stdout: "", stderr: "" };
     }
     if (args[0] === "delete") {
       present.delete(args[1]);
+      for (const key of [...values.keys()]) {
+        if (key.startsWith(`${args[1]}::`)) values.delete(key);
+      }
       return { status: 0, stdout: "", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "unexpected" };
@@ -217,10 +234,21 @@ test("installExplorerContextMenu does not duplicate HKLM verbs into HKCU", () =>
     "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
     "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
   ]);
+  const values = new Map();
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
     if (args[0] === "query") {
-      if (args.includes("/v")) {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
         return { status: 1, stdout: "", stderr: "no value" };
       }
       return present.has(args[1])
@@ -230,10 +258,16 @@ test("installExplorerContextMenu does not duplicate HKLM verbs into HKCU", () =>
     if (args[0] === "add") {
       writes.push(args.slice());
       present.add(args[1]);
+      const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+      const dataIdx = args.indexOf("/d");
+      if (dataIdx >= 0) values.set(`${args[1]}::${valueName}`, args[dataIdx + 1]);
       return { status: 0, stdout: "", stderr: "" };
     }
     if (args[0] === "delete") {
       present.delete(args[1]);
+      for (const key of [...values.keys()]) {
+        if (key.startsWith(`${args[1]}::`)) values.delete(key);
+      }
       return { status: 0, stdout: "", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "unexpected" };
@@ -251,6 +285,67 @@ test("installExplorerContextMenu does not duplicate HKLM verbs into HKCU", () =>
   assert.ok(writes.length > 0);
   assert.ok(writes.every((args) => String(args[1]).startsWith("HKLM\\")));
   assert.ok(!writes.some((args) => String(args[1]).startsWith("HKCU\\")));
+});
+
+test("installExplorerContextMenu skips reg writes when shell verbs are already current", () => {
+  const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
+  const folderCmd = buildExplorerContextMenuCommand(exe, "%1");
+  const backgroundCmd = buildExplorerContextMenuCommand(exe, "%V");
+  const present = new Set([
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", folderCmd],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", backgroundCmd],
+  ]);
+  const writes = [];
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      writes.push(args.slice());
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "delete") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: exe,
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
+  assert.equal(writes.length, 0);
 });
 
 test("resolveExplorerContextMenuEnabled prefers saved preference over registry", () => {
