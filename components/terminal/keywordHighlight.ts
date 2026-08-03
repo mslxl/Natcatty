@@ -184,6 +184,10 @@ export class KeywordHighlighter implements IDisposable {
         }
         if (this.isInputProtectionActive(performance.now())) {
           if (this.lastUserInputWasEnter) {
+            this.cancelScrollRefresh();
+            if (this.pendingRefreshReason === "scroll") {
+              this.pendingRefreshReason = "write";
+            }
             this.markDirtyFromWrite({ includeViewportProbe: false });
             const buffer = this.term.buffer.active;
             this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);

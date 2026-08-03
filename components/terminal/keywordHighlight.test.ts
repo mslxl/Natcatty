@@ -783,6 +783,7 @@ test("pressing Enter keeps unchanged keyword decorations mounted", async () => {
     term.buffer.active.viewportY += 1;
     term.buffer.active.baseY += 1;
     term.buffer.active.length += 1;
+    handlers.scroll?.();
     handlers.writeParsed?.();
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
