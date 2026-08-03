@@ -401,9 +401,19 @@ function installExplorerContextMenu({
   // Drop any per-user hide before enabling again. If the enable path fails
   // later, restore suppression so we do not expose stale machine verbs.
   const wasSuppressed = isUserSuppressed(options);
-  clearUserSuppression(options);
-
   const machineRegistered = hasMachineRegistration(options);
+
+  if (machineRegistered) {
+    // Portable/ZIP builds may have left real HKCU verbs that take precedence
+    // over the installer-created HKLM registration. Always clear HKCU Netcatty
+    // keys when a machine registration exists so Explorer uses the current
+    // all-users command path.
+    for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+      deleteRegKey("HKCU", keyPath, options);
+    }
+  } else {
+    clearUserSuppression(options);
+  }
 
   // When the installer already registered per-machine (HKLM) verbs, refresh
   // those only. Do NOT mirror them into HKCU: the NSIS uninstaller only cleans
