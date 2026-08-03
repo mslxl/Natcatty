@@ -568,6 +568,10 @@ export const useSftpConnections = ({
           sharedHostCache?.path,
         );
 
+        // Sudo never reuses a terminal shell; normalize before UI state so
+        // reusedConnection (spinner/overlay) matches the actual open path.
+        const sourceSessionId = host.sftpSudo ? undefined : options?.sourceSessionId;
+
         const connection: SftpConnection = {
           id: connectionId,
           hostId: host.id,
@@ -579,7 +583,7 @@ export const useSftpConnections = ({
           // If the backend falls back to a fresh connection, the pane stays
           // non-interactive (loading=true) with stale cached files visible —
           // no worse than the previous UX of always showing a spinner.
-          reusedConnection: !!options?.sourceSessionId,
+          reusedConnection: !!sourceSessionId,
           fileProtocol: host.sftpFileProtocol ?? 'auto',
         };
 
@@ -652,7 +656,7 @@ export const useSftpConnections = ({
           // immediately repeated after a shared-channel attempt fails.
           const sftpId = await openSftpConnectionOnce({
             bridge,
-            sourceSessionId: !host.sftpSudo ? options?.sourceSessionId : undefined,
+            sourceSessionId,
             openOptions: {
               sessionId: sftpSessionId,
               ...credentials,

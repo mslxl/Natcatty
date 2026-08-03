@@ -96,7 +96,11 @@ export const sftpPickerSessionsEqual = (
 
 /**
  * Build the "currently connected" host list for the SFTP host picker.
- * One entry per hostId — keeps the most recently listed reusable session.
+ * One entry per hostId — keeps the most recently listed SSH terminal session.
+ *
+ * Includes hosts with sftpSudo: they still belong under "Connected" when a
+ * terminal is open, but connect paths must not reuse the shell (see
+ * resolveSftpTransferSourceSessionId and useSftpConnections sudo guards).
  */
 export const listSftpConnectedHosts = (
   sessions: ReadonlyArray<SftpPickerSessionFields>,
@@ -109,10 +113,9 @@ export const listSftpConnectedHosts = (
     const host = hostsById.get(session.hostId);
     if (!host) continue;
     if (host.protocol === "serial" || isPluginHostProtocol(host.protocol)) continue;
-    // SFTP sudo never reuses a terminal shell conn (bridge requires !options.sudo).
-    if (host.sftpSudo) continue;
     // Use session transport flags only. Vault hosts may still have mosh/et
     // defaults while the live terminal was opened as plain SSH (e.g. ssh://).
+    // Do not filter sftpSudo here — picker display only; reuse is stripped later.
 
     // Later sessions overwrite earlier ones for the same hostId.
     bestByHostId.set(host.id, {
@@ -125,6 +128,19 @@ export const listSftpConnectedHosts = (
   return [...bestByHostId.values()].sort((a, b) =>
     a.host.label.localeCompare(b.host.label),
   );
+};
+
+/**
+ * Drop terminal-session reuse when the host requires a dedicated sudo SFTP
+ * channel. Used by the picker and browse connect path so UI state
+ * (`reusedConnection`) and the actual open agree.
+ */
+export const sftpSourceSessionIdForHost = (
+  host: Pick<Host, "sftpSudo"> | null | undefined,
+  sourceSessionId: string | undefined,
+): string | undefined => {
+  if (!sourceSessionId || host?.sftpSudo) return undefined;
+  return sourceSessionId;
 };
 
 /**

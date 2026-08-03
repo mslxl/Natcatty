@@ -7,6 +7,7 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
     sftpHostEndpointsEqual,
+    sftpSourceSessionIdForHost,
     type SftpConnectedHostEntry,
 } from '../../domain/sftpConnectedHosts';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
@@ -193,7 +194,16 @@ const SftpHostPickerInner: React.FC<SftpHostPickerProps> = ({
         if (item.type === 'local') {
             onSelectLocal();
         } else if (item.type === 'connected') {
-            onSelectHost(item.entry.host, { sourceSessionId: item.entry.sessionId });
+            // Sudo SFTP cannot reuse the terminal shell; omit the hint so connect
+            // UI (reusedConnection / spinner) matches the dedicated open path.
+            const sourceSessionId = sftpSourceSessionIdForHost(
+                item.entry.host,
+                item.entry.sessionId,
+            );
+            onSelectHost(
+                item.entry.host,
+                sourceSessionId ? { sourceSessionId } : undefined,
+            );
         } else {
             onSelectHost(item.host);
         }
