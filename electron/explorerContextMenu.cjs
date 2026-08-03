@@ -318,6 +318,25 @@ function isExplorerContextMenuRegistered({
   return isHiveFullyRegistered("HKCU", options) || isHiveFullyRegistered("HKLM", options);
 }
 
+function hasAnyActiveShellVerb({
+  platform = process.platform,
+  spawnSyncImpl = spawnSync,
+  logWarn = console.warn,
+} = {}) {
+  if (!isWindowsPlatform(platform)) return false;
+  const options = { spawnSyncImpl, logWarn };
+  if (isUserSuppressed(options)) return false;
+  for (const hive of ["HKCU", "HKLM"]) {
+    if (
+      hasActiveShellKey(hive, DIRECTORY_SHELL_KEY, options)
+      || hasActiveShellKey(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function removeExplorerContextMenu({
   platform = process.platform,
   spawnSyncImpl = spawnSync,
@@ -528,11 +547,13 @@ function applyInitialExplorerContextMenuPreference({
 
   const currentExe = String(executablePath || "").trim();
 
-  // No saved preference: keep installer/portable state, but repair the command
-  // path once when the menu is already registered (upgrade migration). Persist
-  // the outcome so later startups skip the registry refresh path entirely.
+  // No saved preference: keep installer/portable state, but repair when any
+  // residual verb remains (complete or partial). A single leftover verb would
+  // otherwise leave the toggle off while Explorer still shows one entry.
   if (record === null) {
-    if (isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })) {
+    const residual = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })
+      || hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn });
+    if (residual) {
       const refreshed = installExplorerContextMenu({
         executablePath: currentExe,
         platform,
