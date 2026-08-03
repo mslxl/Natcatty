@@ -33,6 +33,7 @@ const {
   findAllDefaultPrivateKeys: findAllDefaultPrivateKeysFromHelper,
   getSshAgentSocket,
   getAvailableAgentSocket: getAvailableSystemAgentSocket,
+  getAvailableForwardingAgentSocket,
   prepareSystemSshAgentForAuth,
   readFileNoFollow,
   expandIdentityFilePath,
@@ -959,7 +960,7 @@ const startSessionApi = createStartSessionApi({
   trackSessionIdlePrompt, looksLikeIdleAutoLogout, createZmodemSentry, enableSshNoDelay, enableTcpNoDelay,
   iconv, getSessionDecoder, resetSessionDecoders, sessionEncodings, sessionDecoders, encodeTerminalInput,
   normalizeTerminalEncoding,
-  connectThroughChain, getAvailableAgentSocket, getCachedAuthMethod, setCachedAuthMethod, clearCachedAuthMethod,
+  connectThroughChain, getAvailableAgentSocket, getAvailableForwardingAgentSocket, getCachedAuthMethod, setCachedAuthMethod, clearCachedAuthMethod,
   attachSshDebugLogger, logSshAlgorithms, safeSend, zmodemOverwritePending,
   shouldLogSshDebugMessage, log, createSshDiagnosticLogger,
   buildAlgorithms, randomUUID, findDefaultPrivateKey, findAllDefaultPrivateKeys,
@@ -1465,7 +1466,9 @@ function registerHandlers(ipcMain, options = {}) {
     if (process.platform === "win32" && !identityAgent) {
       return await checkWindowsSshAgent();
     }
-    const socketPath = await getAvailableSystemAgentSocket(identityAgent, typeof options === "string" ? {} : options);
+    const socketPath = options?.agentForwarding
+      ? await getAvailableForwardingAgentSocket(identityAgent, typeof options === "string" ? {} : options)
+      : await getAvailableSystemAgentSocket(identityAgent, typeof options === "string" ? {} : options);
     return {
       running: Boolean(socketPath),
       startupType: socketPath ? "running" : "stopped",

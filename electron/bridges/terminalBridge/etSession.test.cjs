@@ -597,6 +597,26 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
   assert.equal(automaticJumpEnv.SSH_AUTH_SOCK, "/tmp/jump-agent.sock");
 });
 
+test("ET forwarding replaces an empty inherited agent with the discovered agent", async (t) => {
+  const { api } = makeApi(t, {
+    getAvailableForwardingAgentSocket: async () => "/Users/alice/.bitwarden-ssh-agent.sock",
+  });
+
+  const prepared = await api.prepareEtSshAgentOptions({
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: false,
+    agentForwarding: true,
+  });
+  const env = api.applyEtSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
+    prepared,
+  );
+
+  assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
+});
+
 test("ET prepares target and jump agents before generating their host config", async (t) => {
   const calls = [];
   const { api } = makeApi(t, {

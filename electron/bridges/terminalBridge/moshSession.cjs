@@ -133,11 +133,19 @@ function createMoshSessionApi(ctx) {
     }
 
     async function prepareMoshSshAgentOptions(options) {
-      if (options?.useSshAgent !== true) return options;
-      await prepareSystemSshAgentForAuth(options, "[Mosh]");
-      const socketPath = await getAvailableAgentSocket(options.identityAgent, options);
+      if (options?.useSshAgent !== true && !options?.agentForwarding) return options;
+      if (options.useSshAgent === true) {
+        await prepareSystemSshAgentForAuth(options, "[Mosh]");
+      }
+      const resolveSocket = options.agentForwarding
+        ? getAvailableForwardingAgentSocket
+        : getAvailableAgentSocket;
+      const socketPath = await resolveSocket(options.identityAgent, options);
       if (!socketPath) {
-        throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+        if (options.useSshAgent === true) {
+          throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+        }
+        return options;
       }
       return { ...options, _resolvedSshAgentSocket: socketPath };
     }
@@ -145,7 +153,9 @@ function createMoshSessionApi(ctx) {
     function applyMoshSshAgentEnvironment(env, options) {
       if (options?.useSshAgent === false) {
         if (options.agentForwarding) {
-          if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
+          if (options._resolvedSshAgentSocket) {
+            env.SSH_AUTH_SOCK = options._resolvedSshAgentSocket;
+          } else if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
             env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
           }
         } else {

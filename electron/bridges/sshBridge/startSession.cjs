@@ -147,6 +147,17 @@ function shouldPromoteCachedAuthMethod(authMethod, cachedMethod) {
   return true;
 }
 
+async function applyAgentForwarding(options, connectOpts, resolveForwardingAgentSocket) {
+  if (!options?.agentForwarding) return connectOpts;
+  if (!connectOpts.agent) {
+    connectOpts.agent = await resolveForwardingAgentSocket(options.identityAgent, options);
+  }
+  if (connectOpts.agent) {
+    connectOpts.agentForward = true;
+  }
+  return connectOpts;
+}
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     const listInteractiveShellPids = async (conn) => {
@@ -1204,13 +1215,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
         // Agent forwarding
         if (options.agentForwarding) {
-          if (!connectOpts.agent) {
-            connectOpts.agent = await getAvailableAgentSocket();
-          }
-          // Only enable forwarding when an agent is actually available
-          if (connectOpts.agent) {
-            connectOpts.agentForward = true;
-          } else {
+          await applyAgentForwarding(options, connectOpts, getAvailableForwardingAgentSocket);
+          if (!connectOpts.agentForward) {
             log("Agent forwarding requested but no agent available, skipping");
           }
         }
@@ -2146,4 +2152,5 @@ module.exports = {
   shouldPrepareSystemAgentForLogin,
   resolveUnlockedEncryptedKeysForAuth,
   shouldPromoteCachedAuthMethod,
+  applyAgentForwarding,
 };

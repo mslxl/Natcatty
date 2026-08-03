@@ -71,6 +71,7 @@ const { isTerminalReportSequence } = require("./terminalReportSequence.cjs");
 const { receiveYmodemFiles, sendYmodemCancel, sendYmodemFile } = require("./ymodemTransfer.cjs");
 const {
   getNativeOpenSshAgentSocket,
+  getNativeOpenSshForwardingAgentSocket,
   prepareSystemSshAgentForAuth,
 } = require("./sshAuthHelper.cjs");
 
@@ -1112,6 +1113,7 @@ const moshSessionApi = createMoshSessionApi({
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   ensureMoshStatsConnection: (...args) => require("./sshBridge.cjs").ensureMoshStatsConnection(...args),
   getAvailableAgentSocket: getNativeOpenSshAgentSocket,
+  getAvailableForwardingAgentSocket: getNativeOpenSshForwardingAgentSocket,
   prepareSystemSshAgentForAuth,
   bundledMoshClient: (...args) => bundledMoshClient(...args),
 });
@@ -1143,6 +1145,7 @@ const etSessionApi = createEtSessionApi({
   findExecutable,
   openTerminalOutputSession, closeTerminalOutputSession,
   getAvailableAgentSocket: getNativeOpenSshAgentSocket,
+  getAvailableForwardingAgentSocket: getNativeOpenSshForwardingAgentSocket,
   prepareSystemSshAgentForAuth,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },

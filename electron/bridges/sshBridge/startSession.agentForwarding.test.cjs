@@ -5,10 +5,29 @@ const assert = require("node:assert/strict");
 
 const {
   resolveUnlockedEncryptedKeysForAuth,
+  applyAgentForwarding,
   shouldOfferAgentForLogin,
   shouldPrepareSystemAgentForLogin,
   shouldPromoteCachedAuthMethod,
 } = require("./startSession.cjs");
+
+test("agent forwarding resolves the forwarding socket independently from login auth", async () => {
+  const connectOptions = { password: "login-password" };
+  const resolved = [];
+
+  await applyAgentForwarding(
+    { agentForwarding: true, useSshAgent: false },
+    connectOptions,
+    async (identityAgent) => {
+      resolved.push(identityAgent);
+      return "/Users/alice/.bitwarden-ssh-agent.sock";
+    },
+  );
+
+  assert.deepEqual(resolved, [undefined]);
+  assert.equal(connectOptions.agent, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+});
 
 test("agent forwarding does not enable agent login after an explicit opt-out", () => {
   assert.equal(shouldOfferAgentForLogin(

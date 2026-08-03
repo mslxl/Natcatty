@@ -298,6 +298,29 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
   assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
 });
 
+test("Mosh forwarding replaces an empty inherited agent with the discovered agent", async () => {
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process,
+    randomUUID: () => "fixed",
+    getAvailableForwardingAgentSocket: async () => "/Users/alice/.bitwarden-ssh-agent.sock",
+  });
+
+  const prepared = await api.prepareMoshSshAgentOptions({
+    useSshAgent: false,
+    agentForwarding: true,
+  });
+  const env = api.applyMoshSshAgentEnvironment(
+    { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
+    prepared,
+  );
+
+  assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
+});
+
 test("Mosh automatic mode discovers custom local keys in preferred order", async (t) => {
   const tempBase = makeTmp();
   const fakeHome = path.join(tempBase, "home");

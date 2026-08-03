@@ -179,6 +179,7 @@ declare global {
     }): Promise<{ success: boolean; privateKey?: string; publicKey?: string; error?: string }>;
     checkSshAgent?(options?: {
       identityAgent?: string;
+      agentForwarding?: boolean;
       hostname?: string;
       port?: number;
       username?: string;

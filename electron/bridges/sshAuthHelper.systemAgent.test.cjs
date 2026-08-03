@@ -11,13 +11,65 @@ const { Duplex } = require("node:stream");
 const {
   buildAuthHandler,
   getAvailableAgentSocket,
+  getAvailableForwardingAgentSocket,
   getNativeOpenSshAgentSocket,
   cygwinAgentConnectable,
   isWindowsNamedPipe,
   socketAgentConnectable,
+  socketAgentIdentityCount,
   ssh2AgentConnectable,
   resolveIdentityAgentPath,
 } = require("./sshAuthHelper.cjs");
+
+test("macOS forwarding prefers a Bitwarden agent with identities over an empty inherited agent", async () => {
+  const inheritedSocket = "/private/tmp/com.apple.launchd.test/Listeners";
+  const bitwardenSocket = "/Users/alice/.bitwarden-ssh-agent.sock";
+  const checked = [];
+
+  const result = await getAvailableForwardingAgentSocket(undefined, {
+    platform: "darwin",
+    env: { SSH_AUTH_SOCK: inheritedSocket },
+    homedir: "/Users/alice",
+    getAvailableAgentSocketImpl: async (candidate) => {
+      checked.push(candidate);
+      return candidate;
+    },
+    socketAgentIdentityCount: async (candidate) => (
+      candidate === bitwardenSocket ? 1 : 0
+    ),
+  });
+
+  assert.equal(result, bitwardenSocket);
+  assert.deepEqual(checked, [inheritedSocket, bitwardenSocket]);
+});
+
+test("forwarding keeps an explicitly configured agent authoritative", async () => {
+  let identityChecks = 0;
+  const result = await getAvailableForwardingAgentSocket("/tmp/selected-agent.sock", {
+    platform: "darwin",
+    getAvailableAgentSocketImpl: async (candidate) => candidate,
+    socketAgentIdentityCount: async () => {
+      identityChecks += 1;
+      return 0;
+    },
+  });
+
+  assert.equal(result, "/tmp/selected-agent.sock");
+  assert.equal(identityChecks, 0);
+});
+
+test("macOS forwarding preserves the inherited agent when discovered providers are empty", async () => {
+  const inheritedSocket = "/private/tmp/com.apple.launchd.test/Listeners";
+  const result = await getAvailableForwardingAgentSocket(undefined, {
+    platform: "darwin",
+    env: { SSH_AUTH_SOCK: inheritedSocket },
+    homedir: "/Users/alice",
+    getAvailableAgentSocketImpl: async (candidate) => candidate,
+    socketAgentIdentityCount: async () => 0,
+  });
+
+  assert.equal(result, inheritedSocket);
+});
 
 test("explicit agent opt-out suppresses automatic socket fallback", () => {
   const auth = buildAuthHandler({
@@ -328,6 +380,26 @@ test("Unix agent protocol probe closes a connection that never responds", async 
     new Promise((_, reject) => setTimeout(() => reject(new Error("agent probe connection stayed open")), 500)),
   ]);
   assert.equal(acceptedSocket?.destroyed, true);
+});
+
+test("Unix agent identity probe reads the advertised identity count", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-agent-identities-"));
+  const socketPath = path.join(dir, "agent.sock");
+  const server = net.createServer((socket) => {
+    socket.once("data", () => {
+      socket.write(Buffer.from([0, 0, 0, 5, 12, 0, 0, 0, 2]));
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socketPath, resolve);
+  });
+  t.after(() => {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  assert.equal(await socketAgentIdentityCount(socketPath), 2);
 });
 
 test("native OpenSSH modes reject Pageant and Cygwin-only adapters clearly", async () => {

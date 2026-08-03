@@ -161,11 +161,19 @@ main();
 
     async function prepareEtSshAgentOptions(options) {
       const prepareOne = async (connectionOptions, logPrefix) => {
-        if (connectionOptions?.useSshAgent !== true) return connectionOptions;
-        await prepareSystemSshAgentForAuth(connectionOptions, logPrefix);
-        const socketPath = await getAvailableAgentSocket(connectionOptions.identityAgent, connectionOptions);
+        if (connectionOptions?.useSshAgent !== true && !connectionOptions?.agentForwarding) return connectionOptions;
+        if (connectionOptions.useSshAgent === true) {
+          await prepareSystemSshAgentForAuth(connectionOptions, logPrefix);
+        }
+        const resolveSocket = connectionOptions.agentForwarding
+          ? getAvailableForwardingAgentSocket
+          : getAvailableAgentSocket;
+        const socketPath = await resolveSocket(connectionOptions.identityAgent, connectionOptions);
         if (!socketPath) {
-          throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+          if (connectionOptions.useSshAgent === true) {
+            throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+          }
+          return connectionOptions;
         }
         return { ...connectionOptions, _resolvedSshAgentSocket: socketPath };
       };
@@ -187,7 +195,9 @@ main();
           jump?.authMethod === "auto" && jump.useSshAgent !== false
         ));
         if (options.agentForwarding || automaticJumpNeedsAmbientAgent) {
-          if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
+          if (options._resolvedSshAgentSocket) {
+            env.SSH_AUTH_SOCK = options._resolvedSshAgentSocket;
+          } else if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
             env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
           }
         } else {
