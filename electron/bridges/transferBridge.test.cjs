@@ -3932,6 +3932,66 @@ test("stream fallback resume skips source open when checkpoint already covers th
   assert.deepEqual(downloaded, snapshot);
 });
 
+test("stream fallback treats a zero-byte snapshot as complete when remote has grown", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-download-empty-growth-"));
+  const transferId = "download-empty-snapshot-growth";
+  const targetPath = path.join(tempDir, "empty.log");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(stagedPath, { force: true }).catch(() => {});
+  });
+
+  // Preflight sees an empty file; later stats report append growth. The body
+  // stream must not open (unbounded read would pull the tail and fail).
+  const grownRemote = Buffer.from("appended-after-empty-snapshot");
+  let remoteSize = 0;
+  let bodyStreamOpened = false;
+  const sharedSftp = createFastSftp({
+    createReadStream() {
+      bodyStreamOpened = true;
+      remoteSize = grownRemote.length;
+      return Readable.from([grownRemote]);
+    },
+  });
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: remoteSize,
+        mtimeMs: remoteSize > 0 ? 3_000 : 1_000,
+        ctimeMs: remoteSize > 0 ? 3_000 : 1_000,
+        mtime: remoteSize > 0 ? 3 : 1,
+        ctime: remoteSize > 0 ? 3 : 1,
+      });
+    },
+  };
+  // Grow after the planned empty snapshot is fixed (async gap before body I/O).
+  const growTimer = setTimeout(() => { remoteSize = grownRemote.length; }, 0);
+  t.after(() => clearTimeout(growTimer));
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/var/log/empty-then-grown.log",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: 0,
+      resumable: true,
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(bodyStreamOpened, false, "zero-byte planned snapshot must not open a source stream");
+  const downloaded = await fs.promises.readFile(targetPath);
+  assert.equal(downloaded.length, 0);
+});
+
 test("SFTP uploads fail when remote size does not match local size", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-size-test-"));
   t.after(async () => {

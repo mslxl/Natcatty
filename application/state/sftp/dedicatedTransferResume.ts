@@ -249,7 +249,10 @@ async function yieldDirectoryResumeWork(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
-async function indexDirectoryResumeFiles(files: DirectoryResumeFilePlan[]): Promise<DirectoryResumeFilePlan[]> {
+async function indexDirectoryResumeFiles(
+  files: DirectoryResumeFilePlan[],
+  options?: { pathStableIdentity?: boolean },
+): Promise<DirectoryResumeFilePlan[]> {
   const sorted = [...files]
     .sort((left, right) => compareDirectoryTraversalPaths(left.relativePath, right.relativePath));
   if (sorted.length >= DIRECTORY_RESUME_YIELD_CHECK_INTERVAL) {
@@ -257,6 +260,7 @@ async function indexDirectoryResumeFiles(files: DirectoryResumeFilePlan[]): Prom
   }
   const indexed = new Array<DirectoryResumeFilePlan>(sorted.length);
   let sliceStartedAt = directoryResumeNow();
+  const contentFingerprint = options?.pathStableIdentity ? false : true;
   for (let directoryEntryIndex = 0; directoryEntryIndex < sorted.length; directoryEntryIndex += 1) {
     const file = sorted[directoryEntryIndex]!;
     indexed[directoryEntryIndex] = {
@@ -267,7 +271,7 @@ async function indexDirectoryResumeFiles(files: DirectoryResumeFilePlan[]): Prom
         targetPath: file.targetPath,
         size: file.size,
         lastModified: file.lastModified,
-      }),
+      }, { contentFingerprint }),
     };
     if (
       directoryEntryIndex > 0
@@ -868,10 +872,15 @@ async function collectDirectoryResumeFiles(
     0,
     shouldAbort,
   );
-  const files = await indexDirectoryResumeFiles(remote.files.map((file) => ({
+  // Downloads use path-stable identities so append-only growth of covered
+  // entries does not invalidate the compact prefix. Uploads/S2S keep size+mtime.
+  const files = await indexDirectoryResumeFiles(
+    remote.files.map((file) => ({
       ...file,
       targetPath: joinTransferTargetPath(destRoot, file.relativePath),
-    })));
+    })),
+    { pathStableIdentity: endpoints.isDownload },
+  );
   return {
     files,
     directoryTargetPaths: remote.directoryRelativePaths.map((relativePath) => (
@@ -1113,6 +1122,15 @@ async function resumeDirectoryWithDedicatedSession(
             const childId = persisted?.id ?? crypto.randomUUID();
             const resetPersistedCheckpoint = resetReplaceStage
               || (hasCompactCheckpoint && !compactCheckpointValid);
+            // Prefer the original planned snapshot size for interrupted download
+            // children. Fresh traversal `file.size` may already include appends
+            // (live logs); re-planning to the grown size breaks growth-aware
+            // resume validation and restarts the file incorrectly.
+            const plannedTotalBytes = !resetPersistedCheckpoint
+              && endpoints.isDownload
+              && Number.isFinite(persisted?.totalBytes)
+              ? Math.max(0, Number(persisted?.totalBytes) || 0)
+              : (file.size || persisted?.totalBytes || 0);
             let childBase: TransferTask = {
               ...parent,
               ...persisted,
@@ -1126,7 +1144,7 @@ async function resumeDirectoryWithDedicatedSession(
               progressMode: "bytes",
               ownerId: "dedicated-resume",
               status: "transferring",
-              totalBytes: file.size || persisted?.totalBytes || 0,
+              totalBytes: plannedTotalBytes,
               transferredBytes: resetPersistedCheckpoint
                 ? 0
                 : (persisted?.checkpointBytes ?? persisted?.transferredBytes ?? 0),

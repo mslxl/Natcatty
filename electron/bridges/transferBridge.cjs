@@ -3006,22 +3006,24 @@ async function downloadFile(
 
   // Fallback: sequential stream piping
   const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-  if (fileSize > 0 && checkpoint >= fileSize) {
-    // Planned snapshot is already fully staged (e.g. soft-resume after growth).
-    // Do not open a source stream at the old EOF — an unbounded read would pull
-    // the appended tail and fail the transferred === fileSize finish check.
+  if (checkpoint >= fileSize) {
+    // Planned snapshot is already fully staged (including zero-byte snapshots).
+    // Do not open a source stream at EOF — an unbounded read would pull any
+    // append tail and fail the transferred === fileSize finish check.
+    if (fileSize === 0) {
+      await fs.promises.writeFile(localPath, Buffer.alloc(0));
+    }
     sendProgress(fileSize, fileSize, { force: true, checkpointBytes: fileSize });
   } else {
     await new Promise((resolve, reject) => {
       // Bound the stream to the preflight snapshot so live appends (logs) cannot
       // push transferred bytes past the planned size and fail the finish check.
+      // fileSize > checkpoint here, so end is always defined for a non-empty plan.
       const streamOptions = {
         highWaterMark: TRANSFER_CHUNK_SIZE,
         start: checkpoint,
+        end: fileSize - 1,
       };
-      if (Number.isFinite(fileSize) && fileSize > 0 && fileSize > checkpoint) {
-        streamOptions.end = fileSize - 1;
-      }
       const readStream = sftp.createReadStream(remotePath, streamOptions);
       const writeStream = fs.createWriteStream(localPath, {
         highWaterMark: TRANSFER_CHUNK_SIZE,

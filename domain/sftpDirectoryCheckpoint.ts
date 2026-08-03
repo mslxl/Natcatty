@@ -144,12 +144,30 @@ function sha256Hex(value: string): string {
   return Array.from(H, (word) => word.toString(16).padStart(8, "0")).join("");
 }
 
-export function createDirectoryEntryIdentity(entry: {
-  sourcePath: string;
-  targetPath: string;
-  size: number;
-  lastModified?: number;
-}): string {
+/**
+ * Stable identity for one directory-transfer entry in the compact resume
+ * manifest.
+ *
+ * @param options.contentFingerprint When false, identity is path-only. Use for
+ *   download trees so append-only remote growth (live logs) does not invalidate
+ *   an already-covered compact prefix. Uploads/copies keep size+mtime so an
+ *   in-place rewrite still fails closed.
+ */
+export function createDirectoryEntryIdentity(
+  entry: {
+    sourcePath: string;
+    targetPath: string;
+    size: number;
+    lastModified?: number;
+  },
+  options?: { contentFingerprint?: boolean },
+): string {
+  if (options?.contentFingerprint === false) {
+    return sha256Hex(JSON.stringify([
+      entry.sourcePath,
+      entry.targetPath,
+    ]));
+  }
   return sha256Hex(JSON.stringify([
     entry.sourcePath,
     entry.targetPath,
