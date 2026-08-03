@@ -158,8 +158,8 @@ import {
   createLocalTerminalFontSizeRecord,
   createTerminalFontSizeSyncOrigin,
   parseTerminalFontSizeRecord,
-  resolveTerminalFontSizeStorage,
-  shouldApplyTerminalFontSizeRecord,
+  resolveAuthoritativeTerminalFontSizeStorage,
+  resolveIncomingTerminalFontSize,
   shouldBroadcastTerminalFontSizeChange,
   type TerminalFontSizeMutationSource,
   type TerminalFontSizeRecord,
@@ -238,34 +238,42 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     return parseTerminalFontSizeRecord(stored);
   });
   const terminalFontSize = terminalFontSizeRecord.fontSize;
+  const terminalFontSizeRecordRef = useRef(terminalFontSizeRecord);
   const terminalFontSizeMutationSourceRef = useRef<TerminalFontSizeMutationSource>('local');
   const terminalFontSizeLocalOriginRef = useRef(createTerminalFontSizeSyncOrigin());
   const setTerminalFontSize = useCallback((nextValue: SetStateAction<number>) => {
     terminalFontSizeMutationSourceRef.current = 'local';
     const persistedRaw = localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE);
-    setTerminalFontSizeRecord((prev) => {
-      const candidate = typeof nextValue === 'function'
-        ? (nextValue as (prevState: number) => number)(prev.fontSize)
-        : nextValue;
-      return createLocalTerminalFontSizeRecord(
-        prev,
-        persistedRaw,
-        candidate,
-        terminalFontSizeLocalOriginRef.current,
-      );
-    });
+    const current = terminalFontSizeRecordRef.current;
+    const candidate = typeof nextValue === 'function'
+      ? (nextValue as (prevState: number) => number)(current.fontSize)
+      : nextValue;
+    const next = createLocalTerminalFontSizeRecord(
+      current,
+      persistedRaw,
+      candidate,
+      terminalFontSizeLocalOriginRef.current,
+    );
+    if (next === current) return;
+    terminalFontSizeRecordRef.current = next;
+    setTerminalFontSizeRecord(next);
   }, []);
   const applyIncomingTerminalFontSize = useCallback((raw: unknown) => {
-    const incoming = parseTerminalFontSizeRecord(raw);
-    // Version gate so stale IPC/storage echoes cannot clobber a newer local
-    // +/- revision from the Settings window (see #2689).
-    setTerminalFontSizeRecord((prev) => {
-      if (!shouldApplyTerminalFontSizeRecord(prev, incoming)) {
-        return prev;
-      }
-      terminalFontSizeMutationSourceRef.current = 'incoming';
-      return incoming;
-    });
+    const resolution = resolveIncomingTerminalFontSize(
+      terminalFontSizeRecordRef.current,
+      raw,
+      localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE),
+    );
+    if (resolution.repairSerializedRecord !== null) {
+      localStorageAdapter.writeString(
+        STORAGE_KEY_TERM_FONT_SIZE,
+        resolution.repairSerializedRecord,
+      );
+    }
+    if (!resolution.shouldUpdate) return;
+    terminalFontSizeMutationSourceRef.current = 'incoming';
+    terminalFontSizeRecordRef.current = resolution.record;
+    setTerminalFontSizeRecord(resolution.record);
   }, []);
   const [uiLanguage, setUiLanguage] = useState<UILanguage>(() => {
     const stored = readStoredString(STORAGE_KEY_UI_LANGUAGE);
@@ -1078,14 +1086,15 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   }, [terminalFontFamilyId, notifySettingsChanged]);
 
   useEffect(() => {
-    const resolution = resolveTerminalFontSizeStorage(
-      terminalFontSizeRecord,
+    const resolution = resolveAuthoritativeTerminalFontSizeStorage(
+      terminalFontSizeRecordRef,
       localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE),
     );
     // If another window already published a newer winner, adopt it instead of
     // displaying and broadcasting a local value that peers will reject.
     if (resolution.shouldAdopt) {
       terminalFontSizeMutationSourceRef.current = 'incoming';
+      terminalFontSizeRecordRef.current = resolution.record;
       setTerminalFontSizeRecord(resolution.record);
       return;
     }
@@ -1101,7 +1110,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     );
     terminalFontSizeMutationSourceRef.current = decision.nextSource;
     if (!decision.shouldBroadcast) return;
-    notifySettingsChanged(STORAGE_KEY_TERM_FONT_SIZE, terminalFontSizeRecord);
+    notifySettingsChanged(STORAGE_KEY_TERM_FONT_SIZE, resolution.record);
   }, [terminalFontSizeRecord, notifySettingsChanged]);
 
   useEffect(() => {

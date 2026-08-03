@@ -171,6 +171,12 @@ export type TerminalFontSizeStorageResolution = {
   shouldPersist: boolean;
 };
 
+export type TerminalFontSizeIncomingResolution = {
+  record: TerminalFontSizeRecord;
+  shouldUpdate: boolean;
+  repairSerializedRecord: string | null;
+};
+
 export function resolveTerminalFontSizeStorage(
   current: TerminalFontSizeRecord,
   storedRaw: unknown,
@@ -191,6 +197,45 @@ export function resolveTerminalFontSizeStorage(
     serializedRecord,
     shouldAdopt: false,
     shouldPersist: storedRaw !== serializedRecord,
+  };
+}
+
+export function resolveAuthoritativeTerminalFontSizeStorage(
+  currentRef: Readonly<{ current: TerminalFontSizeRecord }>,
+  storedRaw: unknown,
+): TerminalFontSizeStorageResolution {
+  return resolveTerminalFontSizeStorage(currentRef.current, storedRaw);
+}
+
+export function resolveIncomingTerminalFontSize(
+  current: TerminalFontSizeRecord,
+  incomingRaw: unknown,
+  storedRaw: unknown,
+): TerminalFontSizeIncomingResolution {
+  const incoming = parseTerminalFontSizeRecord(incomingRaw);
+  if (shouldApplyTerminalFontSizeRecord(current, incoming)) {
+    return {
+      record: incoming,
+      shouldUpdate: true,
+      repairSerializedRecord: null,
+    };
+  }
+
+  const storageResolution = resolveTerminalFontSizeStorage(current, storedRaw);
+  if (storageResolution.shouldAdopt) {
+    return {
+      record: storageResolution.record,
+      shouldUpdate: true,
+      repairSerializedRecord: null,
+    };
+  }
+
+  return {
+    record: current,
+    shouldUpdate: false,
+    repairSerializedRecord: storageResolution.shouldPersist
+      ? storageResolution.serializedRecord
+      : null,
   };
 }
 

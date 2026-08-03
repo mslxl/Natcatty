@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   createLocalTerminalFontSizeRecord,
   parseTerminalFontSizeRecord,
+  resolveAuthoritativeTerminalFontSizeStorage,
+  resolveIncomingTerminalFontSize,
   resolveTerminalFontSizeStorage,
   serializeTerminalFontSizeRecord,
   shouldApplyTerminalFontSizeRecord,
@@ -237,6 +239,65 @@ test('a stale window creates and persists a revision newer than shared storage',
   assert.equal(resolution.shouldAdopt, false);
   assert.equal(resolution.shouldPersist, true);
   assert.deepEqual(parseTerminalFontSizeRecord(resolution.serializedRecord), local);
+});
+
+test('a rejected losing record repairs shared storage back to the current winner', () => {
+  const winner: TerminalFontSizeRecord = {
+    fontSize: 17,
+    version: 10,
+    origin: 'settings-window',
+  };
+  const loser: TerminalFontSizeRecord = {
+    fontSize: 15,
+    version: 10,
+    origin: 'main-window',
+  };
+  const loserRaw = serializeTerminalFontSizeRecord(loser);
+
+  const rejected = resolveIncomingTerminalFontSize(winner, loser, loserRaw);
+  assert.equal(rejected.shouldUpdate, false);
+  assert.deepEqual(rejected.record, winner);
+  assert.equal(
+    rejected.repairSerializedRecord,
+    serializeTerminalFontSizeRecord(winner),
+  );
+
+  const stable = resolveIncomingTerminalFontSize(
+    winner,
+    loser,
+    rejected.repairSerializedRecord,
+  );
+  assert.equal(stable.shouldUpdate, false);
+  assert.equal(stable.repairSerializedRecord, null);
+});
+
+test('a delayed persistence effect arbitrates from the latest authoritative record', () => {
+  const renderedWhenEffectWasScheduled: TerminalFontSizeRecord = {
+    fontSize: 14,
+    version: 9,
+    origin: 'old-window',
+  };
+  const winner: TerminalFontSizeRecord = {
+    fontSize: 17,
+    version: 10,
+    origin: 'settings-window',
+  };
+  const loser: TerminalFontSizeRecord = {
+    fontSize: 15,
+    version: 10,
+    origin: 'main-window',
+  };
+  const currentRef = { current: renderedWhenEffectWasScheduled };
+  currentRef.current = winner;
+
+  const resolution = resolveAuthoritativeTerminalFontSizeStorage(
+    currentRef,
+    serializeTerminalFontSizeRecord(loser),
+  );
+  assert.equal(resolution.shouldAdopt, false);
+  assert.equal(resolution.shouldPersist, true);
+  assert.deepEqual(resolution.record, winner);
+  assert.deepEqual(parseTerminalFontSizeRecord(resolution.serializedRecord), winner);
 });
 
 test('shouldBroadcastTerminalFontSizeChange suppresses incoming rebroadcasts', () => {
