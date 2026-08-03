@@ -104,7 +104,7 @@ test("listSftpConnectedHosts keeps plain SSH sessions even when vault host defau
   assert.equal(result[0]?.sessionId, "s-ssh-deeplink");
 });
 
-test("listSftpConnectedHosts skips hosts with SFTP sudo enabled", () => {
+test("listSftpConnectedHosts includes hosts with SFTP sudo for picker display", () => {
   const hostsById = new Map([
     ["a", host({ id: "a", label: "Alpha", sftpSudo: true })],
   ]);
@@ -112,7 +112,15 @@ test("listSftpConnectedHosts skips hosts with SFTP sudo enabled", () => {
     session({ id: "s-sudo", hostId: "a", status: "connected" }),
   ];
 
-  assert.deepEqual(listSftpConnectedHosts(sessions, hostsById), []);
+  const result = listSftpConnectedHosts(sessions, hostsById);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]?.sessionId, "s-sudo");
+  assert.equal(result[0]?.host.sftpSudo, true);
+  // Transfer/open must still refuse shell reuse for sudo.
+  assert.equal(
+    resolveSftpTransferSourceSessionId(sessions, hostsById, "a", result[0]?.host),
+    undefined,
+  );
 });
 
 test("listSftpConnectedHosts uses the live session endpoint when the vault host was edited", () => {
