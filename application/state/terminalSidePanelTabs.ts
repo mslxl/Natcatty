@@ -58,6 +58,30 @@ export function reorderTerminalSidePanelTab(
     .order as TerminalSidePanelTabId[];
 }
 
+export function fitTerminalSidePanelTabs(params: {
+  shown: TerminalSidePanelTabId[];
+  collapsed: TerminalSidePanelTabId[];
+  active: TerminalSidePanelTabId | null;
+  maxShown: number;
+}): { shown: TerminalSidePanelTabId[]; collapsed: TerminalSidePanelTabId[] } {
+  if (params.shown.length <= params.maxShown) {
+    return { shown: params.shown, collapsed: params.collapsed };
+  }
+
+  const kept = new Set(params.shown.slice(0, Math.max(1, params.maxShown)));
+  if (params.active && params.shown.includes(params.active) && !kept.has(params.active)) {
+    const lastKept = [...kept].at(-1);
+    if (lastKept) kept.delete(lastKept);
+    kept.add(params.active);
+  }
+  const shown = params.shown.filter((id) => kept.has(id));
+  const autoCollapsed = params.shown.filter((id) => !kept.has(id));
+  return {
+    shown,
+    collapsed: [...autoCollapsed, ...params.collapsed.filter((id) => !autoCollapsed.includes(id))],
+  };
+}
+
 /**
  * Seed the modern layout storage from the legacy order-only key when needed.
  */

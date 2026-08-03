@@ -40,7 +40,7 @@ test('terminal side panel layouts stay isolated and keep one pane per tool', asy
       state?.splitPane('terminal-a', 'ai', 'vertical', {
         paneId: 'pane-ai',
         splitId: 'split-a',
-      });
+      }, 400);
     });
     assert.deepEqual(
       collectSidePanelPanes(state!.sidePanelLayouts.get('terminal-a')!.root).map((pane) => pane.tool),
@@ -55,7 +55,7 @@ test('terminal side panel layouts stay isolated and keep one pane per tool', asy
       state?.splitPane('terminal-a', 'notes', 'horizontal', {
         paneId: 'unused-pane',
         splitId: 'unused-split',
-      });
+      }, 400);
     });
     const focused = state!.sidePanelLayouts.get('terminal-a')!;
     assert.equal(collectSidePanelPanes(focused.root).length, 2);

@@ -47,6 +47,11 @@ export function getSidePanelSplitMinimumSize(
   );
 }
 
+export function canSplitSidePanelPaneAtSize(axisLength: number): boolean {
+  return Number.isFinite(axisLength)
+    && axisLength >= MIN_SIDE_PANEL_PANE_PIXELS * 2;
+}
+
 export function createSidePanelLayout(
   tool: SidePanelTool,
   paneId: string,
@@ -110,12 +115,14 @@ export function splitSidePanelPane(
   tool: SidePanelTool,
   direction: SidePanelSplitDirection,
   ids: { paneId: string; splitId: string },
+  availableAxisLength: number,
 ): SidePanelLayout {
   const panes = collectSidePanelPanes(layout.root);
   const occupied = panes.find((pane) => pane.tool === tool);
   if (occupied) return focusSidePanelPane(layout, occupied.id);
   if (panes.length >= MAX_SIDE_PANEL_PANES) return layout;
   if (!panes.some((pane) => pane.id === targetPaneId)) return layout;
+  if (!canSplitSidePanelPaneAtSize(availableAxisLength)) return layout;
 
   const newPane: SidePanelPaneNode = { id: ids.paneId, type: 'pane', tool };
   const insert = (node: SidePanelLayoutNode): SidePanelLayoutNode => {

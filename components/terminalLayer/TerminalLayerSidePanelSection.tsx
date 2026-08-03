@@ -14,6 +14,7 @@ import {
 } from '../../application/state/sidePanelLiveStore';
 import {
   reorderTerminalSidePanelTab,
+  fitTerminalSidePanelTabs,
   TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
   TERMINAL_SIDE_PANEL_TAB_IDS,
   type TerminalSidePanelTabId,
@@ -21,6 +22,7 @@ import {
 } from '../../application/state/terminalSidePanelTabs';
 import {
   clampTerminalSidePanelWidth,
+  getTerminalSidePanelMaxShownTools,
   TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
 } from '../../application/state/terminalSidePanelWidth';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
@@ -35,7 +37,9 @@ import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '../ui/pop
 import type { SidePanelTab } from './TerminalLayerSupport';
 import {
   MAX_SIDE_PANEL_PANES,
+  canSplitSidePanelPaneAtSize,
   collectSidePanelPanes,
+  getFocusedSidePanelPane,
   getSidePanelSplitMinimumSize,
   type SidePanelLayout,
   type SidePanelLayoutNode,
@@ -773,8 +777,44 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       : []),
     [activeSidePanelLayout],
   );
+  const focusedPane = activeSidePanelLayout
+    ? getFocusedSidePanelPane(activeSidePanelLayout)
+    : null;
+  const focusedPaneHost = focusedPane ? paneHosts.get(focusedPane.tool) ?? null : null;
+  const [focusedPaneSize, setFocusedPaneSize] = useState<{ width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const pane = focusedPaneHost?.closest<HTMLElement>('[data-section="terminal-side-panel-pane"]');
+    if (!pane) {
+      setFocusedPaneSize(null);
+      return undefined;
+    }
+    const update = () => {
+      const rect = pane.getBoundingClientRect();
+      setFocusedPaneSize((current) => (
+        current?.width === rect.width && current.height === rect.height
+          ? current
+          : { width: rect.width, height: rect.height }
+      ));
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(update);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, [focusedPaneHost]);
 
-  const { shown: shownSidePanelTabs, collapsed: collapsedSidePanelTabs } = useMemo(() => {
+  const handleSplitSidePanelSelect = useCallback((
+    tool: SidePanelTab,
+    direction: SidePanelSplitDirection,
+  ) => {
+    const pane = focusedPaneHost?.closest<HTMLElement>('[data-section="terminal-side-panel-pane"]');
+    if (!pane) return;
+    const rect = pane.getBoundingClientRect();
+    const availableAxisLength = direction === 'vertical' ? rect.width : rect.height;
+    handleSplitSidePanelPane(tool, direction, availableAxisLength);
+  }, [focusedPaneHost, handleSplitSidePanelPane]);
+
+  const { shown: configuredShownSidePanelTabs, collapsed: configuredCollapsedSidePanelTabs } = useMemo(() => {
     const parts = partitionSidePanelTabs(TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER);
     // If an external path opens a hidden tab, still show its chip while active.
     if (
@@ -790,6 +830,20 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     }
     return parts;
   }, [activeSidePanelTab, partitionSidePanelTabs]);
+  const { shown: shownSidePanelTabs, collapsed: collapsedSidePanelTabs } = useMemo(
+    () => fitTerminalSidePanelTabs({
+      shown: configuredShownSidePanelTabs,
+      collapsed: configuredCollapsedSidePanelTabs,
+      active: activeSidePanelTab,
+      maxShown: getTerminalSidePanelMaxShownTools(shellWidth),
+    }),
+    [
+      activeSidePanelTab,
+      configuredCollapsedSidePanelTabs,
+      configuredShownSidePanelTabs,
+      shellWidth,
+    ],
+  );
 
   const sidePanelCustomizeItems = useMemo(
     () =>
@@ -966,8 +1020,12 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
                 direction="horizontal"
                 items={sidePanelTabItems}
                 occupiedTools={occupiedSidePanelTools}
-                disabled={!activeSidePanelLayout || activePaneCount >= MAX_SIDE_PANEL_PANES}
-                onSelect={handleSplitSidePanelPane}
+                disabled={
+                  !activeSidePanelLayout
+                  || activePaneCount >= MAX_SIDE_PANEL_PANES
+                  || !canSplitSidePanelPaneAtSize(focusedPaneSize?.height ?? 0)
+                }
+                onSelect={handleSplitSidePanelSelect}
                 t={t}
                 buttonColor={sidePanelTheme.mutedFg}
               />
@@ -975,8 +1033,12 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
                 direction="vertical"
                 items={sidePanelTabItems}
                 occupiedTools={occupiedSidePanelTools}
-                disabled={!activeSidePanelLayout || activePaneCount >= MAX_SIDE_PANEL_PANES}
-                onSelect={handleSplitSidePanelPane}
+                disabled={
+                  !activeSidePanelLayout
+                  || activePaneCount >= MAX_SIDE_PANEL_PANES
+                  || !canSplitSidePanelPaneAtSize(focusedPaneSize?.width ?? 0)
+                }
+                onSelect={handleSplitSidePanelSelect}
                 t={t}
                 buttonColor={sidePanelTheme.mutedFg}
               />

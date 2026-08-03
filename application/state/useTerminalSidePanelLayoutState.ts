@@ -74,10 +74,18 @@ export function useTerminalSidePanelLayoutState() {
     tool: SidePanelTool,
     direction: SidePanelSplitDirection,
     ids: { paneId: string; splitId: string },
+    availableAxisLength: number,
   ) => {
     const layout = sidePanelLayoutsRef.current.get(tabId);
     if (!layout) return;
-    commitLayout(tabId, splitSidePanelPane(layout, layout.focusedPaneId, tool, direction, ids));
+    commitLayout(tabId, splitSidePanelPane(
+      layout,
+      layout.focusedPaneId,
+      tool,
+      direction,
+      ids,
+      availableAxisLength,
+    ));
   }, [commitLayout]);
 
   const closePane = useCallback((tabId: string, paneId: string): boolean => {

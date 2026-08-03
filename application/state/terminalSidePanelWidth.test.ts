@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   clampTerminalSidePanelWidth,
+  getTerminalSidePanelMaxShownTools,
   getTerminalSidePanelMaxWidth,
   TERMINAL_SIDE_PANEL_MAX_WIDTH,
   TERMINAL_SIDE_PANEL_MIN_WIDTH,
@@ -12,6 +13,12 @@ import {
 test('terminal side panel can expand to the wider maximum', () => {
   assert.equal(getTerminalSidePanelMaxWidth(2000), TERMINAL_SIDE_PANEL_MAX_WIDTH);
   assert.equal(clampTerminalSidePanelWidth(1400, 2000), TERMINAL_SIDE_PANEL_MAX_WIDTH);
+});
+
+test('terminal side panel collapses tool buttons before shared actions are clipped', () => {
+  assert.equal(getTerminalSidePanelMaxShownTools(280), 2);
+  assert.equal(getTerminalSidePanelMaxShownTools(320), 4);
+  assert.ok(getTerminalSidePanelMaxShownTools(420) >= 7);
 });
 
 test('terminal side panel keeps tracking viewport width without a React rerender', () => {

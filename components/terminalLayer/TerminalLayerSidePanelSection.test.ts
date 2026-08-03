@@ -5,6 +5,7 @@ import test from 'node:test';
 import {
   normalizeTerminalSidePanelTabOrder,
   reorderTerminalSidePanelTab,
+  fitTerminalSidePanelTabs,
   TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
 } from '../../application/state/terminalSidePanelTabs.ts';
 import {
@@ -112,6 +113,18 @@ test('side panel tab order can move the dragged tab after the target tab', () =>
     ),
     ['sftp', 'history', 'theme', 'system', 'notes', 'ai', 'scripts'],
   );
+});
+
+test('narrow side panels keep the active tool visible and move extra tools into overflow', () => {
+  const fitted = fitTerminalSidePanelTabs({
+    shown: [...TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER],
+    collapsed: [],
+    active: 'ai',
+    maxShown: 2,
+  });
+
+  assert.deepEqual(fitted.shown, ['sftp', 'ai']);
+  assert.deepEqual(fitted.collapsed, ['scripts', 'history', 'theme', 'system', 'notes']);
 });
 
 test('notes side panel forwards repeated open-note requests', () => {
