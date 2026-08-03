@@ -30,6 +30,7 @@ import {
   type VariableSizeVirtualListHandle,
 } from './ui/VariableSizeVirtualList';
 import { Input } from './ui/input';
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
 
 export type HistoryPanelScope = 'host' | 'global';
 
@@ -241,7 +242,10 @@ const HistorySidePanelInner: React.FC<HistorySidePanelProps> = ({
       data-section="history-panel"
       data-history-scope={scope}
     >
-      <div className="shrink-0 px-2 py-1.5 border-b border-border/50 flex items-center gap-1.5">
+      <div className={cn(
+        TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+        'px-2 border-b border-border/50 flex items-center gap-1.5',
+      )}>
         <div className="relative flex-1 min-w-0">
           <Search
             size={12}
@@ -251,7 +255,7 @@ const HistorySidePanelInner: React.FC<HistorySidePanelProps> = ({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder={t('history.searchPlaceholder')}
-            className="h-7 pl-7 text-xs bg-muted/30 border-none"
+            className="h-6 pl-7 text-xs bg-muted/30 border-none"
           />
         </div>
         {scope === 'host' && (
@@ -261,7 +265,7 @@ const HistorySidePanelInner: React.FC<HistorySidePanelProps> = ({
             disabled={!isSupportedSession || state.loading}
             title={t('history.action.refresh')}
             aria-label={t('history.action.refresh')}
-            className="shrink-0 h-7 w-7 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
+            className="shrink-0 h-6 w-6 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
           >
             <RefreshCw size={14} className={cn(state.loading && 'animate-spin')} />
           </button>

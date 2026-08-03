@@ -60,6 +60,18 @@ export function shouldKeepSftpMountedAfterClose(activeTransfersCount: number): b
   return activeTransfersCount > 0;
 }
 
+export function shouldCloseSftpSidePanel(params: {
+  shouldKeepOpen: boolean;
+  isOpen: boolean;
+  isSameEndpoint: boolean;
+  paneCount: number;
+}): boolean {
+  return !params.shouldKeepOpen
+    && params.isOpen
+    && params.isSameEndpoint
+    && params.paneCount <= 1;
+}
+
 export function shouldClearSftpPanelAfterTransferChange(params: {
   activeTransfersCount: number;
   panelOpen: boolean;

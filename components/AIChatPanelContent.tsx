@@ -11,6 +11,8 @@ import ChatInput from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
 import { SessionHistoryDrawer, formatRelativeTime } from './AIChatSessionHistoryDrawer';
+import { cn } from '../lib/utils';
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
 import {
   getAIPanelDiagnosticHiddenParts,
   getAIPanelProfilerProps,
@@ -163,7 +165,10 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
       {/* ── Header ── */}
       {!hideHeader && (
         <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Header')}>
-          <div className="px-2.5 py-1.5 flex items-center justify-between border-b border-border/50 shrink-0">
+          <div className={cn(
+            TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+            'px-2 flex items-center justify-between border-b border-border/50',
+          )}>
             <AgentSelector
               currentAgentId={currentAgentId}
               externalAgents={externalAgents}
@@ -178,16 +183,17 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               <ConversationExport
                 session={activeSession}
                 onExport={handleExport}
+                className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground [&_svg]:size-3"
               />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
+                    className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
                     onClick={() => setShowHistory(!showHistory)}
                   >
-                    <History size={14} />
+                    <History size={12} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t('ai.chat.sessionHistory')}</TooltipContent>
@@ -197,10 +203,10 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 rounded-md text-primary/82 hover:bg-primary/[0.10] hover:text-primary"
+                    className="h-6 w-6 rounded-md text-primary/82 hover:bg-primary/[0.10] hover:text-primary"
                     onClick={handleNewChat}
                   >
-                    <Plus size={15} />
+                    <Plus size={13} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t('ai.chat.newChat')}</TooltipContent>

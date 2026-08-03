@@ -13,15 +13,9 @@ import {
 } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { useToolbarItemLayout } from './useToolbarItemLayout';
+import type { SidePanelTool } from '../../domain/sidePanelLayout';
 
-export type TerminalSidePanelTabId =
-  | 'sftp'
-  | 'scripts'
-  | 'history'
-  | 'theme'
-  | 'system'
-  | 'notes'
-  | 'ai';
+export type TerminalSidePanelTabId = SidePanelTool;
 
 export const TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER: TerminalSidePanelTabId[] = [
   'sftp',
@@ -62,6 +56,30 @@ export function reorderTerminalSidePanelTab(
   };
   return reorderToolbarItems(layout, draggedTab, targetTab, placement)
     .order as TerminalSidePanelTabId[];
+}
+
+export function fitTerminalSidePanelTabs(params: {
+  shown: TerminalSidePanelTabId[];
+  collapsed: TerminalSidePanelTabId[];
+  active: TerminalSidePanelTabId | null;
+  maxShown: number;
+}): { shown: TerminalSidePanelTabId[]; collapsed: TerminalSidePanelTabId[] } {
+  if (params.shown.length <= params.maxShown) {
+    return { shown: params.shown, collapsed: params.collapsed };
+  }
+
+  const kept = new Set(params.shown.slice(0, Math.max(1, params.maxShown)));
+  if (params.active && params.shown.includes(params.active) && !kept.has(params.active)) {
+    const lastKept = [...kept].at(-1);
+    if (lastKept) kept.delete(lastKept);
+    kept.add(params.active);
+  }
+  const shown = params.shown.filter((id) => kept.has(id));
+  const autoCollapsed = params.shown.filter((id) => !kept.has(id));
+  return {
+    shown,
+    collapsed: [...autoCollapsed, ...params.collapsed.filter((id) => !autoCollapsed.includes(id))],
+  };
 }
 
 /**

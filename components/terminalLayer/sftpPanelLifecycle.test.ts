@@ -10,11 +10,38 @@ import {
   listInvalidSftpPanelTabIds,
   listTerminalTabIdsWithRetainingTransfers,
   resolveSftpActiveTransfersCount,
+  shouldCloseSftpSidePanel,
   shouldClearSftpPanelAfterTransferChange,
   shouldKeepSftpMountedAfterClose,
   shouldScheduleSftpRetainedPanelCleanup,
   terminalSftpTransferOwnerId,
 } from "./sftpPanelLifecycle.ts";
+
+test("reopening focused SFTP does not close the other split panes", () => {
+  assert.equal(shouldCloseSftpSidePanel({
+    shouldKeepOpen: false,
+    isOpen: true,
+    isSameEndpoint: true,
+    paneCount: 2,
+  }), false);
+  assert.equal(shouldCloseSftpSidePanel({
+    shouldKeepOpen: false,
+    isOpen: true,
+    isSameEndpoint: true,
+    paneCount: 1,
+  }), true);
+});
+
+test("single-pane SFTP close uses the shared full-panel cleanup and stops opening work", () => {
+  const layerSource = readFileSync(new URL("../TerminalLayer.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    layerSource,
+    /if \(isClosing\) \{\s*closeTerminalSidePanelTab\(tabId\);\s*return;\s*\}/,
+  );
+  assert.match(layerSource, /const handleCloseSidePanel = useCallback[\s\S]*closeTerminalSidePanelTab\(activeTabId\)/);
+  assert.match(layerSource, /closeTerminalSidePanelTab[\s\S]*setAiMountedTabIds[\s\S]*setNotesOpenNoteByTab/);
+});
 
 function task(
   partial: Partial<TransferTask> & Pick<TransferTask, "id" | "status">,

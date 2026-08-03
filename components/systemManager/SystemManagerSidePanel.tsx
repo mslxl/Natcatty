@@ -15,6 +15,7 @@ import { ProcessManagerTab } from './ProcessManagerTab';
 import { SystemOverviewTab } from './SystemOverviewTab';
 import { TmuxManagerTab } from './TmuxManagerTab';
 import { WorkspaceSidebarHostHeader } from '../terminalLayer/WorkspaceSidebarHostHeader';
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from '../terminalLayer/terminalSidePanelChrome';
 import { SystemPanelEmpty, SystemPanelShell } from './SystemPanelUi';
 import { useSessionCapabilities } from './hooks/useSystemManager';
 
@@ -182,13 +183,16 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   return (
     <SystemPanelShell section="system-manager-panel">
       {workspaceHostHeader}
-      <div className="shrink-0 flex items-center gap-0.5 px-2 py-1 border-b border-border/50">
+      <div className={cn(
+        TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+        'flex items-center gap-0.5 px-2 border-b border-border/50',
+      )}>
         {tabDefs.filter((tab) => availableTabs.includes(tab.id)).map(({ id, icon: Icon, label }) => (
           <button
             key={id}
             type="button"
             className={cn(
-              'flex items-center gap-1.5 px-2 py-1 rounded text-[11px] transition-colors',
+              'h-6 flex items-center gap-1.5 px-2 rounded text-[11px] transition-colors',
               resolvedTab === id
                 ? 'bg-muted text-foreground font-medium'
                 : 'text-muted-foreground hover:text-foreground',

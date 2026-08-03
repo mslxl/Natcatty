@@ -5,7 +5,69 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import ChatInput from './ChatInput';
+import {
+  CHAT_INPUT_MAX_HEIGHT,
+  CHAT_INPUT_MIN_HEIGHT,
+  resolveChatInputAriaHeight,
+  resolveChatInputMaxHeight,
+  resolveChatInputResizeHeight,
+  resolveVisibleChatInputHeight,
+  resolveVisibleChatInputMaxHeight,
+} from './chatInputResize';
 import { TooltipProvider } from '../ui/tooltip';
+
+test('clamps composer dragging to the usable pane height', () => {
+  assert.equal(resolveChatInputMaxHeight(900), CHAT_INPUT_MAX_HEIGHT);
+  assert.equal(resolveChatInputMaxHeight(180), CHAT_INPUT_MIN_HEIGHT);
+  assert.equal(resolveChatInputResizeHeight(128, 500, 420, 360), 208);
+  assert.equal(resolveChatInputResizeHeight(128, 500, 700, 360), CHAT_INPUT_MIN_HEIGHT);
+  assert.equal(resolveChatInputResizeHeight(300, 500, 300, 360), 360);
+});
+
+test('keeps the requested composer height while the pane is temporarily hidden or constrained', () => {
+  assert.equal(resolveVisibleChatInputMaxHeight(0), null);
+  assert.equal(resolveVisibleChatInputMaxHeight(Number.NaN), null);
+  assert.equal(resolveVisibleChatInputHeight(360, 220), 220);
+  assert.equal(resolveVisibleChatInputHeight(360, 400), 360);
+  assert.equal(resolveVisibleChatInputHeight(null, 400), null);
+});
+
+test('reports an accessible composer height inside the available range', () => {
+  assert.equal(resolveChatInputAriaHeight(null, CHAT_INPUT_MIN_HEIGHT), CHAT_INPUT_MIN_HEIGHT);
+  assert.equal(resolveChatInputAriaHeight(360, 220), 220);
+  assert.equal(resolveChatInputAriaHeight(160, 220), 160);
+});
+
+test('renders an accessible composer resize handle', () => {
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput value="" onChange={() => {}} onSend={() => {}} />
+    </TooltipProvider>,
+  );
+
+  assert.match(html, /role="separator"/);
+  assert.match(html, /aria-orientation="horizontal"/);
+  assert.match(html, /aria-label="ai\.chat\.resizeInput"/);
+  assert.match(html, /cursor-ns-resize/);
+});
+
+test('expanded composer grows the text area while keeping controls at the bottom', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /data-section="ai-chat-input-body"/);
+  assert.match(source, /composerHeight != null \? 'flex min-h-0 flex-1 flex-col'/);
+  assert.match(source, /data-section="ai-chat-input-footer"/);
+  assert.match(source, /className="shrink-0/);
+  assert.doesNotMatch(source, /<Expand/);
+  assert.doesNotMatch(source, /setExpanded/);
+});
+
+test('composer resizing also ends when pointer capture is unexpectedly lost', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /resizeStartRef\.current = null;[\s\S]*releasePointerCapture/);
+  assert.match(source, /onLostPointerCapture=\{handleComposerResizeEnd\}/);
+});
 
 test('virtualizes the host mention list without changing its option contract', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');

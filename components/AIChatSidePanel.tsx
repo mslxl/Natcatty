@@ -74,6 +74,7 @@ import {
   type SdkRuntimeModelCatalog,
 } from './AIChatSidePanelHelpers';
 import { AIChatPanelContent } from './AIChatPanelContent';
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
 import {
   getAIPanelProfilerProps,
   profileAIPanelCalculation,
@@ -230,8 +231,8 @@ const AIChatSidePanelPreparing = React.memo(function AIChatSidePanelPreparing() 
   const { t } = useI18n();
   return (
     <div className="flex h-full flex-col bg-background" data-section="ai-chat-panel-preparing">
-      <div className="shrink-0 border-b border-border/50 px-2.5 py-1.5">
-        <div className="h-8 w-36 rounded-md bg-muted/45" />
+      <div className={`${TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS} border-b border-border/50 px-2 flex items-center`}>
+        <div className="h-6 w-32 rounded-md bg-muted/45" />
       </div>
       <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
         <div className="flex items-center gap-2">
