@@ -420,11 +420,13 @@ test("resolveExplorerContextMenuExecutablePath prefers portable launcher path", 
 
 test("applyInitialExplorerContextMenuPreference skips reg.exe on current schema warm start", () => {
   let regCalls = 0;
+  const exe = "D:\\Tools\\NetcattyPortable.exe";
   const fsModule = {
     existsSync: () => true,
     readFileSync: () => JSON.stringify({
       enabled: true,
       schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+      executablePath: exe,
     }),
     mkdirSync: () => {
       throw new Error("should not write preference on warm start");
@@ -435,6 +437,7 @@ test("applyInitialExplorerContextMenuPreference skips reg.exe on current schema 
   };
   const result = applyInitialExplorerContextMenuPreference({
     app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    executablePath: exe,
     platform: "win32",
     fsModule,
     spawnSyncImpl: () => {
@@ -445,4 +448,72 @@ test("applyInitialExplorerContextMenuPreference skips reg.exe on current schema 
   });
   assert.deepEqual(result, { enabled: true, success: true, supported: true });
   assert.equal(regCalls, 0);
+});
+
+test("applyInitialExplorerContextMenuPreference re-applies when portable path changes", () => {
+  let wrote = null;
+  const present = new Set();
+  const values = new Map();
+  const fsModule = {
+    existsSync: () => true,
+    readFileSync: () => JSON.stringify({
+      enabled: true,
+      schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+      executablePath: "D:\\Old\\NetcattyPortable.exe",
+    }),
+    mkdirSync: () => {},
+    writeFileSync: (_path, data) => {
+      wrote = JSON.parse(String(data));
+    },
+  };
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      present.add(args[1]);
+      const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+      const dataIdx = args.indexOf("/d");
+      if (dataIdx >= 0) values.set(`${args[1]}::${valueName}`, args[dataIdx + 1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "delete") {
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const nextExe = "E:\\Moved\\NetcattyPortable.exe";
+  const result = applyInitialExplorerContextMenuPreference({
+    app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    executablePath: nextExe,
+    platform: "win32",
+    fsModule,
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
+  assert.equal(wrote?.executablePath, nextExe);
+  assert.ok(
+    [...values.values()].some((value) => String(value).includes(nextExe)),
+    "registry command should use the new portable launcher path",
+  );
 });

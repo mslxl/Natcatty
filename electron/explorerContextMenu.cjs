@@ -62,9 +62,13 @@ function readExplorerContextMenuPreferenceRecord({
     const schemaVersion = Number.isInteger(parsed.schemaVersion)
       ? parsed.schemaVersion
       : 0;
+    const executablePath = typeof parsed.executablePath === "string"
+      ? parsed.executablePath.trim()
+      : "";
     return {
       enabled: parsed.enabled,
       schemaVersion,
+      executablePath,
     };
   } catch (err) {
     logWarn?.("[Main] Failed to read Explorer context menu preference:", err);
@@ -90,6 +94,7 @@ function readExplorerContextMenuEnabledPreference({
 function writeExplorerContextMenuEnabledPreference({
   app,
   enabled,
+  executablePath = "",
   fsModule = fs,
   pathModule = path,
   logWarn = console.warn,
@@ -98,13 +103,13 @@ function writeExplorerContextMenuEnabledPreference({
   if (!filePath) return false;
   try {
     fsModule.mkdirSync(pathModule.dirname(filePath), { recursive: true });
-    fsModule.writeFileSync(
-      filePath,
-      JSON.stringify({
-        enabled: enabled !== false,
-        schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
-      }, null, 2),
-    );
+    const payload = {
+      enabled: enabled !== false,
+      schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+    };
+    const exe = String(executablePath || "").trim();
+    if (exe) payload.executablePath = exe;
+    fsModule.writeFileSync(filePath, JSON.stringify(payload, null, 2));
     return true;
   } catch (err) {
     logWarn?.("[Main] Failed to write Explorer context menu preference:", err);
@@ -506,13 +511,15 @@ function applyInitialExplorerContextMenuPreference({
     logWarn,
   });
 
+  const currentExe = String(executablePath || "").trim();
+
   // No saved preference: keep installer/portable state, but repair the command
   // path once when the menu is already registered (upgrade migration). Persist
   // the outcome so later startups skip the registry refresh path entirely.
   if (record === null) {
     if (isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })) {
       const refreshed = installExplorerContextMenu({
-        executablePath,
+        executablePath: currentExe,
         platform,
         spawnSyncImpl,
         logWarn,
@@ -521,6 +528,7 @@ function applyInitialExplorerContextMenuPreference({
         writeExplorerContextMenuEnabledPreference({
           app,
           enabled: true,
+          executablePath: currentExe,
           fsModule,
           pathModule,
           logWarn,
@@ -536,16 +544,22 @@ function applyInitialExplorerContextMenuPreference({
   }
 
   const preferred = record.enabled;
-  // Healthy warm start: a current schemaVersion means the last successful apply
-  // already wrote/suppressed the correct verbs. Skip reg.exe entirely.
-  if (record.schemaVersion === EXPLORER_CONTEXT_MENU_SCHEMA_VERSION) {
+  const schemaCurrent = record.schemaVersion === EXPLORER_CONTEXT_MENU_SCHEMA_VERSION;
+  // Portable builds can be moved/renamed; re-apply when the launcher path that
+  // was last written into the shell verbs no longer matches.
+  const executableCurrent = !preferred
+    || !currentExe
+    || record.executablePath === currentExe;
+
+  // Healthy warm start: schema + executable path still match last apply.
+  if (schemaCurrent && executableCurrent) {
     return { enabled: preferred, success: true, supported: true };
   }
 
-  // Schema bump (command contract change): re-apply once and rewrite preference.
+  // Schema bump or portable path change: re-apply once and rewrite preference.
   const applied = applyExplorerContextMenuPreference({
     enabled: preferred,
-    executablePath,
+    executablePath: currentExe,
     platform,
     spawnSyncImpl,
     logWarn,
@@ -554,6 +568,7 @@ function applyInitialExplorerContextMenuPreference({
     writeExplorerContextMenuEnabledPreference({
       app,
       enabled: applied.enabled === true,
+      executablePath: currentExe,
       fsModule,
       pathModule,
       logWarn,

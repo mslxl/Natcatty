@@ -673,16 +673,18 @@ ipcMain?.handle?.("netcatty:deepLink:jms:getEnabled", async () => jmsDeepLinkEna
 
 ipcMain?.handle?.("netcatty:explorerContextMenu:setEnabled", async (_event, payload) => {
   const enabled = payload?.enabled !== false;
+  const executablePath = resolveExplorerContextMenuExecutablePath();
   const result = updateExplorerContextMenuEnabledPreference({
     currentEnabled: explorerContextMenuEnabled,
     enabled,
     applyPreference: (nextEnabled) => applyExplorerContextMenuPreference({
       enabled: nextEnabled,
-      executablePath: resolveExplorerContextMenuExecutablePath(),
+      executablePath,
     }),
     writePreference: (nextEnabled) => writeExplorerContextMenuEnabledPreference({
       app,
       enabled: nextEnabled,
+      executablePath,
     }),
   });
   explorerContextMenuEnabled = result.enabled === true;
