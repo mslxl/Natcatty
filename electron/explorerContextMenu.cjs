@@ -707,13 +707,13 @@ function resolveExplorerContextMenuEnabled({
     return { enabled: preferred, supported: true };
   }
 
-  // Probe-only default-off (no user choice). Skip live registry when no machine
-  // registration appeared since the last clean probe.
-  if (
-    isExplorerContextMenuProbeCurrent({ app, fsModule, pathModule, logWarn })
-    && !hasMachineRegistration({ spawnSyncImpl, logWarn })
-  ) {
-    return { enabled: false, supported: true };
+  // Probe-only default-off (no user choice). Still scan for residual verbs so a
+  // later per-user (HKCU) or all-users (HKLM) install is not ignored.
+  if (isExplorerContextMenuProbeCurrent({ app, fsModule, pathModule, logWarn })) {
+    return {
+      enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),
+      supported: true,
+    };
   }
 
   return {
@@ -753,15 +753,9 @@ function applyInitialExplorerContextMenuPreference({
   // residual verb remains (complete or partial). A single leftover verb would
   // otherwise leave the toggle off while Explorer still shows one entry.
   if (record === null) {
-    // Fast path for ZIP/portable defaults already probed clean: avoid repeated
-    // residual scans unless a machine install later appears under shared AppData.
-    if (
-      isExplorerContextMenuProbeCurrent({ app, fsModule, pathModule, logWarn })
-      && !hasMachineRegistration({ spawnSyncImpl, logWarn })
-    ) {
-      return { enabled: false, success: true, supported: true };
-    }
-
+    // Probe markers only skip *writes*; always re-check residual verbs. A later
+    // per-user NSIS install writes HKCU (not HKLM), so machine-only checks would
+    // leave the menu unrepaired under a shared AppData profile.
     const residual = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })
       || hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn });
     if (residual) {
@@ -794,6 +788,8 @@ function applyInitialExplorerContextMenuPreference({
     // ZIP / portable default: no verbs and no preference. Record a probe marker
     // only — never write enabled:false as a durable user choice (shared AppData
     // with a later NSIS install would otherwise suppress installer verbs).
+    // The marker is informational / for resolve() short-circuit of "no preference
+    // yet"; residual verbs are always re-checked above on every launch.
     writeExplorerContextMenuProbeMarker({
       app,
       fsModule,

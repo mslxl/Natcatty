@@ -901,6 +901,81 @@ test("applyInitialExplorerContextMenuPreference caches default-off via probe mar
   assert.equal(Object.hasOwn(wrote[0].data, "enabled"), false);
 });
 
+test("applyInitialExplorerContextMenuPreference repairs per-user HKCU verbs after probe", () => {
+  const exe = "C:\\Users\\me\\AppData\\Local\\Programs\\Netcatty\\Netcatty.exe";
+  const folderCmd = buildExplorerContextMenuCommand(exe, "%1");
+  const backgroundCmd = buildExplorerContextMenuCommand(exe, "%V");
+  const files = new Map([
+    [
+      "C:\\Users\\test\\AppData\\Roaming\\Netcatty\\explorer-context-menu-probe.json",
+      JSON.stringify({ schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION }),
+    ],
+  ]);
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", folderCmd],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", backgroundCmd],
+  ]);
+  let wrotePreference = null;
+  const fsModule = {
+    existsSync: (p) => files.has(String(p)),
+    readFileSync: (p) => files.get(String(p)),
+    mkdirSync: () => {},
+    writeFileSync: (p, data) => {
+      files.set(String(p), String(data));
+      if (String(p).endsWith("explorer-context-menu-preferences.json")) {
+        wrotePreference = JSON.parse(String(data));
+      }
+    },
+  };
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add" || args[0] === "delete") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = applyInitialExplorerContextMenuPreference({
+    app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    executablePath: exe,
+    platform: "win32",
+    fsModule,
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
+  assert.equal(wrotePreference?.enabled, true);
+});
+
 test("resolveExplorerContextMenuLaunchSpec includes dev app entry for electron.exe", () => {
   const spec = resolveExplorerContextMenuLaunchSpec({
     execPath: "C:\\dev\\node_modules\\electron\\dist\\electron.exe",
