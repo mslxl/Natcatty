@@ -34,6 +34,17 @@ test('renders an accessible composer resize handle', () => {
   assert.match(html, /cursor-ns-resize/);
 });
 
+test('expanded composer grows the text area while keeping controls at the bottom', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /data-section="ai-chat-input-body"/);
+  assert.match(source, /composerHeight != null \? 'flex min-h-0 flex-1 flex-col'/);
+  assert.match(source, /data-section="ai-chat-input-footer"/);
+  assert.match(source, /className="shrink-0/);
+  assert.doesNotMatch(source, /<Expand/);
+  assert.doesNotMatch(source, /setExpanded/);
+});
+
 test('virtualizes the host mention list without changing its option contract', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
 

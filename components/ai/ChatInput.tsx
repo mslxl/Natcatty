@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Expand, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
+import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import {
   buildSlashCommandItems,
   filterQuickMessages,
@@ -177,7 +177,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
   const composerDisabled = disabled || isSteering;
-  const [expanded, setExpanded] = useState(false);
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
@@ -832,8 +831,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
           }}
         />
 
-        {/* Textarea with expand toggle */}
-        <div className="relative" onPaste={handlePaste} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+        {/* Resizable textarea */}
+        <div
+          data-section="ai-chat-input-body"
+          className={[
+            'relative',
+            composerHeight != null ? 'flex min-h-0 flex-1 flex-col' : undefined,
+          ].filter(Boolean).join(' ')}
+          onPaste={handlePaste}
+          onDrop={handleDrop}
+          onDragOver={(e) => e.preventDefault()}
+        >
           {selectedUserSkills.length > 0 && (
             <div className="px-3 pt-3 pb-1.5">
               <div className="flex flex-wrap gap-2">
@@ -874,22 +882,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
             className={[
               selectedUserSkills.length > 0 ? 'pt-1.5' : undefined,
               composerHeight != null ? 'min-h-0 max-h-none flex-1' : undefined,
-              composerHeight == null && expanded ? 'max-h-[220px]' : undefined,
             ].filter(Boolean).join(' ')}
             maxLength={100000}
           />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                onClick={() => setExpanded((e) => !e)}
-                className="absolute top-3.5 right-3 rounded-md p-1 text-muted-foreground/38 hover:text-muted-foreground/72 hover:bg-muted/25 transition-colors cursor-pointer"
-              >
-                <Expand size={12} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>{expanded ? t('ai.chat.collapse') : t('ai.chat.expand')}</TooltipContent>
-          </Tooltip>
         </div>
 
         {/* @ mention popover */}
@@ -994,7 +989,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
         )}
 
         {/* Footer toolbar */}
-        <PromptInputFooter className="gap-1.5 border-t-0 bg-transparent px-3 pb-2 pt-0">
+        <PromptInputFooter
+          data-section="ai-chat-input-footer"
+          className="shrink-0 gap-1.5 border-t-0 bg-transparent px-3 pb-2 pt-0"
+        >
           <PromptInputTools className="gap-1 min-w-0">
             <Tooltip>
               <TooltipTrigger asChild>

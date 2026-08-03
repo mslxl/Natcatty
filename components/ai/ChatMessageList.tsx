@@ -105,16 +105,10 @@ export function shouldProvideVaultArtifactNavigation({
   return Boolean(onOpenVaultNote || onOpenVaultHost || onOpenVaultSnippet || onOpenVaultSection);
 }
 
-/**
- * Streamdown + shiki re-parse is too expensive for per-frame streaming updates.
- * Use plain text while the assistant message is still animating; hydrate markdown
- * once the turn settles.
- */
 export function shouldRenderAssistantAsPlainText(options: {
   hideMarkdown: boolean;
-  isStreamingMessage: boolean;
 }): boolean {
-  return options.hideMarkdown || options.isStreamingMessage;
+  return options.hideMarkdown;
 }
 
 const ASSISTANT_PLAIN_TEXT_CLASS = 'whitespace-pre-wrap break-words text-[13px] leading-[1.45]';
@@ -655,7 +649,6 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                     ? <div className={ASSISTANT_PLAIN_TEXT_CLASS}>{message.content}</div>
                     : shouldRenderAssistantAsPlainText({
                         hideMarkdown,
-                        isStreamingMessage: !!isThisStreaming,
                       })
                       ? (
                           <div
@@ -668,7 +661,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                       : (
                           <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Markdown')}>
                             <div data-ai-content="markdown">
-                              <LazyMessageResponse>
+                              <LazyMessageResponse isAnimating={!!isThisStreaming}>
                                 {message.content}
                               </LazyMessageResponse>
                             </div>
