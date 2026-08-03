@@ -278,13 +278,35 @@ function writeUserSuppression(options = {}) {
 
 function clearUserSuppression(options = {}) {
   // Only delete HKCU keys that are suppressions so we do not wipe a real
-  // per-user install when refreshing machine keys.
+  // per-user install when refreshing user-scope keys.
   let ok = true;
   for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
     if (!isSuppressionKey("HKCU", keyPath, options)) continue;
     if (!deleteRegKey("HKCU", keyPath, options)) ok = false;
   }
   return ok;
+}
+
+function clearUserShellKeys(options = {}) {
+  // Drop both HKCU Netcatty verbs (real install or suppression). Used when a
+  // machine-wide (HKLM) registration exists so stale portable/ZIP HKCU commands
+  // cannot take precedence over the all-users path.
+  let ok = true;
+  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+    if (!deleteRegKey("HKCU", keyPath, options)) {
+      if (regKeyExists("HKCU", keyPath, options)) ok = false;
+    }
+  }
+  return ok;
+}
+
+function hasResidualUserShellKeys(options = {}) {
+  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+    if (!regKeyExists("HKCU", keyPath, options)) continue;
+    // Any remaining HKCU verb (install or suppression) can hide or override HKLM.
+    return true;
+  }
+  return false;
 }
 
 function hasMachineRegistration(options = {}) {
@@ -398,21 +420,24 @@ function installExplorerContextMenu({
 
   const options = { spawnSyncImpl, logWarn };
 
-  // Drop any per-user hide before enabling again. If the enable path fails
-  // later, restore suppression so we do not expose stale machine verbs.
+  // Drop any per-user hide / stale portable verbs before enabling again. If
+  // the enable path fails later, restore suppression so we do not expose stale
+  // machine verbs after a partial mutation.
   const wasSuppressed = isUserSuppressed(options);
   const machineRegistered = hasMachineRegistration(options);
 
+  let userKeysCleared = true;
   if (machineRegistered) {
     // Portable/ZIP builds may have left real HKCU verbs that take precedence
     // over the installer-created HKLM registration. Always clear HKCU Netcatty
     // keys when a machine registration exists so Explorer uses the current
-    // all-users command path.
-    for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
-      deleteRegKey("HKCU", keyPath, options);
-    }
+    // all-users command path. Failure here is a hard enable failure.
+    userKeysCleared = clearUserShellKeys(options) && !hasResidualUserShellKeys(options);
   } else {
-    clearUserSuppression(options);
+    // Enable of a user-scope install: only drop suppression keys. Their cleanup
+    // must succeed, otherwise Explorer keeps hiding the verbs we are about to
+    // write / refresh.
+    userKeysCleared = clearUserSuppression(options);
   }
 
   // When the installer already registered per-machine (HKLM) verbs, refresh
@@ -447,7 +472,12 @@ function installExplorerContextMenu({
   const userCurrent = !machineRegistered
     && shellVerbIsCurrent("HKCU", DIRECTORY_SHELL_KEY, folderSpec, options)
     && shellVerbIsCurrent("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
-  let success = writesOk || machineCurrent || userCurrent;
+  let success = userKeysCleared && (writesOk || machineCurrent || userCurrent);
+
+  // Residual HKCU verbs after a machine-scope enable still win in Explorer.
+  if (machineRegistered && hasResidualUserShellKeys(options)) {
+    success = false;
+  }
 
   if (!success && wasSuppressed) {
     writeUserSuppression(options);
@@ -497,8 +527,12 @@ function updateExplorerContextMenuEnabledPreference({
 
   const applied = applyPreference(nextEnabled) || {};
   if (applied.success !== true) {
+    // Apply may have partially mutated the registry (one verb suppressed, or
+    // suppression cleared before a failed HKLM refresh). Restore the previous
+    // preference so the toggle and Explorer state stay aligned.
+    const rolledBack = applyPreference(currentEnabled) || {};
     return {
-      enabled: typeof applied.enabled === "boolean" ? applied.enabled : currentEnabled,
+      enabled: typeof rolledBack.enabled === "boolean" ? rolledBack.enabled : currentEnabled,
       success: false,
       supported: applied.supported !== false,
     };

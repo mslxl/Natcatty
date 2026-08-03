@@ -541,6 +541,212 @@ test("updateExplorerContextMenuEnabledPreference rolls back apply on write failu
   assert.equal(result.enabled, true);
 });
 
+test("updateExplorerContextMenuEnabledPreference rolls back registry on apply failure", () => {
+  const applied = [];
+  const result = updateExplorerContextMenuEnabledPreference({
+    currentEnabled: true,
+    enabled: false,
+    applyPreference: (next) => {
+      applied.push(next);
+      if (next === false) return { success: false, enabled: true, supported: true };
+      return { success: true, enabled: true, supported: true };
+    },
+    writePreference: () => true,
+  });
+  assert.equal(result.success, false);
+  assert.deepEqual(applied, [false, true]);
+  assert.equal(result.enabled, true);
+});
+
+test("installExplorerContextMenu clears stale portable HKCU verbs when HKLM exists", () => {
+  const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
+  const folderCmd = buildExplorerContextMenuCommand(exe, "%1");
+  const backgroundCmd = buildExplorerContextMenuCommand(exe, "%V");
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", "C:\\Portable\\Netcatty.exe,0"],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."'],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", "C:\\Portable\\Netcatty.exe,0"],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%V."'],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", folderCmd],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", backgroundCmd],
+  ]);
+  const deleted = [];
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "delete") {
+      deleted.push(args[1]);
+      present.delete(args[1]);
+      for (const key of [...values.keys()]) {
+        if (key.startsWith(`${args[1]}::`)) values.delete(key);
+      }
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "add") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: exe,
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
+  assert.ok(deleted.some((key) => key.includes("HKCU\\") && key.includes("Directory\\shell\\Netcatty")));
+  assert.ok(deleted.some((key) => key.includes("HKCU\\") && key.includes("Directory\\Background\\shell\\Netcatty")));
+  assert.equal(present.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"), false);
+});
+
+test("installExplorerContextMenu fails when residual HKCU verbs cannot be cleared under HKLM", () => {
+  const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
+  const folderCmd = buildExplorerContextMenuCommand(exe, "%1");
+  const backgroundCmd = buildExplorerContextMenuCommand(exe, "%V");
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."'],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", folderCmd],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", `${exe},0`],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", backgroundCmd],
+  ]);
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "delete") {
+      // Simulate locked residual portable HKCU verb.
+      if (String(args[1]).startsWith("HKCU\\")) {
+        return { status: 1, stdout: "", stderr: "access denied" };
+      }
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "add") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: exe,
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+
+  assert.equal(result.success, false);
+});
+
+test("installExplorerContextMenu fails when suppression cleanup fails on user-scope enable", () => {
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+  ]);
+  const values = new Map([
+    [`HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::${SUPPRESSION_VALUE}`, ""],
+    [`HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::${SUPPRESSION_VALUE}`, ""],
+  ]);
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "delete") {
+      return { status: 1, stdout: "", stderr: "access denied" };
+    }
+    if (args[0] === "add") {
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: "C:\\Apps\\Netcatty.exe",
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, false);
+});
+
 test("non-windows platforms report unsupported explorer context menu", () => {
   assert.equal(
     isExplorerContextMenuRegistered({ platform: "darwin", spawnSyncImpl: () => {
