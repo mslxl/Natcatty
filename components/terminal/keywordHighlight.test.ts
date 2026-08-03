@@ -864,7 +864,6 @@ test("multi-command Enter protection survives earlier buffer movement until idle
       enterInputPending: boolean;
       lastBufferSnapshot: unknown;
       readBufferSnapshot: () => unknown;
-      writePruningDeferred: boolean;
       refreshViewport: (reason: "write") => void;
     };
     for (let index = 0; index < 250; index += 1) {
@@ -872,7 +871,6 @@ test("multi-command Enter protection survives earlier buffer movement until idle
       term.buffer.active.baseY += 1;
       term.buffer.active.length += 1;
       internals.dirtyAllInRenderRange = true;
-      internals.writePruningDeferred = true;
       internals.refreshViewport("write");
     }
     internals.lastBufferSnapshot = internals.readBufferSnapshot();
@@ -1051,7 +1049,7 @@ test("Enter input still detects redraws away from the cursor", async () => {
   }
 });
 
-test("write-only scrolling keeps retained decorations bounded", () => {
+test("write-only scrolling batches pruning but stays hard-bounded", async () => {
   const raf = installAnimationFrameQueue();
   try {
     const { term, decorationStates } = createFakeTerminal("hello DEPLOY world", {
@@ -1082,9 +1080,14 @@ test("write-only scrolling keeps retained decorations bounded", () => {
       internals.refreshViewport("write");
     }
 
+    const liveDuringOutput = decorationStates.filter(({ isDisposed }) => !isDisposed).length;
+    assert.ok(liveDuringOutput > 64, "active output should not prune at the soft threshold");
+    assert.ok(liveDuringOutput <= 256, "active output should remain hard-bounded");
+
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
     assert.ok(
       decorationStates.filter(({ isDisposed }) => !isDisposed).length <= 64,
-      "write-only output should not retain every highlighted scrollback line",
+      "idle cleanup should return retained decorations to the soft bound",
     );
     highlighter.dispose();
   } finally {
@@ -1092,7 +1095,71 @@ test("write-only scrolling keeps retained decorations bounded", () => {
   }
 });
 
-test("Enter defers batched decoration pruning until input is idle", async () => {
+test("late Enter output stays protected after the pending hint expires", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.rows = 3;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      lastBufferSnapshot: unknown;
+      readBufferSnapshot: () => unknown;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 150; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.refreshViewport("write");
+    }
+    internals.lastBufferSnapshot = internals.readBufferSnapshot();
+    const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
+    assert.ok(retainedDecorations.length > 64);
+    const viewportStart = term.buffer.active.viewportY;
+    const visibleDecorations = retainedDecorations.filter(
+      ({ line }) => line > viewportStart && line < viewportStart + term.rows,
+    );
+    assert.ok(visibleDecorations.length > 0);
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 650); });
+
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      visibleDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "late Enter output should not replace visible decorations",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("write pruning enforces a hard bound and delays soft cleanup until idle", async () => {
   const raf = installAnimationFrameQueue();
   try {
     const { term, decorationStates } = createFakeTerminal("hello DEPLOY world", {
@@ -1113,7 +1180,6 @@ test("Enter defers batched decoration pruning until input is idle", async () => 
 
     const internals = highlighter as unknown as {
       dirtyAllInRenderRange: boolean;
-      writePruningDeferred: boolean;
       refreshViewport: (reason: "write") => void;
     };
     for (let index = 0; index < 250; index += 1) {
@@ -1121,15 +1187,13 @@ test("Enter defers batched decoration pruning until input is idle", async () => 
       term.buffer.active.baseY += 1;
       term.buffer.active.length += 1;
       internals.dirtyAllInRenderRange = true;
-      internals.writePruningDeferred = true;
       internals.refreshViewport("write");
     }
 
-    assert.equal(
-      decorationStates.filter(({ isDisposed }) => isDisposed).length,
-      0,
-      "Enter refreshes should not remove decorations while input is settling",
-    );
+    const liveDuringOutput = decorationStates.filter(({ isDisposed }) => !isDisposed).length;
+    const disposedDuringHardTrim = decorationStates.filter(({ isDisposed }) => isDisposed).length;
+    assert.ok(liveDuringOutput > 64, "active output should retain more than the soft bound");
+    assert.ok(liveDuringOutput <= 256, "active output should stay within the hard bound");
 
     const originalPerformance = globalThis.performance;
     let simulatedNow = 0;
@@ -1145,7 +1209,6 @@ test("Enter defers batched decoration pruning until input is idle", async () => 
     try {
       term.rows = 30;
       internals.dirtyAllInRenderRange = true;
-      internals.writePruningDeferred = true;
       internals.refreshViewport("write");
     } finally {
       Object.defineProperty(globalThis, "performance", {
@@ -1158,8 +1221,8 @@ test("Enter defers batched decoration pruning until input is idle", async () => 
 
     assert.equal(
       decorationStates.filter(({ isDisposed }) => isDisposed).length,
-      0,
-      "continuation scans should preserve Enter pruning deferral",
+      disposedDuringHardTrim,
+      "continuation scans should not trigger another prune below the hard bound",
     );
     await new Promise((resolve) => { setTimeout(resolve, 700); });
     assert.ok(

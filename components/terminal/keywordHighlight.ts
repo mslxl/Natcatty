@@ -125,7 +125,6 @@ export class KeywordHighlighter implements IDisposable {
   private lastBurstDecayAt = 0;
   private lastUserInputAt = 0;
   private enterInputPending = false;
-  private writePruningDeferred = false;
   private scrollRefreshJob: ScrollRefreshJob | null = null;
   private scrollRefreshGeneration = 0;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -202,7 +201,6 @@ export class KeywordHighlighter implements IDisposable {
             this.markDirtyFromWrite({ includeViewportProbe: false });
             const buffer = this.term.buffer.active;
             this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
-            this.writePruningDeferred = true;
           } else {
             this.updateWriteBurst();
             this.markVisibleRangeDirty();
@@ -676,14 +674,12 @@ export class KeywordHighlighter implements IDisposable {
     const rangeEnd = viewportEnd + overscan;
 
     const previousRange = this.lastRenderRange;
-    const deferWritePruning = reason === "write" && this.writePruningDeferred;
-    let writeContinuationScheduled = false;
     this.beginTerminalRefreshTracking(viewportStart, viewportEnd);
     try {
       this.reindexLineDecorationsFromMarkers();
 
       if (reason === "write") {
-        writeContinuationScheduled = this.processDirtyLinesInRange(
+        this.processDirtyLinesInRange(
           rangeStart,
           rangeEnd,
           cursorAbsoluteY,
@@ -704,7 +700,7 @@ export class KeywordHighlighter implements IDisposable {
       }
 
       if (reason === "write") {
-        this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd, deferWritePruning);
+        this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd, true);
       } else {
         for (const [lineY, state] of this.lineDecorations) {
           if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
@@ -724,9 +720,6 @@ export class KeywordHighlighter implements IDisposable {
         this.lastRenderRange = { start: rangeStart, end: rangeEnd };
       }
     } finally {
-      if (reason === "write" && !writeContinuationScheduled) {
-        this.writePruningDeferred = false;
-      }
       this.flushTerminalRefresh();
     }
   }
@@ -862,6 +855,11 @@ export class KeywordHighlighter implements IDisposable {
     const highWaterMark = Math.max(64, renderLineCount * 2);
     if (this.lineDecorations.size <= highWaterMark) return;
     if (deferUntilIdle) {
+      const hardLimit = Math.max(256, highWaterMark * 4);
+      if (this.lineDecorations.size > hardLimit) {
+        const trimTarget = Math.max(highWaterMark, Math.floor(hardLimit * 0.75));
+        this.pruneWriteDecorationsToLimit(rangeStart, rangeEnd, trimTarget);
+      }
       this.scheduleDeferredWritePrune();
       return;
     }
@@ -870,6 +868,19 @@ export class KeywordHighlighter implements IDisposable {
     // Prune in batches so ordinary one-line output keeps existing highlights
     // stable while long-running output remains bounded.
     for (const [lineY, state] of this.lineDecorations) {
+      if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
+        this.disposeLineDecorations(lineY, state);
+      }
+    }
+  }
+
+  private pruneWriteDecorationsToLimit(
+    rangeStart: number,
+    rangeEnd: number,
+    targetSize: number,
+  ): void {
+    for (const [lineY, state] of this.lineDecorations) {
+      if (this.lineDecorations.size <= targetSize) return;
       if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
         this.disposeLineDecorations(lineY, state);
       }
@@ -888,8 +899,7 @@ export class KeywordHighlighter implements IDisposable {
           && now - this.lastUserInputAt < KeywordHighlighter.WRITE_PRUNE_IDLE_MS
         )
         || (
-          this.enterInputPending
-          && this.lastWriteAt > 0
+          this.lastWriteAt > 0
           && now - this.lastWriteAt < KeywordHighlighter.WRITE_PRUNE_IDLE_MS
         )
       ) {
