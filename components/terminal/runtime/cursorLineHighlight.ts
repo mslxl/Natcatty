@@ -37,24 +37,16 @@ export class CursorLineHighlighter implements IDisposable {
   private activeColor: string | null = null;
   private activeRanges: HighlightRange[] = [];
   private activeTailRanges: HighlightRange[] = [];
-  private activeProtectedRangesVersion = 0;
   private readonly disposables: IDisposable[] = [];
   private pendingRefresh = false;
   private disposed = false;
 
-  constructor(
-    private readonly term: CursorLineTerminal,
-    private readonly getProtectedRanges: (absoluteLine: number) => readonly HighlightRange[] = () => [],
-    private readonly getProtectedRangesVersion: () => number = () => 0,
-  ) {
+  constructor(private readonly term: CursorLineTerminal) {
     this.disposables.push(
       this.term.onCursorMove(() => this.markPendingRefresh()),
       this.term.onWriteParsed(() => this.markPendingRefresh()),
       this.term.onRender(() => {
-        if (
-          this.pendingRefresh ||
-          this.getProtectedRangesVersion() !== this.activeProtectedRangesVersion
-        ) {
+        if (this.pendingRefresh) {
           this.pendingRefresh = false;
           this.refresh();
         }
@@ -109,10 +101,8 @@ export class CursorLineHighlighter implements IDisposable {
       line,
       cols,
       buffer.getNullCell(),
-      this.getProtectedRanges(absoluteLine),
     );
     const tailRanges = this.getTailRanges(contentEnd, cols);
-    const protectedRangesVersion = this.getProtectedRangesVersion();
 
     if (
       !options.force &&
@@ -125,7 +115,6 @@ export class CursorLineHighlighter implements IDisposable {
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
     ) {
-      this.activeProtectedRangesVersion = protectedRangesVersion;
       return;
     }
 
@@ -175,7 +164,6 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeColor = color;
     this.activeRanges = ranges;
     this.activeTailRanges = tailRanges;
-    this.activeProtectedRangesVersion = protectedRangesVersion;
   }
 
   dispose(): void {
@@ -192,7 +180,6 @@ export class CursorLineHighlighter implements IDisposable {
     line: ReturnType<CursorLineTerminal['buffer']['active']['getLine']>,
     cols: number,
     cell: ReturnType<CursorLineTerminal['buffer']['active']['getNullCell']>,
-    protectedRanges: readonly HighlightRange[],
   ): { ranges: HighlightRange[]; contentEnd: number } {
     const ranges: HighlightRange[] = [];
     let rangeStart: number | null = null;
@@ -205,15 +192,11 @@ export class CursorLineHighlighter implements IDisposable {
       ) {
         contentEnd = Math.min(cols, x + Math.max(1, currentCell.getWidth()));
       }
-      const isProtected = protectedRanges.some(
-        (range) => x >= range.x && x < range.x + range.width,
-      );
       const isHighlightable =
-        !isProtected &&
-        (currentCell === undefined ||
-          (currentCell.isBgDefault() &&
-            currentCell.isFgDefault() &&
-            !currentCell.isInverse()));
+        currentCell === undefined ||
+        (currentCell.isBgDefault() &&
+          currentCell.isFgDefault() &&
+          !currentCell.isInverse());
       if (isHighlightable && rangeStart === null) rangeStart = x;
       if ((!isHighlightable || x === cols - 1) && rangeStart !== null) {
         const end = isHighlightable && x === cols - 1 ? x + 1 : x;
