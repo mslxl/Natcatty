@@ -2518,11 +2518,21 @@ test("assertSourceMetadataUnchanged ignores ctime drift when content is verified
     ),
     /source size changed/i,
   );
+  // Growth without a separate prefix proof is still rejected (rewrite+grow risk).
+  assert.throws(
+    () => transferBridge._assertSourceMetadataUnchangedForTests(
+      initial,
+      { ...initial, size: 150, mtimeMs: 2, ctimeMs: 2 },
+      100,
+      { allowSourceGrowth: true },
+    ),
+    /source content changed/i,
+  );
   assert.doesNotThrow(() => transferBridge._assertSourceMetadataUnchangedForTests(
     initial,
     { ...initial, size: 150, mtimeMs: 2, ctimeMs: 2 },
     100,
-    { allowSourceGrowth: true },
+    { allowSourceGrowth: true, contentVerifiedSeparately: true },
   ));
   // Growth still cannot cover a shrink.
   assert.throws(
@@ -2530,7 +2540,7 @@ test("assertSourceMetadataUnchanged ignores ctime drift when content is verified
       initial,
       { ...initial, size: 80 },
       100,
-      { allowSourceGrowth: true },
+      { allowSourceGrowth: true, contentVerifiedSeparately: true },
     ),
     /source size changed/i,
   );
@@ -3697,6 +3707,12 @@ test("resumable SFTP downloads succeed when the remote source only grows (live l
   let remoteSize = snapshot.length;
   let mtimeMs = 1_000;
   const remotePayload = () => Buffer.concat([snapshot, Buffer.alloc(Math.max(0, remoteSize - snapshot.length), 72)]);
+  const serveReadStream = (_remotePath, options = {}) => {
+    const current = remotePayload();
+    const start = Number.isFinite(options.start) ? options.start : 0;
+    const end = Number.isFinite(options.end) ? options.end : current.length - 1;
+    return Readable.from([Buffer.from(current.subarray(start, end + 1))]);
+  };
   const fastSftp = createFastSftp({
     open(_remotePath, _flags, callback) {
       callback(null, Buffer.from("remote-handle"));
@@ -3714,9 +3730,11 @@ test("resumable SFTP downloads succeed when the remote source only grows (live l
     close(_handle, callback) {
       callback(null);
     },
+    createReadStream: serveReadStream,
   });
   const client = {
-    sftp: createFastSftp({}),
+    // Shared session is used for post-transfer prefix verification on growth.
+    sftp: createFastSftp({ createReadStream: serveReadStream }),
     stat() {
       return Promise.resolve({
         size: remoteSize,
@@ -3754,6 +3772,164 @@ test("resumable SFTP downloads succeed when the remote source only grows (live l
   assert.equal(downloaded.length, snapshot.length);
   assert.deepEqual(downloaded, snapshot);
   await assert.rejects(fs.promises.stat(stagedPath), { code: "ENOENT" });
+});
+
+test("resumable SFTP downloads reject growth when the planned prefix was rewritten", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-download-rewrite-growth-"));
+  const transferId = "download-source-rewrite-growth";
+  const targetPath = path.join(tempDir, "download.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(stagedPath, { force: true }).catch(() => {});
+  });
+
+  // Mid-transfer rotate: prefix bytes change and the file also grows.
+  const snapshot = Buffer.alloc(64 * 1024, 71);
+  const rewritten = Buffer.alloc(64 * 1024, 81);
+  const grownTail = Buffer.alloc(8 * 1024, 72);
+  let useRewritten = false;
+  let remoteSize = snapshot.length;
+  let mtimeMs = 1_000;
+  const remotePayload = () => {
+    const head = useRewritten ? rewritten : snapshot;
+    if (remoteSize <= head.length) return Buffer.from(head.subarray(0, remoteSize));
+    return Buffer.concat([head, Buffer.alloc(remoteSize - head.length, 72)]);
+  };
+  const serveReadStream = (_remotePath, options = {}) => {
+    const current = remotePayload();
+    const start = Number.isFinite(options.start) ? options.start : 0;
+    const end = Number.isFinite(options.end) ? options.end : current.length - 1;
+    return Readable.from([Buffer.from(current.subarray(start, end + 1))]);
+  };
+  const fastSftp = createFastSftp({
+    open(_remotePath, _flags, callback) {
+      callback(null, Buffer.from("remote-handle"));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      // After half the snapshot is staged from the original prefix, rotate the
+      // remote file in place and grow it so finish-path growth acceptance is
+      // the only remaining safety net if samples miss the hole.
+      if (!useRewritten && position >= snapshot.length / 2) {
+        useRewritten = true;
+        remoteSize = snapshot.length + grownTail.length;
+        mtimeMs += 1;
+      }
+      const current = remotePayload();
+      current.copy(buffer, offset, position, position + length);
+      callback(null, length, buffer, position);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream: serveReadStream,
+  });
+  const client = {
+    sftp: createFastSftp({ createReadStream: serveReadStream }),
+    stat() {
+      return Promise.resolve({
+        size: remoteSize,
+        mtimeMs,
+        ctimeMs: mtimeMs,
+        mtime: mtimeMs / 1000,
+        ctime: mtimeMs / 1000,
+      });
+    },
+    client: {
+      sftp(callback) {
+        callback(null, fastSftp);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/var/log/app.log",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: snapshot.length,
+      resumable: true,
+    },
+  );
+
+  // Sample verify or full planned-prefix proof must reject the mixed file.
+  assert.match(result.error || "", /source|content|changed/i);
+  await assert.rejects(fs.promises.stat(stagedPath), { code: "ENOENT" });
+  if (fs.existsSync(targetPath)) {
+    assert.notEqual((await fs.promises.stat(targetPath)).size, snapshot.length);
+  }
+});
+
+test("stream fallback resume skips source open when checkpoint already covers the snapshot", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-download-complete-checkpoint-"));
+  const transferId = "download-complete-checkpoint-growth";
+  const targetPath = path.join(tempDir, "download.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(stagedPath, { force: true }).catch(() => {});
+  });
+
+  // Staged file already holds the full planned snapshot; remote has grown since.
+  const snapshot = Buffer.alloc(16 * 1024, 91);
+  const grownRemote = Buffer.concat([snapshot, Buffer.alloc(4 * 1024, 92)]);
+  await fs.promises.mkdir(path.dirname(stagedPath), { recursive: true });
+  await fs.promises.writeFile(stagedPath, snapshot);
+
+  let bodyStreamAtOldEof = false;
+  const serveReadStream = (_remotePath, options = {}) => {
+    const start = Number.isFinite(options.start) ? options.start : 0;
+    const end = Number.isFinite(options.end) ? options.end : grownRemote.length - 1;
+    // A buggy resume would open the transfer body at the planned EOF and pull
+    // the append tail. Prefix verification only reads [0, snapshot).
+    if (start >= snapshot.length) {
+      bodyStreamAtOldEof = true;
+    }
+    return Readable.from([Buffer.from(grownRemote.subarray(start, end + 1))]);
+  };
+  const sharedSftp = createFastSftp({
+    createReadStream: serveReadStream,
+  });
+  const client = {
+    // Force sequential fallback (no isolated fast channel).
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: grownRemote.length,
+        mtimeMs: 2_000,
+        ctimeMs: 2_000,
+        mtime: 2,
+        ctime: 2,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/var/log/app.log",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: snapshot.length,
+      resumable: true,
+      checkpointBytes: snapshot.length,
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(bodyStreamAtOldEof, false, "must not open transfer body stream at the old EOF");
+  const downloaded = await fs.promises.readFile(targetPath);
+  assert.deepEqual(downloaded, snapshot);
 });
 
 test("SFTP uploads fail when remote size does not match local size", async (t) => {

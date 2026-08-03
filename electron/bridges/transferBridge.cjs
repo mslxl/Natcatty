@@ -2224,6 +2224,9 @@ async function readVerifiedUploadRange(
  *
  * Size always fails hard for shrinks. Growth is optional for download snapshots:
  * append-only files (live logs) grow while we still hold a valid [0, N) copy.
+ * Growth alone is *not* proof of append-only — an in-place rewrite/rotate can
+ * also enlarge the file. Callers must verify the planned prefix (or pass
+ * contentVerifiedSeparately) before accepting growth.
  * Timestamp / inode fields are only a *cheap early reject* when we have no
  * separate content proof (e.g. remote download with no digest). When a digest
  * baseline already verifies bytes — or every range was already verified against
@@ -2249,8 +2252,13 @@ function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize
     if (!options.allowSourceGrowth) {
       throw createSourceSizeChangedError(expectedSize, latestSize);
     }
-    // Append growth: the transferred prefix is still the snapshot we requested.
-    // Skip mtime/ctime checks — writers always bump them when appending.
+    // Growth without a separate prefix proof is indistinguishable from an
+    // in-place rewrite that also enlarged the file. Callers must hash the
+    // planned [0, expectedSize) range first, then pass contentVerifiedSeparately.
+    if (!options.contentVerifiedSeparately) {
+      throw createSourceContentChangedError();
+    }
+    // Append writers always bump mtime/ctime; skip soft metadata after content proof.
     return;
   }
   if (options.contentVerifiedSeparately) {
@@ -2267,6 +2275,87 @@ function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize
   if (changed) {
     throw createSourceContentChangedError();
   }
+}
+
+/**
+ * Prove the staged local download still matches remote [0, prefixBytes).
+ * Required before accepting remote source growth as append-only.
+ *
+ * @param {string} localPath
+ * @param {object} client
+ * @param {string} remotePath session-encoded remote path used by the download
+ * @param {number} prefixBytes planned snapshot size
+ * @param {{ signal?: AbortSignal, onProgress?: (n: number) => void }} [options]
+ */
+async function assertLocalDownloadMatchesRemotePrefix(
+  localPath,
+  client,
+  remotePath,
+  prefixBytes,
+  options = {},
+) {
+  if (!(prefixBytes > 0)) return;
+  if (isScpModeClient(client)) {
+    // SCP cannot range-hash portably; fail closed when growth needs proof.
+    throw createSourceContentChangedError();
+  }
+  await requireSftpChannel(client, { signal: options.signal });
+  if (typeof client.sftp?.createReadStream !== "function") {
+    throw createSourceContentChangedError();
+  }
+  const [localHash, remoteHash] = await Promise.all([
+    hashLocalFile(localPath, options),
+    hashReadable(
+      client.sftp.createReadStream(remotePath, {
+        start: 0,
+        end: prefixBytes - 1,
+      }),
+      options,
+    ),
+  ]);
+  if (!localHash || !remoteHash || localHash !== remoteHash) {
+    throw createSourceContentChangedError();
+  }
+}
+
+/**
+ * Finish-path source check for downloads. Accepts append-only growth only after
+ * the full planned prefix is proven intact against the staged local file.
+ */
+async function assertDownloadSourceAfterTransfer(
+  initialSource,
+  latestSource,
+  expectedSize,
+  {
+    localPath,
+    client,
+    remotePath,
+    signal,
+  } = {},
+) {
+  if (!initialSource) return;
+  const latestSize = Number(latestSource?.size);
+  if (!Number.isFinite(latestSize)) {
+    throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize < expectedSize) {
+    throw createSourceSizeChangedError(expectedSize, latestSize);
+  }
+  if (latestSize > expectedSize) {
+    await assertLocalDownloadMatchesRemotePrefix(
+      localPath,
+      client,
+      remotePath,
+      expectedSize,
+      { signal },
+    );
+    assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, {
+      allowSourceGrowth: true,
+      contentVerifiedSeparately: true,
+    });
+    return;
+  }
+  assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize);
 }
 
 async function runPausableConcurrentRanges({
@@ -2821,9 +2910,13 @@ async function downloadFile(
             sendProgress,
           );
           const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          // Downloads capture a fixed snapshot; remote appends (live logs) are OK.
-          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
-            allowSourceGrowth: true,
+          // Downloads capture a fixed snapshot; remote appends (live logs) are OK
+          // only when the full planned prefix still matches the staged file.
+          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+            localPath,
+            client,
+            remotePath,
+            signal: transfer.signal,
           });
           releaseIsolatedDownloadChannel(client, fastSftp);
           return;
@@ -2881,8 +2974,11 @@ async function downloadFile(
         if (err?.noTransferFallback) throw err;
         if (err?.completedWithUnhealthyChannel) {
           const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
-            allowSourceGrowth: true,
+          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+            localPath,
+            client,
+            remotePath,
+            signal: transfer.signal,
           });
           return;
         }
@@ -2909,74 +3005,84 @@ async function downloadFile(
   }
 
   // Fallback: sequential stream piping
-  await new Promise((resolve, reject) => {
-    const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-    // Bound the stream to the preflight snapshot so live appends (logs) cannot
-    // push transferred bytes past the planned size and fail the finish check.
-    const streamOptions = {
-      highWaterMark: TRANSFER_CHUNK_SIZE,
-      start: checkpoint,
-    };
-    if (Number.isFinite(fileSize) && fileSize > 0 && fileSize > checkpoint) {
-      streamOptions.end = fileSize - 1;
-    }
-    const readStream = sftp.createReadStream(remotePath, streamOptions);
-    const writeStream = fs.createWriteStream(localPath, {
-      highWaterMark: TRANSFER_CHUNK_SIZE,
-      flags: checkpoint > 0 ? "r+" : "w",
-      start: checkpoint,
-    });
-    let transferred = checkpoint;
-    let finished = false;
-
-    transfer.readStream = readStream;
-    transfer.writeStream = writeStream;
-    if (transfer.paused) {
-      try { readStream.pause(); } catch { }
-      transfer.streamsUnpiped = true;
-    } else {
-      readStream.pipe(writeStream);
-      transfer.streamsUnpiped = false;
-    }
-
-    const cleanup = (err) => {
-      if (finished) return;
-      finished = true;
-      readStream.removeAllListeners();
-      writeStream.removeAllListeners();
-      if (err) {
-        try { readStream.destroy(); } catch { }
-        try { writeStream.destroy(); } catch { }
-        reject(err);
-      } else {
-        resolve();
+  const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  if (fileSize > 0 && checkpoint >= fileSize) {
+    // Planned snapshot is already fully staged (e.g. soft-resume after growth).
+    // Do not open a source stream at the old EOF — an unbounded read would pull
+    // the appended tail and fail the transferred === fileSize finish check.
+    sendProgress(fileSize, fileSize, { force: true, checkpointBytes: fileSize });
+  } else {
+    await new Promise((resolve, reject) => {
+      // Bound the stream to the preflight snapshot so live appends (logs) cannot
+      // push transferred bytes past the planned size and fail the finish check.
+      const streamOptions = {
+        highWaterMark: TRANSFER_CHUNK_SIZE,
+        start: checkpoint,
+      };
+      if (Number.isFinite(fileSize) && fileSize > 0 && fileSize > checkpoint) {
+        streamOptions.end = fileSize - 1;
       }
-    };
+      const readStream = sftp.createReadStream(remotePath, streamOptions);
+      const writeStream = fs.createWriteStream(localPath, {
+        highWaterMark: TRANSFER_CHUNK_SIZE,
+        flags: checkpoint > 0 ? "r+" : "w",
+        start: checkpoint,
+      });
+      let transferred = checkpoint;
+      let finished = false;
 
-    readStream.on('data', (chunk) => {
-      if (transfer.cancelled) { cleanup(new Error('Transfer cancelled')); return; }
-      transferred += chunk.length;
-      sendProgress(transferred, fileSize);
-    });
-    readStream.on('error', cleanup);
-    writeStream.on('error', cleanup);
-    writeStream.on('finish', () => {
-      if (transfer.cancelled) {
-        cleanup(new Error('Transfer cancelled'));
-      } else if (!readStream.readableEnded || transferred !== fileSize) {
-        cleanup(new Error('Download stream finished before the full source was received'));
+      transfer.readStream = readStream;
+      transfer.writeStream = writeStream;
+      if (transfer.paused) {
+        try { readStream.pause(); } catch { }
+        transfer.streamsUnpiped = true;
       } else {
-        cleanup(null);
+        readStream.pipe(writeStream);
+        transfer.streamsUnpiped = false;
       }
+
+      const cleanup = (err) => {
+        if (finished) return;
+        finished = true;
+        readStream.removeAllListeners();
+        writeStream.removeAllListeners();
+        if (err) {
+          try { readStream.destroy(); } catch { }
+          try { writeStream.destroy(); } catch { }
+          reject(err);
+        } else {
+          resolve();
+        }
+      };
+
+      readStream.on('data', (chunk) => {
+        if (transfer.cancelled) { cleanup(new Error('Transfer cancelled')); return; }
+        transferred += chunk.length;
+        sendProgress(transferred, fileSize);
+      });
+      readStream.on('error', cleanup);
+      writeStream.on('error', cleanup);
+      writeStream.on('finish', () => {
+        if (transfer.cancelled) {
+          cleanup(new Error('Transfer cancelled'));
+        } else if (!readStream.readableEnded || transferred !== fileSize) {
+          cleanup(new Error('Download stream finished before the full source was received'));
+        } else {
+          cleanup(null);
+        }
+      });
+      writeStream.on('close', () => {
+        if (transfer.cancelled) cleanup(new Error('Transfer cancelled'));
+      });
     });
-    writeStream.on('close', () => {
-      if (transfer.cancelled) cleanup(new Error('Transfer cancelled'));
-    });
-  });
+  }
   if (initialSource) {
     const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-    assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
-      allowSourceGrowth: true,
+    await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+      localPath,
+      client,
+      remotePath,
+      signal: transfer.signal,
     });
   }
 }
@@ -5149,4 +5255,6 @@ module.exports = {
   _getActiveTransferCountForTests: () => activeTransfers.size,
   _execSshCommandCancellableForTests: execSshCommandCancellable,
   _assertSourceMetadataUnchangedForTests: assertSourceMetadataUnchanged,
+  _assertDownloadSourceAfterTransferForTests: assertDownloadSourceAfterTransfer,
+  _assertLocalDownloadMatchesRemotePrefixForTests: assertLocalDownloadMatchesRemotePrefix,
 };
