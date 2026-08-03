@@ -564,6 +564,7 @@ export const zhTWAiMessages: Messages = {
   'topTabs.windowOpacity': '視窗透明度',
   'topTabs.openSettings': '開啟設定',
   'ai.chat.sessionHistory': '工作階段歷史',
+  'ai.chat.resizeInput': '拖曳調整訊息輸入框高度',
   'ai.chat.attach': '附件',
   'ai.chat.terminalSelectionAttachment': '終端選區',
   'ai.chat.terminalSelectionLines': '{count} 行',

@@ -5,7 +5,34 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import ChatInput from './ChatInput';
+import {
+  CHAT_INPUT_MAX_HEIGHT,
+  CHAT_INPUT_MIN_HEIGHT,
+  resolveChatInputMaxHeight,
+  resolveChatInputResizeHeight,
+} from './chatInputResize';
 import { TooltipProvider } from '../ui/tooltip';
+
+test('clamps composer dragging to the usable pane height', () => {
+  assert.equal(resolveChatInputMaxHeight(900), CHAT_INPUT_MAX_HEIGHT);
+  assert.equal(resolveChatInputMaxHeight(180), CHAT_INPUT_MIN_HEIGHT);
+  assert.equal(resolveChatInputResizeHeight(128, 500, 420, 360), 208);
+  assert.equal(resolveChatInputResizeHeight(128, 500, 700, 360), CHAT_INPUT_MIN_HEIGHT);
+  assert.equal(resolveChatInputResizeHeight(300, 500, 300, 360), 360);
+});
+
+test('renders an accessible composer resize handle', () => {
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput value="" onChange={() => {}} onSend={() => {}} />
+    </TooltipProvider>,
+  );
+
+  assert.match(html, /role="separator"/);
+  assert.match(html, /aria-orientation="horizontal"/);
+  assert.match(html, /aria-label="ai\.chat\.resizeInput"/);
+  assert.match(html, /cursor-ns-resize/);
+});
 
 test('virtualizes the host mention list without changing its option contract', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');

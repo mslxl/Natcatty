@@ -31,13 +31,15 @@ export interface PromptInputProps extends HTMLAttributes<HTMLFormElement> {
   onSubmit: (text: string, event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   /** Allow attachments that carry their own prompt context to submit without textarea text. */
   allowEmptySubmit?: boolean;
+  /** Optional styling for the bordered input group inside the form. */
+  inputGroupClassName?: string;
 }
 
 export const shouldSubmitPromptInput = (text: string, allowEmptySubmit = false): boolean =>
   Boolean(text.trim()) || allowEmptySubmit;
 
 export const PromptInput = forwardRef<HTMLFormElement, PromptInputProps>(
-  ({ className, onSubmit, allowEmptySubmit = false, children, ...props }, ref) => {
+  ({ className, onSubmit, allowEmptySubmit = false, inputGroupClassName, children, ...props }, ref) => {
     const handleSubmit = useCallback(
       (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault();
@@ -58,7 +60,7 @@ export const PromptInput = forwardRef<HTMLFormElement, PromptInputProps>(
         data-allow-empty-submit={allowEmptySubmit ? 'true' : undefined}
         {...props}
       >
-        <InputGroup>{children}</InputGroup>
+        <InputGroup className={inputGroupClassName}>{children}</InputGroup>
       </form>
     );
   },

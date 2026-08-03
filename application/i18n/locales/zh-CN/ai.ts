@@ -568,6 +568,7 @@ export const zhCNAiMessages: Messages = {
   'topTabs.windowOpacity': '窗口透明度',
   'topTabs.openSettings': '打开设置',
   'ai.chat.sessionHistory': '会话历史',
+  'ai.chat.resizeInput': '拖动调整消息输入框高度',
   'ai.chat.attach': '附件',
   'ai.chat.terminalSelectionAttachment': '终端选区',
   'ai.chat.terminalSelectionLines': '{count} 行',
