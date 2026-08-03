@@ -7,6 +7,7 @@ import {
   resolveSftpTransferSourceSessionId,
   sftpHostEndpointsEqual,
   sftpPickerSessionsEqual,
+  sftpSourceSessionIdForHost,
 } from "./sftpConnectedHosts";
 
 const host = (overrides: Partial<Host> & Pick<Host, "id" | "label">): Host => ({
@@ -121,6 +122,21 @@ test("listSftpConnectedHosts includes hosts with SFTP sudo for picker display", 
     resolveSftpTransferSourceSessionId(sessions, hostsById, "a", result[0]?.host),
     undefined,
   );
+  // Picker/connect must not pass sessionId as a reuse hint for sudo hosts.
+  assert.equal(sftpSourceSessionIdForHost(result[0]?.host, result[0]?.sessionId), undefined);
+});
+
+test("sftpSourceSessionIdForHost keeps non-sudo reuse and drops sudo", () => {
+  assert.equal(
+    sftpSourceSessionIdForHost(host({ id: "a", label: "Alpha" }), "s1"),
+    "s1",
+  );
+  assert.equal(
+    sftpSourceSessionIdForHost(host({ id: "a", label: "Alpha", sftpSudo: true }), "s1"),
+    undefined,
+  );
+  assert.equal(sftpSourceSessionIdForHost(undefined, "s1"), "s1");
+  assert.equal(sftpSourceSessionIdForHost(host({ id: "a", label: "Alpha" }), undefined), undefined);
 });
 
 test("listSftpConnectedHosts uses the live session endpoint when the vault host was edited", () => {

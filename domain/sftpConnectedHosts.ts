@@ -131,6 +131,19 @@ export const listSftpConnectedHosts = (
 };
 
 /**
+ * Drop terminal-session reuse when the host requires a dedicated sudo SFTP
+ * channel. Used by the picker and browse connect path so UI state
+ * (`reusedConnection`) and the actual open agree.
+ */
+export const sftpSourceSessionIdForHost = (
+  host: Pick<Host, "sftpSudo"> | null | undefined,
+  sourceSessionId: string | undefined,
+): string | undefined => {
+  if (!sourceSessionId || host?.sftpSudo) return undefined;
+  return sourceSessionId;
+};
+
+/**
  * Resolve a terminal session id for transfer-pool opens that can reuse the
  * live SSH transport. Unlike the picker list, this keeps every reusable
  * session so same-hostId tabs with different live endpoints can still match.
