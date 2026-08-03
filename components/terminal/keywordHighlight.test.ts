@@ -839,7 +839,7 @@ test("pasted Enter remains protected when more input arrives before output", asy
   }
 });
 
-test("an unrelated parsed write does not consume pending Enter protection", async () => {
+test("multi-command Enter protection survives earlier buffer movement until idle", async () => {
   const raf = installAnimationFrameQueue();
   try {
     const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
@@ -861,6 +861,7 @@ test("an unrelated parsed write does not consume pending Enter protection", asyn
 
     const internals = highlighter as unknown as {
       dirtyAllInRenderRange: boolean;
+      enterInputPending: boolean;
       lastBufferSnapshot: unknown;
       readBufferSnapshot: () => unknown;
       writePruningDeferred: boolean;
@@ -878,7 +879,11 @@ test("an unrelated parsed write does not consume pending Enter protection", asyn
     const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
     assert.ok(retainedDecorations.length > 64);
 
-    handlers.data?.("\r");
+    handlers.data?.("\u001b[200~echo one\r\necho two\r\n\u001b[201~");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
     handlers.writeParsed?.();
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
@@ -892,7 +897,43 @@ test("an unrelated parsed write does not consume pending Enter protection", asyn
     assert.equal(
       retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
       0,
-      "a write without buffer movement should not consume pending Enter protection",
+      "an earlier moving write should not consume protection for later Enter output",
+    );
+    assert.equal(internals.enterInputPending, true);
+
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.equal(internals.enterInputPending, false, "Enter protection should end after output is idle");
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("a new Enter cancels the previous output idle deadline", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, handlers } = createFakeTerminal("hello DEPLOY world");
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const internals = highlighter as unknown as { enterInputPending: boolean };
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 400); });
+    handlers.data?.("\r");
+    await new Promise((resolve) => { setTimeout(resolve, 250); });
+
+    assert.equal(
+      internals.enterInputPending,
+      true,
+      "the previous command's idle timer should not clear a newer Enter",
     );
     highlighter.dispose();
   } finally {

@@ -103,6 +103,7 @@ export class KeywordHighlighter implements IDisposable {
   private debounceTimer: NodeJS.Timeout | null = null;
   /** Single quiet-window catch-up after bulk dumps (no per-write schedule). */
   private bulkPressureCatchUpTimer: NodeJS.Timeout | null = null;
+  private enterInputIdleTimer: NodeJS.Timeout | null = null;
   private writePruneTimer: NodeJS.Timeout | null = null;
   private animationFrameId: number | null = null;
   private lastRefreshTime: number = 0;
@@ -154,11 +155,20 @@ export class KeywordHighlighter implements IDisposable {
       // once typing pauses.
       this.term.onData((data) => {
         this.lastUserInputAt = performance.now();
-        this.enterInputPending ||= data.includes("\r") || data.includes("\n");
+        if (data.includes("\r") || data.includes("\n")) {
+          this.enterInputPending = true;
+          if (this.enterInputIdleTimer) {
+            clearTimeout(this.enterInputIdleTimer);
+            this.enterInputIdleTimer = null;
+          }
+        }
       }),
       // When new data is written, refresh on the next frame so highlights land
       // with the freshly rendered content instead of trailing behind it.
       this.term.onWriteParsed(() => {
+        if (this.enterInputPending) {
+          this.scheduleEnterInputIdleClear();
+        }
         const pressure = getTerminalOutputPressure(this.term);
         if (pressure.background) {
           // Hidden panes: avoid immediate scans that fight xterm, but still arm a
@@ -185,7 +195,6 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            const enterOutputObserved = this.hasBufferPositionChangedSinceLastSnapshot();
             this.cancelScrollRefresh();
             if (this.pendingRefreshReason === "scroll") {
               this.pendingRefreshReason = "write";
@@ -194,9 +203,6 @@ export class KeywordHighlighter implements IDisposable {
             const buffer = this.term.buffer.active;
             this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
             this.writePruningDeferred = true;
-            if (enterOutputObserved) {
-              this.enterInputPending = false;
-            }
           } else {
             this.updateWriteBurst();
             this.markVisibleRangeDirty();
@@ -308,6 +314,10 @@ export class KeywordHighlighter implements IDisposable {
     if (this.bulkPressureCatchUpTimer) {
       clearTimeout(this.bulkPressureCatchUpTimer);
       this.bulkPressureCatchUpTimer = null;
+    }
+    if (this.enterInputIdleTimer) {
+      clearTimeout(this.enterInputIdleTimer);
+      this.enterInputIdleTimer = null;
     }
     if (this.writePruneTimer) {
       clearTimeout(this.writePruneTimer);
@@ -887,6 +897,14 @@ export class KeywordHighlighter implements IDisposable {
     }, KeywordHighlighter.WRITE_PRUNE_IDLE_MS);
   }
 
+  private scheduleEnterInputIdleClear(): void {
+    if (this.enterInputIdleTimer) clearTimeout(this.enterInputIdleTimer);
+    this.enterInputIdleTimer = setTimeout(() => {
+      this.enterInputIdleTimer = null;
+      this.enterInputPending = false;
+    }, KeywordHighlighter.WRITE_PRUNE_IDLE_MS);
+  }
+
   private mergeRefreshReason(current: RefreshReason, next: RefreshReason): RefreshReason {
     // Scroll refresh must outrank write refresh. During rapid wheel scroll with
     // concurrent output, choosing "write" can skip viewport line scans and leave
@@ -905,18 +923,6 @@ export class KeywordHighlighter implements IDisposable {
       cursorAbsoluteY: buffer.baseY + buffer.cursorY,
       viewportProbe: includeViewportProbe ? this.buildViewportProbe(buffer, this.term.rows) : [],
     };
-  }
-
-  private hasBufferPositionChangedSinceLastSnapshot(): boolean {
-    const previous = this.lastBufferSnapshot;
-    const current = this.readBufferSnapshot({ includeViewportProbe: false });
-    if (!previous || !current) return false;
-    return (
-      current.length !== previous.length
-      || current.baseY !== previous.baseY
-      || current.viewportY !== previous.viewportY
-      || current.cursorAbsoluteY !== previous.cursorAbsoluteY
-    );
   }
 
   private buildViewportProbe(buffer: IBuffer, rows: number): readonly ViewportProbeSample[] {
