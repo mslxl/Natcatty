@@ -200,19 +200,19 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       <DropdownTrigger asChild>
         <button
           type="button"
-          className="group flex h-8 min-w-0 max-w-[170px] items-center gap-2 rounded-md px-2 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28"
+          className="group flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28"
         >
           <AgentIconBadge
             agent={currentAgent}
             size="xs"
             variant="plain"
-            className="opacity-78"
+            className="h-3 w-3 opacity-78"
           />
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground/90">
+          <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/90">
             {currentAgent.name}
           </span>
           <ChevronDown
-            size={12}
+            size={10}
             className={cn(
               'shrink-0 text-muted-foreground/60 transition-transform',
               open && 'rotate-180',

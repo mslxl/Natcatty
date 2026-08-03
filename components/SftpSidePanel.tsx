@@ -12,6 +12,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { SftpSidePanelDeferredMount } from "./SftpSidePanelDeferredMount";
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from "./terminalLayer/terminalSidePanelChrome";
 import { formatHostPort } from "../domain/host";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useSftpState } from "../application/state/useSftpState";
@@ -1572,7 +1573,7 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
       >
         {showWorkspaceHostHeader && displayHost && (
           <div
-            className="shrink-0 border-b border-border/50 bg-muted/20 px-3 py-1.5"
+            className={`${TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS} border-b border-border/50 bg-muted/20 px-3 flex items-center`}
             data-section="terminal-sftp-host-header"
           >
             <div className="flex items-center gap-2 min-w-0">

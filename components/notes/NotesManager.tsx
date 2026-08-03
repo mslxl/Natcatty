@@ -44,6 +44,7 @@ import {
 } from "../../infrastructure/config/storageKeys";
 import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from "../terminalLayer/terminalSidePanelChrome";
 import { readTextFile } from "../../lib/readTextFile";
 import { buildTextFilesZipBlob } from "../../lib/textZip";
 import type { Host, VaultNote } from "../../types";
@@ -90,7 +91,7 @@ interface NoteFolderNode {
 
 type NotesToolbarPanel = "search" | null;
 
-const toolbarIconButtonClass = "netcatty-tab h-7 w-7 shrink-0 rounded-md p-0 hover:bg-transparent";
+const toolbarIconButtonClass = "netcatty-tab h-6 w-6 shrink-0 rounded-md p-0 hover:bg-transparent";
 const menuItemClass = "flex h-8 w-full items-center rounded-md px-3 text-left text-sm hover:bg-secondary";
 const NOTES_TREE_DEFAULT_WIDTH = 300;
 const NOTES_TREE_MIN_WIDTH = 220;
@@ -1326,7 +1327,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             style={isSidebarMode ? undefined : { width: treeWidth }}
           >
           <div className="flex-shrink-0">
-            <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+            <div className={cn(
+              TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+              "flex items-center gap-1 border-b border-border/60 px-1.5",
+            )}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -1580,7 +1584,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
       {isSidebarMode && overlayNote && (
         <div className="absolute inset-0 z-30 flex min-h-0 flex-col bg-background text-foreground">
-          <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+          <div className={cn(
+            TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+            "flex items-center gap-1 border-b border-border/60 px-1.5",
+          )}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

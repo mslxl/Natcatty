@@ -30,6 +30,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 const SCRIPT_ROW_HEIGHT = 34;
@@ -719,11 +720,14 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
       data-section="snippets-panel"
     >
       {/* Sub view tabs */}
-      <div className="shrink-0 px-2 py-1 border-b border-border/50 flex items-center gap-1">
+      <div className={cn(
+        TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+        'px-2 border-b border-border/50 flex items-center gap-1',
+      )}>
         <button
           type="button"
           className={cn(
-            'flex-1 h-7 rounded-md text-xs',
+            'flex-1 h-6 rounded-md text-[11px]',
             subView === 'library' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50',
           )}
           onClick={() => setSubView('library')}
@@ -733,7 +737,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
         <button
           type="button"
           className={cn(
-            'flex-1 h-7 rounded-md text-xs',
+            'flex-1 h-6 rounded-md text-[11px]',
             subView === 'running' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted/50',
           )}
           onClick={() => setSubView('running')}
