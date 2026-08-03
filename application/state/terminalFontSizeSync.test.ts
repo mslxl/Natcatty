@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  createLocalTerminalFontSizeRecord,
   parseTerminalFontSizeRecord,
+  resolveTerminalFontSizeStorage,
   serializeTerminalFontSizeRecord,
   shouldApplyTerminalFontSizeRecord,
   shouldBroadcastTerminalFontSizeChange,
@@ -22,8 +24,8 @@ function simulateFontSizeClicks(options: {
   shouldApply: (current: TerminalFontSizeRecord, incoming: TerminalFontSizeRecord) => boolean;
   versioned: boolean;
 }): { settingsValues: number[]; mainValues: number[]; storageWrites: string[] } {
-  let settings: TerminalFontSizeRecord = { fontSize: 16, version: 0 };
-  let main: TerminalFontSizeRecord = { fontSize: 16, version: 0 };
+  let settings: TerminalFontSizeRecord = { fontSize: 16, version: 0, origin: 'legacy' };
+  let main: TerminalFontSizeRecord = { fontSize: 16, version: 0, origin: 'legacy' };
   let settingsSource: TerminalFontSizeMutationSource = 'local';
   let mainSource: TerminalFontSizeMutationSource = 'local';
   let storage = options.versioned
@@ -45,15 +47,18 @@ function simulateFontSizeClicks(options: {
   };
 
   const applyLocal = (window: 'settings' | 'main', fontSize: number) => {
-    const bump = (prev: TerminalFontSizeRecord): TerminalFontSizeRecord => (
+    const bump = (
+      prev: TerminalFontSizeRecord,
+      origin: string,
+    ): TerminalFontSizeRecord => (
       options.versioned
-        ? { fontSize, version: prev.version + 1 }
-        : { fontSize, version: 0 }
+        ? { fontSize, version: prev.version + 1, origin }
+        : { fontSize, version: 0, origin: 'legacy' }
     );
 
     if (window === 'settings') {
       settingsSource = 'local';
-      settings = bump(settings);
+      settings = bump(settings, 'settings-window');
       settingsValues.push(settings.fontSize);
       writeStorage(settings);
       const decision = options.shouldBroadcast(settingsSource, true);
@@ -63,7 +68,7 @@ function simulateFontSizeClicks(options: {
     }
 
     mainSource = 'local';
-    main = bump(main);
+    main = bump(main, 'main-window');
     mainValues.push(main.fontSize);
     writeStorage(main);
     const decision = options.shouldBroadcast(mainSource, true);
@@ -121,25 +126,117 @@ function simulateFontSizeClicks(options: {
   return { settingsValues, mainValues, storageWrites };
 }
 
-test('parseTerminalFontSizeRecord accepts legacy plain numbers and versioned JSON', () => {
-  assert.deepEqual(parseTerminalFontSizeRecord('16'), { fontSize: 16, version: 0 });
-  assert.deepEqual(parseTerminalFontSizeRecord(14), { fontSize: 14, version: 0 });
+test('parseTerminalFontSizeRecord accepts legacy plain numbers and versioned records', () => {
   assert.deepEqual(
-    parseTerminalFontSizeRecord({ fontSize: 18, version: 3 }),
-    { fontSize: 18, version: 3 },
+    parseTerminalFontSizeRecord('16'),
+    { fontSize: 16, version: 0, origin: 'legacy' },
   );
   assert.deepEqual(
-    parseTerminalFontSizeRecord('{"fontSize":15,"version":9}'),
-    { fontSize: 15, version: 9 },
+    parseTerminalFontSizeRecord(14),
+    { fontSize: 14, version: 0, origin: 'legacy' },
+  );
+  assert.deepEqual(
+    parseTerminalFontSizeRecord({ fontSize: 18, version: 3, origin: 'window-a' }),
+    { fontSize: 18, version: 3, origin: 'window-a' },
+  );
+  assert.deepEqual(
+    parseTerminalFontSizeRecord('{"fontSize":15,"version":9,"origin":"window-b"}'),
+    { fontSize: 15, version: 9, origin: 'window-b' },
+  );
+  assert.deepEqual(
+    parseTerminalFontSizeRecord('17|12|settings-window'),
+    { fontSize: 17, version: 12, origin: 'settings-window' },
   );
   assert.equal(parseTerminalFontSizeRecord('bad').fontSize, 14);
 });
 
 test('shouldApplyTerminalFontSizeRecord ignores stale revisions', () => {
-  const current = { fontSize: 15, version: 2 };
-  assert.equal(shouldApplyTerminalFontSizeRecord(current, { fontSize: 17, version: 1 }), false);
-  assert.equal(shouldApplyTerminalFontSizeRecord(current, { fontSize: 18, version: 3 }), true);
-  assert.equal(shouldApplyTerminalFontSizeRecord(current, { fontSize: 15, version: 2 }), false);
+  const current = { fontSize: 15, version: 2, origin: 'window-a' };
+  assert.equal(
+    shouldApplyTerminalFontSizeRecord(
+      current,
+      { fontSize: 17, version: 1, origin: 'window-b' },
+    ),
+    false,
+  );
+  assert.equal(
+    shouldApplyTerminalFontSizeRecord(
+      current,
+      { fontSize: 18, version: 3, origin: 'window-b' },
+    ),
+    true,
+  );
+  assert.equal(shouldApplyTerminalFontSizeRecord(current, { ...current }), false);
+});
+
+test('simultaneous writers converge through storage in either persistence order', () => {
+  const run = (order: Array<'settings' | 'main'>) => {
+    const initial: TerminalFontSizeRecord = {
+      fontSize: 16,
+      version: 1,
+      origin: 'initial-window',
+    };
+    let storage = serializeTerminalFontSizeRecord(initial);
+    let settings = createLocalTerminalFontSizeRecord(
+      initial,
+      storage,
+      17,
+      'settings-window',
+      10,
+    );
+    let main = createLocalTerminalFontSizeRecord(
+      initial,
+      storage,
+      15,
+      'main-window',
+      10,
+    );
+
+    for (const writer of order) {
+      const current = writer === 'settings' ? settings : main;
+      const resolution = resolveTerminalFontSizeStorage(current, storage);
+      if (resolution.shouldAdopt) {
+        if (writer === 'settings') settings = resolution.record;
+        else main = resolution.record;
+      } else if (resolution.shouldPersist) {
+        storage = resolution.serializedRecord;
+      }
+    }
+
+    const settingsResolution = resolveTerminalFontSizeStorage(settings, storage);
+    const mainResolution = resolveTerminalFontSizeStorage(main, storage);
+    settings = settingsResolution.record;
+    main = mainResolution.record;
+
+    assert.equal(settingsResolution.shouldPersist, false);
+    assert.equal(mainResolution.shouldPersist, false);
+    assert.deepEqual(settings, main);
+    assert.equal(resolveTerminalFontSizeStorage(settings, storage).shouldAdopt, false);
+    assert.equal(resolveTerminalFontSizeStorage(settings, storage).shouldPersist, false);
+    return settings;
+  };
+
+  assert.deepEqual(run(['settings', 'main']), run(['main', 'settings']));
+});
+
+test('a stale window creates and persists a revision newer than shared storage', () => {
+  const stored = serializeTerminalFontSizeRecord({
+    fontSize: 18,
+    version: 7,
+    origin: 'main-window',
+  });
+  const local = createLocalTerminalFontSizeRecord(
+    { fontSize: 15, version: 2, origin: 'settings-window' },
+    stored,
+    16,
+    'settings-window',
+    5,
+  );
+  assert.equal(local.version, 8);
+  const resolution = resolveTerminalFontSizeStorage(local, stored);
+  assert.equal(resolution.shouldAdopt, false);
+  assert.equal(resolution.shouldPersist, true);
+  assert.deepEqual(parseTerminalFontSizeRecord(resolution.serializedRecord), local);
 });
 
 test('shouldBroadcastTerminalFontSizeChange suppresses incoming rebroadcasts', () => {
@@ -192,6 +289,16 @@ test('versioned font size sync ignores stale peer echoes during rapid +/- clicks
 });
 
 test('serializeTerminalFontSizeRecord round-trips through parse', () => {
-  const raw = serializeTerminalFontSizeRecord({ fontSize: 18, version: 9 });
-  assert.deepEqual(parseTerminalFontSizeRecord(JSON.parse(raw)), { fontSize: 18, version: 9 });
+  const record = { fontSize: 18, version: 9, origin: 'window|with delimiter' };
+  const raw = serializeTerminalFontSizeRecord(record);
+  assert.deepEqual(parseTerminalFontSizeRecord(raw), record);
+});
+
+test('serialized records remain readable by the old parseInt storage reader', () => {
+  const raw = serializeTerminalFontSizeRecord({
+    fontSize: 18,
+    version: 9,
+    origin: 'settings-window',
+  });
+  assert.equal(parseInt(raw, 10), 18);
 });

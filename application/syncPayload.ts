@@ -38,6 +38,7 @@ import { sanitizeQuickMessages } from '../infrastructure/ai/quickMessages';
 import { emitAIStateChanged } from './state/aiStateEvents';
 import { rehydrateGlobalSftpBookmarks } from './state/sftp/globalSftpBookmarks';
 import {
+  nextTerminalFontSizeSyncVersion,
   parseTerminalFontSizeRecord,
   serializeTerminalFontSizeRecord,
 } from './state/terminalFontSizeSync';
@@ -611,7 +612,8 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
       serializeTerminalFontSizeRecord({
         fontSize: settings.terminalFontSize,
         // Bump so peer windows' version gates accept the synced value.
-        version: Math.max(existing.version + 1, 1),
+        version: nextTerminalFontSizeSyncVersion(existing.version, existing.version),
+        origin: 'sync-payload',
       }),
     );
   }

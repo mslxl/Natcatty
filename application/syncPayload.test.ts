@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import type { SyncPayload } from "../domain/sync.ts";
 import type { KnownHost } from "../domain/models.ts";
 import type { SyncableVaultData } from "./syncPayload.ts";
+import { parseTerminalFontSizeRecord } from "./state/terminalFontSizeSync.ts";
 
 type LocalStorageMock = {
   clear(): void;
@@ -232,6 +233,42 @@ test("buildSyncPayload includes host tree sidebar visibility setting", () => {
   assert.equal(payload.settings?.showHostTreeSidebar, false);
   assert.equal(payload.settings?.terminalSidePanelAutoOpen, true);
   assert.equal(payload.settings?.terminalSidePanelAutoOpenTab, "scripts");
+});
+
+test("buildSyncPayload reads the versioned terminal font size record", () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_FONT_SIZE,
+    "18|9|settings-window",
+  );
+
+  const payload = buildSyncPayload(vault([]));
+
+  assert.equal(payload.settings?.terminalFontSize, 18);
+});
+
+test("applySyncPayload writes a newer terminal font size that old versions can read", async () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_FONT_SIZE,
+    "16|7|main-window",
+  );
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    settings: { terminalFontSize: 19 },
+  };
+
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const raw = localStorage.getItem(storageKeys.STORAGE_KEY_TERM_FONT_SIZE);
+  assert.ok(raw);
+  assert.equal(parseInt(raw, 10), 19);
+  const record = parseTerminalFontSizeRecord(raw);
+  assert.equal(record.fontSize, 19);
+  assert.ok(record.version > 7);
+  assert.equal(record.origin, "sync-payload");
 });
 
 test("buildSyncPayload excludes externalAgents (device-local OS-bound config)", () => {

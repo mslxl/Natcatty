@@ -155,8 +155,10 @@ import {
   type WindowOpacityRecord,
 } from './windowOpacitySync';
 import {
+  createLocalTerminalFontSizeRecord,
+  createTerminalFontSizeSyncOrigin,
   parseTerminalFontSizeRecord,
-  serializeTerminalFontSizeRecord,
+  resolveTerminalFontSizeStorage,
   shouldApplyTerminalFontSizeRecord,
   shouldBroadcastTerminalFontSizeChange,
   type TerminalFontSizeMutationSource,
@@ -230,20 +232,27 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   });
   const [terminalFontSizeRecord, setTerminalFontSizeRecord] = useState<TerminalFontSizeRecord>(() => {
     const stored = readStoredString(STORAGE_KEY_TERM_FONT_SIZE);
-    if (stored === null) return { fontSize: DEFAULT_FONT_SIZE, version: 0 };
+    if (stored === null) {
+      return { fontSize: DEFAULT_FONT_SIZE, version: 0, origin: 'legacy' };
+    }
     return parseTerminalFontSizeRecord(stored);
   });
   const terminalFontSize = terminalFontSizeRecord.fontSize;
   const terminalFontSizeMutationSourceRef = useRef<TerminalFontSizeMutationSource>('local');
+  const terminalFontSizeLocalOriginRef = useRef(createTerminalFontSizeSyncOrigin());
   const setTerminalFontSize = useCallback((nextValue: SetStateAction<number>) => {
     terminalFontSizeMutationSourceRef.current = 'local';
+    const persistedRaw = localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE);
     setTerminalFontSizeRecord((prev) => {
       const candidate = typeof nextValue === 'function'
         ? (nextValue as (prevState: number) => number)(prev.fontSize)
         : nextValue;
-      const nextFontSize = parseTerminalFontSizeRecord(candidate).fontSize;
-      if (nextFontSize === prev.fontSize) return prev;
-      return { fontSize: nextFontSize, version: prev.version + 1 };
+      return createLocalTerminalFontSizeRecord(
+        prev,
+        persistedRaw,
+        candidate,
+        terminalFontSizeLocalOriginRef.current,
+      );
     });
   }, []);
   const applyIncomingTerminalFontSize = useCallback((raw: unknown) => {
@@ -1069,17 +1078,21 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   }, [terminalFontFamilyId, notifySettingsChanged]);
 
   useEffect(() => {
-    // Never let a stale effect overwrite a newer revision already on disk.
-    const stored = parseTerminalFontSizeRecord(
+    const resolution = resolveTerminalFontSizeStorage(
+      terminalFontSizeRecord,
       localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE),
     );
-    if (
-      shouldApplyTerminalFontSizeRecord(stored, terminalFontSizeRecord)
-      || stored.version === terminalFontSizeRecord.version
-    ) {
+    // If another window already published a newer winner, adopt it instead of
+    // displaying and broadcasting a local value that peers will reject.
+    if (resolution.shouldAdopt) {
+      terminalFontSizeMutationSourceRef.current = 'incoming';
+      setTerminalFontSizeRecord(resolution.record);
+      return;
+    }
+    if (resolution.shouldPersist) {
       localStorageAdapter.writeString(
         STORAGE_KEY_TERM_FONT_SIZE,
-        serializeTerminalFontSizeRecord(terminalFontSizeRecord),
+        resolution.serializedRecord,
       );
     }
     const decision = shouldBroadcastTerminalFontSizeChange(
