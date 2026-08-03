@@ -31,10 +31,20 @@ test("isExplorerContextMenuRegistered checks HKCU and HKLM shell keys", () => {
     assert.equal(cmd, "reg.exe");
     queries.push(args.slice());
     // Value queries (e.g. ProgrammaticAccessOnly) are not present on a real install.
-    if (args.includes("/v")) {
+    if (args.includes("/v") && !args.includes("/ve")) {
       return { status: 1, stdout: "", stderr: "value not found" };
     }
-    if (args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty") {
+    if (args.includes("/ve") && args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command") {
+      return {
+        status: 0,
+        stdout: '    (Default)    REG_SZ    "C:\\\\Apps\\\\Netcatty.exe" -- --open-terminal-path="%1."\n',
+        stderr: "",
+      };
+    }
+    if (
+      args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"
+      || args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command"
+    ) {
       return { status: 0, stdout: "ok", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "not found" };
@@ -45,6 +55,25 @@ test("isExplorerContextMenuRegistered checks HKCU and HKLM shell keys", () => {
     true,
   );
   assert.ok(queries.some((args) => args[0] === "query"));
+});
+
+test("isExplorerContextMenuRegistered ignores bare verb keys without command", () => {
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args.includes("/v") || args.includes("/ve")) {
+      // No ProgrammaticAccessOnly and no command default value.
+      return { status: 1, stdout: "", stderr: "value missing" };
+    }
+    if (args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty") {
+      return { status: 0, stdout: "ok", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "not found" };
+  };
+
+  assert.equal(
+    isExplorerContextMenuRegistered({ platform: "win32", spawnSyncImpl, logWarn: () => {} }),
+    false,
+  );
 });
 
 test("isExplorerContextMenuRegistered is false when user suppressed HKLM menu", () => {

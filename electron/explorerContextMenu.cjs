@@ -291,7 +291,9 @@ function hasActiveShellKey(hive, keyPath, options = {}) {
   if (!regKeyExists(hive, keyPath, options)) return false;
   // Suppression keys are not an active menu entry.
   if (hive === "HKCU" && isSuppressionKey(hive, keyPath, options)) return false;
-  return true;
+  // A bare verb key without a command is a partial write, not a runnable menu.
+  const command = readRegStr(hive, `${keyPath}\\command`, "", options);
+  return typeof command === "string" && command.trim().length > 0;
 }
 
 function isExplorerContextMenuRegistered({
