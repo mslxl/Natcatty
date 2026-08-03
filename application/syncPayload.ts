@@ -38,6 +38,10 @@ import { sanitizeQuickMessages } from '../infrastructure/ai/quickMessages';
 import { emitAIStateChanged } from './state/aiStateEvents';
 import { rehydrateGlobalSftpBookmarks } from './state/sftp/globalSftpBookmarks';
 import {
+  parseTerminalFontSizeRecord,
+  serializeTerminalFontSizeRecord,
+} from './state/terminalFontSizeSync';
+import {
   STORAGE_KEY_THEME,
   STORAGE_KEY_UI_THEME_LIGHT,
   STORAGE_KEY_UI_THEME_DARK,
@@ -400,8 +404,10 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (termThemeLight) settings.terminalThemeLight = termThemeLight;
   const termFont = localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_FAMILY);
   if (termFont) settings.terminalFontFamily = termFont;
-  const termSize = localStorageAdapter.readNumber(STORAGE_KEY_TERM_FONT_SIZE);
-  if (termSize != null) settings.terminalFontSize = termSize;
+  const termSizeRaw = localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE);
+  if (termSizeRaw != null && termSizeRaw !== '') {
+    settings.terminalFontSize = parseTerminalFontSizeRecord(termSizeRaw).fontSize;
+  }
   const terminalSidePanelAutoOpen = localStorageAdapter.readBoolean(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN);
   if (terminalSidePanelAutoOpen != null) settings.terminalSidePanelAutoOpen = terminalSidePanelAutoOpen;
   const terminalSidePanelAutoOpenTab = localStorageAdapter.readString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB);
@@ -596,7 +602,19 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
   if (settings.terminalThemeDark != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME_DARK, settings.terminalThemeDark);
   if (settings.terminalThemeLight != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME_LIGHT, settings.terminalThemeLight);
   if (settings.terminalFontFamily != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_FAMILY, settings.terminalFontFamily);
-  if (settings.terminalFontSize != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_FONT_SIZE, String(settings.terminalFontSize));
+  if (settings.terminalFontSize != null) {
+    const existing = parseTerminalFontSizeRecord(
+      localStorageAdapter.readString(STORAGE_KEY_TERM_FONT_SIZE),
+    );
+    localStorageAdapter.writeString(
+      STORAGE_KEY_TERM_FONT_SIZE,
+      serializeTerminalFontSizeRecord({
+        fontSize: settings.terminalFontSize,
+        // Bump so peer windows' version gates accept the synced value.
+        version: Math.max(existing.version + 1, 1),
+      }),
+    );
+  }
   if (settings.terminalSidePanelAutoOpen != null) {
     localStorageAdapter.writeBoolean(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, settings.terminalSidePanelAutoOpen);
   }

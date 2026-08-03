@@ -119,7 +119,7 @@ interface UseSettingsStorageSyncParams {
   setTerminalThemeLightId: Dispatch<SetStateAction<string>>;
   setFollowAppTerminalThemeState: Dispatch<SetStateAction<boolean>>;
   setTerminalFontFamilyId: Dispatch<SetStateAction<string>>;
-  setTerminalFontSize: Dispatch<SetStateAction<number>>;
+  setTerminalFontSize: (raw: unknown) => void;
   setSftpDoubleClickBehavior: Dispatch<SetStateAction<'open' | 'transfer'>>;
   setSftpAutoSync: Dispatch<SetStateAction<boolean>>;
   setSftpShowHiddenFiles: Dispatch<SetStateAction<boolean>>;
@@ -286,10 +286,7 @@ export function useSettingsStorageSync({
       }
       // Sync terminal font size from other windows
       if (e.key === STORAGE_KEY_TERM_FONT_SIZE && e.newValue) {
-        const newSize = parseInt(e.newValue, 10);
-        if (!isNaN(newSize) && newSize !== s.terminalFontSize) {
-          setTerminalFontSize(newSize);
-        }
+        setTerminalFontSize(e.newValue);
       }
       // Sync SFTP double-click behavior from other windows
       if (e.key === STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR && e.newValue) {

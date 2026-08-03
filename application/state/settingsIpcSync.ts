@@ -73,7 +73,7 @@ interface UseSettingsIpcSyncParams {
   setTerminalThemeLightId: Dispatch<SetStateAction<string>>;
   setFollowAppTerminalThemeState: Dispatch<SetStateAction<boolean>>;
   setTerminalFontFamilyId: Dispatch<SetStateAction<string>>;
-  setTerminalFontSize: Dispatch<SetStateAction<number>>;
+  setTerminalFontSize: (raw: unknown) => void;
   mergeIncomingTerminalSettings: (incoming: Partial<TerminalSettings>) => void;
   setEditorWordWrapState: Dispatch<SetStateAction<boolean>>;
   setSessionLogsEnabled: Dispatch<SetStateAction<boolean>>;
@@ -196,7 +196,7 @@ export function useSettingsIpcSync({
         const migrated = migrateIncomingTerminalFontId(value);
         if (migrated) setTerminalFontFamilyId(migrated);
       }
-      if (key === STORAGE_KEY_TERM_FONT_SIZE && typeof value === 'number') {
+      if (key === STORAGE_KEY_TERM_FONT_SIZE) {
         setTerminalFontSize(value);
       }
       if (key === STORAGE_KEY_TERM_SETTINGS) {
