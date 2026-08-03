@@ -10,6 +10,7 @@ const {
   isExplorerContextMenuRegistered,
   removeExplorerContextMenu,
   resolveExplorerContextMenuEnabled,
+  resolveExplorerContextMenuExecutablePath,
   updateExplorerContextMenuEnabledPreference,
 } = require("./explorerContextMenu.cjs");
 
@@ -398,6 +399,23 @@ test("non-windows platforms report unsupported explorer context menu", () => {
   const removed = removeExplorerContextMenu({ platform: "linux" });
   assert.equal(removed.supported, false);
   assert.equal(removed.enabled, false);
+});
+
+test("resolveExplorerContextMenuExecutablePath prefers portable launcher path", () => {
+  assert.equal(
+    resolveExplorerContextMenuExecutablePath({
+      execPath: "C:\\Users\\me\\AppData\\Local\\Temp\\ncaXXXX\\Netcatty.exe",
+      env: { PORTABLE_EXECUTABLE_FILE: "D:\\Tools\\NetcattyPortable.exe" },
+    }),
+    "D:\\Tools\\NetcattyPortable.exe",
+  );
+  assert.equal(
+    resolveExplorerContextMenuExecutablePath({
+      execPath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+      env: {},
+    }),
+    "C:\\Program Files\\Netcatty\\Netcatty.exe",
+  );
 });
 
 test("applyInitialExplorerContextMenuPreference skips reg.exe on current schema warm start", () => {

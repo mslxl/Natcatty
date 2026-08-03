@@ -101,6 +101,7 @@ const {
   applyExplorerContextMenuPreference,
   applyInitialExplorerContextMenuPreference,
   resolveExplorerContextMenuEnabled,
+  resolveExplorerContextMenuExecutablePath,
   updateExplorerContextMenuEnabledPreference,
   writeExplorerContextMenuEnabledPreference,
 } = require("./explorerContextMenu.cjs");
@@ -677,7 +678,7 @@ ipcMain?.handle?.("netcatty:explorerContextMenu:setEnabled", async (_event, payl
     enabled,
     applyPreference: (nextEnabled) => applyExplorerContextMenuPreference({
       enabled: nextEnabled,
-      executablePath: process.execPath,
+      executablePath: resolveExplorerContextMenuExecutablePath(),
     }),
     writePreference: (nextEnabled) => writeExplorerContextMenuEnabledPreference({
       app,
@@ -1010,7 +1011,7 @@ if (!gotLock) {
 
     const initialExplorerContextMenuPreference = applyInitialExplorerContextMenuPreference({
       app,
-      executablePath: process.execPath,
+      executablePath: resolveExplorerContextMenuExecutablePath(),
     });
     explorerContextMenuEnabled = initialExplorerContextMenuPreference.enabled === true;
 

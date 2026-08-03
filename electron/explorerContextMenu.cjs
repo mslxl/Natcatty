@@ -5,7 +5,8 @@ const { spawnSync } = require("node:child_process");
 const EXPLORER_CONTEXT_MENU_PREFERENCES_FILE = "explorer-context-menu-preferences.json";
 // Bump when the shell verb command/label/icon contract changes so warm starts
 // re-apply registry entries once after upgrade, then stay query-free again.
-const EXPLORER_CONTEXT_MENU_SCHEMA_VERSION = 1;
+// v2: prefer PORTABLE_EXECUTABLE_FILE over process.execPath for registry cmds.
+const EXPLORER_CONTEXT_MENU_SCHEMA_VERSION = 2;
 const SHELL_VERB = "Netcatty";
 const DIRECTORY_SHELL_KEY = `Software\\Classes\\Directory\\shell\\${SHELL_VERB}`;
 const DIRECTORY_BACKGROUND_SHELL_KEY = `Software\\Classes\\Directory\\Background\\shell\\${SHELL_VERB}`;
@@ -17,6 +18,21 @@ const SUPPRESSION_VALUE = "ProgrammaticAccessOnly";
 
 function isWindowsPlatform(platform = process.platform) {
   return platform === "win32";
+}
+
+/**
+ * Resolve the stable executable path for Explorer shell verbs.
+ * electron-builder portable apps unpack under %TEMP%; process.execPath then
+ * points at a transient binary that is deleted when the app exits. The
+ * durable launcher path is exposed as PORTABLE_EXECUTABLE_FILE.
+ */
+function resolveExplorerContextMenuExecutablePath({
+  execPath = process.execPath,
+  env = process.env,
+} = {}) {
+  const portable = String(env?.PORTABLE_EXECUTABLE_FILE || "").trim();
+  if (portable) return portable;
+  return String(execPath || "").trim();
 }
 
 function getExplorerContextMenuPreferencePath({
@@ -567,6 +583,7 @@ module.exports = {
   readExplorerContextMenuEnabledPreference,
   removeExplorerContextMenu,
   resolveExplorerContextMenuEnabled,
+  resolveExplorerContextMenuExecutablePath,
   updateExplorerContextMenuEnabledPreference,
   writeExplorerContextMenuEnabledPreference,
 };
