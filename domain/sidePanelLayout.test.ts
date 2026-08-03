@@ -21,10 +21,10 @@ test('panes smaller than two minimum cells cannot be split again', () => {
   const tooSmall = splitSidePanelPane(layout, 'pane-notes', 'ai', 'vertical', {
     paneId: 'pane-ai',
     splitId: 'split-root',
-  }, 159);
+  }, 160);
 
-  assert.equal(canSplitSidePanelPaneAtSize(159), false);
-  assert.equal(canSplitSidePanelPaneAtSize(160), true);
+  assert.equal(canSplitSidePanelPaneAtSize(160), false);
+  assert.equal(canSplitSidePanelPaneAtSize(161), true);
   assert.equal(tooSmall, layout);
 });
 

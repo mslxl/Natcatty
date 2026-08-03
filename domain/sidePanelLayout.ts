@@ -37,7 +37,9 @@ export const SIDE_PANEL_SPLIT_DIVIDER_PIXELS = 1;
 
 export function canSplitSidePanelPaneAtSize(axisLength: number): boolean {
   return Number.isFinite(axisLength)
-    && axisLength >= MIN_SIDE_PANEL_PANE_PIXELS * 2;
+    && axisLength >= (
+      MIN_SIDE_PANEL_PANE_PIXELS * 2 + SIDE_PANEL_SPLIT_DIVIDER_PIXELS
+    );
 }
 
 export function getSidePanelNodeMinimumPixels(
