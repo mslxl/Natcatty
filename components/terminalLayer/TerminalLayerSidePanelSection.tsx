@@ -22,8 +22,9 @@ import {
 } from '../../application/state/terminalSidePanelTabs';
 import {
   clampTerminalSidePanelWidth,
+  getTerminalSidePanelAvailableWidth,
   getTerminalSidePanelMaxShownTools,
-  TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
+  getTerminalSidePanelMaxWidth,
 } from '../../application/state/terminalSidePanelWidth';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
@@ -568,6 +569,8 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
   const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const shellResizeCleanupRef = useRef<(() => void) | null>(null);
+  const [availableSurfaceWidth, setAvailableSurfaceWidth] = useState(0);
+  const availableSurfaceWidthRef = useRef(availableSurfaceWidth);
   const [paneHosts, setPaneHosts] = useState<Map<SidePanelTab, HTMLElement>>(new Map());
   const [parkingHost, setParkingHost] = useState<HTMLElement | null>(null);
   const parkingHostRef = useRef<HTMLDivElement>(null);
@@ -577,6 +580,41 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
   }, []);
   useLayoutEffect(() => () => {
     shellResizeCleanupRef.current?.();
+  }, []);
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    const terminalLayer = shell?.parentElement;
+    if (!terminalLayer) return undefined;
+
+    let observedFocusSidebar: Element | null = null;
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => updateAvailableWidth());
+    const updateAvailableWidth = () => {
+      const focusSidebar = terminalLayer.querySelector('[data-section="terminal-workspace-sidebar"]');
+      if (resizeObserver && focusSidebar && focusSidebar !== observedFocusSidebar) {
+        if (observedFocusSidebar) resizeObserver.unobserve(observedFocusSidebar);
+        observedFocusSidebar = focusSidebar;
+        resizeObserver.observe(focusSidebar);
+      }
+      const nextWidth = getTerminalSidePanelAvailableWidth(
+        terminalLayer.getBoundingClientRect().width,
+        focusSidebar?.getBoundingClientRect().width ?? 0,
+      );
+      availableSurfaceWidthRef.current = nextWidth;
+      setAvailableSurfaceWidth((current) => current === nextWidth ? current : nextWidth);
+    };
+
+    updateAvailableWidth();
+    resizeObserver?.observe(terminalLayer);
+    const mutationObserver = typeof MutationObserver === 'undefined'
+      ? null
+      : new MutationObserver(updateAvailableWidth);
+    mutationObserver?.observe(terminalLayer, { childList: true });
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+    };
   }, []);
   const handlePaneHostChange = useCallback((tool: SidePanelTab, host: HTMLElement | null) => {
     setPaneHosts((current) => {
@@ -643,7 +681,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     sidePanelWidth,
   });
   const shellWidth = requestedShellWidth > 0
-    ? clampTerminalSidePanelWidth(requestedShellWidth, window.innerWidth)
+    ? clampTerminalSidePanelWidth(requestedShellWidth, availableSurfaceWidth)
     : 0;
 
   const handleSidePanelResizeStart = useCallback((event: React.MouseEvent) => {
@@ -660,7 +698,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       const delta = moveEvent.clientX - startX;
       lastWidth = clampTerminalSidePanelWidth(
         startWidth + (sidePanelPosition === 'left' ? delta : -delta),
-        window.innerWidth,
+        availableSurfaceWidthRef.current,
       );
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
@@ -863,7 +901,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       ref={shellRef}
       style={{
         width: shellWidth,
-        maxWidth: TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
+        maxWidth: getTerminalSidePanelMaxWidth(availableSurfaceWidth),
         contain: 'layout paint style',
       }}
       className={cn(

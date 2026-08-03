@@ -3,20 +3,26 @@ export const TERMINAL_SIDE_PANEL_MAX_WIDTH = 1200;
 export const TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH = 320;
 export const TERMINAL_SIDE_PANEL_TOOL_BUTTON_WIDTH = 28;
 export const TERMINAL_SIDE_PANEL_TOOLBAR_RESERVED_WIDTH = 200;
-export const TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH = `max(${TERMINAL_SIDE_PANEL_MIN_WIDTH}px, min(${TERMINAL_SIDE_PANEL_MAX_WIDTH}px, calc(100vw - ${TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH}px)))`;
 
-export function getTerminalSidePanelMaxWidth(viewportWidth: number): number {
-  const availableWidth = viewportWidth - TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH;
+export function getTerminalSidePanelAvailableWidth(
+  terminalLayerWidth: number,
+  occupiedSiblingWidth: number,
+): number {
+  return Math.max(0, terminalLayerWidth - occupiedSiblingWidth);
+}
+
+export function getTerminalSidePanelMaxWidth(availableSurfaceWidth: number): number {
+  const availableWidth = availableSurfaceWidth - TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH;
   return Math.max(
     TERMINAL_SIDE_PANEL_MIN_WIDTH,
     Math.min(TERMINAL_SIDE_PANEL_MAX_WIDTH, availableWidth),
   );
 }
 
-export function clampTerminalSidePanelWidth(width: number, viewportWidth: number): number {
+export function clampTerminalSidePanelWidth(width: number, availableSurfaceWidth: number): number {
   return Math.max(
     TERMINAL_SIDE_PANEL_MIN_WIDTH,
-    Math.min(getTerminalSidePanelMaxWidth(viewportWidth), width),
+    Math.min(getTerminalSidePanelMaxWidth(availableSurfaceWidth), width),
   );
 }
 

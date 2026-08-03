@@ -249,7 +249,12 @@ test('side panel resize uses the expanded width limit and protects terminal spac
 
   assert.match(layerSource, /TERMINAL_SIDE_PANEL_MAX_WIDTH/);
   assert.match(sectionSource, /clampTerminalSidePanelWidth/);
+  assert.match(sectionSource, /terminalLayer\.getBoundingClientRect\(\)\.width/);
+  assert.match(sectionSource, /terminal-workspace-sidebar/);
+  assert.match(sectionSource, /new ResizeObserver/);
   assert.match(sectionSource, /shellRef\.current\?\.getBoundingClientRect\(\)\.width \?\? shellWidth/);
+  assert.doesNotMatch(sectionSource, /window\.innerWidth[,)\n]/);
+  assert.doesNotMatch(sectionSource, /100vw/);
   assert.doesNotMatch(sectionSource, /const startWidth = sidePanelWidth/);
   assert.doesNotMatch(sectionSource, /Math\.min\(800,/);
 });

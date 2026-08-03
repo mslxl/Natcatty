@@ -3,11 +3,11 @@ import test from 'node:test';
 
 import {
   clampTerminalSidePanelWidth,
+  getTerminalSidePanelAvailableWidth,
   getTerminalSidePanelMaxShownTools,
   getTerminalSidePanelMaxWidth,
   TERMINAL_SIDE_PANEL_MAX_WIDTH,
   TERMINAL_SIDE_PANEL_MIN_WIDTH,
-  TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
 } from './terminalSidePanelWidth.ts';
 
 test('terminal side panel can expand to the wider maximum', () => {
@@ -21,11 +21,10 @@ test('terminal side panel collapses tool buttons before shared actions are clipp
   assert.ok(getTerminalSidePanelMaxShownTools(420) >= 7);
 });
 
-test('terminal side panel keeps tracking viewport width without a React rerender', () => {
-  assert.equal(
-    TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
-    'max(280px, min(1200px, calc(100vw - 320px)))',
-  );
+test('terminal side panel uses the actual surface left after fixed sibling panels', () => {
+  assert.equal(getTerminalSidePanelAvailableWidth(780, 220), 560);
+  assert.equal(getTerminalSidePanelMaxWidth(560), TERMINAL_SIDE_PANEL_MIN_WIDTH);
+  assert.equal(clampTerminalSidePanelWidth(680, 560), TERMINAL_SIDE_PANEL_MIN_WIDTH);
 });
 
 test('terminal side panel keeps usable terminal space in smaller windows', () => {
