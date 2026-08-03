@@ -313,7 +313,7 @@ test("setRules immediately highlights a newly added rule against visible termina
   }
 });
 
-test("marker reindexing invalidates cursor-line protected ranges", () => {
+test("marker reindexing moves keyword decorations to the current buffer line", () => {
   const raf = installAnimationFrameQueue();
   try {
     const { term } = createFakeTerminal("hello DEPLOY world");
@@ -328,18 +328,16 @@ test("marker reindexing invalidates cursor-line protected ranges", () => {
     raf.flush();
 
     const internals = highlighter as unknown as {
-      decorationsVersion: number;
       lineDecorations: Map<number, { marker: { line: number } }>;
       reindexLineDecorationsFromMarkers: () => void;
     };
     const state = internals.lineDecorations.get(0);
     assert.ok(state);
-    const previousVersion = internals.decorationsVersion;
     state.marker.line = 1;
 
     internals.reindexLineDecorationsFromMarkers();
 
-    assert.equal(internals.decorationsVersion, previousVersion + 1);
+    assert.equal(internals.lineDecorations.has(0), false);
     assert.equal(internals.lineDecorations.get(1), state);
     highlighter.dispose();
   } finally {

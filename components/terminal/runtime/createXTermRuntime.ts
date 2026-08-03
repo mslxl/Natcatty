@@ -2044,11 +2044,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const keywordHighlighter = new KeywordHighlighter(term);
   keywordHighlighter.setRules(keywordHighlightRules, keywordHighlightEnabled);
 
-  const cursorLineHighlighter = new CursorLineHighlighter(
-    term,
-    (absoluteLine) => keywordHighlighter.getForegroundRanges(absoluteLine),
-    () => keywordHighlighter.getForegroundRangesVersion(),
-  );
+  const cursorLineHighlighter = new CursorLineHighlighter(term);
   cursorLineHighlighter.setBackgroundColor(
     resolveCursorLineHighlightBackground(ctx.terminalTheme.colors),
   );

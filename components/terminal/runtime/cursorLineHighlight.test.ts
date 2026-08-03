@@ -246,71 +246,39 @@ test('CursorLineHighlighter gives selection and search matches priority', () => 
 
 test('CursorLineHighlighter refreshes after hidden writes become visible', () => {
   const term = createFakeTerm(10);
-  let protectedRanges: Array<{ x: number; width: number }> = [];
-  const highlighter = new CursorLineHighlighter(
-    term as never,
-    () => protectedRanges,
-  );
+  const highlighter = new CursorLineHighlighter(term as never);
   highlighter.setEnabled(true);
-  assert.equal(term.decorations.at(-1)?.options.width, 10);
+  assert.equal(term.markers.at(-1)?.line, 0);
 
   term.writeHiddenOutput(1);
-  protectedRanges = [{ x: 0, width: 2 }];
+  assert.equal(term.decorations.length, 1);
   term.render();
 
-  assert.deepEqual(
-    term.decorations
-      .filter(({ disposed }) => !disposed)
-      .map(({ options }) => ({ x: options.x, width: options.width })),
-    [
-      { x: 2, width: 8 },
-    ],
-  );
+  assert.equal(term.decorations.length, 2);
+  assert.equal(term.decorations[0]?.disposed, true);
+  assert.equal(term.markers.at(-1)?.line, 1);
   highlighter.dispose();
 });
 
-test('CursorLineHighlighter refreshes after keyword ranges are removed', () => {
+test('CursorLineHighlighter keeps a continuous background under keyword decorations', () => {
   const term = createFakeTerm(10);
-  let protectedRanges: Array<{ x: number; width: number }> = [{ x: 0, width: 2 }];
-  let protectedRangesVersion = 1;
-  const highlighter = new CursorLineHighlighter(
-    term as never,
-    () => protectedRanges,
-    () => protectedRangesVersion,
-  );
-  highlighter.setEnabled(true);
-  assert.deepEqual(
-    term.decorations.filter(({ disposed }) => !disposed).map(({ options }) => options.width),
-    [8],
-  );
-
-  protectedRanges = [];
-  protectedRangesVersion += 1;
-  term.render();
-
-  assert.deepEqual(
-    term.decorations.filter(({ disposed }) => !disposed).map(({ options }) => options.width),
-    [10],
-  );
-  highlighter.dispose();
-});
-
-test('CursorLineHighlighter leaves keyword decoration ranges untouched', () => {
-  const term = createFakeTerm(10);
-  const highlighter = new CursorLineHighlighter(
-    term as never,
-    () => [{ x: 2, width: 2 }],
-  );
+  const keywordMarker = term.registerMarker(0);
+  term.registerDecoration({
+    marker: keywordMarker,
+    x: 2,
+    width: 2,
+    foregroundColor: '#F87171',
+  });
+  const highlighter = new CursorLineHighlighter(term as never);
   highlighter.setBackgroundColor('#263449');
   highlighter.setEnabled(true);
 
-  assert.deepEqual(
-    term.decorations.map(({ options }) => ({ x: options.x, width: options.width })),
-    [
-      { x: 0, width: 2 },
-      { x: 4, width: 6 },
-    ],
-  );
+  assert.equal(term.decorations[0]?.options.foregroundColor, '#F87171');
+  assert.equal(term.decorations[0]?.options.backgroundColor, undefined);
+  assert.equal(term.decorations[1]?.options.x, 0);
+  assert.equal(term.decorations[1]?.options.width, 10);
+  assert.equal(term.decorations[1]?.options.backgroundColor, '#263449');
+  assert.equal(term.decorations[1]?.options.layer, 'bottom');
   highlighter.dispose();
 });
 
