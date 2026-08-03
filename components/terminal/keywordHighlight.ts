@@ -195,6 +195,13 @@ export class KeywordHighlighter implements IDisposable {
         }
         this.enterQueuedWriteCancellationPending = false;
         const pressure = getTerminalOutputPressure(this.term);
+        if (pressure.background || pressure.longLine || pressure.largeOutput) {
+          if (this.pendingRefreshReason === "write") {
+            this.cancelQueuedRefreshSchedule();
+          }
+          this.enterViewportScanInProgress = false;
+          this.enterViewportScanNeedsRepeat = false;
+        }
         if (pressure.background) {
           // Hidden panes: avoid immediate scans that fight xterm, but still arm a
           // debounced refresh. Reveal only flushes writes/repaints — without a

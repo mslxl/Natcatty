@@ -891,6 +891,76 @@ test("continuous Enter output lets multi-frame refreshes finish", () => {
   }
 });
 
+test("large output cancels active Enter continuation work until quiet", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 140 });
+    term.rows = 100;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      lastRefreshTime: number;
+      lastUserInputAt: number;
+    };
+    handlers.data?.("\r");
+    internals.lastUserInputAt = Number.NEGATIVE_INFINITY;
+    internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => {
+          simulatedNow += 5;
+          return simulatedNow;
+        },
+      },
+    });
+    try {
+      handlers.writeParsed?.();
+      raf.flushOne();
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+
+    noteTerminalOutputPressureData(
+      term as never,
+      "x\n".repeat(Math.ceil(TERMINAL_LONG_LINE_PRESSURE_BYTES / 2)),
+    );
+    handlers.writeParsed?.();
+    resetTranslateCount();
+    raf.flushOne();
+    const scansDuringPressure = getTranslateCount();
+    highlighter.dispose();
+    resetTerminalOutputPressure(term as never);
+
+    assert.equal(
+      scansDuringPressure,
+      0,
+      "large output should cancel continuation scans until the quiet catch-up",
+    );
+  } finally {
+    raf.restore();
+  }
+});
+
 test("continuous Enter output still refreshes highlights periodically", async () => {
   const raf = installAnimationFrameQueue();
   try {
