@@ -185,7 +185,7 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            this.enterInputPending = false;
+            const enterOutputObserved = this.hasBufferPositionChangedSinceLastSnapshot();
             this.cancelScrollRefresh();
             if (this.pendingRefreshReason === "scroll") {
               this.pendingRefreshReason = "write";
@@ -194,6 +194,9 @@ export class KeywordHighlighter implements IDisposable {
             const buffer = this.term.buffer.active;
             this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
             this.writePruningDeferred = true;
+            if (enterOutputObserved) {
+              this.enterInputPending = false;
+            }
           } else {
             this.updateWriteBurst();
             this.markVisibleRangeDirty();
@@ -902,6 +905,18 @@ export class KeywordHighlighter implements IDisposable {
       cursorAbsoluteY: buffer.baseY + buffer.cursorY,
       viewportProbe: includeViewportProbe ? this.buildViewportProbe(buffer, this.term.rows) : [],
     };
+  }
+
+  private hasBufferPositionChangedSinceLastSnapshot(): boolean {
+    const previous = this.lastBufferSnapshot;
+    const current = this.readBufferSnapshot({ includeViewportProbe: false });
+    if (!previous || !current) return false;
+    return (
+      current.length !== previous.length
+      || current.baseY !== previous.baseY
+      || current.viewportY !== previous.viewportY
+      || current.cursorAbsoluteY !== previous.cursorAbsoluteY
+    );
   }
 
   private buildViewportProbe(buffer: IBuffer, rows: number): readonly ViewportProbeSample[] {

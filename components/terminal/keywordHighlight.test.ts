@@ -839,6 +839,67 @@ test("pasted Enter remains protected when more input arrives before output", asy
   }
 });
 
+test("an unrelated parsed write does not consume pending Enter protection", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.rows = 3;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      lastBufferSnapshot: unknown;
+      readBufferSnapshot: () => unknown;
+      writePruningDeferred: boolean;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 250; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.writePruningDeferred = true;
+      internals.refreshViewport("write");
+    }
+    internals.lastBufferSnapshot = internals.readBufferSnapshot();
+    const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
+    assert.ok(retainedDecorations.length > 64);
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "a write without buffer movement should not consume pending Enter protection",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("pressing Enter avoids rescanning overscan edges", async () => {
   const raf = installAnimationFrameQueue();
   try {
