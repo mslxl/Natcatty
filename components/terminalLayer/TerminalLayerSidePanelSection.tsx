@@ -145,8 +145,13 @@ function SidePanelSplitView({
   separator: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const total = node.sizes.reduce((sum, size) => sum + size, 0) || 1;
   const normalizedSizes = node.children.map((_, index) => (node.sizes[index] ?? 1) / total);
+
+  useLayoutEffect(() => () => {
+    resizeCleanupRef.current?.();
+  }, []);
 
   const startResize = useCallback((event: React.MouseEvent, index: number) => {
     event.preventDefault();
@@ -157,6 +162,7 @@ function SidePanelSplitView({
     const axisLength = node.direction === 'vertical' ? rect.width : rect.height;
     if (axisLength <= 0) return;
 
+    resizeCleanupRef.current?.();
     terminalLayoutSuppressStore.begin();
     const startClient = node.direction === 'vertical' ? event.clientX : event.clientY;
     const startSizes = [...normalizedSizes];
@@ -178,17 +184,29 @@ function SidePanelSplitView({
       pendingClient = node.direction === 'vertical' ? moveEvent.clientX : moveEvent.clientY;
       if (frame === null) frame = requestAnimationFrame(commit);
     };
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      terminalLayoutSuppressStore.end();
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      window.removeEventListener('blur', cleanup);
+      if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
+    };
     const onMouseUp = () => {
       if (frame !== null) {
         cancelAnimationFrame(frame);
         commit();
       }
-      terminalLayoutSuppressStore.end();
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      cleanup();
     };
+    resizeCleanupRef.current = cleanup;
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('blur', cleanup);
   }, [node.direction, node.id, normalizedSizes, onResize]);
 
   return (

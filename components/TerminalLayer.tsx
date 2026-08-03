@@ -107,17 +107,10 @@ import { shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
 import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
 import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
 import {
-  closeSidePanelPane,
-  createSidePanelLayout,
-  focusSidePanelPane,
-  getFocusedSidePanelPane,
-  resizeSidePanelSplit,
-  selectSidePanelTool,
   sidePanelLayoutHasTool,
-  splitSidePanelPane,
-  type SidePanelLayout,
   type SidePanelSplitDirection,
 } from '../domain/sidePanelLayout';
+import { useTerminalSidePanelLayoutState } from '../application/state/useTerminalSidePanelLayoutState';
 
 import {
   AIChatPanelsHost,
@@ -441,7 +434,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.set(tabId, targetPanel);
       return next;
     });
-  }, [onUpdateSessionStatus]);
+  }, [onUpdateSessionStatus, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
 
   const handleSessionExit = useCallback((sessionId: string, evt: TerminalSessionExitEvent) => {
     const intent = resolveTerminalSessionExitIntent(
@@ -532,8 +525,17 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Side panel state - per-tab tracking of which sub-panel is active
   // Maps tab IDs to the active sub-panel type (sftp/scripts/theme), absent = closed
-  const [sidePanelOpenTabs, setSidePanelOpenTabs] = useState<Map<string, SidePanelTab>>(new Map());
-  const [sidePanelLayouts, setSidePanelLayouts] = useState<Map<string, SidePanelLayout>>(new Map());
+  const {
+    sidePanelOpenTabs,
+    setSidePanelOpenTabs,
+    sidePanelOpenTabsRef,
+    sidePanelLayouts,
+    sidePanelLayoutsRef,
+    focusPane: focusSidePanelPaneForTab,
+    splitPane: splitSidePanelPaneForTab,
+    closePane: closeSidePanelPaneForTab,
+    resizeSplit: resizeSidePanelSplitForTab,
+  } = useTerminalSidePanelLayoutState();
   // Keep AI/scripts/theme panels mounted while switching sub-tabs (like SFTP).
   const [aiMountedTabIds, setAiMountedTabIds] = useState<string[]>([]);
   const [scriptsMountedTabIds, setScriptsMountedTabIds] = useState<string[]>([]);
@@ -548,41 +550,6 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     'left',
     (v): v is 'left' | 'right' => v === 'left' || v === 'right',
   );
-  const sidePanelOpenTabsRef = useRef(sidePanelOpenTabs);
-  sidePanelOpenTabsRef.current = sidePanelOpenTabs;
-  const sidePanelLayoutsRef = useRef(sidePanelLayouts);
-  sidePanelLayoutsRef.current = sidePanelLayouts;
-
-  // Legacy and external open paths still write the focused tool map. Keep the
-  // layout in lockstep: create a single pane on first open, switch only the
-  // focused pane afterwards, and discard the per-tab tree when the panel closes.
-  useEffect(() => {
-    setSidePanelLayouts((previous) => {
-      let changed = false;
-      const next = new Map(previous);
-
-      for (const tabId of previous.keys()) {
-        if (!sidePanelOpenTabs.has(tabId)) {
-          next.delete(tabId);
-          changed = true;
-        }
-      }
-
-      for (const [tabId, tool] of sidePanelOpenTabs) {
-        const current = next.get(tabId);
-        const updated = current
-          ? selectSidePanelTool(current, tool)
-          : createSidePanelLayout(tool, crypto.randomUUID());
-        if (updated !== current) {
-          next.set(tabId, updated);
-          changed = true;
-        }
-      }
-
-      return changed ? next : previous;
-    });
-  }, [sidePanelOpenTabs]);
-
   // Remember the last sub-panel shown per tab so the toggle shortcut can
   // restore it after a close. Overwritten on open, never cleared on close.
   const lastSidePanelTabRef = useRef<Map<string, SidePanelTab>>(new Map());
@@ -711,7 +678,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       }, SFTP_TRANSFER_HISTORY_RETENTION_MS);
       sftpRetainedCleanupTimersRef.current.set(tabId, cleanupTimer);
     }
-  }, [clearSftpPanelState, resolveTabActiveTransfersCount]);
+  }, [clearSftpPanelState, resolveTabActiveTransfersCount, sidePanelOpenTabsRef]);
 
   const handleToggleWorkspaceComposeBar = useCallback(() => {
     setIsComposeBarOpen(prev => !prev);
@@ -823,7 +790,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       }
       return next;
     });
-  }, [resolveSftpOpenTarget, resolveTabActiveTransfersCount]);
+  }, [resolveSftpOpenTarget, resolveTabActiveTransfersCount, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
 
   const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
     setSftpPendingUploadsForTab(prev => {
@@ -1023,7 +990,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       },
     });
     cwdProbeCancelersRef.current.set(sessionId, cancelProbe);
-  }, [codingCliSignalController, handleTerminalCwdChange, restoreTerminalCwd, terminalBackend]);
+  }, [codingCliSignalController, handleTerminalCwdChange, restoreTerminalCwd, sidePanelLayoutsRef, terminalBackend]);
 
   const handleCommandExecuted = useCallback((command: string, hostId: string, hostLabel: string, sessionId: string) => {
     onCommandExecuted?.(command, hostId, hostLabel, sessionId);
@@ -1267,7 +1234,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     });
     notesReturnTabRef.current.delete(activeTabId);
     refocusTerminalSession(sessionIdToRefocus);
-  }, [clearSftpPanelState, getActiveTerminalSessionId, refocusTerminalSession, resolveTabActiveTransfersCount, syncWorkspaceFocusIfNeeded]);
+  }, [clearSftpPanelState, getActiveTerminalSessionId, refocusTerminalSession, resolveTabActiveTransfersCount, setSidePanelOpenTabs, syncWorkspaceFocusIfNeeded]);
 
   // Resolve the SFTP host for a tab: a previously-stored host, otherwise the
   // host of the workspace's focused session or the active session. null = none.
@@ -1349,19 +1316,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         return next;
       });
     });
-  }, [prepareSidePanelTool]);
+  }, [prepareSidePanelTool, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
 
   const handleFocusSidePanelPane = useCallback((paneId: string) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-    const layout = sidePanelLayoutsRef.current.get(tabId);
-    if (!layout) return;
-    const nextLayout = focusSidePanelPane(layout, paneId);
-    if (nextLayout === layout) return;
-    const focusedTool = getFocusedSidePanelPane(nextLayout).tool;
-    setSidePanelLayouts((previous) => new Map(previous).set(tabId, nextLayout));
-    setSidePanelOpenTabs((previous) => new Map(previous).set(tabId, focusedTool));
-  }, []);
+    focusSidePanelPaneForTab(tabId, paneId);
+  }, [focusSidePanelPaneForTab]);
 
   const handleSplitSidePanelPane = useCallback((
     tool: SidePanelTab,
@@ -1369,45 +1330,28 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   ) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-    const layout = sidePanelLayoutsRef.current.get(tabId);
-    if (!layout || !prepareSidePanelTool(tabId, tool)) return;
-    const nextLayout = splitSidePanelPane(
-      layout,
-      layout.focusedPaneId,
+    if (!sidePanelLayoutsRef.current.has(tabId) || !prepareSidePanelTool(tabId, tool)) return;
+    splitSidePanelPaneForTab(
+      tabId,
       tool,
       direction,
       { paneId: crypto.randomUUID(), splitId: crypto.randomUUID() },
     );
-    const focusedTool = getFocusedSidePanelPane(nextLayout).tool;
-    setSidePanelLayouts((previous) => new Map(previous).set(tabId, nextLayout));
-    setSidePanelOpenTabs((previous) => new Map(previous).set(tabId, focusedTool));
-  }, [prepareSidePanelTool]);
+  }, [prepareSidePanelTool, sidePanelLayoutsRef, splitSidePanelPaneForTab]);
 
   const handleCloseSidePanelPane = useCallback((paneId: string) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-    const layout = sidePanelLayoutsRef.current.get(tabId);
-    if (!layout) return;
-    const nextLayout = closeSidePanelPane(layout, paneId);
-    if (!nextLayout) {
+    if (closeSidePanelPaneForTab(tabId, paneId)) {
       handleCloseSidePanel();
-      return;
     }
-    const focusedTool = getFocusedSidePanelPane(nextLayout).tool;
-    setSidePanelLayouts((previous) => new Map(previous).set(tabId, nextLayout));
-    setSidePanelOpenTabs((previous) => new Map(previous).set(tabId, focusedTool));
-  }, [handleCloseSidePanel]);
+  }, [closeSidePanelPaneForTab, handleCloseSidePanel]);
 
   const handleResizeSidePanelSplit = useCallback((splitId: string, sizes: number[]) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-    setSidePanelLayouts((previous) => {
-      const layout = previous.get(tabId);
-      if (!layout) return previous;
-      const nextLayout = resizeSidePanelSplit(layout, splitId, sizes);
-      return nextLayout === layout ? previous : new Map(previous).set(tabId, nextLayout);
-    });
-  }, []);
+    resizeSidePanelSplitForTab(tabId, splitId, sizes);
+  }, [resizeSidePanelSplitForTab]);
 
   // Toggle SFTP from activity bar header
   const handleToggleSftpFromBar = useCallback(() => {
@@ -1440,7 +1384,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         return next;
       });
     });
-  }, [handleCloseSidePanel, markSidePanelSubTabOpened]);
+  }, [handleCloseSidePanel, markSidePanelSubTabOpened, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
 
   // Toggle the whole side panel (new ⌘/Ctrl+\ shortcut). Close if open; if
   // closed, reopen the tab's last sub-panel, defaulting to SFTP (when a host is
@@ -1460,7 +1404,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     // If the remembered panel is SFTP but no host is resolvable, use scripts.
     const target: SidePanelTab = intent.tab === 'sftp' && !sftpAvailable ? 'scripts' : intent.tab;
     handleSwitchSidePanelTab(target);
-  }, [handleCloseSidePanel, handleSwitchSidePanelTab, resolveSftpHostForTab]);
+  }, [handleCloseSidePanel, handleSwitchSidePanelTab, resolveSftpHostForTab, sidePanelOpenTabsRef]);
 
   // Open theme side panel (called from Terminal toolbar)
   const handleOpenTheme = useCallback(() => {
@@ -1489,7 +1433,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       notesReturnTabRef.current.set(tabId, currentPanel);
     }
     handleSwitchSidePanelTab('notes');
-  }, [handleSwitchSidePanelTab]);
+  }, [handleSwitchSidePanelTab, sidePanelOpenTabsRef]);
 
   const handleBackFromNotes = useCallback(() => {
     const tabId = activeTabIdRef.current;
@@ -1516,7 +1460,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.set(tabId, 'notes');
       return next;
     });
-  }, []);
+  }, [setSidePanelOpenTabs]);
 
   const handleOpenHostFromNotes = useCallback((host: Host, source?: { noteId?: string }) => {
     const sourceNoteId = source?.noteId;
@@ -1568,7 +1512,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       notesReturnTabRef.current.set(intent.tabId, intent.returnPanel);
     }
     openNotesPanelForSourceNote(intent.tabId, intent.noteId);
-  }, [onOpenVaultNoteFromChat, openNotesPanelForSourceNote]);
+  }, [onOpenVaultNoteFromChat, openNotesPanelForSourceNote, sidePanelOpenTabsRef]);
 
   const handleAddSelectionToAI = useCallback((sourceSessionId: string, selection: string) => {
     const text = selection.trim();
@@ -1614,7 +1558,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     }
 
     handleSwitchSidePanelTab('ai');
-  }, [handleCloseSidePanel, handleSwitchSidePanelTab]);
+  }, [handleCloseSidePanel, handleSwitchSidePanelTab, sidePanelOpenTabsRef]);
 
   // Execute snippet on the focused terminal session
   const handleSnippetClickForFocusedSession = useCallback((

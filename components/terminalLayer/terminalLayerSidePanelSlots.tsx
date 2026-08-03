@@ -537,12 +537,35 @@ function SidePanelAiSlotInner({
 export const SidePanelAiSlot = memo(SidePanelAiSlotInner);
 SidePanelAiSlot.displayName = 'SidePanelAiSlot';
 
-function renderSidePanelPortal(
-  key: string,
-  target: HTMLElement | null,
-  content: React.ReactNode,
-) {
-  return target ? createPortal(content, target, key) : null;
+function PersistentSidePanelPortal({
+  portalKey,
+  target,
+  children,
+}: {
+  portalKey: string;
+  target: HTMLElement | null;
+  children: React.ReactNode;
+}) {
+  const [mountNode] = React.useState(() => {
+    const node = document.createElement('div');
+    node.className = 'absolute inset-0 overflow-hidden';
+    node.dataset.sidePanelPortal = portalKey;
+    return node;
+  });
+
+  // The React portal always targets the same detached node. Moving that node
+  // between a pane host and the hidden parking host preserves the mounted
+  // subtree (including active SFTP/AI state) instead of remounting it whenever
+  // the focused pane changes.
+  React.useLayoutEffect(() => {
+    if (!target) return;
+    target.appendChild(mountNode);
+    return () => {
+      if (mountNode.parentNode === target) mountNode.remove();
+    };
+  }, [mountNode, target]);
+
+  return createPortal(children, mountNode, portalKey);
 }
 
 export function resolveSidePanelPortalTarget<T>(
@@ -587,51 +610,73 @@ export function SidePanelMountedContent({
 
   return (
     <>
-      {mountedSftpTabIds.map((tabId: string) => renderSidePanelPortal(
-        `sftp-${tabId}`,
-        portalTarget(tabId, 'sftp'),
-        <SidePanelSftpSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'sftp')} />,
+      {mountedSftpTabIds.map((tabId: string) => (
+        <PersistentSidePanelPortal
+          key={`sftp-${tabId}`}
+          portalKey={`sftp-${tabId}`}
+          target={portalTarget(tabId, 'sftp')}
+        >
+          <SidePanelSftpSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'sftp')} />
+        </PersistentSidePanelPortal>
       ))}
       {systemMountedTabIds.map((tabId: string) => {
         const isSelected = sidePanelLayoutHasTool(layouts.get(tabId), 'system');
         const isVisible = activeTabId === tabId && isSelected;
-        return renderSidePanelPortal(
-          `system-${tabId}`,
-          resolveSidePanelPortalTarget(isVisible, paneHosts.get('system'), parkingHost),
-          <SidePanelSystemSlot
-            tabId={tabId}
-            ctx={ctx}
-            isTabActive={activeTabId === tabId}
-            isVisible={isVisible}
-            isSelected={isSelected}
-          />,
+        return (
+          <PersistentSidePanelPortal
+            key={`system-${tabId}`}
+            portalKey={`system-${tabId}`}
+            target={resolveSidePanelPortalTarget(isVisible, paneHosts.get('system'), parkingHost)}
+          >
+            <SidePanelSystemSlot
+              tabId={tabId}
+              ctx={ctx}
+              isTabActive={activeTabId === tabId}
+              isVisible={isVisible}
+              isSelected={isSelected}
+            />
+          </PersistentSidePanelPortal>
         );
       })}
-      {scriptsMountedTabIds.map((tabId: string) => renderSidePanelPortal(
-        `scripts-${tabId}`,
-        portalTarget(tabId, 'scripts'),
-        <SidePanelScriptsSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'scripts')} />,
+      {scriptsMountedTabIds.map((tabId: string) => (
+        <PersistentSidePanelPortal
+          key={`scripts-${tabId}`}
+          portalKey={`scripts-${tabId}`}
+          target={portalTarget(tabId, 'scripts')}
+        >
+          <SidePanelScriptsSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'scripts')} />
+        </PersistentSidePanelPortal>
       ))}
-      {renderSidePanelPortal(
-        'history-active',
-        resolveSidePanelPortalTarget(historyVisible, paneHosts.get('history'), parkingHost),
-        <SidePanelHistorySlot activeTabId={activeTabId} ctx={ctx} isVisible={historyVisible} />,
-      )}
-      {themeMountedTabIds.map((tabId: string) => renderSidePanelPortal(
-        `theme-${tabId}`,
-        portalTarget(tabId, 'theme'),
-        <SidePanelThemeSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'theme')} />,
+      <PersistentSidePanelPortal
+        portalKey="history-active"
+        target={resolveSidePanelPortalTarget(historyVisible, paneHosts.get('history'), parkingHost)}
+      >
+        <SidePanelHistorySlot activeTabId={activeTabId} ctx={ctx} isVisible={historyVisible} />
+      </PersistentSidePanelPortal>
+      {themeMountedTabIds.map((tabId: string) => (
+        <PersistentSidePanelPortal
+          key={`theme-${tabId}`}
+          portalKey={`theme-${tabId}`}
+          target={portalTarget(tabId, 'theme')}
+        >
+          <SidePanelThemeSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'theme')} />
+        </PersistentSidePanelPortal>
       ))}
-      {notesMountedTabIds.map((tabId: string) => renderSidePanelPortal(
-        `notes-${tabId}`,
-        portalTarget(tabId, 'notes'),
-        <SidePanelNotesSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'notes')} />,
+      {notesMountedTabIds.map((tabId: string) => (
+        <PersistentSidePanelPortal
+          key={`notes-${tabId}`}
+          portalKey={`notes-${tabId}`}
+          target={portalTarget(tabId, 'notes')}
+        >
+          <SidePanelNotesSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'notes')} />
+        </PersistentSidePanelPortal>
       ))}
-      {renderSidePanelPortal(
-        'ai-host',
-        resolveSidePanelPortalTarget(aiVisible, paneHosts.get('ai'), parkingHost),
-        <SidePanelAiSlot activeTabId={activeTabId} ctx={ctx} isVisible={aiVisible} />,
-      )}
+      <PersistentSidePanelPortal
+        portalKey="ai-host"
+        target={resolveSidePanelPortalTarget(aiVisible, paneHosts.get('ai'), parkingHost)}
+      >
+        <SidePanelAiSlot activeTabId={activeTabId} ctx={ctx} isVisible={aiVisible} />
+      </PersistentSidePanelPortal>
     </>
   );
 }

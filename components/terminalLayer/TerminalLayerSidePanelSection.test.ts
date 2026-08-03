@@ -149,6 +149,9 @@ test('split pane hosts strictly clip each tool and do not use the side panel roo
   assert.match(sectionSource, /overflow-hidden \[contain:strict\]/);
   assert.match(sectionSource, /terminal-side-panel-parking/);
   assert.match(slotsSource, /paneHosts\.get\(tool\)/);
+  assert.match(slotsSource, /document\.createElement\('div'\)/);
+  assert.match(slotsSource, /target\.appendChild\(mountNode\)/);
+  assert.match(slotsSource, /createPortal\(children, mountNode, portalKey\)/);
   assert.doesNotMatch(slotsSource, /document\.querySelector\([^)]*terminal-side-panel/);
 });
 
@@ -159,4 +162,12 @@ test('the shared toolbar owns split controls while panes only render minimal chr
   assert.match(sectionSource, /<SidePanelSplitMenu[\s\S]*direction="vertical"/);
   assert.match(sectionSource, /data-section="terminal-side-panel-pane"/);
   assert.match(sectionSource, /paneCount > 1/);
+});
+
+test('split dragging cleans up on mouseup, window blur, and pane unmount', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /window\.addEventListener\('blur', cleanup\)/);
+  assert.match(sectionSource, /resizeCleanupRef\.current\?\.\(\)/);
+  assert.match(sectionSource, /terminalLayoutSuppressStore\.end\(\)/);
 });
