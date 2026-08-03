@@ -170,6 +170,29 @@ test("resume rejects changed or shortened source files", () => {
     ) ?? "",
     /size changed/,
   );
+  // Explicit zero-byte download snapshots may also grow (empty log → first lines).
+  const emptyPlan = {
+    ...task("empty", "interrupted", 1),
+    totalBytes: 0,
+    sourceLastModified: 50,
+    checkpointBytes: 0,
+  };
+  assert.equal(
+    validateTransferResumeSource(
+      emptyPlan,
+      { size: 40, lastModified: 51 },
+      { allowSourceGrowth: true },
+    ),
+    null,
+  );
+  assert.match(
+    validateTransferResumeSource(
+      emptyPlan,
+      { size: 0, lastModified: 51 },
+      { allowSourceGrowth: true },
+    ) ?? "",
+    /modified/,
+  );
 });
 
 test("prune upgrades legacy completed children into the parent checkpoint", () => {

@@ -590,14 +590,14 @@ export function useSftpDirectoryTransferOps({
           const sourcePath = joinPath(task.sourcePath, file.name);
           const targetPath = joinTransferTargetPath(task.targetPath, file.name);
           const directoryEntryIndex = directoryEntryBase + fileIndex;
-          // Download trees use path-stable identities so append-only growth of
-          // covered entries does not invalidate the compact resume prefix.
+          // Download trees omit mtime so append-only growth does not invalidate
+          // the compact resume prefix; size still fingerprints the planned snapshot.
           const directoryEntryIdentity = createDirectoryEntryIdentity({
             sourcePath,
             targetPath,
             size: fileSize,
             lastModified: file.lastModified,
-          }, { contentFingerprint: task.direction !== "download" });
+          }, { omitMtime: task.direction === "download" });
           const persistedChild = transfersRef.current.find((candidate) => (
             candidate.parentTaskId === rootTaskId
             && candidate.sourcePath === sourcePath

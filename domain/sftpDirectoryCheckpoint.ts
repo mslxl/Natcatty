@@ -148,10 +148,12 @@ function sha256Hex(value: string): string {
  * Stable identity for one directory-transfer entry in the compact resume
  * manifest.
  *
- * @param options.contentFingerprint When false, identity is path-only. Use for
- *   download trees so append-only remote growth (live logs) does not invalidate
- *   an already-covered compact prefix. Uploads/copies keep size+mtime so an
- *   in-place rewrite still fails closed.
+ * @param options.omitMtime When true (download trees), identity is path+size
+ *   only. Append-only remote growth always bumps mtime; omitting it lets a
+ *   resume re-validate covered entries against the *planned* snapshot size
+ *   (usually the local destination size) while still rejecting path changes
+ *   and planned-size mismatches. Uploads/copies keep mtime so same-size
+ *   in-place rewrites fail closed.
  */
 export function createDirectoryEntryIdentity(
   entry: {
@@ -160,18 +162,20 @@ export function createDirectoryEntryIdentity(
     size: number;
     lastModified?: number;
   },
-  options?: { contentFingerprint?: boolean },
+  options?: { omitMtime?: boolean },
 ): string {
-  if (options?.contentFingerprint === false) {
+  const size = Math.max(0, Number(entry.size) || 0);
+  if (options?.omitMtime) {
     return sha256Hex(JSON.stringify([
       entry.sourcePath,
       entry.targetPath,
+      size,
     ]));
   }
   return sha256Hex(JSON.stringify([
     entry.sourcePath,
     entry.targetPath,
-    Math.max(0, Number(entry.size) || 0),
+    size,
     Number(entry.lastModified) || 0,
   ]));
 }

@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings, TransferTask } from "../../../domain/models";
 import { validateTransferResumeSource } from "../../../domain/sftpTransferCenter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
@@ -251,7 +252,11 @@ async function yieldDirectoryResumeWork(): Promise<void> {
 
 async function indexDirectoryResumeFiles(
   files: DirectoryResumeFilePlan[],
-  options?: { pathStableIdentity?: boolean },
+  options?: {
+    omitMtime?: boolean;
+    /** When set, identity size prefers the planned snapshot over the live remote size. */
+    resolvePlannedSize?: (file: DirectoryResumeFilePlan) => number | null | undefined;
+  },
 ): Promise<DirectoryResumeFilePlan[]> {
   const sorted = [...files]
     .sort((left, right) => compareDirectoryTraversalPaths(left.relativePath, right.relativePath));
@@ -260,18 +265,19 @@ async function indexDirectoryResumeFiles(
   }
   const indexed = new Array<DirectoryResumeFilePlan>(sorted.length);
   let sliceStartedAt = directoryResumeNow();
-  const contentFingerprint = options?.pathStableIdentity ? false : true;
   for (let directoryEntryIndex = 0; directoryEntryIndex < sorted.length; directoryEntryIndex += 1) {
     const file = sorted[directoryEntryIndex]!;
+    const plannedSize = options?.resolvePlannedSize?.(file);
+    const identitySize = Number.isFinite(plannedSize) ? Math.max(0, Number(plannedSize)) : file.size;
     indexed[directoryEntryIndex] = {
       ...file,
       directoryEntryIndex,
       directoryEntryIdentity: createDirectoryEntryIdentity({
         sourcePath: file.sourcePath,
         targetPath: file.targetPath,
-        size: file.size,
+        size: identitySize,
         lastModified: file.lastModified,
-      }, { contentFingerprint }),
+      }, { omitMtime: options?.omitMtime === true }),
     };
     if (
       directoryEntryIndex > 0
@@ -286,8 +292,17 @@ async function indexDirectoryResumeFiles(
 }
 
 export async function validateDirectoryResumeCheckpoint(
-  parent: Pick<TransferTask, "directoryResumeCheckpoint">,
+  parent: Pick<TransferTask, "directoryResumeCheckpoint" | "direction">,
   planned: readonly DirectoryResumeFilePlan[],
+  options?: {
+    /**
+     * Downloads: resolve the planned snapshot size for a covered entry
+     * (typically the local destination byte length). Required so append-only
+     * remote growth does not change the identity while truncates/rewrites that
+     * alter the planned size still fail closed.
+     */
+    resolvePlannedSize?: (file: DirectoryResumeFilePlan) => Promise<number | null> | number | null;
+  },
 ): Promise<boolean> {
   const checkpoint = parent.directoryResumeCheckpoint;
   if (!isValidDirectoryResumeCheckpoint(checkpoint)) return false;
@@ -302,9 +317,25 @@ export async function validateDirectoryResumeCheckpoint(
     : createEmptyDirectoryResumeCheckpoint();
   const manifest = createDirectoryManifestAccumulator(rebuilt);
   let sliceStartedAt = directoryResumeNow();
+  const omitMtime = parent.direction === "download";
   for (let index = 0; index < checkpoint.coveredEntries; index += 1) {
-    const identity = planned[index]?.directoryEntryIdentity;
-    if (!identity) return false;
+    const file = planned[index];
+    if (!file) return false;
+    let identity = file.directoryEntryIdentity;
+    if (options?.resolvePlannedSize) {
+      const plannedSize = await options.resolvePlannedSize(file);
+      if (!Number.isFinite(plannedSize) || (plannedSize as number) < 0) return false;
+      // Remote may have grown; identity must stay keyed to the completed snapshot.
+      if ((plannedSize as number) > file.size) return false;
+      identity = createDirectoryEntryIdentity({
+        sourcePath: file.sourcePath,
+        targetPath: file.targetPath,
+        size: plannedSize as number,
+        lastModified: file.lastModified,
+      }, { omitMtime });
+    } else if (!identity) {
+      return false;
+    }
     manifest.append(identity);
     rebuilt.coveredEntries += 1;
     if (
@@ -872,14 +903,15 @@ async function collectDirectoryResumeFiles(
     0,
     shouldAbort,
   );
-  // Downloads use path-stable identities so append-only growth of covered
-  // entries does not invalidate the compact prefix. Uploads/S2S keep size+mtime.
+  // Downloads omit mtime and key identity size to the planned snapshot so
+  // append-only growth of covered entries does not invalidate the compact
+  // prefix while path/size changes still fail closed. Uploads/S2S keep mtime.
   const files = await indexDirectoryResumeFiles(
     remote.files.map((file) => ({
       ...file,
       targetPath: joinTransferTargetPath(destRoot, file.relativePath),
     })),
-    { pathStableIdentity: endpoints.isDownload },
+    { omitMtime: endpoints.isDownload },
   );
   return {
     files,
@@ -1045,7 +1077,23 @@ async function resumeDirectoryWithDedicatedSession(
         totalFiles = planned.length;
         const hasCompactCheckpoint = isValidDirectoryResumeCheckpoint(parent.directoryResumeCheckpoint);
         const compactCheckpointValid = hasCompactCheckpoint
-          && await validateDirectoryResumeCheckpoint(parent, planned);
+          && await validateDirectoryResumeCheckpoint(parent, planned, endpoints.isDownload
+            ? {
+              // Re-key covered identities to the local destination size (the
+              // completed snapshot). Remote growth then keeps the manifest
+              // stable; missing/shorter local files or a remote shrink below
+              // the planned size fail closed.
+              async resolvePlannedSize(file) {
+                try {
+                  const st = await fs.promises.stat(file.targetPath);
+                  if (!st.isFile()) return null;
+                  return st.size;
+                } catch {
+                  return null;
+                }
+              },
+            }
+            : undefined);
         if (
           compactCheckpointValid
           && parent.directoryResumeCheckpoint?.version === 1
@@ -1166,7 +1214,16 @@ async function resumeDirectoryWithDedicatedSession(
                 ? file.lastModified
                 : (persisted?.sourceLastModified ?? file.lastModified),
               directoryEntryIndex: file.directoryEntryIndex,
-              directoryEntryIdentity: file.directoryEntryIdentity,
+              // Downloads keep identity size keyed to the planned snapshot, not
+              // a grown remote size from the fresh walk.
+              directoryEntryIdentity: endpoints.isDownload
+                ? createDirectoryEntryIdentity({
+                  sourcePath: file.sourcePath,
+                  targetPath: file.targetPath,
+                  size: plannedTotalBytes,
+                  lastModified: file.lastModified,
+                }, { omitMtime: true })
+                : file.directoryEntryIdentity,
               conflict: undefined,
             };
 
@@ -1219,13 +1276,18 @@ async function resumeDirectoryWithDedicatedSession(
                 throw new Error(classified.message || validationError || "Resume validation failed");
               } else {
                 // Keep the planned snapshot size for growing remote downloads so
-                // we do not re-plan the whole file mid-resume.
+                // we do not re-plan the whole file mid-resume. Preserve explicit
+                // zero-byte plans (`||` would incorrectly promote to grown size).
+                const plannedBytes = Number(childBase.totalBytes);
+                const hasPlannedBytes = Number.isFinite(plannedBytes) && plannedBytes >= 0;
                 childBase = {
                   ...childBase,
                   totalBytes: allowSourceGrowth
-                    ? (childBase.totalBytes || sourceStat.size)
+                    ? (hasPlannedBytes ? plannedBytes : sourceStat.size)
                     : (sourceStat.size || childBase.totalBytes),
-                  sourceLastModified: allowSourceGrowth && sourceStat.size > (childBase.totalBytes || 0)
+                  sourceLastModified: allowSourceGrowth
+                    && hasPlannedBytes
+                    && sourceStat.size > plannedBytes
                     ? (childBase.sourceLastModified ?? sourceStat.lastModified)
                     : (sourceStat.lastModified ?? childBase.sourceLastModified),
                 };
@@ -1245,7 +1307,9 @@ async function resumeDirectoryWithDedicatedSession(
                 targetSftpId,
                 sourceHostId: endpoints.sourceHost?.id,
                 targetHostId: endpoints.targetHost?.id,
-                totalBytes: childBase.totalBytes || file.size || undefined,
+                totalBytes: Number.isFinite(childBase.totalBytes)
+                  ? childBase.totalBytes
+                  : (file.size || undefined),
                 resumable: parent.resumable !== false,
                 checkpointBytes: childBase.checkpointBytes ?? 0,
                 resumeStage: childBase.resumeStage,
@@ -1263,7 +1327,9 @@ async function resumeDirectoryWithDedicatedSession(
               options?.onChildUpdate?.({
                 ...childBase,
                 status: "completed",
-                transferredBytes: childBase.totalBytes || file.size || childBase.transferredBytes,
+                transferredBytes: Number.isFinite(childBase.totalBytes)
+                  ? childBase.totalBytes
+                  : (file.size || childBase.transferredBytes),
                 speed: 0,
                 endTime: Date.now(),
                 error: undefined,

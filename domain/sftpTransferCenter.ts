@@ -172,7 +172,7 @@ export function pruneSftpTransferHistory(
             targetPath: child.targetPath,
             size: child.totalBytes,
             lastModified: child.sourceLastModified,
-          }, { contentFingerprint: parent.direction !== "download" }),
+          }, { omitMtime: parent.direction === "download" }),
         }));
       for (const child of parentChildren) normalizedChildUpdates.set(child.id, child);
     }
@@ -251,22 +251,26 @@ export function validateTransferResumeSource(
 ): string | null {
   const checkpoint = Math.max(0, task.checkpointBytes ?? 0);
   if (checkpoint > source.size) return "Saved checkpoint is beyond the current source size";
-  if (task.totalBytes > 0) {
-    if (source.size < task.totalBytes) {
+  const plannedSize = Number(task.totalBytes);
+  const hasPlannedSize = Number.isFinite(plannedSize) && plannedSize >= 0;
+  if (hasPlannedSize) {
+    if (source.size < plannedSize) {
       return "Source size changed while the transfer was paused";
     }
     // Download snapshots of append-only files (live logs) may grow past the
-    // planned size; the original [0, totalBytes) range is still resume-safe.
-    if (source.size > task.totalBytes && !options?.allowSourceGrowth) {
+    // planned size — including an empty (0-byte) snapshot; the original
+    // [0, totalBytes) range is still resume-safe.
+    if (source.size > plannedSize && !options?.allowSourceGrowth) {
       return "Source size changed while the transfer was paused";
     }
   }
   // Append growth always updates mtime; only treat mtime drift as a rewrite when
-  // the planned size is still exact.
+  // the planned size is still exact. plannedSize === 0 with source growth is
+  // still growth (empty log that received its first lines while paused).
   const sizeGrew =
     Boolean(options?.allowSourceGrowth)
-    && task.totalBytes > 0
-    && source.size > task.totalBytes;
+    && hasPlannedSize
+    && source.size > plannedSize;
   if (
     !sizeGrew
     && task.sourceLastModified
