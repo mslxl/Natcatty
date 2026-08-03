@@ -31,4 +31,6 @@ test('terminal side panel keeps usable terminal space in smaller windows', () =>
   assert.equal(getTerminalSidePanelMaxWidth(1000), 680);
   assert.equal(clampTerminalSidePanelWidth(900, 1000), 680);
   assert.equal(clampTerminalSidePanelWidth(100, 1000), TERMINAL_SIDE_PANEL_MIN_WIDTH);
+  assert.equal(clampTerminalSidePanelWidth(280, 1000, 401), 401);
+  assert.equal(clampTerminalSidePanelWidth(280, 600, 401), TERMINAL_SIDE_PANEL_MIN_WIDTH);
 });

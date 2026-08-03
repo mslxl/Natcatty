@@ -41,7 +41,9 @@ import {
   canSplitSidePanelPaneAtSize,
   collectSidePanelPanes,
   getFocusedSidePanelPane,
-  getSidePanelSplitMinimumSize,
+  getSidePanelNodeMinimumPixels,
+  getSidePanelSplitResizeBounds,
+  SIDE_PANEL_SPLIT_DIVIDER_PIXELS,
   type SidePanelLayout,
   type SidePanelLayoutNode,
   type SidePanelSplitDirection,
@@ -196,7 +198,8 @@ function SidePanelSplitView({
     const container = containerRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
-    const axisLength = node.direction === 'vertical' ? rect.width : rect.height;
+    const axisLength = (node.direction === 'vertical' ? rect.width : rect.height)
+      - Math.max(0, node.children.length - 1) * SIDE_PANEL_SPLIT_DIVIDER_PIXELS;
     if (axisLength <= 0) return;
 
     resizeCleanupRef.current?.();
@@ -204,7 +207,12 @@ function SidePanelSplitView({
     const startClient = node.direction === 'vertical' ? event.clientX : event.clientY;
     const startSizes = [...normalizedSizes];
     const pairSize = startSizes[index] + startSizes[index + 1];
-    const minimum = getSidePanelSplitMinimumSize(pairSize, axisLength);
+    const { firstMin, firstMax } = getSidePanelSplitResizeBounds(
+      node,
+      index,
+      pairSize,
+      axisLength,
+    );
     let frame: number | null = null;
     let pendingClient = startClient;
 
@@ -212,7 +220,7 @@ function SidePanelSplitView({
     const updatePreview = () => {
       frame = null;
       const delta = (pendingClient - startClient) / axisLength;
-      const first = Math.max(minimum, Math.min(pairSize - minimum, startSizes[index] + delta));
+      const first = Math.max(firstMin, Math.min(firstMax, startSizes[index] + delta));
       const next = [...startSizes];
       next[index] = first;
       next[index + 1] = pairSize - first;
@@ -249,7 +257,7 @@ function SidePanelSplitView({
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('blur', finish);
-  }, [node.direction, node.id, normalizedSizes, onResize]);
+  }, [node, normalizedSizes, onResize]);
 
   return (
     <div
@@ -297,13 +305,19 @@ function SidePanelSplitView({
                 const next = [...renderedSizes];
                 const pairSize = next[index] + next[index + 1];
                 const rect = containerRef.current?.getBoundingClientRect();
-                const axisLength = node.direction === 'vertical'
+                const axisLength = (node.direction === 'vertical'
                   ? (rect?.width ?? 0)
-                  : (rect?.height ?? 0);
-                const minimum = getSidePanelSplitMinimumSize(pairSize, axisLength);
+                  : (rect?.height ?? 0))
+                  - Math.max(0, node.children.length - 1) * SIDE_PANEL_SPLIT_DIVIDER_PIXELS;
+                const { firstMin, firstMax } = getSidePanelSplitResizeBounds(
+                  node,
+                  index,
+                  pairSize,
+                  axisLength,
+                );
                 const first = Math.max(
-                  minimum,
-                  Math.min(pairSize - minimum, next[index] + (decrease ? -0.04 : 0.04)),
+                  firstMin,
+                  Math.min(firstMax, next[index] + (decrease ? -0.04 : 0.04)),
                 );
                 next[index] = first;
                 next[index + 1] = pairSize - first;
@@ -592,10 +606,10 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       : new ResizeObserver(() => updateAvailableWidth());
     const updateAvailableWidth = () => {
       const focusSidebar = terminalLayer.querySelector('[data-section="terminal-workspace-sidebar"]');
-      if (resizeObserver && focusSidebar && focusSidebar !== observedFocusSidebar) {
+      if (resizeObserver && focusSidebar !== observedFocusSidebar) {
         if (observedFocusSidebar) resizeObserver.unobserve(observedFocusSidebar);
         observedFocusSidebar = focusSidebar;
-        resizeObserver.observe(focusSidebar);
+        if (focusSidebar) resizeObserver.observe(focusSidebar);
       }
       const nextWidth = getTerminalSidePanelAvailableWidth(
         terminalLayer.getBoundingClientRect().width,
@@ -614,6 +628,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     return () => {
       resizeObserver?.disconnect();
       mutationObserver?.disconnect();
+      observedFocusSidebar = null;
     };
   }, []);
   const handlePaneHostChange = useCallback((tool: SidePanelTab, host: HTMLElement | null) => {
@@ -680,8 +695,15 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     resizePreviewWidth,
     sidePanelWidth,
   });
+  const sidePanelContentMinimumWidth = activeSidePanelLayout
+    ? getSidePanelNodeMinimumPixels(activeSidePanelLayout.root, 'vertical')
+    : 0;
   const shellWidth = requestedShellWidth > 0
-    ? clampTerminalSidePanelWidth(requestedShellWidth, availableSurfaceWidth)
+    ? clampTerminalSidePanelWidth(
+      requestedShellWidth,
+      availableSurfaceWidth,
+      sidePanelContentMinimumWidth,
+    )
     : 0;
 
   const handleSidePanelResizeStart = useCallback((event: React.MouseEvent) => {
@@ -699,6 +721,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       lastWidth = clampTerminalSidePanelWidth(
         startWidth + (sidePanelPosition === 'left' ? delta : -delta),
         availableSurfaceWidthRef.current,
+        sidePanelContentMinimumWidth,
       );
       if (rafId !== null) return;
       rafId = requestAnimationFrame(() => {
@@ -732,6 +755,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     isSidePanelOpenForCurrentTab,
     persistSidePanelWidth,
     setSidePanelWidth,
+    sidePanelContentMinimumWidth,
     sidePanelPosition,
     shellWidth,
   ]);
@@ -819,19 +843,30 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     ? getFocusedSidePanelPane(activeSidePanelLayout)
     : null;
   const focusedPaneHost = focusedPane ? paneHosts.get(focusedPane.tool) ?? null : null;
-  const [focusedPaneSize, setFocusedPaneSize] = useState<{ width: number; height: number } | null>(null);
+  const [focusedPaneSplitAvailability, setFocusedPaneSplitAvailability] = useState({
+    horizontal: false,
+    vertical: false,
+  });
   useLayoutEffect(() => {
     const pane = focusedPaneHost?.closest<HTMLElement>('[data-section="terminal-side-panel-pane"]');
     if (!pane) {
-      setFocusedPaneSize(null);
+      setFocusedPaneSplitAvailability((current) => (
+        !current.horizontal && !current.vertical
+          ? current
+          : { horizontal: false, vertical: false }
+      ));
       return undefined;
     }
     const update = () => {
       const rect = pane.getBoundingClientRect();
-      setFocusedPaneSize((current) => (
-        current?.width === rect.width && current.height === rect.height
+      const next = {
+        horizontal: canSplitSidePanelPaneAtSize(rect.height),
+        vertical: canSplitSidePanelPaneAtSize(rect.width),
+      };
+      setFocusedPaneSplitAvailability((current) => (
+        current.horizontal === next.horizontal && current.vertical === next.vertical
           ? current
-          : { width: rect.width, height: rect.height }
+          : next
       ));
     };
     update();
@@ -1061,7 +1096,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
                 disabled={
                   !activeSidePanelLayout
                   || activePaneCount >= MAX_SIDE_PANEL_PANES
-                  || !canSplitSidePanelPaneAtSize(focusedPaneSize?.height ?? 0)
+                  || !focusedPaneSplitAvailability.horizontal
                 }
                 onSelect={handleSplitSidePanelSelect}
                 t={t}
@@ -1074,7 +1109,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
                 disabled={
                   !activeSidePanelLayout
                   || activePaneCount >= MAX_SIDE_PANEL_PANES
-                  || !canSplitSidePanelPaneAtSize(focusedPaneSize?.width ?? 0)
+                  || !focusedPaneSplitAvailability.vertical
                 }
                 onSelect={handleSplitSidePanelSelect}
                 t={t}

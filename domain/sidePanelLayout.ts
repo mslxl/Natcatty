@@ -33,23 +33,55 @@ export type SidePanelLayout = {
 export const MAX_SIDE_PANEL_PANES = 8;
 export const MIN_SIDE_PANEL_PANE_PIXELS = 80;
 export const MIN_SIDE_PANEL_PANE_RATIO = 0.04;
-
-export function getSidePanelSplitMinimumSize(
-  pairSize: number,
-  axisLength: number,
-): number {
-  const pixelMinimum = axisLength > 0
-    ? MIN_SIDE_PANEL_PANE_PIXELS / axisLength
-    : MIN_SIDE_PANEL_PANE_RATIO;
-  return Math.min(
-    pairSize / 2,
-    Math.max(MIN_SIDE_PANEL_PANE_RATIO, pixelMinimum),
-  );
-}
+export const SIDE_PANEL_SPLIT_DIVIDER_PIXELS = 1;
 
 export function canSplitSidePanelPaneAtSize(axisLength: number): boolean {
   return Number.isFinite(axisLength)
     && axisLength >= MIN_SIDE_PANEL_PANE_PIXELS * 2;
+}
+
+export function getSidePanelNodeMinimumPixels(
+  node: SidePanelLayoutNode,
+  direction: SidePanelSplitDirection,
+): number {
+  if (node.type === 'pane') return MIN_SIDE_PANEL_PANE_PIXELS;
+  const childMinimums = node.children.map((child) => (
+    getSidePanelNodeMinimumPixels(child, direction)
+  ));
+  if (childMinimums.length === 0) return MIN_SIDE_PANEL_PANE_PIXELS;
+  if (node.direction !== direction) return Math.max(...childMinimums);
+  return childMinimums.reduce((sum, minimum) => sum + minimum, 0)
+    + Math.max(0, node.children.length - 1) * SIDE_PANEL_SPLIT_DIVIDER_PIXELS;
+}
+
+export function getSidePanelSplitResizeBounds(
+  node: SidePanelSplitNode,
+  index: number,
+  pairSize: number,
+  axisLength: number,
+): { firstMin: number; firstMax: number } {
+  const ratioFor = (child: SidePanelLayoutNode) => (
+    axisLength > 0
+      ? Math.max(
+        MIN_SIDE_PANEL_PANE_RATIO,
+        getSidePanelNodeMinimumPixels(child, node.direction) / axisLength,
+      )
+      : MIN_SIDE_PANEL_PANE_RATIO
+  );
+  const firstMinimum = ratioFor(node.children[index]);
+  const secondMinimum = ratioFor(node.children[index + 1]);
+  const combinedMinimum = firstMinimum + secondMinimum;
+  if (combinedMinimum > pairSize) {
+    const scale = pairSize / combinedMinimum;
+    return {
+      firstMin: firstMinimum * scale,
+      firstMax: pairSize - (secondMinimum * scale),
+    };
+  }
+  return {
+    firstMin: firstMinimum,
+    firstMax: pairSize - secondMinimum,
+  };
 }
 
 export function createSidePanelLayout(

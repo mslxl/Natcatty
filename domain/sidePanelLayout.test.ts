@@ -8,18 +8,13 @@ import {
   collectSidePanelPanes,
   createSidePanelLayout,
   focusSidePanelPane,
-  getSidePanelSplitMinimumSize,
+  getSidePanelNodeMinimumPixels,
+  getSidePanelSplitResizeBounds,
   resizeSidePanelSplit,
   selectSidePanelTool,
   sidePanelLayoutHasTool,
   splitSidePanelPane,
 } from './sidePanelLayout.ts';
-
-test('split minimum size protects the same pixel width for mouse and keyboard resizing', () => {
-  assert.equal(getSidePanelSplitMinimumSize(1, 400), 0.2);
-  assert.equal(getSidePanelSplitMinimumSize(1, 4000), 0.04);
-  assert.equal(getSidePanelSplitMinimumSize(0.1, 100), 0.05);
-});
 
 test('panes smaller than two minimum cells cannot be split again', () => {
   const layout = createSidePanelLayout('notes', 'pane-notes');
@@ -31,6 +26,27 @@ test('panes smaller than two minimum cells cannot be split again', () => {
   assert.equal(canSplitSidePanelPaneAtSize(159), false);
   assert.equal(canSplitSidePanelPaneAtSize(160), true);
   assert.equal(tooSmall, layout);
+});
+
+test('nested split resize bounds preserve every descendant pane minimum', () => {
+  let layout = createSidePanelLayout('notes', 'pane-notes');
+  layout = splitSidePanelPane(layout, 'pane-notes', 'ai', 'vertical', {
+    paneId: 'pane-ai',
+    splitId: 'split-root',
+  }, 420);
+  layout = splitSidePanelPane(layout, 'pane-ai', 'system', 'vertical', {
+    paneId: 'pane-system',
+    splitId: 'split-nested',
+  }, 210);
+
+  assert.equal(layout.root.type, 'split');
+  if (layout.root.type !== 'split') return;
+  assert.equal(getSidePanelNodeMinimumPixels(layout.root, 'vertical'), 242);
+  assert.equal(getSidePanelNodeMinimumPixels(layout.root, 'horizontal'), 80);
+
+  const bounds = getSidePanelSplitResizeBounds(layout.root, 0, 1, 419);
+  assert.ok(bounds.firstMax < 0.62);
+  assert.ok((1 - bounds.firstMax) * 419 >= 161);
 });
 
 test('a focused pane can be split repeatedly into a nested multi-pane layout', () => {

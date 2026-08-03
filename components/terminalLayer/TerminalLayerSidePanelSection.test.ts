@@ -267,3 +267,20 @@ test('side panel width dragging cleans up on mouseup, blur, and unmount', () => 
   assert.match(sectionSource, /window\.addEventListener\('blur', finish\)/);
   assert.match(sectionSource, /window\.removeEventListener\('blur', finish\)/);
 });
+
+test('split resizing preserves nested minimums without rerendering on every pixel', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /getSidePanelSplitResizeBounds/);
+  assert.match(sectionSource, /getSidePanelNodeMinimumPixels\(activeSidePanelLayout\.root, 'vertical'\)/);
+  assert.match(sectionSource, /focusedPaneSplitAvailability/);
+  assert.doesNotMatch(sectionSource, /focusedPaneSize/);
+});
+
+test('available-width observer releases a removed focus sidebar immediately', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /focusSidebar !== observedFocusSidebar/);
+  assert.match(sectionSource, /if \(observedFocusSidebar\) resizeObserver\.unobserve\(observedFocusSidebar\)/);
+  assert.match(sectionSource, /observedFocusSidebar = null/);
+});

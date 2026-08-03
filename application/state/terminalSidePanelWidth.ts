@@ -19,11 +19,17 @@ export function getTerminalSidePanelMaxWidth(availableSurfaceWidth: number): num
   );
 }
 
-export function clampTerminalSidePanelWidth(width: number, availableSurfaceWidth: number): number {
-  return Math.max(
-    TERMINAL_SIDE_PANEL_MIN_WIDTH,
-    Math.min(getTerminalSidePanelMaxWidth(availableSurfaceWidth), width),
+export function clampTerminalSidePanelWidth(
+  width: number,
+  availableSurfaceWidth: number,
+  contentMinimumWidth = TERMINAL_SIDE_PANEL_MIN_WIDTH,
+): number {
+  const maximumWidth = getTerminalSidePanelMaxWidth(availableSurfaceWidth);
+  const minimumWidth = Math.min(
+    maximumWidth,
+    Math.max(TERMINAL_SIDE_PANEL_MIN_WIDTH, contentMinimumWidth),
   );
+  return Math.max(minimumWidth, Math.min(maximumWidth, width));
 }
 
 export function getTerminalSidePanelMaxShownTools(panelWidth: number): number {
