@@ -408,12 +408,19 @@ function writeUserSuppression(options = {}) {
 }
 
 function clearUserSuppression(options = {}) {
-  // Only delete HKCU keys that are suppressions so we do not wipe a real
-  // per-user install when refreshing user-scope keys.
+  // Remove per-user ProgrammaticAccessOnly hides without destroying a real
+  // portable/user install that was only hidden (command value still present).
   let ok = true;
   for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
     if (!isSuppressionKey("HKCU", keyPath, options)) continue;
-    if (!deleteRegKey("HKCU", keyPath, options)) ok = false;
+    const command = readRegStr("HKCU", `${keyPath}\\command`, "", options);
+    if (typeof command === "string" && command.trim()) {
+      // Hidden install verb: drop only the suppression value.
+      if (!deleteRegValue("HKCU", keyPath, SUPPRESSION_VALUE, options)) ok = false;
+    } else if (!deleteRegKey("HKCU", keyPath, options)) {
+      // Pure suppression stub with no runnable command.
+      ok = false;
+    }
   }
   return ok;
 }
@@ -593,9 +600,12 @@ function installExplorerContextMenu({
       && shellVerbIsCurrent("HKLM", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
 
     if (!machineCurrent) {
-      // Keep existing HKCU portable verbs / suppression intact. Report any
-      // surviving runnable verb (including a partial single HKLM entry) so the
-      // Settings toggle stays aligned with what Explorer still shows.
+      // Cannot refresh HKLM. If we were only hiding via suppression (including
+      // on top of portable install verbs), clear that hide so a failed enable /
+      // preference-write rollback does not leave the only working verbs suppressed.
+      if (wasSuppressed) {
+        clearUserSuppression(options);
+      }
       return {
         success: false,
         enabled: hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn }),

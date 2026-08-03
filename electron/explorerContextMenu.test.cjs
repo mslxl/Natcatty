@@ -785,6 +785,78 @@ test("installExplorerContextMenu clears stale portable HKCU verbs when HKLM exis
   assert.equal(present.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"), false);
 });
 
+test("installExplorerContextMenu unsuppresses portable HKCU when HKLM refresh fails", () => {
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    [`HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::${SUPPRESSION_VALUE}`, ""],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."'],
+    [`HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::${SUPPRESSION_VALUE}`, ""],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%V."'],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Old\\Netcatty.exe" --open-terminal-path "%1"'],
+  ]);
+  const deletedValues = [];
+  const deletedKeys = [];
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      return { status: 1, stdout: "", stderr: "access denied" };
+    }
+    if (args[0] === "delete") {
+      if (args.includes("/v")) {
+        const key = args[1];
+        const valueName = args[args.indexOf("/v") + 1];
+        deletedValues.push(`${key}::${valueName}`);
+        values.delete(`${key}::${valueName}`);
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      deletedKeys.push(args[1]);
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, false);
+  assert.equal(deletedKeys.length, 0);
+  assert.ok(deletedValues.every((entry) => entry.includes(SUPPRESSION_VALUE)));
+  assert.equal(result.enabled, true);
+  assert.equal(
+    values.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::"),
+    true,
+  );
+});
+
 test("installExplorerContextMenu keeps working HKCU when HKLM refresh fails", () => {
   const portableCmd = '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."';
   const portableBg = '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%V."';
