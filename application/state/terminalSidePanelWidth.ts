@@ -1,6 +1,7 @@
 export const TERMINAL_SIDE_PANEL_MIN_WIDTH = 280;
 export const TERMINAL_SIDE_PANEL_MAX_WIDTH = 1200;
 export const TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH = 320;
+export const TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH = `max(${TERMINAL_SIDE_PANEL_MIN_WIDTH}px, min(${TERMINAL_SIDE_PANEL_MAX_WIDTH}px, calc(100vw - ${TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH}px)))`;
 
 export function getTerminalSidePanelMaxWidth(viewportWidth: number): number {
   const availableWidth = viewportWidth - TERMINAL_SIDE_PANEL_MIN_TERMINAL_WIDTH;

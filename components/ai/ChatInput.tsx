@@ -43,8 +43,11 @@ import {
   CHAT_INPUT_MAX_HEIGHT,
   CHAT_INPUT_MIN_HEIGHT,
   CHAT_INPUT_PANEL_RESERVE,
+  resolveChatInputAriaHeight,
   resolveChatInputMaxHeight,
   resolveChatInputResizeHeight,
+  resolveVisibleChatInputHeight,
+  resolveVisibleChatInputMaxHeight,
 } from './chatInputResize';
 
 // Keep in sync with the popover's Tailwind max-width below.
@@ -179,6 +182,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const composerDisabled = disabled || isSteering;
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
+  const composerDesiredHeightRef = useRef<number | null>(null);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
   type ActiveMenu = 'model' | 'attach' | 'atMention' | 'slashCommand' | 'perm' | null;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
@@ -213,6 +217,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
     startHeight: number;
     maxHeight: number;
     previousUserSelect: string;
+    pendingY: number | null;
+    frame: number | null;
   } | null>(null);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
   const permBtnRef = useRef<HTMLButtonElement>(null);
@@ -228,15 +234,35 @@ const ChatInput: React.FC<ChatInputProps> = ({
     );
   }, []);
 
+  const applyPendingComposerResize = useCallback(() => {
+    const resizeStart = resizeStartRef.current;
+    if (!resizeStart) return;
+    resizeStart.frame = null;
+    if (resizeStart.pendingY == null) return;
+    const nextHeight = resolveChatInputResizeHeight(
+      resizeStart.startHeight,
+      resizeStart.startY,
+      resizeStart.pendingY,
+      resizeStart.maxHeight,
+    );
+    resizeStart.pendingY = null;
+    composerDesiredHeightRef.current = nextHeight;
+    setComposerHeight(nextHeight);
+  }, []);
+
   const finishComposerResize = useCallback((target?: HTMLDivElement, pointerId?: number) => {
     const resizeStart = resizeStartRef.current;
     if (!resizeStart) return;
+    if (resizeStart.frame !== null) {
+      cancelAnimationFrame(resizeStart.frame);
+      applyPendingComposerResize();
+    }
     if (target && pointerId != null && target.hasPointerCapture(pointerId)) {
       target.releasePointerCapture(pointerId);
     }
     document.body.style.userSelect = resizeStart.previousUserSelect;
     resizeStartRef.current = null;
-  }, []);
+  }, [applyPendingComposerResize]);
 
   const handleComposerResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !inputShellRef.current) return;
@@ -249,6 +275,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
       startHeight: inputShellRef.current.getBoundingClientRect().height,
       maxHeight,
       previousUserSelect: document.body.style.userSelect,
+      pendingY: null,
+      frame: null,
     };
     setComposerMaxHeight(maxHeight);
     document.body.style.userSelect = 'none';
@@ -258,13 +286,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const handleComposerResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     const resizeStart = resizeStartRef.current;
     if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
-    setComposerHeight(resolveChatInputResizeHeight(
-      resizeStart.startHeight,
-      resizeStart.startY,
-      event.clientY,
-      resizeStart.maxHeight,
-    ));
-  }, []);
+    resizeStart.pendingY = event.clientY;
+    if (resizeStart.frame === null) {
+      resizeStart.frame = requestAnimationFrame(applyPendingComposerResize);
+    }
+  }, [applyPendingComposerResize]);
 
   const handleComposerResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     finishComposerResize(event.currentTarget, event.pointerId);
@@ -284,6 +310,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       maxHeight,
     );
     setComposerMaxHeight(maxHeight);
+    composerDesiredHeightRef.current = nextHeight;
     setComposerHeight(nextHeight);
   }, [composerHeight, getComposerMaxHeight]);
 
@@ -291,10 +318,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     const panel = inputShellRef.current?.closest<HTMLElement>('[data-section="ai-chat-panel"]');
     if (!panel || typeof ResizeObserver === 'undefined') return undefined;
     const observer = new ResizeObserver(() => {
-      const maxHeight = resolveChatInputMaxHeight(panel.clientHeight);
+      const maxHeight = resolveVisibleChatInputMaxHeight(panel.clientHeight);
+      if (maxHeight == null) return;
       setComposerMaxHeight(maxHeight);
-      setComposerHeight((currentHeight) => (
-        currentHeight == null ? null : Math.min(currentHeight, maxHeight)
+      setComposerHeight(resolveVisibleChatInputHeight(
+        composerDesiredHeightRef.current,
+        maxHeight,
       ));
     });
     observer.observe(panel);
@@ -303,7 +332,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   useEffect(() => () => {
     const resizeStart = resizeStartRef.current;
-    if (resizeStart) document.body.style.userSelect = resizeStart.previousUserSelect;
+    if (!resizeStart) return;
+    if (resizeStart.frame !== null) cancelAnimationFrame(resizeStart.frame);
+    document.body.style.userSelect = resizeStart.previousUserSelect;
   }, []);
 
   const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
@@ -757,7 +788,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
         aria-label={t('ai.chat.resizeInput')}
         aria-valuemin={CHAT_INPUT_MIN_HEIGHT}
         aria-valuemax={composerMaxHeight}
-        aria-valuenow={Math.round(composerHeight ?? CHAT_INPUT_DEFAULT_HEIGHT)}
+        aria-valuenow={Math.round(resolveChatInputAriaHeight(
+          composerHeight,
+          composerMaxHeight,
+        ))}
         tabIndex={0}
         title={t('ai.chat.resizeInput')}
         onPointerDown={handleComposerResizeStart}
@@ -765,7 +799,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
         onPointerUp={handleComposerResizeEnd}
         onPointerCancel={handleComposerResizeEnd}
         onKeyDown={handleComposerResizeKeyDown}
-        onDoubleClick={() => setComposerHeight(null)}
+        onDoubleClick={() => {
+          composerDesiredHeightRef.current = null;
+          setComposerHeight(null);
+        }}
         className="group/resize absolute inset-x-2 -top-1 z-20 flex h-2 cursor-ns-resize touch-none items-start justify-center outline-none"
       >
         <span className="mt-[3px] h-0.5 w-10 rounded-full bg-border opacity-0 transition-opacity group-hover/resize:opacity-80 group-focus-visible/resize:opacity-80" />

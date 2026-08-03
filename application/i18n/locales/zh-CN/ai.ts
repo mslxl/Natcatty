@@ -529,6 +529,8 @@ export const zhCNAiMessages: Messages = {
   'terminal.layer.movePanelLeft': '面板移至左侧',
   'terminal.layer.movePanelRight': '面板移至右侧',
   'terminal.layer.closePanel': '关闭面板',
+  'terminal.layer.closePane': '关闭分屏',
+  'terminal.layer.resizeSplit': '调整分屏大小',
   'terminal.layer.splitHorizontal': '上下分屏',
   'terminal.layer.splitVertical': '左右分屏',
   'terminal.layer.openInNewSplit': '在新分屏中打开',

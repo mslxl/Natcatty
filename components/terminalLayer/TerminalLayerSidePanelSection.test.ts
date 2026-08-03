@@ -7,7 +7,10 @@ import {
   reorderTerminalSidePanelTab,
   TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER,
 } from '../../application/state/terminalSidePanelTabs.ts';
-import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection.tsx';
+import {
+  getTerminalSidePanelShellWidth,
+  listenForSidePanelPaneFocus,
+} from './TerminalLayerSidePanelSection.tsx';
 import { resolveSidePanelPortalTarget } from './terminalLayerSidePanelSlots.tsx';
 
 test('AI side panel shell can be force-hidden for layout isolation', () => {
@@ -48,6 +51,21 @@ test('closed side panel shell has no width', () => {
     resizePreviewWidth: null,
     sidePanelWidth: 420,
   }), 0);
+});
+
+test('native events from portaled tool content focus the owning pane', () => {
+  const host = new EventTarget();
+  let focusCount = 0;
+  const stopListening = listenForSidePanelPaneFocus(host, () => {
+    focusCount += 1;
+  });
+
+  host.dispatchEvent(new Event('pointerdown'));
+  assert.equal(focusCount, 1);
+
+  stopListening();
+  host.dispatchEvent(new Event('pointerdown'));
+  assert.equal(focusCount, 1);
 });
 
 test('side panel tab order falls back to the default order', () => {
@@ -183,10 +201,17 @@ test('side panel layout state is initialized before callbacks read it', () => {
   assert.ok(layoutStateIndex < statusCallbackIndex);
 });
 
-test('split dragging cleans up on mouseup, window blur, and pane unmount', () => {
+test('split dragging previews locally, commits once, and cleans up on every exit path', () => {
   const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
 
-  assert.match(sectionSource, /window\.addEventListener\('blur', cleanup\)/);
+  assert.match(sectionSource, /const updatePreview = \(\) => \{[\s\S]*setPreviewSizes\(next\)/);
+  assert.match(sectionSource, /const finish = \(\) => \{[\s\S]*onResize\(node\.id, latestSizes\)/);
+  const previewBody = sectionSource.slice(
+    sectionSource.indexOf('const updatePreview = () => {'),
+    sectionSource.indexOf('const onMouseMove = (moveEvent: MouseEvent) => {'),
+  );
+  assert.doesNotMatch(previewBody, /onResize/);
+  assert.match(sectionSource, /window\.addEventListener\('blur', finish\)/);
   assert.match(sectionSource, /resizeCleanupRef\.current\?\.\(\)/);
   assert.match(sectionSource, /terminalLayoutSuppressStore\.end\(\)/);
 });
@@ -208,5 +233,16 @@ test('side panel resize uses the expanded width limit and protects terminal spac
 
   assert.match(layerSource, /TERMINAL_SIDE_PANEL_MAX_WIDTH/);
   assert.match(sectionSource, /clampTerminalSidePanelWidth/);
+  assert.match(sectionSource, /shellRef\.current\?\.getBoundingClientRect\(\)\.width \?\? shellWidth/);
+  assert.doesNotMatch(sectionSource, /const startWidth = sidePanelWidth/);
   assert.doesNotMatch(sectionSource, /Math\.min\(800,/);
+});
+
+test('side panel width dragging cleans up on mouseup, blur, and unmount', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(sectionSource, /shellResizeCleanupRef\.current\?\.\(\)/);
+  assert.match(sectionSource, /window\.addEventListener\('mouseup', finish\)/);
+  assert.match(sectionSource, /window\.addEventListener\('blur', finish\)/);
+  assert.match(sectionSource, /window\.removeEventListener\('blur', finish\)/);
 });

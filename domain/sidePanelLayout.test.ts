@@ -7,11 +7,18 @@ import {
   collectSidePanelPanes,
   createSidePanelLayout,
   focusSidePanelPane,
+  getSidePanelSplitMinimumSize,
   resizeSidePanelSplit,
   selectSidePanelTool,
   sidePanelLayoutHasTool,
   splitSidePanelPane,
 } from './sidePanelLayout.ts';
+
+test('split minimum size protects the same pixel width for mouse and keyboard resizing', () => {
+  assert.equal(getSidePanelSplitMinimumSize(1, 400), 0.2);
+  assert.equal(getSidePanelSplitMinimumSize(1, 4000), 0.04);
+  assert.equal(getSidePanelSplitMinimumSize(0.1, 100), 0.05);
+});
 
 test('a focused pane can be split repeatedly into a nested multi-pane layout', () => {
   let layout = createSidePanelLayout('notes', 'pane-notes');

@@ -529,6 +529,8 @@ export const enAiMessages: Messages = {
   'terminal.layer.movePanelLeft': 'Move panel to left',
   'terminal.layer.movePanelRight': 'Move panel to right',
   'terminal.layer.closePanel': 'Close panel',
+  'terminal.layer.closePane': 'Close split',
+  'terminal.layer.resizeSplit': 'Resize split',
   'terminal.layer.splitHorizontal': 'Split top and bottom',
   'terminal.layer.splitVertical': 'Split left and right',
   'terminal.layer.openInNewSplit': 'Open in new split',

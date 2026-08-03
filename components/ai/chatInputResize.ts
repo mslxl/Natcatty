@@ -10,6 +10,28 @@ export function resolveChatInputMaxHeight(panelHeight: number): number {
   );
 }
 
+export function resolveVisibleChatInputMaxHeight(panelHeight: number): number | null {
+  if (!Number.isFinite(panelHeight) || panelHeight <= 0) return null;
+  return resolveChatInputMaxHeight(panelHeight);
+}
+
+export function resolveVisibleChatInputHeight(
+  desiredHeight: number | null,
+  maxHeight: number,
+): number | null {
+  return desiredHeight == null ? null : Math.min(desiredHeight, maxHeight);
+}
+
+export function resolveChatInputAriaHeight(
+  height: number | null,
+  maxHeight: number,
+): number {
+  return Math.max(
+    CHAT_INPUT_MIN_HEIGHT,
+    Math.min(maxHeight, height ?? CHAT_INPUT_DEFAULT_HEIGHT),
+  );
+}
+
 export function resolveChatInputResizeHeight(
   startHeight: number,
   startPointerY: number,

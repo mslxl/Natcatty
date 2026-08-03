@@ -19,7 +19,10 @@ import {
   type TerminalSidePanelTabId,
   useTerminalSidePanelTabOrder,
 } from '../../application/state/terminalSidePanelTabs';
-import { clampTerminalSidePanelWidth } from '../../application/state/terminalSidePanelWidth';
+import {
+  clampTerminalSidePanelWidth,
+  TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
+} from '../../application/state/terminalSidePanelWidth';
 import { terminalLayoutSuppressStore } from '../../application/state/terminalLayoutSuppressStore';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 
@@ -33,6 +36,7 @@ import type { SidePanelTab } from './TerminalLayerSupport';
 import {
   MAX_SIDE_PANEL_PANES,
   collectSidePanelPanes,
+  getSidePanelSplitMinimumSize,
   type SidePanelLayout,
   type SidePanelLayoutNode,
   type SidePanelSplitDirection,
@@ -61,6 +65,14 @@ type SidePanelTabItem = {
   onClick: () => void;
 };
 
+export function listenForSidePanelPaneFocus(
+  target: EventTarget,
+  onFocus: () => void,
+): () => void {
+  target.addEventListener('pointerdown', onFocus);
+  return () => target.removeEventListener('pointerdown', onFocus);
+}
+
 function SidePanelPaneHost({
   node,
   focused,
@@ -69,6 +81,7 @@ function SidePanelPaneHost({
   onClose,
   onFocus,
   onHostChange,
+  closePaneLabel,
   separator,
   mutedColor,
 }: {
@@ -79,6 +92,7 @@ function SidePanelPaneHost({
   onClose: (paneId: string) => void;
   onFocus: (paneId: string) => void;
   onHostChange: (tool: SidePanelTab, host: HTMLElement | null) => void;
+  closePaneLabel: string;
   separator: string;
   mutedColor: string;
 }) {
@@ -90,8 +104,14 @@ function SidePanelPaneHost({
   useLayoutEffect(() => {
     const host = hostRef.current;
     onHostChange(node.tool, host);
-    return () => onHostChange(node.tool, null);
-  }, [node.tool, onHostChange]);
+    const stopListening = host
+      ? listenForSidePanelPaneFocus(host, () => onFocus(node.id))
+      : null;
+    return () => {
+      stopListening?.();
+      onHostChange(node.tool, null);
+    };
+  }, [node.id, node.tool, onFocus, onHostChange]);
 
   return (
     <div
@@ -114,7 +134,7 @@ function SidePanelPaneHost({
           <button
             type="button"
             className="h-5 w-5 grid place-items-center rounded-sm opacity-70 hover:opacity-100 hover:bg-white/10"
-            aria-label={label}
+            aria-label={`${closePaneLabel}: ${label}`}
             onMouseDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
@@ -139,16 +159,22 @@ function SidePanelSplitView({
   children,
   onResize,
   separator,
+  resizeLabel,
 }: {
   node: SidePanelSplitNode;
   children: React.ReactNode[];
   onResize: (splitId: string, sizes: number[]) => void;
   separator: string;
+  resizeLabel: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
-  const total = node.sizes.reduce((sum, size) => sum + size, 0) || 1;
-  const normalizedSizes = node.children.map((_, index) => (node.sizes[index] ?? 1) / total);
+  const normalizedSizes = useMemo(() => {
+    const total = node.sizes.reduce((sum, size) => sum + size, 0) || 1;
+    return node.children.map((_, index) => (node.sizes[index] ?? 1) / total);
+  }, [node.children, node.sizes]);
+  const [previewSizes, setPreviewSizes] = useState<number[] | null>(null);
+  const renderedSizes = previewSizes ?? normalizedSizes;
 
   useLayoutEffect(() => () => {
     resizeCleanupRef.current?.();
@@ -168,22 +194,24 @@ function SidePanelSplitView({
     const startClient = node.direction === 'vertical' ? event.clientX : event.clientY;
     const startSizes = [...normalizedSizes];
     const pairSize = startSizes[index] + startSizes[index + 1];
-    const minimum = Math.min(pairSize / 2, Math.max(0.04, 80 / axisLength));
+    const minimum = getSidePanelSplitMinimumSize(pairSize, axisLength);
     let frame: number | null = null;
     let pendingClient = startClient;
 
-    const commit = () => {
+    let latestSizes = startSizes;
+    const updatePreview = () => {
       frame = null;
       const delta = (pendingClient - startClient) / axisLength;
       const first = Math.max(minimum, Math.min(pairSize - minimum, startSizes[index] + delta));
       const next = [...startSizes];
       next[index] = first;
       next[index + 1] = pairSize - first;
-      onResize(node.id, next);
+      latestSizes = next;
+      setPreviewSizes(next);
     };
     const onMouseMove = (moveEvent: MouseEvent) => {
       pendingClient = node.direction === 'vertical' ? moveEvent.clientX : moveEvent.clientY;
-      if (frame === null) frame = requestAnimationFrame(commit);
+      if (frame === null) frame = requestAnimationFrame(updatePreview);
     };
     let cleanedUp = false;
     const cleanup = () => {
@@ -194,20 +222,23 @@ function SidePanelSplitView({
       terminalLayoutSuppressStore.end();
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
-      window.removeEventListener('blur', cleanup);
+      window.removeEventListener('blur', finish);
       if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
     };
-    const onMouseUp = () => {
+    const finish = () => {
       if (frame !== null) {
         cancelAnimationFrame(frame);
-        commit();
+        updatePreview();
       }
+      onResize(node.id, latestSizes);
+      setPreviewSizes(null);
       cleanup();
     };
+    const onMouseUp = () => finish();
     resizeCleanupRef.current = cleanup;
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
-    window.addEventListener('blur', cleanup);
+    window.addEventListener('blur', finish);
   }, [node.direction, node.id, normalizedSizes, onResize]);
 
   return (
@@ -224,7 +255,7 @@ function SidePanelSplitView({
         <React.Fragment key={node.children[index].id}>
           <div
             className="min-h-0 min-w-0 overflow-hidden relative"
-            style={{ flexBasis: 0, flexGrow: normalizedSizes[index] }}
+            style={{ flexBasis: 0, flexGrow: renderedSizes[index] }}
           >
             {child}
           </div>
@@ -234,7 +265,40 @@ function SidePanelSplitView({
                 ? "group relative w-px shrink-0 cursor-ew-resize z-20 after:content-[''] after:absolute after:inset-y-0 after:left-1/2 after:w-2 after:-translate-x-1/2"
                 : "group relative h-px shrink-0 cursor-ns-resize z-20 after:content-[''] after:absolute after:inset-x-0 after:top-1/2 after:h-2 after:-translate-y-1/2"}
               data-section="terminal-side-panel-split-resizer"
+              role="separator"
+              tabIndex={0}
+              aria-label={resizeLabel}
+              aria-orientation={node.direction === 'vertical' ? 'vertical' : 'horizontal'}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(
+                (renderedSizes[index] / (renderedSizes[index] + renderedSizes[index + 1])) * 100,
+              )}
               onMouseDown={(event) => startResize(event, index)}
+              onKeyDown={(event) => {
+                const decrease = node.direction === 'vertical'
+                  ? event.key === 'ArrowLeft'
+                  : event.key === 'ArrowUp';
+                const increase = node.direction === 'vertical'
+                  ? event.key === 'ArrowRight'
+                  : event.key === 'ArrowDown';
+                if (!decrease && !increase) return;
+                event.preventDefault();
+                const next = [...renderedSizes];
+                const pairSize = next[index] + next[index + 1];
+                const rect = containerRef.current?.getBoundingClientRect();
+                const axisLength = node.direction === 'vertical'
+                  ? (rect?.width ?? 0)
+                  : (rect?.height ?? 0);
+                const minimum = getSidePanelSplitMinimumSize(pairSize, axisLength);
+                const first = Math.max(
+                  minimum,
+                  Math.min(pairSize - minimum, next[index] + (decrease ? -0.04 : 0.04)),
+                );
+                next[index] = first;
+                next[index + 1] = pairSize - first;
+                onResize(node.id, next);
+              }}
             >
               <div
                 className={node.direction === 'vertical'
@@ -261,6 +325,8 @@ function SidePanelLayoutTree({
   onResize,
   separator,
   accent,
+  closePaneLabel,
+  resizeLabel,
 }: {
   node: SidePanelLayoutNode;
   layout: SidePanelLayout;
@@ -272,6 +338,8 @@ function SidePanelLayoutTree({
   onResize: (splitId: string, sizes: number[]) => void;
   separator: string;
   accent: string;
+  closePaneLabel: string;
+  resizeLabel: string;
 }): React.ReactNode {
   if (node.type === 'pane') {
     return (
@@ -283,6 +351,7 @@ function SidePanelLayoutTree({
         onClose={onClose}
         onFocus={onFocus}
         onHostChange={onHostChange}
+        closePaneLabel={closePaneLabel}
         separator={separator}
         mutedColor={accent}
       />
@@ -290,7 +359,12 @@ function SidePanelLayoutTree({
   }
 
   return (
-    <SidePanelSplitView node={node} onResize={onResize} separator={separator}>
+    <SidePanelSplitView
+      node={node}
+      onResize={onResize}
+      separator={separator}
+      resizeLabel={resizeLabel}
+    >
       {node.children.map((child) => (
         <SidePanelLayoutTree
           key={child.id}
@@ -304,6 +378,8 @@ function SidePanelLayoutTree({
           onResize={onResize}
           separator={separator}
           accent={accent}
+          closePaneLabel={closePaneLabel}
+          resizeLabel={resizeLabel}
         />
       ))}
     </SidePanelSplitView>
@@ -481,12 +557,17 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       : ctxResolvedPreviewTheme);
 
   const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const shellResizeCleanupRef = useRef<(() => void) | null>(null);
   const [paneHosts, setPaneHosts] = useState<Map<SidePanelTab, HTMLElement>>(new Map());
   const [parkingHost, setParkingHost] = useState<HTMLElement | null>(null);
   const parkingHostRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     setParkingHost(parkingHostRef.current);
     return () => setParkingHost(null);
+  }, []);
+  useLayoutEffect(() => () => {
+    shellResizeCleanupRef.current?.();
   }, []);
   const handlePaneHostChange = useCallback((tool: SidePanelTab, host: HTMLElement | null) => {
     setPaneHosts((current) => {
@@ -559,9 +640,10 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
   const handleSidePanelResizeStart = useCallback((event: React.MouseEvent) => {
     if (!isSidePanelOpenForCurrentTab) return;
     event.preventDefault();
+    shellResizeCleanupRef.current?.();
     terminalLayoutSuppressStore.begin();
     const startX = event.clientX;
-    const startWidth = sidePanelWidth;
+    const startWidth = shellRef.current?.getBoundingClientRect().width ?? shellWidth;
     let lastWidth = startWidth;
     let rafId: number | null = null;
 
@@ -577,23 +659,34 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
         setResizePreviewWidth(lastWidth);
       });
     };
-    const onMouseUp = () => {
+    let cleanedUp = false;
+    const cleanup = () => {
+      if (cleanedUp) return;
+      cleanedUp = true;
       if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = null;
+      terminalLayoutSuppressStore.end();
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', finish);
+      window.removeEventListener('blur', finish);
+      if (shellResizeCleanupRef.current === cleanup) shellResizeCleanupRef.current = null;
+    };
+    const finish = () => {
       setSidePanelWidth(lastWidth);
       persistSidePanelWidth(lastWidth);
       setResizePreviewWidth(null);
-      terminalLayoutSuppressStore.end();
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+      cleanup();
     };
+    shellResizeCleanupRef.current = cleanup;
     window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mouseup', finish);
+    window.addEventListener('blur', finish);
   }, [
     isSidePanelOpenForCurrentTab,
     persistSidePanelWidth,
     setSidePanelWidth,
     sidePanelPosition,
-    sidePanelWidth,
+    shellWidth,
   ]);
 
   const handleSidePanelTabDragStart = useCallback((event: React.DragEvent, tab: TerminalSidePanelTabId) => {
@@ -708,7 +801,12 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
 
   return (
     <div
-      style={{ width: shellWidth, contain: 'layout paint style' }}
+      ref={shellRef}
+      style={{
+        width: shellWidth,
+        maxWidth: TERMINAL_SIDE_PANEL_VIEWPORT_MAX_WIDTH,
+        contain: 'layout paint style',
+      }}
       className={cn(
         'flex-shrink-0 h-full relative z-20',
         shellWidth === 0 && 'overflow-hidden',
@@ -922,6 +1020,8 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
               onResize={handleResizeSidePanelSplit}
               separator={sidePanelTheme.separator}
               accent={sidePanelTheme.accent}
+              closePaneLabel={t('terminal.layer.closePane')}
+              resizeLabel={t('terminal.layer.resizeSplit')}
             />
           )}
           <div

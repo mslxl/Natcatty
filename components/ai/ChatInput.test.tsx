@@ -8,8 +8,11 @@ import ChatInput from './ChatInput';
 import {
   CHAT_INPUT_MAX_HEIGHT,
   CHAT_INPUT_MIN_HEIGHT,
+  resolveChatInputAriaHeight,
   resolveChatInputMaxHeight,
   resolveChatInputResizeHeight,
+  resolveVisibleChatInputHeight,
+  resolveVisibleChatInputMaxHeight,
 } from './chatInputResize';
 import { TooltipProvider } from '../ui/tooltip';
 
@@ -19,6 +22,20 @@ test('clamps composer dragging to the usable pane height', () => {
   assert.equal(resolveChatInputResizeHeight(128, 500, 420, 360), 208);
   assert.equal(resolveChatInputResizeHeight(128, 500, 700, 360), CHAT_INPUT_MIN_HEIGHT);
   assert.equal(resolveChatInputResizeHeight(300, 500, 300, 360), 360);
+});
+
+test('keeps the requested composer height while the pane is temporarily hidden or constrained', () => {
+  assert.equal(resolveVisibleChatInputMaxHeight(0), null);
+  assert.equal(resolveVisibleChatInputMaxHeight(Number.NaN), null);
+  assert.equal(resolveVisibleChatInputHeight(360, 220), 220);
+  assert.equal(resolveVisibleChatInputHeight(360, 400), 360);
+  assert.equal(resolveVisibleChatInputHeight(null, 400), null);
+});
+
+test('reports an accessible composer height inside the available range', () => {
+  assert.equal(resolveChatInputAriaHeight(null, CHAT_INPUT_MIN_HEIGHT), CHAT_INPUT_MIN_HEIGHT);
+  assert.equal(resolveChatInputAriaHeight(360, 220), 220);
+  assert.equal(resolveChatInputAriaHeight(160, 220), 160);
 });
 
 test('renders an accessible composer resize handle', () => {

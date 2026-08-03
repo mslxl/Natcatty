@@ -31,6 +31,21 @@ export type SidePanelLayout = {
 };
 
 export const MAX_SIDE_PANEL_PANES = 8;
+export const MIN_SIDE_PANEL_PANE_PIXELS = 80;
+export const MIN_SIDE_PANEL_PANE_RATIO = 0.04;
+
+export function getSidePanelSplitMinimumSize(
+  pairSize: number,
+  axisLength: number,
+): number {
+  const pixelMinimum = axisLength > 0
+    ? MIN_SIDE_PANEL_PANE_PIXELS / axisLength
+    : MIN_SIDE_PANEL_PANE_RATIO;
+  return Math.min(
+    pairSize / 2,
+    Math.max(MIN_SIDE_PANEL_PANE_RATIO, pixelMinimum),
+  );
+}
 
 export function createSidePanelLayout(
   tool: SidePanelTool,
