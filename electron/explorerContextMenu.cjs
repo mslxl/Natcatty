@@ -482,18 +482,22 @@ function removeExplorerContextMenu({
   // The Settings toggle is a per-user preference (stored under this user's
   // userData). Never delete HKLM verbs here — even when elevated — so other
   // accounts keep the installer-created menu. Machine-wide cleanup belongs to
-  // the NSIS uninstaller. Per-user disable is: drop HKCU install keys, then
-  // suppress any remaining HKLM verbs via ProgrammaticAccessOnly.
+  // the NSIS uninstaller.
   let success = true;
-  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
-    if (!deleteRegKey("HKCU", keyPath, options)) {
-      if (regKeyExists("HKCU", keyPath, options)) success = false;
-    }
-  }
 
   if (hasMachineRegistration(options)) {
+    // Per-user hide of machine verbs via ProgrammaticAccessOnly. Do not delete
+    // working portable/user HKCU install verbs first: if suppression fails
+    // (partial write rolled back), Explorer must keep the last working path.
     if (!writeUserSuppression(options)) {
       success = false;
+    }
+  } else {
+    // User-scope only: remove the install keys entirely.
+    for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+      if (!deleteRegKey("HKCU", keyPath, options)) {
+        if (regKeyExists("HKCU", keyPath, options)) success = false;
+      }
     }
   }
 

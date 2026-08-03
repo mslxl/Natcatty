@@ -272,10 +272,68 @@ test("removeExplorerContextMenu never deletes HKLM; suppresses per-user instead"
   assert.equal(result.enabled, false);
   assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"));
   assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
-  // Machine keys remain for other users / uninstaller.
+  // Machine keys remain for other users / uninstaller; working HKCU verbs are
+  // hidden via suppression rather than deleted first.
+  assert.equal(deleted.length, 0);
   assert.ok(present.has("HKLM\\Software\\Classes\\Directory\\shell\\Netcatty"));
   assert.ok(present.has("HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
   assert.ok(deleted.every((key) => key.startsWith("HKCU\\")));
+});
+
+test("removeExplorerContextMenu keeps portable HKCU when machine suppression fails", () => {
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."'],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%V."'],
+  ]);
+  const deleted = [];
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "delete") {
+      deleted.push(args[1]);
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "add") {
+      // Suppression write fails (e.g. partial ACL / disk error).
+      return { status: 1, stdout: "", stderr: "access denied" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = removeExplorerContextMenu({
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, false);
+  assert.equal(deleted.length, 0);
+  assert.equal(present.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"), true);
+  assert.equal(result.enabled, true);
 });
 
 test("installExplorerContextMenu writes HKCU shell command entries", () => {
