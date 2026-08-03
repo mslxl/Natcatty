@@ -635,7 +635,7 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
   );
 });
 
-test("forwarding socket changes invalidate connection reuse", () => {
+test("forwarding socket changes invalidate shell reuse without blocking channel reuse", () => {
   const base = {
     hostname: "h.example",
     username: "alice",
@@ -643,14 +643,31 @@ test("forwarding socket changes invalidate connection reuse", () => {
     password: "secret",
     agentForwarding: true,
   };
-  assert.notEqual(
-    fingerprintAuth({ ...base, forwardingAgentSocket: "/tmp/apple-agent.sock" }),
-    fingerprintAuth({ ...base, forwardingAgentSocket: "/Users/alice/.bitwarden-ssh-agent.sock" }),
-  );
+  const apple = { ...base, forwardingAgentSocket: "/tmp/apple-agent.sock" };
+  const bitwarden = {
+    ...base,
+    forwardingAgentSocket: "/Users/alice/.bitwarden-ssh-agent.sock",
+  };
   assert.equal(
-    fingerprintAuth({ ...base, agentForwarding: false, forwardingAgentSocket: "/tmp/one.sock" }),
-    fingerprintAuth({ ...base, agentForwarding: false, forwardingAgentSocket: "/tmp/two.sock" }),
+    fingerprintAuth(apple),
+    fingerprintAuth(bitwarden),
   );
+  assert.equal(buildEndpointKey(apple), buildEndpointKey(bitwarden));
+  assert.equal(endpointAllowsReuse(bitwarden, apple, "shell"), false);
+  assert.equal(endpointAllowsReuse(
+    { ...base, agentForwarding: false },
+    apple,
+    "channel",
+  ), true);
+
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  const transport = createTransport({ conn: makeConn(), endpoint: apple });
+  assert.equal(
+    findTransportByEndpoint({ ...base, agentForwarding: false }),
+    transport,
+  );
+  assert.equal(findTransportByEndpoint(bitwarden, { kind: "shell" }), null);
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
 });
 
 test("automatic key success reuses an unchanged endpoint without exposing credentials", () => {
