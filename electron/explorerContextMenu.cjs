@@ -249,9 +249,11 @@ function isSuppressionKey(hive, keyPath, options = {}) {
 }
 
 function isUserSuppressed(options = {}) {
+  // Both verbs must be suppressed; a partial write would otherwise hide only
+  // one Explorer entry while still reporting the integration as disabled.
   return (
     isSuppressionKey("HKCU", DIRECTORY_SHELL_KEY, options)
-    || isSuppressionKey("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options)
+    && isSuppressionKey("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options)
   );
 }
 

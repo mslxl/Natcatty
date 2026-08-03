@@ -115,7 +115,10 @@ test("isExplorerContextMenuRegistered is false when user suppressed HKLM menu", 
     }
     if (
       key === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"
+      || key === "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"
       || key === "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty"
+      || key === "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"
+      || key.endsWith("\\command")
     ) {
       return { status: 0, stdout: "ok", stderr: "" };
     }
@@ -125,6 +128,50 @@ test("isExplorerContextMenuRegistered is false when user suppressed HKLM menu", 
   assert.equal(
     isExplorerContextMenuRegistered({ platform: "win32", spawnSyncImpl, logWarn: () => {} }),
     false,
+  );
+});
+
+test("isExplorerContextMenuRegistered stays true when only one verb is suppressed", () => {
+  const commandByKey = {
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command":
+      '"C:\\\\Apps\\\\Netcatty.exe" -- --open-terminal-path="%1."',
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command":
+      '"C:\\\\Apps\\\\Netcatty.exe" -- --open-terminal-path="%V."',
+  };
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] !== "query") return { status: 1, stdout: "", stderr: "unexpected" };
+    if (args.includes("/ve")) {
+      const command = commandByKey[args[1]];
+      return command
+        ? { status: 0, stdout: `    (Default)    REG_SZ    ${command}\n`, stderr: "" }
+        : { status: 1, stdout: "", stderr: "no value" };
+    }
+    if (args.includes("/v")) {
+      // Only the folder verb is suppressed; background is still visible via HKLM.
+      if (
+        args.includes(SUPPRESSION_VALUE)
+        && args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"
+      ) {
+        return { status: 0, stdout: "ok", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "value missing" };
+    }
+    return present.has(args[1])
+      ? { status: 0, stdout: "ok", stderr: "" }
+      : { status: 1, stdout: "", stderr: "missing" };
+  };
+
+  assert.equal(
+    isExplorerContextMenuRegistered({ platform: "win32", spawnSyncImpl, logWarn: () => {} }),
+    true,
   );
 });
 
