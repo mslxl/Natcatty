@@ -144,38 +144,16 @@ function sha256Hex(value: string): string {
   return Array.from(H, (word) => word.toString(16).padStart(8, "0")).join("");
 }
 
-/**
- * Stable identity for one directory-transfer entry in the compact resume
- * manifest.
- *
- * @param options.omitMtime When true (download trees), identity is path+size
- *   only. Append-only remote growth always bumps mtime; omitting it lets a
- *   resume re-validate covered entries against the *planned* snapshot size
- *   (usually the local destination size) while still rejecting path changes
- *   and planned-size mismatches. Uploads/copies keep mtime so same-size
- *   in-place rewrites fail closed.
- */
-export function createDirectoryEntryIdentity(
-  entry: {
-    sourcePath: string;
-    targetPath: string;
-    size: number;
-    lastModified?: number;
-  },
-  options?: { omitMtime?: boolean },
-): string {
-  const size = Math.max(0, Number(entry.size) || 0);
-  if (options?.omitMtime) {
-    return sha256Hex(JSON.stringify([
-      entry.sourcePath,
-      entry.targetPath,
-      size,
-    ]));
-  }
+export function createDirectoryEntryIdentity(entry: {
+  sourcePath: string;
+  targetPath: string;
+  size: number;
+  lastModified?: number;
+}): string {
   return sha256Hex(JSON.stringify([
     entry.sourcePath,
     entry.targetPath,
-    size,
+    Math.max(0, Number(entry.size) || 0),
     Number(entry.lastModified) || 0,
   ]));
 }

@@ -172,7 +172,7 @@ export function pruneSftpTransferHistory(
             targetPath: child.targetPath,
             size: child.totalBytes,
             lastModified: child.sourceLastModified,
-          }, { omitMtime: parent.direction === "download" }),
+          }),
         }));
       for (const child of parentChildren) normalizedChildUpdates.set(child.id, child);
     }

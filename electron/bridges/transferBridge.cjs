@@ -3679,9 +3679,13 @@ async function startTransferNow(event, payload, onProgress) {
   };
 
   try {
-    let fileSize = totalBytes || 0;
+    // Explicit 0 is a valid empty-snapshot plan (e.g. download of an empty log
+    // that may grow later). Do not treat it as "size unknown" and re-stat into
+    // a grown remote size.
+    const hasExplicitTotal = Number.isFinite(totalBytes) && totalBytes >= 0;
+    let fileSize = hasExplicitTotal ? Math.max(0, Number(totalBytes)) : 0;
 
-    if (!fileSize) {
+    if (!hasExplicitTotal) {
       if (sourceType === 'local') {
         const stat = await fs.promises.stat(sourcePath);
         fileSize = stat.size;

@@ -121,7 +121,7 @@ export async function restoreSftpTransferHistoryCooperatively(
             targetPath: child.targetPath,
             size: child.totalBytes,
             lastModified: child.sourceLastModified,
-          }, { omitMtime: parent.direction === "download" }),
+          }),
         };
         parentChildren[childIndex] = normalized;
         normalizedChildUpdates.set(normalized.id, normalized);
