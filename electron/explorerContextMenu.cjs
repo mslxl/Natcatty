@@ -260,6 +260,8 @@ function isUserSuppressed(options = {}) {
 function writeUserSuppression(options = {}) {
   // HKCU Classes values override HKLM for the same key path. Marking the verb
   // ProgrammaticAccessOnly hides it in Explorer for this user without elevation.
+  // Both writes must succeed; roll back a partial pair so disable never leaves
+  // only one Explorer entry hidden while the other remains visible.
   const folderOk = writeRegStr("HKCU", DIRECTORY_SHELL_KEY, SUPPRESSION_VALUE, "", options);
   const backgroundOk = writeRegStr(
     "HKCU",
@@ -268,7 +270,10 @@ function writeUserSuppression(options = {}) {
     "",
     options,
   );
-  return folderOk && backgroundOk;
+  if (folderOk && backgroundOk) return true;
+  if (folderOk) deleteRegKey("HKCU", DIRECTORY_SHELL_KEY, options);
+  if (backgroundOk) deleteRegKey("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options);
+  return false;
 }
 
 function clearUserSuppression(options = {}) {
