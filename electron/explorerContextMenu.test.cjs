@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  SUPPRESSION_VALUE,
   buildExplorerContextMenuCommand,
   installExplorerContextMenu,
   isExplorerContextMenuRegistered,
@@ -26,6 +27,10 @@ test("isExplorerContextMenuRegistered checks HKCU and HKLM shell keys", () => {
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
     queries.push(args.slice());
+    // Value queries (e.g. ProgrammaticAccessOnly) are not present on a real install.
+    if (args.includes("/v")) {
+      return { status: 1, stdout: "", stderr: "value not found" };
+    }
     if (args[1] === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty") {
       return { status: 0, stdout: "ok", stderr: "" };
     }
@@ -39,6 +44,38 @@ test("isExplorerContextMenuRegistered checks HKCU and HKLM shell keys", () => {
   assert.ok(queries.some((args) => args[0] === "query"));
 });
 
+test("isExplorerContextMenuRegistered is false when user suppressed HKLM menu", () => {
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] !== "query") return { status: 1, stdout: "", stderr: "unexpected" };
+    const key = args[1];
+    if (args.includes("/v")) {
+      if (
+        args.includes(SUPPRESSION_VALUE)
+        && (
+          key === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"
+          || key === "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"
+        )
+      ) {
+        return { status: 0, stdout: "ok", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "value missing" };
+    }
+    if (
+      key === "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"
+      || key === "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty"
+    ) {
+      return { status: 0, stdout: "ok", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "missing" };
+  };
+
+  assert.equal(
+    isExplorerContextMenuRegistered({ platform: "win32", spawnSyncImpl, logWarn: () => {} }),
+    false,
+  );
+});
+
 test("removeExplorerContextMenu deletes both folder and background keys", () => {
   const deleted = [];
   const present = new Set([
@@ -50,6 +87,9 @@ test("removeExplorerContextMenu deletes both folder and background keys", () => 
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
     if (args[0] === "query") {
+      if (args.includes("/v")) {
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
       return present.has(args[1])
         ? { status: 0, stdout: "ok", stderr: "" }
         : { status: 1, stdout: "", stderr: "missing" };
@@ -73,15 +113,79 @@ test("removeExplorerContextMenu deletes both folder and background keys", () => 
   assert.ok(deleted.some((key) => key.includes("Directory\\Background\\shell\\Netcatty")));
 });
 
-test("installExplorerContextMenu writes HKCU shell command entries", () => {
-  const writes = [];
+test("removeExplorerContextMenu suppresses leftover HKLM when delete is denied", () => {
+  const present = new Set([
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+  ]);
+  const suppressed = new Set();
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
     if (args[0] === "query") {
-      return { status: 1, stdout: "", stderr: "missing" };
+      if (args.includes("/v")) {
+        if (args.includes(SUPPRESSION_VALUE) && suppressed.has(args[1])) {
+          return { status: 0, stdout: "ok", stderr: "" };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1]) || suppressed.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "delete") {
+      if (String(args[1]).startsWith("HKLM\\")) {
+        return { status: 1, stdout: "", stderr: "access denied" };
+      }
+      present.delete(args[1]);
+      suppressed.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "add") {
+      const key = args[1];
+      const valueIdx = args.indexOf("/v");
+      if (valueIdx >= 0 && args[valueIdx + 1] === SUPPRESSION_VALUE) {
+        suppressed.add(key);
+        present.add(key);
+        return { status: 0, stdout: "", stderr: "" };
+      }
+      return { status: 1, stdout: "", stderr: "unexpected add" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = removeExplorerContextMenu({
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, false);
+  assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"));
+  assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
+  // Machine keys remain, but the user-facing menu is suppressed.
+  assert.ok(present.has("HKLM\\Software\\Classes\\Directory\\shell\\Netcatty"));
+});
+
+test("installExplorerContextMenu writes HKCU shell command entries", () => {
+  const writes = [];
+  const present = new Set();
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v")) {
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
     }
     if (args[0] === "add") {
       writes.push(args.slice());
+      present.add(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "delete") {
+      present.delete(args[1]);
       return { status: 0, stdout: "", stderr: "" };
     }
     return { status: 1, stdout: "", stderr: "unexpected" };
@@ -95,6 +199,7 @@ test("installExplorerContextMenu writes HKCU shell command entries", () => {
   });
 
   assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
   assert.ok(writes.some((args) => args.includes("MUIVerb") && args.includes("Open in Netcatty")));
   assert.ok(writes.some((args) =>
     args.some((part) => String(part).includes('--open-terminal-path="%1."'))
@@ -102,6 +207,50 @@ test("installExplorerContextMenu writes HKCU shell command entries", () => {
   assert.ok(writes.some((args) =>
     args.some((part) => String(part).includes('--open-terminal-path="%V."'))
   ));
+  // Per-user only when no machine registration exists.
+  assert.ok(writes.every((args) => String(args[1]).startsWith("HKCU\\")));
+});
+
+test("installExplorerContextMenu does not duplicate HKLM verbs into HKCU", () => {
+  const writes = [];
+  const present = new Set([
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+  ]);
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v")) {
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      writes.push(args.slice());
+      present.add(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "delete") {
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.enabled, true);
+  assert.ok(writes.length > 0);
+  assert.ok(writes.every((args) => String(args[1]).startsWith("HKLM\\")));
+  assert.ok(!writes.some((args) => String(args[1]).startsWith("HKCU\\")));
 });
 
 test("resolveExplorerContextMenuEnabled prefers saved preference over registry", () => {

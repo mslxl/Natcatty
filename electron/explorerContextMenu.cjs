@@ -8,6 +8,9 @@ const DIRECTORY_SHELL_KEY = `Software\\Classes\\Directory\\shell\\${SHELL_VERB}`
 const DIRECTORY_BACKGROUND_SHELL_KEY = `Software\\Classes\\Directory\\Background\\shell\\${SHELL_VERB}`;
 const MENU_LABEL = "Open in Netcatty";
 const OPEN_TERMINAL_PATH_ARG = "--open-terminal-path";
+// Hides a shell verb from Explorer while keeping the key present. Used as a
+// per-user override when per-machine (HKLM) keys cannot be deleted without elevation.
+const SUPPRESSION_VALUE = "ProgrammaticAccessOnly";
 
 function isWindowsPlatform(platform = process.platform) {
   return platform === "win32";
@@ -104,6 +107,11 @@ function regKeyExists(hive, keyPath, options = {}) {
   return result.status === 0;
 }
 
+function regValueExists(hive, keyPath, valueName, options = {}) {
+  const result = runReg(["query", `${hive}\\${keyPath}`, "/v", valueName], options);
+  return result.status === 0;
+}
+
 function deleteRegKey(hive, keyPath, options = {}) {
   if (!regKeyExists(hive, keyPath, options)) return true;
   const result = runReg(["delete", `${hive}\\${keyPath}`, "/f"], options);
@@ -137,6 +145,57 @@ function writeShellVerb(hive, keyPath, {
   );
 }
 
+function isSuppressionKey(hive, keyPath, options = {}) {
+  return regKeyExists(hive, keyPath, options)
+    && regValueExists(hive, keyPath, SUPPRESSION_VALUE, options);
+}
+
+function isUserSuppressed(options = {}) {
+  return (
+    isSuppressionKey("HKCU", DIRECTORY_SHELL_KEY, options)
+    || isSuppressionKey("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, options)
+  );
+}
+
+function writeUserSuppression(options = {}) {
+  // HKCU Classes values override HKLM for the same key path. Marking the verb
+  // ProgrammaticAccessOnly hides it in Explorer for this user without elevation.
+  const folderOk = writeRegStr("HKCU", DIRECTORY_SHELL_KEY, SUPPRESSION_VALUE, "", options);
+  const backgroundOk = writeRegStr(
+    "HKCU",
+    DIRECTORY_BACKGROUND_SHELL_KEY,
+    SUPPRESSION_VALUE,
+    "",
+    options,
+  );
+  return folderOk && backgroundOk;
+}
+
+function clearUserSuppression(options = {}) {
+  // Only delete HKCU keys that are suppressions so we do not wipe a real
+  // per-user install when refreshing machine keys.
+  let ok = true;
+  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+    if (!isSuppressionKey("HKCU", keyPath, options)) continue;
+    if (!deleteRegKey("HKCU", keyPath, options)) ok = false;
+  }
+  return ok;
+}
+
+function hasMachineRegistration(options = {}) {
+  return (
+    regKeyExists("HKLM", DIRECTORY_SHELL_KEY, options)
+    || regKeyExists("HKLM", DIRECTORY_BACKGROUND_SHELL_KEY, options)
+  );
+}
+
+function hasActiveShellKey(hive, keyPath, options = {}) {
+  if (!regKeyExists(hive, keyPath, options)) return false;
+  // Suppression keys are not an active menu entry.
+  if (hive === "HKCU" && isSuppressionKey(hive, keyPath, options)) return false;
+  return true;
+}
+
 function isExplorerContextMenuRegistered({
   platform = process.platform,
   spawnSyncImpl = spawnSync,
@@ -144,11 +203,12 @@ function isExplorerContextMenuRegistered({
 } = {}) {
   if (!isWindowsPlatform(platform)) return false;
   const options = { spawnSyncImpl, logWarn };
-  const hives = ["HKCU", "HKLM"];
-  for (const hive of hives) {
+  // Per-user suppression hides machine registration for this user.
+  if (isUserSuppressed(options)) return false;
+  for (const hive of ["HKCU", "HKLM"]) {
     if (
-      regKeyExists(hive, DIRECTORY_SHELL_KEY, options)
-      || regKeyExists(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options)
+      hasActiveShellKey(hive, DIRECTORY_SHELL_KEY, options)
+      || hasActiveShellKey(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options)
     ) {
       return true;
     }
@@ -166,26 +226,33 @@ function removeExplorerContextMenu({
   }
 
   const options = { spawnSyncImpl, logWarn };
-  const hives = ["HKCU", "HKLM"];
+
+  // Always clear per-user keys first (real install and any prior suppression).
   let success = true;
-  for (const hive of hives) {
-    const folderOk = deleteRegKey(hive, DIRECTORY_SHELL_KEY, options);
-    const backgroundOk = deleteRegKey(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options);
-    // HKLM may require elevation; treat leftover HKLM keys as failure only when
-    // they still exist after the delete attempt.
-    if (!folderOk || !backgroundOk) {
-      if (
-        regKeyExists(hive, DIRECTORY_SHELL_KEY, options)
-        || regKeyExists(hive, DIRECTORY_BACKGROUND_SHELL_KEY, options)
-      ) {
-        success = false;
-      }
+  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+    if (!deleteRegKey("HKCU", keyPath, options)) {
+      if (regKeyExists("HKCU", keyPath, options)) success = false;
     }
   }
 
+  // Best-effort machine-wide removal. Unelevated processes often cannot delete HKLM.
+  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
+    if (!deleteRegKey("HKLM", keyPath, options)) {
+      // Leave success alone here; leftover HKLM is handled via suppression below.
+    }
+  }
+
+  if (hasMachineRegistration(options)) {
+    // Cannot remove per-machine verbs without elevation: suppress them for this user.
+    if (!writeUserSuppression(options)) {
+      success = false;
+    }
+  }
+
+  const stillActive = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
   return {
-    success,
-    enabled: isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn }),
+    success: success && !stillActive,
+    enabled: stillActive,
     supported: true,
   };
 }
@@ -206,17 +273,18 @@ function installExplorerContextMenu({
   }
 
   const options = { spawnSyncImpl, logWarn };
-  // Always write HKCU so the toggle works without elevation. If the installer
-  // already created HKLM keys, refresh those too when permitted.
-  const hives = ["HKCU"];
-  if (
-    regKeyExists("HKLM", DIRECTORY_SHELL_KEY, options)
-    || regKeyExists("HKLM", DIRECTORY_BACKGROUND_SHELL_KEY, options)
-  ) {
-    hives.push("HKLM");
-  }
 
-  let success = true;
+  // Drop any per-user hide before enabling again.
+  clearUserSuppression(options);
+
+  const machineRegistered = hasMachineRegistration(options);
+
+  // When the installer already registered per-machine (HKLM) verbs, refresh
+  // those only. Do NOT mirror them into HKCU: the NSIS uninstaller only cleans
+  // SHCTX (HKLM in all-users mode), so an HKCU copy would survive uninstall.
+  const hives = machineRegistered ? ["HKLM"] : ["HKCU"];
+
+  let writesOk = true;
   for (const hive of hives) {
     const folderOk = writeShellVerb(hive, DIRECTORY_SHELL_KEY, {
       executablePath: exe,
@@ -228,12 +296,17 @@ function installExplorerContextMenu({
       pathPlaceholder: "%V",
       iconPath: exe,
     }, options);
-    if (!folderOk || !backgroundOk) success = false;
+    if (!folderOk || !backgroundOk) writesOk = false;
   }
+
+  // Machine keys that we could not refresh still show the menu (installer path).
+  // Treat that as success so the Settings toggle can stay enabled without elevation.
+  const enabled = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
+  const success = enabled && (writesOk || machineRegistered);
 
   return {
     success,
-    enabled: isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn }),
+    enabled,
     supported: true,
   };
 }
@@ -382,6 +455,7 @@ module.exports = {
   DIRECTORY_SHELL_KEY,
   EXPLORER_CONTEXT_MENU_PREFERENCES_FILE,
   MENU_LABEL,
+  SUPPRESSION_VALUE,
   applyExplorerContextMenuPreference,
   applyInitialExplorerContextMenuPreference,
   buildExplorerContextMenuCommand,
