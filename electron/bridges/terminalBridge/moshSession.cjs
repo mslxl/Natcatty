@@ -350,14 +350,14 @@ function createMoshSessionApi(ctx) {
 
         if (options.useSshAgent === false) {
           sshArgs.push("-o", "IdentityAgent=none");
-          if (options.agentForwarding) {
-            sshArgs.push("-o", "ForwardAgent=${SSH_AUTH_SOCK}");
-          }
         } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
           sshArgs.push("-o", `IdentityAgent=${options._resolvedSshAgentSocket}`);
           if (options.identitiesOnly && !sshArgs.includes("IdentitiesOnly=yes")) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
+        }
+        if (options.agentForwarding) {
+          sshArgs.push("-o", "ForwardAgent=${SSH_AUTH_SOCK}");
         }
 
         if (options.authMethod === "password") {

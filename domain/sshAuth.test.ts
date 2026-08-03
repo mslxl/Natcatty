@@ -192,6 +192,22 @@ test("resolveBridgeSshAgentAuth leaves the ambient agent available in automatic 
   );
 });
 
+test("resolveBridgeSshAgentAuth keeps an explicit forwarding agent separate from login", () => {
+  assert.deepEqual(
+    resolveBridgeSshAgentAuth({
+      ...autofillBaseHost,
+      authMethod: "password",
+      useSshAgent: false,
+      agentForwarding: true,
+      identityAgent: "/tmp/forwarding-agent.sock",
+    }, undefined, "password"),
+    {
+      useSshAgent: false,
+      identityAgent: "/tmp/forwarding-agent.sock",
+    },
+  );
+});
+
 test("resolveBridgeSshAgentAuth lets explicit auth override a stale agent toggle", () => {
   const staleAgentHost = { ...autofillBaseHost, useSshAgent: true };
   assert.deepEqual(

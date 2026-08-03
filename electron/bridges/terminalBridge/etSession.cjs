@@ -476,10 +476,10 @@ main();
 
       if (options.useSshAgent === false) {
         configLines.push("IdentityAgent none");
-        if (options.agentForwarding) configLines.push("ForwardAgent ${SSH_AUTH_SOCK}");
       } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
         configLines.push(`IdentityAgent ${quoteRawSshConfigValue(options._resolvedSshAgentSocket)}`);
       }
+      if (options.agentForwarding) configLines.push("ForwardAgent ${SSH_AUTH_SOCK}");
 
       // Private key
       const identityPaths = [];

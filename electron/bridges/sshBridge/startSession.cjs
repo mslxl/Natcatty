@@ -147,9 +147,14 @@ function shouldPromoteCachedAuthMethod(authMethod, cachedMethod) {
   return true;
 }
 
-async function applyAgentForwarding(options, connectOpts, resolveForwardingAgentSocket) {
+async function applyAgentForwarding(
+  options,
+  connectOpts,
+  resolveForwardingAgentSocket,
+  { replaceExistingAgent = false } = {},
+) {
   if (!options?.agentForwarding) return connectOpts;
-  if (!connectOpts.agent) {
+  if (!connectOpts.agent || replaceExistingAgent) {
     connectOpts.agent = await resolveForwardingAgentSocket(options.identityAgent, options);
   }
   if (connectOpts.agent) {
@@ -1040,6 +1045,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         });
 
         let authAgent = null;
+        let hasAutomaticallyDiscoveredAgent = false;
         const systemAuthAgent = shouldPrepareSystemAgentForLogin(options)
           ? await prepareSystemSshAgentForAuth(options, "[SSH]")
           : null;
@@ -1176,6 +1182,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
           const automaticAgentSocket = await getAvailableAgentSocket();
           if (automaticAgentSocket) {
             connectOpts.agent = automaticAgentSocket;
+            hasAutomaticallyDiscoveredAgent = true;
             log("Automatic auth found SSH agent", { agentSocket: automaticAgentSocket });
           }
         }
@@ -1192,6 +1199,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
           if (sshAgentSocket) {
             log("No auth method configured, trying ssh-agent first", { agentSocket: sshAgentSocket });
             connectOpts.agent = sshAgentSocket;
+            hasAutomaticallyDiscoveredAgent = true;
           }
 
           // Mark that we need to try all default keys (handled in authMethods below)
@@ -1215,7 +1223,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
         // Agent forwarding
         if (options.agentForwarding) {
-          await applyAgentForwarding(options, connectOpts, getAvailableForwardingAgentSocket);
+          await applyAgentForwarding(
+            options,
+            connectOpts,
+            getAvailableForwardingAgentSocket,
+            { replaceExistingAgent: hasAutomaticallyDiscoveredAgent },
+          );
           if (!connectOpts.agentForward) {
             log("Agent forwarding requested but no agent available, skipping");
           }

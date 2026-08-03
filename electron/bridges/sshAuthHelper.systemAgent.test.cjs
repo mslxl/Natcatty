@@ -28,7 +28,7 @@ test("macOS forwarding prefers a Bitwarden agent with identities over an empty i
 
   const result = await getAvailableForwardingAgentSocket(undefined, {
     platform: "darwin",
-    env: { SSH_AUTH_SOCK: inheritedSocket },
+    localEnv: { SSH_AUTH_SOCK: inheritedSocket },
     homedir: "/Users/alice",
     getAvailableAgentSocketImpl: async (candidate) => {
       checked.push(candidate);
@@ -62,13 +62,60 @@ test("macOS forwarding preserves the inherited agent when discovered providers a
   const inheritedSocket = "/private/tmp/com.apple.launchd.test/Listeners";
   const result = await getAvailableForwardingAgentSocket(undefined, {
     platform: "darwin",
-    env: { SSH_AUTH_SOCK: inheritedSocket },
+    localEnv: { SSH_AUTH_SOCK: inheritedSocket },
     homedir: "/Users/alice",
     getAvailableAgentSocketImpl: async (candidate) => candidate,
     socketAgentIdentityCount: async () => 0,
   });
 
   assert.equal(result, inheritedSocket);
+});
+
+test("forwarding ignores a remote terminal env when reading the local agent", async () => {
+  const inheritedSocket = "/private/tmp/com.apple.launchd.test/Listeners";
+  const checked = [];
+  await getAvailableForwardingAgentSocket(undefined, {
+    platform: "darwin",
+    env: { TERM: "xterm-256color" },
+    localEnv: { SSH_AUTH_SOCK: inheritedSocket },
+    homedir: "/Users/alice",
+    getAvailableAgentSocketImpl: async (candidate) => {
+      checked.push(candidate);
+      return null;
+    },
+    socketAgentIdentityCount: async () => 0,
+  });
+
+  assert.equal(checked[0], inheritedSocket);
+});
+
+test("forwarding does not report an empty auto-discovered provider as available", async () => {
+  const result = await getAvailableForwardingAgentSocket(undefined, {
+    platform: "darwin",
+    localEnv: {},
+    homedir: "/Users/alice",
+    getAvailableAgentSocketImpl: async (candidate) => candidate,
+    socketAgentIdentityCount: async () => 0,
+  });
+
+  assert.equal(result, null);
+});
+
+test("non-macOS forwarding keeps the existing agent resolution path", async () => {
+  const calls = [];
+  const result = await getAvailableForwardingAgentSocket(undefined, {
+    platform: "linux",
+    getAvailableAgentSocketImpl: async (candidate) => {
+      calls.push(candidate);
+      return "/tmp/agent.sock";
+    },
+    socketAgentIdentityCount: async () => {
+      throw new Error("must not inspect identities outside macOS discovery");
+    },
+  });
+
+  assert.equal(result, "/tmp/agent.sock");
+  assert.deepEqual(calls, [undefined]);
 });
 
 test("explicit agent opt-out suppresses automatic socket fallback", () => {

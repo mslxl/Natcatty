@@ -252,7 +252,7 @@ export const resolveBridgeKeyAuth = (args: {
 };
 
 export const resolveBridgeSshAgentAuth = (
-  host: Pick<Host, "authMethod" | "useSshAgent" | "identityAgent" | "identityFilePaths" | "identitiesOnly" | "addKeysToAgent" | "useKeychain">,
+  host: Pick<Host, "authMethod" | "useSshAgent" | "identityAgent" | "identityFilePaths" | "identitiesOnly" | "addKeysToAgent" | "useKeychain" | "agentForwarding">,
   key?: Pick<SSHKey, "certificate" | "publicKey" | "source" | "filePath">,
   authMethod?: HostAuthMethod,
 ): {
@@ -263,8 +263,11 @@ export const resolveBridgeSshAgentAuth = (
   useKeychain?: boolean;
   agentPublicKeys?: string[];
 } => {
+  const forwardingAgent = host.agentForwarding && host.identityAgent !== undefined
+    ? { identityAgent: host.identityAgent }
+    : {};
   if (authMethod === "password" || authMethod === "certificate" || key?.certificate?.trim()) {
-    return { useSshAgent: false };
+    return { useSshAgent: false, ...forwardingAgent };
   }
   if (authMethod === "key") {
     const hasAgentSelector = Boolean(
@@ -273,7 +276,7 @@ export const resolveBridgeSshAgentAuth = (
       || host.identityFilePaths?.some((filePath) => filePath.trim()),
     );
     if (host.useSshAgent !== true || !hasAgentSelector) {
-      return { useSshAgent: false };
+      return { useSshAgent: false, ...forwardingAgent };
     }
     return {
       useSshAgent: true,
@@ -286,8 +289,8 @@ export const resolveBridgeSshAgentAuth = (
   }
   if (host.useSshAgent !== true) {
     return authMethod === "auto" && host.useSshAgent !== false
-      ? {}
-      : { useSshAgent: false };
+      ? forwardingAgent
+      : { useSshAgent: false, ...forwardingAgent };
   }
   return {
     useSshAgent: true,

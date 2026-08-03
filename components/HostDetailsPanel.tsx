@@ -202,7 +202,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     let cancelled = false;
     if (form.agentForwarding || form.useSshAgent === true) {
       void checkSshAgent({
-        identityAgent: form.useSshAgent === true ? form.identityAgent : undefined,
+        identityAgent: form.useSshAgent === true || form.agentForwarding
+          ? form.identityAgent
+          : undefined,
         agentForwarding: form.agentForwarding,
         hostname: form.hostname,
         port: form.port,

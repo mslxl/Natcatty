@@ -599,22 +599,31 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
 
 test("ET forwarding replaces an empty inherited agent with the discovered agent", async (t) => {
   const { api } = makeApi(t, {
+    prepareSystemSshAgentForAuth: async () => {},
     getAvailableForwardingAgentSocket: async () => "/Users/alice/.bitwarden-ssh-agent.sock",
   });
 
-  const prepared = await api.prepareEtSshAgentOptions({
-    hostname: "host.example",
-    username: "alice",
-    useSshAgent: false,
-    agentForwarding: true,
-  });
-  const env = api.applyEtSshAgentEnvironment(
-    { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
-    prepared,
-  );
+  for (const useSshAgent of [false, undefined, true]) {
+    const prepared = await api.prepareEtSshAgentOptions({
+      hostname: `host-${String(useSshAgent)}.example`,
+      username: "alice",
+      useSshAgent,
+      agentForwarding: true,
+    });
+    const env = api.applyEtSshAgentEnvironment(
+      { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
+      prepared,
+    );
+    const preparedEnvironment = api.prepareEtSshEnvironment(
+      `session-forwarding-${String(useSshAgent)}`,
+      prepared,
+    );
+    const config = fs.readFileSync(path.join(preparedEnvironment.env.HOME, ".ssh", "config"), "utf8");
 
-  assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
-  assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
+    assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+    assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
+    assert.match(config, /ForwardAgent \$\{SSH_AUTH_SOCK\}/);
+  }
 });
 
 test("ET prepares target and jump agents before generating their host config", async (t) => {

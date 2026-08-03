@@ -806,21 +806,24 @@ async function getAvailableForwardingAgentSocket(identityAgent, injected = {}) {
     return resolveAvailable(identityAgent, injected);
   }
 
-  const env = injected.env || process.env;
+  const env = injected.localEnv || process.env;
   const home = injected.homedir || os.homedir();
+  const inheritedCandidates = [env.SSH_AUTH_SOCK, env.SSH_AUTH_SOCKET].filter(Boolean);
   const candidates = [...new Set([
-    env.SSH_AUTH_SOCK,
-    env.SSH_AUTH_SOCKET,
+    ...inheritedCandidates,
     path.join(home, ".bitwarden-ssh-agent.sock"),
     path.join(home, "Library", "Containers", "com.bitwarden.desktop", "Data", ".bitwarden-ssh-agent.sock"),
-  ].filter(Boolean))];
+  ])];
+  const inheritedCandidateSet = new Set(inheritedCandidates);
   const countIdentities = injected.socketAgentIdentityCount || socketAgentIdentityCount;
   let fallbackSocket = null;
 
   for (const candidate of candidates) {
     const socketPath = await resolveAvailable(candidate, injected);
     if (!socketPath) continue;
-    fallbackSocket ||= socketPath;
+    if (inheritedCandidateSet.has(candidate)) {
+      fallbackSocket ||= socketPath;
+    }
     const identityCount = await countIdentities(socketPath, injected);
     if (Number.isInteger(identityCount) && identityCount > 0) {
       return socketPath;

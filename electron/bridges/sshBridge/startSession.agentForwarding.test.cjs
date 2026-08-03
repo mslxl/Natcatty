@@ -29,6 +29,39 @@ test("agent forwarding resolves the forwarding socket independently from login a
   assert.equal(connectOptions.agentForward, true);
 });
 
+test("agent forwarding replaces an automatically discovered empty login agent", async () => {
+  const connectOptions = { agent: "/private/tmp/com.apple.launchd.test/Listeners" };
+
+  await applyAgentForwarding(
+    { agentForwarding: true },
+    connectOptions,
+    async () => "/Users/alice/.bitwarden-ssh-agent.sock",
+    { replaceExistingAgent: true },
+  );
+
+  assert.equal(connectOptions.agent, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+});
+
+test("agent forwarding preserves an explicitly prepared login agent", async () => {
+  const explicitAgent = { kind: "selected-agent" };
+  const connectOptions = { agent: explicitAgent };
+  let resolutions = 0;
+
+  await applyAgentForwarding(
+    { agentForwarding: true, identityAgent: "/tmp/selected-agent.sock" },
+    connectOptions,
+    async () => {
+      resolutions += 1;
+      return "/tmp/other-agent.sock";
+    },
+  );
+
+  assert.equal(connectOptions.agent, explicitAgent);
+  assert.equal(connectOptions.agentForward, true);
+  assert.equal(resolutions, 0);
+});
+
 test("agent forwarding does not enable agent login after an explicit opt-out", () => {
   assert.equal(shouldOfferAgentForLogin(
     { useSshAgent: false, agentForwarding: true },

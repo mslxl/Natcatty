@@ -586,9 +586,13 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           sessionLog: ctx.sessionLog?.enabled ? ctx.sessionLog : undefined,
           sshDebugLogEnabled: ctx.sshDebugLogEnabled,
           identityFilePaths: attempt.useIdentityFiles ? targetIdentityFilePaths : undefined,
-          ...(attempt.useSshAgent === false
-            ? { useSshAgent: false }
-            : resolveBridgeSshAgentAuth(ctx.host, attempt.key, authMethod)),
+          ...resolveBridgeSshAgentAuth(
+            attempt.useSshAgent === false
+              ? { ...ctx.host, useSshAgent: false }
+              : ctx.host,
+            attempt.key,
+            authMethod,
+          ),
           knownHosts: ctx.knownHosts,
           sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
           // Ask the bridge to reuse the source tab's authenticated connection

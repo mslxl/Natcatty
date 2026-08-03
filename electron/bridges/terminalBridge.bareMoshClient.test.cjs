@@ -305,20 +305,25 @@ test("Mosh forwarding replaces an empty inherited agent with the discovered agen
     fs,
     process,
     randomUUID: () => "fixed",
+    prepareSystemSshAgentForAuth: async () => {},
     getAvailableForwardingAgentSocket: async () => "/Users/alice/.bitwarden-ssh-agent.sock",
   });
 
-  const prepared = await api.prepareMoshSshAgentOptions({
-    useSshAgent: false,
-    agentForwarding: true,
-  });
-  const env = api.applyMoshSshAgentEnvironment(
-    { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
-    prepared,
-  );
+  for (const useSshAgent of [false, undefined, true]) {
+    const prepared = await api.prepareMoshSshAgentOptions({
+      useSshAgent,
+      agentForwarding: true,
+    });
+    const env = api.applyMoshSshAgentEnvironment(
+      { SSH_AUTH_SOCK: "/private/tmp/com.apple.launchd.test/Listeners" },
+      prepared,
+    );
+    const auth = await api.buildMoshSshAuthArgs(prepared, `session-forwarding-${String(useSshAgent)}`);
 
-  assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
-  assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
+    assert.equal(prepared._resolvedSshAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+    assert.equal(env.SSH_AUTH_SOCK, "/Users/alice/.bitwarden-ssh-agent.sock");
+    assert.ok(auth.sshArgs.includes("ForwardAgent=${SSH_AUTH_SOCK}"));
+  }
 });
 
 test("Mosh automatic mode discovers custom local keys in preferred order", async (t) => {
