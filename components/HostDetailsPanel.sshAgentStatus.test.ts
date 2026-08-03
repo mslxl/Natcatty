@@ -8,7 +8,7 @@ test('login and forwarding agent availability are checked independently', () => 
   assert.equal(source.match(/let cancelled = false/g)?.length, 2);
   assert.match(source, /if \(!cancelled\) setSshAgentStatus\(status\)/);
   assert.match(source, /if \(!cancelled\) setSshForwardingAgentStatus\(status\)/);
-  assert.match(source, /if \(form\.useSshAgent === true\) \{\s*void checkSshAgent\(\{\s*identityAgent: form\.identityAgent,\s*hostname:/);
+  assert.match(source, /if \(form\.agentForwarding \|\| form\.useSshAgent === true\) \{\s*void checkSshAgent\(\{\s*identityAgent: form\.useSshAgent === true \? form\.identityAgent : undefined,\s*hostname:/);
   assert.match(source, /if \(form\.agentForwarding\) \{\s*void checkSshAgent\(\{\s*identityAgent: form\.identityAgent,\s*agentForwarding: true,/);
   assert.equal(source.match(/return \(\) => \{\s*cancelled = true/g)?.length, 2);
   assert.match(source, /sshForwardingAgentStatus=\{sshForwardingAgentStatus\}/);
