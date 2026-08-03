@@ -221,8 +221,8 @@ test("windows installer registers and removes Explorer folder context menu entri
   assert.match(installerScript, /!macro customInstall\b/);
   assert.match(installerScript, new RegExp(`WriteRegStr SHCTX "${folderKey.replaceAll("\\", "\\\\")}"`));
   assert.match(installerScript, new RegExp(`WriteRegStr SHCTX "${backgroundKey.replaceAll("\\", "\\\\")}"`));
-  assert.match(installerScript, /--open-terminal-path "%1"/);
-  assert.match(installerScript, /--open-terminal-path "%V"/);
+  assert.match(installerScript, /-- --open-terminal-path="%1\."/);
+  assert.match(installerScript, /-- --open-terminal-path="%V\."/);
 
   assert.match(installerScript, /!macro customUnInstall\b/);
   assert.match(installerScript, new RegExp(`DeleteRegKey SHCTX "${folderKey.replaceAll("\\", "\\\\")}"`));

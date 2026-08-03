@@ -95,6 +95,8 @@ export const DEFAULT_SESSION_LOGS_TIMESTAMPS_ENABLED = false;
 export const DEFAULT_SSH_DEBUG_LOGS_ENABLED = false;
 export const DEFAULT_SSH_DEEP_LINK_ENABLED = true;
 export const DEFAULT_JMS_DEEP_LINK_ENABLED = false;
+/** Windows Explorer context menu; true matches NSIS installer default. */
+export const DEFAULT_EXPLORER_CONTEXT_MENU_ENABLED = true;
 
 export const readStoredString = (key: string): string | null => {
   const raw = localStorageAdapter.readString(key);

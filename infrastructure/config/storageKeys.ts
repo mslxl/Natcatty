@@ -148,6 +148,8 @@ export const STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED = 'netcatty_session_log
 export const STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED = 'netcatty_ssh_debug_logs_enabled_v1';
 export const STORAGE_KEY_SSH_DEEP_LINK_ENABLED = 'netcatty_ssh_deep_link_enabled_v1';
 export const STORAGE_KEY_JMS_DEEP_LINK_ENABLED = 'netcatty_jms_deep_link_enabled_v1';
+/** Windows Explorer "Open in Netcatty" folder context menu (device-local). */
+export const STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED = 'netcatty_explorer_context_menu_enabled_v1';
 
 // Archived legacy key records that are no longer supported by the app (e.g. biometric/WebAuthn/FIDO2 experiments).
 export const STORAGE_KEY_LEGACY_KEYS = 'netcatty_legacy_keys_v1';

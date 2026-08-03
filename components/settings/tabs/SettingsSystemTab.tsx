@@ -91,6 +91,9 @@ interface SettingsSystemTabProps {
   setSshDeepLinkEnabled: (enabled: boolean) => void;
   jmsDeepLinkEnabled: boolean;
   setJmsDeepLinkEnabled: (enabled: boolean) => void;
+  explorerContextMenuEnabled: boolean;
+  setExplorerContextMenuEnabled: (enabled: boolean) => void;
+  explorerContextMenuSupported: boolean;
   restorePreviousSession: boolean;
   setRestorePreviousSession: (enabled: boolean) => void;
   restoreTerminalCwd: boolean;
@@ -129,6 +132,9 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setSshDeepLinkEnabled,
   jmsDeepLinkEnabled,
   setJmsDeepLinkEnabled,
+  explorerContextMenuEnabled,
+  setExplorerContextMenuEnabled,
+  explorerContextMenuSupported,
   restorePreviousSession,
   setRestorePreviousSession,
   restoreTerminalCwd,
@@ -1011,6 +1017,24 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                 />
               </SettingRow>
             </SettingCard>
+
+          {explorerContextMenuSupported && (
+            <>
+              <SectionHeader title={t('settings.explorerContextMenu.title')} />
+              <SettingCard>
+                <SettingRow
+                  label={t('settings.explorerContextMenu.enable')}
+                  description={t('settings.explorerContextMenu.enableDesc')}
+                >
+                  <Toggle
+                    checked={explorerContextMenuEnabled}
+                    onChange={setExplorerContextMenuEnabled}
+                    ariaLabel={t('settings.explorerContextMenu.enable')}
+                  />
+                </SettingRow>
+              </SettingCard>
+            </>
+          )}
 
           <SectionHeader title={t("settings.sshDebugLogs.title")} />
             <SettingCard className="min-w-0 max-w-full overflow-hidden space-y-4 py-4">

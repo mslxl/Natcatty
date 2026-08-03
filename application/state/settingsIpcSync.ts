@@ -22,6 +22,7 @@ import {
   STORAGE_KEY_SSH_DEBUG_LOGS_ENABLED,
   STORAGE_KEY_SSH_DEEP_LINK_ENABLED,
   STORAGE_KEY_JMS_DEEP_LINK_ENABLED,
+  STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED,
   STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR,
   STORAGE_KEY_SFTP_FOLLOW_TERMINAL_CWD,
   STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE,
@@ -82,6 +83,7 @@ interface UseSettingsIpcSyncParams {
   setSshDebugLogsEnabled: Dispatch<SetStateAction<boolean>>;
   setSshDeepLinkEnabledState: (enabled: boolean) => void;
   setJmsDeepLinkEnabledState: (enabled: boolean) => void;
+  setExplorerContextMenuEnabledState: (enabled: boolean) => void;
   setHotkeyScheme: Dispatch<SetStateAction<HotkeyScheme>>;
   applyIncomingCustomKeyBindings: (incoming: { bindings: CustomKeyBindings; version: number; origin: string }) => void;
   setIsHotkeyRecordingState: Dispatch<SetStateAction<boolean>>;
@@ -125,6 +127,7 @@ export function useSettingsIpcSync({
   setSshDebugLogsEnabled,
   setSshDeepLinkEnabledState,
   setJmsDeepLinkEnabledState,
+  setExplorerContextMenuEnabledState,
   setHotkeyScheme,
   applyIncomingCustomKeyBindings,
   setIsHotkeyRecordingState,
@@ -235,6 +238,9 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_JMS_DEEP_LINK_ENABLED && typeof value === 'boolean') {
         setJmsDeepLinkEnabledState(value);
       }
+      if (key === STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED && typeof value === 'boolean') {
+        setExplorerContextMenuEnabledState(value);
+      }
       if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
         setHotkeyScheme(value);
       }
@@ -331,6 +337,7 @@ export function useSettingsIpcSync({
     setSessionLogsTimestampsEnabled,
     setSshDeepLinkEnabledState,
     setJmsDeepLinkEnabledState,
+    setExplorerContextMenuEnabledState,
     setSshDebugLogsEnabled,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,
