@@ -21,6 +21,7 @@ import {
 import { getRunnableHostsForSnippet, snippetHasRunTargets } from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
+import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
 import { DEFAULT_SCRIPT_TEMPLATE, isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
 import { Button } from './ui/button';
@@ -510,11 +511,11 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const [draggingPackagePath, setDraggingPackagePath] = useState<string | null>(null);
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedSnippetIds, setSelectedSnippetIds] = useState<Set<string>>(new Set());
-  const [deleteTarget, setDeleteTarget] = useState<{
-    type: 'snippet' | 'package';
-    id: string;
-    name: string;
-  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { type: 'snippet' | 'package'; id: string; name: string }
+    | { type: 'selection'; ids: string[] }
+    | null
+  >(null);
   const [isSnippetImportDialogOpen, setIsSnippetImportDialogOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingSnippetImport | null>(null);
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(listRef);
@@ -1252,11 +1253,38 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     });
   };
 
+  const requestDeleteSelectedSnippets = () => {
+    const ids = snippets
+      .filter((snippet) => selectedSnippetIds.has(snippet.id))
+      .map((snippet) => snippet.id);
+    if (ids.length === 0) return;
+    setDeleteTarget({ type: 'selection', ids });
+  };
+
+  const existingDeleteSelectionIds = deleteTarget?.type === 'selection'
+    ? deleteTarget.ids.filter((id) => snippets.some((snippet) => snippet.id === id))
+    : [];
+
   const confirmDeleteTarget = () => {
     if (!deleteTarget) return;
 
     if (deleteTarget.type === 'package') {
       performDeletePackage(deleteTarget.id);
+    } else if (deleteTarget.type === 'selection') {
+      const deletedIds = new Set(deleteTarget.ids);
+      const result = deleteSelectedSnippetsFromVault(snippets, hosts, deletedIds);
+      if (result.deletedCount === 0) {
+        clearSnippetSelection();
+        setDeleteTarget(null);
+        return;
+      }
+      onBulkSave(result.snippets);
+      onUpdateHosts?.(result.hosts);
+      if (editingSnippet.id && deletedIds.has(editingSnippet.id)) {
+        handleClosePanel();
+      }
+      toast.success(t('snippets.selection.deleteSuccess', { count: result.deletedCount }));
+      clearSnippetSelection();
     } else {
       onDelete(deleteTarget.id);
       setSelectedSnippetIds((prev) => {
@@ -1821,6 +1849,16 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               {t('snippets.selection.exportSelected', { count: selectedSnippetIds.size })}
             </Button>
             <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={selectedSnippetIds.size === 0}
+              onClick={requestDeleteSelectedSnippets}
+            >
+              <Trash2 size={12} className="mr-1" />
+              {t('snippets.selection.deleteSelected', { count: selectedSnippetIds.size })}
+            </Button>
+            <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7"
@@ -2138,12 +2176,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
       <VaultDeleteConfirmDialog
         open={Boolean(deleteTarget)}
-        title={t('vault.deleteConfirm.title', {
-          name: deleteTarget?.name ?? '',
-        })}
+        title={deleteTarget?.type === 'selection'
+          ? t('snippets.selection.deleteConfirmTitle', { count: existingDeleteSelectionIds.length })
+          : t('vault.deleteConfirm.title', { name: deleteTarget?.name ?? '' })}
         description={
           deleteTarget?.type === 'package'
             ? t('vault.deleteConfirm.packageDesc')
+            : deleteTarget?.type === 'selection'
+              ? t('snippets.selection.deleteConfirmDesc')
             : t('vault.deleteConfirm.desc')
         }
         onOpenChange={(open) => {
