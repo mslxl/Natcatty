@@ -3,6 +3,8 @@ const assert = require("node:assert/strict");
 
 const {
   SUPPRESSION_VALUE,
+  EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+  applyInitialExplorerContextMenuPreference,
   buildExplorerContextMenuCommand,
   installExplorerContextMenu,
   isExplorerContextMenuRegistered,
@@ -76,13 +78,11 @@ test("isExplorerContextMenuRegistered is false when user suppressed HKLM menu", 
   );
 });
 
-test("removeExplorerContextMenu deletes both folder and background keys", () => {
+test("removeExplorerContextMenu deletes per-user folder and background keys", () => {
   const deleted = [];
   const present = new Set([
     "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
     "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
-    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
-    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
   ]);
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
@@ -111,13 +111,15 @@ test("removeExplorerContextMenu deletes both folder and background keys", () => 
   assert.equal(result.enabled, false);
   assert.ok(deleted.some((key) => key.endsWith("Directory\\shell\\Netcatty")));
   assert.ok(deleted.some((key) => key.includes("Directory\\Background\\shell\\Netcatty")));
+  assert.ok(deleted.every((key) => key.startsWith("HKCU\\")));
 });
 
-test("removeExplorerContextMenu suppresses leftover HKLM when delete is denied", () => {
+test("removeExplorerContextMenu never deletes HKLM; suppresses per-user instead", () => {
   const present = new Set([
     "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
     "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
   ]);
+  const deleted = [];
   const suppressed = new Set();
   const spawnSyncImpl = (cmd, args) => {
     assert.equal(cmd, "reg.exe");
@@ -133,9 +135,11 @@ test("removeExplorerContextMenu suppresses leftover HKLM when delete is denied",
         : { status: 1, stdout: "", stderr: "missing" };
     }
     if (args[0] === "delete") {
+      // Even if elevated, the toggle must not wipe machine-wide verbs.
       if (String(args[1]).startsWith("HKLM\\")) {
-        return { status: 1, stdout: "", stderr: "access denied" };
+        throw new Error("must not delete HKLM from per-user toggle");
       }
+      deleted.push(args[1]);
       present.delete(args[1]);
       suppressed.delete(args[1]);
       return { status: 0, stdout: "", stderr: "" };
@@ -162,8 +166,10 @@ test("removeExplorerContextMenu suppresses leftover HKLM when delete is denied",
   assert.equal(result.enabled, false);
   assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"));
   assert.ok(suppressed.has("HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
-  // Machine keys remain, but the user-facing menu is suppressed.
+  // Machine keys remain for other users / uninstaller.
   assert.ok(present.has("HKLM\\Software\\Classes\\Directory\\shell\\Netcatty"));
+  assert.ok(present.has("HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty"));
+  assert.ok(deleted.every((key) => key.startsWith("HKCU\\")));
 });
 
 test("installExplorerContextMenu writes HKCU shell command entries", () => {
@@ -392,4 +398,33 @@ test("non-windows platforms report unsupported explorer context menu", () => {
   const removed = removeExplorerContextMenu({ platform: "linux" });
   assert.equal(removed.supported, false);
   assert.equal(removed.enabled, false);
+});
+
+test("applyInitialExplorerContextMenuPreference skips reg.exe on current schema warm start", () => {
+  let regCalls = 0;
+  const fsModule = {
+    existsSync: () => true,
+    readFileSync: () => JSON.stringify({
+      enabled: true,
+      schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+    }),
+    mkdirSync: () => {
+      throw new Error("should not write preference on warm start");
+    },
+    writeFileSync: () => {
+      throw new Error("should not write preference on warm start");
+    },
+  };
+  const result = applyInitialExplorerContextMenuPreference({
+    app: { getPath: () => "C:\\Users\\test\\AppData\\Roaming\\Netcatty" },
+    platform: "win32",
+    fsModule,
+    spawnSyncImpl: () => {
+      regCalls += 1;
+      return { status: 1, stdout: "", stderr: "" };
+    },
+    logWarn: () => {},
+  });
+  assert.deepEqual(result, { enabled: true, success: true, supported: true });
+  assert.equal(regCalls, 0);
 });

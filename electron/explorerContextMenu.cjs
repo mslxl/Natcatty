@@ -3,6 +3,9 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const EXPLORER_CONTEXT_MENU_PREFERENCES_FILE = "explorer-context-menu-preferences.json";
+// Bump when the shell verb command/label/icon contract changes so warm starts
+// re-apply registry entries once after upgrade, then stay query-free again.
+const EXPLORER_CONTEXT_MENU_SCHEMA_VERSION = 1;
 const SHELL_VERB = "Netcatty";
 const DIRECTORY_SHELL_KEY = `Software\\Classes\\Directory\\shell\\${SHELL_VERB}`;
 const DIRECTORY_BACKGROUND_SHELL_KEY = `Software\\Classes\\Directory\\Background\\shell\\${SHELL_VERB}`;
@@ -28,7 +31,7 @@ function getExplorerContextMenuPreferencePath({
   }
 }
 
-function readExplorerContextMenuEnabledPreference({
+function readExplorerContextMenuPreferenceRecord({
   app,
   fsModule = fs,
   pathModule = path,
@@ -40,11 +43,32 @@ function readExplorerContextMenuEnabledPreference({
     if (!fsModule.existsSync(filePath)) return null;
     const parsed = JSON.parse(fsModule.readFileSync(filePath, "utf8"));
     if (typeof parsed?.enabled !== "boolean") return null;
-    return parsed.enabled;
+    const schemaVersion = Number.isInteger(parsed.schemaVersion)
+      ? parsed.schemaVersion
+      : 0;
+    return {
+      enabled: parsed.enabled,
+      schemaVersion,
+    };
   } catch (err) {
     logWarn?.("[Main] Failed to read Explorer context menu preference:", err);
     return null;
   }
+}
+
+function readExplorerContextMenuEnabledPreference({
+  app,
+  fsModule = fs,
+  pathModule = path,
+  logWarn = console.warn,
+} = {}) {
+  const record = readExplorerContextMenuPreferenceRecord({
+    app,
+    fsModule,
+    pathModule,
+    logWarn,
+  });
+  return record ? record.enabled : null;
 }
 
 function writeExplorerContextMenuEnabledPreference({
@@ -58,7 +82,13 @@ function writeExplorerContextMenuEnabledPreference({
   if (!filePath) return false;
   try {
     fsModule.mkdirSync(pathModule.dirname(filePath), { recursive: true });
-    fsModule.writeFileSync(filePath, JSON.stringify({ enabled: enabled !== false }, null, 2));
+    fsModule.writeFileSync(
+      filePath,
+      JSON.stringify({
+        enabled: enabled !== false,
+        schemaVersion: EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
+      }, null, 2),
+    );
     return true;
   } catch (err) {
     logWarn?.("[Main] Failed to write Explorer context menu preference:", err);
@@ -274,7 +304,11 @@ function removeExplorerContextMenu({
 
   const options = { spawnSyncImpl, logWarn };
 
-  // Always clear per-user keys first (real install and any prior suppression).
+  // The Settings toggle is a per-user preference (stored under this user's
+  // userData). Never delete HKLM verbs here — even when elevated — so other
+  // accounts keep the installer-created menu. Machine-wide cleanup belongs to
+  // the NSIS uninstaller. Per-user disable is: drop HKCU install keys, then
+  // suppress any remaining HKLM verbs via ProgrammaticAccessOnly.
   let success = true;
   for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
     if (!deleteRegKey("HKCU", keyPath, options)) {
@@ -282,15 +316,7 @@ function removeExplorerContextMenu({
     }
   }
 
-  // Best-effort machine-wide removal. Unelevated processes often cannot delete HKLM.
-  for (const keyPath of [DIRECTORY_SHELL_KEY, DIRECTORY_BACKGROUND_SHELL_KEY]) {
-    if (!deleteRegKey("HKLM", keyPath, options)) {
-      // Leave success alone here; leftover HKLM is handled via suppression below.
-    }
-  }
-
   if (hasMachineRegistration(options)) {
-    // Cannot remove per-machine verbs without elevation: suppress them for this user.
     if (!writeUserSuppression(options)) {
       success = false;
     }
@@ -457,16 +483,17 @@ function applyInitialExplorerContextMenuPreference({
     return { enabled: false, success: true, supported: false };
   }
 
-  const preferred = readExplorerContextMenuEnabledPreference({
+  const record = readExplorerContextMenuPreferenceRecord({
     app,
     fsModule,
     pathModule,
     logWarn,
   });
 
-  // No saved preference: keep installer/portable state, but refresh the command
-  // path when the menu is already registered so upgrades keep working.
-  if (preferred === null) {
+  // No saved preference: keep installer/portable state, but repair the command
+  // path once when the menu is already registered (upgrade migration). Persist
+  // the outcome so later startups skip the registry refresh path entirely.
+  if (record === null) {
     if (isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn })) {
       const refreshed = installExplorerContextMenu({
         executablePath,
@@ -474,6 +501,15 @@ function applyInitialExplorerContextMenuPreference({
         spawnSyncImpl,
         logWarn,
       });
+      if (refreshed.success === true && refreshed.enabled === true) {
+        writeExplorerContextMenuEnabledPreference({
+          app,
+          enabled: true,
+          fsModule,
+          pathModule,
+          logWarn,
+        });
+      }
       return {
         enabled: refreshed.enabled === true,
         success: refreshed.success === true,
@@ -483,6 +519,14 @@ function applyInitialExplorerContextMenuPreference({
     return { enabled: false, success: true, supported: true };
   }
 
+  const preferred = record.enabled;
+  // Healthy warm start: a current schemaVersion means the last successful apply
+  // already wrote/suppressed the correct verbs. Skip reg.exe entirely.
+  if (record.schemaVersion === EXPLORER_CONTEXT_MENU_SCHEMA_VERSION) {
+    return { enabled: preferred, success: true, supported: true };
+  }
+
+  // Schema bump (command contract change): re-apply once and rewrite preference.
   const applied = applyExplorerContextMenuPreference({
     enabled: preferred,
     executablePath,
@@ -490,6 +534,15 @@ function applyInitialExplorerContextMenuPreference({
     spawnSyncImpl,
     logWarn,
   });
+  if (applied.success === true) {
+    writeExplorerContextMenuEnabledPreference({
+      app,
+      enabled: applied.enabled === true,
+      fsModule,
+      pathModule,
+      logWarn,
+    });
+  }
   return {
     enabled: applied.enabled === true,
     success: applied.success === true,
@@ -501,6 +554,7 @@ module.exports = {
   DIRECTORY_BACKGROUND_SHELL_KEY,
   DIRECTORY_SHELL_KEY,
   EXPLORER_CONTEXT_MENU_PREFERENCES_FILE,
+  EXPLORER_CONTEXT_MENU_SCHEMA_VERSION,
   MENU_LABEL,
   SUPPRESSION_VALUE,
   applyExplorerContextMenuPreference,
