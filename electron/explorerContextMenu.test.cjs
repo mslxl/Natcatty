@@ -635,6 +635,80 @@ test("installExplorerContextMenu clears stale portable HKCU verbs when HKLM exis
   assert.equal(present.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"), false);
 });
 
+test("installExplorerContextMenu keeps working HKCU when HKLM refresh fails", () => {
+  const portableCmd = '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%1."';
+  const portableBg = '"C:\\Portable\\Netcatty.exe" -- --open-terminal-path="%V."';
+  const present = new Set([
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty",
+    "HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command",
+  ]);
+  const values = new Map([
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", "C:\\Portable\\Netcatty.exe,0"],
+    ["HKCU\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", portableCmd],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", "C:\\Portable\\Netcatty.exe,0"],
+    ["HKCU\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", portableBg],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty::Icon", "C:\\Old\\Netcatty.exe,0"],
+    ["HKLM\\Software\\Classes\\Directory\\shell\\Netcatty\\command::", '"C:\\Old\\Netcatty.exe" --open-terminal-path "%1"'],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::MUIVerb", "Open in Netcatty"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty::Icon", "C:\\Old\\Netcatty.exe,0"],
+    ["HKLM\\Software\\Classes\\Directory\\Background\\shell\\Netcatty\\command::", '"C:\\Old\\Netcatty.exe" --open-terminal-path "%V"'],
+  ]);
+  const deleted = [];
+  const spawnSyncImpl = (cmd, args) => {
+    assert.equal(cmd, "reg.exe");
+    if (args[0] === "query") {
+      if (args.includes("/v") || args.includes("/ve")) {
+        const key = args[1];
+        const valueName = args.includes("/ve") ? "" : args[args.indexOf("/v") + 1];
+        const mapKey = `${key}::${valueName}`;
+        if (values.has(mapKey)) {
+          return {
+            status: 0,
+            stdout: `    ${(valueName || "(Default)").padEnd(16)}REG_SZ    ${values.get(mapKey)}\n`,
+            stderr: "",
+          };
+        }
+        return { status: 1, stdout: "", stderr: "no value" };
+      }
+      return present.has(args[1])
+        ? { status: 0, stdout: "ok", stderr: "" }
+        : { status: 1, stdout: "", stderr: "missing" };
+    }
+    if (args[0] === "add") {
+      // Unelevated: cannot rewrite HKLM.
+      return { status: 1, stdout: "", stderr: "access denied" };
+    }
+    if (args[0] === "delete") {
+      deleted.push(args[1]);
+      present.delete(args[1]);
+      return { status: 0, stdout: "", stderr: "" };
+    }
+    return { status: 1, stdout: "", stderr: "unexpected" };
+  };
+
+  const result = installExplorerContextMenu({
+    executablePath: "C:\\Program Files\\Netcatty\\Netcatty.exe",
+    platform: "win32",
+    spawnSyncImpl,
+    logWarn: () => {},
+  });
+
+  assert.equal(result.success, false);
+  // Portable HKCU must remain so Explorer still has a working entry.
+  assert.equal(deleted.length, 0);
+  assert.equal(present.has("HKCU\\Software\\Classes\\Directory\\shell\\Netcatty"), true);
+  assert.equal(result.enabled, true);
+});
+
 test("installExplorerContextMenu fails when residual HKCU verbs cannot be cleared under HKLM", () => {
   const exe = "C:\\Program Files\\Netcatty\\Netcatty.exe";
   const folderCmd = buildExplorerContextMenuCommand(exe, "%1");
