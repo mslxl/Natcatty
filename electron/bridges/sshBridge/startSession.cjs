@@ -153,12 +153,34 @@ async function applyAgentForwarding(
   resolveForwardingAgentSocket,
 ) {
   if (!options?.agentForwarding) return connectOpts;
-  const forwardingAgent = await resolveForwardingAgentSocket(options.identityAgent, options);
+  const alreadyResolved = Object.prototype.hasOwnProperty.call(
+    options,
+    "_resolvedForwardingAgentSocket",
+  );
+  const forwardingAgent = alreadyResolved
+    ? options._resolvedForwardingAgentSocket
+    : await resolveForwardingAgentSocket(options.identityAgent, options);
   if (forwardingAgent) {
     connectOpts.agent = forwardingAgent;
     connectOpts.agentForward = true;
   }
   return connectOpts;
+}
+
+async function prepareAgentForwardingOptions(options, resolveForwardingAgentSocket) {
+  if (!options?.agentForwarding) return options;
+  if (Object.prototype.hasOwnProperty.call(options, "_resolvedForwardingAgentSocket")) {
+    return {
+      ...options,
+      forwardingAgentSocket: options._resolvedForwardingAgentSocket || "",
+    };
+  }
+  const forwardingAgent = await resolveForwardingAgentSocket(options.identityAgent, options);
+  return {
+    ...options,
+    _resolvedForwardingAgentSocket: forwardingAgent || null,
+    forwardingAgentSocket: forwardingAgent || "",
+  };
 }
 
 function createStartSessionApi(ctx) {
@@ -831,6 +853,11 @@ printf '%s\n' '${scanCompleteMarker}'`;
           });
         }
       };
+
+      // Resolve forwarding before connection reuse so an agent-provider change
+      // (for example Bitwarden becoming available after unlock) cannot attach a
+      // new shell to a transport that still forwards the previous socket.
+      options = await prepareAgentForwardingOptions(options, getAvailableForwardingAgentSocket);
 
       // Connection reuse (issue #1204): when a tab is duplicated we try to open
       // a new shell channel on the source tab's already-authenticated
@@ -2177,4 +2204,5 @@ module.exports = {
   resolveUnlockedEncryptedKeysForAuth,
   shouldPromoteCachedAuthMethod,
   applyAgentForwarding,
+  prepareAgentForwardingOptions,
 };

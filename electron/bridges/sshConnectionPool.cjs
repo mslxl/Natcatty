@@ -450,6 +450,9 @@ function fingerprintAuth(endpoint) {
     addKeysToAgent: endpoint.addKeysToAgent ?? null,
     useKeychain: endpoint.useKeychain ?? null,
     agentPublicKeys: endpoint.agentPublicKeys ?? null,
+    forwardingAgentSocket: endpoint.agentForwarding
+      ? endpoint.forwardingAgentSocket ?? null
+      : null,
     legacyAlgorithms: endpoint.legacyAlgorithms ?? null,
     skipEcdsaHostKey: endpoint.skipEcdsaHostKey ?? null,
     algorithmOverrides: endpoint.algorithmOverrides ?? null,
@@ -509,6 +512,7 @@ function buildConnectionReuseEndpoint(options = {}, overrides = {}) {
     useKeychain: options.useKeychain,
     agentPublicKeys: options.agentPublicKeys,
     agentForwarding: Boolean(overrides.agentForwarding ?? options.agentForwarding),
+    forwardingAgentSocket: options.forwardingAgentSocket || "",
     ...keepalive,
     password: options.password,
     privateKey: options.privateKey,

@@ -154,6 +154,16 @@ function createMoshSessionApi(ctx) {
 
     function applyMoshSshAgentEnvironment(env, options) {
       delete env.SSH_AUTH_SOCK;
+      if (
+        process.platform === "win32"
+        && options?.agentForwarding
+        && options._resolvedForwardingAgentSocket
+      ) {
+        // Windows OpenSSH reparses backslashes in a direct ForwardAgent value.
+        // Keep the named pipe intact by expanding the standard socket variable.
+        env.SSH_AUTH_SOCK = options._resolvedForwardingAgentSocket;
+        return env;
+      }
       if (options?.useSshAgent === false) {
         return env;
       }
@@ -350,7 +360,10 @@ function createMoshSessionApi(ctx) {
           }
         }
         if (options.agentForwarding && options._resolvedForwardingAgentSocket) {
-          sshArgs.push("-o", `ForwardAgent=${options._resolvedForwardingAgentSocket}`);
+          const forwardingValue = process.platform === "win32"
+            ? "${SSH_AUTH_SOCK}"
+            : options._resolvedForwardingAgentSocket;
+          sshArgs.push("-o", `ForwardAgent=${forwardingValue}`);
         }
 
         if (options.authMethod === "password") {

@@ -114,6 +114,46 @@ test("startEtSession preserves discovered automatic identities for host informat
   assert.equal(sessions.get("sess-auto-stats").etStatsAuth.authMethod, "auto");
 });
 
+test("startEtSession passes the selected forwarding socket to the bundled ET client", async (t) => {
+  const forwardingAgent = "/Users/alice/.bitwarden-ssh-agent.sock";
+  let spawnArgs = null;
+  const proc = {
+    onData() {},
+    onExit() {},
+    write() {},
+  };
+  const { api } = makeApi(t, {
+    bundledEtClient: () => "/fake/et",
+    getAvailableForwardingAgentSocket: async () => forwardingAgent,
+    pty: {
+      spawn: (_command, args) => {
+        spawnArgs = args;
+        return proc;
+      },
+    },
+    electronModule: { webContents: { fromId: () => null } },
+    openTerminalOutputSession: () => {},
+    selectZmodemUploadFiles: null,
+    selectZmodemDownloadDirectory: null,
+  });
+
+  await api.startEtSession({ sender: { id: 7 } }, {
+    sessionId: "sess-forwarding-socket",
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: false,
+    agentForwarding: true,
+  });
+
+  const forwardingFlag = spawnArgs.indexOf("-f");
+  assert.notEqual(forwardingFlag, -1);
+  assert.deepEqual(spawnArgs.slice(forwardingFlag, forwardingFlag + 3), [
+    "-f",
+    "--ssh-socket",
+    forwardingAgent,
+  ]);
+});
+
 test("ET PTY explicitly enables bundled ConPTY clear support only on Windows", async (t) => {
   const spawnForPlatform = async (platform) => {
     let spawnOptions = null;
@@ -618,16 +658,9 @@ test("ET keeps its login agent separate from the discovered forwarding agent", a
       { SSH_AUTH_SOCK: "/tmp/remote-agent.sock" },
       prepared,
     );
-    const preparedEnvironment = api.prepareEtSshEnvironment(
-      `session-forwarding-${String(useSshAgent)}`,
-      prepared,
-    );
-    const config = fs.readFileSync(path.join(preparedEnvironment.env.HOME, ".ssh", "config"), "utf8");
-
     assert.equal(prepared._resolvedSshAgentSocket, useSshAgent === true ? localAgent : undefined);
     assert.equal(prepared._resolvedForwardingAgentSocket, forwardingAgent);
     assert.equal(env.SSH_AUTH_SOCK, useSshAgent === false ? undefined : localAgent);
-    assert.match(config, new RegExp(`ForwardAgent "${forwardingAgent}"`));
   }
 });
 

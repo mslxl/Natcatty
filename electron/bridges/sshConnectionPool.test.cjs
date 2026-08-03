@@ -635,6 +635,24 @@ test("fingerprintAuth changes when credential material rotates under same keyId"
   );
 });
 
+test("forwarding socket changes invalidate connection reuse", () => {
+  const base = {
+    hostname: "h.example",
+    username: "alice",
+    authType: "password",
+    password: "secret",
+    agentForwarding: true,
+  };
+  assert.notEqual(
+    fingerprintAuth({ ...base, forwardingAgentSocket: "/tmp/apple-agent.sock" }),
+    fingerprintAuth({ ...base, forwardingAgentSocket: "/Users/alice/.bitwarden-ssh-agent.sock" }),
+  );
+  assert.equal(
+    fingerprintAuth({ ...base, agentForwarding: false, forwardingAgentSocket: "/tmp/one.sock" }),
+    fingerprintAuth({ ...base, agentForwarding: false, forwardingAgentSocket: "/tmp/two.sock" }),
+  );
+});
+
 test("automatic key success reuses an unchanged endpoint without exposing credentials", () => {
   const endpoint = buildConnectionReuseEndpoint({
     hostId: "auto-key-profile",

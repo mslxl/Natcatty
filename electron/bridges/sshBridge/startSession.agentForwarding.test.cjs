@@ -9,7 +9,40 @@ const {
   shouldOfferAgentForLogin,
   shouldPrepareSystemAgentForLogin,
   shouldPromoteCachedAuthMethod,
+  prepareAgentForwardingOptions,
 } = require("./startSession.cjs");
+
+test("forwarding agent selection is resolved before connection reuse", async () => {
+  const calls = [];
+  const prepared = await prepareAgentForwardingOptions(
+    { agentForwarding: true, identityAgent: "none" },
+    async (identityAgent) => {
+      calls.push(identityAgent);
+      return "/Users/alice/.bitwarden-ssh-agent.sock";
+    },
+  );
+
+  assert.deepEqual(calls, ["none"]);
+  assert.equal(prepared._resolvedForwardingAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(prepared.forwardingAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+});
+
+test("pre-resolved forwarding agent selection is reused during SSH setup", async () => {
+  const connectOptions = {};
+  await applyAgentForwarding(
+    {
+      agentForwarding: true,
+      _resolvedForwardingAgentSocket: "/Users/alice/.bitwarden-ssh-agent.sock",
+    },
+    connectOptions,
+    async () => {
+      throw new Error("forwarding socket should not be resolved twice");
+    },
+  );
+
+  assert.equal(connectOptions.agent, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+});
 
 test("agent forwarding resolves the forwarding socket independently from login auth", async () => {
   const connectOptions = { password: "login-password" };

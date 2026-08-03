@@ -329,6 +329,32 @@ test("Mosh keeps its login agent separate from the discovered forwarding agent",
   }
 });
 
+test("Mosh forwards a Windows named-pipe agent through SSH_AUTH_SOCK", async () => {
+  const forwardingAgent = "\\\\.\\pipe\\openssh-ssh-agent";
+  const processMock = Object.create(process);
+  Object.defineProperty(processMock, "platform", { value: "win32" });
+  processMock.env = {};
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process: processMock,
+    randomUUID: () => "fixed",
+  });
+  const prepared = {
+    useSshAgent: false,
+    agentForwarding: true,
+    _resolvedForwardingAgentSocket: forwardingAgent,
+  };
+
+  const env = api.applyMoshSshAgentEnvironment({}, prepared);
+  const auth = await api.buildMoshSshAuthArgs(prepared, "session-windows-forwarding");
+
+  assert.equal(env.SSH_AUTH_SOCK, forwardingAgent);
+  assert.ok(auth.sshArgs.includes("ForwardAgent=${SSH_AUTH_SOCK}"));
+  assert.equal(auth.sshArgs.some((arg) => arg.includes(forwardingAgent)), false);
+});
+
 test("Mosh automatic mode discovers custom local keys in preferred order", async (t) => {
   const tempBase = makeTmp();
   const fakeHome = path.join(tempBase, "home");

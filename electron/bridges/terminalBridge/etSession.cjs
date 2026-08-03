@@ -478,10 +478,6 @@ main();
       } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
         configLines.push(`IdentityAgent ${quoteRawSshConfigValue(options._resolvedSshAgentSocket)}`);
       }
-      if (options.agentForwarding && options._resolvedForwardingAgentSocket) {
-        configLines.push(`ForwardAgent ${quoteRawSshConfigValue(options._resolvedForwardingAgentSocket)}`);
-      }
-
       // Private key
       const identityPaths = [];
       let tempKeyPath = null;
@@ -1170,7 +1166,7 @@ main();
         const preparedOptions = await prepareEtSshAgentOptions(options);
         options = preparedOptions;
         if (options.agentForwarding && options._resolvedForwardingAgentSocket) {
-          args.push("-f");
+          args.push("-f", "--ssh-socket", options._resolvedForwardingAgentSocket);
         }
         sshEnvironment = prepareEtSshEnvironment(sessionId, preparedOptions);
       } catch (err) {
