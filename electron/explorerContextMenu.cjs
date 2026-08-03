@@ -366,7 +366,9 @@ function removeExplorerContextMenu({
     }
   }
 
-  const stillActive = isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
+  // Any surviving runnable verb counts as still enabled (including a partial
+  // single-verb leftover that isExplorerContextMenuRegistered would miss).
+  const stillActive = hasAnyActiveShellVerb({ platform, spawnSyncImpl, logWarn });
   return {
     success: success && !stillActive,
     enabled: stillActive,
@@ -391,7 +393,9 @@ function installExplorerContextMenu({
 
   const options = { spawnSyncImpl, logWarn };
 
-  // Drop any per-user hide before enabling again.
+  // Drop any per-user hide before enabling again. If the enable path fails
+  // later, restore suppression so we do not expose stale machine verbs.
+  const wasSuppressed = isUserSuppressed(options);
   clearUserSuppression(options);
 
   const machineRegistered = hasMachineRegistration(options);
@@ -428,7 +432,12 @@ function installExplorerContextMenu({
   const userCurrent = !machineRegistered
     && shellVerbIsCurrent("HKCU", DIRECTORY_SHELL_KEY, folderSpec, options)
     && shellVerbIsCurrent("HKCU", DIRECTORY_BACKGROUND_SHELL_KEY, backgroundSpec, options);
-  const success = writesOk || machineCurrent || userCurrent;
+  let success = writesOk || machineCurrent || userCurrent;
+
+  if (!success && wasSuppressed) {
+    writeUserSuppression(options);
+  }
+
   const enabled = success
     || isExplorerContextMenuRegistered({ platform, spawnSyncImpl, logWarn });
 
