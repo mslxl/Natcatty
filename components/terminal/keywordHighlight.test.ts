@@ -204,11 +204,13 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
   const lineCount = options.lineCount ?? 1;
   let translateCount = 0;
   const translatedLineIndexes: number[] = [];
-  const lines = Array.from({ length: lineCount }, (_, index) =>
-    createFakeLine(`${lineText} ${index}`, () => {
+  const createLineAtIndex = (text: string, index: number) =>
+    createFakeLine(text, () => {
       translateCount += 1;
       translatedLineIndexes.push(index);
-    })
+    });
+  const lines = Array.from({ length: lineCount }, (_, index) =>
+    createLineAtIndex(`${lineText} ${index}`, index)
   );
   const decorations: Array<{ x: number; width: number; foregroundColor: string }> = [];
   const decorationStates: Array<{
@@ -304,6 +306,9 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
     },
     resetRefreshCalls: () => {
       refreshCalls.length = 0;
+    },
+    setLineText: (lineY: number, text: string) => {
+      lines[lineY] = createLineAtIndex(text, lineY);
     },
   };
 }
@@ -823,7 +828,81 @@ test("pressing Enter rescans only the cursor neighborhood", async () => {
   }
 });
 
-test("pressing Enter does not force an extra repaint after markers move", async () => {
+test("non-Enter input still detects redraws away from the cursor", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, handlers, setLineText } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 60,
+    });
+    term.rows = 10;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 9;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    assert.notDeepEqual(highlighter.getForegroundRanges(20), []);
+
+    handlers.data?.("a");
+    setLineText(20, "redrawn without a keyword");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.deepEqual(highlighter.getForegroundRanges(20), []);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("write-only scrolling keeps retained decorations bounded", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 250; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.refreshViewport("write");
+    }
+
+    assert.ok(
+      decorationStates.filter(({ isDisposed }) => !isDisposed).length <= 64,
+      "write-only output should not retain every highlighted scrollback line",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter limits marker-move repaint to the cursor row", async () => {
   const raf = installAnimationFrameQueue();
   try {
     const {
@@ -855,7 +934,7 @@ test("pressing Enter does not force an extra repaint after markers move", async 
     handlers.writeParsed?.();
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
-    assert.deepEqual(refreshCalls, []);
+    assert.deepEqual(refreshCalls, [{ start: 2, end: 2 }]);
     highlighter.dispose();
   } finally {
     raf.restore();

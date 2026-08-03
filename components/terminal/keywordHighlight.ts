@@ -122,6 +122,7 @@ export class KeywordHighlighter implements IDisposable {
   private lastWriteAt = 0;
   private lastBurstDecayAt = 0;
   private lastUserInputAt = 0;
+  private lastUserInputWasEnter = false;
   private scrollRefreshJob: ScrollRefreshJob | null = null;
   private scrollRefreshGeneration = 0;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -148,8 +149,9 @@ export class KeywordHighlighter implements IDisposable {
       }),
       // User input should keep terminal echo responsive; highlight can catch up
       // once typing pauses.
-      this.term.onData(() => {
+      this.term.onData((data) => {
         this.lastUserInputAt = performance.now();
+        this.lastUserInputWasEnter = data === "\r" || data === "\n" || data === "\r\n";
       }),
       // When new data is written, refresh on the next frame so highlights land
       // with the freshly rendered content instead of trailing behind it.
@@ -178,7 +180,12 @@ export class KeywordHighlighter implements IDisposable {
           return;
         }
         if (this.isInputProtectionActive(performance.now())) {
-          this.markDirtyFromWrite({ includeViewportProbe: false });
+          if (this.lastUserInputWasEnter) {
+            this.markDirtyFromWrite({ includeViewportProbe: false });
+          } else {
+            this.updateWriteBurst();
+            this.markVisibleRangeDirty();
+          }
           this.triggerRefresh("debounced", "write");
           return;
         }
@@ -660,7 +667,9 @@ export class KeywordHighlighter implements IDisposable {
         this.processLineRange(rangeStart, rangeEnd, cursorAbsoluteY);
       }
 
-      if (reason !== "write") {
+      if (reason === "write") {
+        this.pruneWriteDecorationsIfNeeded(rangeStart, rangeEnd);
+      } else {
         for (const [lineY, state] of this.lineDecorations) {
           if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
             this.disposeLineDecorations(lineY, state);
@@ -797,6 +806,21 @@ export class KeywordHighlighter implements IDisposable {
       if (performance.now() - startTime >= writeRefreshBudgetMs) {
         this.triggerRefresh("continuation", continuationReason);
         return;
+      }
+    }
+  }
+
+  private pruneWriteDecorationsIfNeeded(rangeStart: number, rangeEnd: number): void {
+    const renderLineCount = Math.max(1, rangeEnd - rangeStart + 1);
+    const highWaterMark = Math.max(64, renderLineCount * 2);
+    if (this.lineDecorations.size <= highWaterMark) return;
+
+    // Decoration registration/removal makes xterm repaint the full viewport.
+    // Prune in batches so ordinary one-line output keeps existing highlights
+    // stable while long-running output remains bounded.
+    for (const [lineY, state] of this.lineDecorations) {
+      if (lineY < rangeStart || lineY > rangeEnd || state.marker.isDisposed) {
+        this.disposeLineDecorations(lineY, state);
       }
     }
   }
