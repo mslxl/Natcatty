@@ -123,7 +123,7 @@ export class KeywordHighlighter implements IDisposable {
   private lastWriteAt = 0;
   private lastBurstDecayAt = 0;
   private lastUserInputAt = 0;
-  private lastUserInputWasEnter = false;
+  private enterInputPending = false;
   private writePruningDeferred = false;
   private scrollRefreshJob: ScrollRefreshJob | null = null;
   private scrollRefreshGeneration = 0;
@@ -154,7 +154,7 @@ export class KeywordHighlighter implements IDisposable {
       // once typing pauses.
       this.term.onData((data) => {
         this.lastUserInputAt = performance.now();
-        this.lastUserInputWasEnter = data === "\r" || data === "\n" || data === "\r\n";
+        this.enterInputPending ||= data.includes("\r") || data.includes("\n");
       }),
       // When new data is written, refresh on the next frame so highlights land
       // with the freshly rendered content instead of trailing behind it.
@@ -182,8 +182,10 @@ export class KeywordHighlighter implements IDisposable {
           this.scheduleBulkPressureCatchUp();
           return;
         }
-        if (this.isInputProtectionActive(performance.now())) {
-          if (this.lastUserInputWasEnter) {
+        const inputProtectionActive = this.isInputProtectionActive(performance.now());
+        if (inputProtectionActive || this.enterInputPending) {
+          if (this.enterInputPending) {
+            this.enterInputPending = false;
             this.cancelScrollRefresh();
             if (this.pendingRefreshReason === "scroll") {
               this.pendingRefreshReason = "write";

@@ -798,6 +798,47 @@ test("pressing Enter keeps unchanged keyword decorations mounted", async () => {
   }
 });
 
+test("pasted Enter remains protected when more input arrives before output", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    handlers.data?.("\u001b[200~echo DEPLOY\r\u001b[201~");
+    handlers.data?.("x");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "a submitted Enter should stay protected until its output is processed",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("pressing Enter avoids rescanning overscan edges", async () => {
   const raf = installAnimationFrameQueue();
   try {
