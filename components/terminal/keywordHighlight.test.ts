@@ -18,20 +18,33 @@ import {
 type RafCallback = (time: number) => void;
 
 function installAnimationFrameQueue() {
-  const callbacks: RafCallback[] = [];
+  const callbacks = new Map<number, RafCallback>();
+  let nextId = 1;
   const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
   const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
 
   globalThis.requestAnimationFrame = ((callback: RafCallback) => {
-    callbacks.push(callback);
-    return callbacks.length;
+    const id = nextId;
+    nextId += 1;
+    callbacks.set(id, callback);
+    return id;
   }) as typeof requestAnimationFrame;
-  globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame;
+  globalThis.cancelAnimationFrame = ((id: number) => {
+    callbacks.delete(id);
+  }) as typeof cancelAnimationFrame;
+
+  const flushOne = () => {
+    const next = callbacks.entries().next().value as [number, RafCallback] | undefined;
+    if (!next) return;
+    callbacks.delete(next[0]);
+    next[1](performance.now());
+  };
 
   return {
+    flushOne,
     flush() {
-      while (callbacks.length > 0) {
-        callbacks.shift()?.(performance.now());
+      while (callbacks.size > 0) {
+        flushOne();
       }
     },
     restore() {
@@ -204,13 +217,26 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
   const lineCount = options.lineCount ?? 1;
   let translateCount = 0;
   const translatedLineIndexes: number[] = [];
-  const lines = Array.from({ length: lineCount }, (_, index) =>
-    createFakeLine(`${lineText} ${index}`, () => {
+  const createLineAtIndex = (text: string, index: number) =>
+    createFakeLine(text, () => {
       translateCount += 1;
       translatedLineIndexes.push(index);
-    })
+    });
+  const lines = Array.from({ length: lineCount }, (_, index) =>
+    createLineAtIndex(`${lineText} ${index}`, index)
   );
   const decorations: Array<{ x: number; width: number; foregroundColor: string }> = [];
+  const decorationStates: Array<{
+    readonly line: number;
+    isDisposed: boolean;
+    dispose: () => void;
+  }> = [];
+  const markers: Array<{
+    line: number;
+    isDisposed: boolean;
+    dispose: () => void;
+  }> = [];
+  const refreshCalls: Array<{ start: number; end: number }> = [];
   const noopDisposable = { dispose() {} };
   const handlers: {
     scroll?: () => void;
@@ -253,35 +279,58 @@ function createFakeTerminal(lineText: string, options: { lineCount?: number } = 
       return noopDisposable;
     },
     registerMarker(offset: number) {
-      return {
-        line: offset,
+      const marker = {
+        line: term.buffer.active.baseY + term.buffer.active.cursorY + offset,
         isDisposed: false,
         dispose() {
           this.isDisposed = true;
         },
       };
+      markers.push(marker);
+      return marker;
     },
-    registerDecoration(options: { x: number; width: number; foregroundColor: string }) {
+    registerDecoration(options: {
+      marker?: { line: number };
+      x: number;
+      width: number;
+      foregroundColor: string;
+    }) {
       decorations.push(options);
-      return {
+      const state = {
+        get line() {
+          return options.marker?.line ?? -1;
+        },
         isDisposed: false,
         dispose() {
           this.isDisposed = true;
         },
       };
+      decorationStates.push(state);
+      return state;
     },
-    refresh() {},
+    refresh(start: number, end: number) {
+      refreshCalls.push({ start, end });
+    },
   };
 
   return {
     term,
     decorations,
+    decorationStates,
+    markers,
+    refreshCalls,
     handlers,
     getTranslateCount: () => translateCount,
     getTranslatedLineIndexes: () => [...translatedLineIndexes],
     resetTranslateCount: () => {
       translateCount = 0;
       translatedLineIndexes.length = 0;
+    },
+    resetRefreshCalls: () => {
+      refreshCalls.length = 0;
+    },
+    setLineText: (lineY: number, text: string) => {
+      lines[lineY] = createLineAtIndex(text, lineY);
     },
   };
 }
@@ -684,6 +733,315 @@ test("large output delays keyword highlight scans until output quiets", async ()
   }
 });
 
+test("Enter cancels queued scroll work before large-output deferral", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+    resetTranslateCount();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    noteTerminalOutputPressureData(
+      term as never,
+      "x\n".repeat(Math.ceil(TERMINAL_LONG_LINE_PRESSURE_BYTES / 2)),
+    );
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    const disposedDecorationCount = existingDecorations.filter(({ isDisposed }) => isDisposed).length;
+    const translateCountBeforeQuiet = getTranslateCount();
+    highlighter.dispose();
+    resetTerminalOutputPressure(term as never);
+    assert.equal(
+      disposedDecorationCount,
+      0,
+      "large Enter output should not leave a queued scroll prune behind",
+    );
+    assert.equal(translateCountBeforeQuiet, 0, "large output should wait for the quiet catch-up scan");
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter replaces a queued write refresh with input-quiet work", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetTranslateCount();
+
+    const internals = highlighter as unknown as { lastRefreshTime: number };
+    internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+    handlers.writeParsed?.();
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    resetTranslateCount();
+    raf.flush();
+
+    assert.equal(
+      getTranslateCount(),
+      0,
+      "the pre-Enter write frame should not scan during the input quiet window",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter dirty work continues after a queued full refresh", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      setLineText,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const originalDecoration = decorationStates.find(({ line }) => line === 22);
+    assert.ok(originalDecoration);
+
+    handlers.resize?.();
+    handlers.data?.("\r");
+    setLineText(22, "redrawn without a keyword");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 340); });
+    raf.flush();
+
+    const originalDisposed = originalDecoration.isDisposed;
+    highlighter.dispose();
+    assert.equal(
+      originalDisposed,
+      true,
+      "Enter changes should be consumed after a queued full refresh completes",
+    );
+  } finally {
+    raf.restore();
+  }
+});
+
+test("continuous Enter output lets multi-frame refreshes finish", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 140 });
+    term.rows = 100;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetTranslateCount();
+
+    const internals = highlighter as unknown as {
+      lastRefreshTime: number;
+      lastUserInputAt: number;
+    };
+    handlers.data?.("\r");
+    internals.lastUserInputAt = Number.NEGATIVE_INFINITY;
+
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => {
+          simulatedNow += 5;
+          return simulatedNow;
+        },
+      },
+    });
+    try {
+      for (let index = 0; index < 3; index += 1) {
+        internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+        handlers.writeParsed?.();
+        raf.flushOne();
+      }
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+
+    const reachedViewportEnd = getTranslatedLineIndexes().includes(98);
+    highlighter.dispose();
+    assert.ok(
+      reachedViewportEnd,
+      "continuation work should reach the end of a large viewport during ongoing output",
+    );
+  } finally {
+    raf.restore();
+  }
+});
+
+test("large output cancels active Enter continuation work until quiet", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 140 });
+    term.rows = 100;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      lastRefreshTime: number;
+      lastUserInputAt: number;
+    };
+    handlers.data?.("\r");
+    internals.lastUserInputAt = Number.NEGATIVE_INFINITY;
+    internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => {
+          simulatedNow += 5;
+          return simulatedNow;
+        },
+      },
+    });
+    try {
+      handlers.writeParsed?.();
+      raf.flushOne();
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+
+    noteTerminalOutputPressureData(
+      term as never,
+      "x\n".repeat(Math.ceil(TERMINAL_LONG_LINE_PRESSURE_BYTES / 2)),
+    );
+    handlers.writeParsed?.();
+    resetTranslateCount();
+    raf.flushOne();
+    const scansDuringPressure = getTranslateCount();
+    highlighter.dispose();
+    resetTerminalOutputPressure(term as never);
+
+    assert.equal(
+      scansDuringPressure,
+      0,
+      "large output should cancel continuation scans until the quiet catch-up",
+    );
+  } finally {
+    raf.restore();
+  }
+});
+
+test("continuous Enter output still refreshes highlights periodically", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("no match", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    assert.equal(decorationStates.filter(({ isDisposed }) => !isDisposed).length, 0);
+
+    handlers.data?.("\r");
+    setLineText(22, "DEPLOY");
+    for (let index = 0; index < 20; index += 1) {
+      handlers.writeParsed?.();
+      raf.flush();
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+    }
+
+    assert.ok(
+      decorationStates.some(({ isDisposed }) => !isDisposed),
+      "ongoing output should not postpone new highlights until the stream stops",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("recent user input delays keyword highlight scans until typing is quiet", async () => {
   const raf = installAnimationFrameQueue();
   try {
@@ -716,6 +1074,544 @@ test("recent user input delays keyword highlight scans until typing is quiet", a
 
     await new Promise((resolve) => { setTimeout(resolve, 100); });
     assert.ok(getTranslateCount() > 0);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter keeps unchanged keyword decorations mounted", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "unchanged decorations should remain mounted while Enter output settles",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pasted Enter remains protected when more input arrives before output", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    handlers.data?.("\u001b[200~echo DEPLOY\r\u001b[201~");
+    handlers.data?.("x");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "a submitted Enter should stay protected until its output is processed",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("multi-command Enter protection survives earlier buffer movement until idle", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.rows = 3;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      enterInputPending: boolean;
+      lastBufferSnapshot: unknown;
+      readBufferSnapshot: () => unknown;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 250; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.refreshViewport("write");
+    }
+    internals.lastBufferSnapshot = internals.readBufferSnapshot();
+    const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
+    assert.ok(retainedDecorations.length > 64);
+
+    handlers.data?.("\u001b[200~echo one\r\necho two\r\n\u001b[201~");
+    for (let index = 0; index < 12; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      handlers.scroll?.();
+      handlers.writeParsed?.();
+      await new Promise((resolve) => { setTimeout(resolve, 50); });
+    }
+
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "continuous Enter output should postpone decoration pruning until idle",
+    );
+    assert.equal(internals.enterInputPending, true);
+
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.equal(internals.enterInputPending, false, "Enter protection should end after output is idle");
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("a new Enter cancels the previous output idle deadline", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, handlers } = createFakeTerminal("hello DEPLOY world");
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const internals = highlighter as unknown as { enterInputPending: boolean };
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 400); });
+    handlers.data?.("\r");
+    await new Promise((resolve) => { setTimeout(resolve, 250); });
+
+    assert.equal(
+      internals.enterInputPending,
+      true,
+      "the previous command's idle timer should not clear a newer Enter",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter avoids rescanning overscan edges", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetTranslateCount();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    const scannedLines = getTranslatedLineIndexes();
+    assert.ok(scannedLines.includes(22));
+    assert.equal(scannedLines.includes(15), false);
+    assert.equal(scannedLines.includes(29), false);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("non-Enter input still detects redraws away from the cursor", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 60,
+    });
+    term.rows = 10;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 9;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const originalDecoration = decorationStates.find(({ line }) => line === 20);
+    assert.ok(originalDecoration);
+
+    handlers.data?.("a");
+    setLineText(20, "redrawn without a keyword");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(originalDecoration.isDisposed, true);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter input still detects redraws away from the cursor", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 60,
+    });
+    term.rows = 10;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 9;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const originalDecoration = decorationStates.find(({ line }) => line === 20);
+    assert.ok(originalDecoration);
+
+    handlers.data?.("\r");
+    setLineText(20, "redrawn without a keyword");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(originalDecoration.isDisposed, true);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("write-only scrolling batches pruning but stays hard-bounded", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 250; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.refreshViewport("write");
+    }
+
+    const liveDuringOutput = decorationStates.filter(({ isDisposed }) => !isDisposed).length;
+    assert.ok(liveDuringOutput > 64, "active output should not prune at the soft threshold");
+    assert.ok(liveDuringOutput <= 256, "active output should remain hard-bounded");
+
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.ok(
+      decorationStates.filter(({ isDisposed }) => !isDisposed).length <= 64,
+      "idle cleanup should return retained decorations to the soft bound",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("late Enter output stays protected after the pending hint expires", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
+    assert.ok(retainedDecorations.length > 0);
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 650); });
+
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "late Enter output should treat its queued scroll as output-driven",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("late Enter output detects content shifts after scrollback saturates", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, markers } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const retainedDecorations = decorationStates.filter(({ isDisposed }) => !isDisposed);
+    assert.ok(retainedDecorations.length > 0);
+
+    handlers.data?.("\r");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 650); });
+
+    for (const marker of markers) {
+      if (!marker.isDisposed) marker.line -= 1;
+    }
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.equal(
+      retainedDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "marker shifts should identify delayed output when buffer positions are saturated",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("write pruning enforces a hard bound and delays soft cleanup until idle", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates } = createFakeTerminal("hello DEPLOY world", {
+      lineCount: 400,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      dirtyAllInRenderRange: boolean;
+      refreshViewport: (reason: "write") => void;
+    };
+    for (let index = 0; index < 250; index += 1) {
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      internals.dirtyAllInRenderRange = true;
+      internals.refreshViewport("write");
+    }
+
+    const liveDuringOutput = decorationStates.filter(({ isDisposed }) => !isDisposed).length;
+    const disposedDuringHardTrim = decorationStates.filter(({ isDisposed }) => isDisposed).length;
+    assert.ok(liveDuringOutput > 64, "active output should retain more than the soft bound");
+    assert.ok(liveDuringOutput <= 256, "active output should stay within the hard bound");
+
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => {
+          simulatedNow += 5;
+          return simulatedNow;
+        },
+      },
+    });
+    try {
+      term.rows = 30;
+      internals.dirtyAllInRenderRange = true;
+      internals.refreshViewport("write");
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+    raf.flush();
+    term.rows = 3;
+
+    assert.equal(
+      decorationStates.filter(({ isDisposed }) => isDisposed).length,
+      disposedDuringHardTrim,
+      "continuation scans should not trigger another prune below the hard bound",
+    );
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.ok(
+      decorationStates.filter(({ isDisposed }) => !isDisposed).length <= 64,
+      "idle cleanup should return retained decorations to the bounded range",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pressing Enter does not repaint after keyword markers move", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      markers,
+      refreshCalls,
+      handlers,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    resetRefreshCalls();
+
+    for (const marker of markers) marker.line += 1;
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+
+    assert.deepEqual(refreshCalls, []);
     highlighter.dispose();
   } finally {
     raf.restore();
