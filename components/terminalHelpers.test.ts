@@ -423,6 +423,14 @@ test("connection dialog keeps existing local and disconnected behavior", () => {
 test("connection reuse hides connecting dialog only while reuse is still possible", () => {
   assert.equal(
     shouldHideConnectingDialogForConnectionReuse({
+      reuseConnectionFromSessionId: undefined,
+      host: host(),
+      connectionReuseFellBack: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldHideConnectingDialogForConnectionReuse({
       reuseConnectionFromSessionId: "source-session",
       host: host(),
       connectionReuseFellBack: false,

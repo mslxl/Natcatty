@@ -556,8 +556,13 @@ test("concurrent Copy Tab requests serialize shell discovery per connection", as
   ]);
 
   assert.equal(sessions.get("source").shellPid, "111");
-  assert.equal(sessions.get("copy-1").shellPid, "222");
-  assert.equal(sessions.get("copy-2").shellPid, "333");
+  // The macOS network preflight runs before either request joins the shared
+  // shell-open queue, so under load either copy may enqueue first. The contract
+  // is that both remote shells are identified once and never collide.
+  assert.deepEqual(
+    new Set([sessions.get("copy-1").shellPid, sessions.get("copy-2").shellPid]),
+    new Set(["222", "333"]),
+  );
 });
 
 test("concurrent copies keep distinct shell IDs when the source closes immediately", async (t) => {
@@ -590,8 +595,10 @@ test("concurrent copies keep distinct shell IDs when the source closes immediate
   terminalBridge.closeSession({ sender: {} }, { sessionId: "source" });
   await copies;
 
-  assert.equal(sessions.get("copy-1").shellPid, "222");
-  assert.equal(sessions.get("copy-2").shellPid, "333");
+  assert.deepEqual(
+    new Set([sessions.get("copy-1").shellPid, sessions.get("copy-2").shellPid]),
+    new Set(["222", "333"]),
+  );
 });
 
 test("Copy Tab preserves the server locale unless the host explicitly overrides it", async (t) => {

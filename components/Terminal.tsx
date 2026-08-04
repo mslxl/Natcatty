@@ -728,6 +728,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [progressValue, setProgressValue] = useState(15);
   const [isDisconnectedDialogDismissed, setIsDisconnectedDialogDismissed] = useState(false);
   const [connectionReuseFellBack, setConnectionReuseFellBack] = useState(false);
+  const [connectionReuseAttemptSourceId, setConnectionReuseAttemptSourceId] = useState(
+    reuseConnectionFromSessionId,
+  );
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
@@ -2148,6 +2151,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     resolvedChainHosts,
     sessionId,
     reuseConnectionFromSessionIdRef: reuseConnectionSourceRef,
+    setConnectionReuseAttemptSourceId,
     requiresFreshSshConnection: shouldUseFreshSshConnectionForAutomation({
       host,
       snippets,
@@ -3197,6 +3201,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     setIsDisconnectedDialogDismissed(false);
     setConnectionReuseFellBack(false);
+    setConnectionReuseAttemptSourceId(undefined);
     updateStatus("connecting");
     setError(null);
     setProgressLogs((prev) => (
@@ -3286,7 +3291,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isSerialConnection,
     isDisconnectedDialogDismissed,
     hideConnectingDialogForConnectionReuse: shouldHideConnectingDialogForConnectionReuse({
-      reuseConnectionFromSessionId,
+      reuseConnectionFromSessionId: connectionReuseAttemptSourceId,
       host,
       connectionReuseFellBack,
     }),

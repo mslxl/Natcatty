@@ -452,9 +452,13 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   };
 
   const reuseConnectionFromSessionIdRef = { current: "source-session" as string | undefined };
+  const reuseAttempts: Array<string | undefined> = [];
   const automatedStarters = createTerminalSessionStarters(createStarterContext({
     requiresFreshSshConnection: true,
     reuseConnectionFromSessionIdRef,
+    setConnectionReuseAttemptSourceId: (sourceSessionId: string | undefined) => {
+      reuseAttempts.push(sourceSessionId);
+    },
     terminalBackend,
   }) as never);
   await automatedStarters.startSSH(createTermStub() as never);
@@ -469,6 +473,7 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   assert.equal(captured[1].reuseTransport, false);
   assert.equal(captured[1].sourceSessionId, undefined);
   assert.equal(captured[2].reuseTransport, undefined);
+  assert.deepEqual(reuseAttempts, ["source-session", undefined]);
 });
 
 test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {

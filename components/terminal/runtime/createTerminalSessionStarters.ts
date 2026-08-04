@@ -539,6 +539,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         if (ctx.reuseConnectionFromSessionIdRef) {
           ctx.reuseConnectionFromSessionIdRef.current = undefined;
         }
+        ctx.setConnectionReuseAttemptSourceId?.(sourceSessionId);
         ctx.setIsConnectionAwaitingUserInput?.(false);
         ctx.setIsConnectionPastTcpDial?.(false);
         // Resolve keepalive per-host: a host can opt into its own values
