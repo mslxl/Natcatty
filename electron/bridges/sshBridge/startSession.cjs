@@ -871,8 +871,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // X11. For X11 hosts we deliberately skip reuse and make a fresh
       // connection so the duplicate keeps working X11 forwarding.
       const reuseEndpoint = buildConnectionReuseEndpoint(options);
+      const allowTransportReuse = options.reuseTransport !== false;
 
-      if (options.sourceSessionId && !options.x11Forwarding) {
+      if (allowTransportReuse && options.sourceSessionId && !options.x11Forwarding) {
         const sourceSession = findReusableSession(sessions, options.sourceSessionId, reuseEndpoint);
         if (sourceSession) {
           try {
@@ -897,7 +898,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
       // Idle-park / endpoint reuse: after the last tab returns its lease the
       // transport may still be warm. Open a new shell channel without re-auth.
-      if (!options.x11Forwarding && typeof findTransportByEndpoint === "function") {
+      if (allowTransportReuse && !options.x11Forwarding && typeof findTransportByEndpoint === "function") {
         // Shell park reuse requires exact agentForwarding match so disabling
         // ForwardAgent cannot reattach to a warm conn that still exposes the agent.
         const parked = findTransportByEndpoint(reuseEndpoint, { kind: "shell" });
@@ -938,7 +939,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // for the same compatible endpoint can wait for this leader and then
       // open its own channel on the authenticated transport.
       let pendingDialCoordination = options._pendingDialState?.coordination || null;
-      if (!pendingDialCoordination && !options.x11Forwarding && typeof beginTransportDial === "function") {
+      if (
+        allowTransportReuse
+        && !pendingDialCoordination
+        && !options.x11Forwarding
+        && typeof beginTransportDial === "function"
+      ) {
         const coordination = beginTransportDial(reuseEndpoint, { kind: "shell" });
         if (coordination.role === "reuse" || coordination.role === "join") {
           try {

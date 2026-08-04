@@ -150,6 +150,9 @@ export type TerminalSessionStartersContext = {
   // Source session id to reuse an authenticated SSH connection from when this
   // terminal was created from an existing SSH session.
   reuseConnectionFromSessionId?: string;
+  // Hosts with connect-time automation need the initial login output. Ordinary
+  // opens therefore use a fresh connection instead of an endpoint-pooled one.
+  hasConnectionAutomation?: boolean;
   isNetworkDevice?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;

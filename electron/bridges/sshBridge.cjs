@@ -1108,7 +1108,7 @@ function isStrictAgentAuthFailure(options, err) {
 }
 
 function canReuseExistingSession(options) {
-  if (!options.sourceSessionId || options.x11Forwarding) return false;
+  if (options.reuseTransport === false || !options.sourceSessionId || options.x11Forwarding) return false;
   return Boolean(findReusableSession(sessions, options.sourceSessionId, {
     hostname: options.hostname,
     port: options.port || 22,

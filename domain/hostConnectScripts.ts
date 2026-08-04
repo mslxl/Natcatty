@@ -118,6 +118,16 @@ export function resolveConnectScriptsForHost(host: Host, snippets: Snippet[]): S
   return [...globals, ...hostScripts];
 }
 
+/**
+ * Whether connecting this host can run automation that depends on the initial
+ * login output. Missing referenced scripts still count: vault hydration or a
+ * later sync may restore them after the terminal has already started.
+ */
+export function hasHostConnectAutomation(host: Host, snippets: Snippet[]): boolean {
+  return hasUnresolvedConnectScriptBindings(host, snippets)
+    || resolveConnectScriptsForHost(host, snippets).length > 0;
+}
+
 export function appendHostConnectScript(host: Host, scriptId: string, snippets: Snippet[]): Host {
   const snippet = scriptById(snippets, scriptId);
   if (!snippet) return host;

@@ -104,6 +104,32 @@ test("simultaneous normal opens of the same host make one physical SSH dial", as
   assert.equal(sessions.get("normal-1").connRef.count, 2);
 });
 
+test("reuseTransport false makes simultaneous same-host opens dial independently", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.51",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+    reuseTransport: false,
+  };
+
+  await Promise.all([
+    start({ sender: makeSender() }, { ...options, sessionId: "fresh-1" }),
+    start({ sender: makeSender() }, { ...options, sessionId: "fresh-2" }),
+  ]);
+
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("fresh-1").conn, sessions.get("fresh-2").conn);
+});
+
 function makeSender() {
   return {
     id: 1,
@@ -310,6 +336,34 @@ test("Copy Tab reuses the source connection instead of dialing fresh", async (t)
   const progress = sender.sent.filter((m) => m.channel === "netcatty:chain:progress");
   assert.ok(progress.some((m) => m.payload.status === "connected"));
   assert.equal(getConnectionReuseFallbackEvents(sender).length, 0, "successful reuse should not emit fallback");
+});
+
+test("reuseTransport false bypasses a matching live source and connects fresh", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  sessions.set("source", makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await start(
+    { sender: makeSender() },
+    {
+      sessionId: "fresh",
+      hostname: "10.0.0.1",
+      username: "alice",
+      port: 22,
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: false,
+      verifyHostKeys: false,
+      sourceSessionId: "source",
+      reuseTransport: false,
+    },
+  );
+
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sourceConn.openedShells.length, 0);
+  assert.notEqual(sessions.get("fresh").conn, sourceConn);
 });
 
 test("Copy Tab records a distinct remote shell for each shared terminal", async (t) => {

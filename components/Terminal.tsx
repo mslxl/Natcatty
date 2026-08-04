@@ -108,7 +108,11 @@ import {
   resumeScriptRun,
   stopScriptRun,
 } from "@/application/state/scriptAutomationCoordinator.ts";
-import { resolveConnectScriptsForHost, hasUnresolvedConnectScriptBindings } from "@/domain/hostConnectScripts.ts";
+import {
+  hasHostConnectAutomation,
+  hasUnresolvedConnectScriptBindings,
+  resolveConnectScriptsForHost,
+} from "@/domain/hostConnectScripts.ts";
 import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
 import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
 import { ScriptExecutionOverlay } from "./terminal/ScriptExecutionOverlay";
@@ -2138,6 +2142,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     resolvedChainHosts,
     sessionId,
     reuseConnectionFromSessionId,
+    hasConnectionAutomation: hasHostConnectAutomation(host, snippets),
     isNetworkDevice,
     startupCommand,
     noAutoRun,

@@ -436,6 +436,41 @@ test("startSSH tells the bridge to skip shell discovery for network devices", as
   assert.equal(capturedOptions?.skipShellPidDiscovery, true);
 });
 
+test("startSSH requests a fresh transport for ordinary opens with connection automation", async () => {
+  const captured: Record<string, unknown>[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      captured.push(options);
+      return `ssh-session-${captured.length}`;
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+
+  await createTerminalSessionStarters(createStarterContext({
+    hasConnectionAutomation: true,
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+  await createTerminalSessionStarters(createStarterContext({
+    hasConnectionAutomation: true,
+    reuseConnectionFromSessionId: "source-session",
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+  await createTerminalSessionStarters(createStarterContext({
+    hasConnectionAutomation: false,
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+
+  assert.equal(captured[0].reuseTransport, false);
+  assert.equal(captured[1].reuseTransport, undefined);
+  assert.equal(captured[1].sourceSessionId, "source-session");
+  assert.equal(captured[2].reuseTransport, undefined);
+});
+
 test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {

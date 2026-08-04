@@ -165,11 +165,10 @@ declare global {
     // Skip POSIX process discovery when copying a network-device session.
     skipShellPidDiscovery?: boolean;
     /**
-     * When false, openSftp must dial a fresh SSH connection and must not
-     * borrow a parked/shared registry transport. Used for dedicated bulk
-     * transfer / restart-resume so transfers do not attach to a terminal
-     * conn that may die or leave checkpoint resume half-bound.
-     * Default true (browse / MFA-skip reuse of parked transports).
+     * When false, terminal/SFTP opens must dial a fresh SSH connection and
+     * must not borrow a live, parked, or in-flight registry transport. Used by
+     * connect-time terminal automation and dedicated bulk transfers.
+     * Default true (normal terminal, browse, and MFA-skip reuse).
      */
     reuseTransport?: boolean;
   }

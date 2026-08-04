@@ -5,6 +5,7 @@ import {
   appendHostConnectScript,
   getGlobalConnectScripts,
   getHostConnectScriptIds,
+  hasHostConnectAutomation,
   migrateHostConnectScriptIds,
   reorderHostConnectScript,
   removeHostConnectScript,
@@ -52,6 +53,25 @@ test('resolveConnectScriptsForHost runs globals before host queue and dedupes', 
     snippets,
   );
   assert.deepEqual(resolved.map((item) => item.id), ['global', 'both', 'host-only']);
+});
+
+test('hasHostConnectAutomation covers host, global, and unresolved connect scripts', () => {
+  assert.equal(
+    hasHostConnectAutomation(
+      { ...host, connectScriptIds: ['host-script'] },
+      [script({ id: 'host-script', targets: ['host-a'] })],
+    ),
+    true,
+  );
+  assert.equal(
+    hasHostConnectAutomation(host, [script({ id: 'global', targetsAllHosts: true })]),
+    true,
+  );
+  assert.equal(
+    hasHostConnectAutomation({ ...host, loginScriptId: 'not-loaded-yet' }, []),
+    true,
+  );
+  assert.equal(hasHostConnectAutomation(host, []), false);
 });
 
 test('append updates host connectScriptIds order', () => {

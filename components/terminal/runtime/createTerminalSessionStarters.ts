@@ -600,6 +600,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // bridge silently falls back to a fresh connection if the source is
           // gone, so reconnect/retry after the source closed still works.
           sourceSessionId: ctx.reuseConnectionFromSessionId,
+          // Connect-time automation must see the complete login sequence. An
+          // explicit Copy/Split keeps its source-session reuse contract, while
+          // an ordinary open bypasses endpoint/idle transport reuse.
+          reuseTransport: ctx.hasConnectionAutomation && !ctx.reuseConnectionFromSessionId
+            ? false
+            : undefined,
           skipShellPidDiscovery: ctx.isNetworkDevice === true,
         });
       };
