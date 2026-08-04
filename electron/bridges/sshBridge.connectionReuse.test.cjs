@@ -474,18 +474,17 @@ test("Copy Tab skips POSIX shell discovery for network devices", async (t) => {
   assert.ok(sessions.get("copy"));
 });
 
-test("Copy Tab with jump hosts skips shell PID discovery exec channels", async (t) => {
+test("Copy Tab with jump hosts still discovers shell PIDs after a short delay", async (t) => {
   const { bridge } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
-  const sourceConn = makeReusableConn();
-  let execCalls = 0;
-  sourceConn.exec = () => { execCalls += 1; };
+  const sourceConn = makePidTrackingReusableConn();
   const jumpHosts = [{ hostname: "bastion.example", username: "jump", port: 22 }];
-  sessions.set("source", makeSourceSession(sourceConn, {
+  const source = makeSourceSession(sourceConn, {
     hostname: "10.0.0.1",
     username: "alice",
     jumpHosts,
-  }));
+  });
+  sessions.set("source", source);
 
   const start = registerStartHandler(bridge, sessions);
   await start(
@@ -496,12 +495,14 @@ test("Copy Tab with jump hosts skips shell PID discovery exec channels", async (
       username: "alice",
       sourceSessionId: "source",
       jumpHosts,
+      sshChannelOpenRateLimitBackoffMs: 1,
     },
   );
 
-  assert.equal(execCalls, 0, "jump-host reuse must not open discovery exec channels");
+  assert.ok(sourceConn.shellPidSnapshots.length >= 2, "jump-host reuse must still run discovery");
+  assert.equal(source.shellPid, "111");
+  assert.equal(sessions.get("copy").shellPid, "222");
   assert.equal(sourceConn.openedShells.length, 1);
-  assert.ok(sessions.get("copy"));
 });
 
 test("Copy Tab retries bastion channelOpen too offen before falling back", async (t) => {

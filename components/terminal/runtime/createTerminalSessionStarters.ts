@@ -622,7 +622,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           reuseTransport: !sourceSessionId && (requiresFreshSshConnection || isFallbackAfterSourceReuse)
             ? false
             : undefined,
-          skipShellPidDiscovery: ctx.isNetworkDevice === true || jumpHosts.length > 0,
+          skipShellPidDiscovery: ctx.isNetworkDevice === true,
         });
         if (!requiresFreshSshConnection) {
           ctx.onConnectAutomationSnapshotCommitted?.();

@@ -436,41 +436,6 @@ test("startSSH tells the bridge to skip shell discovery for network devices", as
   assert.equal(capturedOptions?.skipShellPidDiscovery, true);
 });
 
-test("startSSH skips shell discovery when jump hosts are configured", async () => {
-  let capturedOptions: Record<string, unknown> | null = null;
-  const terminalBackend = {
-    backendAvailable: () => true,
-    startSSHSession: async (options: Record<string, unknown>) => {
-      capturedOptions = options;
-      return "ssh-session";
-    },
-    onSessionData: () => noop,
-    onSessionExit: () => noop,
-    onChainProgress: () => noop,
-    writeToSession: noop,
-    resizeSession: noop,
-  };
-  const ctx = createStarterContext({
-    isNetworkDevice: false,
-    resolvedChainHosts: [{
-      id: "jump-1",
-      label: "Bastion",
-      hostname: "bastion.example.test",
-      username: "jump",
-      port: 22,
-      authMethod: "password",
-      password: "jump-secret",
-    }],
-    reuseConnectionFromSessionIdRef: { current: "source-session" },
-    terminalBackend,
-  });
-
-  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
-
-  assert.equal(capturedOptions?.skipShellPidDiscovery, true);
-  assert.equal(Array.isArray(capturedOptions?.jumpHosts), true);
-});
-
 test("startSSH requests a fresh transport for ordinary opens with connection automation", async () => {
   const captured: Record<string, unknown>[] = [];
   const terminalBackend = {

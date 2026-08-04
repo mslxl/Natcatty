@@ -658,11 +658,18 @@ printf '%s\n' '${scanCompleteMarker}'`;
       };
       let shellDiscoveryBeforeOpen = { available: false, pids: [] };
       // Jump/bastion hosts often rate-limit rapid session channel opens
-      // ("channelOpen too offen"). Skip the discovery exec so Copy Tab only
-      // opens the shell channel itself on an already-authenticated transport.
-      const skipShellPidDiscovery = options.skipShellPidDiscovery === true
-        || (Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0);
-      if (!skipShellPidDiscovery) {
+      // ("channelOpen too offen"). Pause briefly before the discovery exec so
+      // Copy Tab does not immediately follow another channel open, but still
+      // discover shell PIDs so shared-transport cwd lookup stays unambiguous.
+      const hasJumpHosts = Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0;
+      const configuredBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
+      const jumpHostDiscoveryDelayMs = Number.isFinite(configuredBackoffMs) && configuredBackoffMs > 0
+        ? configuredBackoffMs
+        : 150;
+      if (hasJumpHosts && !options.skipShellPidDiscovery) {
+        await new Promise((resolve) => setTimeout(resolve, jumpHostDiscoveryDelayMs));
+      }
+      if (!options.skipShellPidDiscovery) {
         conn.once("error", onDiscoveryConnectionError);
         shellDiscoveryBeforeOpen = await listInteractiveShellPids(conn);
         conn.removeListener("error", onDiscoveryConnectionError);
