@@ -497,7 +497,7 @@ jobs:
           script: |
             const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
             const recoveryVersion = 'protected-tests-and-media-v1';
-            const auditedIssueNumbers = new Set([2679, 2697, 2705, 2708, 2709]);
+            const auditedIssueNumbers = new Set([2679, 2697, 2704, 2705, 2708, 2709]);
             const repository = `${context.repo.owner}/${context.repo.repo}`;
             const issues = await github.paginate(
               github.rest.search.issuesAndPullRequests,

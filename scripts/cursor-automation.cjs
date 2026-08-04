@@ -3122,12 +3122,17 @@ function isTrustedOpenPullForIssue(pull, issueNumber, {
   ));
   const author = String(pull.user?.login || pull.author?.login || '').toLowerCase();
   const headRef = String(pull.head?.ref || pull.headRefName || '');
+  const trustedBotAuthor = ['netcatty-bot', 'github-actions[bot]', 'github-actions']
+    .includes(author);
   const automationManaged =
-    isBotPrMarker(body)
-    || labels.includes('automation:bot-pr')
+    Boolean(sourceMarker)
     || (
-      ['netcatty-bot', 'github-actions[bot]', 'github-actions'].includes(author)
-      && /^cursor\/issue-\d+-/.test(headRef)
+      trustedBotAuthor
+      && (
+        isBotPrMarker(body)
+        || labels.includes('automation:bot-pr')
+        || /^cursor\/issue-\d+-/.test(headRef)
+      )
     );
   const referencesIssue = automationManaged
     ? Boolean(sourceMarker && sourceMarker[1] === String(issueNumber))

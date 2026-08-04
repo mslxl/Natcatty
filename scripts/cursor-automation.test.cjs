@@ -1007,7 +1007,7 @@ test('workflow cleans source labels after eligible PR close and dedupes clean no
   assert.ok((workflow.match(/auto\.extractPaginatedItems\(response\)/g) || []).length >= 2);
   assert.match(workflow, /notBefore: '2026-07-31T12:54:37Z'/);
   assert.match(workflow, /notAfter: '2026-08-04T08:27:14Z'/);
-  assert.match(workflow, /auditedIssueNumbers = new Set\(\[2679, 2697, 2705, 2708, 2709\]\)/);
+  assert.match(workflow, /auditedIssueNumbers = new Set\(\[2679, 2697, 2704, 2705, 2708, 2709\]\)/);
   assert.match(workflow, /is:issue is:closed label:"ready-for-human" label:triage/);
   assert.match(workflow, /is:pr is:merged label:"ready-for-human" label:"automation:bot-pr"/);
   const route = workflow.match(/\n  route:\n[\s\S]*?(?=\n  cleanup_source_issue:)/)?.[0] || '';
@@ -1462,6 +1462,25 @@ test('automation pull references only control the marked source issue', () => {
   assert.equal(auto.isTrustedOpenPullForIssue(pull, 41, options), true);
   assert.equal(auto.isTrustedOpenPullForIssue(pull, 42, options), false);
   assert.equal(auto.isTrustedOpenPullForIssue(pull, 43, options), false);
+});
+
+test('automation label does not hide a trusted maintainer pull reference', () => {
+  const pull = {
+    number: 2703,
+    state: 'open',
+    body: 'Maintainer implementation\n\nRelated to #2699',
+    labels: [{ name: 'automation:bot-pr' }],
+    user: { login: 'binaricat' },
+    author_association: 'OWNER',
+    head: {
+      ref: 'worktree/quiet-cloud-b74d',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+  };
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 2699, {
+    repository: 'binaricat/Netcatty',
+    includeRelated: true,
+  }), true);
 });
 
 test('getPendingIssueFollowupsForPull does not block maintainer Fixes-only PRs', async () => {
