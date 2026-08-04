@@ -2177,6 +2177,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         snippets: snippetsRef.current,
         vaultInitialized: isVaultInitialized(),
         hasPendingScript: hasUnhandledPendingScript,
+        connectAutomationConsumed: connectScriptsConsumedRef.current,
       });
     },
     onConnectAutomationSnapshotCommitted: () => {

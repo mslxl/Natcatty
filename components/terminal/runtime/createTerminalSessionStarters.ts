@@ -529,6 +529,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             ? ctx.host.identityFilePaths
             : undefined;
 
+      let sourceReuseAttempted = false;
       const startAttempt = async (attempt: {
         password?: string;
         key?: SSHKey;
@@ -536,9 +537,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         useSshAgent?: boolean;
       }): Promise<string> => {
         const sourceSessionId = ctx.reuseConnectionFromSessionIdRef?.current;
+        const isFallbackAfterSourceReuse = sourceReuseAttempted && !sourceSessionId;
         if (ctx.reuseConnectionFromSessionIdRef) {
           ctx.reuseConnectionFromSessionIdRef.current = undefined;
         }
+        if (sourceSessionId) sourceReuseAttempted = true;
         ctx.setConnectionReuseAttemptSourceId?.(sourceSessionId);
         ctx.setIsConnectionAwaitingUserInput?.(false);
         ctx.setIsConnectionPastTcpDial?.(false);
@@ -609,7 +612,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // Connect-time automation must see the complete login sequence. An
           // explicit Copy/Split keeps its source-session reuse contract, while
           // an ordinary open bypasses endpoint/idle transport reuse.
-          reuseTransport: requiresFreshSshConnection && !sourceSessionId
+          reuseTransport: !sourceSessionId && (requiresFreshSshConnection || isFallbackAfterSourceReuse)
             ? false
             : undefined,
           skipShellPidDiscovery: ctx.isNetworkDevice === true,

@@ -93,6 +93,19 @@ test('fresh SSH automation policy is conservative before vault hydration and for
     snippets: [],
     vaultInitialized: true,
   }), false);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [script({ id: 'global', targetsAllHosts: true })],
+    vaultInitialized: true,
+    connectAutomationConsumed: true,
+  }), false);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [script({ id: 'global', targetsAllHosts: true })],
+    vaultInitialized: true,
+    hasPendingScript: true,
+    connectAutomationConsumed: true,
+  }), true);
 });
 
 test('empty hydrated vault finalizes the current connection automation decision', () => {

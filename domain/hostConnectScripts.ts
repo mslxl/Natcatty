@@ -133,10 +133,16 @@ export function shouldUseFreshSshConnectionForAutomation(options: {
   snippets: Snippet[];
   vaultInitialized: boolean;
   hasPendingScript?: boolean;
+  connectAutomationConsumed?: boolean;
 }): boolean {
-  return !options.vaultInitialized
-    || options.hasPendingScript === true
-    || hasHostConnectAutomation(options.host, options.snippets);
+  return options.hasPendingScript === true
+    || (
+      options.connectAutomationConsumed !== true
+      && (
+        !options.vaultInitialized
+        || hasHostConnectAutomation(options.host, options.snippets)
+      )
+    );
 }
 
 /**

@@ -569,6 +569,52 @@ test("startSSH rechecks the live automation policy before password fallback", as
   assert.equal(commitCount, 0);
 });
 
+test("startSSH keeps a source fallback off unrelated pooled transports", async () => {
+  const captured: Record<string, unknown>[] = [];
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      captured.push(options);
+      if (captured.length === 1) throw new Error("Authentication failed");
+      return "ssh-session";
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      authMethod: "key",
+      identityFileId: "key-1",
+      password: "login-secret",
+    },
+    keys: [{
+      id: "key-1",
+      name: "Key",
+      privateKey: "plain-private-key",
+      publicKey: "",
+      source: "embedded",
+    }],
+    reuseConnectionFromSessionIdRef: { current: "source-session" },
+    shouldUseFreshSshConnection: () => false,
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(captured.length, 2);
+  assert.equal(captured[0].sourceSessionId, "source-session");
+  assert.equal(captured[0].reuseTransport, undefined);
+  assert.equal(captured[1].sourceSessionId, undefined);
+  assert.equal(captured[1].reuseTransport, false);
+});
+
 test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {
