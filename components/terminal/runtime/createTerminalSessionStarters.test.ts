@@ -569,7 +569,7 @@ test("startSSH rechecks the live automation policy before password fallback", as
   assert.equal(commitCount, 0);
 });
 
-test("startSSH keeps a source fallback off unrelated pooled transports", async () => {
+test("startSSH keeps interactive source auth retries off unrelated pooled transports", async () => {
   const captured: Record<string, unknown>[] = [];
   const terminalBackend = {
     backendAvailable: () => true,
@@ -584,7 +584,9 @@ test("startSSH keeps a source fallback off unrelated pooled transports", async (
     writeToSession: noop,
     resizeSession: noop,
   };
-  const ctx = createStarterContext({
+  const reuseConnectionFromSessionIdRef = { current: "source-session" as string | undefined };
+  const reuseConnectionSourceAttemptedRef = { current: false };
+  const firstCtx = createStarterContext({
     host: {
       id: "host-1",
       label: "Target",
@@ -592,7 +594,6 @@ test("startSSH keeps a source fallback off unrelated pooled transports", async (
       username: "alice",
       authMethod: "key",
       identityFileId: "key-1",
-      password: "login-secret",
     },
     keys: [{
       id: "key-1",
@@ -601,18 +602,38 @@ test("startSSH keeps a source fallback off unrelated pooled transports", async (
       publicKey: "",
       source: "embedded",
     }],
-    reuseConnectionFromSessionIdRef: { current: "source-session" },
+    reuseConnectionFromSessionIdRef,
+    reuseConnectionSourceAttemptedRef,
     shouldUseFreshSshConnection: () => false,
     terminalBackend,
   });
 
-  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+  await createTerminalSessionStarters(firstCtx as never).startSSH(createTermStub() as never);
+
+  assert.equal(reuseConnectionSourceAttemptedRef.current, true);
+
+  const retryCtx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      authMethod: "password",
+      password: "corrected-secret",
+    },
+    reuseConnectionFromSessionIdRef,
+    reuseConnectionSourceAttemptedRef,
+    shouldUseFreshSshConnection: () => false,
+    terminalBackend,
+  });
+  await createTerminalSessionStarters(retryCtx as never).startSSH(createTermStub() as never);
 
   assert.equal(captured.length, 2);
   assert.equal(captured[0].sourceSessionId, "source-session");
   assert.equal(captured[0].reuseTransport, undefined);
   assert.equal(captured[1].sourceSessionId, undefined);
   assert.equal(captured[1].reuseTransport, false);
+  assert.equal(reuseConnectionSourceAttemptedRef.current, false);
 });
 
 test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {

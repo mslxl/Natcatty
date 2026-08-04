@@ -1061,10 +1061,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const sudoHintText = t("terminal.sudoHint.pressEnter");
   const sessionStartersRef = useRef<ReturnType<typeof createTerminalSessionStarters> | null>(null);
   const reuseConnectionSourceRef = useRef(reuseConnectionFromSessionId);
+  const reuseConnectionSourceAttemptedRef = useRef(false);
   const previousReuseConnectionSourcePropRef = useRef(reuseConnectionFromSessionId);
   if (previousReuseConnectionSourcePropRef.current !== reuseConnectionFromSessionId) {
     previousReuseConnectionSourcePropRef.current = reuseConnectionFromSessionId;
     reuseConnectionSourceRef.current = reuseConnectionFromSessionId;
+    reuseConnectionSourceAttemptedRef.current = false;
   }
   const auth = useTerminalAuthState({
     host,
@@ -2162,6 +2164,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     resolvedChainHosts,
     sessionId,
     reuseConnectionFromSessionIdRef: reuseConnectionSourceRef,
+    reuseConnectionSourceAttemptedRef,
     setConnectionReuseAttemptSourceId,
     shouldUseFreshSshConnection: () => {
       const currentPendingScript = pendingScriptRef.current;

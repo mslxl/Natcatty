@@ -529,7 +529,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             ? ctx.host.identityFilePaths
             : undefined;
 
-      let sourceReuseAttempted = false;
+      let sourceReuseAttemptedWithinStart = false;
       const startAttempt = async (attempt: {
         password?: string;
         key?: SSHKey;
@@ -537,11 +537,18 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         useSshAgent?: boolean;
       }): Promise<string> => {
         const sourceSessionId = ctx.reuseConnectionFromSessionIdRef?.current;
+        const sourceReuseAttempted = ctx.reuseConnectionSourceAttemptedRef?.current
+          ?? sourceReuseAttemptedWithinStart;
         const isFallbackAfterSourceReuse = sourceReuseAttempted && !sourceSessionId;
         if (ctx.reuseConnectionFromSessionIdRef) {
           ctx.reuseConnectionFromSessionIdRef.current = undefined;
         }
-        if (sourceSessionId) sourceReuseAttempted = true;
+        if (sourceSessionId) {
+          sourceReuseAttemptedWithinStart = true;
+          if (ctx.reuseConnectionSourceAttemptedRef) {
+            ctx.reuseConnectionSourceAttemptedRef.current = true;
+          }
+        }
         ctx.setConnectionReuseAttemptSourceId?.(sourceSessionId);
         ctx.setIsConnectionAwaitingUserInput?.(false);
         ctx.setIsConnectionPastTcpDial?.(false);
@@ -619,6 +626,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         });
         if (!requiresFreshSshConnection) {
           ctx.onConnectAutomationSnapshotCommitted?.();
+        }
+        sourceReuseAttemptedWithinStart = false;
+        if (ctx.reuseConnectionSourceAttemptedRef) {
+          ctx.reuseConnectionSourceAttemptedRef.current = false;
         }
         return startedSessionId;
       };
