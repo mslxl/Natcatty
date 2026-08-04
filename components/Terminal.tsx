@@ -2170,6 +2170,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         hasPendingScript: hasUnhandledPendingScript,
       });
     },
+    onConnectAutomationSnapshotCommitted: () => {
+      connectScriptsConsumedRef.current = true;
+    },
     isNetworkDevice,
     startupCommand,
     noAutoRun,

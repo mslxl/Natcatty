@@ -156,6 +156,9 @@ export type TerminalSessionStartersContext = {
   // Connect automation and still-unhandled pending scripts need the initial
   // login output. Evaluate per attempt because pending work is one-shot.
   shouldUseFreshSshConnection?: () => boolean;
+  // Commit the no-automation snapshot only after the corresponding backend
+  // session actually starts, so failed auth attempts do not consume scripts.
+  onConnectAutomationSnapshotCommitted?: () => void;
   isNetworkDevice?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;

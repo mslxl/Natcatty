@@ -454,8 +454,12 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   const reuseConnectionFromSessionIdRef = { current: "source-session" as string | undefined };
   const reuseAttempts: Array<string | undefined> = [];
   let requiresFreshConnection = true;
+  let committedAutomationSnapshots = 0;
   const automatedStarters = createTerminalSessionStarters(createStarterContext({
     shouldUseFreshSshConnection: () => requiresFreshConnection,
+    onConnectAutomationSnapshotCommitted: () => {
+      committedAutomationSnapshots += 1;
+    },
     reuseConnectionFromSessionIdRef,
     setConnectionReuseAttemptSourceId: (sourceSessionId: string | undefined) => {
       reuseAttempts.push(sourceSessionId);
@@ -464,8 +468,10 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   }) as never);
   await automatedStarters.startSSH(createTermStub() as never);
   await automatedStarters.startSSH(createTermStub() as never);
+  assert.equal(committedAutomationSnapshots, 0);
   requiresFreshConnection = false;
   await automatedStarters.startSSH(createTermStub() as never);
+  assert.equal(committedAutomationSnapshots, 1);
   await createTerminalSessionStarters(createStarterContext({
     shouldUseFreshSshConnection: () => false,
     terminalBackend,
@@ -479,6 +485,36 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
   assert.equal(captured[2].sourceSessionId, undefined);
   assert.equal(captured[3].reuseTransport, undefined);
   assert.deepEqual(reuseAttempts, ["source-session", undefined, undefined]);
+});
+
+test("startSSH commits an empty automation snapshot only after the backend session succeeds", async () => {
+  let resolveStart: ((sessionId: string) => void) | undefined;
+  let commitCount = 0;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: () => new Promise<string>((resolve) => {
+      resolveStart = resolve;
+    }),
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const startPromise = createTerminalSessionStarters(createStarterContext({
+    shouldUseFreshSshConnection: () => false,
+    onConnectAutomationSnapshotCommitted: () => {
+      commitCount += 1;
+    },
+    terminalBackend,
+  }) as never).startSSH(createTermStub() as never);
+
+  await Promise.resolve();
+  assert.equal(commitCount, 0);
+  assert.ok(resolveStart);
+  resolveStart("ssh-session");
+  await startPromise;
+  assert.equal(commitCount, 1);
 });
 
 test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {

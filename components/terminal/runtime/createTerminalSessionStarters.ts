@@ -551,7 +551,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           globalTerminalSettings,
         );
         const connectionTimeouts = resolveHostSshConnectionTimeouts(ctx.host);
-        return ctx.terminalBackend.startSSHSession({
+        const requiresFreshSshConnection = ctx.shouldUseFreshSshConnection?.() === true;
+        const startedSessionId = await ctx.terminalBackend.startSSHSession({
           sessionId: ctx.sessionId,
           hostLabel: ctx.host.label,
           hostname: ctx.host.hostname,
@@ -608,11 +609,15 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // Connect-time automation must see the complete login sequence. An
           // explicit Copy/Split keeps its source-session reuse contract, while
           // an ordinary open bypasses endpoint/idle transport reuse.
-          reuseTransport: ctx.shouldUseFreshSshConnection?.() === true && !sourceSessionId
+          reuseTransport: requiresFreshSshConnection && !sourceSessionId
             ? false
             : undefined,
           skipShellPidDiscovery: ctx.isNetworkDevice === true,
         });
+        if (!requiresFreshSshConnection) {
+          ctx.onConnectAutomationSnapshotCommitted?.();
+        }
+        return startedSessionId;
       };
 
       let id: string;
