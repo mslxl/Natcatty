@@ -1176,9 +1176,10 @@ function extractKeywordIssueNumbers(body, { includeRelated = false } = {}) {
   const keywords = includeRelated
     ? 'close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\\s+to|refs?|references?'
     : 'close[sd]?|fix(?:e[sd])?|resolve[sd]?';
+  const issueReference = '#\\d+(?![A-Za-z0-9_])';
   const clause = new RegExp(
     `(?:^|\\W)(?:${keywords})\\s+(`
-      + '#\\d+(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+|&\\s*)#\\d+)*'
+      + `${issueReference}(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+|&\\s*)${issueReference})*`
       + ')',
     'gi',
   );

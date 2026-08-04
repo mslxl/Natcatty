@@ -1301,6 +1301,14 @@ test('pullReferencesIssue matches exact closing references without prefix collis
   assert.equal(auto.pullReferencesIssue(relatedList, 43, { includeRelated: true }), true);
   assert.equal(auto.pullReferencesIssue(relatedList, 44, { includeRelated: true }), false);
   assert.equal(
+    auto.pullReferencesIssue({ body: 'Related to #42abc' }, 42, { includeRelated: true }),
+    false,
+  );
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42_foo' }, 42), false);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42-detail' }, 42), true);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42, #43oops' }, 42), true);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42, #43oops' }, 43), false);
+  assert.equal(
     auto.pullReferencesIssue({ head: { ref: 'cursor/issue-42-123' } }, 42),
     false,
   );
