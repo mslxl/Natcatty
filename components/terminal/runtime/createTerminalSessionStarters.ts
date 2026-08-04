@@ -535,6 +535,10 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         useIdentityFiles?: boolean;
         useSshAgent?: boolean;
       }): Promise<string> => {
+        const sourceSessionId = ctx.reuseConnectionFromSessionIdRef?.current;
+        if (ctx.reuseConnectionFromSessionIdRef) {
+          ctx.reuseConnectionFromSessionIdRef.current = undefined;
+        }
         ctx.setIsConnectionAwaitingUserInput?.(false);
         ctx.setIsConnectionPastTcpDial?.(false);
         // Resolve keepalive per-host: a host can opt into its own values
@@ -599,11 +603,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // (issue #1204). Only honored on the very first connect attempt; the
           // bridge silently falls back to a fresh connection if the source is
           // gone, so reconnect/retry after the source closed still works.
-          sourceSessionId: ctx.reuseConnectionFromSessionId,
+          sourceSessionId,
           // Connect-time automation must see the complete login sequence. An
           // explicit Copy/Split keeps its source-session reuse contract, while
           // an ordinary open bypasses endpoint/idle transport reuse.
-          reuseTransport: ctx.hasConnectionAutomation && !ctx.reuseConnectionFromSessionId
+          reuseTransport: ctx.requiresFreshSshConnection && !sourceSessionId
             ? false
             : undefined,
           skipShellPidDiscovery: ctx.isNetworkDevice === true,

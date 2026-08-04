@@ -1,6 +1,6 @@
 import type { FitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon } from "@xterm/addon-serialize";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 import type { Host, Identity, KnownHost, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
 import type { PromptLineBreakState } from "./promptLineBreak";
 import type {
@@ -147,12 +147,11 @@ export type TerminalSessionStartersContext = {
   knownHosts?: KnownHost[];
   resolvedChainHosts: Host[];
   sessionId: string;
-  // Source session id to reuse an authenticated SSH connection from when this
-  // terminal was created from an existing SSH session.
-  reuseConnectionFromSessionId?: string;
-  // Hosts with connect-time automation need the initial login output. Ordinary
-  // opens therefore use a fresh connection instead of an endpoint-pooled one.
-  hasConnectionAutomation?: boolean;
+  // One-shot source session intent for Copy/Split. Consumed by the first SSH
+  // attempt so later reconnects do not skip the initial login sequence.
+  reuseConnectionFromSessionIdRef?: MutableRefObject<string | undefined>;
+  // Connect automation and pending scripts need the initial login output.
+  requiresFreshSshConnection?: boolean;
   isNetworkDevice?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;

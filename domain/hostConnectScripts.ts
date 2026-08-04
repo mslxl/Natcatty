@@ -128,6 +128,17 @@ export function hasHostConnectAutomation(host: Host, snippets: Snippet[]): boole
     || resolveConnectScriptsForHost(host, snippets).length > 0;
 }
 
+export function shouldUseFreshSshConnectionForAutomation(options: {
+  host: Host;
+  snippets: Snippet[];
+  vaultInitialized: boolean;
+  hasPendingScript?: boolean;
+}): boolean {
+  return !options.vaultInitialized
+    || options.hasPendingScript === true
+    || hasHostConnectAutomation(options.host, options.snippets);
+}
+
 export function appendHostConnectScript(host: Host, scriptId: string, snippets: Snippet[]): Host {
   const snippet = scriptById(snippets, scriptId);
   if (!snippet) return host;

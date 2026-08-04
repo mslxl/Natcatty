@@ -426,7 +426,7 @@ test("startSSH tells the bridge to skip shell discovery for network devices", as
   };
   const ctx = createStarterContext({
     isNetworkDevice: true,
-    reuseConnectionFromSessionId: "source-session",
+    reuseConnectionFromSessionIdRef: { current: "source-session" },
     terminalBackend,
   });
 
@@ -451,23 +451,23 @@ test("startSSH requests a fresh transport for ordinary opens with connection aut
     resizeSession: noop,
   };
 
-  await createTerminalSessionStarters(createStarterContext({
-    hasConnectionAutomation: true,
+  const reuseConnectionFromSessionIdRef = { current: "source-session" as string | undefined };
+  const automatedStarters = createTerminalSessionStarters(createStarterContext({
+    requiresFreshSshConnection: true,
+    reuseConnectionFromSessionIdRef,
     terminalBackend,
-  }) as never).startSSH(createTermStub() as never);
+  }) as never);
+  await automatedStarters.startSSH(createTermStub() as never);
+  await automatedStarters.startSSH(createTermStub() as never);
   await createTerminalSessionStarters(createStarterContext({
-    hasConnectionAutomation: true,
-    reuseConnectionFromSessionId: "source-session",
-    terminalBackend,
-  }) as never).startSSH(createTermStub() as never);
-  await createTerminalSessionStarters(createStarterContext({
-    hasConnectionAutomation: false,
+    requiresFreshSshConnection: false,
     terminalBackend,
   }) as never).startSSH(createTermStub() as never);
 
-  assert.equal(captured[0].reuseTransport, false);
-  assert.equal(captured[1].reuseTransport, undefined);
-  assert.equal(captured[1].sourceSessionId, "source-session");
+  assert.equal(captured[0].reuseTransport, undefined);
+  assert.equal(captured[0].sourceSessionId, "source-session");
+  assert.equal(captured[1].reuseTransport, false);
+  assert.equal(captured[1].sourceSessionId, undefined);
   assert.equal(captured[2].reuseTransport, undefined);
 });
 

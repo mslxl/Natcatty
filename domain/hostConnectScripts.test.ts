@@ -10,6 +10,7 @@ import {
   reorderHostConnectScript,
   removeHostConnectScript,
   resolveConnectScriptsForHost,
+  shouldUseFreshSshConnectionForAutomation,
   syncHostsForSnippetTargetChange,
 } from './hostConnectScripts.ts';
 
@@ -72,6 +73,25 @@ test('hasHostConnectAutomation covers host, global, and unresolved connect scrip
     true,
   );
   assert.equal(hasHostConnectAutomation(host, []), false);
+});
+
+test('fresh SSH automation policy is conservative before vault hydration and for pending scripts', () => {
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [],
+    vaultInitialized: false,
+  }), true);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [],
+    vaultInitialized: true,
+    hasPendingScript: true,
+  }), true);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [],
+    vaultInitialized: true,
+  }), false);
 });
 
 test('append updates host connectScriptIds order', () => {

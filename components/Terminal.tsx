@@ -109,9 +109,9 @@ import {
   stopScriptRun,
 } from "@/application/state/scriptAutomationCoordinator.ts";
 import {
-  hasHostConnectAutomation,
   hasUnresolvedConnectScriptBindings,
   resolveConnectScriptsForHost,
+  shouldUseFreshSshConnectionForAutomation,
 } from "@/domain/hostConnectScripts.ts";
 import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
 import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
@@ -1046,6 +1046,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const passwordPickerEmptyText = t("terminal.passwordPicker.empty");
   const sudoHintText = t("terminal.sudoHint.pressEnter");
   const sessionStartersRef = useRef<ReturnType<typeof createTerminalSessionStarters> | null>(null);
+  const reuseConnectionSourceRef = useRef(reuseConnectionFromSessionId);
+  const previousReuseConnectionSourcePropRef = useRef(reuseConnectionFromSessionId);
+  if (previousReuseConnectionSourcePropRef.current !== reuseConnectionFromSessionId) {
+    previousReuseConnectionSourcePropRef.current = reuseConnectionFromSessionId;
+    reuseConnectionSourceRef.current = reuseConnectionFromSessionId;
+  }
   const auth = useTerminalAuthState({
     host,
     pendingAuthRef,
@@ -2141,8 +2147,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     knownHosts,
     resolvedChainHosts,
     sessionId,
-    reuseConnectionFromSessionId,
-    hasConnectionAutomation: hasHostConnectAutomation(host, snippets),
+    reuseConnectionFromSessionIdRef: reuseConnectionSourceRef,
+    requiresFreshSshConnection: shouldUseFreshSshConnectionForAutomation({
+      host,
+      snippets,
+      vaultInitialized: isVaultInitialized(),
+      hasPendingScript: Boolean(pendingScript || pendingScriptId),
+    }),
     isNetworkDevice,
     startupCommand,
     noAutoRun,
