@@ -517,6 +517,58 @@ test("startSSH commits an empty automation snapshot only after the backend sessi
   assert.equal(commitCount, 1);
 });
 
+test("startSSH rechecks the live automation policy before password fallback", async () => {
+  const captured: Record<string, unknown>[] = [];
+  let requiresFreshConnection = false;
+  let commitCount = 0;
+  const terminalBackend = {
+    backendAvailable: () => true,
+    startSSHSession: async (options: Record<string, unknown>) => {
+      captured.push(options);
+      if (captured.length === 1) {
+        requiresFreshConnection = true;
+        throw new Error("Authentication failed");
+      }
+      return "ssh-session";
+    },
+    onSessionData: () => noop,
+    onSessionExit: () => noop,
+    onChainProgress: () => noop,
+    writeToSession: noop,
+    resizeSession: noop,
+  };
+  const ctx = createStarterContext({
+    host: {
+      id: "host-1",
+      label: "Target",
+      hostname: "target.example.test",
+      username: "alice",
+      authMethod: "key",
+      identityFileId: "key-1",
+      password: "login-secret",
+    },
+    keys: [{
+      id: "key-1",
+      name: "Key",
+      privateKey: "plain-private-key",
+      publicKey: "",
+      source: "embedded",
+    }],
+    shouldUseFreshSshConnection: () => requiresFreshConnection,
+    onConnectAutomationSnapshotCommitted: () => {
+      commitCount += 1;
+    },
+    terminalBackend,
+  });
+
+  await createTerminalSessionStarters(ctx as never).startSSH(createTermStub() as never);
+
+  assert.equal(captured.length, 2);
+  assert.equal(captured[0].reuseTransport, undefined);
+  assert.equal(captured[1].reuseTransport, false);
+  assert.equal(commitCount, 0);
+});
+
 test("startSSH uses the system agent when a synced vault key cannot be decrypted", async () => {
   let capturedOptions: Record<string, unknown> | null = null;
   const terminalBackend = {

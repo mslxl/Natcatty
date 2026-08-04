@@ -357,6 +357,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const connectScriptsInFlightRef = useRef(false);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
+  const pendingScriptRef = useRef(pendingScript);
+  const pendingScriptIdRef = useRef(pendingScriptId);
+  pendingScriptRef.current = pendingScript;
+  pendingScriptIdRef.current = pendingScriptId;
   const isPendingScriptAlreadyHandled = useCallback((snippet: Snippet) => {
     if (snippet.id) {
       return pendingScriptRunIdRef.current === snippet.id;
@@ -2160,12 +2164,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     reuseConnectionFromSessionIdRef: reuseConnectionSourceRef,
     setConnectionReuseAttemptSourceId,
     shouldUseFreshSshConnection: () => {
-      const hasUnhandledPendingScript = pendingScript && isScriptSnippet(pendingScript)
-        ? !isPendingScriptAlreadyHandled(pendingScript)
-        : Boolean(pendingScriptId && pendingScriptRunIdRef.current !== pendingScriptId);
+      const currentPendingScript = pendingScriptRef.current;
+      const currentPendingScriptId = pendingScriptIdRef.current;
+      const hasUnhandledPendingScript = currentPendingScript && isScriptSnippet(currentPendingScript)
+        ? !isPendingScriptAlreadyHandled(currentPendingScript)
+        : Boolean(
+          currentPendingScriptId
+          && pendingScriptRunIdRef.current !== currentPendingScriptId,
+        );
       return shouldUseFreshSshConnectionForAutomation({
-        host,
-        snippets,
+        host: hostRef.current,
+        snippets: snippetsRef.current,
         vaultInitialized: isVaultInitialized(),
         hasPendingScript: hasUnhandledPendingScript,
       });
