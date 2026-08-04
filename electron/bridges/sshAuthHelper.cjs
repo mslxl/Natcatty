@@ -660,6 +660,49 @@ function socketAgentConnectable(agentPath, options = {}) {
   });
 }
 
+function socketAgentIdentityCount(agentPath, options = {}) {
+  const createConnection = options.createConnectionImpl || require("node:net").createConnection;
+  const timeoutMs = options.timeoutMs ?? 1000;
+  return new Promise((resolve) => {
+    let settled = false;
+    let socket = null;
+    let response = Buffer.alloc(0);
+    const finish = (count) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (socket) {
+        socket.removeAllListeners();
+        socket.destroy();
+      }
+      resolve(count);
+    };
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    try {
+      socket = createConnection(agentPath);
+      socket.once("connect", () => {
+        socket.write(Buffer.from([0, 0, 0, 1, 11]));
+      });
+      socket.on("data", (chunk) => {
+        response = Buffer.concat([response, chunk]);
+        if (response.length < 5) return;
+        const payloadLength = response.readUInt32BE(0);
+        if (payloadLength < 1 || payloadLength > 1024 * 1024) return finish(null);
+        if (response.length < payloadLength + 4) return;
+        const responseType = response[4];
+        if (responseType === 5) return finish(0);
+        if (responseType !== 12 || payloadLength < 5) return finish(null);
+        finish(response.readUInt32BE(5));
+      });
+      socket.once("error", () => finish(null));
+      socket.once("end", () => finish(null));
+      socket.once("close", () => finish(null));
+    } catch {
+      finish(null);
+    }
+  });
+}
+
 /**
  * Check if an SSH agent is available on Windows.
  * Probes the well-known named pipe via net.connect(). This supports any
@@ -756,8 +799,59 @@ async function getAvailableAgentSocket(identityAgent, injected = {}) {
   return running ? socketPath : null;
 }
 
+async function getAvailableForwardingAgentSocket(identityAgent, injected = {}) {
+  const resolveAvailable = injected.getAvailableAgentSocketImpl || getAvailableAgentSocket;
+  const platform = injected.platform || process.platform;
+  const forwardingIdentityAgent = typeof identityAgent === "string"
+    && identityAgent.trim().replace(/^["']|["']$/g, "").trim().toLowerCase() === "none"
+    ? undefined
+    : identityAgent;
+  if (forwardingIdentityAgent || platform !== "darwin") {
+    return resolveAvailable(forwardingIdentityAgent, injected);
+  }
+
+  const env = injected.localEnv || process.env;
+  const home = injected.homedir || os.homedir();
+  const inheritedCandidates = [env.SSH_AUTH_SOCK, env.SSH_AUTH_SOCKET].filter(Boolean);
+  const candidates = [...new Set([
+    ...inheritedCandidates,
+    path.join(home, ".bitwarden-ssh-agent.sock"),
+    path.join(home, "Library", "Containers", "com.bitwarden.desktop", "Data", ".bitwarden-ssh-agent.sock"),
+  ])];
+  const inheritedCandidateSet = new Set(inheritedCandidates);
+  const countIdentities = injected.socketAgentIdentityCount || socketAgentIdentityCount;
+  let fallbackSocket = null;
+
+  for (const candidate of candidates) {
+    const socketPath = await resolveAvailable(candidate, injected);
+    if (!socketPath) continue;
+    if (inheritedCandidateSet.has(candidate)) {
+      fallbackSocket ||= socketPath;
+    }
+    const identityCount = await countIdentities(socketPath, injected);
+    if (Number.isInteger(identityCount) && identityCount > 0) {
+      return socketPath;
+    }
+  }
+
+  return fallbackSocket;
+}
+
 async function getNativeOpenSshAgentSocket(identityAgent, injected = {}) {
   const socketPath = await getAvailableAgentSocket(identityAgent, injected);
+  const platform = injected.platform || process.platform;
+  if (platform === "win32" && socketPath && !isWindowsNamedPipe(socketPath)) {
+    const error = new Error(
+      "This SSH agent is available only to Netcatty's built-in SSH client. Mosh and EternalTerminal require a Windows named-pipe agent.",
+    );
+    error.code = "ERR_SSH_AGENT_NATIVE_UNSUPPORTED";
+    throw error;
+  }
+  return socketPath;
+}
+
+async function getNativeOpenSshForwardingAgentSocket(identityAgent, injected = {}) {
+  const socketPath = await getAvailableForwardingAgentSocket(identityAgent, injected);
   const platform = injected.platform || process.platform;
   if (platform === "win32" && socketPath && !isWindowsNamedPipe(socketPath)) {
     const error = new Error(
@@ -1494,9 +1588,11 @@ function shouldSkipKiPasswordAutoFill(authPhase) {
  * @param {{ hadPartialSuccess: boolean, passwordAlreadySucceeded?: boolean, keyboardInteractiveSuccessCount?: number }} authPhase
  * @param {(label: string) => void} [onAuthAttempt] - optional progress callback
  *   (jump/SFTP connection logs). Mirrors the dynamic authHandler's onAuthAttempt.
+ * @param {{ username?: string, agent?: unknown }} [agentAuth] - optional
+ *   login-only agent override when the connection's agent is reserved for forwarding.
  * @returns {(methodsLeft: string[]|null, partialSuccess: boolean, callback: Function) => void}
  */
-function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
+function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt, agentAuth = {}) {
   // Methods we actually offered (server got a chance to accept/reject).
   let attempted = new Set();
   // Methods that contributed a successful factor; never retried.
@@ -1512,6 +1608,13 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
     if (method === "agent") return "SSH agent";
     return method;
   };
+  const resolveAttempt = (method) => method === "agent" && agentAuth.agent
+    ? {
+      type: "agent",
+      username: agentAuth.username,
+      agent: agentAuth.agent,
+    }
+    : method;
 
   return (methodsLeft, partialSuccess, callback) => {
     if (partialSuccess) {
@@ -1581,7 +1684,7 @@ function createOrderedStringAuthHandler(order, authPhase, onAuthAttempt) {
         );
       }
       onAuthAttempt?.(attemptLabel(method));
-      return callback(method);
+      return callback(resolveAttempt(method));
     }
     onAuthAttempt?.("all methods exhausted");
     return callback(false);
@@ -1939,11 +2042,14 @@ module.exports = {
   findAllDefaultPrivateKeys,
   getSshAgentSocket,
   getAvailableAgentSocket,
+  getAvailableForwardingAgentSocket,
   getNativeOpenSshAgentSocket,
+  getNativeOpenSshForwardingAgentSocket,
   isWindowsNamedPipe,
   ssh2AgentConnectable,
   cygwinAgentConnectable,
   socketAgentConnectable,
+  socketAgentIdentityCount,
   resolveIdentityAgentPath,
   prepareSystemSshAgentForAuth,
   buildAuthHandler,

@@ -509,6 +509,7 @@ function buildConnectionReuseEndpoint(options = {}, overrides = {}) {
     useKeychain: options.useKeychain,
     agentPublicKeys: options.agentPublicKeys,
     agentForwarding: Boolean(overrides.agentForwarding ?? options.agentForwarding),
+    forwardingAgentSocket: options.forwardingAgentSocket || "",
     ...keepalive,
     password: options.password,
     privateKey: options.privateKey,
@@ -555,6 +556,11 @@ function normalizeEndpoint(endpoint) {
     // A transport opened with ForwardAgent can serve SFTP/PF; a transport
     // without it cannot satisfy a later shell open that needs agentForwarding.
     agentForwarding: Boolean(endpoint.agentForwarding),
+    forwardingAgentFingerprint: endpoint.forwardingAgentFingerprint
+      ? String(endpoint.forwardingAgentFingerprint)
+      : endpoint.agentForwarding && endpoint.forwardingAgentSocket
+        ? secureDigest(String(endpoint.forwardingAgentSocket))
+        : "-",
     ...keepalive,
   };
 }
@@ -618,7 +624,9 @@ function endpointAllowsReuse(requested, existing, kind = "channel") {
   const have = normalizeEndpoint(existing);
   if (!req || !have) return false;
   if (kind === "shell") {
-    return req.agentForwarding === have.agentForwarding;
+    return req.agentForwarding === have.agentForwarding
+      && (!req.agentForwarding
+        || req.forwardingAgentFingerprint === have.forwardingAgentFingerprint);
   }
   if (req.agentForwarding && !have.agentForwarding) return false;
   return true;
@@ -1212,6 +1220,7 @@ function createConnectionRef(session, conn, chainConnections) {
       verifyHostKeys: session._reuseEndpoint.verifyHostKeys,
       useSshAgent: session._reuseEndpoint.useSshAgent,
       agentForwarding: session._reuseEndpoint.agentForwarding,
+      forwardingAgentFingerprint: session._reuseEndpoint.forwardingAgentFingerprint,
       keepaliveIntervalMs: session._reuseEndpoint.keepaliveIntervalMs,
       keepaliveCountMax: session._reuseEndpoint.keepaliveCountMax,
       authFingerprint: session._reuseEndpoint.authFingerprint,

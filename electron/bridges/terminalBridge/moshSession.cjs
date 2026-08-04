@@ -133,28 +133,41 @@ function createMoshSessionApi(ctx) {
     }
 
     async function prepareMoshSshAgentOptions(options) {
-      if (options?.useSshAgent !== true) return options;
-      await prepareSystemSshAgentForAuth(options, "[Mosh]");
-      const socketPath = await getAvailableAgentSocket(options.identityAgent, options);
-      if (!socketPath) {
-        throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+      if (options?.useSshAgent !== true && !options?.agentForwarding) return options;
+      let prepared = options;
+      if (options.useSshAgent === true) {
+        await prepareSystemSshAgentForAuth(options, "[Mosh]");
+        const loginSocketPath = await getAvailableAgentSocket(options.identityAgent, options);
+        if (!loginSocketPath) {
+          throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+        }
+        prepared = { ...prepared, _resolvedSshAgentSocket: loginSocketPath };
       }
-      return { ...options, _resolvedSshAgentSocket: socketPath };
+      if (options.agentForwarding) {
+        const forwardingSocketPath = await getAvailableForwardingAgentSocket(options.identityAgent, options);
+        if (forwardingSocketPath) {
+          prepared = { ...prepared, _resolvedForwardingAgentSocket: forwardingSocketPath };
+        }
+      }
+      return prepared;
     }
 
     function applyMoshSshAgentEnvironment(env, options) {
-      if (options?.useSshAgent === false) {
-        if (options.agentForwarding) {
-          if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
-            env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
-          }
-        } else {
-          delete env.SSH_AUTH_SOCK;
-        }
+      delete env.SSH_AUTH_SOCK;
+      if (
+        process.platform === "win32"
+        && options?.agentForwarding
+        && options._resolvedForwardingAgentSocket
+      ) {
+        // Windows OpenSSH reparses backslashes in a direct ForwardAgent value.
+        // Keep the named pipe intact by expanding the standard socket variable.
+        env.SSH_AUTH_SOCK = options._resolvedForwardingAgentSocket;
         return env;
       }
-      const socketPath = options?._resolvedSshAgentSocket
-        || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
+      if (options?.useSshAgent === false) {
+        return env;
+      }
+      const socketPath = options?._resolvedSshAgentSocket || process.env.SSH_AUTH_SOCK;
       if (socketPath) env.SSH_AUTH_SOCK = socketPath;
       return env;
     }
@@ -340,14 +353,17 @@ function createMoshSessionApi(ctx) {
 
         if (options.useSshAgent === false) {
           sshArgs.push("-o", "IdentityAgent=none");
-          if (options.agentForwarding) {
-            sshArgs.push("-o", "ForwardAgent=${SSH_AUTH_SOCK}");
-          }
         } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
           sshArgs.push("-o", `IdentityAgent=${options._resolvedSshAgentSocket}`);
           if (options.identitiesOnly && !sshArgs.includes("IdentitiesOnly=yes")) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
+        }
+        if (options.agentForwarding && options._resolvedForwardingAgentSocket) {
+          const forwardingValue = process.platform === "win32"
+            ? "${SSH_AUTH_SOCK}"
+            : options._resolvedForwardingAgentSocket;
+          sshArgs.push("-o", `ForwardAgent=${forwardingValue}`);
         }
 
         if (options.authMethod === "password") {

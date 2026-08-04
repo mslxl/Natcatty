@@ -41,6 +41,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   effectiveFontSize,
   hasEffectiveFontSizeOverride,
   sshAgentStatus,
+  sshForwardingAgentStatus,
   effectiveGroupDefaults,
   effectiveAuthMethod,
   showAlgorithmOverrides,
@@ -319,7 +320,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             enabled={!!form.agentForwarding}
             onToggle={() => update("agentForwarding", !form.agentForwarding)}
           />
-          {form.agentForwarding && sshAgentStatus && !sshAgentStatus.running && (
+          {form.agentForwarding && sshForwardingAgentStatus && !sshForwardingAgentStatus.running && (
             <div className="flex items-start gap-2 p-2 rounded-md bg-yellow-500/10 border border-yellow-500/20">
               <AlertTriangle size={14} className="text-yellow-500 mt-0.5 flex-shrink-0" />
               <div className="space-y-1">

@@ -292,10 +292,67 @@ test("Mosh explicitly disables native agent login after an opt-out", async () =>
   );
   assert.deepEqual(forwardingAuth.sshArgs, [
     "-o", "IdentityAgent=none",
-    "-o", "ForwardAgent=${SSH_AUTH_SOCK}",
     "-o", "StrictHostKeyChecking=ask",
   ]);
-  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, undefined);
+});
+
+test("Mosh keeps its login agent separate from the discovered forwarding agent", async () => {
+  const localAgent = "/private/tmp/com.apple.launchd.test/Listeners";
+  const forwardingAgent = "/Users/alice/.bitwarden-ssh-agent.sock";
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process: { ...process, env: { SSH_AUTH_SOCK: localAgent } },
+    randomUUID: () => "fixed",
+    prepareSystemSshAgentForAuth: async () => {},
+    getAvailableAgentSocket: async () => localAgent,
+    getAvailableForwardingAgentSocket: async () => forwardingAgent,
+  });
+
+  for (const useSshAgent of [false, undefined, true]) {
+    const prepared = await api.prepareMoshSshAgentOptions({
+      useSshAgent,
+      agentForwarding: true,
+    });
+    const env = api.applyMoshSshAgentEnvironment(
+      { SSH_AUTH_SOCK: "/tmp/remote-agent.sock" },
+      prepared,
+    );
+    const auth = await api.buildMoshSshAuthArgs(prepared, `session-forwarding-${String(useSshAgent)}`);
+
+    assert.equal(prepared._resolvedSshAgentSocket, useSshAgent === true ? localAgent : undefined);
+    assert.equal(prepared._resolvedForwardingAgentSocket, forwardingAgent);
+    assert.equal(env.SSH_AUTH_SOCK, useSshAgent === false ? undefined : localAgent);
+    assert.ok(auth.sshArgs.includes(`ForwardAgent=${forwardingAgent}`));
+  }
+});
+
+test("Mosh forwards a Windows named-pipe agent through SSH_AUTH_SOCK", async () => {
+  const forwardingAgent = "\\\\.\\pipe\\openssh-ssh-agent";
+  const processMock = Object.create(process);
+  Object.defineProperty(processMock, "platform", { value: "win32" });
+  processMock.env = {};
+  const api = createMoshSessionApi({
+    os,
+    path,
+    fs,
+    process: processMock,
+    randomUUID: () => "fixed",
+  });
+  const prepared = {
+    useSshAgent: false,
+    agentForwarding: true,
+    _resolvedForwardingAgentSocket: forwardingAgent,
+  };
+
+  const env = api.applyMoshSshAgentEnvironment({}, prepared);
+  const auth = await api.buildMoshSshAuthArgs(prepared, "session-windows-forwarding");
+
+  assert.equal(env.SSH_AUTH_SOCK, forwardingAgent);
+  assert.ok(auth.sshArgs.includes("ForwardAgent=${SSH_AUTH_SOCK}"));
+  assert.equal(auth.sshArgs.some((arg) => arg.includes(forwardingAgent)), false);
 });
 
 test("Mosh automatic mode discovers custom local keys in preferred order", async (t) => {

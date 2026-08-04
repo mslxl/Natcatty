@@ -114,6 +114,46 @@ test("startEtSession preserves discovered automatic identities for host informat
   assert.equal(sessions.get("sess-auto-stats").etStatsAuth.authMethod, "auto");
 });
 
+test("startEtSession passes the selected forwarding socket to the bundled ET client", async (t) => {
+  const forwardingAgent = "/Users/alice/.bitwarden-ssh-agent.sock";
+  let spawnArgs = null;
+  const proc = {
+    onData() {},
+    onExit() {},
+    write() {},
+  };
+  const { api } = makeApi(t, {
+    bundledEtClient: () => "/fake/et",
+    getAvailableForwardingAgentSocket: async () => forwardingAgent,
+    pty: {
+      spawn: (_command, args) => {
+        spawnArgs = args;
+        return proc;
+      },
+    },
+    electronModule: { webContents: { fromId: () => null } },
+    openTerminalOutputSession: () => {},
+    selectZmodemUploadFiles: null,
+    selectZmodemDownloadDirectory: null,
+  });
+
+  await api.startEtSession({ sender: { id: 7 } }, {
+    sessionId: "sess-forwarding-socket",
+    hostname: "host.example",
+    username: "alice",
+    useSshAgent: false,
+    agentForwarding: true,
+  });
+
+  const forwardingFlag = spawnArgs.indexOf("-f");
+  assert.notEqual(forwardingFlag, -1);
+  assert.deepEqual(spawnArgs.slice(forwardingFlag, forwardingFlag + 3), [
+    "-f",
+    "--ssh-socket",
+    forwardingAgent,
+  ]);
+});
+
 test("ET PTY explicitly enables bundled ConPTY clear support only on Windows", async (t) => {
   const spawnForPlatform = async (platform) => {
     let spawnOptions = null;
@@ -583,8 +623,8 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
     { useSshAgent: false, agentForwarding: true },
   );
   assert.match(forwardingConfig, /IdentityAgent none/);
-  assert.match(forwardingConfig, /ForwardAgent \$\{SSH_AUTH_SOCK\}/);
-  assert.equal(forwardingEnv.SSH_AUTH_SOCK, "/tmp/forwarded-agent.sock");
+  assert.doesNotMatch(forwardingConfig, /ForwardAgent/);
+  assert.equal(forwardingEnv.SSH_AUTH_SOCK, undefined);
 
   const automaticJumpEnv = api.applyEtSshAgentEnvironment(
     { SSH_AUTH_SOCK: "/tmp/jump-agent.sock" },
@@ -594,7 +634,34 @@ test("ET explicitly disables native agent login for target and jump hosts", (t) 
       jumpHosts: [{ authMethod: "auto" }],
     },
   );
-  assert.equal(automaticJumpEnv.SSH_AUTH_SOCK, "/tmp/jump-agent.sock");
+  assert.equal(automaticJumpEnv.SSH_AUTH_SOCK, process.env.SSH_AUTH_SOCK);
+});
+
+test("ET keeps its login agent separate from the discovered forwarding agent", async (t) => {
+  const localAgent = "/private/tmp/com.apple.launchd.test/Listeners";
+  const forwardingAgent = "/Users/alice/.bitwarden-ssh-agent.sock";
+  const { api } = makeApi(t, {
+    prepareSystemSshAgentForAuth: async () => {},
+    getAvailableAgentSocket: async () => localAgent,
+    getAvailableForwardingAgentSocket: async () => forwardingAgent,
+    process: { ...process, env: { SSH_AUTH_SOCK: localAgent } },
+  });
+
+  for (const useSshAgent of [false, undefined, true]) {
+    const prepared = await api.prepareEtSshAgentOptions({
+      hostname: `host-${String(useSshAgent)}.example`,
+      username: "alice",
+      useSshAgent,
+      agentForwarding: true,
+    });
+    const env = api.applyEtSshAgentEnvironment(
+      { SSH_AUTH_SOCK: "/tmp/remote-agent.sock" },
+      prepared,
+    );
+    assert.equal(prepared._resolvedSshAgentSocket, useSshAgent === true ? localAgent : undefined);
+    assert.equal(prepared._resolvedForwardingAgentSocket, forwardingAgent);
+    assert.equal(env.SSH_AUTH_SOCK, useSshAgent === false ? undefined : localAgent);
+  }
 });
 
 test("ET prepares target and jump agents before generating their host config", async (t) => {

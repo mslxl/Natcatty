@@ -5,10 +5,95 @@ const assert = require("node:assert/strict");
 
 const {
   resolveUnlockedEncryptedKeysForAuth,
+  applyAgentForwarding,
   shouldOfferAgentForLogin,
   shouldPrepareSystemAgentForLogin,
   shouldPromoteCachedAuthMethod,
+  prepareAgentForwardingOptions,
 } = require("./startSession.cjs");
+
+test("forwarding agent selection is resolved before connection reuse", async () => {
+  const calls = [];
+  const prepared = await prepareAgentForwardingOptions(
+    { agentForwarding: true, identityAgent: "none" },
+    async (identityAgent) => {
+      calls.push(identityAgent);
+      return "/Users/alice/.bitwarden-ssh-agent.sock";
+    },
+  );
+
+  assert.deepEqual(calls, ["none"]);
+  assert.equal(prepared._resolvedForwardingAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(prepared.forwardingAgentSocket, "/Users/alice/.bitwarden-ssh-agent.sock");
+});
+
+test("pre-resolved forwarding agent selection is reused during SSH setup", async () => {
+  const connectOptions = {};
+  await applyAgentForwarding(
+    {
+      agentForwarding: true,
+      _resolvedForwardingAgentSocket: "/Users/alice/.bitwarden-ssh-agent.sock",
+    },
+    connectOptions,
+    async () => {
+      throw new Error("forwarding socket should not be resolved twice");
+    },
+  );
+
+  assert.equal(connectOptions.agent, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+});
+
+test("agent forwarding resolves the forwarding socket independently from login auth", async () => {
+  const connectOptions = { password: "login-password" };
+  const resolved = [];
+
+  await applyAgentForwarding(
+    { agentForwarding: true, useSshAgent: false },
+    connectOptions,
+    async (identityAgent) => {
+      resolved.push(identityAgent);
+      return "/Users/alice/.bitwarden-ssh-agent.sock";
+    },
+  );
+
+  assert.deepEqual(resolved, [undefined]);
+  assert.equal(connectOptions.agent, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+});
+
+test("agent forwarding replaces an automatically discovered empty login agent", async () => {
+  const connectOptions = { agent: "/private/tmp/com.apple.launchd.test/Listeners" };
+
+  await applyAgentForwarding(
+    { agentForwarding: true },
+    connectOptions,
+    async () => "/Users/alice/.bitwarden-ssh-agent.sock",
+    { replaceExistingAgent: true },
+  );
+
+  assert.equal(connectOptions.agent, "/Users/alice/.bitwarden-ssh-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+});
+
+test("agent forwarding configures ssh2 separately from an explicitly prepared login agent", async () => {
+  const explicitAgent = { kind: "selected-agent" };
+  const connectOptions = { agent: explicitAgent };
+  let resolutions = 0;
+
+  await applyAgentForwarding(
+    { agentForwarding: true, identityAgent: "/tmp/selected-agent.sock" },
+    connectOptions,
+    async () => {
+      resolutions += 1;
+      return "/tmp/other-agent.sock";
+    },
+  );
+
+  assert.equal(connectOptions.agent, "/tmp/other-agent.sock");
+  assert.equal(connectOptions.agentForward, true);
+  assert.equal(resolutions, 1);
+});
 
 test("agent forwarding does not enable agent login after an explicit opt-out", () => {
   assert.equal(shouldOfferAgentForLogin(

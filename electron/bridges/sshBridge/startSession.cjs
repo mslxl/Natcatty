@@ -147,6 +147,42 @@ function shouldPromoteCachedAuthMethod(authMethod, cachedMethod) {
   return true;
 }
 
+async function applyAgentForwarding(
+  options,
+  connectOpts,
+  resolveForwardingAgentSocket,
+) {
+  if (!options?.agentForwarding) return connectOpts;
+  const alreadyResolved = Object.prototype.hasOwnProperty.call(
+    options,
+    "_resolvedForwardingAgentSocket",
+  );
+  const forwardingAgent = alreadyResolved
+    ? options._resolvedForwardingAgentSocket
+    : await resolveForwardingAgentSocket(options.identityAgent, options);
+  if (forwardingAgent) {
+    connectOpts.agent = forwardingAgent;
+    connectOpts.agentForward = true;
+  }
+  return connectOpts;
+}
+
+async function prepareAgentForwardingOptions(options, resolveForwardingAgentSocket) {
+  if (!options?.agentForwarding) return options;
+  if (Object.prototype.hasOwnProperty.call(options, "_resolvedForwardingAgentSocket")) {
+    return {
+      ...options,
+      forwardingAgentSocket: options._resolvedForwardingAgentSocket || "",
+    };
+  }
+  const forwardingAgent = await resolveForwardingAgentSocket(options.identityAgent, options);
+  return {
+    ...options,
+    _resolvedForwardingAgentSocket: forwardingAgent || null,
+    forwardingAgentSocket: forwardingAgent || "",
+  };
+}
+
 function createStartSessionApi(ctx) {
   with (ctx) {
     const listInteractiveShellPids = async (conn) => {
@@ -818,6 +854,11 @@ printf '%s\n' '${scanCompleteMarker}'`;
         }
       };
 
+      // Resolve forwarding before connection reuse so an agent-provider change
+      // (for example Bitwarden becoming available after unlock) cannot attach a
+      // new shell to a transport that still forwards the previous socket.
+      options = await prepareAgentForwardingOptions(options, getAvailableForwardingAgentSocket);
+
       // Connection reuse (issue #1204): when a tab is duplicated we try to open
       // a new shell channel on the source tab's already-authenticated
       // connection. This skips key exchange + authentication entirely, so an
@@ -1202,15 +1243,14 @@ printf '%s\n' '${scanCompleteMarker}'`;
           isPasswordOnlyAuth,
         });
 
+        // ssh2 uses connectOpts.agent for forwarding, but authHandler agent
+        // objects may select a different agent for login.
+        const loginAgent = connectOpts.agent;
+
         // Agent forwarding
         if (options.agentForwarding) {
-          if (!connectOpts.agent) {
-            connectOpts.agent = await getAvailableAgentSocket();
-          }
-          // Only enable forwarding when an agent is actually available
-          if (connectOpts.agent) {
-            connectOpts.agentForward = true;
-          } else {
+          await applyAgentForwarding(options, connectOpts, getAvailableForwardingAgentSocket);
+          if (!connectOpts.agentForward) {
             log("Agent forwarding requested but no agent available, skipping");
           }
         }
@@ -1246,7 +1286,14 @@ printf '%s\n' '${scanCompleteMarker}'`;
           if (!order.includes("keyboard-interactive")) order.push("keyboard-interactive");
           // Function form so authPhase.hadPartialSuccess updates for cert/agent
           // first-factor + keyboard-interactive second-factor (#2150).
-          connectOpts.authHandler = createOrderedStringAuthHandler(order, authPhase);
+          connectOpts.authHandler = createOrderedStringAuthHandler(
+            order,
+            authPhase,
+            undefined,
+            authAgent !== connectOpts.agent
+              ? { username: connectOpts.username, agent: authAgent }
+              : undefined,
+          );
           connectOpts._shouldRetryKeyboardInteractiveFirst = () => Boolean(authPhase.retryKeyboardInteractiveFirst);
           log("Auth order (agent mode)", { order, skipPasswordMethod: !!options._skipPasswordMethod });
         } else {
@@ -1257,8 +1304,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
             if (options.requiresMfa && !connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push({ type: "keyboard-interactive", id: "keyboard-interactive" });
             }
-            if (shouldOfferAgentForLogin(options, connectOpts)) {
-              authMethods.push({ type: "agent", id: "agent" });
+            if (shouldOfferAgentForLogin(options, { agent: loginAgent })) {
+              authMethods.push({ type: "agent", agent: loginAgent, id: "agent" });
             }
             if (connectOpts.privateKey && !usedDefaultKeyAsPrimary) {
               authMethods.push({ type: "publickey", key: connectOpts.privateKey, passphrase: connectOpts.passphrase, id: "publickey-user" });
@@ -1284,8 +1331,8 @@ printf '%s\n' '${scanCompleteMarker}'`;
             }
 
             // Then try agent if configured (try agent before password since it's usually faster)
-            if (shouldOfferAgentForLogin(options, connectOpts)) {
-              authMethods.push({ type: "agent", id: "agent" });
+            if (shouldOfferAgentForLogin(options, { agent: loginAgent })) {
+              authMethods.push({ type: "agent", agent: loginAgent, id: "agent" });
             }
 
             // MFA/PAM hosts can reject the SSH "password" method while accepting
@@ -1492,9 +1539,15 @@ printf '%s\n' '${scanCompleteMarker}'`;
                       password: connectOpts.password,
                     });
                   } else if (matchingMethod.type === "agent") {
-                    const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
+                    const agentType = typeof matchingMethod.agent === "string" ? "path" : "NetcattyAgent";
                     log("Trying agent auth (partial success)", { id: matchingMethod.id, agentType });
-                    return callback("agent");
+                    return matchingMethod.agent === connectOpts.agent
+                      ? callback("agent")
+                      : callback({
+                        type: "agent",
+                        username: connectOpts.username,
+                        agent: matchingMethod.agent,
+                      });
                   } else if (matchingMethod.type === "publickey") {
                     log("Trying publickey auth (partial success)", { id: matchingMethod.id });
                     return callback({
@@ -1533,11 +1586,16 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
                 if (method.type === "agent") {
                   // Only log safe identifier, not the full agent object which may contain private keys
-                  const agentType = typeof connectOpts.agent === "string" ? "path" : "NetcattyAgent";
+                  const agentType = typeof method.agent === "string" ? "path" : "NetcattyAgent";
                   log("Trying agent auth", { id: method.id, agentType });
                   sendProgress(totalHops, totalHops, options.hostname, 'auth-attempt', 'SSH agent');
-                  // Return "agent" string to use SSH agent for authentication
-                  return callback("agent");
+                  return method.agent === connectOpts.agent
+                    ? callback("agent")
+                    : callback({
+                      type: "agent",
+                      username: connectOpts.username,
+                      agent: method.agent,
+                    });
                 } else if (method.type === "publickey") {
                   log("Trying publickey auth", { id: method.id, isDefault: method.isDefault || false });
                   const keyLabel = method.id.startsWith("publickey-default-")
@@ -2073,14 +2131,21 @@ printf '%s\n' '${scanCompleteMarker}'`;
             // Using array format is more reliable - ssh2 uses connectOpts credentials directly
             const authMethods = [];
             // Try agent FIRST (this is what regular SSH does - it checks ssh-agent before key files)
-            if (connectOpts.agent) authMethods.push("agent");
+            if (loginAgent) authMethods.push("agent");
             if (connectOpts.privateKey) authMethods.push("publickey");
             if (connectOpts.password && !options._skipPasswordMethod) {
               authMethods.push("password");
             }
             authMethods.push("keyboard-interactive");
             const dedupedAuthMethods = Array.from(new Set(authMethods));
-            connectOpts.authHandler = dedupedAuthMethods;
+            connectOpts.authHandler = createOrderedStringAuthHandler(
+              dedupedAuthMethods,
+              createAuthPhase(),
+              undefined,
+              loginAgent !== connectOpts.agent
+                ? { username: connectOpts.username, agent: loginAgent }
+                : undefined,
+            );
             log("Using simple array authHandler", {
               authMethods: dedupedAuthMethods,
               usedDefaultKeyAsPrimary,
@@ -2146,4 +2211,6 @@ module.exports = {
   shouldPrepareSystemAgentForLogin,
   resolveUnlockedEncryptedKeysForAuth,
   shouldPromoteCachedAuthMethod,
+  applyAgentForwarding,
+  prepareAgentForwardingOptions,
 };

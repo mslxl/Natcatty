@@ -29,3 +29,8 @@ test('editing enabled SSH agent controls persists the enabled state', () => {
 test('enabling SSH agent login clears an imported none sentinel', () => {
   assert.match(source, /resolveSshAgentToggleUpdate/);
 });
+
+test('login and forwarding warnings use independent agent status', () => {
+  assert.match(source, /systemSshAgentEnabled && sshAgentStatus && !sshAgentStatus\.running/);
+  assert.match(source, /form\.agentForwarding && sshForwardingAgentStatus && !sshForwardingAgentStatus\.running/);
+});

@@ -161,13 +161,26 @@ main();
 
     async function prepareEtSshAgentOptions(options) {
       const prepareOne = async (connectionOptions, logPrefix) => {
-        if (connectionOptions?.useSshAgent !== true) return connectionOptions;
-        await prepareSystemSshAgentForAuth(connectionOptions, logPrefix);
-        const socketPath = await getAvailableAgentSocket(connectionOptions.identityAgent, connectionOptions);
-        if (!socketPath) {
-          throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+        if (connectionOptions?.useSshAgent !== true && !connectionOptions?.agentForwarding) return connectionOptions;
+        let prepared = connectionOptions;
+        if (connectionOptions.useSshAgent === true) {
+          await prepareSystemSshAgentForAuth(connectionOptions, logPrefix);
+          const loginSocketPath = await getAvailableAgentSocket(connectionOptions.identityAgent, connectionOptions);
+          if (!loginSocketPath) {
+            throw new Error("System SSH agent is unavailable. Start or unlock it, or configure a valid agent socket.");
+          }
+          prepared = { ...prepared, _resolvedSshAgentSocket: loginSocketPath };
         }
-        return { ...connectionOptions, _resolvedSshAgentSocket: socketPath };
+        if (connectionOptions.agentForwarding) {
+          const forwardingSocketPath = await getAvailableForwardingAgentSocket(
+            connectionOptions.identityAgent,
+            connectionOptions,
+          );
+          if (forwardingSocketPath) {
+            prepared = { ...prepared, _resolvedForwardingAgentSocket: forwardingSocketPath };
+          }
+        }
+        return prepared;
       };
 
       const preparedTarget = await prepareOne(options, "[ET]");
@@ -182,21 +195,17 @@ main();
     }
 
     function applyEtSshAgentEnvironment(env, options) {
+      delete env.SSH_AUTH_SOCK;
       if (options?.useSshAgent === false) {
         const automaticJumpNeedsAmbientAgent = options.jumpHosts?.some((jump) => (
           jump?.authMethod === "auto" && jump.useSshAgent !== false
         ));
-        if (options.agentForwarding || automaticJumpNeedsAmbientAgent) {
-          if (!env.SSH_AUTH_SOCK && process.env.SSH_AUTH_SOCK) {
-            env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
-          }
-        } else {
-          delete env.SSH_AUTH_SOCK;
+        if (automaticJumpNeedsAmbientAgent && process.env.SSH_AUTH_SOCK) {
+          env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;
         }
         return env;
       }
-      const socketPath = options?._resolvedSshAgentSocket
-        || (options?.agentForwarding ? process.env.SSH_AUTH_SOCK : undefined);
+      const socketPath = options?._resolvedSshAgentSocket || process.env.SSH_AUTH_SOCK;
       if (socketPath) env.SSH_AUTH_SOCK = socketPath;
       return env;
     }
@@ -466,11 +475,9 @@ main();
 
       if (options.useSshAgent === false) {
         configLines.push("IdentityAgent none");
-        if (options.agentForwarding) configLines.push("ForwardAgent ${SSH_AUTH_SOCK}");
       } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
         configLines.push(`IdentityAgent ${quoteRawSshConfigValue(options._resolvedSshAgentSocket)}`);
       }
-
       // Private key
       const identityPaths = [];
       let tempKeyPath = null;
@@ -1154,15 +1161,13 @@ main();
         args.push("-p", String(options.etPort));
       }
 
-      // SSH Agent forwarding (ET supports -f natively)
-      if (options.agentForwarding) {
-        args.push("-f");
-      }
-
       let sshEnvironment;
       try {
         const preparedOptions = await prepareEtSshAgentOptions(options);
         options = preparedOptions;
+        if (options.agentForwarding && options._resolvedForwardingAgentSocket) {
+          args.push("-f", "--ssh-socket", options._resolvedForwardingAgentSocket);
+        }
         sshEnvironment = prepareEtSshEnvironment(sessionId, preparedOptions);
       } catch (err) {
         throw new Error(err instanceof Error ? err.message : String(err));

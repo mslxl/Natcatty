@@ -35,6 +35,7 @@ export const useApplicationBackend = () => {
 
   const checkSshAgent = useCallback(async (options?: {
     identityAgent?: string;
+    agentForwarding?: boolean;
     hostname?: string;
     port?: number;
     username?: string;
