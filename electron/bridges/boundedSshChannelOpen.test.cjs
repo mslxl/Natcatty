@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter, getEventListeners } = require("node:events");
 const {
+  isSshChannelOpenRateLimitedError,
   openBoundedForwardIn,
   openBoundedForwardOut,
   openBoundedSshShell,
@@ -104,4 +105,68 @@ test("channel open keeps its deadline referenced and clears it after success", a
   assert.equal(await pending, stream);
   assert.equal(timers.active.size, 0);
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+});
+
+test("detects bastion channelOpen rate-limit errors including the offen typo", () => {
+  assert.equal(
+    isSshChannelOpenRateLimitedError(
+      new Error("(SSH) Channel open failure: channelOpen too offen type=session"),
+    ),
+    true,
+  );
+  assert.equal(
+    isSshChannelOpenRateLimitedError(
+      new Error("channel open failure: channelOpen too often type=session"),
+    ),
+    true,
+  );
+  assert.equal(
+    isSshChannelOpenRateLimitedError(new Error("Permission denied")),
+    false,
+  );
+});
+
+test("shell open retries bastion rate-limit failures with short backoff", async () => {
+  const delays = [];
+  let attempts = 0;
+  const client = {
+    shell(_window, _options, next) {
+      attempts += 1;
+      if (attempts < 3) {
+        next(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+        return;
+      }
+      next(null, new EventEmitter());
+    },
+  };
+
+  const stream = await openBoundedSshShell(client, {}, {}, {
+    rateLimitRetries: 3,
+    rateLimitBackoffMs: 5,
+    sleepFn: async (ms) => { delays.push(ms); },
+  });
+
+  assert.ok(stream);
+  assert.equal(attempts, 3);
+  assert.deepEqual(delays, [5, 10]);
+});
+
+test("shell open does not retry unrelated channel open failures", async () => {
+  let attempts = 0;
+  const client = {
+    shell(_window, _options, next) {
+      attempts += 1;
+      next(new Error("Channel open failure: administratively prohibited"));
+    },
+  };
+
+  await assert.rejects(
+    openBoundedSshShell(client, {}, {}, {
+      rateLimitRetries: 3,
+      rateLimitBackoffMs: 5,
+      sleepFn: async () => {},
+    }),
+    /administratively prohibited/,
+  );
+  assert.equal(attempts, 1);
 });

@@ -3,6 +3,8 @@
 const { invalidateSshTransport } = require("./sshTransportInvalidation.cjs");
 
 const DEFAULT_SSH_CHANNEL_OPEN_TIMEOUT_MS = 30_000;
+const DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_RETRIES = 3;
+const DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_BACKOFF_MS = 150;
 
 function closeLateChannel(channel) {
   if (!channel || typeof channel === "number") return;
@@ -17,6 +19,22 @@ function channelAbortError(signal, label) {
   const error = reason instanceof Error ? reason : new Error(`${label} was cancelled`);
   if (!error.code) error.code = "ABORT_ERR";
   return error;
+}
+
+/**
+ * Bastion / jump hosts sometimes reject rapid session channel opens with a
+ * distinctive rate-limit message. The common Chinese bastion typo "offen"
+ * (for "often") is part of the real wire text we see in the field.
+ */
+function isSshChannelOpenRateLimitedError(error) {
+  const message = String(error?.message || error || "");
+  return /channelOpen\s+too\s+offen\b/i.test(message)
+    || /channelOpen\s+too\s+often\b/i.test(message);
+}
+
+function sleep(ms, sleepFn = null) {
+  if (typeof sleepFn === "function") return Promise.resolve(sleepFn(ms));
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function openBoundedSshChannel(sshClient, invoke, options = {}) {
@@ -76,16 +94,43 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
   });
 }
 
-function openBoundedSshShell(sshClient, windowOptions, shellOptions, options = {}) {
-  return openBoundedSshChannel(
-    sshClient,
-    (callback) => sshClient.shell(windowOptions, shellOptions, callback),
-    {
-      ...options,
-      label: options.label || "SSH shell channel open",
-      timeoutCode: "SSH_SHELL_OPEN_TIMEOUT",
-    },
+async function openBoundedSshShell(sshClient, windowOptions, shellOptions, options = {}) {
+  const rateLimitRetries = Math.max(
+    0,
+    Number.isFinite(options.rateLimitRetries)
+      ? Number(options.rateLimitRetries)
+      : DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_RETRIES,
   );
+  const rateLimitBackoffMs = Math.max(
+    1,
+    Number(options.rateLimitBackoffMs) || DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_BACKOFF_MS,
+  );
+  const sleepFn = options.sleepFn || null;
+  let attempt = 0;
+
+  for (;;) {
+    try {
+      return await openBoundedSshChannel(
+        sshClient,
+        (callback) => sshClient.shell(windowOptions, shellOptions, callback),
+        {
+          ...options,
+          label: options.label || "SSH shell channel open",
+          timeoutCode: "SSH_SHELL_OPEN_TIMEOUT",
+        },
+      );
+    } catch (error) {
+      if (
+        attempt >= rateLimitRetries
+        || !isSshChannelOpenRateLimitedError(error)
+        || options.signal?.aborted
+      ) {
+        throw error;
+      }
+      attempt += 1;
+      await sleep(rateLimitBackoffMs * attempt, sleepFn);
+    }
+  }
 }
 
 function openBoundedForwardOut(
@@ -183,7 +228,10 @@ function openBoundedForwardInCallback(
 
 module.exports = {
   DEFAULT_SSH_CHANNEL_OPEN_TIMEOUT_MS,
+  DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_RETRIES,
+  DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_BACKOFF_MS,
   closeLateChannel,
+  isSshChannelOpenRateLimitedError,
   openBoundedSshChannel,
   openBoundedSshShell,
   openBoundedSshShellCallback,

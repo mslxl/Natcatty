@@ -16,7 +16,7 @@ const {
 const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
-const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
+const { openBoundedSshShellCallback, isSshChannelOpenRateLimitedError } = require("../boundedSshChannelOpen.cjs");
 const {
   annotateMacLocalNetworkErrorMessage,
   resolveFirstTcpEndpoint,
@@ -237,21 +237,57 @@ printf '%s\n' '${scanCompleteMarker}'`;
           available,
           pids: available ? lines.filter((value) => /^\d+$/.test(value)) : [],
         };
-      } catch {
-        return { available: false, pids: [] };
+      } catch (error) {
+        return {
+          available: false,
+          rateLimited: isSshChannelOpenRateLimitedError(error),
+          pids: [],
+        };
       }
     };
 
-    const waitForNewInteractiveShellPid = async (conn, previousPids) => {
+    const listInteractiveShellPidsResilient = async (conn, opts = {}) => {
+      const attempts = Math.max(1, Number(opts.attempts) || 1);
+      const backoffMs = Math.max(1, Number(opts.backoffMs) || 150);
+      const initialDelayMs = Math.max(0, Number(opts.initialDelayMs) || 0);
+      let last = { available: false, pids: [] };
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const delayMs = attempt === 0
+          ? initialDelayMs
+          : backoffMs * attempt;
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        last = await listInteractiveShellPids(conn);
+        if (last.available || !last.rateLimited) return last;
+      }
+      return last;
+    };
+
+    const waitForNewInteractiveShellPid = async (conn, previousPids, opts = {}) => {
       const previous = new Set(previousPids);
+      const initialDelayMs = Math.max(0, Number(opts.initialDelayMs) || 0);
+      const backoffMs = Math.max(1, Number(opts.backoffMs) || 50);
+      if (initialDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, initialDelayMs));
+      }
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const discovery = await listInteractiveShellPids(conn);
-        if (!discovery.available) return null;
+        if (!discovery.available) {
+          // Bastion rate limits can reject the post-open discovery exec just
+          // after a retried shell open. Back off and try again instead of
+          // permanently leaving the copied session without a shellPid.
+          if (discovery.rateLimited && attempt < 4) {
+            await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+            continue;
+          }
+          return null;
+        }
         const newPids = discovery.pids.filter((pid) => !previous.has(pid));
         if (newPids.length === 1) return newPids[0];
         if (newPids.length > 1) return null;
         if (attempt < 4) {
-          await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+          await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
         }
       }
       return null;
@@ -657,9 +693,24 @@ printf '%s\n' '${scanCompleteMarker}'`;
         discoveryConnectionError = err;
       };
       let shellDiscoveryBeforeOpen = { available: false, pids: [] };
+      // Bastions (whether configured as jumpHosts or used as the direct SSH
+      // target) often rate-limit rapid session channel opens ("channelOpen too
+      // offen"). Retry rate-limited PID scans on every Copy Tab reuse so a
+      // successful shell open still gets shellPid tracking. Only the optional
+      // pre-scan pause is jump-host specific to avoid delaying the happy path
+      // on ordinary direct hosts.
+      const hasJumpHosts = Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0;
+      const configuredBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
+      const discoveryBackoffMs = Number.isFinite(configuredBackoffMs) && configuredBackoffMs > 0
+        ? configuredBackoffMs
+        : 150;
       if (!options.skipShellPidDiscovery) {
         conn.once("error", onDiscoveryConnectionError);
-        shellDiscoveryBeforeOpen = await listInteractiveShellPids(conn);
+        shellDiscoveryBeforeOpen = await listInteractiveShellPidsResilient(conn, {
+          initialDelayMs: hasJumpHosts ? discoveryBackoffMs : 0,
+          attempts: 4,
+          backoffMs: discoveryBackoffMs,
+        });
         conn.removeListener("error", onDiscoveryConnectionError);
       }
       const shellPidsBeforeOpen = shellDiscoveryBeforeOpen.pids;
@@ -733,6 +784,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         conn.once("error", onConnError);
 
         try {
+          const rateLimitBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
           openBoundedSshShellCallback(
             conn,
             {
@@ -786,7 +838,14 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 refHolder.connRef = null;
               }
               const newShellPidPromise = shellDiscoveryBeforeOpen.available
-                ? waitForNewInteractiveShellPid(conn, shellPidsBeforeOpen)
+                ? waitForNewInteractiveShellPid(
+                  conn,
+                  shellPidsBeforeOpen,
+                  {
+                    initialDelayMs: hasJumpHosts ? discoveryBackoffMs : 0,
+                    backoffMs: discoveryBackoffMs,
+                  },
+                )
                 : Promise.resolve(null);
               void newShellPidPromise.then((newShellPid) => {
                 const liveSession = sessions.get(sessionId);
@@ -796,7 +855,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 settled = true;
                 resolve({ sessionId });
               });
-            }
+            },
+            Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
+              ? { rateLimitBackoffMs }
+              : {},
           );
         } catch (syncErr) {
           // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
