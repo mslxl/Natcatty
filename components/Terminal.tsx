@@ -2362,6 +2362,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
     }
 
+    const resolvedConnectScripts = resolveConnectScriptsForHost(host, snippets);
+    // An empty hydrated vault is a final decision for this connection. Lock it
+    // before the output-settling delay so a sync arriving during that window
+    // cannot inject a new connect script into an already-reused SSH session.
+    if (
+      !connectScriptsConsumedRef.current
+      && resolvedConnectScripts.length === 0
+      && shouldMarkConnectAutomationConsumed({
+        allConnectScriptsDone: true,
+        vaultInitialized: isVaultInitialized(),
+        hasUnresolvedBindings: hasUnresolvedConnectScriptBindings(host, snippets),
+      })
+    ) {
+      connectScriptsConsumedRef.current = true;
+    }
+
     const shouldEvaluateConnect = !connectScriptsConsumedRef.current;
     const hasPendingWork = Boolean(pendingOne);
     if (!shouldEvaluateConnect && !hasPendingWork) return;
@@ -2373,7 +2389,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       const runPending = Boolean(pendingOne);
       const connectQueueNow = connectScriptsConsumedRef.current
         ? []
-        : resolveConnectScriptsForHost(host, snippets).filter(
+        : resolvedConnectScripts.filter(
           (item) => item.id && !connectScriptsCompletedIdsRef.current.has(item.id),
         );
 
@@ -2385,7 +2401,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         scriptsToRun.push(pendingOne);
       }
 
-      const resolvedConnectScripts = resolveConnectScriptsForHost(host, snippets);
       const allConnectScriptsDone = resolvedConnectScripts.length === 0
         || resolvedConnectScripts.every(
           (item) => item.id && connectScriptsCompletedIdsRef.current.has(item.id),
