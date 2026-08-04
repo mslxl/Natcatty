@@ -246,6 +246,24 @@ printf '%s\n' '${scanCompleteMarker}'`;
       }
     };
 
+    const listInteractiveShellPidsResilient = async (conn, opts = {}) => {
+      const attempts = Math.max(1, Number(opts.attempts) || 1);
+      const backoffMs = Math.max(1, Number(opts.backoffMs) || 150);
+      const initialDelayMs = Math.max(0, Number(opts.initialDelayMs) || 0);
+      let last = { available: false, pids: [] };
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const delayMs = attempt === 0
+          ? initialDelayMs
+          : backoffMs * attempt;
+        if (delayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+        last = await listInteractiveShellPids(conn);
+        if (last.available || !last.rateLimited) return last;
+      }
+      return last;
+    };
+
     const waitForNewInteractiveShellPid = async (conn, previousPids, opts = {}) => {
       const previous = new Set(previousPids);
       const initialDelayMs = Math.max(0, Number(opts.initialDelayMs) || 0);
@@ -677,19 +695,22 @@ printf '%s\n' '${scanCompleteMarker}'`;
       let shellDiscoveryBeforeOpen = { available: false, pids: [] };
       // Jump/bastion hosts often rate-limit rapid session channel opens
       // ("channelOpen too offen"). Pause briefly before the discovery exec so
-      // Copy Tab does not immediately follow another channel open, but still
-      // discover shell PIDs so shared-transport cwd lookup stays unambiguous.
+      // Copy Tab does not immediately follow another channel open, and retry
+      // rate-limited scans so shellPid tracking still succeeds.
       const hasJumpHosts = Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0;
       const configuredBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
       const jumpHostDiscoveryDelayMs = Number.isFinite(configuredBackoffMs) && configuredBackoffMs > 0
         ? configuredBackoffMs
         : 150;
-      if (hasJumpHosts && !options.skipShellPidDiscovery) {
-        await new Promise((resolve) => setTimeout(resolve, jumpHostDiscoveryDelayMs));
-      }
       if (!options.skipShellPidDiscovery) {
         conn.once("error", onDiscoveryConnectionError);
-        shellDiscoveryBeforeOpen = await listInteractiveShellPids(conn);
+        shellDiscoveryBeforeOpen = hasJumpHosts
+          ? await listInteractiveShellPidsResilient(conn, {
+            initialDelayMs: jumpHostDiscoveryDelayMs,
+            attempts: 4,
+            backoffMs: jumpHostDiscoveryDelayMs,
+          })
+          : await listInteractiveShellPids(conn);
         conn.removeListener("error", onDiscoveryConnectionError);
       }
       const shellPidsBeforeOpen = shellDiscoveryBeforeOpen.pids;
