@@ -610,12 +610,15 @@ test('actionable author follow-ups without an open bot PR are reclassified', () 
     }),
     decision,
   );
-  assert.equal(
+  assert.deepEqual(
     auto.refineIssueCommentRoute(decision, {
       hasOpenRelatedPull: true,
       body: 'Please also cover this case.',
     }),
-    decision,
+    {
+      kind: 'issue_classify',
+      reason: 'actionable author follow-up with trusted related PR',
+    },
   );
   assert.equal(
     auto.refineIssueCommentRoute(decision, {

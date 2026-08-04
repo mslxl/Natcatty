@@ -2317,16 +2317,14 @@ function refineIssueCommentRoute(decision, {
   hasOpenRelatedPull = false,
   body = '',
 } = {}) {
-  if (
-    decision?.kind !== 'issue_followup' ||
-    hasOpenBotPull ||
-    hasOpenRelatedPull
-  ) return decision;
+  if (decision?.kind !== 'issue_followup' || hasOpenBotPull) return decision;
   const simpleKind = classifySimpleIssueFollowup([{ body }]);
   if (simpleKind) return decision;
   return {
     kind: 'issue_classify',
-    reason: 'actionable author follow-up without open automation PR',
+    reason: hasOpenRelatedPull
+      ? 'actionable author follow-up with trusted related PR'
+      : 'actionable author follow-up without open automation PR',
   };
 }
 
