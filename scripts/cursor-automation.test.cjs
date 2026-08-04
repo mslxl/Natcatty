@@ -591,6 +591,44 @@ test('decideIssueCommentRoute sends author additions on managed issues to follow
   );
 });
 
+test('actionable author follow-ups without an open bot PR are reclassified', () => {
+  const decision = { kind: 'issue_followup', reason: 'author follow-up on managed issue' };
+  assert.deepEqual(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenBotPull: false,
+      body: '默认开启 X11 就可以，内置服务暂时不需要。',
+    }),
+    {
+      kind: 'issue_classify',
+      reason: 'actionable author follow-up without open automation PR',
+    },
+  );
+  assert.equal(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenBotPull: true,
+      body: 'Please also cover this case.',
+    }),
+    decision,
+  );
+  assert.deepEqual(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenRelatedPull: true,
+      body: 'Please also cover this case.',
+    }),
+    {
+      kind: 'issue_classify',
+      reason: 'actionable author follow-up with trusted related PR',
+    },
+  );
+  assert.equal(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenBotPull: false,
+      body: '收到，谢谢',
+    }),
+    decision,
+  );
+});
+
 test('decideIssueCommentRoute accepts maintainer @bot and ignores untrusted bystanders', () => {
   assert.equal(
     auto.decideIssueCommentRoute({
@@ -791,6 +829,51 @@ test('source issue labels clear stale agent state after PR completion', () => {
   );
 });
 
+test('source cleanup includes merged maintainer fixes but not unmerged handoffs', () => {
+  const maintainerPull = {
+    state: 'closed',
+    merged: true,
+    body: 'Focused maintainer fix.\n\nFixes #42',
+    user: { login: 'binaricat' },
+    head: { repo: { full_name: 'binaricat/Netcatty' } },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
+  };
+  const options = {
+    ownActors: 'binaricat,netcatty-bot,github-actions[bot]',
+    repository: 'binaricat/Netcatty',
+  };
+  assert.equal(auto.shouldCleanupSourceIssueAfterPull(maintainerPull, options), true);
+  assert.deepEqual(
+    auto.extractSourceIssueNumbers({
+      ...maintainerPull,
+      body: 'Fixes #42, #43, and #44\nCloses #42',
+    }),
+    [42, 43, 44],
+  );
+  assert.equal(
+    auto.shouldCleanupSourceIssueAfterPull({
+      ...maintainerPull,
+      merged: false,
+      merged_at: null,
+    }, options),
+    false,
+  );
+  assert.equal(
+    auto.shouldCleanupSourceIssueAfterPull({
+      ...maintainerPull,
+      body: 'Related to #42',
+    }, options),
+    false,
+  );
+  assert.equal(
+    auto.shouldCleanupSourceIssueAfterPull({
+      ...maintainerPull,
+      base: { repo: { full_name: 'another/repo' } },
+    }, options),
+    false,
+  );
+});
+
 test('implementation failure messages report the real category and preserved artifact', () => {
   const message = auto.buildImplementationFailureMessage(
     { title: '[Bug] 上传失败' },
@@ -803,6 +886,63 @@ test('implementation failure messages report the real category and preserved art
   assert.match(message, /新增了验证失败/);
   assert.match(message, /implement-patch-1/);
   assert.match(message, /github\.example/);
+
+  const protectedMessage = auto.buildImplementationFailureMessage(
+    { title: '[Bug] 自动修改失败' },
+    {
+      kind: 'protected_path',
+      protectedPaths: [
+        '.github/workflows/release.yml',
+        'components/ordinary.test.ts',
+      ],
+    },
+  );
+  assert.match(protectedMessage, /\.github\/workflows\/release\.yml/);
+  assert.doesNotMatch(protectedMessage, /ordinary\.test\.ts/);
+
+  const codexMessage = auto.buildCodexFixFailureMessage({
+    kind: 'verification_failed',
+    workflowUrl: 'https://github.example/run/2',
+    artifactName: 'codex-fix-patch-2',
+  });
+  assert.match(codexMessage, /verification failures/);
+  assert.match(codexMessage, /codex-fix-patch-2/);
+  assert.match(codexMessage, /github\.example/);
+
+  const noChangesMessage = auto.buildCodexFixFailureMessage({
+    kind: 'no_changes',
+    workflowUrl: 'https://github.example/run/3',
+  });
+  assert.match(noChangesMessage, /did not change any files/);
+  assert.match(noChangesMessage, /already be addressed, stale/);
+  assert.match(noChangesMessage, /github\.example\/run\/3/);
+
+  const classificationMessage = auto.buildClassificationFailureMessage(
+    { title: '[Bug] 附件无法读取' },
+    {
+      kind: 'research_failed',
+      workflowUrl: 'https://github.example/run/4',
+    },
+  );
+  assert.match(classificationMessage, /读取附件或外部资料时失败/);
+  assert.match(classificationMessage, /github\.example\/run\/4/);
+});
+
+test('protected path reports replace stale data and ignore ordinary source files', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-protected-report-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const report = path.join(dir, 'protected-paths.json');
+
+  assert.deepEqual(auto.writeProtectedPathReport(report, [
+    'package-lock.json',
+    'components/App.tsx',
+    'package-lock.json',
+  ]), ['package-lock.json']);
+  assert.deepEqual(auto.readProtectedPathReport(report), ['package-lock.json']);
+
+  assert.deepEqual(auto.writeProtectedPathReport(report, []), []);
+  assert.equal(fs.existsSync(report), false);
+  assert.deepEqual(auto.readProtectedPathReport(report), []);
 });
 
 test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', async () => {
@@ -842,19 +982,42 @@ test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', a
   assert.equal(created, 1);
 });
 
-test('workflow cleans source labels on automation PR close and dedupes clean notices', () => {
+test('workflow cleans source labels after eligible PR close and dedupes clean notices', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
     'utf8',
   );
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
   assert.match(workflow, /kind == 'source_issue_cleanup'/);
-  assert.match(workflow, /shouldGatePullOnSourceIssueFollowups\(pull/);
+  assert.match(workflow, /shouldCleanupSourceIssueAfterPull\(pull/);
+  assert.match(workflow, /const issueNumbers = auto\.extractSourceIssueNumbers\(pull\)/);
+  assert.match(workflow, /for \(const issueNumber of issueNumbers\)/);
   assert.match(workflow, /github\.rest\.issues\.removeLabel/);
   assert.match(workflow, /github\.rest\.issues\.addLabels/);
-  assert.match(workflow, /not a trusted automation pull request; skipping source cleanup/);
+  assert.match(workflow, /not eligible for source cleanup; skipping/);
   assert.match(workflow, /is no longer closed; skipping source cleanup/);
   assert.match(workflow, /source issue changed while queued; skipping cleanup/);
+  assert.match(workflow, /does not currently close issue/);
+  assert.match(workflow, /findOpenPullForIssue/);
+  assert.match(workflow, /refineIssueCommentRoute/);
+  assert.match(workflow, /issueNumber: issue\.number,\n\s+includeRelated: true/);
+  assert.match(workflow, /reconcile_closed_handoffs:/);
+  assert.match(workflow, /shouldRetryIssueHandoff/);
+  assert.match(workflow, /isTrustedOpenPullForIssue/);
+  assert.match(workflow, /cursor-handoff-recovery:version=\$\{recoveryVersion\}/);
+  assert.match(workflow, /workflow_id: 'cursor-automation\.yml'/);
+  assert.match(workflow, /Reconcile handoffs/);
+  assert.ok((workflow.match(/auto\.extractPaginatedItems\(response\)/g) || []).length >= 2);
+  assert.match(workflow, /notBefore: '2026-07-31T12:54:37Z'/);
+  assert.match(workflow, /notAfter: '2026-08-04T08:27:14Z'/);
+  assert.match(workflow, /auditedIssueNumbers = new Set\(\[2679, 2697, 2704, 2705, 2708, 2709\]\)/);
+  assert.match(workflow, /is:issue is:closed label:"ready-for-human" label:triage/);
+  assert.match(workflow, /is:pr is:merged label:"ready-for-human" label:"automation:bot-pr"/);
+  const route = workflow.match(/\n  route:\n[\s\S]*?(?=\n  cleanup_source_issue:)/)?.[0] || '';
+  assert.doesNotMatch(
+    route,
+    /sameRepo\s*&&\s*\n\s*context\.payload\.action === 'closed'/,
+  );
   assert.match(workflow, /Follow-up changed before the simple reply; dispatched a fresh review/);
   assert.match(workflow, /is merged; skipped stale follow-up handoff state changes/);
   assert.match(workflow, /trusted_comment_bodies/);
@@ -984,6 +1147,10 @@ test('buildPullRequestBody records the issue comment snapshot', () => {
   assert.match(body, /<!-- cursor-issue-watermark:comment-id=987 -->/);
   assert.equal(auto.extractIssueCommentWatermark(body), '987');
   assert.equal(auto.extractSourceIssueNumber({ body }), 42);
+  assert.deepEqual(
+    auto.extractSourceIssueNumbers({ body: `${body}\nFixes #99` }),
+    [42],
+  );
 });
 
 test('parseIssueFollowupStatus is fail-closed and builds durable reply markers', () => {
@@ -1118,6 +1285,218 @@ test('shouldGatePullOnSourceIssueFollowups is limited to automation bot PRs', ()
     }),
     false,
   );
+});
+
+test('pullReferencesIssue matches exact closing references without prefix collisions', () => {
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42' }, 42), true);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #420' }, 42), false);
+  assert.equal(auto.pullReferencesIssue({ body: 'Related to #42' }, 42), false);
+  assert.equal(
+    auto.pullReferencesIssue({ body: 'Related to #42' }, 42, { includeRelated: true }),
+    true,
+  );
+  const relatedList = { body: 'Related to #41, #42, and #43.' };
+  assert.equal(auto.pullReferencesIssue(relatedList, 41, { includeRelated: true }), true);
+  assert.equal(auto.pullReferencesIssue(relatedList, 42, { includeRelated: true }), true);
+  assert.equal(auto.pullReferencesIssue(relatedList, 43, { includeRelated: true }), true);
+  assert.equal(auto.pullReferencesIssue(relatedList, 44, { includeRelated: true }), false);
+  assert.equal(
+    auto.pullReferencesIssue({ body: 'Related to #42abc' }, 42, { includeRelated: true }),
+    false,
+  );
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42_foo' }, 42), false);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42-detail' }, 42), true);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42, #43oops' }, 42), true);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42, #43oops' }, 43), false);
+  assert.equal(
+    auto.pullReferencesIssue({ head: { ref: 'cursor/issue-42-123' } }, 42),
+    false,
+  );
+});
+
+test('findOpenPullForIssue keeps maintainer work from spawning a duplicate bot PR', async () => {
+  const pulls = [
+    {
+      number: 7,
+      body: 'Fixes #42',
+      author_association: 'NONE',
+      head: { repo: { full_name: 'attacker/fork' } },
+    },
+    {
+      number: 8,
+      body: 'Maintainer implementation\n\nFixes #42',
+      author_association: 'MEMBER',
+      head: { repo: { full_name: 'maintainer/fork' } },
+    },
+  ];
+  const found = await auto.findOpenPullForIssue({
+    github: {
+      paginate: async () => pulls,
+      rest: { pulls: { list: async () => ({ data: pulls }) } },
+    },
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    issueNumber: 42,
+  });
+  assert.equal(found.number, 8);
+});
+
+test('legacy retry only accepts trusted fixed failure categories once', () => {
+  const options = {
+    trustedActors: 'netcatty-bot,github-actions[bot]',
+    recoveryVersion: 'handoff-v1',
+  };
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+  }], options), true);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
+  }], options), true);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'attacker' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+  }], options), false);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=verification_failed -->',
+  }], options), false);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-handoff-recovery:version=handoff-v1 -->',
+    },
+  ], options), false);
+
+  const boundedOptions = {
+    ...options,
+    recoveryVersion: 'handoff-v2',
+    notBefore: '2026-07-31T12:54:37Z',
+    notAfter: '2026-08-04T08:27:14Z',
+  };
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
+    created_at: '2026-07-30T12:00:00Z',
+  }], boundedOptions), false);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
+    created_at: '2026-08-01T12:00:00Z',
+  }], boundedOptions), true);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      created_at: '2026-08-01T12:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-followup:comment-id=123;result=no_change -->',
+      created_at: '2026-08-02T12:00:00Z',
+    },
+  ], boundedOptions), false);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-followup:comment-id=123;result=updated -->',
+      created_at: '2026-08-01T12:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-classification-failure:kind=research_failed;run=2 -->',
+      created_at: '2026-08-02T12:00:00Z',
+    },
+  ], boundedOptions), true);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '<!-- cursor-implement-failure:base=future;kind=protected_path -->',
+    created_at: '2026-08-05T12:00:00Z',
+  }], boundedOptions), false);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      created_at: '2026-08-01T12:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-handoff-recovery:version=handoff-v2 -->',
+      created_at: '2026-08-05T12:00:00Z',
+    },
+  ], boundedOptions), false);
+});
+
+test('findOpenPullForIssue accepts same-repo work but ignores untrusted fork claims', async () => {
+  const pulls = [
+    {
+      number: 7,
+      body: 'Fixes #42',
+      author_association: 'NONE',
+      head: { repo: { full_name: 'attacker/fork' } },
+    },
+    {
+      number: 8,
+      body: 'Fixes #42',
+      author_association: 'NONE',
+      head: { repo: { full_name: 'binaricat/Netcatty' } },
+    },
+  ];
+  const found = await auto.findOpenPullForIssue({
+    github: {
+      paginate: async () => pulls,
+      rest: { pulls: { list: async () => ({ data: pulls }) } },
+    },
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    issueNumber: 42,
+  });
+  assert.equal(found.number, 8);
+});
+
+test('automation pull references only control the marked source issue', () => {
+  const pull = {
+    number: 8,
+    state: 'open',
+    body: [
+      '<!-- cursor-bot-pr -->',
+      '<!-- cursor-source-issue:41 -->',
+      'Related to #42',
+      'Fixes #43',
+    ].join('\n'),
+    labels: [{ name: 'automation:bot-pr' }],
+    user: { login: 'netcatty-bot' },
+    head: {
+      ref: 'cursor/issue-41-123',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+  };
+  const options = { repository: 'binaricat/Netcatty', includeRelated: true };
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 41, options), true);
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 42, options), false);
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 43, options), false);
+});
+
+test('automation label does not hide a trusted maintainer pull reference', () => {
+  const pull = {
+    number: 2703,
+    state: 'open',
+    body: 'Maintainer implementation\n\nRelated to #2699',
+    labels: [{ name: 'automation:bot-pr' }],
+    user: { login: 'binaricat' },
+    author_association: 'OWNER',
+    head: {
+      ref: 'worktree/quiet-cloud-b74d',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+  };
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 2699, {
+    repository: 'binaricat/Netcatty',
+    includeRelated: true,
+  }), true);
 });
 
 test('getPendingIssueFollowupsForPull does not block maintainer Fixes-only PRs', async () => {
@@ -1734,7 +2113,7 @@ test('hasProtectedChangesInSources checks commit names', () => {
   ]);
 });
 
-test('generated changes may add tests but cannot alter existing test sources', () => {
+test('generated changes may add or update regression tests', () => {
   const committed = auto.hasProtectedChangesInSources({
     nameStatusText: [
       'M\tcomponents/existing.test.ts',
@@ -1742,7 +2121,7 @@ test('generated changes may add tests but cannot alter existing test sources', (
       'M\tcomponents/App.tsx',
     ].join('\n'),
   });
-  assert.deepEqual(committed, ['components/existing.test.ts']);
+  assert.deepEqual(committed, []);
 
   const workingTree = auto.hasProtectedChangesInSources({
     gitStatusPorcelain: [
@@ -1750,7 +2129,7 @@ test('generated changes may add tests but cannot alter existing test sources', (
       '?? components/new-regression-2.test.ts',
     ].join('\n'),
   });
-  assert.deepEqual(workingTree, ['components/other.test.ts']);
+  assert.deepEqual(workingTree, []);
 });
 
 test('hasProtectedChangesInSources blocks electron-builder configs', () => {
@@ -1924,7 +2303,24 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
     assert.ok(restoreDependencies >= 0);
     assert.ok(lintCandidate > restoreDependencies);
     assert.match(section, /restoring locked dependencies failed/);
+    assert.equal((section.match(/writeProtectedPathReport/g) || []).length, 2);
+    assert.match(section, /readProtectedPathReport/);
   }
+  assert.match(implement, /Skip if trusted related PR already open/);
+  assert.match(implement, /findOpenPullForIssue/);
+  assert.match(implement, /includeRelated: true/);
+  assert.match(implement, /id: upload_patch/);
+  assert.match(implement, /steps\.upload_patch\.outcome/);
+  assert.match(codex, /buildCodexFixFailureMessage/);
+  assert.match(codex, /id: upload_fixpatch/);
+  assert.match(codex, /steps\.upload_fixpatch\.outcome/);
+  assert.match(codex, /cursor-codex-fix-failure:kind=/);
+  assert.match(codex, /cursor-codex-fix-failure:kind=no_changes/);
+  assert.doesNotMatch(
+    codex,
+    /agent, protected paths, or verification failed/,
+  );
+  assert.doesNotMatch(codex, /did not produce additional code changes/);
 });
 
 test('classification failure handoff receives its issue number', () => {
@@ -1937,6 +2333,50 @@ test('classification failure handoff receives its issue number', () => {
   )?.[0] || '';
   assert.match(handoff, /ISSUE_NUMBER: \$\{\{ needs\.route\.outputs\.issue_number \}\}/);
   assert.match(handoff, /const issueNumber = Number\(process\.env\.ISSUE_NUMBER\)/);
+  assert.match(handoff, /cursor-classification-failure:kind=\$\{kind\};run=\$\{context\.runId\}/);
+  assert.match(handoff, /buildClassificationFailureMessage/);
+  assert.match(handoff, /steps\.research\.outcome/);
+  assert.match(handoff, /steps\.classify_agent\.outcome/);
+  assert.match(handoff, /steps\.validate_classification\.outcome/);
+  assert.match(handoff, /actions\/runs\/\$\{context\.runId\}/);
+  assert.match(handoff, /fs\.existsSync\(helper\)/);
+  assert.match(handoff, /const failureMessage = auto/);
+  assert.doesNotMatch(handoff, /自动复核没有安全完成/);
+  assert.match(workflow, /name: Validate classification result/);
+  assert.match(workflow, /auto\.parseClassificationFile\("\.cursor-runtime\/classification\.json"\)/);
+});
+
+test('implementation publish rechecks related work and records a deduplicated handoff', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const implement = workflow.match(
+    /\n  implement:\n[\s\S]*?(?=\n  publish_implement:\n)/,
+  )?.[0] || '';
+  const publish = workflow.match(
+    /\n  publish_implement:\n[\s\S]*?(?=\n  codex_loop:\n)/,
+  )?.[0] || '';
+  assert.match(implement, /cursor-existing-related-pr:\$\{existing\.number\}/);
+  assert.match(implement, /auto\.markNeedsHuman/);
+  assert.match(publish, /name: Skip publish if trusted related PR opened during implementation/);
+  assert.match(publish, /includeRelated: true/);
+  assert.match(publish, /auto\.markNeedsHuman/);
+  assert.match(publish, /cursor-existing-related-pr:\$\{existing\.number\}/);
+  assert.ok(
+    publish.indexOf('name: Skip publish if trusted related PR opened during implementation')
+      < publish.indexOf('name: Publish branch from fresh runner'),
+  );
+  assert.match(
+    publish,
+    /name: Publish branch from fresh runner\n\s+if: steps\.existing\.outputs\.exists != 'true'/,
+  );
+  const openPr = publish.match(
+    /- name: Open draft PR[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  assert.match(openPr, /findOpenPullForIssue/);
+  assert.match(openPr, /includeRelated: true/);
+  assert.match(openPr, /skip the duplicate/);
 });
 
 test('classification follow-up rate-limit handoff receives its issue number', () => {
@@ -2386,6 +2826,43 @@ test('research input replaces only successfully proxied GitHub image attachments
     auto.normalizeExternalResearchText(noResearchNeeded, { input: imageOnly }),
     noResearchNeeded,
   );
+
+  const mediaOnly = auto.rewriteExternalResearchInputAttachments(
+    { body: attachmentUrl },
+    [{ sourceUrl: attachmentUrl, kind: 'unsupported_media' }],
+  );
+  assert.match(mediaOnly.body, /video or audio attachment omitted/);
+  assert.doesNotMatch(mediaOnly.body, /https?:\/\//);
+  assert.equal(
+    auto.normalizeExternalResearchText(noResearchNeeded, { input: mediaOnly }),
+    noResearchNeeded,
+  );
+});
+
+test('GitHub attachment redirects distinguish images from video and reject other hosts', () => {
+  const redirect = (host, mediaType) => [
+    'HTTP/2 302',
+    `location: https://${host}/asset?response-content-type=${encodeURIComponent(mediaType)}`,
+    '',
+  ].join('\r\n');
+  assert.equal(
+    auto.classifyGithubUserAttachmentRedirect(
+      redirect('github-production-user-asset-6210df.s3.amazonaws.com', 'image/png'),
+    ),
+    'image',
+  );
+  assert.equal(
+    auto.classifyGithubUserAttachmentRedirect(
+      redirect('github-production-user-asset-6210df.s3.amazonaws.com', 'video/mp4'),
+    ),
+    'unsupported_media',
+  );
+  assert.equal(
+    auto.classifyGithubUserAttachmentRedirect(
+      redirect('example.com', 'image/png'),
+    ),
+    '',
+  );
 });
 
 test('normalizeExternalResearchText fails closed on blocked or unsourced research', () => {
@@ -2461,6 +2938,36 @@ test('parseExternalResearchStream requires a recorded web tool call and sources'
       body: 'See https://cursor.com/docs',
     }),
     /WebSearch\/WebFetch tool call/i,
+  );
+
+  const githubCaseStream = [
+    JSON.stringify({
+      type: 'tool_call',
+      subtype: 'completed',
+      tool_call: {
+        webSearchToolCall: {
+          result: {
+            success: {
+              content: 'Repository: https://github.com/ByteDance/trae-agent',
+            },
+          },
+        },
+      },
+    }),
+    JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: [
+        'RESEARCH_COMPLETE: Trae Agent is a CLI.',
+        'Sources:',
+        '- https://github.com/bytedance/trae-agent — official repository',
+      ].join('\n'),
+    }),
+  ].join('\n');
+  assert.match(
+    auto.parseExternalResearchStream(githubCaseStream, {}),
+    /^RESEARCH_COMPLETE:/,
   );
 });
 
@@ -3125,8 +3632,10 @@ test('workflow sanitizes GitHub screenshots through pinned imgproxy before resea
     /git show "FETCH_HEAD:scripts\/prepare-cursor-research-input\.sh" > "\$RUNNER_TEMP\/prepare-cursor-research-input\.sh"/,
   );
   assert.match(attachmentProxy, /extractGithubUserAttachmentAssetUrls/);
+  assert.match(attachmentProxy, /classifyGithubUserAttachmentRedirect/);
   assert.match(attachmentProxy, /rewriteExternalResearchInputAttachments/);
   assert.match(attachmentProxy, /attachment_count > 4/);
+  assert.match(attachmentProxy, /unsupported_media/);
   assert.match(
     attachmentProxy,
     /IMGPROXY_ALLOWED_SOURCES=https:\/\/github\.com\/user-attachments\/assets\//,
@@ -3866,7 +4375,7 @@ const SAMPLE_BUG_BODY = [
   'Windows 11',
 ].join('\n');
 
-test('prepareIssueContext dedupes and limits needs-info author replies', async () => {
+test('prepareIssueContext dedupes and limits all managed issue author replies', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-needs-info-'));
   const issue = {
     number: 99,
@@ -3878,12 +4387,17 @@ test('prepareIssueContext dedupes and limits needs-info author replies', async (
     author_association: 'NONE',
     labels: [{ name: 'needs-info' }],
   };
-  const run = async (comments, triggerCommentId, followupDailyLimit = 20) => {
+  const run = async (
+    comments,
+    triggerCommentId,
+    followupDailyLimit = 20,
+    labels = [{ name: 'needs-info' }],
+  ) => {
     const outputs = {};
     const github = {
       rest: {
         issues: {
-          get: async () => ({ data: issue }),
+          get: async () => ({ data: { ...issue, labels } }),
           listComments: Symbol('listComments'),
         },
       },
@@ -3931,6 +4445,34 @@ test('prepareIssueContext dedupes and limits needs-info author replies', async (
   assert.equal(rateLimited.result.rateLimited, true);
   assert.equal(rateLimited.outputs.rate_limited, 'true');
   assert.equal(rateLimited.outputs.pending_ids, '11');
+
+  const managedRateLimited = await run([
+    {
+      id: 10,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=8 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+    {
+      id: 11,
+      user: { login: 'alice', type: 'User' },
+      body: '请重新检查这个聚焦方案',
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ], 11, 1, [{ name: 'ready-for-human' }, { name: 'triage:feature-defer' }]);
+  assert.equal(managedRateLimited.result.shouldRun, false);
+  assert.equal(managedRateLimited.outputs.rate_limited, 'true');
+
+  const managedProcessed = await run([
+    {
+      id: 10,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=11 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+  ], 11, 20, [{ name: 'ready-for-agent' }]);
+  assert.equal(managedProcessed.result.shouldRun, false);
+  assert.match(managedProcessed.outputs.reason, /already processed/i);
 
   const burstComments = [
     {

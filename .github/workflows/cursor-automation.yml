@@ -254,6 +254,24 @@ jobs:
                   context,
                   issueNumber: issue.number,
                 });
+                const relatedPull = pull || await auto.findOpenPullForIssue({
+                  github,
+                  context,
+                  issueNumber: issue.number,
+                  includeRelated: true,
+                });
+                const refined = auto.refineIssueCommentRoute(decision, {
+                  hasOpenBotPull: Boolean(pull),
+                  hasOpenRelatedPull: Boolean(relatedPull),
+                  body: comment.body,
+                });
+                if (refined.kind === 'issue_classify') {
+                  return set('issue_classify', {
+                    issue_number: String(issue.number),
+                    trigger_comment_id: String(comment.id),
+                    reason: refined.reason,
+                  });
+                }
                 return set('issue_followup', {
                   issue_number: String(issue.number),
                   pull_number: pull ? String(pull.number) : '',
@@ -274,9 +292,8 @@ jobs:
                 repository: `${context.repo.owner}/${context.repo.repo}`,
               });
               if (
-                sameRepo &&
                 context.payload.action === 'closed' &&
-                auto.shouldGatePullOnSourceIssueFollowups(pr, {
+                auto.shouldCleanupSourceIssueAfterPull(pr, {
                   ownActors,
                   repository: `${context.repo.owner}/${context.repo.repo}`,
                 })
@@ -284,7 +301,7 @@ jobs:
                 return set('source_issue_cleanup', {
                   issue_number: String(auto.extractSourceIssueNumber(pr)),
                   pull_number: String(pr.number),
-                  reason: pr.merged ? 'automation PR merged' : 'automation PR closed',
+                  reason: pr.merged ? 'merged PR closed source issue' : 'automation PR closed',
                 });
               }
               if (sameRepo) {
@@ -370,16 +387,16 @@ jobs:
               core.warning(`PR #${pullNumber} is no longer closed; skipping source cleanup.`);
               return;
             }
-            if (!auto.shouldGatePullOnSourceIssueFollowups(pull, {
+            if (!auto.shouldCleanupSourceIssueAfterPull(pull, {
               ownActors: process.env.OWN_ACTORS,
               repository: `${context.repo.owner}/${context.repo.repo}`,
             })) {
-              core.warning(`PR #${pullNumber} is not a trusted automation pull request; skipping source cleanup.`);
+              core.warning(`PR #${pullNumber} is not eligible for source cleanup; skipping.`);
               return;
             }
-            const issueNumber = auto.extractSourceIssueNumber(pull);
+            const issueNumbers = auto.extractSourceIssueNumbers(pull);
             const expectedIssueNumber = Number(process.env.SOURCE_ISSUE_NUMBER);
-            if (!issueNumber || issueNumber !== expectedIssueNumber) {
+            if (!issueNumbers.includes(expectedIssueNumber)) {
               core.warning(`PR #${pullNumber} source issue changed while queued; skipping cleanup.`);
               return;
             }
@@ -394,19 +411,160 @@ jobs:
                 if (error.status !== 404) throw error;
               }
             };
-            for (const name of ['ready-for-agent', 'needs-info', 'ready-for-human']) {
-              await removeLabel(issueNumber, name);
-            }
-            if (!pull.merged) {
-              await github.rest.issues.addLabels({
+            for (const issueNumber of issueNumbers) {
+              const { data: sourceIssue } = await github.rest.issues.get({
                 ...context.repo,
                 issue_number: issueNumber,
-                labels: ['ready-for-human'],
               });
+              if (sourceIssue.pull_request) {
+                core.warning(`#${issueNumber} is a pull request, not a source issue; skipping cleanup.`);
+                continue;
+              }
+              if (pull.merged && sourceIssue.state !== 'closed') {
+                core.warning(`Merged PR #${pullNumber} does not currently close issue #${issueNumber}; skipping cleanup.`);
+                continue;
+              }
+              for (const name of ['ready-for-agent', 'needs-info', 'ready-for-human']) {
+                await removeLabel(issueNumber, name);
+              }
+              if (!pull.merged) {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  labels: ['ready-for-human'],
+                });
+              }
             }
             for (const name of ['automation:codex-loop', 'ready-for-human']) {
               await removeLabel(pullNumber, name);
             }
+
+  reconcile_closed_handoffs:
+    name: Reconcile handoffs
+    if: github.event_name == 'schedule' && github.event.schedule == '17 3 * * *'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout automation helpers
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Remove stale ready-for-human labels
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const queries = [
+              `repo:${context.repo.owner}/${context.repo.repo} is:issue is:closed label:"ready-for-human" label:triage`,
+              `repo:${context.repo.owner}/${context.repo.repo} is:pr is:merged label:"ready-for-human" label:"automation:bot-pr"`,
+            ];
+            let cleaned = 0;
+            for (const q of queries) {
+              const items = await github.paginate(
+                github.rest.search.issuesAndPullRequests,
+                { q, per_page: 100 },
+                (response) => auto.extractPaginatedItems(response),
+              );
+              for (const item of items) {
+                try {
+                  await github.rest.issues.removeLabel({
+                    ...context.repo,
+                    issue_number: item.number,
+                    name: 'ready-for-human',
+                  });
+                  cleaned += 1;
+                } catch (error) {
+                  if (error.status !== 404) throw error;
+                }
+              }
+            }
+            core.summary.addHeading('Closed handoff reconciliation');
+            core.summary.addRaw(`Removed stale ready-for-human from ${cleaned} closed items.`);
+            await core.summary.write();
+
+      - name: Retry handoffs fixed by this hardening pass
+        uses: actions/github-script@v9
+        env:
+          ISSUE_BOT_LOGINS: ${{ vars.AUTOMATION_ISSUE_BOT_LOGINS || 'netcatty-bot,github-actions[bot]' }}
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            const recoveryVersion = 'protected-tests-and-media-v1';
+            const auditedIssueNumbers = new Set([2679, 2697, 2704, 2705, 2708, 2709]);
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const issues = await github.paginate(
+              github.rest.search.issuesAndPullRequests,
+              {
+                q: `repo:${repository} is:issue is:open label:"ready-for-human" label:triage`,
+                per_page: 100,
+              },
+              (response) => auto.extractPaginatedItems(response),
+            );
+            const pulls = await github.paginate(github.rest.pulls.list, {
+              ...context.repo,
+              state: 'open',
+              per_page: 100,
+              sort: 'updated',
+              direction: 'desc',
+            });
+            let dispatched = 0;
+            for (const issue of issues) {
+              if (!auditedIssueNumbers.has(Number(issue.number))) continue;
+              const comments = await github.paginate(
+                github.rest.issues.listComments,
+                { ...context.repo, issue_number: issue.number, per_page: 100 },
+              );
+              if (!auto.shouldRetryIssueHandoff(comments, {
+                trustedActors: process.env.ISSUE_BOT_LOGINS,
+                recoveryVersion,
+                notBefore: '2026-07-31T12:54:37Z',
+                notAfter: '2026-08-04T08:27:14Z',
+              })) continue;
+              if (pulls.some((pull) => auto.isTrustedOpenPullForIssue(pull, issue.number, {
+                repository,
+                includeRelated: true,
+              }))) continue;
+
+              const { data: marker } = await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: issue.number,
+                body: [
+                  '<!-- cursor-automation -->',
+                  `<!-- cursor-handoff-recovery:version=${recoveryVersion} -->`,
+                  '',
+                  '此前导致自动处理停止的问题已经修复，现重新进入自动检查。',
+                ].join('\n'),
+              });
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  ...context.repo,
+                  workflow_id: 'cursor-automation.yml',
+                  ref: context.payload.repository.default_branch,
+                  inputs: { issue_number: String(issue.number) },
+                });
+                dispatched += 1;
+              } catch (error) {
+                try {
+                  await github.rest.issues.deleteComment({
+                    ...context.repo,
+                    comment_id: marker.id,
+                  });
+                } catch (cleanupError) {
+                  core.warning(`Issue #${issue.number}: could not remove retry marker (${cleanupError.message}).`);
+                }
+                throw error;
+              }
+            }
+            core.summary.addHeading('Retry recovered handoffs');
+            core.summary.addRaw(`Re-dispatched ${dispatched} retryable issues without open related PRs.`);
+            await core.summary.write();
 
   classify:
     name: Classify issue
@@ -693,6 +851,7 @@ jobs:
           fi
 
       - name: Research external context for classification
+        id: research
         if: steps.prepare.outputs.should_run == 'true'
         env:
           GITHUB_TOKEN: ''
@@ -802,6 +961,7 @@ jobs:
         run: *stage_cursor_api_key
 
       - name: Classify with Cursor CLI
+        id: classify_agent
         if: steps.prepare.outputs.should_run == 'true'
         env:
           GITHUB_TOKEN: ''
@@ -857,6 +1017,15 @@ jobs:
             );
           '
 
+      - name: Validate classification result
+        id: validate_classification
+        if: steps.prepare.outputs.should_run == 'true'
+        run: |
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.parseClassificationFile(".cursor-runtime/classification.json");
+          '
+
       - name: Apply classification
         id: apply
         if: steps.prepare.outputs.should_run == 'true'
@@ -890,6 +1059,20 @@ jobs:
         with:
           github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
+            const fs = require('node:fs');
+            let auto = null;
+            for (const helper of [
+              `${process.env.RUNNER_TEMP}/cursor-automation.cjs`,
+              `${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`,
+            ]) {
+              if (!fs.existsSync(helper)) continue;
+              try {
+                auto = require(helper);
+                break;
+              } catch (error) {
+                core.warning(`Could not load automation helper ${helper}: ${error.message}`);
+              }
+            }
             const issueNumber = Number(process.env.ISSUE_NUMBER);
             const commentId = String(process.env.TRIGGER_COMMENT_ID || '');
             const { data: issue } = await github.rest.issues.get({
@@ -933,22 +1116,42 @@ jobs:
             if (issue.state === 'closed') update.state = 'open';
             await github.rest.issues.update(update);
             if (!processed) {
-              const isChinese = /[\u3400-\u9fff]/u.test(
-                `${issue.title || ''}\n${issue.body || ''}`,
-              );
               const marker = /^[A-Za-z0-9_-]+$/.test(commentId)
                 ? `<!-- cursor-followup:comment-id=${commentId};result=blocked -->`
                 : '';
+              const kind = '${{ steps.research.outcome }}' === 'failure'
+                ? 'research_failed'
+                : '${{ steps.classify_agent.outcome }}' === 'failure'
+                  ? 'classification_failed'
+                  : '${{ steps.validate_classification.outcome }}' === 'failure'
+                    ? 'classification_failed'
+                    : '${{ steps.apply.outcome }}' === 'failure'
+                      ? 'apply_failed'
+                      : 'processing_failed';
+              const chinese = /[\u3400-\u9fff]/u.test(
+                `${issue.title || ''}\n${issue.body || ''}`,
+              );
+              const failureMessage = auto
+                ? auto.buildClassificationFailureMessage(issue, {
+                    kind,
+                    isFollowup: Boolean(commentId),
+                    workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                  })
+                : [
+                    chinese
+                      ? '自动分类流程没有正常完成，Issue 已保留并转给维护者继续处理。'
+                      : 'The automatic classification process did not finish normally. The issue was preserved for maintainer review.',
+                    `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                  ].join('\n\n');
               await github.rest.issues.createComment({
                 ...context.repo,
                 issue_number: issueNumber,
                 body: [
                   '<!-- cursor-automation -->',
+                  `<!-- cursor-classification-failure:kind=${kind};run=${context.runId} -->`,
                   marker,
                   '',
-                  isChinese
-                    ? '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。'
-                    : 'We received the additional information, but the automatic review could not finish safely. A maintainer has been notified.',
+                  failureMessage,
                 ].filter(Boolean).join('\n'),
               });
             }
@@ -1760,6 +1963,7 @@ jobs:
               changedFiles: process.argv[2].split("\n").filter(Boolean),
               nameStatusText: process.argv[3],
             });
+            auto.writeProtectedPathReport(process.env.RUNNER_TEMP + "/protected-paths.json", hits);
             if (hits.length) {
               console.error("Protected paths modified:", hits.join(", "));
               process.exit(1);
@@ -1855,6 +2059,7 @@ jobs:
             const hits = auto.hasProtectedChangesInSources({
               nameStatusText: process.argv[1],
             });
+            auto.writeProtectedPathReport(process.env.RUNNER_TEMP + "/protected-paths.json", hits);
             if (hits.length) {
               console.error("Protected paths modified after verification:", hits.join(", "));
               process.exit(1);
@@ -2084,10 +2289,19 @@ jobs:
               ...context.repo,
               issue_number: issueNumber,
             });
-            const fallback = auto.buildIssueFollowupFallbackReply(
-              issue,
-              'processing_failed',
+            const protectedPaths = auto.readProtectedPathReport(
+              process.env.RUNNER_TEMP + '/protected-paths.json',
             );
+            const fallback = protectedPaths.length
+              ? auto.buildImplementationFailureMessage(issue, {
+                  kind: 'protected_path',
+                  protectedPaths,
+                  workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                })
+              : auto.buildIssueFollowupFallbackReply(
+                  issue,
+                  'processing_failed',
+                );
             const comments = await github.paginate(
               github.rest.issues.listComments,
               { ...context.repo, issue_number: issueNumber, per_page: 100 },
@@ -2813,29 +3027,32 @@ jobs:
           cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
           cp scripts/compare-ci-test-baseline.cjs "$RUNNER_TEMP/compare-ci-test-baseline.cjs"
 
-      - name: Skip if bot PR already open
+      - name: Skip if trusted related PR already open
         id: existing
         uses: actions/github-script@v9
         with:
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
-            const existing = await auto.findOpenBotPrForIssue({
+            const botPull = await auto.findOpenBotPrForIssue({
               github,
               context,
               issueNumber: process.env.ISSUE_NUMBER,
             });
+            const existing = botPull || await auto.findOpenPullForIssue({
+              github,
+              context,
+              issueNumber: process.env.ISSUE_NUMBER,
+              includeRelated: true,
+            });
             core.setOutput('exists', existing ? 'true' : 'false');
             core.setOutput('url', existing ? existing.html_url : '');
             if (existing) {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: Number(process.env.ISSUE_NUMBER),
-                body: [
-                  auto.TRIAGE_MARKER,
-                  auto.DISCLAIMER,
-                  '',
-                  `An automation pull request is already open or was already filed: ${existing.html_url}`,
-                ].join('\n'),
+              await auto.markNeedsHuman({
+                github,
+                context,
+                issueNumber: Number(process.env.ISSUE_NUMBER),
+                message: `A trusted related pull request is already open: ${existing.html_url}`,
+                dedupeMarker: `<!-- cursor-existing-related-pr:${existing.number} -->`,
               });
             }
 
@@ -2992,6 +3209,7 @@ jobs:
               changedFiles: process.argv[2].split("\n").filter(Boolean),
               nameStatusText: process.argv[3],
             });
+            auto.writeProtectedPathReport(process.env.RUNNER_TEMP + "/protected-paths.json", hits);
             if (hits.length) {
               console.error("Protected paths modified:", hits.join(", "));
               process.exit(1);
@@ -3114,6 +3332,7 @@ jobs:
           node -e '
             const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
             const hits = auto.hasProtectedChangesInSources({ nameStatusText: process.argv[1] });
+            auto.writeProtectedPathReport(process.env.RUNNER_TEMP + "/protected-paths.json", hits);
             if (hits.length) {
               console.error("Protected paths modified:", hits.join(", "));
               process.exit(1);
@@ -3170,6 +3389,7 @@ jobs:
           '
 
       - name: Upload implement patch
+        id: upload_patch
         if: steps.patch.outputs.artifact_ready == 'true'
         uses: actions/upload-artifact@v7
         with:
@@ -3203,14 +3423,17 @@ jobs:
               : `${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`;
             const auto = require(helper);
             const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const protectedPaths = auto.readProtectedPathReport(
+              process.env.RUNNER_TEMP + '/protected-paths.json',
+            );
             const { data: issue } = await github.rest.issues.get({
               ...context.repo,
               issue_number: issueNumber,
             });
-            const protectedFailure = '${{ steps.check_protected.outcome }}' === 'failure';
             const artifactReady = '${{ steps.patch.outputs.artifact_ready }}' === 'true';
+            const artifactUploaded = '${{ steps.upload_patch.outcome }}' === 'success';
             const verifyFailed = '${{ steps.verify.outputs.passed }}' === 'false';
-            const kind = protectedFailure
+            const kind = protectedPaths.length
               ? 'protected_path'
               : artifactReady && verifyFailed
                 ? 'verification_failed'
@@ -3222,7 +3445,10 @@ jobs:
               message: auto.buildImplementationFailureMessage(issue, {
                 kind,
                 workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                artifactName: artifactReady ? `implement-patch-${context.runId}` : '',
+                artifactName: artifactReady && artifactUploaded
+                  ? `implement-patch-${context.runId}`
+                  : '',
+                protectedPaths,
               }),
               dedupeMarker: `<!-- cursor-implement-failure:base=${{ steps.branch.outputs.base_sha }};kind=${kind} -->`,
             });
@@ -3258,7 +3484,60 @@ jobs:
           name: implement-patch-${{ github.run_id }}
           path: patch-in
 
+      - name: Checkout trusted helper for publish guard
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          path: helpers
+
+      - name: Ensure automation helper present
+        working-directory: helpers
+        env:
+          BOOTSTRAP_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -f scripts/cursor-automation.cjs ]]; then
+            cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+            exit 0
+          fi
+          git fetch --depth=1 origin "${BOOTSTRAP_SHA}"
+          git show "FETCH_HEAD:scripts/cursor-automation.cjs" > "$RUNNER_TEMP/cursor-automation.cjs"
+          test -s "$RUNNER_TEMP/cursor-automation.cjs"
+
+      - name: Skip publish if trusted related PR opened during implementation
+        id: existing
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const botPull = await auto.findOpenBotPrForIssue({
+              github,
+              context,
+              issueNumber,
+            });
+            const existing = botPull || await auto.findOpenPullForIssue({
+              github,
+              context,
+              issueNumber,
+              includeRelated: true,
+            });
+            core.setOutput('exists', existing ? 'true' : 'false');
+            if (existing) {
+              await auto.markNeedsHuman({
+                github,
+                context,
+                issueNumber,
+                message: `A trusted related pull request is already open: ${existing.html_url}`,
+                dedupeMarker: `<!-- cursor-existing-related-pr:${existing.number} -->`,
+              });
+              core.notice(`Trusted related pull request ${existing.html_url} opened during implementation; skip publishing a duplicate branch.`);
+            }
+
       - name: Publish branch from fresh runner
+        if: steps.existing.outputs.exists != 'true'
         id: publish
         run: |
           set -euo pipefail
@@ -3301,7 +3580,7 @@ jobs:
           exit 1
 
       - name: Mark needs human on publish failure
-        if: failure() && steps.publish.outputs.handoff == 'true'
+        if: failure() && steps.existing.outputs.exists != 'true' && steps.publish.outputs.handoff == 'true'
         uses: actions/github-script@v9
         env:
           ISSUE_NUMBER: ${{ needs.implement.outputs.issue_number }}
@@ -3329,32 +3608,6 @@ jobs:
               });
             }
 
-      - name: Checkout helper for PR body helpers
-        if: steps.publish.outputs.published == 'true'
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-          path: helpers
-
-      - name: Ensure automation helper present
-        if: steps.publish.outputs.published == 'true'
-        working-directory: helpers
-        env:
-          BOOTSTRAP_SHA: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          HEAD_REPO: ''
-          BASE_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          if [[ -f scripts/cursor-automation.cjs ]]; then
-            cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
-            exit 0
-          fi
-          git fetch --depth=1 origin "${BOOTSTRAP_SHA}"
-          git show "FETCH_HEAD:scripts/cursor-automation.cjs" > "$RUNNER_TEMP/cursor-automation.cjs"
-          test -s "$RUNNER_TEMP/cursor-automation.cjs"
-
       - name: Open draft PR
         if: steps.publish.outputs.published == 'true'
         id: openpr
@@ -3373,6 +3626,29 @@ jobs:
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const fs = require('node:fs');
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const botPull = await auto.findOpenBotPrForIssue({
+              github,
+              context,
+              issueNumber,
+            });
+            const existing = botPull || await auto.findOpenPullForIssue({
+              github,
+              context,
+              issueNumber,
+              includeRelated: true,
+            });
+            if (existing) {
+              await auto.markNeedsHuman({
+                github,
+                context,
+                issueNumber,
+                message: `A trusted related pull request is already open: ${existing.html_url}`,
+                dedupeMarker: `<!-- cursor-existing-related-pr:${existing.number} -->`,
+              });
+              core.notice(`Trusted related pull request ${existing.html_url} opened before PR creation; skip the duplicate.`);
+              return;
+            }
             let statusText = '';
             let agentBody = '';
             try {
@@ -4400,6 +4676,7 @@ jobs:
               changedFiles: process.argv[2].split("\n").filter(Boolean),
               nameStatusText: process.argv[3],
             });
+            auto.writeProtectedPathReport(process.env.RUNNER_TEMP + "/protected-paths.json", hits);
             if (hits.length) {
               console.error("Protected paths modified:", hits.join(", "));
               process.exit(1);
@@ -4498,6 +4775,7 @@ jobs:
           node -e '
             const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
             const hits = auto.hasProtectedChangesInSources({ nameStatusText: process.argv[1] });
+            auto.writeProtectedPathReport(process.env.RUNNER_TEMP + "/protected-paths.json", hits);
             if (hits.length) {
               console.error("Protected paths modified:", hits.join(", "));
               process.exit(1);
@@ -4544,6 +4822,7 @@ jobs:
           '
 
       - name: Upload fix patch
+        id: upload_fixpatch
         if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.artifact_ready == 'true'
         uses: actions/upload-artifact@v7
         with:
@@ -4578,9 +4857,12 @@ jobs:
               issue_number: pull_number,
               body: [
                 auto.TRIAGE_MARKER,
-                auto.DISCLAIMER,
+                `<!-- cursor-codex-fix-failure:kind=no_changes;run=${context.runId} -->`,
                 '',
-                'Automatic fix did not produce additional code changes for the latest Codex findings. Marking for human review.',
+                auto.buildCodexFixFailureMessage({
+                  kind: 'no_changes',
+                  workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                }),
               ].join('\n'),
             });
             await auto.applyCodexTerminalLabels({
@@ -4604,14 +4886,32 @@ jobs:
               : `${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`;
             const auto = require(helper);
             const pull_number = Number(process.env.PULL_NUMBER);
+            const protectedPaths = auto.readProtectedPathReport(
+              process.env.RUNNER_TEMP + '/protected-paths.json',
+            );
+            const artifactReady = '${{ steps.fixpatch.outputs.artifact_ready }}' === 'true';
+            const artifactUploaded = '${{ steps.upload_fixpatch.outcome }}' === 'success';
+            const verifyFailed = '${{ steps.fixverify.outputs.passed }}' === 'false';
+            const kind = protectedPaths.length
+              ? 'protected_path'
+              : artifactReady && verifyFailed
+                ? 'verification_failed'
+                : 'processing_failed';
             await github.rest.issues.createComment({
               ...context.repo,
               issue_number: pull_number,
               body: [
                 auto.TRIAGE_MARKER,
-                auto.DISCLAIMER,
+                `<!-- cursor-codex-fix-failure:kind=${kind};run=${context.runId} -->`,
                 '',
-                'Automatic Codex fix did not finish cleanly (agent, protected paths, or verification failed). Marking for human review.',
+                auto.buildCodexFixFailureMessage({
+                  kind,
+                  protectedPaths,
+                  artifactName: artifactReady && artifactUploaded
+                    ? `codex-fix-patch-${context.runId}`
+                    : '',
+                  workflowUrl: `${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                }),
               ].join('\n'),
             });
             await auto.applyCodexTerminalLabels({
