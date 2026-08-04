@@ -1172,17 +1172,25 @@ function extractIssueCommentWatermark(body) {
   return String(body || '').match(ISSUE_WATERMARK_RE)?.[1] || '';
 }
 
-function extractSourceIssueNumber(pull) {
+function extractSourceIssueNumbers(pull) {
   const body = String(pull?.body || '');
   const marker = body.match(SOURCE_ISSUE_RE);
-  if (marker) return Number(marker[1]);
-  const closing = body.match(
-    /(?:^|\W)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/i,
-  );
-  if (closing) return Number(closing[1]);
+  if (marker) return [Number(marker[1])];
+  const closing = [];
+  const closingPattern =
+    /(?:^|\W)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
+  for (const match of body.matchAll(closingPattern)) {
+    const issueNumber = Number(match[1]);
+    if (Number.isFinite(issueNumber) && issueNumber > 0) closing.push(issueNumber);
+  }
+  if (closing.length) return [...new Set(closing)];
   const headRef = String(pull?.head?.ref || pull?.headRefName || '');
   const branch = headRef.match(/^cursor\/issue-(\d+)-/i);
-  return branch ? Number(branch[1]) : null;
+  return branch ? [Number(branch[1])] : [];
+}
+
+function extractSourceIssueNumber(pull) {
+  return extractSourceIssueNumbers(pull)[0] || null;
 }
 
 function extractProcessedIssueFollowupIds(
@@ -1468,8 +1476,8 @@ function nextSourceIssueLabelsAfterPull(existing = [], merged = false) {
 
 function shouldCleanupSourceIssueAfterPull(pull, options = {}) {
   if (!pull || String(pull.state || '').toLowerCase() !== 'closed') return false;
-  const issueNumber = extractSourceIssueNumber(pull);
-  if (!Number.isFinite(issueNumber) || issueNumber <= 0) return false;
+  const issueNumbers = extractSourceIssueNumbers(pull);
+  if (!issueNumbers.length) return false;
 
   const repository = String(options.repository || '').toLowerCase();
   const baseRepo = String(
@@ -1480,11 +1488,16 @@ function shouldCleanupSourceIssueAfterPull(pull, options = {}) {
   const merged = Boolean(pull.merged || pull.merged_at || pull.mergedAt);
   if (merged) {
     const body = String(pull.body || '');
-    const closing = new RegExp(
-      `(?:^|\\W)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${issueNumber}\\b`,
-      'i',
-    );
-    if (closing.test(body)) return true;
+    if (SOURCE_ISSUE_RE.test(body)) {
+      const issueNumber = issueNumbers[0];
+      const closing = new RegExp(
+        `(?:^|\\W)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${issueNumber}\\b`,
+        'i',
+      );
+      if (closing.test(body)) return true;
+    } else {
+      return true;
+    }
   }
 
   return shouldGatePullOnSourceIssueFollowups(pull, options);
@@ -3102,9 +3115,26 @@ function isTrustedOpenPullForIssue(pull, issueNumber, {
   const trustedAuthor = trustedAssociations.has(
     String(pull.author_association || pull.authorAssociation || '').toUpperCase(),
   );
+  const body = String(pull.body || '');
+  const sourceMarker = body.match(SOURCE_ISSUE_RE);
+  const labels = (pull.labels || []).map((label) => (
+    typeof label === 'string' ? label : label?.name
+  ));
+  const author = String(pull.user?.login || pull.author?.login || '').toLowerCase();
+  const headRef = String(pull.head?.ref || pull.headRefName || '');
+  const automationManaged =
+    isBotPrMarker(body)
+    || labels.includes('automation:bot-pr')
+    || (
+      ['netcatty-bot', 'github-actions[bot]', 'github-actions'].includes(author)
+      && /^cursor\/issue-\d+-/.test(headRef)
+    );
+  const referencesIssue = automationManaged
+    ? Boolean(sourceMarker && sourceMarker[1] === String(issueNumber))
+    : pullReferencesIssue(pull, issueNumber, { includeRelated });
   return (
     (Boolean(normalizedRepository) && headRepository === normalizedRepository || trustedAuthor)
-    && pullReferencesIssue(pull, issueNumber, { includeRelated })
+    && referencesIssue
   );
 }
 
@@ -3132,6 +3162,7 @@ function shouldRetryIssueHandoff(comments = [], {
   trustedActors = '',
   recoveryVersion = '',
   notBefore = '',
+  notAfter = '',
 } = {}) {
   const actors = new Set(
     String(trustedActors || '')
@@ -3140,25 +3171,44 @@ function shouldRetryIssueHandoff(comments = [], {
       .filter(Boolean),
   );
   const notBeforeMs = Date.parse(String(notBefore || ''));
-  const trustedBodies = (comments || [])
-    .filter((comment) => {
-      if (!actors.has(String(comment.user?.login || '').toLowerCase())) return false;
-      if (!Number.isFinite(notBeforeMs)) return true;
-      const createdAt = Date.parse(comment.created_at || comment.createdAt || '');
-      return Number.isFinite(createdAt) && createdAt >= notBeforeMs;
-    })
-    .map((comment) => String(comment.body || ''));
-  if (!trustedBodies.length) return false;
+  const notAfterMs = Date.parse(String(notAfter || ''));
+  const trustedComments = (comments || []).filter((comment) => (
+    actors.has(String(comment.user?.login || '').toLowerCase())
+  ));
   if (
     recoveryVersion
-    && trustedBodies.some((body) => body.includes(`cursor-handoff-recovery:version=${recoveryVersion}`))
+    && trustedComments.some((comment) => (
+      String(comment.body || '').includes(`cursor-handoff-recovery:version=${recoveryVersion}`)
+    ))
   ) return false;
-  return trustedBodies.some((body) => (
-    /cursor-implement-failure:[^>]*kind=protected_path/i.test(body)
-    || /cursor-classification-failure:kind=research_failed/i.test(body)
-    || body.includes('收到这条补充了，但自动复核没有安全完成')
-    || body.includes('The automatic follow-up did not finish safely')
-  ));
+  const boundedComments = trustedComments
+    .filter((comment) => {
+      if (!Number.isFinite(notBeforeMs) && !Number.isFinite(notAfterMs)) return true;
+      const createdAt = Date.parse(comment.created_at || comment.createdAt || '');
+      if (!Number.isFinite(createdAt)) return false;
+      if (Number.isFinite(notBeforeMs) && createdAt < notBeforeMs) return false;
+      if (Number.isFinite(notAfterMs) && createdAt > notAfterMs) return false;
+      return true;
+    })
+    .sort((left, right) => (
+      Date.parse(left.created_at || left.createdAt || '')
+      - Date.parse(right.created_at || right.createdAt || '')
+    ));
+  let latestTerminal = '';
+  for (const comment of boundedComments) {
+    const body = String(comment.body || '');
+    const retryableFailure =
+      /cursor-implement-failure:[^>]*kind=protected_path/i.test(body)
+      || /cursor-classification-failure:kind=research_failed/i.test(body)
+      || body.includes('收到这条补充了，但自动复核没有安全完成')
+      || body.includes('The automatic follow-up did not finish safely');
+    if (retryableFailure) {
+      latestTerminal = 'retryable_failure';
+    } else if (/cursor-followup:comment-id=[^;>]+;result=(?:no_change|updated)/i.test(body)) {
+      latestTerminal = 'success';
+    }
+  }
+  return latestTerminal === 'retryable_failure';
 }
 
 async function findOpenBotPrForIssue({ github, context, issueNumber }) {
@@ -3607,6 +3657,7 @@ module.exports = {
   buildTriageComment,
   buildPullRequestBody,
   extractIssueCommentWatermark,
+  extractSourceIssueNumbers,
   extractSourceIssueNumber,
   extractProcessedIssueFollowupIds,
   countIssueFollowupRepliesSince,

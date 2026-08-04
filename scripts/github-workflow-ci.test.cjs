@@ -300,7 +300,7 @@ test("issue implementation publishing tolerates competing automation runs", () =
   assert.match(publishJob[0], /echo "handoff=true" >> "\$GITHUB_OUTPUT"/);
   assert.match(
     publishJob[0],
-    /if: failure\(\) && steps\.publish\.outputs\.handoff == 'true'/,
+    /if: failure\(\) && steps\.existing\.outputs\.exists != 'true' && steps\.publish\.outputs\.handoff == 'true'/,
   );
   assert.doesNotMatch(publishJob[0], /steps\.publish\.outcome == 'failure'/);
   assert.match(publishJob[0], /labels: \['ready-for-human'\]/);

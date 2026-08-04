@@ -394,18 +394,10 @@ jobs:
               core.warning(`PR #${pullNumber} is not eligible for source cleanup; skipping.`);
               return;
             }
-            const issueNumber = auto.extractSourceIssueNumber(pull);
+            const issueNumbers = auto.extractSourceIssueNumbers(pull);
             const expectedIssueNumber = Number(process.env.SOURCE_ISSUE_NUMBER);
-            if (!issueNumber || issueNumber !== expectedIssueNumber) {
+            if (!issueNumbers.includes(expectedIssueNumber)) {
               core.warning(`PR #${pullNumber} source issue changed while queued; skipping cleanup.`);
-              return;
-            }
-            const { data: sourceIssue } = await github.rest.issues.get({
-              ...context.repo,
-              issue_number: issueNumber,
-            });
-            if (pull.merged && sourceIssue.state !== 'closed') {
-              core.warning(`Merged PR #${pullNumber} does not currently close issue #${issueNumber}; skipping cleanup.`);
               return;
             }
             const removeLabel = async (issue_number, name) => {
@@ -419,15 +411,29 @@ jobs:
                 if (error.status !== 404) throw error;
               }
             };
-            for (const name of ['ready-for-agent', 'needs-info', 'ready-for-human']) {
-              await removeLabel(issueNumber, name);
-            }
-            if (!pull.merged) {
-              await github.rest.issues.addLabels({
+            for (const issueNumber of issueNumbers) {
+              const { data: sourceIssue } = await github.rest.issues.get({
                 ...context.repo,
                 issue_number: issueNumber,
-                labels: ['ready-for-human'],
               });
+              if (sourceIssue.pull_request) {
+                core.warning(`#${issueNumber} is a pull request, not a source issue; skipping cleanup.`);
+                continue;
+              }
+              if (pull.merged && sourceIssue.state !== 'closed') {
+                core.warning(`Merged PR #${pullNumber} does not currently close issue #${issueNumber}; skipping cleanup.`);
+                continue;
+              }
+              for (const name of ['ready-for-agent', 'needs-info', 'ready-for-human']) {
+                await removeLabel(issueNumber, name);
+              }
+              if (!pull.merged) {
+                await github.rest.issues.addLabels({
+                  ...context.repo,
+                  issue_number: issueNumber,
+                  labels: ['ready-for-human'],
+                });
+              }
             }
             for (const name of ['automation:codex-loop', 'ready-for-human']) {
               await removeLabel(pullNumber, name);
@@ -491,6 +497,7 @@ jobs:
           script: |
             const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
             const recoveryVersion = 'protected-tests-and-media-v1';
+            const auditedIssueNumbers = new Set([2679, 2697, 2705, 2708, 2709]);
             const repository = `${context.repo.owner}/${context.repo.repo}`;
             const issues = await github.paginate(
               github.rest.search.issuesAndPullRequests,
@@ -509,6 +516,7 @@ jobs:
             });
             let dispatched = 0;
             for (const issue of issues) {
+              if (!auditedIssueNumbers.has(Number(issue.number))) continue;
               const comments = await github.paginate(
                 github.rest.issues.listComments,
                 { ...context.repo, issue_number: issue.number, per_page: 100 },
@@ -517,6 +525,7 @@ jobs:
                 trustedActors: process.env.ISSUE_BOT_LOGINS,
                 recoveryVersion,
                 notBefore: '2026-07-31T12:54:37Z',
+                notAfter: '2026-08-04T08:27:14Z',
               })) continue;
               if (pulls.some((pull) => auto.isTrustedOpenPullForIssue(pull, issue.number, {
                 repository,
@@ -1008,6 +1017,15 @@ jobs:
             );
           '
 
+      - name: Validate classification result
+        id: validate_classification
+        if: steps.prepare.outputs.should_run == 'true'
+        run: |
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+            auto.parseClassificationFile(".cursor-runtime/classification.json");
+          '
+
       - name: Apply classification
         id: apply
         if: steps.prepare.outputs.should_run == 'true'
@@ -1105,9 +1123,11 @@ jobs:
                 ? 'research_failed'
                 : '${{ steps.classify_agent.outcome }}' === 'failure'
                   ? 'classification_failed'
-                  : '${{ steps.apply.outcome }}' === 'failure'
-                    ? 'apply_failed'
-                    : 'processing_failed';
+                  : '${{ steps.validate_classification.outcome }}' === 'failure'
+                    ? 'classification_failed'
+                    : '${{ steps.apply.outcome }}' === 'failure'
+                      ? 'apply_failed'
+                      : 'processing_failed';
               const chinese = /[\u3400-\u9fff]/u.test(
                 `${issue.title || ''}\n${issue.body || ''}`,
               );
@@ -3027,15 +3047,12 @@ jobs:
             core.setOutput('exists', existing ? 'true' : 'false');
             core.setOutput('url', existing ? existing.html_url : '');
             if (existing) {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: Number(process.env.ISSUE_NUMBER),
-                body: [
-                  auto.TRIAGE_MARKER,
-                  auto.DISCLAIMER,
-                  '',
-                  `A trusted related pull request is already open: ${existing.html_url}`,
-                ].join('\n'),
+              await auto.markNeedsHuman({
+                github,
+                context,
+                issueNumber: Number(process.env.ISSUE_NUMBER),
+                message: `A trusted related pull request is already open: ${existing.html_url}`,
+                dedupeMarker: `<!-- cursor-existing-related-pr:${existing.number} -->`,
               });
             }
 
@@ -3467,7 +3484,60 @@ jobs:
           name: implement-patch-${{ github.run_id }}
           path: patch-in
 
+      - name: Checkout trusted helper for publish guard
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          path: helpers
+
+      - name: Ensure automation helper present
+        working-directory: helpers
+        env:
+          BOOTSTRAP_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -f scripts/cursor-automation.cjs ]]; then
+            cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
+            exit 0
+          fi
+          git fetch --depth=1 origin "${BOOTSTRAP_SHA}"
+          git show "FETCH_HEAD:scripts/cursor-automation.cjs" > "$RUNNER_TEMP/cursor-automation.cjs"
+          test -s "$RUNNER_TEMP/cursor-automation.cjs"
+
+      - name: Skip publish if trusted related PR opened during implementation
+        id: existing
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const botPull = await auto.findOpenBotPrForIssue({
+              github,
+              context,
+              issueNumber,
+            });
+            const existing = botPull || await auto.findOpenPullForIssue({
+              github,
+              context,
+              issueNumber,
+              includeRelated: true,
+            });
+            core.setOutput('exists', existing ? 'true' : 'false');
+            if (existing) {
+              await auto.markNeedsHuman({
+                github,
+                context,
+                issueNumber,
+                message: `A trusted related pull request is already open: ${existing.html_url}`,
+                dedupeMarker: `<!-- cursor-existing-related-pr:${existing.number} -->`,
+              });
+              core.notice(`Trusted related pull request ${existing.html_url} opened during implementation; skip publishing a duplicate branch.`);
+            }
+
       - name: Publish branch from fresh runner
+        if: steps.existing.outputs.exists != 'true'
         id: publish
         run: |
           set -euo pipefail
@@ -3510,7 +3580,7 @@ jobs:
           exit 1
 
       - name: Mark needs human on publish failure
-        if: failure() && steps.publish.outputs.handoff == 'true'
+        if: failure() && steps.existing.outputs.exists != 'true' && steps.publish.outputs.handoff == 'true'
         uses: actions/github-script@v9
         env:
           ISSUE_NUMBER: ${{ needs.implement.outputs.issue_number }}
@@ -3538,32 +3608,6 @@ jobs:
               });
             }
 
-      - name: Checkout helper for PR body helpers
-        if: steps.publish.outputs.published == 'true'
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-          path: helpers
-
-      - name: Ensure automation helper present
-        if: steps.publish.outputs.published == 'true'
-        working-directory: helpers
-        env:
-          BOOTSTRAP_SHA: ${{ github.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          HEAD_REPO: ''
-          BASE_REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          if [[ -f scripts/cursor-automation.cjs ]]; then
-            cp scripts/cursor-automation.cjs "$RUNNER_TEMP/cursor-automation.cjs"
-            exit 0
-          fi
-          git fetch --depth=1 origin "${BOOTSTRAP_SHA}"
-          git show "FETCH_HEAD:scripts/cursor-automation.cjs" > "$RUNNER_TEMP/cursor-automation.cjs"
-          test -s "$RUNNER_TEMP/cursor-automation.cjs"
-
       - name: Open draft PR
         if: steps.publish.outputs.published == 'true'
         id: openpr
@@ -3582,6 +3626,29 @@ jobs:
           script: |
             const auto = require(`${process.env.RUNNER_TEMP}/cursor-automation.cjs`);
             const fs = require('node:fs');
+            const issueNumber = Number(process.env.ISSUE_NUMBER);
+            const botPull = await auto.findOpenBotPrForIssue({
+              github,
+              context,
+              issueNumber,
+            });
+            const existing = botPull || await auto.findOpenPullForIssue({
+              github,
+              context,
+              issueNumber,
+              includeRelated: true,
+            });
+            if (existing) {
+              await auto.markNeedsHuman({
+                github,
+                context,
+                issueNumber,
+                message: `A trusted related pull request is already open: ${existing.html_url}`,
+                dedupeMarker: `<!-- cursor-existing-related-pr:${existing.number} -->`,
+              });
+              core.notice(`Trusted related pull request ${existing.html_url} opened before PR creation; skip the duplicate.`);
+              return;
+            }
             let statusText = '';
             let agentBody = '';
             try {

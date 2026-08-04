@@ -840,6 +840,13 @@ test('source cleanup includes merged maintainer fixes but not unmerged handoffs'
     repository: 'binaricat/Netcatty',
   };
   assert.equal(auto.shouldCleanupSourceIssueAfterPull(maintainerPull, options), true);
+  assert.deepEqual(
+    auto.extractSourceIssueNumbers({
+      ...maintainerPull,
+      body: 'Fixes #42\nResolves #43\nCloses #42',
+    }),
+    [42, 43],
+  );
   assert.equal(
     auto.shouldCleanupSourceIssueAfterPull({
       ...maintainerPull,
@@ -980,6 +987,8 @@ test('workflow cleans source labels after eligible PR close and dedupes clean no
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
   assert.match(workflow, /kind == 'source_issue_cleanup'/);
   assert.match(workflow, /shouldCleanupSourceIssueAfterPull\(pull/);
+  assert.match(workflow, /const issueNumbers = auto\.extractSourceIssueNumbers\(pull\)/);
+  assert.match(workflow, /for \(const issueNumber of issueNumbers\)/);
   assert.match(workflow, /github\.rest\.issues\.removeLabel/);
   assert.match(workflow, /github\.rest\.issues\.addLabels/);
   assert.match(workflow, /not eligible for source cleanup; skipping/);
@@ -997,6 +1006,8 @@ test('workflow cleans source labels after eligible PR close and dedupes clean no
   assert.match(workflow, /Reconcile handoffs/);
   assert.ok((workflow.match(/auto\.extractPaginatedItems\(response\)/g) || []).length >= 2);
   assert.match(workflow, /notBefore: '2026-07-31T12:54:37Z'/);
+  assert.match(workflow, /notAfter: '2026-08-04T08:27:14Z'/);
+  assert.match(workflow, /auditedIssueNumbers = new Set\(\[2679, 2697, 2705, 2708, 2709\]\)/);
   assert.match(workflow, /is:issue is:closed label:"ready-for-human" label:triage/);
   assert.match(workflow, /is:pr is:merged label:"ready-for-human" label:"automation:bot-pr"/);
   const route = workflow.match(/\n  route:\n[\s\S]*?(?=\n  cleanup_source_issue:)/)?.[0] || '';
@@ -1133,6 +1144,10 @@ test('buildPullRequestBody records the issue comment snapshot', () => {
   assert.match(body, /<!-- cursor-issue-watermark:comment-id=987 -->/);
   assert.equal(auto.extractIssueCommentWatermark(body), '987');
   assert.equal(auto.extractSourceIssueNumber({ body }), 42);
+  assert.deepEqual(
+    auto.extractSourceIssueNumbers({ body: `${body}\nFixes #99` }),
+    [42],
+  );
 });
 
 test('parseIssueFollowupStatus is fail-closed and builds durable reply markers', () => {
@@ -1345,6 +1360,7 @@ test('legacy retry only accepts trusted fixed failure categories once', () => {
     ...options,
     recoveryVersion: 'handoff-v2',
     notBefore: '2026-07-31T12:54:37Z',
+    notAfter: '2026-08-04T08:27:14Z',
   };
   assert.equal(auto.shouldRetryIssueHandoff([{
     user: { login: 'netcatty-bot' },
@@ -1356,6 +1372,47 @@ test('legacy retry only accepts trusted fixed failure categories once', () => {
     body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
     created_at: '2026-08-01T12:00:00Z',
   }], boundedOptions), true);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      created_at: '2026-08-01T12:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-followup:comment-id=123;result=no_change -->',
+      created_at: '2026-08-02T12:00:00Z',
+    },
+  ], boundedOptions), false);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-followup:comment-id=123;result=updated -->',
+      created_at: '2026-08-01T12:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-classification-failure:kind=research_failed;run=2 -->',
+      created_at: '2026-08-02T12:00:00Z',
+    },
+  ], boundedOptions), true);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '<!-- cursor-implement-failure:base=future;kind=protected_path -->',
+    created_at: '2026-08-05T12:00:00Z',
+  }], boundedOptions), false);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+      created_at: '2026-08-01T12:00:00Z',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-handoff-recovery:version=handoff-v2 -->',
+      created_at: '2026-08-05T12:00:00Z',
+    },
+  ], boundedOptions), false);
 });
 
 test('findOpenPullForIssue accepts same-repo work but ignores untrusted fork claims', async () => {
@@ -1382,6 +1439,29 @@ test('findOpenPullForIssue accepts same-repo work but ignores untrusted fork cla
     issueNumber: 42,
   });
   assert.equal(found.number, 8);
+});
+
+test('automation pull references only control the marked source issue', () => {
+  const pull = {
+    number: 8,
+    state: 'open',
+    body: [
+      '<!-- cursor-bot-pr -->',
+      '<!-- cursor-source-issue:41 -->',
+      'Related to #42',
+      'Fixes #43',
+    ].join('\n'),
+    labels: [{ name: 'automation:bot-pr' }],
+    user: { login: 'netcatty-bot' },
+    head: {
+      ref: 'cursor/issue-41-123',
+      repo: { full_name: 'binaricat/Netcatty' },
+    },
+  };
+  const options = { repository: 'binaricat/Netcatty', includeRelated: true };
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 41, options), true);
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 42, options), false);
+  assert.equal(auto.isTrustedOpenPullForIssue(pull, 43, options), false);
 });
 
 test('getPendingIssueFollowupsForPull does not block maintainer Fixes-only PRs', async () => {
@@ -2222,10 +2302,46 @@ test('classification failure handoff receives its issue number', () => {
   assert.match(handoff, /buildClassificationFailureMessage/);
   assert.match(handoff, /steps\.research\.outcome/);
   assert.match(handoff, /steps\.classify_agent\.outcome/);
+  assert.match(handoff, /steps\.validate_classification\.outcome/);
   assert.match(handoff, /actions\/runs\/\$\{context\.runId\}/);
   assert.match(handoff, /fs\.existsSync\(helper\)/);
   assert.match(handoff, /const failureMessage = auto/);
   assert.doesNotMatch(handoff, /自动复核没有安全完成/);
+  assert.match(workflow, /name: Validate classification result/);
+  assert.match(workflow, /auto\.parseClassificationFile\("\.cursor-runtime\/classification\.json"\)/);
+});
+
+test('implementation publish rechecks related work and records a deduplicated handoff', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+  const implement = workflow.match(
+    /\n  implement:\n[\s\S]*?(?=\n  publish_implement:\n)/,
+  )?.[0] || '';
+  const publish = workflow.match(
+    /\n  publish_implement:\n[\s\S]*?(?=\n  codex_loop:\n)/,
+  )?.[0] || '';
+  assert.match(implement, /cursor-existing-related-pr:\$\{existing\.number\}/);
+  assert.match(implement, /auto\.markNeedsHuman/);
+  assert.match(publish, /name: Skip publish if trusted related PR opened during implementation/);
+  assert.match(publish, /includeRelated: true/);
+  assert.match(publish, /auto\.markNeedsHuman/);
+  assert.match(publish, /cursor-existing-related-pr:\$\{existing\.number\}/);
+  assert.ok(
+    publish.indexOf('name: Skip publish if trusted related PR opened during implementation')
+      < publish.indexOf('name: Publish branch from fresh runner'),
+  );
+  assert.match(
+    publish,
+    /name: Publish branch from fresh runner\n\s+if: steps\.existing\.outputs\.exists != 'true'/,
+  );
+  const openPr = publish.match(
+    /- name: Open draft PR[\s\S]*?(?=\n\s{6}- name:)/,
+  )?.[0] || '';
+  assert.match(openPr, /findOpenPullForIssue/);
+  assert.match(openPr, /includeRelated: true/);
+  assert.match(openPr, /skip the duplicate/);
 });
 
 test('classification follow-up rate-limit handoff receives its issue number', () => {
