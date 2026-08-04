@@ -608,7 +608,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // Connect-time automation must see the complete login sequence. An
           // explicit Copy/Split keeps its source-session reuse contract, while
           // an ordinary open bypasses endpoint/idle transport reuse.
-          reuseTransport: ctx.requiresFreshSshConnection && !sourceSessionId
+          reuseTransport: ctx.shouldUseFreshSshConnection?.() === true && !sourceSessionId
             ? false
             : undefined,
           skipShellPidDiscovery: ctx.isNetworkDevice === true,

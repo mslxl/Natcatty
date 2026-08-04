@@ -10,6 +10,7 @@ import {
   reorderHostConnectScript,
   removeHostConnectScript,
   resolveConnectScriptsForHost,
+  shouldMarkConnectAutomationConsumed,
   shouldUseFreshSshConnectionForAutomation,
   syncHostsForSnippetTargetChange,
 } from './hostConnectScripts.ts';
@@ -91,6 +92,19 @@ test('fresh SSH automation policy is conservative before vault hydration and for
     host,
     snippets: [],
     vaultInitialized: true,
+  }), false);
+});
+
+test('empty hydrated vault finalizes the current connection automation decision', () => {
+  assert.equal(shouldMarkConnectAutomationConsumed({
+    allConnectScriptsDone: true,
+    vaultInitialized: true,
+    hasUnresolvedBindings: false,
+  }), true);
+  assert.equal(shouldMarkConnectAutomationConsumed({
+    allConnectScriptsDone: true,
+    vaultInitialized: false,
+    hasUnresolvedBindings: false,
   }), false);
 });
 

@@ -153,8 +153,9 @@ export type TerminalSessionStartersContext = {
   // Mirrors the source actually consumed by the current SSH attempt so the UI
   // only hides its connecting dialog while Copy/Split reuse is being tried.
   setConnectionReuseAttemptSourceId?: (sourceSessionId: string | undefined) => void;
-  // Connect automation and pending scripts need the initial login output.
-  requiresFreshSshConnection?: boolean;
+  // Connect automation and still-unhandled pending scripts need the initial
+  // login output. Evaluate per attempt because pending work is one-shot.
+  shouldUseFreshSshConnection?: () => boolean;
   isNetworkDevice?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;

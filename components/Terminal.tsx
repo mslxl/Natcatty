@@ -111,6 +111,7 @@ import {
 import {
   hasUnresolvedConnectScriptBindings,
   resolveConnectScriptsForHost,
+  shouldMarkConnectAutomationConsumed,
   shouldUseFreshSshConnectionForAutomation,
 } from "@/domain/hostConnectScripts.ts";
 import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
@@ -356,6 +357,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const connectScriptsInFlightRef = useRef(false);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
+  const isPendingScriptAlreadyHandled = useCallback((snippet: Snippet) => {
+    if (snippet.id) {
+      return pendingScriptRunIdRef.current === snippet.id;
+    }
+    return pendingScriptHandledRef.current === snippet;
+  }, []);
   // Mosh marks status=connected during the SSH handshake so interactive
   // prompts remain reachable. Connect/pending scripts must wait until
   // mosh-client is ready (#2199). closeSession clears preload ready
@@ -2152,12 +2159,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     sessionId,
     reuseConnectionFromSessionIdRef: reuseConnectionSourceRef,
     setConnectionReuseAttemptSourceId,
-    requiresFreshSshConnection: shouldUseFreshSshConnectionForAutomation({
-      host,
-      snippets,
-      vaultInitialized: isVaultInitialized(),
-      hasPendingScript: Boolean(pendingScript || pendingScriptId),
-    }),
+    shouldUseFreshSshConnection: () => {
+      const hasUnhandledPendingScript = pendingScript && isScriptSnippet(pendingScript)
+        ? !isPendingScriptAlreadyHandled(pendingScript)
+        : Boolean(pendingScriptId && pendingScriptRunIdRef.current !== pendingScriptId);
+      return shouldUseFreshSshConnectionForAutomation({
+        host,
+        snippets,
+        vaultInitialized: isVaultInitialized(),
+        hasPendingScript: hasUnhandledPendingScript,
+      });
+    },
     isNetworkDevice,
     startupCommand,
     noAutoRun,
@@ -2334,13 +2346,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     pendingScriptHandledRef.current = null;
   }, [pendingScript?.id, pendingScriptId]);
 
-  const isPendingScriptAlreadyHandled = useCallback((snippet: Snippet) => {
-    if (snippet.id) {
-      return pendingScriptRunIdRef.current === snippet.id;
-    }
-    return pendingScriptHandledRef.current === snippet;
-  }, []);
-
   useEffect(() => {
     if (status !== 'connected') return;
     if (effectiveTerminalProtocol === 'mosh' && !moshShellReady) return;
@@ -2387,13 +2392,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         );
 
       if (scriptsToRun.length === 0) {
-        if (
-          !connectScriptsConsumedRef.current
-          && allConnectScriptsDone
-          && isVaultInitialized()
-          && snippets.length > 0
-          && !hasUnresolvedConnectScriptBindings(host, snippets)
-        ) {
+        if (!connectScriptsConsumedRef.current && shouldMarkConnectAutomationConsumed({
+          allConnectScriptsDone,
+          vaultInitialized: isVaultInitialized(),
+          hasUnresolvedBindings: hasUnresolvedConnectScriptBindings(host, snippets),
+        })) {
           connectScriptsConsumedRef.current = true;
         }
         return;

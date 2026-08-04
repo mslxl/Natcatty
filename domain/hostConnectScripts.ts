@@ -139,6 +139,22 @@ export function shouldUseFreshSshConnectionForAutomation(options: {
     || hasHostConnectAutomation(options.host, options.snippets);
 }
 
+/**
+ * Mark the current connection's automation decision as final once the vault
+ * has hydrated, even when it hydrated to an empty script list. This prevents a
+ * later sync from starting a newly arrived global script against a connection
+ * whose initial login output may already have been skipped.
+ */
+export function shouldMarkConnectAutomationConsumed(options: {
+  allConnectScriptsDone: boolean;
+  vaultInitialized: boolean;
+  hasUnresolvedBindings: boolean;
+}): boolean {
+  return options.allConnectScriptsDone
+    && options.vaultInitialized
+    && !options.hasUnresolvedBindings;
+}
+
 export function appendHostConnectScript(host: Host, scriptId: string, snippets: Snippet[]): Host {
   const snippet = scriptById(snippets, scriptId);
   if (!snippet) return host;
