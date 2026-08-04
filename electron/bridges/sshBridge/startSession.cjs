@@ -16,7 +16,7 @@ const {
 const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
-const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
+const { openBoundedSshShellCallback, isSshChannelOpenRateLimitedError } = require("../boundedSshChannelOpen.cjs");
 const {
   annotateMacLocalNetworkErrorMessage,
   resolveFirstTcpEndpoint,
@@ -237,21 +237,39 @@ printf '%s\n' '${scanCompleteMarker}'`;
           available,
           pids: available ? lines.filter((value) => /^\d+$/.test(value)) : [],
         };
-      } catch {
-        return { available: false, pids: [] };
+      } catch (error) {
+        return {
+          available: false,
+          rateLimited: isSshChannelOpenRateLimitedError(error),
+          pids: [],
+        };
       }
     };
 
-    const waitForNewInteractiveShellPid = async (conn, previousPids) => {
+    const waitForNewInteractiveShellPid = async (conn, previousPids, opts = {}) => {
       const previous = new Set(previousPids);
+      const initialDelayMs = Math.max(0, Number(opts.initialDelayMs) || 0);
+      const backoffMs = Math.max(1, Number(opts.backoffMs) || 50);
+      if (initialDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, initialDelayMs));
+      }
       for (let attempt = 0; attempt < 5; attempt += 1) {
         const discovery = await listInteractiveShellPids(conn);
-        if (!discovery.available) return null;
+        if (!discovery.available) {
+          // Bastion rate limits can reject the post-open discovery exec just
+          // after a retried shell open. Back off and try again instead of
+          // permanently leaving the copied session without a shellPid.
+          if (discovery.rateLimited && attempt < 4) {
+            await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
+            continue;
+          }
+          return null;
+        }
         const newPids = discovery.pids.filter((pid) => !previous.has(pid));
         if (newPids.length === 1) return newPids[0];
         if (newPids.length > 1) return null;
         if (attempt < 4) {
-          await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+          await new Promise((resolve) => setTimeout(resolve, backoffMs * (attempt + 1)));
         }
       }
       return null;
@@ -799,7 +817,16 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 refHolder.connRef = null;
               }
               const newShellPidPromise = shellDiscoveryBeforeOpen.available
-                ? waitForNewInteractiveShellPid(conn, shellPidsBeforeOpen)
+                ? waitForNewInteractiveShellPid(
+                  conn,
+                  shellPidsBeforeOpen,
+                  hasJumpHosts
+                    ? {
+                      initialDelayMs: jumpHostDiscoveryDelayMs,
+                      backoffMs: jumpHostDiscoveryDelayMs,
+                    }
+                    : {},
+                )
                 : Promise.resolve(null);
               void newShellPidPromise.then((newShellPid) => {
                 const liveSession = sessions.get(sessionId);
