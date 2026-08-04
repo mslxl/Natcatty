@@ -846,9 +846,9 @@ test('source cleanup includes merged maintainer fixes but not unmerged handoffs'
   assert.deepEqual(
     auto.extractSourceIssueNumbers({
       ...maintainerPull,
-      body: 'Fixes #42\nResolves #43\nCloses #42',
+      body: 'Fixes #42, #43, and #44\nCloses #42',
     }),
-    [42, 43],
+    [42, 43, 44],
   );
   assert.equal(
     auto.shouldCleanupSourceIssueAfterPull({
@@ -1295,6 +1295,11 @@ test('pullReferencesIssue matches exact closing references without prefix collis
     auto.pullReferencesIssue({ body: 'Related to #42' }, 42, { includeRelated: true }),
     true,
   );
+  const relatedList = { body: 'Related to #41, #42, and #43.' };
+  assert.equal(auto.pullReferencesIssue(relatedList, 41, { includeRelated: true }), true);
+  assert.equal(auto.pullReferencesIssue(relatedList, 42, { includeRelated: true }), true);
+  assert.equal(auto.pullReferencesIssue(relatedList, 43, { includeRelated: true }), true);
+  assert.equal(auto.pullReferencesIssue(relatedList, 44, { includeRelated: true }), false);
   assert.equal(
     auto.pullReferencesIssue({ head: { ref: 'cursor/issue-42-123' } }, 42),
     false,

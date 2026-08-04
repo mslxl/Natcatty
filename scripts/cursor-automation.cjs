@@ -1172,17 +1172,31 @@ function extractIssueCommentWatermark(body) {
   return String(body || '').match(ISSUE_WATERMARK_RE)?.[1] || '';
 }
 
+function extractKeywordIssueNumbers(body, { includeRelated = false } = {}) {
+  const keywords = includeRelated
+    ? 'close[sd]?|fix(?:e[sd])?|resolve[sd]?|related\\s+to|refs?|references?'
+    : 'close[sd]?|fix(?:e[sd])?|resolve[sd]?';
+  const clause = new RegExp(
+    `(?:^|\\W)(?:${keywords})\\s+(`
+      + '#\\d+(?:\\s*(?:,\\s*(?:and\\s+)?|and\\s+|&\\s*)#\\d+)*'
+      + ')',
+    'gi',
+  );
+  const issueNumbers = [];
+  for (const match of String(body || '').matchAll(clause)) {
+    for (const reference of match[1].matchAll(/#(\d+)/g)) {
+      const issueNumber = Number(reference[1]);
+      if (Number.isFinite(issueNumber) && issueNumber > 0) issueNumbers.push(issueNumber);
+    }
+  }
+  return [...new Set(issueNumbers)];
+}
+
 function extractSourceIssueNumbers(pull) {
   const body = String(pull?.body || '');
   const marker = body.match(SOURCE_ISSUE_RE);
   if (marker) return [Number(marker[1])];
-  const closing = [];
-  const closingPattern =
-    /(?:^|\W)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi;
-  for (const match of body.matchAll(closingPattern)) {
-    const issueNumber = Number(match[1]);
-    if (Number.isFinite(issueNumber) && issueNumber > 0) closing.push(issueNumber);
-  }
+  const closing = extractKeywordIssueNumbers(body);
   if (closing.length) return [...new Set(closing)];
   const headRef = String(pull?.head?.ref || pull?.headRefName || '');
   const branch = headRef.match(/^cursor\/issue-(\d+)-/i);
@@ -3087,17 +3101,7 @@ function pullReferencesIssue(pull, issueNumber, { includeRelated = false } = {})
   const body = String(pull.body || '');
   const marker = body.match(SOURCE_ISSUE_RE);
   if (marker && marker[1] === n) return true;
-  const closing = new RegExp(
-    `(?:^|\\W)(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\\s+#${n}(?!\\d)`,
-    'i',
-  );
-  if (closing.test(body)) return true;
-  if (!includeRelated) return false;
-  const related = new RegExp(
-    `(?:^|\\W)(?:related\\s+to|refs?|references?)\\s+#${n}(?!\\d)`,
-    'i',
-  );
-  return related.test(body);
+  return extractKeywordIssueNumbers(body, { includeRelated }).includes(Number(n));
 }
 
 function isTrustedOpenPullForIssue(pull, issueNumber, {
