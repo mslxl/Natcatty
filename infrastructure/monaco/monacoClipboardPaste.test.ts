@@ -193,7 +193,6 @@ test('pasteForMonacoEditorCommand aborts if focus leaves the find field mid clip
     });
   } finally {
     if (previousDocument === undefined) {
-      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
       delete (globalThis as { document?: Document }).document;
     } else {
       Object.defineProperty(globalThis, 'document', {
