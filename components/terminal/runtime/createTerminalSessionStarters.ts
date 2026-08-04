@@ -529,12 +529,27 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
             ? ctx.host.identityFilePaths
             : undefined;
 
+      let sourceReuseAttemptedWithinStart = false;
       const startAttempt = async (attempt: {
         password?: string;
         key?: SSHKey;
         useIdentityFiles?: boolean;
         useSshAgent?: boolean;
       }): Promise<string> => {
+        const sourceSessionId = ctx.reuseConnectionFromSessionIdRef?.current;
+        const sourceReuseAttempted = ctx.reuseConnectionSourceAttemptedRef?.current
+          ?? sourceReuseAttemptedWithinStart;
+        const isFallbackAfterSourceReuse = sourceReuseAttempted && !sourceSessionId;
+        if (ctx.reuseConnectionFromSessionIdRef) {
+          ctx.reuseConnectionFromSessionIdRef.current = undefined;
+        }
+        if (sourceSessionId) {
+          sourceReuseAttemptedWithinStart = true;
+          if (ctx.reuseConnectionSourceAttemptedRef) {
+            ctx.reuseConnectionSourceAttemptedRef.current = true;
+          }
+        }
+        ctx.setConnectionReuseAttemptSourceId?.(sourceSessionId);
         ctx.setIsConnectionAwaitingUserInput?.(false);
         ctx.setIsConnectionPastTcpDial?.(false);
         // Resolve keepalive per-host: a host can opt into its own values
@@ -546,7 +561,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           globalTerminalSettings,
         );
         const connectionTimeouts = resolveHostSshConnectionTimeouts(ctx.host);
-        return ctx.terminalBackend.startSSHSession({
+        const requiresFreshSshConnection = ctx.shouldUseFreshSshConnection?.() === true;
+        const startedSessionId = await ctx.terminalBackend.startSSHSession({
           sessionId: ctx.sessionId,
           hostLabel: ctx.host.label,
           hostname: ctx.host.hostname,
@@ -599,9 +615,23 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           // (issue #1204). Only honored on the very first connect attempt; the
           // bridge silently falls back to a fresh connection if the source is
           // gone, so reconnect/retry after the source closed still works.
-          sourceSessionId: ctx.reuseConnectionFromSessionId,
+          sourceSessionId,
+          // Connect-time automation must see the complete login sequence. An
+          // explicit Copy/Split keeps its source-session reuse contract, while
+          // an ordinary open bypasses endpoint/idle transport reuse.
+          reuseTransport: !sourceSessionId && (requiresFreshSshConnection || isFallbackAfterSourceReuse)
+            ? false
+            : undefined,
           skipShellPidDiscovery: ctx.isNetworkDevice === true,
         });
+        if (!requiresFreshSshConnection) {
+          ctx.onConnectAutomationSnapshotCommitted?.();
+        }
+        sourceReuseAttemptedWithinStart = false;
+        if (ctx.reuseConnectionSourceAttemptedRef) {
+          ctx.reuseConnectionSourceAttemptedRef.current = false;
+        }
+        return startedSessionId;
       };
 
       let id: string;

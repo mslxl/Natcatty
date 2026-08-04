@@ -1,6 +1,6 @@
 import type { FitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon } from "@xterm/addon-serialize";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 import type { Host, Identity, KnownHost, SerialConfig, SSHKey, TerminalSession, TerminalSettings } from "../../../types";
 import type { PromptLineBreakState } from "./promptLineBreak";
 import type {
@@ -147,9 +147,21 @@ export type TerminalSessionStartersContext = {
   knownHosts?: KnownHost[];
   resolvedChainHosts: Host[];
   sessionId: string;
-  // Source session id to reuse an authenticated SSH connection from when this
-  // terminal was created from an existing SSH session.
-  reuseConnectionFromSessionId?: string;
+  // One-shot source session intent for Copy/Split. Consumed by the first SSH
+  // attempt so later reconnects do not skip the initial login sequence.
+  reuseConnectionFromSessionIdRef?: MutableRefObject<string | undefined>;
+  // Persists across renderer auth retries after the one-shot source intent is
+  // consumed. Cleared only after a backend session starts successfully.
+  reuseConnectionSourceAttemptedRef?: MutableRefObject<boolean>;
+  // Mirrors the source actually consumed by the current SSH attempt so the UI
+  // only hides its connecting dialog while Copy/Split reuse is being tried.
+  setConnectionReuseAttemptSourceId?: (sourceSessionId: string | undefined) => void;
+  // Connect automation and still-unhandled pending scripts need the initial
+  // login output. Evaluate per attempt because pending work is one-shot.
+  shouldUseFreshSshConnection?: () => boolean;
+  // Commit the no-automation snapshot only after the corresponding backend
+  // session actually starts, so failed auth attempts do not consume scripts.
+  onConnectAutomationSnapshotCommitted?: () => void;
   isNetworkDevice?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;

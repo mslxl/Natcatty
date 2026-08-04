@@ -104,6 +104,91 @@ test("simultaneous normal opens of the same host make one physical SSH dial", as
   assert.equal(sessions.get("normal-1").connRef.count, 2);
 });
 
+test("reuseTransport false makes simultaneous same-host opens dial independently", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.51",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+    reuseTransport: false,
+  };
+
+  await Promise.all([
+    start({ sender: makeSender() }, { ...options, sessionId: "fresh-1" }),
+    start({ sender: makeSender() }, { ...options, sessionId: "fresh-2" }),
+  ]);
+
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("fresh-1").conn, sessions.get("fresh-2").conn);
+});
+
+test("a sequential ordinary open with reuse disabled bypasses the live same-host transport", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.52",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  await start({ sender: makeSender() }, {
+    ...options,
+    sessionId: "second",
+    reuseTransport: false,
+  });
+
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("first").conn, sessions.get("second").conn);
+});
+
+test("an ordinary open with reuse disabled bypasses an idle same-host transport", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.53",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const firstTransport = first.connRef;
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "idle");
+
+  await start({ sender: makeSender() }, {
+    ...options,
+    sessionId: "second",
+    reuseTransport: false,
+  });
+
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(firstTransport.conn, sessions.get("second").conn);
+});
+
 function makeSender() {
   return {
     id: 1,
@@ -312,6 +397,34 @@ test("Copy Tab reuses the source connection instead of dialing fresh", async (t)
   assert.equal(getConnectionReuseFallbackEvents(sender).length, 0, "successful reuse should not emit fallback");
 });
 
+test("reuseTransport false bypasses a matching live source and connects fresh", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  sessions.set("source", makeSourceSession(sourceConn, { hostname: "10.0.0.1", username: "alice" }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await start(
+    { sender: makeSender() },
+    {
+      sessionId: "fresh",
+      hostname: "10.0.0.1",
+      username: "alice",
+      port: 22,
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: false,
+      verifyHostKeys: false,
+      sourceSessionId: "source",
+      reuseTransport: false,
+    },
+  );
+
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sourceConn.openedShells.length, 0);
+  assert.notEqual(sessions.get("fresh").conn, sourceConn);
+});
+
 test("Copy Tab records a distinct remote shell for each shared terminal", async (t) => {
   const { bridge } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
@@ -443,8 +556,13 @@ test("concurrent Copy Tab requests serialize shell discovery per connection", as
   ]);
 
   assert.equal(sessions.get("source").shellPid, "111");
-  assert.equal(sessions.get("copy-1").shellPid, "222");
-  assert.equal(sessions.get("copy-2").shellPid, "333");
+  // The macOS network preflight runs before either request joins the shared
+  // shell-open queue, so under load either copy may enqueue first. The contract
+  // is that both remote shells are identified once and never collide.
+  assert.deepEqual(
+    new Set([sessions.get("copy-1").shellPid, sessions.get("copy-2").shellPid]),
+    new Set(["222", "333"]),
+  );
 });
 
 test("concurrent copies keep distinct shell IDs when the source closes immediately", async (t) => {
@@ -477,8 +595,10 @@ test("concurrent copies keep distinct shell IDs when the source closes immediate
   terminalBridge.closeSession({ sender: {} }, { sessionId: "source" });
   await copies;
 
-  assert.equal(sessions.get("copy-1").shellPid, "222");
-  assert.equal(sessions.get("copy-2").shellPid, "333");
+  assert.deepEqual(
+    new Set([sessions.get("copy-1").shellPid, sessions.get("copy-2").shellPid]),
+    new Set(["222", "333"]),
+  );
 });
 
 test("Copy Tab preserves the server locale unless the host explicitly overrides it", async (t) => {
@@ -591,19 +711,20 @@ test("source closed while reused shell is pending keeps the connection alive", a
   terminalBridge.init({ sessions, electronModule: {} });
   const start = registerStartHandler(bridge, sessions);
 
-  // Begin the copy; conn.shell() is deferred, so the reuse path has acquired the
-  // ref (count -> 2) but not yet attached the session.
+  // Begin the copy; conn.shell() is deferred. The request pin protects the
+  // explicit source across preflight, and the shell-open pin protects the
+  // pending channel (count -> 3) before the real session is attached.
   const startPromise = start(
     { sender: makeSender() },
     { sessionId: "copy", hostname: "10.0.0.1", username: "alice", sourceSessionId: "source" },
   );
   await new Promise((r) => setImmediate(r));
-  assert.equal(connRef.count, 2, "reuse pins the connection before opening the shell");
+  assert.equal(connRef.count, 3, "request and shell-open pins protect the source connection");
 
   // Close the source tab while the copy's shell is still opening.
   terminalBridge.closeSession({ sender: {} }, { sessionId: "source" });
   assert.equal(conn.ended, 0, "connection must survive for the pending copy");
-  assert.equal(connRef.count, 1);
+  assert.equal(connRef.count, 2);
 
   // Now let the copy's shell open.
   conn.flushShell();
@@ -678,6 +799,8 @@ test("synchronous shell failure releases the ref and falls back to fresh", async
 test("falls back to a fresh connection when the source is gone", async (t) => {
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
+  const otherConn = makeReusableConn();
+  sessions.set("other", makeSourceSession(otherConn, { hostname: "10.0.0.1", username: "alice" }));
   const start = registerStartHandler(bridge, sessions);
 
   // sourceSessionId points at a session that doesn't exist -> fresh connect.
@@ -695,6 +818,7 @@ test("falls back to a fresh connection when the source is gone", async (t) => {
       },
     ),
   );
+  assert.equal(otherConn.openedShells.length, 0, "must not substitute another matching transport");
   assert.equal(getClientConstructCount(), 1, "should attempt one fresh connection");
   assert.deepEqual(
     getConnectionReuseFallbackEvents(sender).map((m) => m.payload),

@@ -1108,7 +1108,7 @@ function isStrictAgentAuthFailure(options, err) {
 }
 
 function canReuseExistingSession(options) {
-  if (!options.sourceSessionId || options.x11Forwarding) return false;
+  if (options.reuseTransport === false || !options.sourceSessionId || options.x11Forwarding) return false;
   return Boolean(findReusableSession(sessions, options.sourceSessionId, {
     hostname: options.hostname,
     port: options.port || 22,
@@ -1300,16 +1300,38 @@ async function startSSHSessionWithRetries(event, options, pendingDialState) {
 
 async function startSSHSessionWrapper(event, options) {
   const pendingDialState = { coordination: null };
+  let sourcePinHolder = null;
+  let sourceReuseState = options.sourceSessionId && options.reuseTransport !== false
+    ? { attempted: false, session: null }
+    : null;
+  if (options.sourceSessionId && options.reuseTransport !== false) {
+    const sourceAtRequest = findReusableSession(sessions, options.sourceSessionId);
+    if (sourceAtRequest?.connRef) {
+      sourcePinHolder = {};
+      acquireConnectionRef(sourcePinHolder, sourceAtRequest.connRef);
+      sourceReuseState.session = {
+        conn: sourceAtRequest.conn,
+        connRef: sourceAtRequest.connRef,
+        stream: sourceAtRequest.stream,
+        _reuseEndpoint: sourceAtRequest._reuseEndpoint,
+      };
+    }
+  }
   try {
     // Main-process LAN probe so macOS Local Network TCC attributes to Netcatty
     // before the (possibly worker-hosted) SSH dial. See #2663 / TN3179.
     await ensureMacLocalNetworkAccess(options);
-    return await startSSHSessionWithRetries(event, options, pendingDialState);
+    return await startSSHSessionWithRetries(event, {
+      ...options,
+      ...(sourceReuseState ? { _sourceReuseState: sourceReuseState } : {}),
+    }, pendingDialState);
   } catch (err) {
     if (pendingDialState.coordination) {
       failTransportDial(pendingDialState.coordination, err);
     }
     throw err;
+  } finally {
+    if (sourcePinHolder) releaseConnectionRef(sourcePinHolder);
   }
 }
 

@@ -118,6 +118,49 @@ export function resolveConnectScriptsForHost(host: Host, snippets: Snippet[]): S
   return [...globals, ...hostScripts];
 }
 
+/**
+ * Whether connecting this host can run automation that depends on the initial
+ * login output. Missing referenced scripts still count: vault hydration or a
+ * later sync may restore them after the terminal has already started.
+ */
+export function hasHostConnectAutomation(host: Host, snippets: Snippet[]): boolean {
+  return hasUnresolvedConnectScriptBindings(host, snippets)
+    || resolveConnectScriptsForHost(host, snippets).length > 0;
+}
+
+export function shouldUseFreshSshConnectionForAutomation(options: {
+  host: Host;
+  snippets: Snippet[];
+  vaultInitialized: boolean;
+  hasPendingScript?: boolean;
+  connectAutomationConsumed?: boolean;
+}): boolean {
+  return options.hasPendingScript === true
+    || (
+      options.connectAutomationConsumed !== true
+      && (
+        !options.vaultInitialized
+        || hasHostConnectAutomation(options.host, options.snippets)
+      )
+    );
+}
+
+/**
+ * Mark the current connection's automation decision as final once the vault
+ * has hydrated, even when it hydrated to an empty script list. This prevents a
+ * later sync from starting a newly arrived global script against a connection
+ * whose initial login output may already have been skipped.
+ */
+export function shouldMarkConnectAutomationConsumed(options: {
+  allConnectScriptsDone: boolean;
+  vaultInitialized: boolean;
+  hasUnresolvedBindings: boolean;
+}): boolean {
+  return options.allConnectScriptsDone
+    && options.vaultInitialized
+    && !options.hasUnresolvedBindings;
+}
+
 export function appendHostConnectScript(host: Host, scriptId: string, snippets: Snippet[]): Host {
   const snippet = scriptById(snippets, scriptId);
   if (!snippet) return host;

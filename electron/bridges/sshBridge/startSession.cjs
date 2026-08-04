@@ -871,9 +871,29 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // X11. For X11 hosts we deliberately skip reuse and make a fresh
       // connection so the duplicate keeps working X11 forwarding.
       const reuseEndpoint = buildConnectionReuseEndpoint(options);
+      const allowTransportReuse = options.reuseTransport !== false;
+      // Copy/Split reuse is source-specific. If that source disappears or its
+      // channel cannot open, fall through to a fresh login instead of silently
+      // borrowing another live, idle, or in-flight transport for the endpoint.
+      const allowGeneralTransportReuse = allowTransportReuse && !options.sourceSessionId;
+      const sourceReuseState = options._sourceReuseState;
+      const canAttemptSourceReuse = Boolean(
+        allowTransportReuse
+        && options.sourceSessionId
+        && !options.x11Forwarding
+        && (!sourceReuseState || sourceReuseState.attempted !== true),
+      );
 
-      if (options.sourceSessionId && !options.x11Forwarding) {
-        const sourceSession = findReusableSession(sessions, options.sourceSessionId, reuseEndpoint);
+      if (canAttemptSourceReuse) {
+        if (sourceReuseState) sourceReuseState.attempted = true;
+        const sourceSession = findReusableSession(sessions, options.sourceSessionId, reuseEndpoint)
+          || (sourceReuseState?.session
+            ? findReusableSession(
+              new Map([[options.sourceSessionId, sourceReuseState.session]]),
+              options.sourceSessionId,
+              reuseEndpoint,
+            )
+            : null);
         if (sourceSession) {
           try {
             return await reuseShellSession(event, options, sourceSession, sessionId, log);
@@ -897,7 +917,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
       // Idle-park / endpoint reuse: after the last tab returns its lease the
       // transport may still be warm. Open a new shell channel without re-auth.
-      if (!options.x11Forwarding && typeof findTransportByEndpoint === "function") {
+      if (allowGeneralTransportReuse && !options.x11Forwarding && typeof findTransportByEndpoint === "function") {
         // Shell park reuse requires exact agentForwarding match so disabling
         // ForwardAgent cannot reattach to a warm conn that still exposes the agent.
         const parked = findTransportByEndpoint(reuseEndpoint, { kind: "shell" });
@@ -938,7 +958,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
       // for the same compatible endpoint can wait for this leader and then
       // open its own channel on the authenticated transport.
       let pendingDialCoordination = options._pendingDialState?.coordination || null;
-      if (!pendingDialCoordination && !options.x11Forwarding && typeof beginTransportDial === "function") {
+      if (
+        allowGeneralTransportReuse
+        && !pendingDialCoordination
+        && !options.x11Forwarding
+        && typeof beginTransportDial === "function"
+      ) {
         const coordination = beginTransportDial(reuseEndpoint, { kind: "shell" });
         if (coordination.role === "reuse" || coordination.role === "join") {
           try {

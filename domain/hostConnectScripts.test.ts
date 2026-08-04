@@ -5,10 +5,13 @@ import {
   appendHostConnectScript,
   getGlobalConnectScripts,
   getHostConnectScriptIds,
+  hasHostConnectAutomation,
   migrateHostConnectScriptIds,
   reorderHostConnectScript,
   removeHostConnectScript,
   resolveConnectScriptsForHost,
+  shouldMarkConnectAutomationConsumed,
+  shouldUseFreshSshConnectionForAutomation,
   syncHostsForSnippetTargetChange,
 } from './hostConnectScripts.ts';
 
@@ -52,6 +55,70 @@ test('resolveConnectScriptsForHost runs globals before host queue and dedupes', 
     snippets,
   );
   assert.deepEqual(resolved.map((item) => item.id), ['global', 'both', 'host-only']);
+});
+
+test('hasHostConnectAutomation covers host, global, and unresolved connect scripts', () => {
+  assert.equal(
+    hasHostConnectAutomation(
+      { ...host, connectScriptIds: ['host-script'] },
+      [script({ id: 'host-script', targets: ['host-a'] })],
+    ),
+    true,
+  );
+  assert.equal(
+    hasHostConnectAutomation(host, [script({ id: 'global', targetsAllHosts: true })]),
+    true,
+  );
+  assert.equal(
+    hasHostConnectAutomation({ ...host, loginScriptId: 'not-loaded-yet' }, []),
+    true,
+  );
+  assert.equal(hasHostConnectAutomation(host, []), false);
+});
+
+test('fresh SSH automation policy is conservative before vault hydration and for pending scripts', () => {
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [],
+    vaultInitialized: false,
+  }), true);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [],
+    vaultInitialized: true,
+    hasPendingScript: true,
+  }), true);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [],
+    vaultInitialized: true,
+  }), false);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [script({ id: 'global', targetsAllHosts: true })],
+    vaultInitialized: true,
+    connectAutomationConsumed: true,
+  }), false);
+  assert.equal(shouldUseFreshSshConnectionForAutomation({
+    host,
+    snippets: [script({ id: 'global', targetsAllHosts: true })],
+    vaultInitialized: true,
+    hasPendingScript: true,
+    connectAutomationConsumed: true,
+  }), true);
+});
+
+test('empty hydrated vault finalizes the current connection automation decision', () => {
+  assert.equal(shouldMarkConnectAutomationConsumed({
+    allConnectScriptsDone: true,
+    vaultInitialized: true,
+    hasUnresolvedBindings: false,
+  }), true);
+  assert.equal(shouldMarkConnectAutomationConsumed({
+    allConnectScriptsDone: true,
+    vaultInitialized: false,
+    hasUnresolvedBindings: false,
+  }), false);
 });
 
 test('append updates host connectScriptIds order', () => {

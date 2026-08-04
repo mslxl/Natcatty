@@ -108,7 +108,12 @@ import {
   resumeScriptRun,
   stopScriptRun,
 } from "@/application/state/scriptAutomationCoordinator.ts";
-import { resolveConnectScriptsForHost, hasUnresolvedConnectScriptBindings } from "@/domain/hostConnectScripts.ts";
+import {
+  hasUnresolvedConnectScriptBindings,
+  resolveConnectScriptsForHost,
+  shouldMarkConnectAutomationConsumed,
+  shouldUseFreshSshConnectionForAutomation,
+} from "@/domain/hostConnectScripts.ts";
 import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
 import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
 import { ScriptExecutionOverlay } from "./terminal/ScriptExecutionOverlay";
@@ -352,6 +357,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const connectScriptsInFlightRef = useRef(false);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
+  const pendingScriptRef = useRef(pendingScript);
+  const pendingScriptIdRef = useRef(pendingScriptId);
+  pendingScriptRef.current = pendingScript;
+  pendingScriptIdRef.current = pendingScriptId;
+  const isPendingScriptAlreadyHandled = useCallback((snippet: Snippet) => {
+    if (snippet.id) {
+      return pendingScriptRunIdRef.current === snippet.id;
+    }
+    return pendingScriptHandledRef.current === snippet;
+  }, []);
   // Mosh marks status=connected during the SSH handshake so interactive
   // prompts remain reachable. Connect/pending scripts must wait until
   // mosh-client is ready (#2199). closeSession clears preload ready
@@ -724,6 +739,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [progressValue, setProgressValue] = useState(15);
   const [isDisconnectedDialogDismissed, setIsDisconnectedDialogDismissed] = useState(false);
   const [connectionReuseFellBack, setConnectionReuseFellBack] = useState(false);
+  const [connectionReuseAttemptSourceId, setConnectionReuseAttemptSourceId] = useState(
+    reuseConnectionFromSessionId,
+  );
 
   const statusRef = useRef<TerminalSession["status"]>(status);
   statusRef.current = status;
@@ -1042,6 +1060,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const passwordPickerEmptyText = t("terminal.passwordPicker.empty");
   const sudoHintText = t("terminal.sudoHint.pressEnter");
   const sessionStartersRef = useRef<ReturnType<typeof createTerminalSessionStarters> | null>(null);
+  const reuseConnectionSourceRef = useRef(reuseConnectionFromSessionId);
+  const reuseConnectionSourceAttemptedRef = useRef(false);
+  const previousReuseConnectionSourcePropRef = useRef(reuseConnectionFromSessionId);
+  if (previousReuseConnectionSourcePropRef.current !== reuseConnectionFromSessionId) {
+    previousReuseConnectionSourcePropRef.current = reuseConnectionFromSessionId;
+    reuseConnectionSourceRef.current = reuseConnectionFromSessionId;
+    reuseConnectionSourceAttemptedRef.current = false;
+  }
   const auth = useTerminalAuthState({
     host,
     pendingAuthRef,
@@ -2137,7 +2163,29 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     knownHosts,
     resolvedChainHosts,
     sessionId,
-    reuseConnectionFromSessionId,
+    reuseConnectionFromSessionIdRef: reuseConnectionSourceRef,
+    reuseConnectionSourceAttemptedRef,
+    setConnectionReuseAttemptSourceId,
+    shouldUseFreshSshConnection: () => {
+      const currentPendingScript = pendingScriptRef.current;
+      const currentPendingScriptId = pendingScriptIdRef.current;
+      const hasUnhandledPendingScript = currentPendingScript && isScriptSnippet(currentPendingScript)
+        ? !isPendingScriptAlreadyHandled(currentPendingScript)
+        : Boolean(
+          currentPendingScriptId
+          && pendingScriptRunIdRef.current !== currentPendingScriptId,
+        );
+      return shouldUseFreshSshConnectionForAutomation({
+        host: hostRef.current,
+        snippets: snippetsRef.current,
+        vaultInitialized: isVaultInitialized(),
+        hasPendingScript: hasUnhandledPendingScript,
+        connectAutomationConsumed: connectScriptsConsumedRef.current,
+      });
+    },
+    onConnectAutomationSnapshotCommitted: () => {
+      connectScriptsConsumedRef.current = true;
+    },
     isNetworkDevice,
     startupCommand,
     noAutoRun,
@@ -2314,13 +2362,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     pendingScriptHandledRef.current = null;
   }, [pendingScript?.id, pendingScriptId]);
 
-  const isPendingScriptAlreadyHandled = useCallback((snippet: Snippet) => {
-    if (snippet.id) {
-      return pendingScriptRunIdRef.current === snippet.id;
-    }
-    return pendingScriptHandledRef.current === snippet;
-  }, []);
-
   useEffect(() => {
     if (status !== 'connected') return;
     if (effectiveTerminalProtocol === 'mosh' && !moshShellReady) return;
@@ -2337,6 +2378,22 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
     }
 
+    const resolvedConnectScripts = resolveConnectScriptsForHost(host, snippets);
+    // An empty hydrated vault is a final decision for this connection. Lock it
+    // before the output-settling delay so a sync arriving during that window
+    // cannot inject a new connect script into an already-reused SSH session.
+    if (
+      !connectScriptsConsumedRef.current
+      && resolvedConnectScripts.length === 0
+      && shouldMarkConnectAutomationConsumed({
+        allConnectScriptsDone: true,
+        vaultInitialized: isVaultInitialized(),
+        hasUnresolvedBindings: hasUnresolvedConnectScriptBindings(host, snippets),
+      })
+    ) {
+      connectScriptsConsumedRef.current = true;
+    }
+
     const shouldEvaluateConnect = !connectScriptsConsumedRef.current;
     const hasPendingWork = Boolean(pendingOne);
     if (!shouldEvaluateConnect && !hasPendingWork) return;
@@ -2348,7 +2405,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       const runPending = Boolean(pendingOne);
       const connectQueueNow = connectScriptsConsumedRef.current
         ? []
-        : resolveConnectScriptsForHost(host, snippets).filter(
+        : resolvedConnectScripts.filter(
           (item) => item.id && !connectScriptsCompletedIdsRef.current.has(item.id),
         );
 
@@ -2360,20 +2417,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         scriptsToRun.push(pendingOne);
       }
 
-      const resolvedConnectScripts = resolveConnectScriptsForHost(host, snippets);
       const allConnectScriptsDone = resolvedConnectScripts.length === 0
         || resolvedConnectScripts.every(
           (item) => item.id && connectScriptsCompletedIdsRef.current.has(item.id),
         );
 
       if (scriptsToRun.length === 0) {
-        if (
-          !connectScriptsConsumedRef.current
-          && allConnectScriptsDone
-          && isVaultInitialized()
-          && snippets.length > 0
-          && !hasUnresolvedConnectScriptBindings(host, snippets)
-        ) {
+        if (!connectScriptsConsumedRef.current && shouldMarkConnectAutomationConsumed({
+          allConnectScriptsDone,
+          vaultInitialized: isVaultInitialized(),
+          hasUnresolvedBindings: hasUnresolvedConnectScriptBindings(host, snippets),
+        })) {
           connectScriptsConsumedRef.current = true;
         }
         return;
@@ -3181,6 +3235,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     setIsDisconnectedDialogDismissed(false);
     setConnectionReuseFellBack(false);
+    setConnectionReuseAttemptSourceId(undefined);
     updateStatus("connecting");
     setError(null);
     setProgressLogs((prev) => (
@@ -3270,7 +3325,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isSerialConnection,
     isDisconnectedDialogDismissed,
     hideConnectingDialogForConnectionReuse: shouldHideConnectingDialogForConnectionReuse({
-      reuseConnectionFromSessionId,
+      reuseConnectionFromSessionId: connectionReuseAttemptSourceId,
       host,
       connectionReuseFellBack,
     }),
