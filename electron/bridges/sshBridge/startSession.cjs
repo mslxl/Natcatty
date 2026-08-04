@@ -693,24 +693,24 @@ printf '%s\n' '${scanCompleteMarker}'`;
         discoveryConnectionError = err;
       };
       let shellDiscoveryBeforeOpen = { available: false, pids: [] };
-      // Jump/bastion hosts often rate-limit rapid session channel opens
-      // ("channelOpen too offen"). Pause briefly before the discovery exec so
-      // Copy Tab does not immediately follow another channel open, and retry
-      // rate-limited scans so shellPid tracking still succeeds.
+      // Bastions (whether configured as jumpHosts or used as the direct SSH
+      // target) often rate-limit rapid session channel opens ("channelOpen too
+      // offen"). Retry rate-limited PID scans on every Copy Tab reuse so a
+      // successful shell open still gets shellPid tracking. Only the optional
+      // pre-scan pause is jump-host specific to avoid delaying the happy path
+      // on ordinary direct hosts.
       const hasJumpHosts = Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0;
       const configuredBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
-      const jumpHostDiscoveryDelayMs = Number.isFinite(configuredBackoffMs) && configuredBackoffMs > 0
+      const discoveryBackoffMs = Number.isFinite(configuredBackoffMs) && configuredBackoffMs > 0
         ? configuredBackoffMs
         : 150;
       if (!options.skipShellPidDiscovery) {
         conn.once("error", onDiscoveryConnectionError);
-        shellDiscoveryBeforeOpen = hasJumpHosts
-          ? await listInteractiveShellPidsResilient(conn, {
-            initialDelayMs: jumpHostDiscoveryDelayMs,
-            attempts: 4,
-            backoffMs: jumpHostDiscoveryDelayMs,
-          })
-          : await listInteractiveShellPids(conn);
+        shellDiscoveryBeforeOpen = await listInteractiveShellPidsResilient(conn, {
+          initialDelayMs: hasJumpHosts ? discoveryBackoffMs : 0,
+          attempts: 4,
+          backoffMs: discoveryBackoffMs,
+        });
         conn.removeListener("error", onDiscoveryConnectionError);
       }
       const shellPidsBeforeOpen = shellDiscoveryBeforeOpen.pids;
@@ -841,12 +841,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 ? waitForNewInteractiveShellPid(
                   conn,
                   shellPidsBeforeOpen,
-                  hasJumpHosts
-                    ? {
-                      initialDelayMs: jumpHostDiscoveryDelayMs,
-                      backoffMs: jumpHostDiscoveryDelayMs,
-                    }
-                    : {},
+                  {
+                    initialDelayMs: hasJumpHosts ? discoveryBackoffMs : 0,
+                    backoffMs: discoveryBackoffMs,
+                  },
                 )
                 : Promise.resolve(null);
               void newShellPidPromise.then((newShellPid) => {

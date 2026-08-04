@@ -554,6 +554,51 @@ test("Copy Tab retries rate-limited pre-open shell PID discovery on jump hosts",
   assert.equal(sessions.get("copy").shellPid, "222");
 });
 
+test("Copy Tab retries rate-limited PID discovery for direct bastion targets", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let execCalls = 0;
+  sourceConn.exec = (_command, callback) => {
+    execCalls += 1;
+    // Direct bastion (no jumpHosts): first pre-open scan is rate-limited.
+    if (execCalls === 1) {
+      callback(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      return;
+    }
+    const stream = new EventEmitter();
+    stream.stderr = new EventEmitter();
+    stream.close = () => {};
+    const snapshot = execCalls === 2 ? ["111"] : ["111", "222"];
+    const pids = `${snapshot.join("\n")}\n__NETCATTY_SHELL_SCAN_COMPLETE__\n`;
+    setImmediate(() => {
+      stream.emit("data", Buffer.from(pids));
+      stream.emit("close", 0);
+    });
+    callback(null, stream);
+  };
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy",
+      hostname: "bastion.example",
+      username: "alice",
+      sourceSessionId: "source",
+      sshChannelOpenRateLimitBackoffMs: 1,
+    },
+  );
+
+  assert.ok(execCalls >= 3, "direct bastion reuse must retry rate-limited PID discovery");
+  assert.equal(sessions.get("source").shellPid, "111");
+  assert.equal(sessions.get("copy").shellPid, "222");
+});
+
 test("Copy Tab retries rate-limited post-open shell PID discovery on jump hosts", async (t) => {
   const { bridge } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
