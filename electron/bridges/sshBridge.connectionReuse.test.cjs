@@ -341,6 +341,7 @@ function makeSourceSession(conn, endpoint) {
       hostname: endpoint.hostname,
       port: endpoint.port || 22,
       username: endpoint.username,
+      ...(Array.isArray(endpoint.jumpHosts) ? { jumpHosts: endpoint.jumpHosts } : {}),
     },
   };
   createConnectionRef(session, conn, []);
@@ -471,6 +472,79 @@ test("Copy Tab skips POSIX shell discovery for network devices", async (t) => {
   assert.equal(execCalls, 0);
   assert.equal(sourceConn.openedShells.length, 1);
   assert.ok(sessions.get("copy"));
+});
+
+test("Copy Tab with jump hosts skips shell PID discovery exec channels", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let execCalls = 0;
+  sourceConn.exec = () => { execCalls += 1; };
+  const jumpHosts = [{ hostname: "bastion.example", username: "jump", port: 22 }];
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "10.0.0.1",
+    username: "alice",
+    jumpHosts,
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy",
+      hostname: "10.0.0.1",
+      username: "alice",
+      sourceSessionId: "source",
+      jumpHosts,
+    },
+  );
+
+  assert.equal(execCalls, 0, "jump-host reuse must not open discovery exec channels");
+  assert.equal(sourceConn.openedShells.length, 1);
+  assert.ok(sessions.get("copy"));
+});
+
+test("Copy Tab retries bastion channelOpen too offen before falling back", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    if (shellAttempts === 1) {
+      setImmediate(() => cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session")));
+      return;
+    }
+    const stream = makeStream();
+    sourceConn.openedShells.push(stream);
+    setImmediate(() => cb(null, stream));
+  };
+  const jumpHosts = [{ hostname: "bastion.example", username: "jump", port: 22 }];
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "10.0.0.1",
+    username: "alice",
+    jumpHosts,
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const result = await start(
+    { sender },
+    {
+      sessionId: "copy",
+      hostname: "10.0.0.1",
+      username: "alice",
+      sourceSessionId: "source",
+      jumpHosts,
+      sshChannelOpenRateLimitBackoffMs: 1,
+    },
+  );
+
+  assert.equal(result.sessionId, "copy");
+  assert.equal(shellAttempts, 2);
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sourceConn.openedShells.length, 1);
+  assert.equal(getConnectionReuseFallbackEvents(sender).length, 0);
 });
 
 test("Copy Tab waits briefly when the new remote shell is not visible immediately", async (t) => {

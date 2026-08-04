@@ -657,7 +657,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
         discoveryConnectionError = err;
       };
       let shellDiscoveryBeforeOpen = { available: false, pids: [] };
-      if (!options.skipShellPidDiscovery) {
+      // Jump/bastion hosts often rate-limit rapid session channel opens
+      // ("channelOpen too offen"). Skip the discovery exec so Copy Tab only
+      // opens the shell channel itself on an already-authenticated transport.
+      const skipShellPidDiscovery = options.skipShellPidDiscovery === true
+        || (Array.isArray(options.jumpHosts) && options.jumpHosts.length > 0);
+      if (!skipShellPidDiscovery) {
         conn.once("error", onDiscoveryConnectionError);
         shellDiscoveryBeforeOpen = await listInteractiveShellPids(conn);
         conn.removeListener("error", onDiscoveryConnectionError);
@@ -733,6 +738,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
         conn.once("error", onConnError);
 
         try {
+          const rateLimitBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
           openBoundedSshShellCallback(
             conn,
             {
@@ -796,7 +802,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 settled = true;
                 resolve({ sessionId });
               });
-            }
+            },
+            Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
+              ? { rateLimitBackoffMs }
+              : {},
           );
         } catch (syncErr) {
           // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
