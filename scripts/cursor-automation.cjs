@@ -2781,20 +2781,16 @@ async function prepareIssueContext({
         (comment) => String(comment?.id || '') === previousWatermark,
       )
     : -1;
-  const needsInfoReply = Boolean(
-    triggerId &&
-      (labelNames.includes('needs-info') ||
-        labelNames.includes('triage:bug-needs-info')),
-  );
+  const commentTriggeredReclassification = Boolean(triggerId);
   const processed = extractProcessedIssueFollowupIds(commentList, botLogins);
-  if ((needsInfoReply || automaticBacklogDrain) && !manual) {
+  if ((commentTriggeredReclassification || automaticBacklogDrain) && !manual) {
     if (
       triggerId &&
       (processed.has(triggerId) ||
         commentIdAtOrBefore(triggerId, previousWatermark))
     ) {
       setOutput(core, 'should_run', false);
-      setOutput(core, 'reason', 'This needs-info reply was already processed.');
+      setOutput(core, 'reason', 'This issue reply was already processed.');
       return { shouldRun: false, issue, comments: commentList };
     }
     const startOfDay = new Date(nowMs);
@@ -2810,7 +2806,7 @@ async function prepareIssueContext({
       setOutput(core, 'should_run', false);
       setOutput(core, 'rate_limited', true);
       setOutput(core, 'pending_ids', triggerId);
-      setOutput(core, 'reason', 'Daily needs-info follow-up limit reached.');
+      setOutput(core, 'reason', 'Daily issue follow-up limit reached.');
       return {
         shouldRun: false,
         rateLimited: true,
@@ -3135,6 +3131,7 @@ async function findOpenPullForIssue({
 function shouldRetryIssueHandoff(comments = [], {
   trustedActors = '',
   recoveryVersion = '',
+  notBefore = '',
 } = {}) {
   const actors = new Set(
     String(trustedActors || '')
@@ -3142,8 +3139,14 @@ function shouldRetryIssueHandoff(comments = [], {
       .map((value) => value.trim().toLowerCase())
       .filter(Boolean),
   );
+  const notBeforeMs = Date.parse(String(notBefore || ''));
   const trustedBodies = (comments || [])
-    .filter((comment) => actors.has(String(comment.user?.login || '').toLowerCase()))
+    .filter((comment) => {
+      if (!actors.has(String(comment.user?.login || '').toLowerCase())) return false;
+      if (!Number.isFinite(notBeforeMs)) return true;
+      const createdAt = Date.parse(comment.created_at || comment.createdAt || '');
+      return Number.isFinite(createdAt) && createdAt >= notBeforeMs;
+    })
     .map((comment) => String(comment.body || ''));
   if (!trustedBodies.length) return false;
   if (

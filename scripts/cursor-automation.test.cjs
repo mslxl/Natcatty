@@ -988,14 +988,22 @@ test('workflow cleans source labels after eligible PR close and dedupes clean no
   assert.match(workflow, /does not currently close issue/);
   assert.match(workflow, /findOpenPullForIssue/);
   assert.match(workflow, /refineIssueCommentRoute/);
+  assert.match(workflow, /issueNumber: issue\.number,\n\s+includeRelated: true/);
   assert.match(workflow, /reconcile_closed_handoffs:/);
   assert.match(workflow, /shouldRetryIssueHandoff/);
   assert.match(workflow, /isTrustedOpenPullForIssue/);
   assert.match(workflow, /cursor-handoff-recovery:version=\$\{recoveryVersion\}/);
   assert.match(workflow, /workflow_id: 'cursor-automation\.yml'/);
   assert.match(workflow, /Reconcile handoffs/);
+  assert.ok((workflow.match(/auto\.extractPaginatedItems\(response\)/g) || []).length >= 2);
+  assert.match(workflow, /notBefore: '2026-07-31T12:54:37Z'/);
   assert.match(workflow, /is:issue is:closed label:"ready-for-human" label:triage/);
   assert.match(workflow, /is:pr is:merged label:"ready-for-human" label:"automation:bot-pr"/);
+  const route = workflow.match(/\n  route:\n[\s\S]*?(?=\n  cleanup_source_issue:)/)?.[0] || '';
+  assert.doesNotMatch(
+    route,
+    /sameRepo\s*&&\s*\n\s*context\.payload\.action === 'closed'/,
+  );
   assert.match(workflow, /Follow-up changed before the simple reply; dispatched a fresh review/);
   assert.match(workflow, /is merged; skipped stale follow-up handoff state changes/);
   assert.match(workflow, /trusted_comment_bodies/);
@@ -1332,6 +1340,22 @@ test('legacy retry only accepts trusted fixed failure categories once', () => {
       body: '<!-- cursor-handoff-recovery:version=handoff-v1 -->',
     },
   ], options), false);
+
+  const boundedOptions = {
+    ...options,
+    recoveryVersion: 'handoff-v2',
+    notBefore: '2026-07-31T12:54:37Z',
+  };
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
+    created_at: '2026-07-30T12:00:00Z',
+  }], boundedOptions), false);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
+    created_at: '2026-08-01T12:00:00Z',
+  }], boundedOptions), true);
 });
 
 test('findOpenPullForIssue accepts same-repo work but ignores untrusted fork claims', async () => {
@@ -2167,7 +2191,14 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
     assert.equal((section.match(/writeProtectedPathReport/g) || []).length, 2);
     assert.match(section, /readProtectedPathReport/);
   }
+  assert.match(implement, /Skip if trusted related PR already open/);
+  assert.match(implement, /findOpenPullForIssue/);
+  assert.match(implement, /includeRelated: true/);
+  assert.match(implement, /id: upload_patch/);
+  assert.match(implement, /steps\.upload_patch\.outcome/);
   assert.match(codex, /buildCodexFixFailureMessage/);
+  assert.match(codex, /id: upload_fixpatch/);
+  assert.match(codex, /steps\.upload_fixpatch\.outcome/);
   assert.match(codex, /cursor-codex-fix-failure:kind=/);
   assert.match(codex, /cursor-codex-fix-failure:kind=no_changes/);
   assert.doesNotMatch(
@@ -2192,6 +2223,8 @@ test('classification failure handoff receives its issue number', () => {
   assert.match(handoff, /steps\.research\.outcome/);
   assert.match(handoff, /steps\.classify_agent\.outcome/);
   assert.match(handoff, /actions\/runs\/\$\{context\.runId\}/);
+  assert.match(handoff, /fs\.existsSync\(helper\)/);
+  assert.match(handoff, /const failureMessage = auto/);
   assert.doesNotMatch(handoff, /自动复核没有安全完成/);
 });
 
@@ -4191,7 +4224,7 @@ const SAMPLE_BUG_BODY = [
   'Windows 11',
 ].join('\n');
 
-test('prepareIssueContext dedupes and limits needs-info author replies', async () => {
+test('prepareIssueContext dedupes and limits all managed issue author replies', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-needs-info-'));
   const issue = {
     number: 99,
@@ -4203,12 +4236,17 @@ test('prepareIssueContext dedupes and limits needs-info author replies', async (
     author_association: 'NONE',
     labels: [{ name: 'needs-info' }],
   };
-  const run = async (comments, triggerCommentId, followupDailyLimit = 20) => {
+  const run = async (
+    comments,
+    triggerCommentId,
+    followupDailyLimit = 20,
+    labels = [{ name: 'needs-info' }],
+  ) => {
     const outputs = {};
     const github = {
       rest: {
         issues: {
-          get: async () => ({ data: issue }),
+          get: async () => ({ data: { ...issue, labels } }),
           listComments: Symbol('listComments'),
         },
       },
@@ -4256,6 +4294,34 @@ test('prepareIssueContext dedupes and limits needs-info author replies', async (
   assert.equal(rateLimited.result.rateLimited, true);
   assert.equal(rateLimited.outputs.rate_limited, 'true');
   assert.equal(rateLimited.outputs.pending_ids, '11');
+
+  const managedRateLimited = await run([
+    {
+      id: 10,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=8 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+    {
+      id: 11,
+      user: { login: 'alice', type: 'User' },
+      body: '请重新检查这个聚焦方案',
+      created_at: '2026-07-24T11:00:00Z',
+    },
+  ], 11, 1, [{ name: 'ready-for-human' }, { name: 'triage:feature-defer' }]);
+  assert.equal(managedRateLimited.result.shouldRun, false);
+  assert.equal(managedRateLimited.outputs.rate_limited, 'true');
+
+  const managedProcessed = await run([
+    {
+      id: 10,
+      user: { login: 'netcatty-bot', type: 'User' },
+      body: '<!-- cursor-triage-watermark:comment-id=11 -->',
+      created_at: '2026-07-24T10:00:00Z',
+    },
+  ], 11, 20, [{ name: 'ready-for-agent' }]);
+  assert.equal(managedProcessed.result.shouldRun, false);
+  assert.match(managedProcessed.outputs.reason, /already processed/i);
 
   const burstComments = [
     {
