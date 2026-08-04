@@ -25,32 +25,69 @@ if (( attachment_count == 0 )); then
 fi
 
 mkdir -p "$research_dir/attachments"
+attachment_kinds_path="$research_dir/attachment-kinds.txt"
+: > "$attachment_kinds_path"
+image_count=0
+for (( index=0; index<attachment_count; index++ )); do
+  source_url="$(node -e '
+    process.stdout.write(require(process.argv[1])[Number(process.argv[2])]);
+  ' "$attachment_urls_path" "$index")"
+  headers_path="$(mktemp "${RUNNER_TEMP}/cursor-attachment-headers.XXXXXX")"
+  curl --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+    --connect-timeout 3 --max-time 20 --max-redirs 0 -fsS \
+    -D "$headers_path" -o /dev/null "$source_url"
+  kind="$(node -e '
+    const fs = require("node:fs");
+    const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
+    process.stdout.write(auto.classifyGithubUserAttachmentRedirect(
+      fs.readFileSync(process.argv[1], "utf8"),
+    ));
+  ' "$headers_path")"
+  rm -f "$headers_path"
+  if [[ "$kind" != "image" && "$kind" != "unsupported_media" ]]; then
+    echo "GitHub attachment did not provide a trusted image/video/audio redirect." >&2
+    exit 1
+  fi
+  printf '%s\n' "$kind" >> "$attachment_kinds_path"
+  if [[ "$kind" == "image" ]]; then
+    image_count=$((image_count + 1))
+  fi
+done
+
 container_name="cursor-research-imgproxy-${GITHUB_RUN_ID}-${GITHUB_JOB}"
-docker run -d --rm --name "$container_name" \
-  --cap-drop=ALL --security-opt=no-new-privileges --read-only \
-  --memory=512m --cpus=1 --pids-limit=128 \
-  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  -p 127.0.0.1:18081:8080 \
-  -e IMGPROXY_ALLOWED_SOURCES=https://github.com/user-attachments/assets/ \
-  -e IMGPROXY_ALLOW_LOOPBACK_SOURCE_ADDRESSES=false \
-  -e IMGPROXY_ALLOW_LINK_LOCAL_SOURCE_ADDRESSES=false \
-  -e IMGPROXY_ALLOW_PRIVATE_SOURCE_ADDRESSES=false \
-  -e IMGPROXY_MAX_SRC_FILE_SIZE=10485760 \
-  -e IMGPROXY_MAX_SRC_RESOLUTION=50 \
-  -e IMGPROXY_MAX_RESULT_DIMENSION=4096 \
-  -e IMGPROXY_MAX_REDIRECTS=2 \
-  -e IMGPROXY_MAX_ANIMATION_FRAMES=1 \
-  -e IMGPROXY_ALWAYS_RASTERIZE_SVG=true \
-  -e IMGPROXY_ALLOW_SECURITY_OPTIONS=false \
-  -e IMGPROXY_COOKIE_PASSTHROUGH=false \
-  -e IMGPROXY_COOKIE_PASSTHROUGH_ALL=false \
-  "$CURSOR_RESEARCH_IMGPROXY_IMAGE" >/dev/null
+if (( image_count > 0 )); then
+  docker run -d --rm --name "$container_name" \
+    --cap-drop=ALL --security-opt=no-new-privileges --read-only \
+    --memory=512m --cpus=1 --pids-limit=128 \
+    --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+    -p 127.0.0.1:18081:8080 \
+    -e IMGPROXY_ALLOWED_SOURCES=https://github.com/user-attachments/assets/ \
+    -e IMGPROXY_ALLOW_LOOPBACK_SOURCE_ADDRESSES=false \
+    -e IMGPROXY_ALLOW_LINK_LOCAL_SOURCE_ADDRESSES=false \
+    -e IMGPROXY_ALLOW_PRIVATE_SOURCE_ADDRESSES=false \
+    -e IMGPROXY_MAX_SRC_FILE_SIZE=10485760 \
+    -e IMGPROXY_MAX_SRC_RESOLUTION=50 \
+    -e IMGPROXY_MAX_RESULT_DIMENSION=4096 \
+    -e IMGPROXY_MAX_REDIRECTS=2 \
+    -e IMGPROXY_MAX_ANIMATION_FRAMES=1 \
+    -e IMGPROXY_ALWAYS_RASTERIZE_SVG=true \
+    -e IMGPROXY_ALLOW_SECURITY_OPTIONS=false \
+    -e IMGPROXY_COOKIE_PASSTHROUGH=false \
+    -e IMGPROXY_COOKIE_PASSTHROUGH_ALL=false \
+    "$CURSOR_RESEARCH_IMGPROXY_IMAGE" >/dev/null
+fi
 stop_imgproxy() {
-  docker stop "$container_name" >/dev/null 2>&1 || true
+  if (( image_count > 0 )); then
+    docker stop "$container_name" >/dev/null 2>&1 || true
+  fi
 }
 trap stop_imgproxy EXIT
 
 for (( index=0; index<attachment_count; index++ )); do
+  kind="$(sed -n "$((index + 1))p" "$attachment_kinds_path")"
+  if [[ "$kind" != "image" ]]; then
+    continue
+  fi
   source_url="$(node -e '
     process.stdout.write(require(process.argv[1])[Number(process.argv[2])]);
   ' "$attachment_urls_path" "$index")"
@@ -79,12 +116,17 @@ node -e '
   const auto = require(process.env.RUNNER_TEMP + "/cursor-automation.cjs");
   const input = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
   const urls = require(process.argv[2]);
+  const kinds = fs.readFileSync(process.argv[3], "utf8").trim().split("\n");
   const attachments = urls.map((sourceUrl, index) => ({
     sourceUrl,
-    relativePath: `attachments/issue-image-${index + 1}.png`,
+    kind: kinds[index],
+    ...(kinds[index] === "image"
+      ? { relativePath: `attachments/issue-image-${index + 1}.png` }
+      : {}),
   }));
   fs.writeFileSync(
-    process.argv[3],
+    process.argv[4],
     JSON.stringify(auto.rewriteExternalResearchInputAttachments(input, attachments), null, 2) + "\n",
   );
-' "$input_path" "$attachment_urls_path" "$research_dir/input.json"
+' "$input_path" "$attachment_urls_path" "$attachment_kinds_path" "$research_dir/input.json"
+rm -f "$attachment_urls_path" "$attachment_kinds_path"

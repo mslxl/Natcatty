@@ -591,6 +591,41 @@ test('decideIssueCommentRoute sends author additions on managed issues to follow
   );
 });
 
+test('actionable author follow-ups without an open bot PR are reclassified', () => {
+  const decision = { kind: 'issue_followup', reason: 'author follow-up on managed issue' };
+  assert.deepEqual(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenBotPull: false,
+      body: '默认开启 X11 就可以，内置服务暂时不需要。',
+    }),
+    {
+      kind: 'issue_classify',
+      reason: 'actionable author follow-up without open automation PR',
+    },
+  );
+  assert.equal(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenBotPull: true,
+      body: 'Please also cover this case.',
+    }),
+    decision,
+  );
+  assert.equal(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenRelatedPull: true,
+      body: 'Please also cover this case.',
+    }),
+    decision,
+  );
+  assert.equal(
+    auto.refineIssueCommentRoute(decision, {
+      hasOpenBotPull: false,
+      body: '收到，谢谢',
+    }),
+    decision,
+  );
+});
+
 test('decideIssueCommentRoute accepts maintainer @bot and ignores untrusted bystanders', () => {
   assert.equal(
     auto.decideIssueCommentRoute({
@@ -791,6 +826,44 @@ test('source issue labels clear stale agent state after PR completion', () => {
   );
 });
 
+test('source cleanup includes merged maintainer fixes but not unmerged handoffs', () => {
+  const maintainerPull = {
+    state: 'closed',
+    merged: true,
+    body: 'Focused maintainer fix.\n\nFixes #42',
+    user: { login: 'binaricat' },
+    head: { repo: { full_name: 'binaricat/Netcatty' } },
+    base: { repo: { full_name: 'binaricat/Netcatty' } },
+  };
+  const options = {
+    ownActors: 'binaricat,netcatty-bot,github-actions[bot]',
+    repository: 'binaricat/Netcatty',
+  };
+  assert.equal(auto.shouldCleanupSourceIssueAfterPull(maintainerPull, options), true);
+  assert.equal(
+    auto.shouldCleanupSourceIssueAfterPull({
+      ...maintainerPull,
+      merged: false,
+      merged_at: null,
+    }, options),
+    false,
+  );
+  assert.equal(
+    auto.shouldCleanupSourceIssueAfterPull({
+      ...maintainerPull,
+      body: 'Related to #42',
+    }, options),
+    false,
+  );
+  assert.equal(
+    auto.shouldCleanupSourceIssueAfterPull({
+      ...maintainerPull,
+      base: { repo: { full_name: 'another/repo' } },
+    }, options),
+    false,
+  );
+});
+
 test('implementation failure messages report the real category and preserved artifact', () => {
   const message = auto.buildImplementationFailureMessage(
     { title: '[Bug] 上传失败' },
@@ -803,6 +876,63 @@ test('implementation failure messages report the real category and preserved art
   assert.match(message, /新增了验证失败/);
   assert.match(message, /implement-patch-1/);
   assert.match(message, /github\.example/);
+
+  const protectedMessage = auto.buildImplementationFailureMessage(
+    { title: '[Bug] 自动修改失败' },
+    {
+      kind: 'protected_path',
+      protectedPaths: [
+        '.github/workflows/release.yml',
+        'components/ordinary.test.ts',
+      ],
+    },
+  );
+  assert.match(protectedMessage, /\.github\/workflows\/release\.yml/);
+  assert.doesNotMatch(protectedMessage, /ordinary\.test\.ts/);
+
+  const codexMessage = auto.buildCodexFixFailureMessage({
+    kind: 'verification_failed',
+    workflowUrl: 'https://github.example/run/2',
+    artifactName: 'codex-fix-patch-2',
+  });
+  assert.match(codexMessage, /verification failures/);
+  assert.match(codexMessage, /codex-fix-patch-2/);
+  assert.match(codexMessage, /github\.example/);
+
+  const noChangesMessage = auto.buildCodexFixFailureMessage({
+    kind: 'no_changes',
+    workflowUrl: 'https://github.example/run/3',
+  });
+  assert.match(noChangesMessage, /did not change any files/);
+  assert.match(noChangesMessage, /already be addressed, stale/);
+  assert.match(noChangesMessage, /github\.example\/run\/3/);
+
+  const classificationMessage = auto.buildClassificationFailureMessage(
+    { title: '[Bug] 附件无法读取' },
+    {
+      kind: 'research_failed',
+      workflowUrl: 'https://github.example/run/4',
+    },
+  );
+  assert.match(classificationMessage, /读取附件或外部资料时失败/);
+  assert.match(classificationMessage, /github\.example\/run\/4/);
+});
+
+test('protected path reports replace stale data and ignore ordinary source files', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-protected-report-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const report = path.join(dir, 'protected-paths.json');
+
+  assert.deepEqual(auto.writeProtectedPathReport(report, [
+    'package-lock.json',
+    'components/App.tsx',
+    'package-lock.json',
+  ]), ['package-lock.json']);
+  assert.deepEqual(auto.readProtectedPathReport(report), ['package-lock.json']);
+
+  assert.deepEqual(auto.writeProtectedPathReport(report, []), []);
+  assert.equal(fs.existsSync(report), false);
+  assert.deepEqual(auto.readProtectedPathReport(report), []);
 });
 
 test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', async () => {
@@ -842,19 +972,30 @@ test('markNeedsHuman ignores forged dedupe markers from untrusted commenters', a
   assert.equal(created, 1);
 });
 
-test('workflow cleans source labels on automation PR close and dedupes clean notices', () => {
+test('workflow cleans source labels after eligible PR close and dedupes clean notices', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
     'utf8',
   );
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, closed\]/);
   assert.match(workflow, /kind == 'source_issue_cleanup'/);
-  assert.match(workflow, /shouldGatePullOnSourceIssueFollowups\(pull/);
+  assert.match(workflow, /shouldCleanupSourceIssueAfterPull\(pull/);
   assert.match(workflow, /github\.rest\.issues\.removeLabel/);
   assert.match(workflow, /github\.rest\.issues\.addLabels/);
-  assert.match(workflow, /not a trusted automation pull request; skipping source cleanup/);
+  assert.match(workflow, /not eligible for source cleanup; skipping/);
   assert.match(workflow, /is no longer closed; skipping source cleanup/);
   assert.match(workflow, /source issue changed while queued; skipping cleanup/);
+  assert.match(workflow, /does not currently close issue/);
+  assert.match(workflow, /findOpenPullForIssue/);
+  assert.match(workflow, /refineIssueCommentRoute/);
+  assert.match(workflow, /reconcile_closed_handoffs:/);
+  assert.match(workflow, /shouldRetryIssueHandoff/);
+  assert.match(workflow, /isTrustedOpenPullForIssue/);
+  assert.match(workflow, /cursor-handoff-recovery:version=\$\{recoveryVersion\}/);
+  assert.match(workflow, /workflow_id: 'cursor-automation\.yml'/);
+  assert.match(workflow, /Reconcile handoffs/);
+  assert.match(workflow, /is:issue is:closed label:"ready-for-human" label:triage/);
+  assert.match(workflow, /is:pr is:merged label:"ready-for-human" label:"automation:bot-pr"/);
   assert.match(workflow, /Follow-up changed before the simple reply; dispatched a fresh review/);
   assert.match(workflow, /is merged; skipped stale follow-up handoff state changes/);
   assert.match(workflow, /trusted_comment_bodies/);
@@ -1118,6 +1259,105 @@ test('shouldGatePullOnSourceIssueFollowups is limited to automation bot PRs', ()
     }),
     false,
   );
+});
+
+test('pullReferencesIssue matches exact closing references without prefix collisions', () => {
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #42' }, 42), true);
+  assert.equal(auto.pullReferencesIssue({ body: 'Fixes #420' }, 42), false);
+  assert.equal(auto.pullReferencesIssue({ body: 'Related to #42' }, 42), false);
+  assert.equal(
+    auto.pullReferencesIssue({ body: 'Related to #42' }, 42, { includeRelated: true }),
+    true,
+  );
+  assert.equal(
+    auto.pullReferencesIssue({ head: { ref: 'cursor/issue-42-123' } }, 42),
+    false,
+  );
+});
+
+test('findOpenPullForIssue keeps maintainer work from spawning a duplicate bot PR', async () => {
+  const pulls = [
+    {
+      number: 7,
+      body: 'Fixes #42',
+      author_association: 'NONE',
+      head: { repo: { full_name: 'attacker/fork' } },
+    },
+    {
+      number: 8,
+      body: 'Maintainer implementation\n\nFixes #42',
+      author_association: 'MEMBER',
+      head: { repo: { full_name: 'maintainer/fork' } },
+    },
+  ];
+  const found = await auto.findOpenPullForIssue({
+    github: {
+      paginate: async () => pulls,
+      rest: { pulls: { list: async () => ({ data: pulls }) } },
+    },
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    issueNumber: 42,
+  });
+  assert.equal(found.number, 8);
+});
+
+test('legacy retry only accepts trusted fixed failure categories once', () => {
+  const options = {
+    trustedActors: 'netcatty-bot,github-actions[bot]',
+    recoveryVersion: 'handoff-v1',
+  };
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+  }], options), true);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '收到这条补充了，但自动复核没有安全完成，已经转给维护者继续处理。',
+  }], options), true);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'attacker' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+  }], options), false);
+  assert.equal(auto.shouldRetryIssueHandoff([{
+    user: { login: 'netcatty-bot' },
+    body: '<!-- cursor-implement-failure:base=abc;kind=verification_failed -->',
+  }], options), false);
+  assert.equal(auto.shouldRetryIssueHandoff([
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-implement-failure:base=abc;kind=protected_path -->',
+    },
+    {
+      user: { login: 'netcatty-bot' },
+      body: '<!-- cursor-handoff-recovery:version=handoff-v1 -->',
+    },
+  ], options), false);
+});
+
+test('findOpenPullForIssue accepts same-repo work but ignores untrusted fork claims', async () => {
+  const pulls = [
+    {
+      number: 7,
+      body: 'Fixes #42',
+      author_association: 'NONE',
+      head: { repo: { full_name: 'attacker/fork' } },
+    },
+    {
+      number: 8,
+      body: 'Fixes #42',
+      author_association: 'NONE',
+      head: { repo: { full_name: 'binaricat/Netcatty' } },
+    },
+  ];
+  const found = await auto.findOpenPullForIssue({
+    github: {
+      paginate: async () => pulls,
+      rest: { pulls: { list: async () => ({ data: pulls }) } },
+    },
+    context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+    issueNumber: 42,
+  });
+  assert.equal(found.number, 8);
 });
 
 test('getPendingIssueFollowupsForPull does not block maintainer Fixes-only PRs', async () => {
@@ -1734,7 +1974,7 @@ test('hasProtectedChangesInSources checks commit names', () => {
   ]);
 });
 
-test('generated changes may add tests but cannot alter existing test sources', () => {
+test('generated changes may add or update regression tests', () => {
   const committed = auto.hasProtectedChangesInSources({
     nameStatusText: [
       'M\tcomponents/existing.test.ts',
@@ -1742,7 +1982,7 @@ test('generated changes may add tests but cannot alter existing test sources', (
       'M\tcomponents/App.tsx',
     ].join('\n'),
   });
-  assert.deepEqual(committed, ['components/existing.test.ts']);
+  assert.deepEqual(committed, []);
 
   const workingTree = auto.hasProtectedChangesInSources({
     gitStatusPorcelain: [
@@ -1750,7 +1990,7 @@ test('generated changes may add tests but cannot alter existing test sources', (
       '?? components/new-regression-2.test.ts',
     ].join('\n'),
   });
-  assert.deepEqual(workingTree, ['components/other.test.ts']);
+  assert.deepEqual(workingTree, []);
 });
 
 test('hasProtectedChangesInSources blocks electron-builder configs', () => {
@@ -1924,7 +2164,17 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
     assert.ok(restoreDependencies >= 0);
     assert.ok(lintCandidate > restoreDependencies);
     assert.match(section, /restoring locked dependencies failed/);
+    assert.equal((section.match(/writeProtectedPathReport/g) || []).length, 2);
+    assert.match(section, /readProtectedPathReport/);
   }
+  assert.match(codex, /buildCodexFixFailureMessage/);
+  assert.match(codex, /cursor-codex-fix-failure:kind=/);
+  assert.match(codex, /cursor-codex-fix-failure:kind=no_changes/);
+  assert.doesNotMatch(
+    codex,
+    /agent, protected paths, or verification failed/,
+  );
+  assert.doesNotMatch(codex, /did not produce additional code changes/);
 });
 
 test('classification failure handoff receives its issue number', () => {
@@ -1937,6 +2187,12 @@ test('classification failure handoff receives its issue number', () => {
   )?.[0] || '';
   assert.match(handoff, /ISSUE_NUMBER: \$\{\{ needs\.route\.outputs\.issue_number \}\}/);
   assert.match(handoff, /const issueNumber = Number\(process\.env\.ISSUE_NUMBER\)/);
+  assert.match(handoff, /cursor-classification-failure:kind=\$\{kind\};run=\$\{context\.runId\}/);
+  assert.match(handoff, /buildClassificationFailureMessage/);
+  assert.match(handoff, /steps\.research\.outcome/);
+  assert.match(handoff, /steps\.classify_agent\.outcome/);
+  assert.match(handoff, /actions\/runs\/\$\{context\.runId\}/);
+  assert.doesNotMatch(handoff, /自动复核没有安全完成/);
 });
 
 test('classification follow-up rate-limit handoff receives its issue number', () => {
@@ -2386,6 +2642,43 @@ test('research input replaces only successfully proxied GitHub image attachments
     auto.normalizeExternalResearchText(noResearchNeeded, { input: imageOnly }),
     noResearchNeeded,
   );
+
+  const mediaOnly = auto.rewriteExternalResearchInputAttachments(
+    { body: attachmentUrl },
+    [{ sourceUrl: attachmentUrl, kind: 'unsupported_media' }],
+  );
+  assert.match(mediaOnly.body, /video or audio attachment omitted/);
+  assert.doesNotMatch(mediaOnly.body, /https?:\/\//);
+  assert.equal(
+    auto.normalizeExternalResearchText(noResearchNeeded, { input: mediaOnly }),
+    noResearchNeeded,
+  );
+});
+
+test('GitHub attachment redirects distinguish images from video and reject other hosts', () => {
+  const redirect = (host, mediaType) => [
+    'HTTP/2 302',
+    `location: https://${host}/asset?response-content-type=${encodeURIComponent(mediaType)}`,
+    '',
+  ].join('\r\n');
+  assert.equal(
+    auto.classifyGithubUserAttachmentRedirect(
+      redirect('github-production-user-asset-6210df.s3.amazonaws.com', 'image/png'),
+    ),
+    'image',
+  );
+  assert.equal(
+    auto.classifyGithubUserAttachmentRedirect(
+      redirect('github-production-user-asset-6210df.s3.amazonaws.com', 'video/mp4'),
+    ),
+    'unsupported_media',
+  );
+  assert.equal(
+    auto.classifyGithubUserAttachmentRedirect(
+      redirect('example.com', 'image/png'),
+    ),
+    '',
+  );
 });
 
 test('normalizeExternalResearchText fails closed on blocked or unsourced research', () => {
@@ -2461,6 +2754,36 @@ test('parseExternalResearchStream requires a recorded web tool call and sources'
       body: 'See https://cursor.com/docs',
     }),
     /WebSearch\/WebFetch tool call/i,
+  );
+
+  const githubCaseStream = [
+    JSON.stringify({
+      type: 'tool_call',
+      subtype: 'completed',
+      tool_call: {
+        webSearchToolCall: {
+          result: {
+            success: {
+              content: 'Repository: https://github.com/ByteDance/trae-agent',
+            },
+          },
+        },
+      },
+    }),
+    JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: [
+        'RESEARCH_COMPLETE: Trae Agent is a CLI.',
+        'Sources:',
+        '- https://github.com/bytedance/trae-agent — official repository',
+      ].join('\n'),
+    }),
+  ].join('\n');
+  assert.match(
+    auto.parseExternalResearchStream(githubCaseStream, {}),
+    /^RESEARCH_COMPLETE:/,
   );
 });
 
@@ -3125,8 +3448,10 @@ test('workflow sanitizes GitHub screenshots through pinned imgproxy before resea
     /git show "FETCH_HEAD:scripts\/prepare-cursor-research-input\.sh" > "\$RUNNER_TEMP\/prepare-cursor-research-input\.sh"/,
   );
   assert.match(attachmentProxy, /extractGithubUserAttachmentAssetUrls/);
+  assert.match(attachmentProxy, /classifyGithubUserAttachmentRedirect/);
   assert.match(attachmentProxy, /rewriteExternalResearchInputAttachments/);
   assert.match(attachmentProxy, /attachment_count > 4/);
+  assert.match(attachmentProxy, /unsupported_media/);
   assert.match(
     attachmentProxy,
     /IMGPROXY_ALLOWED_SOURCES=https:\/\/github\.com\/user-attachments\/assets\//,
