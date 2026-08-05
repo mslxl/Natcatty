@@ -2293,6 +2293,9 @@ test('every code-writing Cursor path compares exact-base failures and preserves 
   assert.match(codex, /fix-test-comparison\.json/);
   assert.match(codex, /steps\.fixpatch\.outputs\.artifact_ready == 'true'/);
   assert.match(codex, /fix-candidate-tests\.log/);
+  assert.match(codex, /fix-base-tests\.log/);
+  assert.match(implement, /base-tests\.log/);
+  assert.match(followup, /followup-base-tests\.log/);
   assert.ok(
     codex.indexOf('name: Install test shell dependencies') <
       codex.indexOf('name: Capture Codex-fix exact-base test baseline'),

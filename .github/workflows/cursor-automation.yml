@@ -2093,6 +2093,7 @@ jobs:
                 ".cursor-runtime/followup-pending-snapshots.json",
                 ".cursor-runtime/followup-verify-result.json",
                 ".cursor-runtime/followup-test-comparison.json",
+                ".cursor-runtime/followup-base-tests.log",
                 ".cursor-runtime/followup-candidate-lint.log",
                 ".cursor-runtime/followup-candidate-tests.log",
                 ".cursor-runtime/followup-candidate-build.log",
@@ -2114,6 +2115,7 @@ jobs:
             .cursor-runtime/followup-pending-snapshots.json
             .cursor-runtime/followup-verify-result.json
             .cursor-runtime/followup-test-comparison.json
+            .cursor-runtime/followup-base-tests.log
             .cursor-runtime/followup-candidate-lint.log
             .cursor-runtime/followup-candidate-tests.log
             .cursor-runtime/followup-candidate-build.log
@@ -3379,6 +3381,7 @@ jobs:
                 ".cursor-runtime/implement-pr-body.md",
                 ".cursor-runtime/verify-result.json",
                 ".cursor-runtime/test-comparison.json",
+                ".cursor-runtime/base-tests.log",
                 ".cursor-runtime/candidate-lint.log",
                 ".cursor-runtime/candidate-tests.log",
                 ".cursor-runtime/candidate-build.log",
@@ -3400,6 +3403,7 @@ jobs:
             .cursor-runtime/implement-pr-body.out.md
             .cursor-runtime/verify-result.json
             .cursor-runtime/test-comparison.json
+            .cursor-runtime/base-tests.log
             .cursor-runtime/candidate-lint.log
             .cursor-runtime/candidate-tests.log
             .cursor-runtime/candidate-build.log
@@ -3409,6 +3413,14 @@ jobs:
         if: steps.patch.outputs.artifact_ready == 'true' && steps.verify.outputs.passed != 'true'
         run: |
           echo "Candidate patch was preserved, but candidate-specific verification failed." >&2
+          if [[ -f .cursor-runtime/test-comparison.json ]]; then
+            echo "Test comparison:" >&2
+            cat .cursor-runtime/test-comparison.json >&2 || true
+          fi
+          if [[ -f .cursor-runtime/verify-result.json ]]; then
+            echo "Verify result:" >&2
+            cat .cursor-runtime/verify-result.json >&2 || true
+          fi
           exit 1
 
       - name: Mark needs human on implement failure
@@ -4812,6 +4824,7 @@ jobs:
                 ".cursor-runtime/fix.patch",
                 ".cursor-runtime/fix-verify-result.json",
                 ".cursor-runtime/fix-test-comparison.json",
+                ".cursor-runtime/fix-base-tests.log",
                 ".cursor-runtime/fix-candidate-lint.log",
                 ".cursor-runtime/fix-candidate-tests.log",
                 ".cursor-runtime/fix-candidate-build.log",
@@ -4831,6 +4844,7 @@ jobs:
             .cursor-runtime/fix.patch
             .cursor-runtime/fix-verify-result.json
             .cursor-runtime/fix-test-comparison.json
+            .cursor-runtime/fix-base-tests.log
             .cursor-runtime/fix-candidate-lint.log
             .cursor-runtime/fix-candidate-tests.log
             .cursor-runtime/fix-candidate-build.log
@@ -4840,6 +4854,14 @@ jobs:
         if: steps.codex.outputs.action == 'fix' && steps.fixpatch.outputs.artifact_ready == 'true' && steps.fixverify.outputs.passed != 'true'
         run: |
           echo "Codex fix patch was preserved, but candidate-specific verification failed." >&2
+          if [[ -f .cursor-runtime/fix-test-comparison.json ]]; then
+            echo "Test comparison:" >&2
+            cat .cursor-runtime/fix-test-comparison.json >&2 || true
+          fi
+          if [[ -f .cursor-runtime/fix-verify-result.json ]]; then
+            echo "Verify result:" >&2
+            cat .cursor-runtime/fix-verify-result.json >&2 || true
+          fi
           exit 1
 
       - name: Mark needs human when no fix produced
