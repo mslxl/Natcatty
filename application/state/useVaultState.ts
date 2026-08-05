@@ -1520,6 +1520,10 @@ export const useVaultState = () => {
           latestHosts.length,
           destination,
           storedGroups,
+          {
+            identities: latestIdentities.length,
+            keys: latestKeys.length,
+          },
         );
         const nextHosts = normalizeVaultOrder(committed.hosts.map((host) => sanitizeHost(host)));
         const nextKeys = normalizeVaultOrder(committed.keys);

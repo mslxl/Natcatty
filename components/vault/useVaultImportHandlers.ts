@@ -28,6 +28,8 @@ import { sanitizeHost } from "../../domain/host";
 import {
   applyVaultImportDestination,
   applyVaultHostImport,
+  buildVaultHostEndpointKey,
+  buildVaultHostMergeKey,
   filterVaultImportKeyPassphrasesAgainstExisting,
   mergeVaultImportIssues,
   resolveVaultImportKeyPassphraseConflicts,
@@ -179,6 +181,9 @@ export function useVaultImportHandlers({
             result = applyVaultImportDestination(
               result,
               options?.destination ?? { mode: "preserve" },
+              // SecureCRT keeps distinct session files that share an endpoint;
+              // only rewrite their group when the user picks an import location.
+              { collapseDuplicateEndpoints: format !== "securecrt" },
             );
           }
           updateProgress({ stage: "preparing", percent: 70 });
@@ -308,15 +313,16 @@ export function useVaultImportHandlers({
             }
           }
   
-          const makeKey = (h: Host) =>
-            `${(h.protocol ?? "ssh").toLowerCase()}|${h.hostname.toLowerCase()}|${h.port}|${(h.username ?? "").toLowerCase()}`;
-  
+          // Managed ssh_config rematch is endpoint-only; CSV/other imports treat
+          // group as part of session identity so direct vs proxy copies can coexist.
+          const makeKey = isManaged ? buildVaultHostEndpointKey : buildVaultHostMergeKey;
+
           const existingKeys = new Set(currentHosts.map(makeKey));
           // Filter out duplicates for both managed and non-managed imports
           let newHosts = format === "securecrt"
             ? result.hosts
             : result.hosts.filter((h) => !existingKeys.has(makeKey(h)));
-  
+
           // For managed imports, also update existing hosts to be managed
           let updatedExistingHosts: Host[] = [];
           if (isManaged) {

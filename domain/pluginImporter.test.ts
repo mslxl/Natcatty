@@ -450,6 +450,321 @@ test('plugin importer destination moves only newly imported hosts into the selec
   assert.equal(targeted.addedCount, 2);
 });
 
+test('plugin importer destination re-dedupes same-endpoint hosts collapsed into one group', () => {
+  const existingDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: { label: 'Existing', hostname: 'existing.test', group: 'Original' },
+  } }]);
+  const importedDrafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: {
+      kind: 'host',
+      value: {
+        label: 'direct',
+        hostname: '10.10.10.10',
+        port: 22,
+        username: 'root',
+        group: 'lan',
+      },
+    } },
+    { type: 'draft', draft: {
+      kind: 'host',
+      value: {
+        label: 'via-socks',
+        hostname: '10.10.10.10',
+        port: 22,
+        username: 'root',
+        group: 'lan-proxy',
+      },
+    } },
+  ]);
+  const merged = mergePluginImporterDrafts({
+    hosts: existingDrafts.hosts,
+    identities: [],
+    keys: [],
+    snippets: [],
+    customGroups: ['Original'],
+  }, importedDrafts);
+
+  assert.equal(merged.hosts.length, 3);
+  assert.equal(merged.addedCount, 4); // 2 hosts + 2 new groups
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    existingDrafts.hosts.length,
+    { mode: 'group', group: 'Chosen' },
+    ['Original'],
+  );
+
+  assert.equal(targeted.hosts.length, 2);
+  assert.equal(targeted.hosts[1]?.group, 'Chosen');
+  assert.deepEqual(targeted.customGroups, ['Original', 'Chosen']);
+  assert.equal(targeted.duplicateCount, merged.duplicateCount + 1);
+  assert.equal(targeted.addedCount, 2); // 1 retained host + Chosen group
+});
+
+test('plugin importer destination keeps distinct plugin hosts that share an endpoint', () => {
+  const drafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'credential-a', label: 'Credential A', username: 'root', authMethod: 'password', password: 'first',
+    } } },
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'credential-b', label: 'Credential B', username: 'root', authMethod: 'password', password: 'second',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host A',
+      protocol: 'plugin:com.example.transport.connection',
+      group: 'lan',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: { endpoint: 'shared', path: 'a' },
+        credentialId: 'credential-a',
+      },
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Plugin host B',
+      protocol: 'plugin:com.example.transport.connection',
+      group: 'lan-proxy',
+      pluginConnection: {
+        providerId: 'com.example.transport.connection',
+        configuration: { endpoint: 'shared', path: 'b' },
+        credentialId: 'credential-b',
+      },
+    } } },
+  ]);
+  const merged = mergePluginImporterDrafts({
+    hosts: [], identities: [], keys: [], snippets: [], customGroups: [],
+  }, drafts);
+
+  assert.equal(merged.hosts.length, 2);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    0,
+    { mode: 'group', group: 'Chosen' },
+  );
+
+  assert.equal(targeted.hosts.length, 2);
+  assert.deepEqual(targeted.hosts.map((host) => host.group), ['Chosen', 'Chosen']);
+  assert.notEqual(
+    targeted.hosts[0].pluginConnection?.configuration,
+    targeted.hosts[1].pluginConnection?.configuration,
+  );
+  assert.equal(targeted.duplicateCount, merged.duplicateCount);
+  assert.equal(targeted.addedCount, merged.addedCount - 2 + 1); // replace 2 source groups with Chosen
+});
+
+test('plugin importer destination skips imports that collide with existing hosts after rewrite', () => {
+  const existingDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Existing',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'Chosen',
+    },
+  } }]);
+  const importedDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Imported copy',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'lan',
+    },
+  } }]);
+  const merged = mergePluginImporterDrafts({
+    hosts: existingDrafts.hosts,
+    identities: [],
+    keys: [],
+    snippets: [],
+    customGroups: ['Chosen'],
+  }, importedDrafts);
+
+  assert.equal(merged.hosts.length, 2);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    existingDrafts.hosts.length,
+    { mode: 'group', group: 'Chosen' },
+    ['Chosen'],
+  );
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.equal(targeted.hosts[0]?.label, 'Existing');
+  assert.equal(targeted.duplicateCount, merged.duplicateCount + 1);
+  assert.equal(targeted.addedCount, 0);
+});
+
+test('plugin importer destination prunes orphan credentials for skipped colliding hosts', () => {
+  const existingDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
+    kind: 'host',
+    value: {
+      label: 'Existing',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'Chosen',
+    },
+  } }]);
+  const importedDrafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'imported-identity',
+      label: 'Imported identity',
+      username: 'root',
+      authMethod: 'password',
+      password: 'secret',
+    } } },
+    { type: 'draft', draft: { kind: 'key', value: {
+      id: 'imported-key',
+      label: 'Imported key',
+      type: 'ED25519',
+      privateKey: 'private-key-material',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Imported copy',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'lan',
+      identityId: 'imported-identity',
+      identityFileId: 'imported-key',
+    } } },
+  ]);
+  const merged = mergePluginImporterDrafts({
+    hosts: existingDrafts.hosts,
+    identities: [],
+    keys: [],
+    snippets: [],
+    customGroups: ['Chosen'],
+  }, importedDrafts);
+
+  assert.equal(merged.hosts.length, 2);
+  assert.equal(merged.identities.length, 1);
+  assert.equal(merged.keys.length, 1);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    existingDrafts.hosts.length,
+    { mode: 'group', group: 'Chosen' },
+    ['Chosen'],
+    { identities: 0, keys: 0 },
+  );
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.deepEqual(targeted.identities, []);
+  assert.deepEqual(targeted.keys, []);
+  assert.equal(targeted.addedCount, 0);
+});
+
+test('plugin importer destination keeps existing credentials remapped onto skipped hosts', () => {
+  const existingDrafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'existing-identity',
+      label: 'Existing identity',
+      username: 'root',
+      authMethod: 'password',
+      password: 'vault-secret',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Existing',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'Chosen',
+      identityId: 'existing-identity',
+    } } },
+  ]);
+  const existingIdentityId = existingDrafts.identities[0]?.id;
+  assert.ok(existingIdentityId);
+  const importedDrafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'imported-identity',
+      label: 'Duplicate identity',
+      username: 'root',
+      authMethod: 'password',
+      password: 'vault-secret',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'Imported copy',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'lan',
+      identityId: 'imported-identity',
+    } } },
+  ]);
+  const merged = mergePluginImporterDrafts({
+    hosts: existingDrafts.hosts,
+    identities: existingDrafts.identities,
+    keys: [],
+    snippets: [],
+    customGroups: ['Chosen'],
+  }, importedDrafts);
+
+  assert.equal(merged.identities.length, 1);
+  assert.equal(merged.identities[0]?.id, existingIdentityId);
+  assert.equal(merged.duplicateCount >= 1, true);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    existingDrafts.hosts.length,
+    { mode: 'group', group: 'Chosen' },
+    ['Chosen'],
+    { identities: existingDrafts.identities.length, keys: 0 },
+  );
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.equal(targeted.identities.length, 1);
+  assert.equal(targeted.identities[0]?.id, existingIdentityId);
+});
+
+test('plugin importer destination merges referenced credentials when collapsing imports', () => {
+  const drafts = normalizePluginImporterRecords([
+    { type: 'draft', draft: { kind: 'identity', value: {
+      id: 'imported-identity',
+      label: 'Imported identity',
+      username: 'root',
+      authMethod: 'password',
+      password: 'secret',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'bare',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'lan',
+    } } },
+    { type: 'draft', draft: { kind: 'host', value: {
+      label: 'with-identity',
+      hostname: '10.10.10.10',
+      port: 22,
+      username: 'root',
+      group: 'lan-proxy',
+      identityId: 'imported-identity',
+    } } },
+  ]);
+  const merged = mergePluginImporterDrafts({
+    hosts: [], identities: [], keys: [], snippets: [], customGroups: [],
+  }, drafts);
+
+  assert.equal(merged.hosts.length, 2);
+  assert.equal(merged.identities.length, 1);
+
+  const targeted = applyPluginImporterDestination(
+    merged,
+    0,
+    { mode: 'group', group: 'Chosen' },
+    [],
+    { identities: 0, keys: 0 },
+  );
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.equal(targeted.hosts[0]?.identityId, merged.identities[0]?.id);
+  assert.equal(targeted.identities.length, 1);
+});
+
 test('plugin importer does not count a host-owned destination group as newly added', () => {
   const existingDrafts = normalizePluginImporterRecords([{ type: 'draft', draft: {
     kind: 'host',

@@ -169,10 +169,24 @@ const parseKeyPath = (draft: VaultHostDraft): string | undefined => {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined;
 };
 
-export const buildVaultHostMergeKey = (
+/** Endpoint-only identity (protocol/host/port/user). Used for managed ssh_config matching. */
+export const buildVaultHostEndpointKey = (
   host: Pick<Host, 'hostname' | 'port' | 'username' | 'protocol'>,
 ): string =>
   `${(host.protocol ?? 'ssh').toLowerCase()}|${host.hostname.toLowerCase()}|${host.port}|${(host.username ?? '').toLowerCase()}`;
+
+/**
+ * Session identity for vault import/create dedupe.
+ * Same endpoint in a different group is a distinct connection (e.g. direct vs proxy copy).
+ */
+export const buildVaultHostMergeKey = (
+  host: Pick<Host, 'hostname' | 'port' | 'username' | 'protocol' | 'group'>,
+): string => {
+  // Keep normalized group spelling (do not case-fold). Vault group paths are
+  // compared exactly elsewhere, so Prod vs prod are distinct sessions.
+  const group = normalizeGroupPath(host.group) ?? '';
+  return `${buildVaultHostEndpointKey(host)}|${group}`;
+};
 
 export function buildVaultHostFromDraft(
   draft: VaultHostDraft,

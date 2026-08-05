@@ -7,12 +7,39 @@ import {
   applyVaultHostDelete,
   applyVaultHostCreates,
   applyVaultHostUpdate,
+  buildVaultHostEndpointKey,
   buildVaultHostFromDraft,
+  buildVaultHostMergeKey,
   buildVaultHostsFromDrafts,
   parseVaultHostDraftsInput,
   type VaultHostDraft,
   type VaultHostUpdatePatch,
 } from './vaultHostCreate.ts';
+
+test('buildVaultHostMergeKey treats group as part of session identity', () => {
+  const base = {
+    hostname: '10.10.10.10',
+    port: 22,
+    username: 'root',
+    protocol: 'ssh' as const,
+  };
+  assert.notEqual(
+    buildVaultHostMergeKey({ ...base, group: 'lan' }),
+    buildVaultHostMergeKey({ ...base, group: 'lan-proxy' }),
+  );
+  assert.equal(
+    buildVaultHostMergeKey({ ...base, group: 'lan' }),
+    buildVaultHostMergeKey({ ...base, group: 'lan' }),
+  );
+  assert.notEqual(
+    buildVaultHostMergeKey({ ...base, group: 'Prod' }),
+    buildVaultHostMergeKey({ ...base, group: 'prod' }),
+  );
+  assert.equal(
+    buildVaultHostEndpointKey({ ...base, group: 'lan' }),
+    buildVaultHostEndpointKey({ ...base, group: 'lan-proxy' }),
+  );
+});
 
 test('buildVaultHostFromDraft maps minimal unstructured fields to a vault host', () => {
   const built = buildVaultHostFromDraft({

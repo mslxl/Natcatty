@@ -87,6 +87,38 @@ test("SecureCRT keeps separate session files that point to the same endpoint", a
   assert.deepEqual(result.hosts.map((host) => host.group), ["Prod", "Staging"]);
 });
 
+test("SecureCRT destination group keeps same-endpoint session files", async () => {
+  const { applyVaultImportDestination } = await import("../../domain/vaultImport");
+  const session = [
+    'S:"Hostname"=shared.example.com',
+    'S:"Username"=root',
+    'S:"Protocol Name"=SSH2',
+  ].join("\n");
+  const imported = await importVaultHostFiles({
+    format: "securecrt",
+    files: [
+      new File([session], "web.ini"),
+      new File([session], "web.ini"),
+    ],
+    relativePaths: [
+      "Sessions/Prod/web.ini",
+      "Sessions/Staging/web.ini",
+    ],
+  });
+
+  const targeted = applyVaultImportDestination(
+    imported,
+    { mode: "group", group: "Imported/SecureCRT" },
+    { collapseDuplicateEndpoints: false },
+  );
+
+  assert.equal(targeted.hosts.length, 2);
+  assert.deepEqual(targeted.hosts.map((host) => host.group), [
+    "Imported/SecureCRT",
+    "Imported/SecureCRT",
+  ]);
+});
+
 test("SecureCRT batch import does not count an unsupported session twice", async () => {
   const result = await importVaultHostFiles({
     format: "securecrt",

@@ -474,11 +474,29 @@ export function applyPluginImporterDestination(
   existingHostCount: number,
   destination?: VaultImportDestination,
   existingCustomGroups: ReadonlyArray<string> = [],
+  existingCounts: {
+    identities?: number;
+    keys?: number;
+  } = {},
 ): PluginImporterMergeResult {
   if (!destination || destination.mode === 'preserve') return merged;
   const splitAt = Math.max(0, Math.min(existingHostCount, merged.hosts.length));
   const existingHosts = merged.hosts.slice(0, splitAt);
   const importedHosts = merged.hosts.slice(splitAt);
+  const existingIdentityCount = Math.max(
+    0,
+    Math.min(existingCounts.identities ?? 0, merged.identities.length),
+  );
+  const existingKeyCount = Math.max(
+    0,
+    Math.min(existingCounts.keys ?? 0, merged.keys.length),
+  );
+  const existingIdentityIds = new Set(
+    merged.identities.slice(0, existingIdentityCount).map((identity) => identity.id),
+  );
+  const existingKeyIds = new Set(
+    merged.keys.slice(0, existingKeyCount).map((key) => key.id),
+  );
   const targeted = applyVaultImportDestination({
     hosts: importedHosts,
     groups: [],
@@ -489,7 +507,63 @@ export function applyPluginImporterDestination(
       skipped: 0,
       duplicates: 0,
     },
-  }, destination);
+  }, destination, {
+    // Plugin hosts that differ by configuration/credentials must survive a
+    // shared destination group; classic vault hosts still collapse by endpoint.
+    isCollapsible: (host) => !host.pluginConnection,
+  });
+  // Destination rewrite can make an imported vault host collide with an existing
+  // one (same endpoint, now same group). Re-check like the CSV import path.
+  const existingFingerprints = new Set(existingHosts.map(hostFingerprint));
+  const retainedImported: Host[] = [];
+  for (const host of targeted.hosts) {
+    const fingerprint = hostFingerprint(host);
+    if (existingFingerprints.has(fingerprint)) continue;
+    existingFingerprints.add(fingerprint);
+    retainedImported.push(host);
+  }
+  const retainedImportedIds = new Set(retainedImported.map((host) => host.id));
+  const droppedImported = importedHosts.filter((host) => !retainedImportedIds.has(host.id));
+  const collectHostCredentialIds = (hosts: ReadonlyArray<Host>): Set<string> => {
+    const ids = new Set<string>();
+    for (const host of hosts) {
+      if (host.identityId) ids.add(host.identityId);
+      if (host.telnetIdentityId) ids.add(host.telnetIdentityId);
+      if (host.identityFileId) ids.add(host.identityFileId);
+      const pluginCredentialId = host.pluginConnection?.credentialId;
+      if (pluginCredentialId) ids.add(pluginCredentialId);
+    }
+    return ids;
+  };
+  const keptCredentialIds = collectHostCredentialIds([...existingHosts, ...retainedImported]);
+  const droppedOnlyCredentialIds = new Set(
+    [...collectHostCredentialIds(droppedImported)].filter((id) => !keptCredentialIds.has(id)),
+  );
+  // Only prune credentials introduced by this import. Remapped duplicates that
+  // point at pre-existing vault identities/keys must stay in the vault.
+  const nextIdentities = merged.identities.filter((identity) => (
+    existingIdentityIds.has(identity.id)
+    || !droppedOnlyCredentialIds.has(identity.id)
+  ));
+  const keptIdentityKeyIds = new Set(
+    nextIdentities.flatMap((identity) => (identity.keyId ? [identity.keyId] : [])),
+  );
+  const prunedIdentityKeyIds = new Set(
+    merged.identities
+      .filter((identity) => (
+        !existingIdentityIds.has(identity.id)
+        && droppedOnlyCredentialIds.has(identity.id)
+      ))
+      .flatMap((identity) => (identity.keyId ? [identity.keyId] : [])),
+  );
+  const nextKeys = merged.keys.filter((key) => {
+    if (existingKeyIds.has(key.id)) return true;
+    if (keptCredentialIds.has(key.id) || keptIdentityKeyIds.has(key.id)) return true;
+    if (droppedOnlyCredentialIds.has(key.id) || prunedIdentityKeyIds.has(key.id)) return false;
+    return true;
+  });
+  const prunedIdentityCount = merged.identities.length - nextIdentities.length;
+  const prunedKeyCount = merged.keys.length - nextKeys.length;
   const existingGroupSet = new Set([
     ...existingCustomGroups,
     ...existingHosts.flatMap((host) => host.group ? [host.group] : []),
@@ -501,11 +575,22 @@ export function applyPluginImporterDestination(
   const nextAddedGroupCount = customGroups.filter(
     (group) => !existingGroupSet.has(group),
   ).length;
+  // Destination rewriting can collapse same-endpoint hosts into one group;
+  // keep added/duplicate counts aligned with the hosts actually retained.
+  const collapsedHostCount = Math.max(0, importedHosts.length - retainedImported.length);
   return {
     ...merged,
-    hosts: [...existingHosts, ...targeted.hosts],
+    hosts: [...existingHosts, ...retainedImported],
+    identities: nextIdentities,
+    keys: nextKeys,
     customGroups,
-    addedCount: merged.addedCount - previousAddedGroupCount + nextAddedGroupCount,
+    duplicateCount: merged.duplicateCount + collapsedHostCount,
+    addedCount: merged.addedCount
+      - previousAddedGroupCount
+      + nextAddedGroupCount
+      - collapsedHostCount
+      - prunedIdentityCount
+      - prunedKeyCount,
   };
 }
 

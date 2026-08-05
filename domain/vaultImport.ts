@@ -9,7 +9,10 @@ import {
   type VaultHostDraftProtocol,
 } from "./vaultHostCreate";
 
-export { buildVaultHostMergeKey } from "./vaultHostCreate";
+export {
+  buildVaultHostEndpointKey,
+  buildVaultHostMergeKey,
+} from "./vaultHostCreate";
 import { parseQuickConnectInput } from "./quickConnect";
 import { findExactHeaderIndex, findHeaderIndex, parseCsv } from "./vaultImport/csvUtils";
 import { decodeCsvKeyPath, decodeCsvPassphrase } from "./vaultImport/csvCredentialFields";
@@ -136,6 +139,20 @@ export type VaultImportDestination =
   | { mode: "preserve" }
   | { mode: "group"; group: string };
 
+export type ApplyVaultImportDestinationOptions = {
+  /**
+   * When false, only rewrite groups. SecureCRT keeps distinct session files that
+   * share an endpoint even after an import-location override.
+   * @default true
+   */
+  collapseDuplicateEndpoints?: boolean;
+  /**
+   * Return false to keep a host even when another shares its merge key after the
+   * destination rewrite (plugin hosts that differ by configuration/credentials).
+   */
+  isCollapsible?: (host: Host) => boolean;
+};
+
 export function mergeVaultImportIssues(
   ...groups: ReadonlyArray<ReadonlyArray<VaultImportIssue>>
 ): VaultImportIssue[] {
@@ -162,14 +179,89 @@ const normalizeGroupPath = (raw: string | undefined): string | undefined => {
 export function applyVaultImportDestination(
   result: VaultImportResult,
   destination: VaultImportDestination,
+  options?: ApplyVaultImportDestinationOptions,
 ): VaultImportResult {
   if (destination.mode === "preserve") return result;
   const group = normalizeGroupPath(destination.group);
   if (!group) return result;
+
+  const rewrittenHosts = result.hosts.map((host) => ({ ...host, group }));
+  // SecureCRT (and similar) keep same-endpoint sessions as distinct imports.
+  if (options?.collapseDuplicateEndpoints === false) {
+    return {
+      ...result,
+      hosts: rewrittenHosts,
+      groups: [group],
+    };
+  }
+
+  // Destination rewriting can collapse previously distinct group-scoped sessions
+  // onto one merge key; re-dedupe so identical endpoints are not imported twice.
+  // Plugin hosts can opt out via isCollapsible so configuration/credential
+  // differences survive a shared destination group.
+  const { hosts, duplicates } = dedupeHosts(rewrittenHosts, {
+    isCollapsible: options?.isCollapsible,
+  });
+  const retainedIds = new Set(hosts.map((host) => host.id));
+  const retainedByMergeKey = new Map(
+    hosts
+      .filter((host) => options?.isCollapsible?.(host) !== false)
+      .map((host) => [hostKey(host), host]),
+  );
+  const originalById = new Map(result.hosts.map((host) => [host.id, host]));
+
+  const remapHostId = (hostId: string): string | undefined => {
+    if (retainedIds.has(hostId)) return hostId;
+    const original = originalById.get(hostId);
+    if (!original) return undefined;
+    if (options?.isCollapsible?.({ ...original, group }) === false) return undefined;
+    return retainedByMergeKey.get(hostKey({ ...original, group }))?.id;
+  };
+
+  const selectedKeyByHostId = new Map(
+    hosts.map((host) => {
+      const selected = host.identityFilePaths?.find((path) => path.trim())?.trim();
+      return [host.id, selected ? normalizeKeyPathKey(selected) : undefined] as const;
+    }),
+  );
+
+  const remapKeyPassphrases = (
+    entries: VaultHostKeyPassphrase[] | undefined,
+    remapOptions?: { matchSelectedKey?: boolean },
+  ): VaultHostKeyPassphrase[] | undefined => {
+    if (!entries) return entries;
+    const remapped: VaultHostKeyPassphrase[] = [];
+    const seen = new Set<string>();
+    for (const entry of entries) {
+      const nextHostId = remapHostId(entry.hostId);
+      if (!nextHostId) continue;
+      // Match CSV same-group dedupe: never attach a passphrase for a key the
+      // retained host did not keep as its selected identity file.
+      if (remapOptions?.matchSelectedKey) {
+        const selectedKey = selectedKeyByHostId.get(nextHostId);
+        if (!selectedKey || normalizeKeyPathKey(entry.keyPath) !== selectedKey) continue;
+      }
+      const dedupeKey = `${nextHostId}\u0000${normalizeKeyPathKey(entry.keyPath)}\u0000${entry.passphrase}`;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      remapped.push(nextHostId === entry.hostId ? entry : { ...entry, hostId: nextHostId });
+    }
+    return remapped;
+  };
+
   return {
     ...result,
-    hosts: result.hosts.map((host) => ({ ...host, group })),
+    hosts,
     groups: [group],
+    keyPassphrases: remapKeyPassphrases(result.keyPassphrases, { matchSelectedKey: true }),
+    // Keep remapped candidates for alias conflict checks (same as CSV same-group
+    // dedupe); the import handler still gates saves on the retained key path.
+    keyPassphraseCandidates: remapKeyPassphrases(result.keyPassphraseCandidates),
+    stats: {
+      ...result.stats,
+      imported: hosts.length,
+      duplicates: result.stats.duplicates + duplicates,
+    },
   };
 }
 
@@ -227,15 +319,24 @@ const createHost = (input: {
   return built.host;
 };
 
-const dedupeHosts = (hosts: Host[]): { hosts: Host[]; duplicates: number } => {
+const dedupeHosts = (
+  hosts: Host[],
+  options?: { isCollapsible?: (host: Host) => boolean },
+): { hosts: Host[]; duplicates: number } => {
   const seen = new Map<string, Host>();
+  const retained: Host[] = [];
   let duplicates = 0;
 
   for (const host of hosts) {
+    if (options?.isCollapsible?.(host) === false) {
+      retained.push(host);
+      continue;
+    }
     const key = hostKey(host);
     const existing = seen.get(key);
     if (!existing) {
       seen.set(key, host);
+      retained.push(host);
       continue;
     }
     duplicates++;
@@ -248,13 +349,27 @@ const dedupeHosts = (hosts: Host[]): { hosts: Host[]; duplicates: number } => {
       existing.authPolicyVersion = host.authPolicyVersion;
       existing.useSshAgent = host.useSshAgent;
     }
+    // Only graft referenced credentials onto a retained host that has no auth
+    // source yet. Otherwise identity auth can override an existing key path.
+    const retainedHasCredentialSource = Boolean(
+      existing.identityId
+      || existing.telnetIdentityId
+      || existing.identityFileId
+      || existing.identityFilePaths?.some((path) => path.trim())
+      || (typeof existing.password === "string" && existing.password.length > 0)
+    );
+    if (!retainedHasCredentialSource) {
+      if (host.identityId) existing.identityId = host.identityId;
+      if (host.telnetIdentityId) existing.telnetIdentityId = host.telnetIdentityId;
+      if (host.identityFileId) existing.identityFileId = host.identityFileId;
+    }
     if (existing.group == null && host.group != null) existing.group = host.group;
     if (existing.label === existing.hostname && host.label && host.label !== host.hostname) {
       existing.label = host.label;
     }
   }
 
-  return { hosts: Array.from(seen.values()), duplicates };
+  return { hosts: retained, duplicates };
 };
 
 const uniq = (items: string[]) => Array.from(new Set(items.filter(Boolean)));

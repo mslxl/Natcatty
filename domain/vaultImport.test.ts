@@ -185,6 +185,185 @@ test("vault import can place every imported host into one selected group", () =>
   assert.deepEqual(imported.groups, ["Production/Web", "Production/DB"]);
 });
 
+test("applyVaultImportDestination re-dedupes same-endpoint hosts collapsed into one group", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username",
+    "lan,direct,10.10.10.10,22,root",
+    "lan-proxy,via-socks,10.10.10.10,22,root",
+  ].join("\n"));
+
+  assert.equal(imported.hosts.length, 2);
+
+  const targeted = applyVaultImportDestination(imported, {
+    mode: "group",
+    group: "Imported/July",
+  });
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.equal(targeted.hosts[0]?.group, "Imported/July");
+  assert.equal(targeted.stats.duplicates, 1);
+  assert.equal(targeted.stats.imported, 1);
+  assert.deepEqual(targeted.groups, ["Imported/July"]);
+
+  const merged = applyVaultHostImport([], [], targeted);
+  assert.equal(merged.addedCount, 1);
+  assert.equal(merged.hosts.length, 1);
+});
+
+test("applyVaultImportDestination remaps a shared key passphrase onto the retained host", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username,KeyPath,Passphrase",
+    "lan,direct,10.10.10.10,22,root,~/.ssh/id_ed25519,",
+    "lan-proxy,via-socks,10.10.10.10,22,root,~/.ssh/id_ed25519,secret",
+  ].join("\n"));
+
+  assert.equal(imported.hosts.length, 2);
+
+  const targeted = applyVaultImportDestination(imported, {
+    mode: "group",
+    group: "Imported/July",
+  });
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.deepEqual(targeted.hosts[0]?.identityFilePaths, ["~/.ssh/id_ed25519"]);
+  assert.deepEqual(targeted.keyPassphrases, [{
+    hostId: targeted.hosts[0]?.id,
+    keyPath: "~/.ssh/id_ed25519",
+    passphrase: "secret",
+  }]);
+});
+
+test("applyVaultImportDestination does not attach a passphrase for a non-retained key", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username,KeyPath,Passphrase",
+    "lan,direct,10.10.10.10,22,root,~/.ssh/id_first,first",
+    "lan-proxy,via-socks,10.10.10.10,22,root,~/.ssh/id_second,second",
+  ].join("\n"));
+
+  const targeted = applyVaultImportDestination(imported, {
+    mode: "group",
+    group: "Imported/July",
+  });
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.deepEqual(targeted.hosts[0]?.identityFilePaths, ["~/.ssh/id_first"]);
+  assert.deepEqual(targeted.keyPassphrases, [{
+    hostId: targeted.hosts[0]?.id,
+    keyPath: "~/.ssh/id_first",
+    passphrase: "first",
+  }]);
+});
+
+test("applyVaultImportDestination can keep same-endpoint hosts when collapse is disabled", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username",
+    "Prod,web-a,shared.example.com,22,root",
+    "Staging,web-b,shared.example.com,22,root",
+  ].join("\n"));
+
+  assert.equal(imported.hosts.length, 2);
+
+  const targeted = applyVaultImportDestination(
+    imported,
+    { mode: "group", group: "Imported/SecureCRT" },
+    { collapseDuplicateEndpoints: false },
+  );
+
+  assert.equal(targeted.hosts.length, 2);
+  assert.deepEqual(targeted.hosts.map((host) => host.group), [
+    "Imported/SecureCRT",
+    "Imported/SecureCRT",
+  ]);
+  assert.equal(targeted.stats.duplicates, 0);
+  assert.equal(targeted.stats.imported, 2);
+});
+
+test("applyVaultImportDestination can skip collapse for selected hosts", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username",
+    "lan,direct,10.10.10.10,22,root",
+    "lan-proxy,via-socks,10.10.10.10,22,root",
+  ].join("\n"));
+  const withPluginFlag = {
+    ...imported,
+    hosts: imported.hosts.map((host, index) => (
+      index === 0
+        ? host
+        : {
+            ...host,
+            pluginConnection: {
+              providerId: "com.example.transport.connection",
+              configuration: { endpoint: "via-socks" },
+            },
+          }
+    )),
+  };
+
+  const targeted = applyVaultImportDestination(
+    withPluginFlag,
+    { mode: "group", group: "Imported/Plugin" },
+    { isCollapsible: (host) => !host.pluginConnection },
+  );
+
+  assert.equal(targeted.hosts.length, 2);
+  assert.deepEqual(targeted.hosts.map((host) => host.group), [
+    "Imported/Plugin",
+    "Imported/Plugin",
+  ]);
+});
+
+test("applyVaultImportDestination merges referenced credentials onto the retained host", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username",
+    "lan,direct,10.10.10.10,22,root",
+    "lan-proxy,via-socks,10.10.10.10,22,root",
+  ].join("\n"));
+  const [first, second] = imported.hosts;
+  assert.ok(first && second);
+  const withRefs = {
+    ...imported,
+    hosts: [
+      { ...first, identityId: undefined, identityFileId: undefined },
+      { ...second, identityId: "identity-1", identityFileId: "key-1" },
+    ],
+  };
+
+  const targeted = applyVaultImportDestination(withRefs, {
+    mode: "group",
+    group: "Imported/July",
+  });
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.equal(targeted.hosts[0]?.identityId, "identity-1");
+  assert.equal(targeted.hosts[0]?.identityFileId, "key-1");
+});
+
+test("applyVaultImportDestination does not override retained key auth with identity refs", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username,KeyPath",
+    "lan,direct,10.10.10.10,22,root,~/.ssh/id_ed25519",
+    "lan-proxy,via-socks,10.10.10.10,22,root,",
+  ].join("\n"));
+  const [first, second] = imported.hosts;
+  assert.ok(first && second);
+  const withRefs = {
+    ...imported,
+    hosts: [
+      first,
+      { ...second, identityId: "identity-1" },
+    ],
+  };
+
+  const targeted = applyVaultImportDestination(withRefs, {
+    mode: "group",
+    group: "Imported/July",
+  });
+
+  assert.equal(targeted.hosts.length, 1);
+  assert.deepEqual(targeted.hosts[0]?.identityFilePaths, ["~/.ssh/id_ed25519"]);
+  assert.equal(targeted.hosts[0]?.identityId, undefined);
+});
+
 test("CSV import keeps working when KeyPath and Passphrase columns are absent", () => {
   const result = importVaultHostsFromText(
     "csv",
@@ -612,6 +791,69 @@ test("applyVaultHostImport skips duplicates by default", () => {
   assert.equal(merged.addedCount, 1);
   assert.equal(merged.skippedExistingCount, 1);
   assert.equal(merged.hosts.length, 2);
+});
+
+test("CSV import keeps same-endpoint rows that use different groups", () => {
+  const result = importVaultHostsFromText(
+    "csv",
+    [
+      "Groups,Label,Hostname,Port,Username",
+      "lan,direct,10.10.10.10,22,root",
+      "lan-proxy,via-socks,10.10.10.10,22,root",
+    ].join("\n"),
+  );
+
+  assert.equal(result.hosts.length, 2);
+  assert.equal(result.stats.duplicates, 0);
+  assert.deepEqual(
+    result.hosts.map((host) => host.group).sort(),
+    ["lan", "lan-proxy"],
+  );
+});
+
+test("applyVaultHostImport keeps same-endpoint hosts when the group differs", () => {
+  const existing: Host = {
+    id: "existing-1",
+    label: "direct",
+    hostname: "10.10.10.10",
+    username: "root",
+    port: 22,
+    group: "lan",
+  };
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username",
+    "lan-proxy,via-socks,10.10.10.10,22,root",
+  ].join("\n"));
+  const targeted = applyVaultImportDestination(imported, {
+    mode: "group",
+    group: "lan-proxy",
+  });
+
+  const merged = applyVaultHostImport([existing], ["lan"], targeted);
+  assert.equal(merged.addedCount, 1);
+  assert.equal(merged.skippedExistingCount, 0);
+  assert.equal(merged.hosts.length, 2);
+  assert.equal(merged.addedHosts[0]?.group, "lan-proxy");
+});
+
+test("applyVaultHostImport still skips same-endpoint hosts in the same group", () => {
+  const existing: Host = {
+    id: "existing-1",
+    label: "direct",
+    hostname: "10.10.10.10",
+    username: "root",
+    port: 22,
+    group: "lan",
+  };
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Port,Username",
+    "lan,copy,10.10.10.10,22,root",
+  ].join("\n"));
+
+  const merged = applyVaultHostImport([existing], ["lan"], imported);
+  assert.equal(merged.addedCount, 0);
+  assert.equal(merged.skippedExistingCount, 1);
+  assert.equal(merged.hosts.length, 1);
 });
 
 test("applyVaultHostImport can preserve distinct sessions with the same endpoint", () => {
