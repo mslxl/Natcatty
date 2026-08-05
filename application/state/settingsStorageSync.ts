@@ -66,6 +66,7 @@ interface UseSettingsStorageSyncParams {
   darkUiThemeId: string;
   accentMode: 'theme' | 'custom';
   customAccent: string;
+  customAccentVersion: number;
   customCSS: string;
   uiFontFamilyId: string;
   hotkeyScheme: HotkeyScheme;
@@ -109,7 +110,7 @@ interface UseSettingsStorageSyncParams {
   setLightUiThemeId: Dispatch<SetStateAction<string>>;
   setDarkUiThemeId: Dispatch<SetStateAction<string>>;
   setAccentMode: Dispatch<SetStateAction<'theme' | 'custom'>>;
-  setCustomAccent: Dispatch<SetStateAction<string>>;
+  applyIncomingCustomAccent: (raw: unknown) => void;
   setCustomCSS: Dispatch<SetStateAction<string>>;
   setUiFontFamilyId: Dispatch<SetStateAction<string>>;
   setHotkeyScheme: Dispatch<SetStateAction<HotkeyScheme>>;
@@ -160,7 +161,7 @@ interface UseSettingsStorageSyncParams {
 
 export function useSettingsStorageSync({
   enabled = true,
-  theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+  theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentVersion,
   customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
   terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
   sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
@@ -168,7 +169,7 @@ export function useSettingsStorageSync({
   showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
   editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
   globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
-  setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
+  setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, applyIncomingCustomAccent,
   setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
   setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
   setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
@@ -184,7 +185,7 @@ export function useSettingsStorageSync({
   // can compare without capturing 25+ state variables in its closure / dep array.
   // This avoids constant listener detach/reattach on every state change.
   const settingsSnapshotRef = useRef({
-    theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+    theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentVersion,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
@@ -194,7 +195,7 @@ export function useSettingsStorageSync({
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
   });
   settingsSnapshotRef.current = {
-    theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+    theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentVersion,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
@@ -215,7 +216,15 @@ export function useSettingsStorageSync({
         if (appearance.next.lightUiThemeId !== s.lightUiThemeId) setLightUiThemeId(appearance.next.lightUiThemeId);
         if (appearance.next.darkUiThemeId !== s.darkUiThemeId) setDarkUiThemeId(appearance.next.darkUiThemeId);
         if (appearance.next.accentMode !== s.accentMode) setAccentMode(appearance.next.accentMode);
-        if (appearance.next.customAccent !== s.customAccent) setCustomAccent(appearance.next.customAccent);
+        if (
+          appearance.next.customAccent !== s.customAccent
+          || appearance.next.customAccentVersion !== s.customAccentVersion
+        ) {
+          applyIncomingCustomAccent({
+            color: appearance.next.customAccent,
+            version: appearance.next.customAccentVersion,
+          });
+        }
         return;
       }
       if (e.key === STORAGE_KEY_CUSTOM_CSS && e.newValue !== null) {
@@ -505,7 +514,7 @@ export function useSettingsStorageSync({
     mergeIncomingTerminalSettings,
     setAccentMode,
     setAutoUpdateEnabled,
-    setCustomAccent,
+    applyIncomingCustomAccent,
     setCustomCSS,
     setDarkUiThemeId,
     setEditorWordWrapState,

@@ -27,6 +27,7 @@ const systemLight: AppearanceRenderSnapshot = {
   darkUiThemeId: "midnight",
   accentMode: "theme",
   customAccent: "208 100% 50%",
+  customAccentVersion: 0,
 };
 
 test("an OS color event cannot persist a stale System choice over a newer Dark choice", () => {
@@ -97,6 +98,7 @@ test("a non-theme appearance IPC value wins over stale local storage for that ke
     darkUiThemeId: "midnight",
     accentMode: "theme",
     customAccent: "208 100% 50%",
+    customAccentVersion: 0,
   };
   // Storage still lags for every non-theme field (the race the review covers).
   const staleStored: StoredAppearanceValues = {
@@ -151,6 +153,22 @@ test("a non-theme appearance IPC value wins over stale local storage for that ke
   }, customAccentSelection);
   assert.equal(nextCustomAccent.customAccent, "221.2 83.2% 53.3%");
 
+  // Stale lower-version accent echoes must not clobber a newer local drag sample.
+  const afterDrag = {
+    ...current,
+    customAccent: "199 89% 48%",
+    customAccentVersion: 2,
+  };
+  const staleAccentEcho = resolveAppearanceSyncState(afterDrag, {
+    ...staleStored,
+    customAccent: "0 84% 60%",
+  }, {
+    key: STORAGE_KEY_COLOR,
+    value: { color: "0 84% 60%", version: 1 },
+  });
+  assert.equal(staleAccentEcho.customAccent, "199 89% 48%");
+  assert.equal(staleAccentEcho.customAccentVersion, 2);
+
   // Without an announced key, full rehydrate still reads storage.
   const noIncoming = resolveAppearanceSyncState(current, {
     ...staleStored,
@@ -168,6 +186,7 @@ test("sequential keyed appearance IPC updates compose without stale-storage clob
     darkUiThemeId: "midnight",
     accentMode: "theme",
     customAccent: "208 100% 50%",
+    customAccentVersion: 0,
   };
   const staleStored: StoredAppearanceValues = { ...initial };
 
@@ -196,6 +215,7 @@ test("System on a light OS changes to Dark in every open follow-app terminal", (
     darkUiThemeId: systemLight.darkUiThemeId,
     accentMode: systemLight.accentMode,
     customAccent: systemLight.customAccent,
+    customAccentVersion: systemLight.customAccentVersion,
   };
   const terminalAppearance = (appearance: AppearanceState, resolvedTheme: "light" | "dark") => (
     resolveGlobalTerminalAppearance({
@@ -292,7 +312,7 @@ test("the race guards are wired into the real settings paths", () => {
   const lightNotifyIndex = stateSource.indexOf("notifySettingsChanged(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId)", writeIndex);
   const darkNotifyIndex = stateSource.indexOf("notifySettingsChanged(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId)", writeIndex);
   const accentModeNotifyIndex = stateSource.indexOf("notifySettingsChanged(STORAGE_KEY_ACCENT_MODE, accentMode)", writeIndex);
-  const colorNotifyIndex = stateSource.indexOf("notifySettingsChanged(STORAGE_KEY_COLOR, customAccent)", writeIndex);
+  const colorNotifyIndex = stateSource.indexOf("notifySettingsChanged(STORAGE_KEY_COLOR, customAccentRecord)", writeIndex);
 
   assert.ok(guardIndex >= 0, "the settings effect must compare persisted appearance fields");
   assert.ok(returnIndex > guardIndex && returnIndex < writeIndex, "the stale render must stop before storage is written");
@@ -301,6 +321,8 @@ test("the race guards are wired into the real settings paths", () => {
   assert.ok(darkNotifyIndex > writeIndex, "dark UI theme changes must be announced over IPC with the new value");
   assert.ok(accentModeNotifyIndex > writeIndex, "accent mode changes must be announced over IPC with the new value");
   assert.ok(colorNotifyIndex > writeIndex, "custom accent changes must be announced over IPC with the new value");
+  assert.match(stateSource, /shouldBroadcastCustomAccentChange/);
+  assert.match(stateSource, /serializeCustomAccentRecord\(customAccentRecord\)/);
   // Source still only notifies fields that actually changed (keyed, not a single theme-only broadcast).
   assert.match(
     stateSource,

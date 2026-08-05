@@ -88,7 +88,6 @@ import { resolveSftpTransferConcurrency } from './sftp/transferConcurrency';
 import { resolveSshTransportIdleTtlMs } from '../../infrastructure/config/sshTransportIdleTtl';
 import {
   DEFAULT_ACCENT_MODE,
-  DEFAULT_CUSTOM_ACCENT,
   DEFAULT_DARK_UI_THEME,
   DEFAULT_EDITOR_WORD_WRAP,
   DEFAULT_HOTKEY_SCHEME,
@@ -155,6 +154,14 @@ import {
   type WindowOpacityRecord,
 } from './windowOpacitySync';
 import {
+  parseCustomAccentRecord,
+  serializeCustomAccentRecord,
+  shouldApplyCustomAccentRecord,
+  shouldBroadcastCustomAccentChange,
+  type CustomAccentMutationSource,
+  type CustomAccentRecord,
+} from './customAccentSync';
+import {
   createLocalTerminalFontSizeRecord,
   createTerminalFontSizeSyncOrigin,
   parseTerminalFontSizeRecord,
@@ -193,15 +200,47 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const stored = readStoredString(STORAGE_KEY_UI_THEME_DARK);
     return stored && isValidUiThemeId('dark', stored) ? stored : DEFAULT_DARK_UI_THEME;
   });
-  const [customAccent, setCustomAccent] = useState<string>(() => {
-    const stored = readStoredString(STORAGE_KEY_COLOR);
-    return stored && isValidHslToken(stored) ? stored.trim() : DEFAULT_CUSTOM_ACCENT;
+  const [customAccentRecord, setCustomAccentRecord] = useState<CustomAccentRecord>(() => {
+    return parseCustomAccentRecord(readStoredString(STORAGE_KEY_COLOR));
   });
+  const customAccent = customAccentRecord.color;
+  const customAccentMutationSourceRef = useRef<CustomAccentMutationSource>('local');
+  const setCustomAccent = useCallback((nextValue: SetStateAction<string>) => {
+    customAccentMutationSourceRef.current = 'local';
+    setCustomAccentRecord((prev) => {
+      const candidate = typeof nextValue === 'function'
+        ? (nextValue as (prevState: string) => string)(prev.color)
+        : nextValue;
+      const next = parseCustomAccentRecord(candidate);
+      if (next.color === prev.color) return prev;
+      return { color: next.color, version: prev.version + 1 };
+    });
+  }, []);
+  const applyIncomingCustomAccent = useCallback((raw: unknown) => {
+    const incoming = parseCustomAccentRecord(raw);
+    setCustomAccentRecord((prev) => {
+      if (!shouldApplyCustomAccentRecord(prev, incoming)) {
+        return prev;
+      }
+      customAccentMutationSourceRef.current = 'incoming';
+      return incoming;
+    });
+  }, []);
   const [accentMode, setAccentMode] = useState<'theme' | 'custom'>(() => {
     const stored = readStoredString(STORAGE_KEY_ACCENT_MODE);
     if (stored === 'theme' || stored === 'custom') return stored;
-    const legacyColor = readStoredString(STORAGE_KEY_COLOR);
-    return legacyColor && isValidHslToken(legacyColor) ? 'custom' : DEFAULT_ACCENT_MODE;
+    const raw = readStoredString(STORAGE_KEY_COLOR);
+    if (!raw) return DEFAULT_ACCENT_MODE;
+    if (isValidHslToken(raw.trim())) return 'custom';
+    if (raw.trim().startsWith('{')) {
+      try {
+        const obj = JSON.parse(raw.trim()) as { color?: unknown };
+        return typeof obj.color === 'string' && isValidHslToken(obj.color) ? 'custom' : DEFAULT_ACCENT_MODE;
+      } catch {
+        return DEFAULT_ACCENT_MODE;
+      }
+    }
+    return DEFAULT_ACCENT_MODE;
   });
   const [uiFontFamilyId, setUiFontFamilyId] = useState<string>(() => {
     const stored = readStoredString(STORAGE_KEY_UI_FONT_FAMILY);
@@ -556,6 +595,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     darkUiThemeId,
     accentMode,
     customAccent,
+    customAccentVersion: customAccentRecord.version,
   });
   appearanceStateRef.current = {
     theme,
@@ -563,6 +603,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     darkUiThemeId,
     accentMode,
     customAccent,
+    customAccentVersion: customAccentRecord.version,
   };
 
   const setTerminalSettings = useCallback((nextValue: SetStateAction<TerminalSettings>) => {
@@ -732,6 +773,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       darkUiThemeId: nextDarkId,
       accentMode: nextAccentMode,
       customAccent: nextAccent,
+      customAccentVersion: nextAccentVersion,
     } = nextAppearance;
 
     // Fix 2: Skip expensive DOM operations if nothing actually changed
@@ -740,18 +782,27 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       nextLightId === current.lightUiThemeId &&
       nextDarkId === current.darkUiThemeId &&
       nextAccentMode === current.accentMode &&
-      nextAccent === current.customAccent
+      nextAccent === current.customAccent &&
+      nextAccentVersion === current.customAccentVersion
     ) {
       return;
     }
 
     // Publish synchronously so a later keyed IPC in the same turn composes on top.
     appearanceStateRef.current = nextAppearance;
+    if (
+      nextAccent !== current.customAccent
+      || nextAccentVersion !== current.customAccentVersion
+    ) {
+      // Mark incoming so the persist effect does not rebroadcast to the peer that
+      // originated this update (color-picker drag ping-pong; see #2743).
+      customAccentMutationSourceRef.current = 'incoming';
+      setCustomAccentRecord({ color: nextAccent, version: nextAccentVersion });
+    }
     setTheme(nextTheme);
     setLightUiThemeId(nextLightId);
     setDarkUiThemeId(nextDarkId);
     setAccentMode(nextAccentMode);
-    setCustomAccent(nextAccent);
 
     const effective = nextTheme === 'system' ? getSystemPreference() : nextTheme;
     const tokens = getUiThemeById(effective, effective === 'dark' ? nextDarkId : nextLightId).tokens;
@@ -892,6 +943,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       darkUiThemeId,
       accentMode,
       customAccent,
+      customAccentVersion: customAccentRecord.version,
     };
     // Capture previous snapshot before overwrite so we can notify only the
     // appearance fields that actually changed on this render.
@@ -913,7 +965,19 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_LIGHT, lightUiThemeId);
     localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_DARK, darkUiThemeId);
     localStorageAdapter.writeString(STORAGE_KEY_ACCENT_MODE, accentMode);
-    localStorageAdapter.writeString(STORAGE_KEY_COLOR, customAccent);
+    // Never let a stale effect overwrite a newer revision already on disk.
+    const storedAccent = parseCustomAccentRecord(
+      localStorageAdapter.readString(STORAGE_KEY_COLOR),
+    );
+    if (
+      shouldApplyCustomAccentRecord(storedAccent, customAccentRecord)
+      || storedAccent.version === customAccentRecord.version
+    ) {
+      localStorageAdapter.writeString(
+        STORAGE_KEY_COLOR,
+        serializeCustomAccentRecord(customAccentRecord),
+      );
+    }
     // Fix 1: Skip IPC broadcast on initial mount (values already match localStorage)
     if (!persistMountedRef.current) return;
     // Emit a keyed IPC notification for each changed appearance field so the
@@ -932,10 +996,21 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     if (!previousAppearance || previousAppearance.accentMode !== accentMode) {
       notifySettingsChanged(STORAGE_KEY_ACCENT_MODE, accentMode);
     }
-    if (!previousAppearance || previousAppearance.customAccent !== customAccent) {
-      notifySettingsChanged(STORAGE_KEY_COLOR, customAccent);
+    if (
+      !previousAppearance
+      || previousAppearance.customAccent !== customAccent
+      || previousAppearance.customAccentVersion !== customAccentRecord.version
+    ) {
+      const decision = shouldBroadcastCustomAccentChange(
+        customAccentMutationSourceRef.current,
+        true,
+      );
+      customAccentMutationSourceRef.current = decision.nextSource;
+      if (decision.shouldBroadcast) {
+        notifySettingsChanged(STORAGE_KEY_COLOR, customAccentRecord);
+      }
     }
-  }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, notifySettingsChanged]);
+  }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentRecord, notifySettingsChanged]);
 
   // Listen for OS color scheme changes to keep systemPreference in sync
   useEffect(() => {
@@ -1035,6 +1110,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   useSettingsStorageSync({
     enabled: enableSettingsSync,
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+    customAccentVersion: customAccentRecord.version,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
@@ -1042,7 +1118,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
-    setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode, setCustomAccent,
+    setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode,
+    applyIncomingCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
     setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize: applyIncomingTerminalFontSize,

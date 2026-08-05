@@ -43,6 +43,10 @@ import {
   serializeTerminalFontSizeRecord,
 } from './state/terminalFontSizeSync';
 import {
+  parseCustomAccentRecord,
+  serializeCustomAccentRecord,
+} from './state/customAccentSync';
+import {
   STORAGE_KEY_THEME,
   STORAGE_KEY_UI_THEME_LIGHT,
   STORAGE_KEY_UI_THEME_DARK,
@@ -384,8 +388,8 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (darkUi) settings.darkUiThemeId = darkUi;
   const accentMode = localStorageAdapter.readString(STORAGE_KEY_ACCENT_MODE);
   if (accentMode === 'theme' || accentMode === 'custom') settings.accentMode = accentMode;
-  const accent = localStorageAdapter.readString(STORAGE_KEY_COLOR);
-  if (accent) settings.customAccent = accent;
+  const accentRaw = localStorageAdapter.readString(STORAGE_KEY_COLOR);
+  if (accentRaw) settings.customAccent = parseCustomAccentRecord(accentRaw).color;
   const uiFont = localStorageAdapter.readString(STORAGE_KEY_UI_FONT_FAMILY);
   if (uiFont) settings.uiFontFamilyId = uiFont;
   const lang = localStorageAdapter.readString(STORAGE_KEY_UI_LANGUAGE);
@@ -591,7 +595,17 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
   if (settings.lightUiThemeId != null) localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_LIGHT, settings.lightUiThemeId);
   if (settings.darkUiThemeId != null) localStorageAdapter.writeString(STORAGE_KEY_UI_THEME_DARK, settings.darkUiThemeId);
   if (settings.accentMode != null) localStorageAdapter.writeString(STORAGE_KEY_ACCENT_MODE, settings.accentMode);
-  if (settings.customAccent != null) localStorageAdapter.writeString(STORAGE_KEY_COLOR, settings.customAccent);
+  if (settings.customAccent != null) {
+    const existing = parseCustomAccentRecord(localStorageAdapter.readString(STORAGE_KEY_COLOR));
+    localStorageAdapter.writeString(
+      STORAGE_KEY_COLOR,
+      serializeCustomAccentRecord({
+        color: parseCustomAccentRecord(settings.customAccent).color,
+        // Bump so peer windows' version gates accept the synced value.
+        version: Math.max(existing.version, 0) + 1,
+      }),
+    );
+  }
   if (settings.uiFontFamilyId != null) localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, settings.uiFontFamilyId);
   if (settings.uiLanguage != null) localStorageAdapter.writeString(STORAGE_KEY_UI_LANGUAGE, settings.uiLanguage);
   if (settings.customCSS != null) localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, settings.customCSS);

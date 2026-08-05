@@ -6,10 +6,14 @@ import {
   STORAGE_KEY_UI_THEME_LIGHT,
 } from '../../infrastructure/config/storageKeys';
 import {
-  isValidHslToken,
   isValidTheme,
   isValidUiThemeId,
 } from './settingsStateDefaults';
+import {
+  parseCustomAccentRecord,
+  shouldApplyCustomAccentRecord,
+  type CustomAccentRecord,
+} from './customAccentSync';
 
 export type AppearanceState = {
   theme: "light" | "dark" | "system";
@@ -17,6 +21,8 @@ export type AppearanceState = {
   darkUiThemeId: string;
   accentMode: "theme" | "custom";
   customAccent: string;
+  /** Sync revision for custom accent; gates stale IPC/storage echoes during color-picker drag. */
+  customAccentVersion: number;
 };
 
 export type AppearanceRenderSnapshot = {
@@ -50,7 +56,8 @@ export function hasPersistedAppearanceChanged(
     || previous.lightUiThemeId !== current.lightUiThemeId
     || previous.darkUiThemeId !== current.darkUiThemeId
     || previous.accentMode !== current.accentMode
-    || previous.customAccent !== current.customAccent;
+    || previous.customAccent !== current.customAccent
+    || previous.customAccentVersion !== current.customAccentVersion;
 }
 
 export function resolveIncomingAppearanceValue<T>(
@@ -106,13 +113,20 @@ export function resolveAppearanceSyncState(
     current.accentMode,
     (value): value is AppearanceState['accentMode'] => value === 'theme' || value === 'custom',
   );
-  const customAccent = resolveIncomingAppearanceValue(
-    incoming,
-    STORAGE_KEY_COLOR,
-    stored.customAccent,
-    current.customAccent,
-    (value): value is string => typeof value === 'string' && isValidHslToken(value),
-  );
+  const currentAccentRecord: CustomAccentRecord = {
+    color: current.customAccent,
+    version: current.customAccentVersion,
+  };
+  const incomingAccentRaw = incoming?.key === STORAGE_KEY_COLOR ? incoming.value : undefined;
+  const resolvedAccentRaw = incomingAccentRaw !== undefined
+    ? incomingAccentRaw
+    : (incoming ? currentAccentRecord : stored.customAccent);
+  const resolvedAccentRecord = incomingAccentRaw !== undefined || !incoming
+    ? parseCustomAccentRecord(resolvedAccentRaw)
+    : currentAccentRecord;
+  const nextAccentRecord = shouldApplyCustomAccentRecord(currentAccentRecord, resolvedAccentRecord)
+    ? resolvedAccentRecord
+    : currentAccentRecord;
 
   return {
     theme: isValidTheme(theme) ? theme : current.theme,
@@ -123,9 +137,8 @@ export function resolveAppearanceSyncState(
       ? darkUiThemeId
       : current.darkUiThemeId,
     accentMode: accentMode === 'theme' || accentMode === 'custom' ? accentMode : current.accentMode,
-    customAccent: typeof customAccent === 'string' && isValidHslToken(customAccent)
-      ? customAccent.trim()
-      : current.customAccent,
+    customAccent: nextAccentRecord.color,
+    customAccentVersion: nextAccentRecord.version,
   };
 }
 
@@ -165,11 +178,24 @@ export function resolveAppearanceStorageEvent(
     };
   }
   if (key === STORAGE_KEY_COLOR) {
+    if (newValue == null) {
+      return { handled: true, next: current };
+    }
+    const incoming = parseCustomAccentRecord(newValue);
+    const currentRecord: CustomAccentRecord = {
+      color: current.customAccent,
+      version: current.customAccentVersion,
+    };
+    if (!shouldApplyCustomAccentRecord(currentRecord, incoming)) {
+      return { handled: true, next: current };
+    }
     return {
       handled: true,
-      next: newValue && isValidHslToken(newValue)
-        ? { ...current, customAccent: newValue.trim() }
-        : current,
+      next: {
+        ...current,
+        customAccent: incoming.color,
+        customAccentVersion: incoming.version,
+      },
     };
   }
   return { handled: false, next: current };
