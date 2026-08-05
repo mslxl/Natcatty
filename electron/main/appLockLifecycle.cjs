@@ -58,7 +58,15 @@ function hasNoUsableAppContentWindows(appContentWindows) {
   if (!Array.isArray(appContentWindows) || appContentWindows.length === 0) return true;
   return !appContentWindows.some((win) => {
     try {
-      return Boolean(win && !(typeof win.isDestroyed === "function" && win.isDestroyed()));
+      if (!win || (typeof win.isDestroyed === "function" && win.isDestroyed())) {
+        return false;
+      }
+      // Hidden prewarm windows (e.g. Settings) keep the process alive but are
+      // not a user session — do not block fresh-session re-lock (Codex P2).
+      if (typeof win.isVisible === "function" && !win.isVisible()) {
+        return false;
+      }
+      return true;
     } catch {
       return false;
     }

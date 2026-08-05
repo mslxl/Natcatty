@@ -51,6 +51,21 @@ test("hasNoUsableAppContentWindows treats empty or destroyed lists as no windows
   assert.equal(hasNoUsableAppContentWindows([null, { isDestroyed: () => true }]), true);
   assert.equal(hasNoUsableAppContentWindows([{ isDestroyed: () => false }]), false);
   assert.equal(hasNoUsableAppContentWindows([{ /* no isDestroyed */ }]), false);
+  // Hidden prewarm windows do not count as a live session.
+  assert.equal(
+    hasNoUsableAppContentWindows([{
+      isDestroyed: () => false,
+      isVisible: () => false,
+    }]),
+    true,
+  );
+  assert.equal(
+    hasNoUsableAppContentWindows([{
+      isDestroyed: () => false,
+      isVisible: () => true,
+    }]),
+    false,
+  );
 });
 
 test("shouldCommitQuitWithoutDirtyCheck commits when no reachable main windows exist", () => {
