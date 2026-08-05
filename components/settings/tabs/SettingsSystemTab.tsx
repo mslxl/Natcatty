@@ -775,7 +775,13 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                         <div className="flex flex-col items-end gap-2">
                           <Toggle
                             checked={appLockSettings.systemUnlockEnabled}
-                            disabled={isSavingAppLockSystemUnlock || !appLockSystemUnlockStatus.available}
+                            // Only block enabling when unavailable; an already-on
+                            // toggle must stay clickable so the user can disable
+                            // system unlock after Touch ID/Hello disappears (Codex P2).
+                            disabled={
+                              isSavingAppLockSystemUnlock
+                              || (!appLockSystemUnlockStatus.available && !appLockSettings.systemUnlockEnabled)
+                            }
                             ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
                             onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
                           />

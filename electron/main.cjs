@@ -581,12 +581,10 @@ async function createAndShowMainWindow() {
   // macOS Dock/tray reopen after every app-content window was closed leaves the
   // process alive with an already-initialized (and possibly unlocked) app-lock
   // runtime. Re-lock before the new renderer mounts so unlock does not stick.
+  // Count settings/tray/popup windows too — an open Settings or session popup
+  // means this is not a fresh session (Codex P2 on 100394dc).
   try {
-    const windowManager = getWindowManager();
-    const appContentWindows = typeof windowManager.getAppContentWindows === "function"
-      ? windowManager.getAppContentWindows()
-      : (typeof windowManager.getMainWindows === "function" ? windowManager.getMainWindows() : []);
-    if (hasNoUsableAppContentWindows(appContentWindows)) {
+    if (hasNoUsableAppContentWindows(getAppLockReopenWindows())) {
       ensureAppLockForFreshSession(appLockController, "startup");
     }
   } catch {
