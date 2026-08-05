@@ -403,6 +403,101 @@ test("translateOpenCodeEvent emits a tool call before a result when only complet
   ]);
 });
 
+test("translateOpenCodeEvent maps tool status error to toolResult without failing the turn (#2718)", () => {
+  const { events, emitter } = collector();
+  const state = {};
+  const result = translateOpenCodeEvent(
+    {
+      type: "message.part.updated",
+      properties: {
+        part: {
+          type: "tool",
+          callID: "tool-err",
+          tool: "netcatty-remote-hosts_terminal_execute",
+          state: {
+            status: "error",
+            input: { command: "du /missing" },
+            error: "Error: Operation failed",
+          },
+        },
+      },
+    },
+    emitter,
+    state,
+  );
+
+  assert.equal(result.error, false);
+  assert.equal(result.content, true);
+  assert.deepEqual(events, [
+    {
+      k: "toolCall",
+      name: "netcatty-remote-hosts_terminal_execute",
+      args: { command: "du /missing" },
+      id: "tool-err",
+    },
+    {
+      k: "toolResult",
+      id: "tool-err",
+      out: "Error: Operation failed",
+      name: "netcatty-remote-hosts_terminal_execute",
+    },
+  ]);
+  assert.equal(events.some((event) => event.k === "error"), false);
+});
+
+test("runOpenCodeTurn continues after a tool error part and reaches session.idle (#2718)", async () => {
+  const { events, emitter } = collector();
+  const abortController = new AbortController();
+  const stream = {
+    async *[Symbol.asyncIterator]() {
+      yield {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "tool",
+            sessionID: "sess-1",
+            callID: "t1",
+            tool: "terminal_execute",
+            state: { status: "error", input: { command: "false" }, error: "Error: Operation failed" },
+          },
+        },
+      };
+      yield {
+        type: "message.part.updated",
+        properties: {
+          part: {
+            type: "text",
+            sessionID: "sess-1",
+            id: "p1",
+            text: "retrying",
+          },
+          delta: "retrying",
+        },
+      };
+      yield { type: "session.idle", properties: { sessionID: "sess-1" } };
+    },
+  };
+  const client = {
+    global: { event: async () => ({ stream }) },
+    session: {
+      create: async () => ({ data: { id: "sess-1" } }),
+      promptAsync: async () => ({ data: true }),
+    },
+  };
+
+  await runOpenCodeTurn({
+    prompt: "run false then continue",
+    emitter,
+    abortController,
+    openCodeFactory: async () => ({ client, server: { close() {} } }),
+  });
+
+  assert.ok(events.some((event) => event.k === "toolResult" && event.out === "Error: Operation failed"));
+  assert.ok(events.some((event) => event.k === "text" && event.t === "retrying"));
+  assert.ok(events.some((event) => event.k === "done"));
+  assert.equal(events.some((event) => event.k === "error"), false);
+});
+
 test("mapOpenCodeModels flattens providers", () => {
   assert.deepEqual(mapOpenCodeModels({
     providers: [

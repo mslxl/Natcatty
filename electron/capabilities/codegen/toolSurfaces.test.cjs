@@ -235,3 +235,129 @@ test("session_close remains available as a cleanup action in observer mode", asy
   assert.equal(result.isError, undefined);
   assert.equal(guardCalls, 0);
 });
+
+test("terminal_execute MCP response preserves stdout/exitCode on non-zero exit (#2718)", async () => {
+  let handler = null;
+  const fakeServer = {
+    tool(name, _description, _shape, candidate) {
+      if (name === "terminal_execute") handler = candidate;
+    },
+  };
+  registerMcpTools(fakeServer, {
+    rpcCall: async () => ({
+      ok: false,
+      stdout: "du: cannot access '/missing': No such file or directory",
+      stderr: "",
+      exitCode: 1,
+    }),
+    scopeParams: { chatSessionId: "chat-1" },
+    guardWriteOperation: () => null,
+    catalogDescription: (_name, fallback) => fallback,
+  });
+
+  assert.ok(handler, "terminal_execute handler registered");
+  const result = await handler({ sessionId: "sess-1", command: "du /missing" });
+  assert.equal(result.isError, undefined);
+  const text = result.content?.[0]?.text || "";
+  assert.match(text, /cannot access '\/missing'/);
+  assert.match(text, /\[exit code: 1\]/);
+  assert.doesNotMatch(text, /Operation failed/);
+});
+
+test("terminal_execute MCP response keeps operational failures as isError", async () => {
+  let handler = null;
+  const fakeServer = {
+    tool(name, _description, _shape, candidate) {
+      if (name === "terminal_execute") handler = candidate;
+    },
+  };
+  registerMcpTools(fakeServer, {
+    rpcCall: async () => ({ ok: false, error: "Session not found" }),
+    scopeParams: { chatSessionId: "chat-1" },
+    guardWriteOperation: () => null,
+    catalogDescription: (_name, fallback) => fallback,
+  });
+
+  const result = await handler({ sessionId: "gone", command: "uptime" });
+  assert.equal(result.isError, true);
+  assert.equal(result.content?.[0]?.text, "Error: Session not found");
+});
+
+test("terminal_execute MCP response includes partial output on timeout", async () => {
+  let handler = null;
+  const fakeServer = {
+    tool(name, _description, _shape, candidate) {
+      if (name === "terminal_execute") handler = candidate;
+    },
+  };
+  registerMcpTools(fakeServer, {
+    rpcCall: async () => ({
+      ok: false,
+      stdout: "partial lines",
+      stderr: "",
+      exitCode: -1,
+      error: "Command timed out (60s)",
+    }),
+    scopeParams: { chatSessionId: "chat-1" },
+    guardWriteOperation: () => null,
+    catalogDescription: (_name, fallback) => fallback,
+  });
+
+  const result = await handler({ sessionId: "sess-1", command: "sleep 999" });
+  assert.equal(result.isError, true);
+  const text = result.content?.[0]?.text || "";
+  assert.match(text, /partial lines/);
+  assert.match(text, /\[exit code: -1\]/);
+  assert.match(text, /\[error\] Command timed out \(60s\)/);
+});
+
+test("terminal_execute MCP response uses neutral text for successful empty output (#2724)", async () => {
+  let handler = null;
+  const fakeServer = {
+    tool(name, _description, _shape, candidate) {
+      if (name === "terminal_execute") handler = candidate;
+    },
+  };
+  // Serial/network-device raw PTY success: ok true, empty streams, exitCode null.
+  registerMcpTools(fakeServer, {
+    rpcCall: async () => ({
+      ok: true,
+      stdout: "",
+      stderr: "",
+      exitCode: null,
+    }),
+    scopeParams: { chatSessionId: "chat-1" },
+    guardWriteOperation: () => null,
+    catalogDescription: (_name, fallback) => fallback,
+  });
+
+  const result = await handler({ sessionId: "sess-1", command: "configure terminal" });
+  assert.equal(result.isError, undefined);
+  assert.equal(result.content?.[0]?.text, "Command completed (no output)");
+  assert.doesNotMatch(result.content?.[0]?.text || "", /Operation failed/);
+});
+
+test("terminal_execute MCP response keeps exit-only non-zero without isError", async () => {
+  let handler = null;
+  const fakeServer = {
+    tool(name, _description, _shape, candidate) {
+      if (name === "terminal_execute") handler = candidate;
+    },
+  };
+  registerMcpTools(fakeServer, {
+    rpcCall: async () => ({
+      ok: false,
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+    }),
+    scopeParams: { chatSessionId: "chat-1" },
+    guardWriteOperation: () => null,
+    catalogDescription: (_name, fallback) => fallback,
+  });
+
+  const result = await handler({ sessionId: "sess-1", command: "false" });
+  assert.equal(result.isError, undefined);
+  assert.equal(result.content?.[0]?.text, "[exit code: 1]");
+  assert.doesNotMatch(result.content?.[0]?.text || "", /Operation failed/);
+});

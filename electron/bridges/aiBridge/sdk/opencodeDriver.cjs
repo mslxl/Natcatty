@@ -287,8 +287,26 @@ function translateOpenCodeEvent(event, emitter, state = {}) {
           emitter.toolResult(callId, part.state.output || "", toolName);
         }
       } else if (part.state?.status === "error") {
-        emitter.emitError(part.state.error || "OpenCode tool failed");
-        return { idle: false, error: true, content: false };
+        // Tool-level failures must not abort the whole OpenCode turn. Other
+        // drivers (Cursor / Codex / Grok) surface tool errors as tool results
+        // so the model can adapt and continue multi-step work (issue #2718).
+        state.toolCalls = state.toolCalls || new Set();
+        if (!state.toolCalls.has(callId)) {
+          state.toolCalls.add(callId);
+          emitter.toolCall(toolName, input, callId);
+        }
+        state.toolResults = state.toolResults || new Set();
+        if (!state.toolResults.has(callId)) {
+          state.toolResults.add(callId);
+          // Prefer non-empty error, then output, then a stable default (blank
+          // string error must not hide a useful output payload).
+          const rawError = part.state.error || part.state.output || "OpenCode tool failed";
+          const errorText = typeof rawError === "string"
+            ? rawError
+            : (extractOpenCodeErrorMessage(rawError) || "OpenCode tool failed");
+          emitter.toolResult(callId, errorText, toolName);
+        }
+        return { idle: false, error: false, content: true };
       }
     }
     return { idle: false, error: false, content: part.type === "tool" };
