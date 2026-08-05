@@ -128,11 +128,27 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
       };
     }, [appLock]);
 
+    // When re-locked after first mount, children stay mounted under the overlay.
+    // Mark them inert so pointer/keyboard/AT cannot reach underlying controls
+    // (sessions, editors, side panels) while the lock screen is up.
+    const lockedBackground = appLock.locked === true;
+
     return (
       <I18nProvider locale={settings.uiLanguage}>
         <ToastProvider>
           <TooltipProvider delayDuration={300}>
-            {renderChildren ? children({ settings, appLock }) : null}
+            {renderChildren ? (
+              <div
+                // React 19 supports the HTML inert attribute; when true, the
+                // subtree is non-interactive and removed from sequential focus.
+                inert={lockedBackground ? true : undefined}
+                aria-hidden={lockedBackground || undefined}
+                className={lockedBackground ? 'pointer-events-none' : undefined}
+                data-app-lock-background={lockedBackground ? 'locked' : 'unlocked'}
+              >
+                {children({ settings, appLock })}
+              </div>
+            ) : null}
             <AppLockOverlay
               locked={appLock.locked}
               reason={appLock.lockReason}

@@ -587,6 +587,8 @@ function createAppLockController({
   return {
     getSettings,
     getRuntimeState,
+    /** Subscribe to runtime lock/unlock transitions (used by tray deferral). */
+    subscribe: (listener) => runtimeBridge.subscribe(listener),
     requestEnable,
     requestDisable,
     requestReset,

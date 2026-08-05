@@ -124,12 +124,47 @@ function createElectronStub() {
   };
 }
 
-function createAppLockControllerStub() {
+function createAppLockControllerStub(initialState = { locked: false, reason: null }) {
+  const listeners = new Set();
+  const state = {
+    locked: initialState.locked === true,
+    reason: initialState.reason ?? null,
+  };
   return {
     setLockedCalls: [],
+    state,
     setLocked(reason) {
       this.setLockedCalls.push(reason);
-      return { locked: true, reason };
+      state.locked = true;
+      state.reason = reason;
+      for (const listener of listeners) {
+        try {
+          listener({ ...state });
+        } catch {
+          // ignore
+        }
+      }
+      return { ...state };
+    },
+    getRuntimeState() {
+      return { ...state };
+    },
+    unlock() {
+      state.locked = false;
+      state.reason = null;
+      for (const listener of listeners) {
+        try {
+          listener({ ...state });
+        } catch {
+          // ignore
+        }
+      }
+      return { ...state };
+    },
+    subscribe(listener) {
+      if (typeof listener !== "function") return () => {};
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
   };
 }
@@ -738,6 +773,57 @@ test("tray icon event registration is platform-dependent", async () => {
       ["netcatty:app-lock:reopen"],
       ["netcatty:tray:togglePortForward", "pf1", false],
     ]);
+    bridge.cleanup();
+  });
+
+  // Locked runtime defers the toggle until unlock, while still reopening the window.
+  await withPlatform("linux", async () => {
+    const bridge = loadBridge();
+    const appLockController = createAppLockControllerStub({ locked: true, reason: "background" });
+    const win = new FakeWindow();
+    win.minimized = true;
+    bridge.init({
+      electronModule: {
+        ...createElectronStub(),
+        BrowserWindow: {
+          getAllWindows() {
+            return [win];
+          },
+        },
+      },
+      getAppLockController: () => appLockController,
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
+    await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+      portForwardRules: [{
+        id: "pf1",
+        label: "ssh",
+        type: "local",
+        localPort: 8080,
+        remoteHost: "host",
+        remotePort: 80,
+        status: "active",
+      }],
+    });
+
+    const portForwardItem = bridge.getTray().contextMenu.template
+      .filter((item) => typeof item.click === "function")
+      .find((item) => String(item.label).includes("ssh"));
+    portForwardItem.click();
+
+    assert.deepEqual(win.sentMessages, [
+      ["netcatty:app-lock:reopen"],
+    ], "toggle must not fire while runtime is locked");
+    assert.equal(bridge.__getPendingPortForwardTogglesForTests().length, 1);
+
+    appLockController.unlock();
+    assert.deepEqual(win.sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:tray:togglePortForward", "pf1", false],
+    ], "queued toggle flushes after unlock");
+    assert.equal(bridge.__getPendingPortForwardTogglesForTests().length, 0);
     bridge.cleanup();
   });
 

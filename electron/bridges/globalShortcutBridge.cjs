@@ -33,6 +33,10 @@ let trayMenuData = {
 
 let trayPanelWindow = null;
 let appLockController = null;
+/** @type {null | (() => void)} */
+let unsubscribeAppLockRuntime = null;
+/** Queued tray port-forward toggles deferred while the runtime is locked. */
+let pendingPortForwardToggles = [];
 
 let trayPanelRefreshTimer = null;
 // Watchdog: if `leave-full-screen` never arrives (edge case / stuck transition)
@@ -60,6 +64,72 @@ function lockAppForBackground() {
     appLockController?.setLocked?.("background");
   } catch {
     // ignore
+  }
+}
+
+function isAppRuntimeLocked() {
+  try {
+    return appLockController?.getRuntimeState?.()?.locked === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Deliver a tray port-forward toggle, or queue it until the runtime unlocks.
+ * Showing the window + reopen still happens at the click site so the user can
+ * authenticate; tunnel start/stop must wait for unlock.
+ */
+function sendOrQueuePortForwardToggle(win, ruleId, start) {
+  if (!win) return;
+  if (isAppRuntimeLocked()) {
+    pendingPortForwardToggles = pendingPortForwardToggles.filter(
+      (item) => item.ruleId !== ruleId,
+    );
+    pendingPortForwardToggles.push({ win, ruleId, start: Boolean(start) });
+    return;
+  }
+  try {
+    win.webContents?.send?.("netcatty:tray:togglePortForward", ruleId, Boolean(start));
+  } catch {
+    // ignore
+  }
+}
+
+function flushPendingPortForwardToggles() {
+  if (isAppRuntimeLocked()) return;
+  const pending = pendingPortForwardToggles.splice(0);
+  for (const item of pending) {
+    try {
+      const win = item.win;
+      if (!win || win.isDestroyed?.()) continue;
+      win.webContents?.send?.("netcatty:tray:togglePortForward", item.ruleId, item.start);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function bindAppLockRuntimeSubscription() {
+  if (typeof unsubscribeAppLockRuntime === "function") {
+    try {
+      unsubscribeAppLockRuntime();
+    } catch {
+      // ignore
+    }
+    unsubscribeAppLockRuntime = null;
+  }
+  if (!appLockController || typeof appLockController.subscribe !== "function") {
+    return;
+  }
+  try {
+    unsubscribeAppLockRuntime = appLockController.subscribe((state) => {
+      if (state?.locked === false) {
+        flushPendingPortForwardToggles();
+      }
+    });
+  } catch {
+    unsubscribeAppLockRuntime = null;
   }
 }
 
@@ -358,6 +428,7 @@ function resolveTrayIconPath() {
 function init(deps) {
   electronModule = deps.electronModule;
   appLockController = deps.getAppLockController?.() ?? null;
+  bindAppLockRuntimeSubscription();
 }
 
 /**
@@ -734,7 +805,10 @@ function buildTrayMenuTemplate() {
             win.show();
             win.focus();
             notifyAppLockReopen(win);
-            win.webContents?.send("netcatty:tray:togglePortForward", rule.id, !isActive);
+            // Defer tunnel start/stop until unlock when the runtime is locked
+            // (e.g. background lock after hide-to-tray). Still surface the
+            // window so the user can authenticate.
+            sendOrQueuePortForwardToggle(win, rule.id, !isActive);
           }
         },
       });
@@ -936,6 +1010,15 @@ function registerHandlers(ipcMain) {
 function cleanup() {
   unregisterGlobalHotkey();
   destroyTray();
+  pendingPortForwardToggles = [];
+  if (typeof unsubscribeAppLockRuntime === "function") {
+    try {
+      unsubscribeAppLockRuntime();
+    } catch {
+      // ignore
+    }
+    unsubscribeAppLockRuntime = null;
+  }
 
   if (trayPanelRefreshTimer) {
     clearInterval(trayPanelRefreshTimer);
@@ -960,4 +1043,8 @@ module.exports = {
   cleanup,
   getTray: () => tray,
   getTrayPanelWindow: () => trayPanelWindow,
+  // Test helpers
+  __flushPendingPortForwardTogglesForTests: flushPendingPortForwardToggles,
+  __isAppRuntimeLockedForTests: isAppRuntimeLocked,
+  __getPendingPortForwardTogglesForTests: () => pendingPortForwardToggles.slice(),
 };

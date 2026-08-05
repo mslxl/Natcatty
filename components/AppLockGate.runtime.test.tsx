@@ -537,14 +537,16 @@ test("hidden app lock reset stays locked when reset bridge is unavailable", asyn
 test("mounted locked gate uses the latest unlock password without remounting", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
+  // Start unlocked so children mount once, then re-lock under the overlay
+  // (first-paint locks withhold children entirely).
   const bridgeHarness = createAppLockBridgeHarness({
     runtimeState: {
       initialized: true,
-      locked: true,
-      reason: "manual",
+      locked: false,
+      reason: null,
       version: 1,
-      lastLockedAt: 1_000,
-      lastUnlockedAt: null,
+      lastLockedAt: null,
+      lastUnlockedAt: 1_000,
       lastActivityAt: 1_000,
     },
     unlockPassword: "alpha",
@@ -580,6 +582,17 @@ test("mounted locked gate uses the latest unlock password without remounting", a
     );
     await flushEffects();
 
+    assert.equal(dom.document.getElementById("latest-password-content")?.textContent, "Unlocked");
+
+    await runWithAct(async () => {
+      bridgeHarness.setRuntimeState({
+        locked: true,
+        reason: "manual",
+        lastLockedAt: 2_000,
+      });
+    });
+    await flushEffects();
+
     bridgeHarness.setUnlockPassword("bravo");
 
     const form = dom.document.querySelector("form");
@@ -598,6 +611,7 @@ test("mounted locked gate uses the latest unlock password without remounting", a
     await flushEffects();
 
     assert.equal(dom.document.querySelectorAll('[role="dialog"]').length, 1);
+    // Children stay mounted under the overlay while re-locked.
     assert.equal(dom.document.getElementById("latest-password-content")?.textContent, "Unlocked");
 
     setInputValue.call(input, "bravo");
@@ -616,17 +630,98 @@ test("mounted locked gate uses the latest unlock password without remounting", a
   }
 });
 
-test("runtime unlock and relock broadcasts update multiple mounted gates together", async () => {
+test("relocked gate marks mounted background content inert", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);
   const bridgeHarness = createAppLockBridgeHarness({
     runtimeState: {
       initialized: true,
-      locked: true,
-      reason: "manual",
+      locked: false,
+      reason: null,
       version: 1,
-      lastLockedAt: 1_000,
-      lastUnlockedAt: null,
+      lastLockedAt: null,
+      lastUnlockedAt: 1_000,
+      lastActivityAt: 1_000,
+    },
+  });
+  const AppLockGate = createAppLockGate({
+    useSettingsState: () => ({
+      uiLanguage: "en",
+      appLockSettings: {
+        enabled: true,
+        timeoutMinutes: 15,
+        passwordVerifier: {
+          version: 1,
+          algorithm: "PBKDF2-SHA256",
+          iterations: 210000,
+          salt: "AAAAAAAAAAAAAAAAAAAAAA==",
+          hash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        },
+      },
+    }) as ReturnType<typeof import("../application/state/useSettingsState.ts").useSettingsState>,
+    useAppLockState,
+    useAppLockBridge,
+  });
+
+  const previousWindowNetcatty = dom.window.netcatty;
+  dom.window.netcatty = bridgeHarness.bridge;
+
+  try {
+    await renderer.render(
+      React.createElement(AppLockGate, {
+        notifyRendererReady: false,
+        children: () => React.createElement("div", { id: "background-app" },
+          React.createElement("button", { id: "bg-action", type: "button" }, "Do work"),
+        ),
+      }),
+    );
+    await flushEffects();
+
+    const unlockedBackground = dom.document.querySelector("[data-app-lock-background]");
+    assert.ok(unlockedBackground);
+    assert.equal(unlockedBackground.getAttribute("data-app-lock-background"), "unlocked");
+    assert.equal(unlockedBackground.hasAttribute("inert"), false);
+    assert.equal(unlockedBackground.getAttribute("aria-hidden"), null);
+
+    await runWithAct(async () => {
+      bridgeHarness.setRuntimeState({
+        locked: true,
+        reason: "idle",
+        lastLockedAt: 2_000,
+      });
+    });
+    await flushEffects();
+
+    const lockedBackground = dom.document.querySelector("[data-app-lock-background]");
+    assert.ok(lockedBackground);
+    assert.equal(lockedBackground.getAttribute("data-app-lock-background"), "locked");
+    assert.equal(lockedBackground.hasAttribute("inert"), true);
+    assert.equal(lockedBackground.getAttribute("aria-hidden"), "true");
+    assert.ok(
+      String(lockedBackground.className || "").includes("pointer-events-none"),
+      "locked background should block pointer events",
+    );
+    assert.equal(dom.document.getElementById("background-app")?.textContent?.includes("Do work"), true);
+    assert.equal(dom.document.querySelectorAll('[role="dialog"]').length, 1);
+  } finally {
+    dom.window.netcatty = previousWindowNetcatty;
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("runtime unlock and relock broadcasts update multiple mounted gates together", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  // Mount while unlocked so children exist, then lock/unlock both gates together.
+  const bridgeHarness = createAppLockBridgeHarness({
+    runtimeState: {
+      initialized: true,
+      locked: false,
+      reason: null,
+      version: 1,
+      lastLockedAt: null,
+      lastUnlockedAt: 1_000,
       lastActivityAt: 1_000,
     },
   });
@@ -669,14 +764,27 @@ test("runtime unlock and relock broadcasts update multiple mounted gates togethe
 
     assert.equal(dom.document.getElementById("gate-a")?.textContent, "Gate A");
     assert.equal(dom.document.getElementById("gate-b")?.textContent, "Gate B");
+    assert.equal(dom.document.querySelector('[role="dialog"]'), null);
+
+    await runWithAct(async () => {
+      bridgeHarness.setRuntimeState({
+        locked: true,
+        reason: "manual",
+        lastLockedAt: 2_000,
+      });
+    });
+    await flushEffects();
+
+    assert.equal(dom.document.getElementById("gate-a")?.textContent, "Gate A");
+    assert.equal(dom.document.getElementById("gate-b")?.textContent, "Gate B");
     assert.equal(dom.document.querySelectorAll('[role="dialog"]').length, 2);
 
     await runWithAct(async () => {
       bridgeHarness.setRuntimeState({
         locked: false,
         reason: null,
-        lastUnlockedAt: 2_000,
-        lastActivityAt: 2_000,
+        lastUnlockedAt: 3_000,
+        lastActivityAt: 3_000,
       });
     });
     await flushEffects();
@@ -687,7 +795,7 @@ test("runtime unlock and relock broadcasts update multiple mounted gates togethe
       bridgeHarness.setRuntimeState({
         locked: true,
         reason: "manual",
-        lastLockedAt: 3_000,
+        lastLockedAt: 4_000,
       });
     });
     await flushEffects();

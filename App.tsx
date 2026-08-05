@@ -563,6 +563,20 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
 
   useAppStartupEffects({ dismissUpdate, enabled: !isPeerSessionWindow, groupConfigs, hosts, identities, installUpdate, isVaultInitialized, keys, knownHosts: effectiveKnownHosts, openSettingsWindow, portForwardingRules, proxyProfiles, sessions, setKeyboardInteractiveQueue, t, terminalSettings, updateState, workspaces });
 
+  const pendingTrayPortForwardsWhileLockedRef = useRef<Array<{ ruleId: string; start: boolean }>>([]);
+
+  const _handleTrayTogglePortForwardMaybeDeferred = useEffectEvent((ruleId: string, start: boolean) => {
+    // Saved-credential tunnels must not start/stop behind the lock overlay.
+    if (shouldDeferExternalActionWhileAppLocked({ locked: appLock.locked })) {
+      const pending = pendingTrayPortForwardsWhileLockedRef.current;
+      const existing = pending.findIndex((item) => item.ruleId === ruleId);
+      if (existing >= 0) pending.splice(existing, 1);
+      pending.push({ ruleId, start });
+      return;
+    }
+    _handleTrayTogglePortForward(ruleId, start);
+  });
+
   useEffect(() => {
     if (isPeerSessionWindow) return;
     const bridge = netcattyBridge.get();
@@ -572,7 +586,7 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
       _handleTrayJumpToSession(sessionId);
     });
     const unsubscribeToggle = bridge.onTrayTogglePortForward((ruleId, start) => {
-      _handleTrayTogglePortForward(ruleId, start);
+      _handleTrayTogglePortForwardMaybeDeferred(ruleId, start);
     });
 
     return () => {
@@ -580,6 +594,14 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
       unsubscribeToggle?.();
     };
   }, [isPeerSessionWindow]);
+
+  useEffect(() => {
+    if (shouldDeferExternalActionWhileAppLocked({ locked: appLock.locked })) return;
+    const pending = pendingTrayPortForwardsWhileLockedRef.current.splice(0);
+    for (const item of pending) {
+      _handleTrayTogglePortForward(item.ruleId, item.start);
+    }
+  }, [appLock.locked]);
 
   useEffect(() => {
     if (isPeerSessionWindow) return;
@@ -856,9 +878,10 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
     executeHotkeyAction(action, e);
   }, [executeHotkeyAction]);
 
-  // Global hotkey handler
+  // Global hotkey handler — suppress while the app lock overlay is up so
+  // capture-phase shortcuts cannot mutate sessions behind the lock screen.
   useEffect(() => {
-    if (hotkeyScheme === 'disabled' || isHotkeyRecording) return;
+    if (hotkeyScheme === 'disabled' || isHotkeyRecording || appLock.locked) return;
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       _handleGlobalHotkeyKeyDown(e);
@@ -866,15 +889,16 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
 
     window.addEventListener('keydown', handleGlobalKeyDown, true);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown, true);
-  }, [hotkeyScheme, isHotkeyRecording]);
+  }, [hotkeyScheme, isHotkeyRecording, appLock.locked]);
 
   useEffect(() => {
+    if (appLock.locked) return;
     const onKeyDown = (e: KeyboardEvent) => {
       _handleEscapeKeyDown(e);
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [appLock.locked]);
 
   const quickResults = useMemo(() => {
     if (!isQuickSwitcherOpen) return [];

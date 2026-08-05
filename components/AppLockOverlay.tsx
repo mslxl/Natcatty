@@ -93,6 +93,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     };
   }, []);
 
+  const overlayRootRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!locked) {
       setPassword('');
@@ -110,6 +112,41 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     }
     const timeout = window.setTimeout(() => passwordRef.current?.focus(), 0);
     return () => window.clearTimeout(timeout);
+  }, [locked]);
+
+  // Soft focus trap: if Tab would leave the dialog, cycle within it. Background
+  // content is also `inert` from AppLockGate (removed from sequential focus),
+  // so this mainly covers residual focusable chrome outside that wrapper.
+  useEffect(() => {
+    if (!locked) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const root = overlayRootRef.current;
+      if (!root) return;
+      const focusable = root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), [href], select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (!active || !root.contains(active)) {
+        event.preventDefault();
+        first.focus();
+        return;
+      }
+      if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
   }, [locked]);
 
   const handleSystemUnlock = useCallback(async () => {
@@ -203,6 +240,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
 
   return (
     <div
+      ref={overlayRootRef}
       className="fixed inset-0 z-[200000] flex items-center justify-center bg-background px-6 text-foreground"
       role="dialog"
       aria-modal="true"
