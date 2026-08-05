@@ -181,11 +181,12 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
           ? stored as { kind: 'secret'; id: string; key: string }
           : undefined;
       if (credentialPlan.secrets.length > 0) {
-        const { putPluginSyncSecret, deletePluginSyncSecrets } = await import(
+        const { putPluginSyncSecret, deletePluginSyncSecrets, restorePluginSyncSecrets } = await import(
           '../../infrastructure/services/adapters/pluginSyncIpcHost'
         );
         // Put secrets before connect; roll back just-created keys if connect fails
         // so a rejected password/token is not left readable in plugin_secrets.
+        // Overwrites restore the previous plaintext from the host stash.
         await storePluginSyncSecretsThenConnect({
           providerId,
           secrets: credentialPlan.secrets.map((secret) => ({
@@ -194,6 +195,7 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
           })),
           putSecret: putPluginSyncSecret,
           deleteSecrets: deletePluginSyncSecrets,
+          restoreSecrets: restorePluginSyncSecrets,
           connect: async (credential) => {
             await sync.connectPluginProvider(
               providerId,

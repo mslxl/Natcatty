@@ -1548,5 +1548,54 @@ test("sync read/write shuttle Uint8Array inline and stream large writes", async 
     key: "sync-credential",
     value: "pw",
   });
-  assert.deepEqual(secret, { kind: "secret", id: "sec-1", key: "sync-credential", pluginId: "com.example", value: "pw" });
+  assert.deepEqual(secret, {
+    kind: "secret",
+    id: "sec-1",
+    key: "sync-credential",
+    pluginId: "com.example",
+    value: "pw",
+    created: true,
+  });
+});
+
+test("syncDeleteSecrets uses retained provider binding when contribution is missing", async () => {
+  const deleted = [];
+  const unbound = [];
+  const ipcMain = createIpcMain();
+  registerPluginBridge(ipcMain, {
+    manager: { async initialize() {} },
+    extensionProviderService: {
+      listProviders() {
+        return [];
+      },
+    },
+    secretStore: {
+      set() {
+        throw new Error("set should not run");
+      },
+      delete(pluginId, key) {
+        deleted.push([pluginId, key]);
+      },
+      deleteByKeyPrefix(pluginId, prefix) {
+        deleted.push([pluginId, `prefix:${prefix}`]);
+        return 2;
+      },
+      resolveSyncProviderPlugin(providerId) {
+        assert.equal(providerId, "com.example.sync");
+        return "com.example";
+      },
+      unbindSyncProviderPlugin(pluginId, providerId) {
+        unbound.push([pluginId, providerId]);
+      },
+    },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 99, once() {}, isDestroyed: () => false } };
+  const result = await ipcMain.handlers.get(CHANNELS.syncDeleteSecrets)(event, {
+    providerId: "com.example.sync",
+  });
+  assert.deepEqual(result, { deleted: 2 });
+  assert.deepEqual(deleted, [["com.example", "prefix:sync-credential"]]);
+  assert.deepEqual(unbound, [["com.example", "com.example.sync"]]);
 });

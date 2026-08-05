@@ -819,7 +819,7 @@ test("buildLocalVaultPayload includes last-known plugin sidecars for protective 
   }
 });
 
-test("buildLocalVaultPayloadAsync keeps last-known when live collect is empty", async () => {
+test("buildLocalVaultPayloadAsync prefers live empty over last-known for backups", async () => {
   const previousWindow = (globalThis as { window?: unknown }).window;
   Object.defineProperty(globalThis, "window", {
     value: {
@@ -847,8 +847,7 @@ test("buildLocalVaultPayloadAsync keeps last-known when live collect is empty", 
   try {
     const { buildLocalVaultPayloadAsync } = await import("./syncPayload.ts");
     const payload = await buildLocalVaultPayloadAsync(vault([]));
-    assert.equal(payload.pluginSidecars?.entries?.length, 1);
-    assert.equal(payload.pluginSidecars?.entries?.[0].value, "dark");
+    assert.equal(payload.pluginSidecars?.entries?.length, 0);
   } finally {
     localStorage.removeItem("netcatty_plugin_sidecars_last_known_v1");
     Object.defineProperty(globalThis, "window", {

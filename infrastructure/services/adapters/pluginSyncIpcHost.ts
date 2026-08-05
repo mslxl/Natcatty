@@ -103,11 +103,16 @@ type ElectronPluginSyncApi = {
     providerId: string;
     key: string;
     value: string;
-  }) => Promise<{ kind: 'secret'; id: string; key: string }>;
+  }) => Promise<{ kind: 'secret'; id: string; key: string; created?: boolean }>;
   pluginSyncDeleteSecrets?: (params: {
     providerId: string;
     keys?: string[];
   }) => Promise<{ deleted: number }>;
+  pluginSyncRestoreSecrets?: (params: {
+    providerId: string;
+    keys: string[];
+    discard?: boolean;
+  }) => Promise<{ restored: number; discarded?: number }>;
 };
 
 function getPluginSyncApi(): ElectronPluginSyncApi | null {
@@ -387,7 +392,7 @@ export async function putPluginSyncSecret(params: {
   providerId: string;
   key?: string;
   value: string;
-}): Promise<{ kind: 'secret'; id: string; key: string }> {
+}): Promise<{ kind: 'secret'; id: string; key: string; created?: boolean }> {
   const api = getPluginSyncApi();
   if (typeof api?.pluginSyncPutSecret !== 'function') {
     throw new Error('Plugin sync secret storage is unavailable');
@@ -411,5 +416,22 @@ export async function deletePluginSyncSecrets(params: {
   return api.pluginSyncDeleteSecrets({
     providerId: params.providerId,
     ...(params.keys ? { keys: [...params.keys] } : {}),
+  });
+}
+
+/** Restore host-stashed plaintext after a rejected overwrite during reconnect. */
+export async function restorePluginSyncSecrets(params: {
+  providerId: string;
+  keys: string[];
+  discard?: boolean;
+}): Promise<{ restored: number; discarded?: number }> {
+  const api = getPluginSyncApi();
+  if (typeof api?.pluginSyncRestoreSecrets !== 'function') {
+    return { restored: 0, discarded: 0 };
+  }
+  return api.pluginSyncRestoreSecrets({
+    providerId: params.providerId,
+    keys: [...params.keys],
+    ...(params.discard === true ? { discard: true } : {}),
   });
 }

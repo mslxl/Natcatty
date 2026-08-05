@@ -31,10 +31,17 @@ function assertSecretRef(secret) {
 }
 
 class PluginSecretStore {
+  /** @type {Map<string, { value: string, secretRef: string }>} */
+  #overwriteStash = new Map();
+
   constructor(options) {
     this.database = options.database;
     this.safeStorage = options.safeStorage ?? null;
     this.randomBytes = options.randomBytes ?? randomBytes;
+  }
+
+  #stashKey(pluginId, key) {
+    return `${pluginId}\0${key}`;
   }
 
   #assertAvailable() {
@@ -67,33 +74,146 @@ class PluginSecretStore {
     return record;
   }
 
-  set(pluginId, key, value) {
+  set(pluginId, key, value, options = {}) {
     this.#assertAvailable();
     assertSecretKey(key);
     if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_SECRET_BYTES) {
       throw new PluginRpcError(RPC_ERRORS.invalidArgument, "Plugin secret value is invalid or too large");
     }
-    const secretRef = this.randomBytes(24).toString("base64url");
-    const ciphertext = this.safeStorage.encryptString(value);
+    const stashPrevious = options.stashPrevious === true;
+    const stashKey = this.#stashKey(pluginId, key);
+    let stashed = false;
+    if (stashPrevious && !this.#overwriteStash.has(stashKey)) {
+      // Keep an existing stash (e.g. after a failed restore) so a later retry
+      // still recovers the original SecretRef, not a rejected replacement.
+      const existing = this.getReference(pluginId, key);
+      if (existing) {
+        try {
+          this.#overwriteStash.set(stashKey, {
+            value: this.resolve(pluginId, existing),
+            // Keep the prior SecretRef id so saved provider connections still resolve.
+            secretRef: existing.id,
+          });
+          stashed = true;
+        } catch {
+          /* keep going; restore may be unavailable for this key */
+        }
+      }
+    }
+    try {
+      const secretRef = this.randomBytes(24).toString("base64url");
+      const ciphertext = this.safeStorage.encryptString(value);
+      if (!Buffer.isBuffer(ciphertext) || ciphertext.byteLength < 1) {
+        throw new PluginRpcError(RPC_ERRORS.unavailable, "OS-backed plugin secret encryption failed");
+      }
+      this.database.upsertSecret({ pluginId, key, secretRef, ciphertext });
+      return Object.freeze({ kind: "secret", id: secretRef, key });
+    } catch (error) {
+      // Failed replacement must not leave prior plaintext stranded in memory.
+      if (stashed) this.#overwriteStash.delete(stashKey);
+      throw error;
+    }
+  }
+
+  /**
+   * Restore the plaintext (and SecretRef id) stashed by the last overwrite.
+   * Returns true when a stashed value was written back.
+   */
+  restoreOverwrite(pluginId, key) {
+    this.#assertAvailable();
+    assertSecretKey(key);
+    const stashKey = this.#stashKey(pluginId, key);
+    const previous = this.#overwriteStash.get(stashKey);
+    if (!previous || typeof previous.value !== "string" || typeof previous.secretRef !== "string") {
+      return false;
+    }
+    const ciphertext = this.safeStorage.encryptString(previous.value);
     if (!Buffer.isBuffer(ciphertext) || ciphertext.byteLength < 1) {
       throw new PluginRpcError(RPC_ERRORS.unavailable, "OS-backed plugin secret encryption failed");
     }
-    this.database.upsertSecret({ pluginId, key, secretRef, ciphertext });
-    return Object.freeze({ kind: "secret", id: secretRef, key });
+    this.database.upsertSecret({
+      pluginId,
+      key,
+      secretRef: previous.secretRef,
+      ciphertext,
+    });
+    // Drop the stash only after the prior value is durably written so a failed
+    // encrypt/upsert can still be retried.
+    this.#overwriteStash.delete(stashKey);
+    return true;
+  }
+
+  clearOverwriteStash(pluginId, key) {
+    assertSecretKey(key);
+    this.#overwriteStash.delete(this.#stashKey(pluginId, key));
   }
 
   delete(pluginId, key) {
     assertSecretKey(key);
+    this.#overwriteStash.delete(this.#stashKey(pluginId, key));
     this.database.deleteSecret(pluginId, key);
   }
 
   deleteByKeyPrefix(pluginId, prefix) {
     assertSecretKey(prefix);
+    let deleted = 0;
     if (typeof this.database.deleteSecretsByKeyPrefix !== "function") {
       this.delete(pluginId, prefix);
-      return 1;
+      deleted = 1;
+    } else {
+      deleted = this.database.deleteSecretsByKeyPrefix(pluginId, prefix);
     }
-    return this.database.deleteSecretsByKeyPrefix(pluginId, prefix);
+    const pluginPrefix = `${pluginId}\0`;
+    for (const stashKey of [...this.#overwriteStash.keys()]) {
+      if (!stashKey.startsWith(pluginPrefix)) continue;
+      const secretKey = stashKey.slice(pluginPrefix.length);
+      if (secretKey === prefix || secretKey.startsWith(`${prefix}:`)) {
+        this.#overwriteStash.delete(stashKey);
+      }
+    }
+    return deleted;
+  }
+
+  /**
+   * Durable providerId → pluginId binding so disconnect can wipe sync secrets
+   * after the contribution disappears (disabled/uninstalled plugin).
+   * Stored in a host-owned table, not plugin-writable secrets.
+   */
+  bindSyncProviderPlugin(pluginId, providerId) {
+    if (typeof pluginId !== "string" || pluginId.length < 1) {
+      throw new TypeError("Plugin id is invalid");
+    }
+    assertSecretKey(providerId);
+    if (
+      providerId !== pluginId
+      && !providerId.startsWith(`${pluginId}.`)
+    ) {
+      throw new TypeError("Sync provider id is outside the plugin namespace");
+    }
+    if (typeof this.database.upsertSyncProviderBinding !== "function") {
+      throw new Error("Plugin sync provider binding storage is unavailable");
+    }
+    this.database.upsertSyncProviderBinding(providerId, pluginId);
+  }
+
+  resolveSyncProviderPlugin(providerId) {
+    assertSecretKey(providerId);
+    if (typeof this.database.getSyncProviderBinding !== "function") return undefined;
+    const row = this.database.getSyncProviderBinding(providerId);
+    const pluginId = row?.pluginId;
+    if (typeof pluginId !== "string" || pluginId.length < 1) return undefined;
+    if (providerId !== pluginId && !providerId.startsWith(`${pluginId}.`)) {
+      return undefined;
+    }
+    return pluginId;
+  }
+
+  unbindSyncProviderPlugin(pluginId, providerId) {
+    assertSecretKey(providerId);
+    if (typeof this.database.deleteSyncProviderBinding !== "function") return;
+    const existing = this.database.getSyncProviderBinding(providerId);
+    if (existing && existing.pluginId !== pluginId) return;
+    this.database.deleteSyncProviderBinding(providerId);
   }
 
   resolve(pluginId, secret) {

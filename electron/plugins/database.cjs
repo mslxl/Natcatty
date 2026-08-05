@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const MAX_SECURITY_AUDIT_DETAILS_BYTES = 16 * 1024;
 const MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN = 1_000;
 const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
@@ -21,6 +21,8 @@ const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
   plugin_security_audit: ["id", "plugin_id", "event", "details_json", "created_at"],
   // User-owned encrypted-sync sidecars: no FK cascade on package uninstall.
   plugin_sync_sidecars: ["plugin_id", "kind", "key", "value_json", "updated_at"],
+  // Host-owned sync provider→plugin bindings (not plugin-writable secrets).
+  plugin_sync_provider_bindings: ["provider_id", "plugin_id", "created_at", "updated_at"],
 });
 
 function parseJson(text, label) {
@@ -164,12 +166,18 @@ class PluginDatabase {
           );
           CREATE INDEX plugin_sync_sidecars_lookup
             ON plugin_sync_sidecars(plugin_id, kind, key);
-          PRAGMA user_version = 2;
+          CREATE TABLE plugin_sync_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            plugin_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          PRAGMA user_version = 3;
         `);
       });
     } else if (version === 1) {
       // Pre-sidecar schema-1 databases only created the original tables.
-      // Migrate in place to schema 2 with the non-cascade sidecar table.
+      // Migrate in place to schema 3 with sidecar + provider binding tables.
       this.transaction(() => {
         this.db.exec(`
           CREATE TABLE IF NOT EXISTS plugin_sync_sidecars (
@@ -182,7 +190,25 @@ class PluginDatabase {
           );
           CREATE INDEX IF NOT EXISTS plugin_sync_sidecars_lookup
             ON plugin_sync_sidecars(plugin_id, kind, key);
-          PRAGMA user_version = 2;
+          CREATE TABLE IF NOT EXISTS plugin_sync_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            plugin_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          PRAGMA user_version = 3;
+        `);
+      });
+    } else if (version === 2) {
+      this.transaction(() => {
+        this.db.exec(`
+          CREATE TABLE IF NOT EXISTS plugin_sync_provider_bindings (
+            provider_id TEXT PRIMARY KEY,
+            plugin_id TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+          );
+          PRAGMA user_version = 3;
         `);
       });
     }
@@ -756,6 +782,46 @@ class PluginDatabase {
       prefix,
       `${String(prefix).replace(/[%_\\]/g, (ch) => `\\${ch}`)}:%`,
     );
+    return Number(result?.changes) || 0;
+  }
+
+  /** Find secret rows by exact key across all plugins (sync provider cleanup). */
+  findSecretsByKey(key) {
+    return this.db.prepare(`
+      SELECT plugin_id, key, secret_ref, ciphertext, created_at, updated_at
+      FROM plugin_secrets WHERE key = ?
+    `).all(key).map((row) => this.#mapSecret(row));
+  }
+
+  upsertSyncProviderBinding(providerId, pluginId) {
+    const now = this.clock();
+    this.db.prepare(`
+      INSERT INTO plugin_sync_provider_bindings(provider_id, plugin_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(provider_id) DO UPDATE SET
+        plugin_id = excluded.plugin_id,
+        updated_at = excluded.updated_at
+    `).run(providerId, pluginId, now, now);
+  }
+
+  getSyncProviderBinding(providerId) {
+    const row = this.db.prepare(`
+      SELECT provider_id, plugin_id, created_at, updated_at
+      FROM plugin_sync_provider_bindings WHERE provider_id = ?
+    `).get(providerId);
+    if (!row) return null;
+    return {
+      providerId: row.provider_id,
+      pluginId: row.plugin_id,
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at),
+    };
+  }
+
+  deleteSyncProviderBinding(providerId) {
+    const result = this.db.prepare(`
+      DELETE FROM plugin_sync_provider_bindings WHERE provider_id = ?
+    `).run(providerId);
     return Number(result?.changes) || 0;
   }
 

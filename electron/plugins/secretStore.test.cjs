@@ -301,3 +301,145 @@ test("credential lease resolution cannot return plaintext after operation cancel
   leaseStore.shutdown();
   database.close();
 });
+
+test("overwrite stash restores previous plaintext and discard clears it", (context) => {
+  const database = createDatabase(context);
+  let random = 0;
+  const store = new PluginSecretStore({
+    database,
+    safeStorage: fakeSafeStorage(),
+    randomBytes: () => Buffer.alloc(24, ++random),
+  });
+  const first = store.set("com.example.one", "sync-credential", "good-password");
+  assert.equal(store.resolve("com.example.one", first), "good-password");
+  const second = store.set("com.example.one", "sync-credential", "bad-password", { stashPrevious: true });
+  assert.equal(store.resolve("com.example.one", second), "bad-password");
+  assert.equal(store.restoreOverwrite("com.example.one", "sync-credential"), true);
+  const restored = store.getReference("com.example.one", "sync-credential");
+  assert.equal(restored.id, first.id, "restore must keep the prior SecretRef id");
+  assert.equal(store.resolve("com.example.one", first), "good-password");
+  assert.equal(store.restoreOverwrite("com.example.one", "sync-credential"), false);
+
+  store.set("com.example.one", "sync-credential", "another-bad", { stashPrevious: true });
+  store.clearOverwriteStash("com.example.one", "sync-credential");
+  assert.equal(store.restoreOverwrite("com.example.one", "sync-credential"), false);
+  assert.equal(
+    store.resolve("com.example.one", store.getReference("com.example.one", "sync-credential")),
+    "another-bad",
+  );
+  // Ordinary secrets.set-style overwrites must not stash plaintext by default.
+  store.set("com.example.one", "api-key", "one");
+  store.set("com.example.one", "api-key", "two");
+  assert.equal(store.restoreOverwrite("com.example.one", "api-key"), false);
+  database.close();
+});
+
+test("failed overwrite clears stashed plaintext", (context) => {
+  const database = createDatabase(context);
+  let failEncrypt = false;
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => {
+      if (failEncrypt) return Buffer.alloc(0);
+      return Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`);
+    },
+    decryptString: (value) => {
+      const encoded = value.toString().slice("sealed:".length);
+      return Buffer.from(encoded, "base64").toString();
+    },
+  };
+  const store = new PluginSecretStore({ database, safeStorage });
+  store.set("com.example", "sync-credential", "good-password");
+  failEncrypt = true;
+  assert.throws(
+    () => store.set("com.example", "sync-credential", "bad-password", { stashPrevious: true }),
+    (error) => error.code === RPC_ERRORS.unavailable,
+  );
+  assert.equal(store.restoreOverwrite("com.example", "sync-credential"), false);
+  failEncrypt = false;
+  const ref = store.getReference("com.example", "sync-credential");
+  assert.equal(store.resolve("com.example", ref), "good-password");
+  database.close();
+});
+
+test("sync provider bindings live outside plugin secrets and reject namespace mismatches", (context) => {
+  const database = createDatabase(context);
+  const store = new PluginSecretStore({
+    database,
+    safeStorage: fakeSafeStorage(),
+  });
+  store.bindSyncProviderPlugin("com.example", "com.example.sync");
+  assert.equal(store.resolveSyncProviderPlugin("com.example.sync"), "com.example");
+  assert.throws(
+    () => store.bindSyncProviderPlugin("com.example", "com.other.sync"),
+    /outside the plugin namespace/,
+  );
+  store.set("com.attacker", "sync-provider-map:com.example.sync", "com.attacker");
+  assert.equal(store.resolveSyncProviderPlugin("com.example.sync"), "com.example");
+  store.unbindSyncProviderPlugin("com.example", "com.example.sync");
+  assert.equal(store.resolveSyncProviderPlugin("com.example.sync"), undefined);
+  database.close();
+});
+
+test("failed restoreOverwrite keeps stash for retry", (context) => {
+  const database = createDatabase(context);
+  let failEncrypt = false;
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => {
+      if (failEncrypt) return Buffer.alloc(0);
+      return Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`);
+    },
+    decryptString: (value) => {
+      const encoded = value.toString().slice("sealed:".length);
+      return Buffer.from(encoded, "base64").toString();
+    },
+  };
+  const store = new PluginSecretStore({ database, safeStorage });
+  const first = store.set("com.example", "sync-credential", "good-password");
+  store.set("com.example", "sync-credential", "bad-password", { stashPrevious: true });
+  failEncrypt = true;
+  assert.throws(
+    () => store.restoreOverwrite("com.example", "sync-credential"),
+    (error) => error.code === RPC_ERRORS.unavailable,
+  );
+  failEncrypt = false;
+  assert.equal(store.restoreOverwrite("com.example", "sync-credential"), true);
+  assert.equal(store.resolve("com.example", first), "good-password");
+  database.close();
+});
+
+test("existing overwrite stash is preserved across retry puts and cleared by prefix delete", (context) => {
+  const database = createDatabase(context);
+  let failEncrypt = false;
+  const safeStorage = {
+    isEncryptionAvailable: () => true,
+    encryptString: (value) => {
+      if (failEncrypt) return Buffer.alloc(0);
+      return Buffer.from(`sealed:${Buffer.from(value).toString("base64")}`);
+    },
+    decryptString: (value) => {
+      const encoded = value.toString().slice("sealed:".length);
+      return Buffer.from(encoded, "base64").toString();
+    },
+  };
+  const store = new PluginSecretStore({ database, safeStorage });
+  const first = store.set("com.example", "sync-credential", "good-password");
+  store.set("com.example", "sync-credential", "bad-password", { stashPrevious: true });
+  failEncrypt = true;
+  assert.throws(
+    () => store.restoreOverwrite("com.example", "sync-credential"),
+    (error) => error.code === RPC_ERRORS.unavailable,
+  );
+  failEncrypt = false;
+  // Retry put must not replace the original good-password stash with bad-password.
+  store.set("com.example", "sync-credential", "worse-password", { stashPrevious: true });
+  assert.equal(store.restoreOverwrite("com.example", "sync-credential"), true);
+  assert.equal(store.resolve("com.example", first), "good-password");
+
+  store.set("com.example", "sync-credential", "temp", { stashPrevious: true });
+  store.deleteByKeyPrefix("com.example", "sync-credential");
+  assert.equal(store.restoreOverwrite("com.example", "sync-credential"), false);
+  assert.equal(store.getReference("com.example", "sync-credential"), undefined);
+  database.close();
+});

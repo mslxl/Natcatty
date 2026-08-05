@@ -434,11 +434,16 @@ declare global {
       providerId: string;
       key: string;
       value: string;
-    }): Promise<{ kind: 'secret'; id: string; key: string }>;
+    }): Promise<{ kind: 'secret'; id: string; key: string; created?: boolean }>;
     pluginSyncDeleteSecrets?(request: {
       providerId: string;
       keys?: string[];
     }): Promise<{ deleted: number }>;
+    pluginSyncRestoreSecrets?(request: {
+      providerId: string;
+      keys: string[];
+      discard?: boolean;
+    }): Promise<{ restored: number; discarded?: number }>;
     collectPluginSyncSidecars?(): Promise<unknown>;
     applyPluginSyncSidecars?(bundle: unknown): Promise<{ applied: boolean; count?: number; entries?: unknown }>;
     pluginHostReady?(): boolean;

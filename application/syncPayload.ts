@@ -1049,15 +1049,9 @@ export async function buildLocalVaultPayloadAsync(
   try {
     const live = await collectPluginSyncSidecarsFromHost();
     if (live) {
-      // Live collect may return authoritative-empty while still deferring the
-      // last-known cache wipe until a successful sync commit. Protective
-      // backups must keep the non-empty last-known already attached to `base`.
-      const liveEmpty = !Array.isArray(live.entries) || live.entries.length === 0;
-      const baseHasEntries = Array.isArray(base.pluginSidecars?.entries)
-        && base.pluginSidecars.entries.length > 0;
-      if (liveEmpty && baseHasEntries) {
-        return base;
-      }
+      // Uploads may still defer wiping last-known until a successful sync
+      // commit, but protective/version-change backups must snapshot the live
+      // authoritative-empty bundle so restore cannot resurrect cleared plugin data.
       return withPluginSyncSidecars(base, live);
     }
   } catch (error) {

@@ -59,7 +59,7 @@ test("obsolete unpublished v1 layouts fail with an explicit reset instruction", 
   );
 });
 
-test("complete schema-1 databases migrate in place to schema 2 with sidecar table", (context) => {
+test("complete schema-1 databases migrate in place to schema 3 with sidecar and binding tables", (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-v1-migrate-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const file = path.join(root, "plugins.sqlite");
@@ -164,6 +164,10 @@ test("complete schema-1 databases migrate in place to schema 2 with sidecar tabl
     database.db.prepare("PRAGMA table_info(plugin_sync_sidecars)").all().map(({ name }) => name),
     ["plugin_id", "kind", "key", "value_json", "updated_at"],
   );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_sync_provider_bindings)").all().map(({ name }) => name),
+    ["provider_id", "plugin_id", "created_at", "updated_at"],
+  );
   // Existing rows survive the in-place migration.
   assert.equal(database.db.prepare("SELECT id FROM plugins").get().id, "com.example.v1");
   database.setSyncSidecar("com.example.v1", "settings", "theme\0application\0application", "dark", 2);
@@ -171,6 +175,8 @@ test("complete schema-1 databases migrate in place to schema 2 with sidecar tabl
     database.getSyncSidecar("com.example.v1", "settings", "theme\0application\0application")?.value,
     "dark",
   );
+  database.upsertSyncProviderBinding("com.example.v1.sync", "com.example.v1");
+  assert.equal(database.getSyncProviderBinding("com.example.v1.sync")?.pluginId, "com.example.v1");
   database.close();
 });
 
@@ -211,6 +217,10 @@ test("initial schema scopes runtime and crash state to immutable plugin versions
   assert.deepEqual(
     database.db.prepare("PRAGMA table_info(plugin_sync_sidecars)").all().map(({ name }) => name),
     ["plugin_id", "kind", "key", "value_json", "updated_at"],
+  );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_sync_provider_bindings)").all().map(({ name }) => name),
+    ["provider_id", "plugin_id", "created_at", "updated_at"],
   );
   assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_settings)").all(), []);
   assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_view_state)").all(), []);

@@ -183,6 +183,7 @@ function createPreloadApi(ctx) {
   },
   pluginSyncPutSecret: (request) => ipcRenderer.invoke("netcatty:plugins:sync-put-secret", request ?? {}),
   pluginSyncDeleteSecrets: (request) => ipcRenderer.invoke("netcatty:plugins:sync-delete-secrets", request ?? {}),
+  pluginSyncRestoreSecrets: (request) => ipcRenderer.invoke("netcatty:plugins:sync-restore-secrets", request ?? {}),
   collectPluginSyncSidecars: () => ipcRenderer.invoke("netcatty:plugins:sync-sidecars-collect", {}),
   applyPluginSyncSidecars: (bundle) => ipcRenderer.invoke("netcatty:plugins:sync-sidecars-apply", bundle ?? { version: 1, entries: [] }),
   /** True only when the main-process plugin host wired a sidecar service. */
