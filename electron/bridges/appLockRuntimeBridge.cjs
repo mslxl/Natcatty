@@ -409,22 +409,30 @@ function createAppLockController({
   }
 
   async function requestDisable(currentPassword) {
-    const current = getSettings();
-    if (current.passwordVerifier) {
-      if (!currentPassword) {
-        return { ok: false, error: "empty-current" };
+    // Full RMW on the mutation queue so a concurrent setTimeoutMinutes cannot
+    // snapshot pre-disable settings and re-enable App Lock after us (Codex P2).
+    let fail = null;
+    const saved = await mutateSettings(async (current) => {
+      if (current.passwordVerifier) {
+        if (!currentPassword) {
+          fail = { ok: false, error: "empty-current" };
+          return null;
+        }
+        const verified = await verifyAppLockPassword(currentPassword, current.passwordVerifier);
+        if (!verified) {
+          fail = { ok: false, error: "incorrect" };
+          return null;
+        }
       }
-      const verified = await verifyAppLockPassword(currentPassword, current.passwordVerifier);
-      if (!verified) {
-        return { ok: false, error: "incorrect" };
-      }
-    }
-
-    const saved = await saveSettings({
-      enabled: false,
-      timeoutMinutes: current.timeoutMinutes,
-      passwordVerifier: null,
+      return {
+        ...current,
+        enabled: false,
+        passwordVerifier: null,
+        systemUnlockEnabled: false,
+        systemUnlockAutoPromptEnabled: false,
+      };
     });
+    if (fail) return fail;
     const runtimeState = runtimeBridge.unlock();
     syncIdleTimer();
     broadcast("netcatty:appLock:runtimeStateChanged", runtimeState);
@@ -432,15 +440,22 @@ function createAppLockController({
   }
 
   async function requestReset(currentPassword) {
-    const current = getSettings();
-    const verified = await verifyCurrentPassword(current, currentPassword);
-    if (verified !== true) return verified;
-
-    const saved = await saveSettings({
-      enabled: false,
-      timeoutMinutes: current.timeoutMinutes,
-      passwordVerifier: null,
+    let fail = null;
+    const saved = await mutateSettings(async (current) => {
+      const verified = await verifyCurrentPassword(current, currentPassword);
+      if (verified !== true) {
+        fail = verified;
+        return null;
+      }
+      return {
+        ...current,
+        enabled: false,
+        passwordVerifier: null,
+        systemUnlockEnabled: false,
+        systemUnlockAutoPromptEnabled: false,
+      };
     });
+    if (fail) return fail;
     const runtimeState = runtimeBridge.unlock();
     syncIdleTimer();
     broadcast("netcatty:appLock:runtimeStateChanged", runtimeState);
@@ -607,7 +622,12 @@ function createAppLockController({
       const current = getSettings();
       if (!canLockFromSettings(current)) return { ok: false, error: "unavailable" };
       if (current.systemUnlockEnabled !== true) return { ok: false, error: "disabled" };
-      if (runtimeBridge.getState().locked !== true) return { ok: false, error: "not-locked" };
+      // Capture the lock presentation epoch before the OS prompt. A re-lock
+      // (idle → background) advances version while staying locked; accepting a
+      // stale prompt would unlock the newer lock (Codex P2).
+      const lockAtPrompt = runtimeBridge.getState();
+      if (lockAtPrompt.locked !== true) return { ok: false, error: "not-locked" };
+      const lockVersionAtPrompt = lockAtPrompt.version;
 
       const status = await getSystemAuthStatusOnly();
       if (status.supported !== true) return { ok: false, error: "unsupported" };
@@ -623,8 +643,13 @@ function createAppLockController({
           error: result?.error || "failed",
         };
       }
-      // Drop the prompt result if we re-locked while the dialog was open.
-      if (runtimeBridge.getState().locked !== true) {
+      // Drop the prompt result if we unlocked, re-locked, or the lock reason
+      // changed while the dialog was open (version advances on each lock patch).
+      const lockAfterPrompt = runtimeBridge.getState();
+      if (
+        lockAfterPrompt.locked !== true
+        || lockAfterPrompt.version !== lockVersionAtPrompt
+      ) {
         return { ok: false, error: "not-locked" };
       }
 
