@@ -4,10 +4,12 @@ const assert = require("node:assert/strict");
 const {
   applyInitialSshDeepLinkPreference,
   collectSshDeepLinkUrls,
+  getSshDeepLinkRendererReadyTimeoutMs,
   isSshDeepLinkUrl,
   applySshProtocolClientPreference,
   readSshDeepLinkEnabledPreference,
   shouldDeliverSshDeepLink,
+  shouldRequeueFailedSshDeepLinkDelivery,
   updateSshDeepLinkEnabledPreference,
   writeSshDeepLinkEnabledPreference,
 } = require("./deepLink.cjs");
@@ -157,6 +159,39 @@ test("shouldDeliverSshDeepLink drops stale deliveries after the setting changes"
     enabled: true,
     deliveryGeneration: 2,
     expectedGeneration: 1,
+  }), false);
+});
+
+test("getSshDeepLinkRendererReadyTimeoutMs waits indefinitely so slow unlock keeps links", () => {
+  assert.equal(getSshDeepLinkRendererReadyTimeoutMs({ isDev: false }), 0);
+  assert.equal(getSshDeepLinkRendererReadyTimeoutMs({ isDev: true }), 0);
+});
+
+test("shouldRequeueFailedSshDeepLinkDelivery keeps valid links after readiness failures", () => {
+  assert.equal(shouldRequeueFailedSshDeepLinkDelivery({
+    enabled: true,
+    deliveryGeneration: 1,
+    expectedGeneration: 1,
+    result: { success: false, reason: "Renderer did not report ready before timeout." },
+  }), true);
+  assert.equal(shouldRequeueFailedSshDeepLinkDelivery({
+    enabled: true,
+    deliveryGeneration: 1,
+    expectedGeneration: 1,
+    result: { success: false, reason: "ssh-deep-link-disabled" },
+    cancelReason: "ssh-deep-link-disabled",
+  }), false);
+  assert.equal(shouldRequeueFailedSshDeepLinkDelivery({
+    enabled: true,
+    deliveryGeneration: 1,
+    expectedGeneration: 1,
+    result: { success: true },
+  }), false);
+  assert.equal(shouldRequeueFailedSshDeepLinkDelivery({
+    enabled: false,
+    deliveryGeneration: 1,
+    expectedGeneration: 1,
+    result: { success: false, reason: "window closed" },
   }), false);
 });
 

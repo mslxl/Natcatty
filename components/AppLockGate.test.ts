@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  shouldDeferExternalActionWhileAppLocked,
   shouldNotifyAppLockGateRendererReady,
   shouldRenderAppLockGateChildren,
 } from "./AppLockGate.tsx";
@@ -24,6 +25,36 @@ test("shouldRenderAppLockGateChildren withholds startup-locked route children un
       hasRenderedChildren: false,
     }),
     true,
+  );
+});
+
+test("shouldRenderAppLockGateChildren withholds first mount for idle and background locks", () => {
+  assert.equal(
+    shouldRenderAppLockGateChildren({
+      initialized: true,
+      locked: true,
+      lockReason: "idle",
+      hasRenderedChildren: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRenderAppLockGateChildren({
+      initialized: true,
+      locked: true,
+      lockReason: "background",
+      hasRenderedChildren: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRenderAppLockGateChildren({
+      initialized: true,
+      locked: true,
+      lockReason: "manual",
+      hasRenderedChildren: false,
+    }),
+    false,
   );
 });
 
@@ -72,7 +103,7 @@ test("shouldRenderAppLockGateChildren keeps existing children mounted for reopen
   );
 });
 
-test("shouldNotifyAppLockGateRendererReady waits until startup-locked children can mount", () => {
+test("shouldNotifyAppLockGateRendererReady waits until locked children can mount", () => {
   assert.equal(
     shouldNotifyAppLockGateRendererReady({
       notifyRendererReady: true,
@@ -94,4 +125,9 @@ test("shouldNotifyAppLockGateRendererReady waits until startup-locked children c
     }),
     false,
   );
+});
+
+test("shouldDeferExternalActionWhileAppLocked queues actions only while locked", () => {
+  assert.equal(shouldDeferExternalActionWhileAppLocked({ locked: true }), true);
+  assert.equal(shouldDeferExternalActionWhileAppLocked({ locked: false }), false);
 });

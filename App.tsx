@@ -27,6 +27,7 @@ import { resolveGroupDefaults, applyGroupDefaults } from './domain/groupConfig';
 import { upsertKnownHost } from './domain/knownHosts';
 import { materializeHostProxyProfile } from './domain/proxyProfiles';
 import { buildSshDeepLinkConnectionHost, buildSshDeepLinkHostDraft, findSshDeepLinkHost, parseSshDeepLink } from './domain/sshDeepLink';
+import { shouldDeferExternalActionWhileAppLocked } from './components/AppLockGate';
 import { resolveHostAuth } from './domain/sshAuth';
 import { isEncryptedCredentialPlaceholder } from './domain/credentials';
 import {
@@ -968,7 +969,9 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host) => { return handleConnectToHostImpl(() => ({ addConnectionLog, connectToHost, host, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef }), host); }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
 
-  const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {
+  const pendingSshDeepLinksWhileLockedRef = useRef<Array<{ url?: string }>>([]);
+
+  const _processSshDeepLink = useEffectEvent((payload: { url?: string }) => {
     const rawUrl = payload?.url || '';
     const target = parseSshDeepLink(rawUrl);
     if (!target) {
@@ -998,6 +1001,25 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
     setNavigateToSection('hosts');
     setActiveTabId('vault');
   });
+
+  const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {
+    // Idle/background/manual locks keep children mounted under the overlay. Queue
+    // deep links until unlock so saved-credential connects cannot start behind
+    // the lock screen.
+    if (shouldDeferExternalActionWhileAppLocked({ locked: appLock.locked })) {
+      pendingSshDeepLinksWhileLockedRef.current.push(payload || {});
+      return;
+    }
+    _processSshDeepLink(payload);
+  });
+
+  useEffect(() => {
+    if (shouldDeferExternalActionWhileAppLocked({ locked: appLock.locked })) return;
+    const pending = pendingSshDeepLinksWhileLockedRef.current.splice(0);
+    for (const payload of pending) {
+      _processSshDeepLink(payload);
+    }
+  }, [appLock.locked]);
 
   useEffect(() => {
     if (isPeerSessionWindow) return;

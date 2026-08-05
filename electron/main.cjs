@@ -69,9 +69,11 @@ const {
   applyInitialSshDeepLinkPreference,
   applySshProtocolClientPreference,
   collectSshDeepLinkUrls,
+  getSshDeepLinkRendererReadyTimeoutMs,
   isSshDeepLinkUrl,
   readSshDeepLinkEnabledPreference,
   shouldDeliverSshDeepLink,
+  shouldRequeueFailedSshDeepLinkDelivery,
   updateSshDeepLinkEnabledPreference,
   writeSshDeepLinkEnabledPreference,
 } = require("./deepLink.cjs");
@@ -624,21 +626,27 @@ async function deliverSshDeepLink(rawUrl, expectedGeneration = sshDeepLinkDelive
     enabled: sshDeepLinkEnabled,
     deliveryGeneration: sshDeepLinkDeliveryGeneration,
     expectedGeneration,
-  })) return;
+  })) {
+    return { success: false, reason: "ssh-deep-link-disabled" };
+  }
   const win = await createAndShowMainWindow();
   if (!shouldDeliverSshDeepLink({
     enabled: sshDeepLinkEnabled,
     deliveryGeneration: sshDeepLinkDeliveryGeneration,
     expectedGeneration,
-  })) return;
+  })) {
+    return { success: false, reason: "ssh-deep-link-disabled" };
+  }
   focusMainWindow();
   const windowManager = getWindowManager();
+  // timeoutMs: 0 waits until AppLockGate marks the renderer ready after unlock,
+  // so a slow password entry does not drop startup ssh:// links.
   const result = await windowManager.sendWhenRendererReady?.(
     win,
     SSH_DEEP_LINK_CHANNEL,
     { url: rawUrl },
     {
-      timeoutMs: isDev ? 30000 : 15000,
+      timeoutMs: getSshDeepLinkRendererReadyTimeoutMs({ isDev }),
       shouldSend: () => shouldDeliverSshDeepLink({
         enabled: sshDeepLinkEnabled,
         deliveryGeneration: sshDeepLinkDeliveryGeneration,
@@ -650,23 +658,44 @@ async function deliverSshDeepLink(rawUrl, expectedGeneration = sshDeepLinkDelive
   if (result && result.success === false && result.reason !== "ssh-deep-link-disabled") {
     console.warn("[Main] Failed to deliver ssh:// deep link:", result.error || result.reason);
   }
+  return result || { success: true };
 }
 
 async function flushPendingSshDeepLinks() {
   if (flushingSshDeepLinks) return;
   flushingSshDeepLinks = true;
+  let requeueDelayMs = 0;
   try {
     while (sshDeepLinkEnabled && pendingSshDeepLinkUrls.length > 0) {
       const rawUrl = pendingSshDeepLinkUrls.shift();
       if (!rawUrl) continue;
-      await deliverSshDeepLink(rawUrl, sshDeepLinkDeliveryGeneration);
+      const result = await deliverSshDeepLink(rawUrl, sshDeepLinkDeliveryGeneration);
+      if (shouldRequeueFailedSshDeepLinkDelivery({
+        enabled: sshDeepLinkEnabled,
+        deliveryGeneration: sshDeepLinkDeliveryGeneration,
+        expectedGeneration: sshDeepLinkDeliveryGeneration,
+        result,
+        cancelReason: "ssh-deep-link-disabled",
+      })) {
+        // Window died or delivery failed while the link is still valid — keep it
+        // queued for the next successful window/renderer ready cycle.
+        pendingSshDeepLinkUrls.unshift(rawUrl);
+        requeueDelayMs = 1000;
+        break;
+      }
     }
   } catch (err) {
     console.warn("[Main] Failed to process ssh:// deep link:", err);
   } finally {
     flushingSshDeepLinks = false;
     if (sshDeepLinkEnabled && pendingSshDeepLinkUrls.length > 0) {
-      void flushPendingSshDeepLinks();
+      if (requeueDelayMs > 0) {
+        setTimeout(() => {
+          void flushPendingSshDeepLinks();
+        }, requeueDelayMs);
+      } else {
+        void flushPendingSshDeepLinks();
+      }
     }
   }
 }

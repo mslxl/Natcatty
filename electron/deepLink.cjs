@@ -119,6 +119,32 @@ function shouldDeliverSshDeepLink({ enabled = true, deliveryGeneration = 0, expe
   return enabled !== false && deliveryGeneration === expectedGeneration;
 }
 
+/**
+ * App Lock can suppress rendererReady until unlock. A short readiness timeout
+ * would shift the URL out of the pending queue and drop it if the user takes
+ * longer than that to unlock. Prefer waiting indefinitely for readiness (or
+ * window death); callers re-queue only on non-cancel failures.
+ */
+function getSshDeepLinkRendererReadyTimeoutMs({ isDev = false } = {}) {
+  void isDev;
+  return 0;
+}
+
+function shouldRequeueFailedSshDeepLinkDelivery({
+  enabled = true,
+  deliveryGeneration = 0,
+  expectedGeneration = 0,
+  result = null,
+  cancelReason = "ssh-deep-link-disabled",
+} = {}) {
+  if (!shouldDeliverSshDeepLink({ enabled, deliveryGeneration, expectedGeneration })) {
+    return false;
+  }
+  if (!result || result.success === true) return false;
+  if (result.reason === cancelReason) return false;
+  return true;
+}
+
 function applyInitialSshDeepLinkPreference({
   enabled = true,
   applyPreference = () => false,
@@ -141,12 +167,14 @@ module.exports = {
   SSH_DEEP_LINK_CHANNEL,
   applyInitialSshDeepLinkPreference,
   collectSshDeepLinkUrls,
+  getSshDeepLinkRendererReadyTimeoutMs,
   isSshDeepLinkUrl,
   applySshProtocolClientPreference,
   registerSshProtocolClient,
   removeSshProtocolClient,
   readSshDeepLinkEnabledPreference,
   shouldDeliverSshDeepLink,
+  shouldRequeueFailedSshDeepLinkDelivery,
   updateSshDeepLinkEnabledPreference,
   writeSshDeepLinkEnabledPreference,
 };

@@ -28,6 +28,13 @@ interface AppLockGateDeps {
   useAppLockBridge: typeof useAppLockBridge;
 }
 
+/**
+ * Withhold first content mount while the gate is locked for any reason
+ * (startup / idle / background / manual). A new renderer that reports ready
+ * before unlock would let main deliver ssh:// deep links into App handlers and
+ * start connections behind the lock overlay. Once children have mounted (e.g.
+ * idle re-lock after use), keep them mounted under the overlay.
+ */
 export function shouldRenderAppLockGateChildren(input: {
   initialized: boolean;
   locked: boolean;
@@ -35,18 +42,27 @@ export function shouldRenderAppLockGateChildren(input: {
   hasRenderedChildren: boolean;
 }): boolean {
   if (!input.initialized && !input.hasRenderedChildren) return false;
-  return !(
-    input.locked &&
-    input.lockReason === 'startup' &&
-    !input.hasRenderedChildren
-  );
+  if (input.locked && !input.hasRenderedChildren) return false;
+  return true;
 }
 
+/**
+ * Deep-link delivery waits on rendererReady. Only mark the renderer ready once
+ * app children are allowed to mount, so unlock (not the 15s readiness timeout)
+ * is what unblocks pending ssh:// links after a locked first paint.
+ */
 export function shouldNotifyAppLockGateRendererReady(input: {
   notifyRendererReady: boolean;
   renderChildren: boolean;
 }): boolean {
   return input.notifyRendererReady && input.renderChildren;
+}
+
+/** Queue external actions (e.g. ssh:// deep links) while the app lock is held. */
+export function shouldDeferExternalActionWhileAppLocked(input: {
+  locked: boolean;
+}): boolean {
+  return input.locked === true;
 }
 
 export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGateProps> {
