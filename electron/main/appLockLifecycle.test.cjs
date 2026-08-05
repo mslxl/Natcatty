@@ -280,6 +280,9 @@ test("handleBeforeQuit cancels quit without locking when dirty editors exist", a
       setQuittingForUpdate(value) {
         calls.push(`setQuittingForUpdate:${value}`);
       },
+      showAndFocusMainWindow(win) {
+        calls.push(`showAndFocus:${win === mainWindow}`);
+      },
     },
     app: {
       quit() {
@@ -302,6 +305,89 @@ test("handleBeforeQuit cancels quit without locking when dirty editors exist", a
     "quitGuardBusy:true",
     "preventDefault",
     "quitGuardBusy:false",
+    "showAndFocus:true",
     "setQuittingForUpdate:false",
+  ]);
+});
+
+test("handleBeforeQuit focuses only dirty windows when multiple renderers reply", async () => {
+  const calls = [];
+  const cleanWindow = {
+    isDestroyed: () => false,
+    webContents: {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      id: 1,
+    },
+  };
+  const dirtyWindow = {
+    isDestroyed: () => false,
+    isMinimized: () => true,
+    restore() {
+      calls.push("restore");
+    },
+    show() {
+      calls.push("show");
+    },
+    focus() {
+      calls.push("focus");
+    },
+    webContents: {
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      id: 2,
+    },
+  };
+  const event = {
+    preventDefault() {
+      calls.push("preventDefault");
+    },
+  };
+
+  const result = await handleBeforeQuit({
+    event,
+    mainWindows: [cleanWindow, dirtyWindow],
+    queryDirtyEditors: async (wc) => wc.id === 2,
+    appLockController: {
+      setLocked(reason) {
+        calls.push(`lock:${reason}`);
+      },
+    },
+    windowManager: {
+      // No showAndFocusMainWindow — exercise the restore/show/focus fallback
+      // used when the window manager helper is unavailable.
+      setIsQuitting(value) {
+        calls.push(`setIsQuitting:${value}`);
+      },
+      isQuittingForUpdate() {
+        return false;
+      },
+    },
+    app: {
+      quit() {
+        calls.push("app.quit");
+      },
+    },
+    ipcMain: {},
+    quitConfirmed: false,
+    quitGuardChannelBusy: false,
+    timeoutMs: 10,
+    setQuitGuardChannelBusy(value) {
+      calls.push(`quitGuardBusy:${value}`);
+    },
+    setQuitConfirmed(value) {
+      calls.push(`quitConfirmed:${value}`);
+    },
+  });
+
+  assert.equal(result.committed, false);
+  assert.equal(result.skipped, "dirty");
+  assert.deepEqual(calls, [
+    "quitGuardBusy:true",
+    "preventDefault",
+    "quitGuardBusy:false",
+    "restore",
+    "show",
+    "focus",
   ]);
 });

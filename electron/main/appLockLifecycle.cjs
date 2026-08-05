@@ -114,9 +114,15 @@ async function handleBeforeQuit({
   const reachableMainWindows = (Array.isArray(mainWindows) ? mainWindows : []).filter((candidate) => (
     candidate && !candidate.isDestroyed?.()
   ));
-  const queryableWebContents = reachableMainWindows
+  // Keep the window alongside webContents so a dirty result can bring the
+  // owning window forward (hidden-to-tray / unfocused) before aborting quit.
+  const queryableWindows = reachableMainWindows.filter((candidate) => {
+    const wc = candidate.webContents;
+    return wc && !wc.isDestroyed?.() && !wc.isCrashed?.();
+  });
+  const queryableWebContents = queryableWindows
     .map((candidate) => candidate.webContents)
-    .filter((wc) => wc && !wc.isDestroyed?.() && !wc.isCrashed?.());
+    .filter(Boolean);
 
   if (shouldCommitQuitWithoutDirtyCheck({ reachableMainWindows, queryableWebContents })) {
     if (shouldBackgroundLockOnHide(appLockController)) {
@@ -133,11 +139,16 @@ async function handleBeforeQuit({
 
   try {
     const dirtyResults = await Promise.all(
-      queryableWebContents.map((wc) => queryDirtyEditors(wc, timeoutMs, { ipcMain })),
+      queryableWindows.map((win) =>
+        queryDirtyEditors(win.webContents, timeoutMs, { ipcMain }).then((hasDirty) => ({
+          win,
+          hasDirty: Boolean(hasDirty),
+        })),
+      ),
     );
     setQuitGuardChannelBusy?.(false);
-    const hasDirty = dirtyResults.some(Boolean);
-    if (!hasDirty) {
+    const dirtyWindows = dirtyResults.filter((result) => result.hasDirty).map((result) => result.win);
+    if (dirtyWindows.length === 0) {
       if (shouldBackgroundLockOnHide(appLockController)) {
         appLockController.setLocked("background");
       }
@@ -145,6 +156,35 @@ async function handleBeforeQuit({
       setQuitConfirmed?.(true);
       app?.quit?.();
       return { committed: true, skipped: null };
+    }
+
+    // Renderer only surfaces the dirty toast in its own window. Focus every
+    // dirty owner so a tray-hidden or backgrounded window is visible before
+    // we refuse to quit.
+    for (const win of dirtyWindows) {
+      try {
+        if (typeof windowManager?.showAndFocusMainWindow === "function") {
+          windowManager.showAndFocusMainWindow(win);
+        } else {
+          try {
+            if (win.isMinimized?.()) win.restore?.();
+          } catch {
+            // ignore
+          }
+          try {
+            win.show?.();
+          } catch {
+            // ignore
+          }
+          try {
+            win.focus?.();
+          } catch {
+            // ignore
+          }
+        }
+      } catch {
+        // ignore
+      }
     }
 
     if (windowManager?.isQuittingForUpdate?.()) {
