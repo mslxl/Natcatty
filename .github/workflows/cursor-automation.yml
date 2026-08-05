@@ -196,9 +196,16 @@ jobs:
             }
 
             if (event === 'issues') {
-              return set('issue_classify', {
-                issue_number: String(context.payload.issue.number),
-                reason: `issues:${context.payload.action}`,
+              const issue = context.payload.issue;
+              const decision = auto.decideIssuesEventRoute({
+                action: context.payload.action,
+                labels: issue?.labels || [],
+                actorLogin: context.payload.sender?.login,
+                botLogins: process.env.ISSUE_BOT_LOGINS,
+              });
+              return set(decision.kind, {
+                issue_number: String(issue.number),
+                reason: decision.reason,
               });
             }
 
@@ -264,6 +271,7 @@ jobs:
                   hasOpenBotPull: Boolean(pull),
                   hasOpenRelatedPull: Boolean(relatedPull),
                   body: comment.body,
+                  labels,
                 });
                 if (refined.kind === 'issue_classify') {
                   return set('issue_classify', {
@@ -348,6 +356,41 @@ jobs:
             }
 
             return set('skip', { reason: `unhandled ${event}` });
+
+  ready_for_human_handoff:
+    name: Hand reopened issue to maintainers
+    needs: route
+    if: needs.route.outputs.kind == 'ready_for_human_handoff'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cursor-source-issue-${{ needs.route.outputs.issue_number || github.run_id }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout helpers
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Apply ready-for-human handoff
+        uses: actions/github-script@v9
+        env:
+          ISSUE_NUMBER: ${{ needs.route.outputs.issue_number }}
+          TRUSTED_COMMENT_AUTHORS: ${{ vars.AUTOMATION_OWN_ACTORS || 'binaricat,netcatty-bot,github-actions[bot]' }}
+        with:
+          github-token: ${{ secrets.TRIAGE_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const auto = require(`${process.env.GITHUB_WORKSPACE}/scripts/cursor-automation.cjs`);
+            await auto.applyReadyForHumanHandoff({
+              github,
+              context,
+              issueNumber: process.env.ISSUE_NUMBER,
+              dedupeMarker: auto.REOPEN_HANDOFF_MARKER,
+              trustedCommentAuthors: process.env.TRUSTED_COMMENT_AUTHORS,
+            });
 
   cleanup_source_issue:
     name: Clean source issue state

@@ -2253,6 +2253,121 @@ const ISSUE_FOLLOWUP_LABELS = new Set([
   'triage:unclear',
 ]);
 
+/** Outcome labels that mean automatic triage already finished once. */
+const ISSUE_ADMITTED_LABELS = new Set([
+  'triage:admitted',
+  'needs-info',
+  'ready-for-agent',
+  'ready-for-human',
+  'triage:bug-ready',
+  'triage:bug-needs-info',
+  'triage:feature-quick-win',
+  'triage:feature-defer',
+  'triage:already-available',
+  'triage:other',
+  'triage:unclear',
+  'unclear',
+]);
+
+/** Auto-closed triage outcomes that a human reopen should hand to maintainers. */
+const ISSUE_AUTO_CLOSE_HANDOFF_LABELS = new Set([
+  'triage:already-available',
+  'triage:unclear',
+  'unclear',
+]);
+
+const REOPEN_HANDOFF_MARKER = '<!-- cursor-reopen-handoff -->';
+
+function normalizeIssueLabelNames(labels = []) {
+  return (labels || [])
+    .map((label) => (typeof label === 'string' ? label : label?.name))
+    .filter(Boolean);
+}
+
+function isIssueAlreadyAdmitted(labels = []) {
+  return normalizeIssueLabelNames(labels).some((name) =>
+    ISSUE_ADMITTED_LABELS.has(name),
+  );
+}
+
+function labelsForReadyForHumanHandoff(existingLabels = []) {
+  const existing = normalizeIssueLabelNames(existingLabels);
+  // Keep triage:already-available / unclear as dispute signals so later author
+  // follow-ups stay on issue_followup instead of re-entering classify.
+  const drop = new Set(['ready-for-agent']);
+  const preserved = existing.includes('triage:admitted')
+    ? ['triage:admitted']
+    : [];
+  return [
+    ...new Set([
+      ...existing.filter((name) => !drop.has(name) && name !== 'ready-for-human'),
+      'triage',
+      'ready-for-human',
+      ...preserved,
+    ]),
+  ];
+}
+
+/**
+ * Route issues opened/reopened without always re-running agent classify.
+ * Reopen of an already-triaged issue must not replay the close/reopen loop.
+ */
+function decideIssuesEventRoute({
+  action,
+  labels = [],
+  actorLogin,
+  botLogins = ['netcatty-bot', 'github-actions[bot]'],
+} = {}) {
+  const normalizedAction = String(action || '').toLowerCase();
+  if (normalizedAction === 'opened') {
+    return { kind: 'issue_classify', reason: 'issues:opened' };
+  }
+  if (normalizedAction !== 'reopened') {
+    return {
+      kind: 'skip',
+      reason: `issues:${normalizedAction || 'unknown'}`,
+    };
+  }
+
+  const names = normalizeIssueLabelNames(labels);
+  const bots = normalizeLoginList(botLogins, [
+    'netcatty-bot',
+    'github-actions[bot]',
+  ]);
+  const actor = String(actorLogin || '').trim().toLowerCase();
+  if (actor && bots.has(actor)) {
+    return {
+      kind: 'skip',
+      reason: 'bot reopen of managed issue',
+    };
+  }
+  if (!isIssueAlreadyAdmitted(names)) {
+    return { kind: 'issue_classify', reason: 'issues:reopened' };
+  }
+  if (names.some((name) => ISSUE_AUTO_CLOSE_HANDOFF_LABELS.has(name))) {
+    return {
+      kind: 'ready_for_human_handoff',
+      reason: 'human reopen of auto-closed triage',
+    };
+  }
+  // Merged-fix / bug-ready / feature reopens must re-enter classify so a
+  // failed fix can spawn another implementation. Bot reopen is already skipped
+  // above, which covers follow-up reopen side effects.
+  return {
+    kind: 'issue_classify',
+    reason: 'issues:reopened admitted non-auto-close',
+  };
+}
+
+function buildReopenHandoffReply(issue = {}) {
+  const chinese = /[\u3400-\u9fff]/u.test(
+    `${issue.title || ''}\n${issue.body || ''}`,
+  );
+  return chinese
+    ? '这条 Issue 已重新打开，并交给维护者继续处理。自动分流不会再次把它标成“已有能力/可关闭”。'
+    : 'This issue was reopened and handed to a maintainer. Automatic triage will not close it again as already available.';
+}
+
 function normalizeLoginList(value, fallback = []) {
   const values = Array.isArray(value) ? value : String(value || '').split(',');
   const normalized = values
@@ -2331,8 +2446,17 @@ function refineIssueCommentRoute(decision, {
   hasOpenBotPull = false,
   hasOpenRelatedPull = false,
   body = '',
+  labels = [],
 } = {}) {
   if (decision?.kind !== 'issue_followup' || hasOpenBotPull) return decision;
+  const names = normalizeIssueLabelNames(labels);
+  // Disputed auto-close outcomes (already_available / unclear) must stay on
+  // follow-up after reopen handoff. Do not gate on ready-for-human alone —
+  // that label also covers feature_defer / other / implement failures that
+  // should still be allowed to re-enter classify.
+  if (names.some((name) => ISSUE_AUTO_CLOSE_HANDOFF_LABELS.has(name))) {
+    return decision;
+  }
   const simpleKind = classifySimpleIssueFollowup([{ body }]);
   if (simpleKind) return decision;
   return {
@@ -3010,6 +3134,8 @@ async function markNeedsHuman({
   message,
   dedupeMarker = '',
   trustedCommentAuthors = 'binaricat,netcatty-bot,github-actions[bot]',
+  labels,
+  ensureOpen = false,
 }) {
   const owner = context.repo.owner;
   const repo = context.repo.repo;
@@ -3019,19 +3145,19 @@ async function markNeedsHuman({
     issue_number: Number(issueNumber),
   });
   const existing = issue.labels.map((l) => (typeof l === 'string' ? l : l.name));
-  const next = [
-    ...new Set([
-      ...existing.filter((l) => l !== 'ready-for-agent'),
-      'triage',
-      'ready-for-human',
-    ]),
-  ];
-  await github.rest.issues.update({
+  const next = Array.isArray(labels)
+    ? [...new Set(labels.filter(Boolean))]
+    : labelsForReadyForHumanHandoff(existing);
+  const update = {
     owner,
     repo,
     issue_number: issue.number,
     labels: next,
-  });
+  };
+  if (ensureOpen && String(issue.state || '').toLowerCase() === 'closed') {
+    update.state = 'open';
+  }
+  await github.rest.issues.update(update);
   const marker = String(dedupeMarker || '').trim();
   if (marker) {
     const trusted = normalizeLoginList(trustedCommentAuthors, [
@@ -3063,6 +3189,53 @@ async function markNeedsHuman({
     ),
   });
   return { issue, labels: next, commented: true };
+}
+
+async function applyReadyForHumanHandoff({
+  github,
+  context,
+  issueNumber,
+  message,
+  dedupeMarker = REOPEN_HANDOFF_MARKER,
+  trustedCommentAuthors = 'binaricat,netcatty-bot,github-actions[bot]',
+} = {}) {
+  const { data: issue } = await github.rest.issues.get({
+    ...context.repo,
+    issue_number: Number(issueNumber),
+  });
+  const names = normalizeIssueLabelNames(issue.labels);
+  // Reopen already left the issue open. If a maintainer re-closed it while this
+  // handoff was queued, do not force it open again.
+  if (String(issue.state || '').toLowerCase() === 'closed') {
+    return {
+      issue,
+      labels: names,
+      commented: false,
+      skipped: true,
+      reason: 'issue already closed',
+    };
+  }
+  // Revalidate at apply time: a queued handoff must not undo a maintainer who
+  // already cleared the auto-close outcome and moved the issue elsewhere.
+  if (!names.some((name) => ISSUE_AUTO_CLOSE_HANDOFF_LABELS.has(name))) {
+    return {
+      issue,
+      labels: names,
+      commented: false,
+      skipped: true,
+      reason: 'auto-close handoff labels no longer present',
+    };
+  }
+  return markNeedsHuman({
+    github,
+    context,
+    issueNumber,
+    message: message || buildReopenHandoffReply(issue),
+    dedupeMarker,
+    trustedCommentAuthors,
+    labels: labelsForReadyForHumanHandoff(issue.labels),
+    ensureOpen: false,
+  });
 }
 
 function isBotPrForIssue(pull, issueNumber) {
@@ -3709,9 +3882,18 @@ module.exports = {
   CODEX_REQUEST_RETRY_MS,
   decideCodexLoopAction,
   shouldReTriageIssueComment,
+  ISSUE_ADMITTED_LABELS,
+  ISSUE_AUTO_CLOSE_HANDOFF_LABELS,
+  REOPEN_HANDOFF_MARKER,
+  normalizeIssueLabelNames,
+  isIssueAlreadyAdmitted,
+  labelsForReadyForHumanHandoff,
+  decideIssuesEventRoute,
+  buildReopenHandoffReply,
   mentionsIssueBot,
   decideIssueCommentRoute,
   refineIssueCommentRoute,
+  applyReadyForHumanHandoff,
   formatCodexFindingsMarkdown,
   listProtectedPathHits,
   formatProtectedPathDetails,
