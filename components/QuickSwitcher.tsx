@@ -101,6 +101,7 @@ export function buildPluginPaletteItems(
   });
 }
 import { DistroAvatar } from "./DistroAvatar";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "./ui/context-menu";
 import { Input } from "./ui/input";
 import {
   VariableSizeVirtualList,
@@ -137,6 +138,7 @@ interface QuickSwitcherProps {
   workspaces: Workspace[];
   onQueryChange: (value: string) => void;
   onSelect: (host: Host) => void;
+  onEditHost?: (host: Host) => void;
   onSelectTab: (tabId: string) => void;
   onClose: () => void;
   onCreateLocalTerminal?: (shell?: { command: string; args?: string[]; name?: string; icon?: string }) => void;
@@ -154,6 +156,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   workspaces,
   onQueryChange,
   onSelect,
+  onEditHost,
   onSelectTab,
   onClose,
   onCreateLocalTerminal,
@@ -227,12 +230,18 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     if (!isOpen) return;
 
     const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target;
+      if (!(target instanceof Node)) return;
+      if (containerRef.current?.contains(target)) return;
+      // ContextMenuContent portals to #netcatty-context-menu-root; treat those
+      // clicks as inside so Connect / Edit host can run before unmount.
       if (
-        containerRef.current &&
-        !containerRef.current.contains(e.target as Node)
+        target instanceof Element &&
+        target.closest("#netcatty-context-menu-root")
       ) {
-        onClose();
+        return;
       }
+      onClose();
     };
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -527,7 +536,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
 
               if (item.type === "host") {
                 const host = item.data as Host;
-                return (
+                const hostRow = (
                   <div
                     className={`flex h-full min-h-0 items-center justify-between overflow-hidden px-4 py-2.5 cursor-pointer transition-colors ${getQuickSwitcherRowStateClass(isSelected, isKeyboardNavigating)}`}
                     onClick={() => onSelect(host)}
@@ -544,6 +553,20 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                       {host.group ? `Personal / ${host.group}` : "Personal"}
                     </div>
                   </div>
+                );
+                if (!onEditHost) return hostRow;
+                return (
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>{hostRow}</ContextMenuTrigger>
+                    <ContextMenuContent>
+                      <ContextMenuItem onClick={() => onSelect(host)}>
+                        {t('vault.hosts.connect')}
+                      </ContextMenuItem>
+                      <ContextMenuItem onClick={() => onEditHost(host)}>
+                        {t('terminal.layer.hostTree.editHost')}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
                 );
               }
 
