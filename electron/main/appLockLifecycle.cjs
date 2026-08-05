@@ -223,6 +223,23 @@ async function handleBeforeQuit({
       }
     }
 
+    // App Lock overlay sits above renderer toasts (z-index). When the app is
+    // already locked, focusing the dirty window does not make the unsaved
+    // warning visible — surface a native dialog above the lock screen (Codex P2).
+    try {
+      const { dialog } = require("electron");
+      dialog.showMessageBoxSync({
+        type: "warning",
+        buttons: ["OK"],
+        defaultId: 0,
+        message: "Unsaved changes",
+        detail:
+          "One or more editors have unsaved changes. If the app is locked, unlock it, then save or discard before quitting.",
+      });
+    } catch {
+      // ignore missing dialog in tests
+    }
+
     if (windowManager?.isQuittingForUpdate?.()) {
       windowManager.setQuittingForUpdate?.(false);
     }
