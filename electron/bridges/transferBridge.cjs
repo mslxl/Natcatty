@@ -978,6 +978,9 @@ function takePendingCancel(transferId) {
 const admittedActiveByResource = new Map();
 let admittedTransferLimit = 2;
 const isolatedDownloadChannelPools = new WeakMap();
+// Sudo downloads share the browse channel; cap concurrent 64-READ fanout the
+// same way isolated channels use FAST_DOWNLOAD_CHANNELS_PER_SESSION (#1507).
+const sharedFastDownloadSlots = new WeakMap();
 // Cache live SFTP clients where remote cp is known to be unavailable, so we
 // skip repeated failed exec attempts without retaining closed session ids.
 const cpUnavailableSet = new WeakSet();
@@ -1363,6 +1366,22 @@ function releaseIsolatedDownloadChannel(client, sftp, options = {}) {
 
   pool.idle.push(sftp);
   scheduleIdleIsolatedDownloadChannel(client, sftp);
+}
+
+function tryAcquireSharedFastDownloadSlot(client) {
+  const inFlight = sharedFastDownloadSlots.get(client) || 0;
+  if (inFlight >= FAST_DOWNLOAD_CHANNELS_PER_SESSION) return false;
+  sharedFastDownloadSlots.set(client, inFlight + 1);
+  return true;
+}
+
+function releaseSharedFastDownloadSlot(client) {
+  const inFlight = sharedFastDownloadSlots.get(client) || 0;
+  if (inFlight <= 1) {
+    sharedFastDownloadSlots.delete(client);
+    return;
+  }
+  sharedFastDownloadSlots.set(client, inFlight - 1);
 }
 
 async function acquireIsolatedDownloadChannel(client, transfer) {
@@ -1902,12 +1921,171 @@ async function uploadFile(
   throw error;
 }
 
-function openSftpHandle(sftp, filePath, flags) {
-  return new Promise((resolve, reject) => {
-    sftp.open(filePath, flags, (error, handle) => {
-      if (error) reject(error);
-      else resolve(handle);
+/**
+ * Open a remote SFTP handle while transfer.abort can reject the wait without
+ * depending on sftp.end(). Isolated channels still pass abortChannel that ends
+ * the subsystem; shared/sudo channels pass a no-op end path and only reject.
+ * A late OPEN handle after cancel / channel error is closed best-effort when
+ * disposeChannel is false so the shared session does not leak handles.
+ * Channel `error` while OPEN is pending must reject here: callers only check
+ * recorded channelError after this await returns, so a dead channel that never
+ * invokes the OPEN callback would otherwise hang the transfer and SFTP lease.
+ * Shared write opens ("w" / "r+" / …) publish transfer.sharedWriteOpenDrain and
+ * keep it pending until the OPEN callback finishes (including late opens after
+ * a cancel settle timeout), so upload cleanup awaits the drain before deleting
+ * the remote stage. Channel-error / cancel-settle paths that never receive an
+ * OPEN callback arm a short drain force-complete so a dead channel cannot hold
+ * the transfer and SFTP lease forever.
+ *
+ * @param {{ disposeChannel?: boolean, abortChannel?: (() => void) | null }} [options]
+ */
+function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}) {
+  const disposeChannel = options.disposeChannel !== false;
+  const abortChannel = typeof options.abortChannel === "function"
+    ? options.abortChannel
+    : null;
+  // ssh2 string flags: "r" is read-only; anything else can create/truncate.
+  const isWriteOpen = String(flags ?? "r") !== "r";
+  const trackSharedWriteDrain = !disposeChannel && isWriteOpen;
+  let resolveSharedWriteDrain = null;
+  if (trackSharedWriteDrain) {
+    transfer.sharedWriteOpenDrain = new Promise((resolve) => {
+      resolveSharedWriteDrain = resolve;
     });
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let openDrainTimer = null;
+    let drainForceTimer = null;
+    const previousAbort = transfer.abort;
+
+    const clearDrainForceTimer = () => {
+      if (!drainForceTimer) return;
+      clearTimeout(drainForceTimer);
+      drainForceTimer = null;
+    };
+
+    const completeSharedWriteDrain = () => {
+      clearDrainForceTimer();
+      if (!resolveSharedWriteDrain) return;
+      const resolveDrain = resolveSharedWriteDrain;
+      resolveSharedWriteDrain = null;
+      resolveDrain();
+    };
+
+    // When OPEN wait settles without an OPEN callback (channel error, or cancel
+    // settle timeout), keep drain pending for a late truncating OPEN — but force
+    // complete if the callback never arrives so cleanup/lease cannot hang.
+    const armSharedWriteDrainForceComplete = () => {
+      if (!trackSharedWriteDrain || !resolveSharedWriteDrain || drainForceTimer) return;
+      drainForceTimer = setTimeout(() => {
+        drainForceTimer = null;
+        completeSharedWriteDrain();
+      }, 2000);
+    };
+
+    const settle = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      if (openDrainTimer) {
+        clearTimeout(openDrainTimer);
+        openDrainTimer = null;
+      }
+      if (transfer.abort === abortDuringOpen) {
+        transfer.abort = previousAbort;
+      }
+      try { sftp.removeListener?.("error", onOpenChannelError); } catch { /* ignore */ }
+      fn(value);
+    };
+
+    const abortDuringOpen = () => {
+      transfer.cancelled = true;
+      // Shared write OPEN can truncate/create the remote path. A settle timeout
+      // unblocks the transfer UX, but sharedWriteOpenDrain stays pending until
+      // the OPEN callback finishes (or the drain force-complete) so cleanup
+      // cannot race a late truncating OPEN.
+      if (!disposeChannel && isWriteOpen && !settled) {
+        try { abortChannel?.(); } catch { /* ignore */ }
+        if (!openDrainTimer) {
+          openDrainTimer = setTimeout(() => {
+            settle(reject, new Error("Transfer cancelled"));
+            armSharedWriteDrainForceComplete();
+          }, 2000);
+        }
+        return;
+      }
+      // Settle before abortChannel so a synchronous OPEN callback from
+      // sftp.end() cannot win the promise with a channel-close error first.
+      settle(reject, new Error("Transfer cancelled"));
+      try { abortChannel?.(); } catch { /* ignore */ }
+      if (!trackSharedWriteDrain) completeSharedWriteDrain();
+    };
+
+    const onOpenChannelError = (error) => {
+      settle(reject, error || new Error("SFTP channel error"));
+      // Shared write: keep drain pending for a late OPEN close, but bound it so
+      // a dead channel that never invokes the OPEN callback cannot hang forever.
+      if (!trackSharedWriteDrain) {
+        completeSharedWriteDrain();
+      } else {
+        armSharedWriteDrainForceComplete();
+      }
+    };
+
+    if (transfer.cancelled) {
+      completeSharedWriteDrain();
+      reject(new Error("Transfer cancelled"));
+      return;
+    }
+
+    transfer.abort = abortDuringOpen;
+    sftp.on?.("error", onOpenChannelError);
+
+    try {
+      sftp.open(filePath, flags, (error, handle) => {
+        if (settled) {
+          // Cancel / channel error already settled (possibly via drain timeout).
+          // Still close a late shared handle, then release the drain barrier so
+          // cleanup can run.
+          if (!error && handle && !disposeChannel) {
+            closeSftpHandle(sftp, handle).then(
+              completeSharedWriteDrain,
+              completeSharedWriteDrain,
+            );
+            return;
+          }
+          completeSharedWriteDrain();
+          return;
+        }
+        if (error) {
+          settle(reject, error);
+          completeSharedWriteDrain();
+          return;
+        }
+        if (transfer.cancelled) {
+          const finishCancel = () => {
+            settle(reject, new Error("Transfer cancelled"));
+            completeSharedWriteDrain();
+          };
+          if (handle && !disposeChannel) {
+            // Close before settle/drain so shared write cleanup runs after the
+            // truncating OPEN handle is released.
+            closeSftpHandle(sftp, handle).then(finishCancel, finishCancel);
+            return;
+          }
+          finishCancel();
+          return;
+        }
+        settle(resolve, handle);
+        completeSharedWriteDrain();
+      });
+    } catch (error) {
+      // Sync throw (destroyed channel / bad state) must still settle and drop
+      // the error listener; otherwise the shared browse channel leaks listeners.
+      settle(reject, error);
+      completeSharedWriteDrain();
+    }
   });
 }
 
@@ -1982,19 +2160,82 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
     Math.max(0, Math.floor((fileSize - sampleSize) / 2)),
     Math.max(0, fileSize - sampleSize),
   ])];
-  for (const position of offsets) {
-    if (transfer.cancelled) throw new Error("Transfer cancelled");
-    const length = Math.min(sampleSize, fileSize - position);
-    const remoteBuffer = Buffer.allocUnsafe(length);
-    const localBuffer = Buffer.allocUnsafe(length);
-    await readSftpRange(sftp, remoteHandle, remoteBuffer, position, length);
-    await readLocalRange(localHandle, localBuffer, position, length);
-    if (!remoteBuffer.equals(localBuffer)) {
-      const error = new Error("Transfer source content changed during transfer");
-      error.noTransferFallback = true;
-      error.sourceChanged = true;
-      throw error;
+
+  // Verification READs sit outside runPausableConcurrentRanges. After ranges
+  // settle, the prior abort hook is a no-op, so shared/sudo cancel (or a
+  // channel error without a READ callback) would hang forever without a local
+  // force-settle — same 2s grace as forceSettleOnError for download READs.
+  let rejectPending = null;
+  let forceSettleTimer = null;
+  let verifyDone = false;
+  let channelError = null;
+  const previousAbort = transfer.abort;
+  const cancelError = () => new Error("Transfer cancelled");
+  const abortDuringVerify = () => {
+    transfer.cancelled = true;
+    try { previousAbort?.(); } catch { /* ignore */ }
+    if (verifyDone || forceSettleTimer) return;
+    forceSettleTimer = setTimeout(() => {
+      forceSettleTimer = null;
+      rejectPending?.(cancelError());
+    }, 2000);
+  };
+  const onVerifyChannelError = (error) => {
+    // Remember across sample gaps: an error between races (after one sample
+    // resolves, before the next rejectPending is installed) must still fail
+    // the next sample instead of letting readSftpRange hang forever.
+    channelError = channelError || error || new Error("SFTP channel error");
+    rejectPending?.(channelError);
+  };
+  transfer.abort = abortDuringVerify;
+  sftp.on?.("error", onVerifyChannelError);
+
+  try {
+    if (transfer.cancelled) throw cancelError();
+    if (channelError) throw channelError;
+    for (const position of offsets) {
+      if (transfer.cancelled) throw cancelError();
+      if (channelError) throw channelError;
+      const length = Math.min(sampleSize, fileSize - position);
+      const remoteBuffer = Buffer.allocUnsafe(length);
+      const localBuffer = Buffer.allocUnsafe(length);
+      await Promise.race([
+        (async () => {
+          await readSftpRange(sftp, remoteHandle, remoteBuffer, position, length);
+          await readLocalRange(localHandle, localBuffer, position, length);
+          if (!remoteBuffer.equals(localBuffer)) {
+            const error = new Error("Transfer source content changed during transfer");
+            error.noTransferFallback = true;
+            error.sourceChanged = true;
+            throw error;
+          }
+        })(),
+        new Promise((_, reject) => {
+          rejectPending = reject;
+          if (channelError) {
+            reject(channelError);
+            return;
+          }
+          if (transfer.cancelled) abortDuringVerify();
+        }),
+      ]);
+      // Cancel during a responsive sample can win the race above without the
+      // force-settle timer firing. Recheck so we never report complete after
+      // cancel (especially the last sample on direct/non-staged downloads).
+      if (transfer.cancelled) throw cancelError();
+      if (channelError) throw channelError;
     }
+  } finally {
+    verifyDone = true;
+    if (forceSettleTimer) {
+      clearTimeout(forceSettleTimer);
+      forceSettleTimer = null;
+    }
+    rejectPending = null;
+    if (transfer.abort === abortDuringVerify) {
+      transfer.abort = previousAbort;
+    }
+    try { sftp.removeListener?.("error", onVerifyChannelError); } catch { /* ignore */ }
   }
 }
 
@@ -2459,10 +2700,11 @@ async function runPausableConcurrentRanges({
         if (settled) return;
         if (error) terminalError = terminalError || error;
         if (active > 0) {
-          // Only an isolated channel may force-settle after aborting the
-          // subsystem. A shared channel cannot discard outstanding WRITE
-          // callbacks safely because the caller may clean up or reuse the
-          // same remote path while those requests are still in flight.
+          // forceSettleOnError callers may abandon in-flight ranges after a
+          // short grace: isolated channels (after sftp.end), and shared
+          // downloads (READ-only — no remote WRITEs to drain). Shared uploads
+          // must keep forceSettleOnError false so outstanding WRITEs finish
+          // before the caller reuses or cleans up the remote path.
           if (terminalError && forceSettleOnError) {
             if (!forceFinishTimer) {
               forceFinishTimer = setTimeout(() => {
@@ -2522,6 +2764,9 @@ async function runPausableConcurrentRanges({
 
           void copyRange(position, length)
             .then(() => {
+              // After force-settle, abandoned ranges must not publish progress
+              // or advance checkpoints into the caller's truncate/fallback window.
+              if (settled) return;
               transferred += length;
               completedRanges.set(position, position + length);
               while (completedRanges.has(contiguousCheckpoint)) {
@@ -2531,8 +2776,12 @@ async function runPausableConcurrentRanges({
               }
               publishContiguousCheckpoint(false);
             })
-            .catch((error) => abort(error))
+            .catch((error) => {
+              if (settled) return;
+              abort(error);
+            })
             .finally(() => {
+              if (settled) return;
               active -= 1;
               settlePauseWaiters();
               if (terminalError || transfer.cancelled) {
@@ -2619,8 +2868,9 @@ async function uploadFileConcurrent(
     channelError = channelError || error;
   };
   sftp.on?.("error", onChannelError);
-  // Install cancel before OPEN so a stalled remote open can still end an
-  // isolated channel (runPausableConcurrentRanges would install this later).
+  // Install cancel before OPEN so a stalled remote open can still settle:
+  // isolated channels end the subsystem; shared/sudo reject OPEN without end().
+  // (runPausableConcurrentRanges would install abort later, after OPEN.)
   const abortChannel = () => {
     if (disposeChannel) {
       try { sftp.end?.(); } catch { /* ignore */ }
@@ -2676,7 +2926,13 @@ async function uploadFileConcurrent(
       digestHandle = await fs.promises.open(ephemeralDigestPath, "r");
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
-    remoteHandle = await openSftpHandle(sftp, remotePath, checkpoint > 0 ? "r+" : "w");
+    remoteHandle = await openSftpHandleForTransfer(
+      sftp,
+      remotePath,
+      checkpoint > 0 ? "r+" : "w",
+      transfer,
+      { disposeChannel, abortChannel },
+    );
     if (channelError) throw channelError;
     if (transfer.cancelled) throw new Error("Transfer cancelled");
 
@@ -2734,6 +2990,19 @@ async function uploadFileConcurrent(
     }
     throw error;
   } finally {
+    // Shared write OPEN may still be in flight after a cancel settle timeout or
+    // channel error. Await the drain barrier before returning so
+    // runRemoteUploadTransaction cannot clean up the stage before a late
+    // truncating OPEN finishes (Codex P2 on 747847e7). openSftpHandleForTransfer
+    // force-completes the drain if the OPEN callback never arrives on a dead
+    // channel, so this await cannot hang forever.
+    const sharedWriteOpenDrain = transfer.sharedWriteOpenDrain;
+    if (sharedWriteOpenDrain) {
+      await sharedWriteOpenDrain.catch(() => {});
+      if (transfer.sharedWriteOpenDrain === sharedWriteOpenDrain) {
+        transfer.sharedWriteOpenDrain = null;
+      }
+    }
     transfer.readStream = null;
     transfer.waitForPause = null;
     transfer.cancelPauseWait = null;
@@ -2788,6 +3057,11 @@ async function uploadFileConcurrent(
  * durable byte; out-of-order range completion cannot advance past a hole.
  * Once pause is requested, no new ranges are scheduled and we wait for every
  * in-flight range before acknowledging it.
+ *
+ * @param {{ disposeChannel?: boolean }} [options]
+ *   disposeChannel — when true (isolated channel), cancel/abort may call
+ *   sftp.end(); the caller still returns healthy channels to the download pool.
+ *   When false (shared browse / sudo session), never call sftp.end().
  */
 async function downloadFileResumableFast(
   remotePath,
@@ -2796,18 +3070,26 @@ async function downloadFileResumableFast(
   fileSize,
   transfer,
   sendProgress,
+  options = {},
 ) {
+  const disposeChannel = options.disposeChannel !== false;
   const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
   let channelError = null;
   const onChannelError = (error) => {
     channelError = channelError || error;
   };
   sftp.on?.("error", onChannelError);
-  // Install cancel before OPEN so a stalled remote open can still end the
-  // isolated channel (runPausableConcurrentRanges would install this later).
+  // Install cancel before OPEN so a stalled remote open can still settle:
+  // isolated channels end the subsystem; shared/sudo reject OPEN without end().
+  // (runPausableConcurrentRanges would install abort later, after OPEN.)
+  const abortChannel = () => {
+    if (disposeChannel) {
+      try { sftp.end?.(); } catch { /* ignore */ }
+    }
+  };
   const abortEarly = () => {
     transfer.cancelled = true;
-    try { sftp.end?.(); } catch { }
+    abortChannel();
   };
   transfer.abort = abortEarly;
 
@@ -2816,7 +3098,13 @@ async function downloadFileResumableFast(
   let failed = false;
   try {
     if (transfer.cancelled) throw new Error("Transfer cancelled");
-    remoteHandle = await openSftpHandle(sftp, remotePath, "r");
+    remoteHandle = await openSftpHandleForTransfer(
+      sftp,
+      remotePath,
+      "r",
+      transfer,
+      { disposeChannel, abortChannel },
+    );
     if (channelError) throw channelError;
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     localHandle = await fs.promises.open(localPath, checkpoint > 0 ? "r+" : "w+");
@@ -2834,8 +3122,11 @@ async function downloadFileResumableFast(
           await writeLocalRange(localHandle, buffer, position, length);
         },
         sendProgress,
-        abortChannel: () => sftp.end?.(),
+        abortChannel,
         sftp,
+        // Always force-settle on cancel/error: downloads have no remote WRITEs
+        // to drain. Shared/sudo paths cannot sftp.end() a stuck READ, so without
+        // this a hung read callback would hold the transfer and SFTP lease forever.
         forceSettleOnError: true,
       });
       if (channelError) throw channelError;
@@ -2861,11 +3152,52 @@ async function downloadFileResumableFast(
       }
     }
     let remoteCloseError = null;
-    if (remoteHandle && !failed && !transfer.cancelled) {
-      try {
-        await closeSftpHandle(sftp, remoteHandle);
-      } catch (error) {
-        remoteCloseError = error;
+    // Close remote handles while the channel is still live. On disposeChannel
+    // cancel/failure the channel is about to be ended (or already dead); a
+    // CLOSE request would hang forever with no callback from ssh2.
+    if (remoteHandle) {
+      const skipClose = disposeChannel && (failed || transfer.cancelled);
+      if (!skipClose) {
+        if (failed || transfer.cancelled) {
+          // Shared cancel/failure already settled the transfer; do not await
+          // CLOSE (adds up to 2s on a dead channel). Best-effort close only.
+          closeSftpHandle(sftp, remoteHandle).catch(() => {});
+        } else {
+          // Success path: bound CLOSE so a hung callback cannot block lease
+          // release. Tag the watchdog so real server "timed out" CLOSE errors
+          // are not swallowed by message matching.
+          let closeTimeout = null;
+          try {
+            await Promise.race([
+              closeSftpHandle(sftp, remoteHandle),
+              new Promise((_, reject) => {
+                closeTimeout = setTimeout(() => {
+                  const timeoutError = new Error("SFTP close timed out");
+                  timeoutError.sftpCloseTimedOut = true;
+                  reject(timeoutError);
+                }, 2000);
+              }),
+            ]);
+          } catch (error) {
+            if (error?.sftpCloseTimedOut) {
+              console.warn(
+                "[transferBridge] SFTP CLOSE timed out; abandoning remote handle",
+                transfer.transferId || "",
+                disposeChannel ? "(isolated — dispose channel)" : "(shared — keep session)",
+              );
+              // Shared/sudo: timeout is non-fatal (session stays alive).
+              // Isolated: mark unhealthy so downloadFile disposes instead of
+              // returning a possibly-dead channel to the pool.
+              if (disposeChannel) {
+                remoteCloseError = error;
+              }
+            } else {
+              remoteCloseError = error;
+            }
+          } finally {
+            if (closeTimeout) clearTimeout(closeTimeout);
+          }
+        }
       }
     }
     if (!failed && !transfer.cancelled && !remoteCloseError && channelError) {
@@ -2878,9 +3210,12 @@ async function downloadFileResumableFast(
       throw error;
     }
     if (!failed && !transfer.cancelled && remoteCloseError) {
-      const error = new Error("The isolated SFTP channel failed while closing", { cause: remoteCloseError });
-      error.completedWithUnhealthyChannel = true;
-      throw error;
+      if (disposeChannel) {
+        const error = new Error("The isolated SFTP channel failed while closing", { cause: remoteCloseError });
+        error.completedWithUnhealthyChannel = true;
+        throw error;
+      }
+      throw remoteCloseError;
     }
   }
 }
@@ -3032,7 +3367,73 @@ async function downloadFile(
     }
   }
 
+  // Sudo cannot open an isolated secondary channel, so elevated downloads must
+  // pipeline READs on the shared browse session (#2719). Cap concurrent shared
+  // fanout with the same per-session budget as isolated fast downloads (#1507).
+  // Non-sudo isolated misses stay on serial createReadStream below.
+  if (
+    client.__netcattySudoMode
+    && typeof sftp.open === "function"
+    && typeof sftp.read === "function"
+    && tryAcquireSharedFastDownloadSlot(client)
+  ) {
+    try {
+      try {
+        transfer.downloadStrategy = "concurrent-shared";
+        logTransferDiag(transfer, "strategy", {
+          strategy: "concurrent-shared",
+          fields: {
+            chunk: formatDiagBytes(TRANSFER_CHUNK_SIZE),
+            concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
+          },
+        });
+        await downloadFileResumableFast(
+          remotePath,
+          localPath,
+          sftp,
+          fileSize,
+          transfer,
+          sendProgress,
+          { disposeChannel: false },
+        );
+        if (initialSource) {
+          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
+          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+            localPath,
+            client,
+            remotePath,
+            signal: transfer.signal,
+          });
+        }
+        return;
+      } catch (err) {
+        if (transfer.cancelled) throw err;
+        if (err?.noTransferFallback) throw err;
+        // Concurrent ranges may leave sparse tails past the contiguous
+        // checkpoint; truncate the actual local target before stream resume.
+        const sharedCheckpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+        try {
+          await fs.promises.truncate(localPath, sharedCheckpoint);
+        } catch (truncateError) {
+          if (!(sharedCheckpoint === 0 && truncateError?.code === "ENOENT")) {
+            throw truncateError;
+          }
+        }
+        sendProgress(sharedCheckpoint, fileSize, { force: true, checkpointBytes: sharedCheckpoint });
+        // Clear so the stream fallback below reports the strategy that actually ran.
+        transfer.downloadStrategy = null;
+        console.warn(
+          "[transferBridge] concurrent shared download failed, falling back to a compatible stream:",
+          err?.message || String(err),
+        );
+      }
+    } finally {
+      releaseSharedFastDownloadSlot(client);
+    }
+  }
+
   // Fallback: sequential stream piping
+  transfer.downloadStrategy = transfer.downloadStrategy || "stream";
   const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
   if (checkpoint >= fileSize) {
     // Planned snapshot is already fully staged (including zero-byte snapshots).

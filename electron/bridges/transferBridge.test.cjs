@@ -12,6 +12,7 @@ const transferBridge = require("./transferBridge.cjs");
 const sftpBridge = require("./sftpBridge.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 const {
+  DOWNLOAD_TRANSFER_CONCURRENCY,
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
 } = require("./transferLimits.cjs");
@@ -4126,6 +4127,1417 @@ test("uploads prefer concurrent shared channel over serial WriteStream", async (
   assert.ok(
     maxInFlight <= UPLOAD_TRANSFER_CONCURRENCY,
     `expected concurrency <= ${UPLOAD_TRANSFER_CONCURRENCY}, got ${maxInFlight}`,
+  );
+});
+
+test("cancel during stalled shared upload OPEN drains before remote cleanup", async (t) => {
+  // Codex P2 on a7f96c94: cancel rejected shared write OPEN immediately, so
+  // runRemoteUploadTransaction cleaned up the stage before a late "w" OPEN
+  // recreated it — leaving an orphan .part (or truncating an in-place target).
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-shared-upload-open-drain-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, Buffer.alloc(TRANSFER_CHUNK_SIZE, 41));
+
+  const remoteFiles = new Map();
+  const eventLog = [];
+  let releaseOpen = null;
+  let endCalls = 0;
+  const sharedSftp = createFastSftp({
+    open(remotePath, flags, callback) {
+      assert.equal(flags, "w");
+      const key = String(remotePath);
+      releaseOpen = () => {
+        remoteFiles.set(key, Buffer.alloc(0));
+        eventLog.push(`open-created:${key}`);
+        callback(null, Buffer.from(`handle:${key}`));
+      };
+    },
+    write() {
+      throw new Error("WRITE must not run after cancel during OPEN");
+    },
+    close(_handle, callback) {
+      eventLog.push("close");
+      callback(null);
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat(remotePath) {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        return Promise.reject(error);
+      }
+      return Promise.resolve({ size: remoteFiles.get(key).length });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    async delete(remotePath) {
+      const key = String(remotePath);
+      eventLog.push(`delete:${key}`);
+      remoteFiles.delete(key);
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const sender = createSender();
+  const transferId = "upload-shared-open-drain-cancel";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: TRANSFER_CHUNK_SIZE,
+      resumable: true,
+      skipAdmission: true,
+    },
+  );
+
+  const ready = await waitUntil(() => typeof releaseOpen === "function", 2000);
+  assert.ok(ready, "expected shared write OPEN to stall");
+
+  await transferBridge.cancelTransfer(null, { transferId });
+
+  // Must still be waiting for OPEN drain — immediate settle would be the bug.
+  let settledEarly = false;
+  await Promise.race([
+    running.then(() => { settledEarly = true; }),
+    new Promise((resolve) => setTimeout(resolve, 100)),
+  ]);
+  assert.equal(settledEarly, false, "shared write OPEN cancel must drain before settle");
+
+  releaseOpen?.();
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("transfer did not settle after drained shared write OPEN")), 3000);
+    }),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"));
+
+  const closeIdx = eventLog.indexOf("close");
+  const deleteIdx = eventLog.findIndex((entry) => entry.startsWith("delete:"));
+  assert.ok(closeIdx >= 0, `expected CLOSE before cleanup, log=${eventLog.join(",")}`);
+  assert.ok(deleteIdx >= 0, `expected stage delete after CLOSE, log=${eventLog.join(",")}`);
+  assert.ok(closeIdx < deleteIdx, `CLOSE must precede cleanup delete, log=${eventLog.join(",")}`);
+  assert.equal(
+    [...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")),
+    false,
+    `expected no orphan staged upload, remaining=${[...remoteFiles.keys()].join(",")}`,
+  );
+});
+
+test("shared upload OPEN drain survives cancel settle timeout", async (t) => {
+  // Codex P2 on af9cef2e: 2s settle timeout unblocked cancel, but cleanup could
+  // still race a later truncating OPEN. sharedWriteOpenDrain must outlive the
+  // settle timeout so finally awaits close before stage delete.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-shared-upload-open-drain-timeout-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, Buffer.alloc(TRANSFER_CHUNK_SIZE, 43));
+
+  const remoteFiles = new Map();
+  const eventLog = [];
+  let releaseOpen = null;
+  let endCalls = 0;
+  const sharedSftp = createFastSftp({
+    open(remotePath, flags, callback) {
+      assert.equal(flags, "w");
+      const key = String(remotePath);
+      releaseOpen = () => {
+        remoteFiles.set(key, Buffer.alloc(0));
+        eventLog.push(`open-created:${key}`);
+        callback(null, Buffer.from(`handle:${key}`));
+      };
+    },
+    write() {
+      throw new Error("WRITE must not run after cancel during OPEN");
+    },
+    close(_handle, callback) {
+      eventLog.push("close");
+      callback(null);
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat(remotePath) {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        return Promise.reject(error);
+      }
+      return Promise.resolve({ size: remoteFiles.get(key).length });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    async delete(remotePath) {
+      const key = String(remotePath);
+      eventLog.push(`delete:${key}`);
+      remoteFiles.delete(key);
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const sender = createSender();
+  const transferId = "upload-shared-open-drain-timeout";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-timeout.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: TRANSFER_CHUNK_SIZE,
+      resumable: true,
+      skipAdmission: true,
+    },
+  );
+
+  const ready = await waitUntil(() => typeof releaseOpen === "function", 2000);
+  assert.ok(ready, "expected shared write OPEN to stall");
+
+  await transferBridge.cancelTransfer(null, { transferId });
+
+  // Let the 2s OPEN cancel settle timeout fire while OPEN is still pending.
+  await new Promise((resolve) => setTimeout(resolve, 2100));
+  assert.ok(typeof releaseOpen === "function", "OPEN must still be pending after settle timeout");
+  assert.equal(eventLog.some((entry) => entry.startsWith("delete:")), false,
+    "cleanup must not run before late OPEN drain");
+
+  // Late OPEN after settle timeout — must close then delete, no orphan.
+  releaseOpen?.();
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("transfer did not settle after late shared write OPEN")), 5000);
+    }),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  const closeIdx = eventLog.indexOf("close");
+  const deleteIdx = eventLog.findIndex((entry) => entry.startsWith("delete:"));
+  assert.ok(closeIdx >= 0, `expected CLOSE after late OPEN, log=${eventLog.join(",")}`);
+  assert.ok(deleteIdx >= 0, `expected stage delete after drain, log=${eventLog.join(",")}`);
+  assert.ok(closeIdx < deleteIdx, `CLOSE must precede cleanup delete, log=${eventLog.join(",")}`);
+  assert.equal(
+    [...remoteFiles.keys()].some((key) => key.includes(".netcatty-upload-")),
+    false,
+    `expected no orphan staged upload, remaining=${[...remoteFiles.keys()].join(",")}`,
+  );
+});
+
+test("shared upload OPEN drain survives channel error before OPEN callback", async (t) => {
+  // Codex P2 on 532cf6cc: channel error completed sharedWriteOpenDrain before the
+  // OPEN callback, so cleanup could race a late truncating OPEN.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-shared-upload-open-channel-error-drain-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, Buffer.alloc(TRANSFER_CHUNK_SIZE, 47));
+
+  const remoteFiles = new Map();
+  const eventLog = [];
+  let releaseOpen = null;
+  let endCalls = 0;
+  const sharedSftp = createFastSftp({
+    open(remotePath, flags, callback) {
+      assert.equal(flags, "w");
+      const key = String(remotePath);
+      releaseOpen = () => {
+        remoteFiles.set(key, Buffer.alloc(0));
+        eventLog.push(`open-created:${key}`);
+        callback(null, Buffer.from(`handle:${key}`));
+      };
+    },
+    write() {
+      throw new Error("WRITE must not run after channel error during OPEN");
+    },
+    close(_handle, callback) {
+      eventLog.push("close");
+      callback(null);
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat(remotePath) {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        return Promise.reject(error);
+      }
+      return Promise.resolve({ size: remoteFiles.get(key).length });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    async delete(remotePath) {
+      const key = String(remotePath);
+      eventLog.push(`delete:${key}`);
+      remoteFiles.delete(key);
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const sender = createSender();
+  const transferId = "upload-shared-open-channel-error-drain";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-channel-error.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: TRANSFER_CHUNK_SIZE,
+      resumable: true,
+      skipAdmission: true,
+    },
+  );
+
+  const ready = await waitUntil(() => typeof releaseOpen === "function", 2000);
+  assert.ok(ready, "expected shared write OPEN to stall");
+
+  sharedSftp.emit("error", new Error("shared SFTP channel died during upload OPEN"));
+
+  // Channel error settles the OPEN wait, but cleanup must wait for drain.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(eventLog.some((entry) => entry.startsWith("delete:")), false,
+    "cleanup must not run before late OPEN drain after channel error");
+
+  releaseOpen?.();
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("transfer did not settle after channel error + late OPEN")), 5000);
+    }),
+  ]);
+
+  assert.ok(result.error, "expected transfer to fail after channel error");
+  assert.match(result.error, /shared SFTP channel died during upload OPEN/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  assert.ok(eventLog.includes("close"), `expected CLOSE after late OPEN, log=${eventLog.join(",")}`);
+  // Resumable uploads preserve the stage on error (not cancel), so delete may
+  // not run; the invariant is drain completed (CLOSE) before the failure path
+  // returned, with no racing truncating OPEN after settle.
+  assert.ok(
+    eventLog.indexOf("close") >= 0
+      && eventLog.findIndex((entry) => entry.startsWith("open-created:")) >= 0
+      && eventLog.indexOf("close")
+        > eventLog.findIndex((entry) => entry.startsWith("open-created:")),
+    `late OPEN must be closed before failure returns, log=${eventLog.join(",")}`,
+  );
+});
+
+test("shared upload OPEN drain force-completes when channel error has no OPEN callback", async (t) => {
+  // Codex P2 on 90494c0c: channel error rejected OPEN but left sharedWriteOpenDrain
+  // pending forever when the OPEN callback never arrived, hanging the transfer
+  // and SFTP lease on a dead shared channel.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-shared-upload-open-channel-error-no-callback-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, Buffer.alloc(TRANSFER_CHUNK_SIZE, 49));
+
+  let endCalls = 0;
+  let openCalls = 0;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, _callback) {
+      assert.equal(flags, "w");
+      openCalls += 1;
+      // Never invoke the OPEN callback (dead channel after error).
+    },
+    write() {
+      throw new Error("WRITE must not run after channel error during OPEN");
+    },
+    close() {
+      throw new Error("CLOSE must not run without an OPEN handle");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      const error = new Error("ENOENT");
+      error.code = 2;
+      return Promise.reject(error);
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    async delete() {},
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const sender = createSender();
+  const transferId = "upload-shared-open-channel-error-no-callback";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: localPath,
+      targetPath: "/tmp/upload-channel-error-hang.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: TRANSFER_CHUNK_SIZE,
+      resumable: true,
+      skipAdmission: true,
+    },
+  );
+
+  const ready = await waitUntil(() => openCalls >= 1, 2000);
+  assert.ok(ready, "expected shared write OPEN to stall");
+
+  sharedSftp.emit("error", new Error("shared SFTP channel died with no OPEN callback"));
+
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("transfer hung awaiting shared write OPEN drain after channel error")),
+        5000,
+      );
+    }),
+  ]);
+
+  assert.ok(result.error, "expected transfer to fail after channel error");
+  assert.match(result.error, /shared SFTP channel died with no OPEN callback/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+});
+
+test("sudo SFTP downloads prefer concurrent shared READ over serial createReadStream", async (t) => {
+  // Sudo cannot open an isolated channel, so downloads used to fall straight to
+  // createReadStream (1-in-flight READs → hundreds of KB/s). Uploads already
+  // keep pipelined WRITE fanout on the shared browse channel; downloads must
+  // mirror that for the elevated SFTP path (#2719).
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-download-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(DOWNLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE, 47);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+  const targetPath = path.join(tempDir, "download.bin");
+
+  let maxInFlight = 0;
+  let activeReads = 0;
+  let createReadStreamCalls = 0;
+  let endCalls = 0;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from("shared-read-handle"));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      activeReads += 1;
+      maxInFlight = Math.max(maxInFlight, activeReads);
+      const slice = payload.subarray(position, position + length);
+      slice.copy(buffer, offset);
+      setImmediate(() => {
+        activeReads -= 1;
+        callback(null, slice.length);
+      });
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream() {
+      createReadStreamCalls += 1;
+      throw new Error("serial createReadStream must not be used when concurrent READ works");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: payload.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-sudo-shared-concurrent",
+      sourcePath: "/root/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(createReadStreamCalls, 0);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  assert.ok(
+    maxInFlight >= 2,
+    `expected pipelined READ concurrency >= 2, got ${maxInFlight}`,
+  );
+  assert.ok(
+    maxInFlight <= DOWNLOAD_TRANSFER_CONCURRENCY,
+    `expected concurrency <= ${DOWNLOAD_TRANSFER_CONCURRENCY}, got ${maxInFlight}`,
+  );
+  const downloaded = await fs.promises.readFile(targetPath);
+  assert.deepEqual(downloaded, payload);
+});
+
+test("non-sudo downloads keep serial stream when isolated channel is unavailable", async (t) => {
+  // P1 regression lock: without sudo, isolated-channel miss (pool full / open
+  // unavailable) must stay on createReadStream. concurrent-shared READ fanout
+  // on the browse channel is sudo-only (#2719); otherwise #1507's one-fast-path
+  // per session is bypassed.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-nonsudo-stream-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(4 * TRANSFER_CHUNK_SIZE, 19);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 197;
+  const targetPath = path.join(tempDir, "download.bin");
+
+  let openCalls = 0;
+  let createReadStreamCalls = 0;
+  let endCalls = 0;
+  const sharedSftp = createFastSftp({
+    open() {
+      openCalls += 1;
+      throw new Error("non-sudo must not use concurrent shared OPEN after isolated miss");
+    },
+    read() {
+      throw new Error("non-sudo must not use concurrent shared READ after isolated miss");
+    },
+    createReadStream(_remotePath, options = {}) {
+      createReadStreamCalls += 1;
+      const start = Number(options.start) || 0;
+      const end = options.end == null ? payload.length - 1 : Number(options.end);
+      return Readable.from([payload.subarray(start, end + 1)]);
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    // No client.client → openIsolatedSftpChannel returns null (isolated miss).
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: payload.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-nonsudo-isolated-miss-stream",
+      sourcePath: "/home/user/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(openCalls, 0, "non-sudo isolated miss must not open shared concurrent handle");
+  assert.ok(createReadStreamCalls >= 1, "expected serial createReadStream fallback");
+  assert.equal(endCalls, 0, "browse channel must not be ended");
+  const downloaded = await fs.promises.readFile(targetPath);
+  assert.deepEqual(downloaded, payload);
+});
+
+test("second concurrent sudo download uses stream while shared fast slot is busy", async (t) => {
+  // P2: sudo shared fanout must honor FAST_DOWNLOAD_CHANNELS_PER_SESSION (#1507).
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-slot-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payloadA = Buffer.alloc(4 * TRANSFER_CHUNK_SIZE, 11);
+  const payloadB = Buffer.alloc(2 * TRANSFER_CHUNK_SIZE, 22);
+  const targetA = path.join(tempDir, "a.bin");
+  const targetB = path.join(tempDir, "b.bin");
+
+  let endCalls = 0;
+  let createReadStreamCalls = 0;
+  const pendingReadCallbacks = [];
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from(`handle:${_remotePath}`));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      // Stall forever so the first transfer keeps the shared fast slot.
+      pendingReadCallbacks.push(() => {
+        buffer.fill(11, offset, offset + length);
+        callback(null, length);
+      });
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream(_remotePath, options = {}) {
+      createReadStreamCalls += 1;
+      const start = Number(options.start) || 0;
+      const end = options.end == null ? payloadB.length - 1 : Number(options.end);
+      return Readable.from([payloadB.subarray(start, end + 1)]);
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat(remotePath) {
+      const size = String(remotePath).includes("b.bin") ? payloadB.length : payloadA.length;
+      return Promise.resolve({
+        size,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const first = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId: "download-sudo-slot-first",
+      sourcePath: "/root/a.bin",
+      targetPath: targetA,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payloadA.length,
+      resumable: true,
+    },
+  );
+
+  const firstReady = await waitUntil(() => pendingReadCallbacks.length >= 1, 2000);
+  assert.ok(firstReady, "expected first sudo download to hold shared READ slot");
+
+  const second = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-sudo-slot-second",
+      sourcePath: "/root/b.bin",
+      targetPath: targetB,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payloadB.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(second.error, undefined, second.error);
+  assert.ok(createReadStreamCalls >= 1, "second sudo download must use stream while fast slot busy");
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  const downloadedB = await fs.promises.readFile(targetB);
+  assert.deepEqual(downloadedB, payloadB);
+
+  await transferBridge.cancelTransfer(null, { transferId: "download-sudo-slot-first" });
+  const firstResult = await Promise.race([
+    first,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("first transfer did not settle after cancel")), 5000);
+    }),
+  ]);
+  assert.match(firstResult.error || "", /cancel/i);
+  for (const release of pendingReadCallbacks.splice(0)) {
+    try { release(); } catch { /* ignore */ }
+  }
+});
+
+test("isolated download CLOSE timeout disposes channel instead of returning it to the pool", async (t) => {
+  // Codex P2 on a3b11137: success-path CLOSE timeout with disposeChannel:true
+  // only logged and left remoteCloseError unset, so downloadFile released the
+  // isolated channel back to the pool without dispose.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-isolated-close-timeout-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(2 * TRANSFER_CHUNK_SIZE, 33);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 173;
+  const targetPath = path.join(tempDir, "download.bin");
+
+  let openedChannels = 0;
+  let endCalls = 0;
+  let closeCalls = 0;
+  const makeIsolated = () => createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from(`isolated-${openedChannels}`));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      const slice = payload.subarray(position, position + length);
+      slice.copy(buffer, offset);
+      setImmediate(() => callback(null, slice.length));
+    },
+    close(_handle, _callback) {
+      closeCalls += 1;
+      // Never invoke callback — simulates a hung CLOSE on an isolated channel.
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    sftp: createFastSftp({
+      createReadStream() {
+        throw new Error("serial stream must not run when isolated concurrent READ succeeds");
+      },
+    }),
+    stat() {
+      return Promise.resolve({
+        size: payload.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+    client: {
+      sftp(callback) {
+        openedChannels += 1;
+        callback(null, makeIsolated());
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const first = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-isolated-close-timeout",
+      sourcePath: "/tmp/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(first.error, undefined, first.error);
+  assert.ok(closeCalls >= 1, "expected isolated CLOSE to be attempted");
+  assert.ok(endCalls >= 1, "CLOSE timeout must dispose the isolated channel");
+  assert.deepEqual(await fs.promises.readFile(targetPath), payload);
+
+  // A follow-up download must open a fresh isolated channel, not reuse the timed-out one.
+  const targetPath2 = path.join(tempDir, "download-2.bin");
+  const second = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId: "download-isolated-close-timeout-2",
+      sourcePath: "/tmp/download.bin",
+      targetPath: targetPath2,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+  assert.equal(second.error, undefined, second.error);
+  assert.ok(openedChannels >= 2, `expected a new isolated channel after dispose, got ${openedChannels}`);
+  assert.deepEqual(await fs.promises.readFile(targetPath2), payload);
+});
+
+test("cancel during stalled shared sudo download OPEN settles without sftp.end()", async (t) => {
+  // Codex P2 on 2c369403: disposeChannel:false made pre-OPEN abort a no-op while
+  // openSftpHandle had no cancel reject, so cancel hung forever and held the lease.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-open-stall-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const targetPath = path.join(tempDir, "download.bin");
+  const fileSize = DOWNLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE;
+  let endCalls = 0;
+  let createReadStreamCalls = 0;
+  let closeCalls = 0;
+  let releaseOpen = null;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      releaseOpen = () => callback(null, Buffer.from("late-shared-handle"));
+    },
+    read() {
+      throw new Error("READ must not run after cancel during OPEN");
+    },
+    close(_handle, callback) {
+      closeCalls += 1;
+      callback(null);
+    },
+    createReadStream() {
+      createReadStreamCalls += 1;
+      throw new Error("serial createReadStream must not run after cancel");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: fileSize,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const transferId = "download-sudo-open-stall-cancel";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: "/root/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: fileSize,
+      resumable: true,
+    },
+  );
+
+  const ready = await waitUntil(() => typeof releaseOpen === "function", 2000);
+  assert.ok(ready, "expected shared OPEN to stall");
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error("transfer did not settle after cancel during shared OPEN")), 3000);
+    }),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended on cancel");
+  assert.equal(createReadStreamCalls, 0, "cancel must not fall through to serial stream");
+  assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"));
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"), false);
+
+  // Late OPEN success after cancel should close the handle, not leave it open.
+  releaseOpen?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(closeCalls >= 1, `expected late shared handle close, got ${closeCalls}`);
+});
+
+test("shared sudo download OPEN rejects on channel error without hanging", async (t) => {
+  // Codex P2 on 50ef8fac: outer onChannelError only recorded the error for a
+  // post-await check. If the shared channel emitted error while sftp.open was
+  // pending and never invoked the OPEN callback, the transfer hung forever and
+  // held the SFTP lease. openSftpHandleForTransfer must reject on channel error.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-open-channel-error-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const targetPath = path.join(tempDir, "download.bin");
+  const fileSize = DOWNLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE;
+  let endCalls = 0;
+  let createReadStreamCalls = 0;
+  let closeCalls = 0;
+  let releaseOpen = null;
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      releaseOpen = () => callback(null, Buffer.from("late-shared-handle-after-error"));
+    },
+    read() {
+      throw new Error("READ must not run after channel error during OPEN");
+    },
+    close(_handle, callback) {
+      closeCalls += 1;
+      callback(null);
+    },
+    createReadStream() {
+      createReadStreamCalls += 1;
+      // Concurrent shared OPEN failure falls through to stream fallback on the
+      // same (already dead) channel — fail fast so the transfer can settle.
+      const stream = new Readable({ read() {} });
+      setImmediate(() => stream.destroy(new Error("shared channel already dead")));
+      return stream;
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: fileSize,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const transferId = "download-sudo-open-channel-error";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: "/root/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: fileSize,
+      resumable: true,
+    },
+  );
+
+  const ready = await waitUntil(() => typeof releaseOpen === "function", 2000);
+  assert.ok(ready, "expected shared OPEN to stall");
+
+  sharedSftp.emit("error", new Error("shared SFTP channel died during OPEN"));
+
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("transfer did not settle after shared channel error during OPEN")),
+        3000,
+      );
+    }),
+  ]);
+
+  assert.ok(result.error, "expected transfer to fail after channel error");
+  assert.match(
+    result.error,
+    /shared SFTP channel died during OPEN|shared channel already dead/i,
+  );
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended on channel error");
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), false);
+  assert.ok(
+    createReadStreamCalls >= 1,
+    "concurrent shared OPEN failure should fall through to stream fallback",
+  );
+
+  // Late OPEN success after channel-error reject should close the handle.
+  releaseOpen?.();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(closeCalls >= 1, `expected late shared handle close, got ${closeCalls}`);
+});
+
+test("cancel during stalled shared sudo READ settles without sftp.end()", async (t) => {
+  // Codex P2 on d855e69c: disposeChannel:false passed forceSettleOnError:false, so
+  // cancel while an sftp.read callback never arrives hung forever (abortChannel is
+  // a no-op on shared channels). Downloads have no remote WRITEs to drain, so they
+  // must force-settle on cancel without ending the sudo session.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-read-stall-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const targetPath = path.join(tempDir, "download.bin");
+  const fileSize = 4 * TRANSFER_CHUNK_SIZE;
+  let endCalls = 0;
+  let createReadStreamCalls = 0;
+  let activeReads = 0;
+  let maxInFlight = 0;
+  const pendingReadCallbacks = [];
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from("shared-read-handle"));
+    },
+    read(_handle, _buffer, _offset, _length, _position, callback) {
+      activeReads += 1;
+      maxInFlight = Math.max(maxInFlight, activeReads);
+      // Stall forever — never invoke callback (simulates dead/hung READ).
+      pendingReadCallbacks.push(() => {
+        activeReads -= 1;
+        callback(new Error("late READ after cancel"));
+      });
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream() {
+      createReadStreamCalls += 1;
+      throw new Error("serial createReadStream must not run after cancel");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: fileSize,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const transferId = "download-sudo-read-stall-cancel";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: "/root/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: fileSize,
+      resumable: true,
+    },
+  );
+
+  const ready = await waitUntil(() => pendingReadCallbacks.length >= 1, 2000);
+  assert.ok(ready, "expected at least one shared READ to stall");
+  assert.ok(maxInFlight >= 1, `expected in-flight READ, got ${maxInFlight}`);
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  // forceSettleOnError grace is 2s; shared cancel/fail CLOSE is fire-and-forget.
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("transfer did not settle after cancel during stalled shared READ")),
+        5000,
+      );
+    }),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended on cancel during READ");
+  assert.equal(createReadStreamCalls, 0, "cancel must not fall through to serial stream");
+  assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"));
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"), false);
+
+  // Late READ callbacks after settle must not crash the process.
+  for (const release of pendingReadCallbacks.splice(0)) {
+    try { release(); } catch { /* ignore */ }
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+test("cancel during stalled shared verification READ settles without sftp.end()", async (t) => {
+  // Codex P2 on cba714f3: after ranged READs finish, verifyFastDownloadSamples still
+  // awaits bare sftp.read outside forceSettleOnError. Shared cancel cannot
+  // sftp.end(), so a hung verification READ would hold the transfer and lease.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-verify-stall-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(3 * TRANSFER_CHUNK_SIZE, 61);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+  const targetPath = path.join(tempDir, "download.bin");
+  let endCalls = 0;
+  let createReadStreamCalls = 0;
+  let transferredBytes = 0;
+  const pendingVerifyCallbacks = [];
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from("shared-verify-handle"));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      // Complete the concurrent download first; stall only verification samples.
+      if (transferredBytes < payload.length) {
+        const slice = payload.subarray(position, position + length);
+        slice.copy(buffer, offset);
+        transferredBytes += slice.length;
+        setImmediate(() => callback(null, slice.length));
+        return;
+      }
+      pendingVerifyCallbacks.push(() => {
+        callback(new Error("late verification READ after cancel"));
+      });
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream() {
+      createReadStreamCalls += 1;
+      throw new Error("serial createReadStream must not run after cancel");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: payload.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const transferId = "download-sudo-verify-stall-cancel";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: "/root/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const ready = await waitUntil(() => pendingVerifyCallbacks.length >= 1, 3000);
+  assert.ok(ready, "expected verification READ to stall after ranged download");
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("transfer did not settle after cancel during stalled verification READ")),
+        5000,
+      );
+    }),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended during verification cancel");
+  assert.equal(createReadStreamCalls, 0, "cancel must not fall through to serial stream");
+  assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"));
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"), false);
+
+  for (const release of pendingVerifyCallbacks.splice(0)) {
+    try { release(); } catch { /* ignore */ }
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
+test("cancel during responsive last verification sample reports cancelled", async (t) => {
+  // Codex P2 on 74ae5e0a: cancel during the last sample can let the READ win the
+  // race before the 2s force-settle fires. Without a post-race cancelled check,
+  // verification returns successfully and sendComplete() reports done.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-verify-race-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(3 * TRANSFER_CHUNK_SIZE, 67);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+  const targetPath = path.join(tempDir, "download.bin");
+  let endCalls = 0;
+  let transferredBytes = 0;
+  let verifyReadCount = 0;
+  let releaseLastVerifyRead = null;
+  const lastVerifyReadHeld = new Promise((resolve) => {
+    releaseLastVerifyRead = resolve;
+  });
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from("shared-verify-race-handle"));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      if (transferredBytes < payload.length) {
+        const slice = payload.subarray(position, position + length);
+        slice.copy(buffer, offset);
+        transferredBytes += slice.length;
+        setImmediate(() => callback(null, slice.length));
+        return;
+      }
+      verifyReadCount += 1;
+      const slice = payload.subarray(position, position + length);
+      slice.copy(buffer, offset);
+      // Hold only the last sample briefly so cancel can land mid-READ, then
+      // complete successfully (responsive server — force-settle never fires).
+      if (verifyReadCount >= 3) {
+        lastVerifyReadHeld.then(() => {
+          setImmediate(() => callback(null, slice.length));
+        });
+        return;
+      }
+      setImmediate(() => callback(null, slice.length));
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream() {
+      throw new Error("serial createReadStream must not run");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: payload.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const transferId = "download-sudo-verify-race-cancel";
+  const running = transferBridge.startTransfer(
+    { sender },
+    {
+      transferId,
+      sourcePath: "/root/download.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  const ready = await waitUntil(() => verifyReadCount >= 3, 3000);
+  assert.ok(ready, "expected last verification sample to be held");
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  releaseLastVerifyRead();
+
+  const result = await Promise.race([
+    running,
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("transfer did not settle after cancel during last verification sample")),
+        3000,
+      );
+    }),
+  ]);
+
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended");
+  assert.ok(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"));
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:error"), false);
+});
+
+test("shared verification channel error between samples fails without hanging", async (t) => {
+  // Codex P2 on 14783168: channel error between sample races (after one sample
+  // resolves, before the next rejectPending is installed) was dropped; the next
+  // readSftpRange could hang forever on a dead shared channel.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-sudo-verify-gap-error-"));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const payload = Buffer.alloc(3 * TRANSFER_CHUNK_SIZE, 71);
+  for (let index = 0; index < payload.length; index += 1) payload[index] = index % 251;
+  const targetPath = path.join(tempDir, "download.bin");
+  let endCalls = 0;
+  let transferredBytes = 0;
+  let verifyReadCount = 0;
+  let sharedSftp = null;
+  const pendingSecondVerify = [];
+  sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "r");
+      callback(null, Buffer.from("shared-verify-gap-handle"));
+    },
+    read(_handle, buffer, offset, length, position, callback) {
+      if (transferredBytes < payload.length) {
+        const slice = payload.subarray(position, position + length);
+        slice.copy(buffer, offset);
+        transferredBytes += slice.length;
+        setImmediate(() => callback(null, slice.length));
+        return;
+      }
+      verifyReadCount += 1;
+      if (verifyReadCount === 1) {
+        const slice = payload.subarray(position, position + length);
+        slice.copy(buffer, offset);
+        setImmediate(() => {
+          callback(null, slice.length);
+          // Emit after the first sample resolves and before the next race installs
+          // rejectPending — the gap Codex identified.
+          setImmediate(() => {
+            sharedSftp.emit("error", new Error("shared channel died between samples"));
+          });
+        });
+        return;
+      }
+      // Subsequent verification READs never callback (dead channel).
+      pendingSecondVerify.push(callback);
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    createReadStream() {
+      throw new Error("serial createReadStream must not run after channel error");
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+
+  const client = {
+    __netcattySudoMode: true,
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({
+        size: payload.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const sender = createSender();
+  const result = await Promise.race([
+    transferBridge.startTransfer(
+      { sender },
+      {
+        transferId: "download-sudo-verify-gap-error",
+        sourcePath: "/root/download.bin",
+        targetPath,
+        sourceType: "sftp",
+        targetType: "local",
+        sourceSftpId: "source",
+        totalBytes: payload.length,
+        resumable: true,
+      },
+    ),
+    new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("transfer hung after shared verification channel error between samples")),
+        4000,
+      );
+    }),
+  ]);
+
+  // Concurrent path already staged the full file, so fallback may complete via
+  // the checkpoint>=fileSize short-circuit — either outcome is fine as long as
+  // we settle instead of hanging on the dead-channel READ.
+  assert.ok(result, "expected transfer to settle after inter-sample channel error");
+  assert.equal(endCalls, 0, "shared sudo channel must not be ended on verification error");
+  assert.ok(
+    sender.sent.some((entry) => (
+      entry.channel === "netcatty:transfer:complete"
+      || entry.channel === "netcatty:transfer:error"
+      || entry.channel === "netcatty:transfer:cancelled"
+    )),
+    "expected a terminal transfer event after channel error between samples",
   );
 });
 
