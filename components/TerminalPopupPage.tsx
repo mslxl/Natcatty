@@ -313,9 +313,15 @@ function TerminalPopupPageInner({
     return resolveTerminalPopupReuseId(config);
   }, [config]);
 
-  // Defer backend start while app-locked so startup commands/credentials do not
-  // run behind the overlay (Codex P2). Config listener still mounts above.
-  const ready = Boolean(config && host && vaultInitialized && allowTerminalStart);
+  // Defer *first* backend start while app-locked so startup commands/credentials
+  // do not run behind the overlay. Once a session has started, keep it mounted
+  // across re-locks so the popup is not torn down mid-session (Codex P2).
+  const readyToStart = Boolean(config && host && vaultInitialized && allowTerminalStart);
+  const [sessionStarted, setSessionStarted] = useState(false);
+  useEffect(() => {
+    if (readyToStart) setSessionStarted(true);
+  }, [readyToStart]);
+  const ready = sessionStarted || readyToStart;
   const startupRevealDelayMs = useMemo(() => {
     if (!config?.startupCommand) return 0;
     const configuredDelay = settings.terminalSettings?.startupCommandDelayMs;
