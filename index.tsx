@@ -155,8 +155,10 @@ const root = ReactDOM.createRoot(rootElement);
 const renderApp = () => {
   const route = getRoute();
   const isPeerSessionWindow = window.location.hash.startsWith('#/session-window');
+  // Session windows still need settings sync (theme/font/language) from the
+  // main window; only suppress system-side effects (tray, global shortcuts, …).
   const settingsOptions = isPeerSessionWindow
-    ? { enableSettingsSync: false, enableSystemEffects: false }
+    ? { enableSystemEffects: false }
     : undefined;
 
   if (route === 'settings') {
