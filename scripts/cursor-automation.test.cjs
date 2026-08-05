@@ -766,6 +766,81 @@ test('decideIssueCommentRoute accepts maintainer @bot and ignores untrusted byst
   assert.equal(auto.mentionsIssueBot('补充：@netcatty-bot请再确认'), true);
 });
 
+test('maintainer @bot on auto-closed labels can reclassify without open bot PR', () => {
+  const maintainerDecision = auto.decideIssueCommentRoute({
+    labels: ['triage:already-available', 'triage:admitted', 'ready-for-human'],
+    commenterLogin: 'maintainer',
+    issueAuthorLogin: 'alice',
+    commenterAssociation: 'MEMBER',
+    body: '@netcatty-bot 请重新分流，这个能力其实还没有。',
+  });
+  assert.deepEqual(maintainerDecision, {
+    kind: 'issue_followup',
+    reason: 'maintainer mentioned issue bot',
+  });
+  assert.deepEqual(
+    auto.refineIssueCommentRoute(maintainerDecision, {
+      hasOpenBotPull: false,
+      labels: ['triage:already-available', 'triage:admitted', 'ready-for-human'],
+      body: '@netcatty-bot 请重新分流，这个能力其实还没有。',
+    }),
+    {
+      kind: 'issue_classify',
+      reason: 'actionable maintainer bot mention without open automation PR',
+    },
+  );
+  // Maintainer who is also the issue author still gets the maintainer reason.
+  const maintainerAuthor = auto.decideIssueCommentRoute({
+    labels: ['triage:already-available', 'ready-for-human'],
+    commenterLogin: 'maintainer',
+    issueAuthorLogin: 'maintainer',
+    commenterAssociation: 'OWNER',
+    body: '@netcatty-bot 请重新分流，这个能力其实还没有。',
+  });
+  assert.deepEqual(maintainerAuthor, {
+    kind: 'issue_followup',
+    reason: 'maintainer mentioned issue bot',
+  });
+  assert.deepEqual(
+    auto.refineIssueCommentRoute(maintainerAuthor, {
+      hasOpenBotPull: false,
+      labels: ['triage:already-available', 'ready-for-human'],
+      body: '@netcatty-bot 请重新分流，这个能力其实还没有。',
+    }),
+    {
+      kind: 'issue_classify',
+      reason: 'actionable maintainer bot mention without open automation PR',
+    },
+  );
+  // Author follow-ups on the same labels still stay on follow-up (no re-close loop).
+  const authorDecision = {
+    kind: 'issue_followup',
+    reason: 'author follow-up on managed issue',
+  };
+  assert.equal(
+    auto.refineIssueCommentRoute(authorDecision, {
+      hasOpenBotPull: false,
+      labels: ['triage:already-available', 'ready-for-human'],
+      body: '@netcatty-bot 请重新分流，这个能力其实还没有。',
+    }),
+    authorDecision,
+  );
+  // Non-maintainer author + @bot still routes as author follow-up (not reclassify).
+  assert.deepEqual(
+    auto.decideIssueCommentRoute({
+      labels: ['triage:already-available', 'ready-for-human'],
+      commenterLogin: 'alice',
+      issueAuthorLogin: 'alice',
+      commenterAssociation: 'NONE',
+      body: '@netcatty-bot 请重新分流，这个能力其实还没有。',
+    }),
+    {
+      kind: 'issue_followup',
+      reason: 'author follow-up on managed issue',
+    },
+  );
+});
+
 test('decideIssueCommentRoute ignores automation actors and unmanaged chatter', () => {
   assert.equal(
     auto.decideIssueCommentRoute({
