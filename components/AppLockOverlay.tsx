@@ -114,15 +114,19 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     return () => window.clearTimeout(timeout);
   }, [locked]);
 
-  // Soft focus trap + block window-level app shortcuts while locked.
-  // Background content is `inert` from AppLockGate, but inert does not stop
-  // keydown bubbling to window listeners (e.g. Snippets Ctrl/Cmd+S). Stop
-  // propagation on the bubble path so those handlers never see lock-UI keys
-  // (Codex P2 on 1d81be94). Capture phase still owns the Tab cycle.
+  // Soft focus trap + stop ALL app-level keydown while locked.
+  // inert does not block window capture (shortkey/hotkey recorders) or window
+  // bubble (Snippets Ctrl/Cmd+S). Use window capture + stopImmediate so peer
+  // window handlers never run, without stopPropagation so the lock password
+  // input still receives the event. Document bubble then stops before window
+  // bubble listeners (Codex P2 on 81e1f779).
   useEffect(() => {
     if (!locked) return;
 
-    const onKeyDownCapture = (event: KeyboardEvent) => {
+    const onWindowCapture = (event: KeyboardEvent) => {
+      // Suppress other window-level keydown handlers registered after us.
+      event.stopImmediatePropagation();
+
       if (event.key !== 'Tab') return;
       const root = overlayRootRef.current;
       if (!root) return;
@@ -147,21 +151,17 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       }
     };
 
-    // Document bubble runs before window bubble listeners used by app panels.
-    const onKeyDownBubble = (event: KeyboardEvent) => {
-      const root = overlayRootRef.current;
-      if (!root) return;
-      const target = event.target as Node | null;
-      if (target && root.contains(target)) {
-        event.stopPropagation();
-      }
+    // Unconditional: even when focus is on body, window bubble shortcuts must
+    // not fire. Runs on document bubble before window bubble.
+    const onDocumentBubble = (event: KeyboardEvent) => {
+      event.stopPropagation();
     };
 
-    document.addEventListener('keydown', onKeyDownCapture, true);
-    document.addEventListener('keydown', onKeyDownBubble, false);
+    window.addEventListener('keydown', onWindowCapture, true);
+    document.addEventListener('keydown', onDocumentBubble, false);
     return () => {
-      document.removeEventListener('keydown', onKeyDownCapture, true);
-      document.removeEventListener('keydown', onKeyDownBubble, false);
+      window.removeEventListener('keydown', onWindowCapture, true);
+      document.removeEventListener('keydown', onDocumentBubble, false);
     };
   }, [locked]);
 
@@ -260,6 +260,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       className="fixed inset-0 z-[1000000] flex items-center justify-center bg-background px-6 text-foreground"
       role="dialog"
       data-state="open"
+      data-app-lock-overlay=""
       aria-modal="true"
       aria-labelledby="app-lock-title"
     >
