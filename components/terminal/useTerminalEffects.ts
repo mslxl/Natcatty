@@ -8,9 +8,10 @@ import { isMacPlatform } from '../../lib/utils';
 import { resolveXTermScrollback } from '../../infrastructure/config/xtermPerformance';
 import {
   createMacOptionForcedSelectionMouseEvent,
+  createRightClickMouseTrackingPressClaim,
   shouldInterceptMouseTrackingContextMenu,
   shouldReplayShiftMouseSelectionAsMacOption,
-  shouldStopShiftRightClickMouseTrackingMouseDown,
+  shouldStopRightClickMouseTrackingMouseUp,
 } from './runtime/middleClickBehavior';
 import {
   hasOpenAppDialog,
@@ -1553,20 +1554,23 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, [sessionId]);
 
 
-  // Prevent xterm.js's built-in rightClickHandler and right-button mouseup
-  // from interfering with tmux/vim popup menus when mouse tracking is active.
-  // On macOS, xterm forces selection with Option, while most terminal users
-  // expect Shift to bypass mouse reporting. Replay Shift+left-click as that
-  // native xterm force-selection gesture before xterm receives the original.
-  // - mousedown (button 2 + Shift): keep Shift+right-click local so the
-  //   terminal app does not also receive the right-button press
+  // Prevent xterm.js's built-in rightClickHandler from interfering with
+  // mouse-tracking TUIs. On macOS, xterm forces selection with Option, while
+  // most terminal users expect Shift to bypass mouse reporting. Replay
+  // Shift+left-click as that native xterm force-selection gesture before
+  // xterm receives the original.
+  // - mousedown (button 2 + Shift / fullscreen-apps menu): keep the press
+  //   local so the terminal app does not also receive it
   // - contextmenu: xterm.js calls textarea.select() which steals focus
-  // - mouseup (button 2): tmux interprets the right-button release as a
-  //   dismiss action, closing the popup menu immediately after it appears
-  // Both are intercepted at the capture phase before xterm.js's own listeners.
+  // - mouseup (button 2): only stop when we also claimed the matching
+  //   mousedown. App-owned right-clicks (Herdr, tmux, vim, ...) must receive
+  //   the release or the TUI stays stuck with the button held (#2721).
+  // Intercepted at the capture phase before xterm.js's own listeners.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    const rightClickPressClaim = createRightClickMouseTrackingPressClaim();
 
     const handleContextMenuCapture = (e: MouseEvent) => {
       if (!shouldInterceptMouseTrackingContextMenu({
@@ -1601,7 +1605,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
 
     const handleMouseDownCapture = (e: MouseEvent) => {
-      if (shouldStopShiftRightClickMouseTrackingMouseDown({
+      if (rightClickPressClaim.noteMouseDown({
         event: e,
         mouseTracking: mouseTrackingRef.current,
         status: statusRef.current,
@@ -1630,7 +1634,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
 
     const handleMouseUpCapture = (e: MouseEvent) => {
-      if (e.button === 2 && mouseTrackingRef.current && statusRef.current === 'connected') {
+      if (shouldStopRightClickMouseTrackingMouseUp({
+        event: e,
+        claimedMatchingMouseDown: rightClickPressClaim.consumeMouseUpClaim(e),
+      })) {
         e.stopImmediatePropagation();
       }
     };

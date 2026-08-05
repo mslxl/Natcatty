@@ -131,6 +131,48 @@ export const shouldStopShiftRightClickMouseTrackingMouseDown = ({
   && event.button === 2
   && (event.shiftKey || forcesMenuOverMouseTracking({ rightClickBehavior, forceMenuInAlternateScreen }));
 
+// Pair mouseup with mousedown ownership. When Netcatty claims the press
+// (Shift / fullscreen-apps menu), also swallow the release so xterm never
+// reports a lone button-up. When the TUI owns the press (Herdr, tmux menus,
+// vim, ...), the release must reach xterm too - otherwise the app stays stuck
+// with the right button held and mouse UI dies until restart (#2721).
+// Ownership is remembered from the actual mousedown claim — never re-derived
+// from mouseup modifiers (Shift may change between press and release).
+export interface RightClickMouseTrackingPressClaim {
+  /** Evaluate + record whether this right-button mousedown was claimed. */
+  noteMouseDown: (state: ShiftRightClickMouseDownCaptureState) => boolean;
+  /** Consume the pending claim for a right-button mouseup (clears state). */
+  consumeMouseUpClaim: (event: MouseEvent) => boolean;
+}
+
+export const createRightClickMouseTrackingPressClaim = (): RightClickMouseTrackingPressClaim => {
+  let claimedMatchingMouseDown = false;
+
+  return {
+    noteMouseDown(state) {
+      const shouldStop = shouldStopShiftRightClickMouseTrackingMouseDown(state);
+      if (state.event.button === 2) {
+        claimedMatchingMouseDown = shouldStop;
+      }
+      return shouldStop;
+    },
+    consumeMouseUpClaim(event) {
+      if (event.button !== 2) return false;
+      const claimed = claimedMatchingMouseDown;
+      claimedMatchingMouseDown = false;
+      return claimed;
+    },
+  };
+};
+
+export const shouldStopRightClickMouseTrackingMouseUp = ({
+  event,
+  claimedMatchingMouseDown,
+}: {
+  event: MouseEvent;
+  claimedMatchingMouseDown: boolean;
+}): boolean => event.button === 2 && claimedMatchingMouseDown;
+
 export const createMacOptionForcedSelectionMouseEvent = (event: MouseEvent): MouseEvent =>
   markShiftSelectionReplayMouseEvent(new MouseEvent(event.type, {
     bubbles: event.bubbles,

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createRightClickMouseTrackingPressClaim,
   isMiddleClickContextMenuEvent,
   isShiftSelectionReplayMouseEvent,
   markMiddleClickContextMenuEvent,
@@ -10,6 +11,7 @@ import {
   resolveMiddleClickBehavior,
   shouldInterceptMouseTrackingContextMenu,
   shouldReplayShiftMouseSelectionAsMacOption,
+  shouldStopRightClickMouseTrackingMouseUp,
   shouldStopShiftRightClickMouseTrackingMouseDown,
 } from "./middleClickBehavior";
 
@@ -294,6 +296,118 @@ test("Shift right-click mousedown capture is limited to connected mouse tracking
       } as MouseEvent,
       mouseTracking: true,
       status: "connected",
+    }),
+    false,
+  );
+});
+
+test("right-click mouseup reaches mouse-tracking apps when Netcatty did not claim the press", () => {
+  // Herdr / Terminal.app: button-down was delivered, so button-up must be too.
+  // Swallowing mouseup leaves the TUI stuck thinking the right button is held (#2721).
+  const claim = createRightClickMouseTrackingPressClaim();
+  assert.equal(
+    claim.noteMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "context-menu",
+      forceMenuInAlternateScreen: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldStopRightClickMouseTrackingMouseUp({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      claimedMatchingMouseDown: claim.consumeMouseUpClaim({ button: 2 } as MouseEvent),
+    }),
+    false,
+  );
+});
+
+test("right-click mouseup is stopped only when Netcatty claimed the matching mousedown", () => {
+  const shiftClaim = createRightClickMouseTrackingPressClaim();
+  assert.equal(
+    shiftClaim.noteMouseDown({
+      event: { button: 2, shiftKey: true } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldStopRightClickMouseTrackingMouseUp({
+      event: { button: 2, shiftKey: true } as MouseEvent,
+      claimedMatchingMouseDown: shiftClaim.consumeMouseUpClaim({ button: 2 } as MouseEvent),
+    }),
+    true,
+  );
+
+  const forceMenuClaim = createRightClickMouseTrackingPressClaim();
+  assert.equal(
+    forceMenuClaim.noteMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+      rightClickBehavior: "context-menu",
+      forceMenuInAlternateScreen: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldStopRightClickMouseTrackingMouseUp({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      claimedMatchingMouseDown: forceMenuClaim.consumeMouseUpClaim({ button: 2 } as MouseEvent),
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldStopRightClickMouseTrackingMouseUp({
+      event: { button: 0, shiftKey: false } as MouseEvent,
+      claimedMatchingMouseDown: false,
+    }),
+    false,
+  );
+});
+
+test("right-click mouseup pairs with the claimed mousedown, not the release modifiers", () => {
+  // Shift+right press claimed by Netcatty, then Shift released before mouseup:
+  // still swallow the release so xterm never sees a lone button-up.
+  const claimedThenShiftReleased = createRightClickMouseTrackingPressClaim();
+  assert.equal(
+    claimedThenShiftReleased.noteMouseDown({
+      event: { button: 2, shiftKey: true } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldStopRightClickMouseTrackingMouseUp({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      claimedMatchingMouseDown: claimedThenShiftReleased.consumeMouseUpClaim(
+        { button: 2, shiftKey: false } as MouseEvent,
+      ),
+    }),
+    true,
+  );
+
+  // App-owned press, then Shift held on release: release must still reach xterm.
+  const appOwnedThenShiftAdded = createRightClickMouseTrackingPressClaim();
+  assert.equal(
+    appOwnedThenShiftAdded.noteMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      status: "connected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldStopRightClickMouseTrackingMouseUp({
+      event: { button: 2, shiftKey: true } as MouseEvent,
+      claimedMatchingMouseDown: appOwnedThenShiftAdded.consumeMouseUpClaim(
+        { button: 2, shiftKey: true } as MouseEvent,
+      ),
     }),
     false,
   );
