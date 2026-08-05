@@ -29,6 +29,42 @@ function handleAppHide(appLockController) {
   }
 }
 
+/**
+ * macOS keeps the process alive after the last BrowserWindow closes
+ * (`window-all-closed` only quits on non-darwin). App-lock runtime is shared
+ * for the process lifetime, so an unlock can otherwise survive a full
+ * close → Dock reopen cycle. Re-apply lock with `startup` (same reason as
+ * cold start) so a fresh renderer withholds content until unlock. Prefer this
+ * over `background`, which waits on a reopen signal that a brand-new window
+ * never receives.
+ */
+function ensureAppLockForFreshSession(appLockController, reason = "startup") {
+  if (!shouldBackgroundLockOnHide(appLockController)) return false;
+  const nextReason = typeof reason === "string" && reason.trim() !== "" ? reason : "startup";
+  try {
+    appLockController.setLocked(nextReason);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * True when no usable app-content windows remain (main / settings / etc.).
+ * Used to decide whether recreating a main window is a "fresh session" reopen
+ * after the last window was closed, vs. adding another window while one is open.
+ */
+function hasNoUsableAppContentWindows(appContentWindows) {
+  if (!Array.isArray(appContentWindows) || appContentWindows.length === 0) return true;
+  return !appContentWindows.some((win) => {
+    try {
+      return Boolean(win && !(typeof win.isDestroyed === "function" && win.isDestroyed()));
+    } catch {
+      return false;
+    }
+  });
+}
+
 function handleActivateWithMainWindow({
   app,
   mainWindow,
@@ -205,9 +241,11 @@ async function handleBeforeQuit({
 
 module.exports = {
   emitAppLockReopen,
+  ensureAppLockForFreshSession,
   handleAppHide,
   handleActivateWithMainWindow,
   handleBeforeQuit,
+  hasNoUsableAppContentWindows,
   shouldBackgroundLockOnHide,
   shouldCommitQuitWithoutDirtyCheck,
 };

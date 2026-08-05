@@ -152,9 +152,11 @@ const {
 } = require("./bridges/appLockSystemAuthBridge.cjs");
 const {
   emitAppLockReopen,
+  ensureAppLockForFreshSession,
   handleAppHide,
   handleActivateWithMainWindow,
   handleBeforeQuit,
+  hasNoUsableAppContentWindows,
   shouldCommitQuitWithoutDirtyCheck,
 } = require("./main/appLockLifecycle.cjs");
 const ptyProcessTree = require("./bridges/ptyProcessTree.cjs");
@@ -566,6 +568,21 @@ let mainWindowStartupPromise = null;
 async function createAndShowMainWindow() {
   if (mainWindowStartupPromise) return mainWindowStartupPromise;
 
+  // macOS Dock/tray reopen after every app-content window was closed leaves the
+  // process alive with an already-initialized (and possibly unlocked) app-lock
+  // runtime. Re-lock before the new renderer mounts so unlock does not stick.
+  try {
+    const windowManager = getWindowManager();
+    const appContentWindows = typeof windowManager.getAppContentWindows === "function"
+      ? windowManager.getAppContentWindows()
+      : (typeof windowManager.getMainWindows === "function" ? windowManager.getMainWindows() : []);
+    if (hasNoUsableAppContentWindows(appContentWindows)) {
+      ensureAppLockForFreshSession(appLockController, "startup");
+    }
+  } catch {
+    // ignore — window creation should still proceed
+  }
+
   mainWindowStartupPromise = (async () => {
     processErrorController.beginMainWindowStartup();
     try {
@@ -970,11 +987,15 @@ if (!gotLock) {
     });
   });
 
-  // Cleanup on all windows closed
+  // Cleanup on all windows closed. On macOS the process stays alive for Dock
+  // reactivation — re-apply App Lock so a later reopen does not inherit an
+  // unlocked runtime from the previous session in this process.
   app.on("window-all-closed", () => {
     if (process.platform !== "darwin") {
       app.quit();
+      return;
     }
+    ensureAppLockForFreshSession(appLockController, "startup");
   });
 
   // Quit guard state:

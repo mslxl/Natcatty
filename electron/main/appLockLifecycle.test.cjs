@@ -3,9 +3,11 @@ const assert = require("node:assert/strict");
 
 const {
   emitAppLockReopen,
+  ensureAppLockForFreshSession,
   handleAppHide,
   handleActivateWithMainWindow,
   handleBeforeQuit,
+  hasNoUsableAppContentWindows,
   shouldBackgroundLockOnHide,
   shouldCommitQuitWithoutDirtyCheck,
 } = require("./appLockLifecycle.cjs");
@@ -13,6 +15,42 @@ const {
 test("shouldBackgroundLockOnHide locks only when app lock controller exists", () => {
   assert.equal(shouldBackgroundLockOnHide({ setLocked: () => {} }), true);
   assert.equal(shouldBackgroundLockOnHide(null), false);
+});
+
+test("ensureAppLockForFreshSession locks with startup by default", () => {
+  const calls = [];
+  assert.equal(
+    ensureAppLockForFreshSession({
+      setLocked(reason) {
+        calls.push(reason);
+      },
+    }),
+    true,
+  );
+  assert.deepEqual(calls, ["startup"]);
+});
+
+test("ensureAppLockForFreshSession accepts an explicit reason and ignores missing controllers", () => {
+  const calls = [];
+  assert.equal(
+    ensureAppLockForFreshSession({
+      setLocked(reason) {
+        calls.push(reason);
+      },
+    }, "background"),
+    true,
+  );
+  assert.deepEqual(calls, ["background"]);
+  assert.equal(ensureAppLockForFreshSession(null), false);
+  assert.equal(ensureAppLockForFreshSession({}), false);
+});
+
+test("hasNoUsableAppContentWindows treats empty or destroyed lists as no windows", () => {
+  assert.equal(hasNoUsableAppContentWindows(undefined), true);
+  assert.equal(hasNoUsableAppContentWindows([]), true);
+  assert.equal(hasNoUsableAppContentWindows([null, { isDestroyed: () => true }]), true);
+  assert.equal(hasNoUsableAppContentWindows([{ isDestroyed: () => false }]), false);
+  assert.equal(hasNoUsableAppContentWindows([{ /* no isDestroyed */ }]), false);
 });
 
 test("shouldCommitQuitWithoutDirtyCheck commits when no reachable main windows exist", () => {
