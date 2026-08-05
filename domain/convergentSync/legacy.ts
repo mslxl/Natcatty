@@ -125,6 +125,9 @@ export function cloudSyncPayloadsEqual(left: SyncPayload, right: SyncPayload): b
         .map((key) => [key, (payload as unknown as Record<string, unknown>)[key] ?? []]),
     ),
     settings: payload.settings ?? {},
+    // Plugin sidecars are host-owned opaque data on the encrypted blob and
+    // must participate in migration freshness / equality checks.
+    pluginSidecars: payload.pluginSidecars ?? { version: 1, entries: [] },
   });
   return fingerprint(project(left)) === fingerprint(project(right));
 }

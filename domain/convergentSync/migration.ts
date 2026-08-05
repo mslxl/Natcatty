@@ -25,6 +25,58 @@ import {
   materializeSyncPayloadFromConvergentState,
   withConvergentSyncEnvelope,
 } from './payload';
+import {
+  mergePluginSyncSidecars,
+  mergePluginSyncSidecarsThreeWay,
+} from '../pluginSyncSidecar';
+
+/** LWW-union plugin sidecars from every migration input that carries them. */
+function mergeMigrationSidecars(
+  ...bundles: Array<SyncPayload['pluginSidecars'] | null | undefined>
+): SyncPayload['pluginSidecars'] | undefined {
+  let entries: NonNullable<SyncPayload['pluginSidecars']>['entries'] = [];
+  let sawAny = false;
+  for (const bundle of bundles) {
+    if (!bundle || !Array.isArray(bundle.entries)) continue;
+    sawAny = true;
+    entries = mergePluginSyncSidecars({ local: entries, remote: bundle });
+  }
+  return sawAny ? { version: 1, entries } : undefined;
+}
+
+/**
+ * Three-way merge local sidecars against each remote source using that
+ * source's trusted baseline (falls back to local baseline). Preserves
+ * explicit local deletions instead of resurrecting them via LWW union.
+ */
+function mergeMigrationSidecarsWithBaselines(options: {
+  local: SyncPayload['pluginSidecars'] | null | undefined;
+  localBaseline: SyncPayload['pluginSidecars'] | null | undefined;
+  sources: Array<{
+    remote: SyncPayload['pluginSidecars'] | null | undefined;
+    baseline: SyncPayload['pluginSidecars'] | null | undefined;
+  }>;
+}): SyncPayload['pluginSidecars'] | undefined {
+  let entries = Array.isArray(options.local?.entries) ? [...options.local.entries] : [];
+  const localBase = Array.isArray(options.localBaseline?.entries)
+    ? options.localBaseline.entries
+    : [];
+  let sawAny = Array.isArray(options.local?.entries);
+  for (const source of options.sources) {
+    if (!source.remote || !Array.isArray(source.remote.entries)) continue;
+    sawAny = true;
+    const base = Array.isArray(source.baseline?.entries)
+      ? source.baseline.entries
+      : localBase;
+    entries = mergePluginSyncSidecarsThreeWay({
+      base,
+      local: entries,
+      remote: source.remote.entries,
+    });
+  }
+  if (!sawAny) return undefined;
+  return { version: 1, entries };
+}
 
 /*
  * A local snapshot with no cloud entities and no trusted base is a fresh
@@ -203,14 +255,43 @@ export function planConvergentSyncMigration(options: {
     }
     if (blockedReasons.length === 0) {
       state = createConvergentSyncStateFromPayload(merged, options.deviceId, options.now);
+      // Prefer the three-way merge result already on `merged` (preserves
+      // explicit sidecar deletions). Do not re-LWW raw provider bundles —
+      // that would resurrect entries three-way merge correctly removed.
+      const migrationSidecars = Object.prototype.hasOwnProperty.call(merged, 'pluginSidecars')
+        ? merged.pluginSidecars
+        : mergeMigrationSidecars(
+          options.localPayload.pluginSidecars,
+          ...v1Inputs.map((input) => input.payload.pluginSidecars),
+        );
       materialized = materializeSyncPayloadFromConvergentState(state, {
         syncedAt: options.now,
         syncMeta: merged.syncMeta,
+        ...(migrationSidecars ? { pluginSidecars: migrationSidecars } : {}),
       });
     }
   } else if (blockedReasons.length === 0) {
     state = v2Inputs.map((input) => input.state).reduce(mergeConvergentSyncStates);
-    const joinedPayload = materializeSyncPayloadFromConvergentState(state, { syncedAt: options.now });
+    // Three-way per provider so local resets are not resurrected from a
+    // still-stale remote entry during convergent enablement.
+    const joinedSidecars = mergeMigrationSidecarsWithBaselines({
+      local: options.localPayload.pluginSidecars,
+      localBaseline: options.localTrustedBaseline?.pluginSidecars,
+      sources: [
+        ...v2Inputs.map((input) => ({
+          remote: input.payload.pluginSidecars,
+          baseline: input.trustedBaseline?.pluginSidecars,
+        })),
+        ...v1Inputs.map((input) => ({
+          remote: input.payload.pluginSidecars,
+          baseline: input.trustedBaseline?.pluginSidecars,
+        })),
+      ],
+    });
+    const joinedPayload = materializeSyncPayloadFromConvergentState(state, {
+      syncedAt: options.now,
+      ...(joinedSidecars ? { pluginSidecars: joinedSidecars } : {}),
+    });
     const legacySources: Array<{
       id: string;
       payload: SyncPayload;
@@ -257,7 +338,13 @@ export function planConvergentSyncMigration(options: {
     }
     if (blockedReasons.length === 0) {
       state = branches.reduce(mergeConvergentSyncStates, state);
-      materialized = materializeSyncPayloadFromConvergentState(state, { syncedAt: options.now });
+      // joinedSidecars already unions local + all provider inputs. Re-LWW-ing
+      // raw sources again cannot add unique entries and can confuse future
+      // three-way paths that expect the joined set to be final.
+      materialized = materializeSyncPayloadFromConvergentState(state, {
+        syncedAt: options.now,
+        ...(joinedSidecars ? { pluginSidecars: joinedSidecars } : {}),
+      });
     }
   }
 
@@ -265,7 +352,13 @@ export function planConvergentSyncMigration(options: {
   if (conflicts.length > 0) blockedReasons.push('The convergent state contains unresolved field conflicts');
   const canInitialize = blockedReasons.length === 0 && state !== null && materialized !== null;
   const payload = canInitialize && state
-    ? withConvergentSyncEnvelope(state, { syncedAt: options.now, syncMeta: materialized?.syncMeta })
+    ? withConvergentSyncEnvelope(state, {
+      syncedAt: options.now,
+      syncMeta: materialized?.syncMeta,
+      ...(materialized?.pluginSidecars
+        ? { pluginSidecars: materialized.pluginSidecars }
+        : {}),
+    })
     : null;
   const previewPayload = materialized ?? options.localPayload;
   const entityCounts = Object.fromEntries(

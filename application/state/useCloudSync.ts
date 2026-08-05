@@ -59,6 +59,7 @@ interface CloudSyncRunOptions {
   overrideShrink?: boolean;
   conflictActionOverride?: CloudSyncConflictAction;
   applyConvergentPayload?: ConvergentPayloadApplier;
+  signal?: AbortSignal;
 }
 
 export interface CloudSyncHook {
@@ -107,6 +108,12 @@ export interface CloudSyncHook {
     authAttemptId?: number
   ) => Promise<void>;
   connectGoogle: () => Promise<string>;
+  /** Connect a namespaced plugin sync Provider (encrypted-object storage only). */
+  connectPluginProvider: (
+    providerId: string,
+    configuration?: unknown,
+    credential?: unknown,
+  ) => Promise<void>;
   connectOneDrive: () => Promise<string>;
   connectWebDAV: (config: WebDAVConfig) => Promise<void>;
   connectS3: (config: S3Config) => Promise<void>;
@@ -124,7 +131,7 @@ export interface CloudSyncHook {
   syncToProvider: (
     provider: CloudProvider,
     payload: SyncPayload,
-    opts?: Pick<CloudSyncRunOptions, 'overrideShrink' | 'applyConvergentPayload'>,
+    opts?: Pick<CloudSyncRunOptions, 'overrideShrink' | 'applyConvergentPayload' | 'signal'>,
   ) => Promise<SyncResult>;
   downloadFromProvider: (provider: CloudProvider) => Promise<RemoteSyncPayload | null>;
   commitRemoteInspection: (provider: CloudProvider, remoteFile: SyncedFile, payload: SyncPayload, opts?: { recordDownload?: boolean }) => Promise<void>;
@@ -303,6 +310,39 @@ export const useCloudSync = (): CloudSyncHook => {
       // A missing/corrupt replica is surfaced by the next explicit sync.
     });
   }, [state.securityState]);
+
+  // Keep plugin sync provider availability aligned with live contributions so
+  // disabled/uninstalled providers leave the auto-sync ready set after restart.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshAvailable = async () => {
+      try {
+        const { pluginExtensionBridge } = await import('./pluginExtensionBridge');
+        const listed = await pluginExtensionBridge.listProviders('sync');
+        if (cancelled) return;
+        const ids = (listed ?? []).map((entry) => {
+          const nested = (entry as { provider?: { id?: string } }).provider;
+          return typeof nested?.id === 'string' ? nested.id : '';
+        }).filter((id) => id.length > 0);
+        manager.setAvailablePluginSyncProviders(ids);
+      } catch {
+        // Transient IPC / host startup failures must not wipe the availability
+        // catalog; leave the previous set until a successful discovery.
+      }
+    };
+    void refreshAvailable();
+    let unsubscribe = () => {};
+    void import('./pluginExtensionBridge').then(({ pluginExtensionBridge }) => {
+      if (cancelled) return;
+      unsubscribe = pluginExtensionBridge.onContributionsChanged(() => {
+        void refreshAvailable();
+      });
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
   
   // ========== Computed Values ==========
   
@@ -676,6 +716,18 @@ export const useCloudSync = (): CloudSyncHook => {
   const connectS3 = useCallback(async (config: S3Config): Promise<void> => {
     await manager.connectConfigProvider('s3', config);
   }, []);
+
+  /**
+   * Connect a namespaced plugin sync Provider (encrypted-object storage only).
+   * Configuration is opaque plugin-owned JSON; encryption stays host-owned.
+   */
+  const connectPluginProvider = useCallback(async (
+    providerId: string,
+    configuration: unknown = {},
+    credential?: unknown,
+  ): Promise<void> => {
+    await manager.connectPluginProvider(providerId, configuration, credential);
+  }, []);
   
   const cancelOAuthConnect = useCallback(() => {
     const githubAbort = activeGitHubAuthAbortRef.current;
@@ -734,16 +786,48 @@ export const useCloudSync = (): CloudSyncHook => {
 
   const syncNowWithUnlock = useCallback(async (payload: SyncPayload, opts?: CloudSyncRunOptions) => {
     await ensureUnlocked();
-    return await manager.syncAllProviders(payload, opts);
+    const controller = new AbortController();
+    let onAbort: (() => void) | undefined;
+    if (opts?.signal) {
+      if (opts.signal.aborted) controller.abort();
+      else {
+        onAbort = () => controller.abort();
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+    try {
+      const results = await manager.syncAllProviders(payload, { ...opts, signal: controller.signal });
+      const { commitPluginSidecarsAfterSuccessfulSync } = await import('../pluginSyncSidecarBridge');
+      commitPluginSidecarsAfterSuccessfulSync(payload, results.values());
+      return results;
+    } finally {
+      if (opts?.signal && onAbort) opts.signal.removeEventListener('abort', onAbort);
+    }
   }, [ensureUnlocked]);
 
   const syncToProviderWithUnlock = useCallback(async (
     provider: CloudProvider,
     payload: SyncPayload,
-    opts?: Pick<CloudSyncRunOptions, 'overrideShrink' | 'applyConvergentPayload'>,
+    opts?: Pick<CloudSyncRunOptions, 'overrideShrink' | 'applyConvergentPayload' | 'signal'>,
   ) => {
     await ensureUnlocked();
-    return await manager.syncToProvider(provider, payload, opts);
+    const controller = new AbortController();
+    let onAbort: (() => void) | undefined;
+    if (opts?.signal) {
+      if (opts.signal.aborted) controller.abort();
+      else {
+        onAbort = () => controller.abort();
+        opts.signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+    try {
+      const result = await manager.syncToProvider(provider, payload, { ...opts, signal: controller.signal });
+      const { commitPluginSidecarsAfterSuccessfulSync } = await import('../pluginSyncSidecarBridge');
+      commitPluginSidecarsAfterSuccessfulSync(payload, [result]);
+      return result;
+    } finally {
+      if (opts?.signal && onAbort) opts.signal.removeEventListener('abort', onAbort);
+    }
   }, [ensureUnlocked]);
 
   const downloadFromProviderWithUnlock = useCallback(async (provider: CloudProvider) => {
@@ -785,7 +869,29 @@ export const useCloudSync = (): CloudSyncHook => {
     ) => Promise<void>,
   ) => {
     await ensureUnlocked();
-    return manager.resolveConvergentConflict(addressKey, candidateDot, applyPayload);
+    // Collect live sidecars so conflict apply/upload does not revert plugin
+    // settings that changed after the last provider baseline. Operational
+    // collection failures must abort (not proceed as empty). Host gated off /
+    // non-authoritative collect must omit the field (not last-known cache) so
+    // apply preserves local DB sidecars.
+    const {
+      collectPluginSyncSidecarsFromHost,
+      isPluginSidecarHostUnavailableError,
+    } = await import('../pluginSyncSidecarBridge');
+    let pluginSidecars: SyncPayload['pluginSidecars'] | undefined;
+    try {
+      const collected = await collectPluginSyncSidecarsFromHost({ liveOnly: true });
+      if (collected) pluginSidecars = collected;
+    } catch (error) {
+      if (isPluginSidecarHostUnavailableError(error)) {
+        // Host gated off: omit field so apply preserves local sidecars.
+      } else {
+        throw error;
+      }
+    }
+    return manager.resolveConvergentConflict(addressKey, candidateDot, applyPayload, {
+      pluginSidecars,
+    });
   }, [ensureUnlocked]);
 
   const refreshConvergentSyncConfig = useCallback(() => {
@@ -854,6 +960,7 @@ export const useCloudSync = (): CloudSyncHook => {
     connectOneDrive,
     connectWebDAV,
     connectS3,
+    connectPluginProvider,
     completePKCEAuth,
     cancelOAuthConnect,
     disconnectProvider,

@@ -257,6 +257,12 @@ export const STORAGE_KEY_PF_RECONNECT_CANCEL = '__netcatty_pf_cancel_reconnect';
 // Default SSH Key Passphrases (for ~/.ssh keys not managed in the vault)
 export const STORAGE_KEY_DEFAULT_KEY_PASSPHRASES = 'netcatty_default_key_passphrases_v1';
 
+// Plugin sync sidecars / availability. Literals MUST match domain/sync
+// SYNC_STORAGE_KEYS (PLUGIN_SIDECARS_* / AVAILABLE_PLUGIN_SYNC_PROVIDERS).
+export const STORAGE_KEY_PLUGIN_SIDECARS_LAST_KNOWN = 'netcatty_plugin_sidecars_last_known_v1';
+export const STORAGE_KEY_PLUGIN_SIDECARS_PENDING_REMOTE = 'netcatty_plugin_sidecars_pending_remote_v1';
+export const STORAGE_KEY_AVAILABLE_PLUGIN_SYNC_PROVIDERS = 'netcatty_available_plugin_sync_providers_v1';
+
 // Debug Flags (no _v1 suffix — developer-only, not persisted data)
 export const STORAGE_KEY_DEBUG_HOTKEYS = 'debug.hotkeys';
 export const STORAGE_KEY_DEBUG_UPDATE_DEMO = 'debug.updateDemo';

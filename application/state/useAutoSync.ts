@@ -31,6 +31,7 @@ import {
   sanitizePortForwardingRulesForSync,
   shouldPromptCloudVaultRecovery,
 } from '../syncPayload';
+import { commitPluginSidecarsAfterSuccessfulSync } from '../pluginSyncSidecarBridge';
 import { readInterruptedVaultApply } from '../localVaultBackups';
 import {
   STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL,
@@ -76,6 +77,21 @@ interface AutoSyncConfig {
 // Get manager singleton for direct state access
 const manager = getCloudSyncManager();
 const AUTO_SYNC_PROVIDER_ORDER: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
+
+/** Prefer built-in order, then any connected namespaced plugin provider. */
+function pickConnectedAutoSyncProvider(
+  providers: Record<string, { status?: string; tokens?: unknown; config?: unknown }>,
+): CloudProvider | undefined {
+  for (const id of AUTO_SYNC_PROVIDER_ORDER) {
+    const conn = providers[id];
+    if (conn && isProviderReadyForSync(conn as never)) return id;
+  }
+  for (const [id, conn] of Object.entries(providers)) {
+    if (AUTO_SYNC_PROVIDER_ORDER.includes(id as CloudProvider)) continue;
+    if (conn && isProviderReadyForSync(conn as never)) return id as CloudProvider;
+  }
+  return undefined;
+}
 const SYNCABLE_SETTING_STORAGE_KEY_SET = new Set<string>(SYNCABLE_SETTING_STORAGE_KEYS);
 
 // Cross-window restore barrier: stored as an epoch-ms deadline. Any value
@@ -125,6 +141,7 @@ const getSyncPayloadDataHash = (payload: SyncPayload): string => {
     portForwardingRules: sanitizePortForwardingRulesForSync(payload.portForwardingRules),
     groupConfigs: payload.groupConfigs,
     settings: payload.settings,
+    pluginSidecars: payload.pluginSidecars,
   });
 };
 
@@ -188,6 +205,21 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     return () => window.removeEventListener('sftp-bookmarks-changed', handler);
   }, []);
 
+  // Plugin settings live in the main-process DB; contribution change events
+  // are the renderer signal that sidecar-backed values may have changed.
+  const [pluginSidecarsVersion, setPluginSidecarsVersion] = useState(0);
+  useEffect(() => {
+    const bridge = netcattyBridge.get() as {
+      onPluginContributionsChanged?: (callback: () => void) => () => void;
+    } | null | undefined;
+    const unsubscribe = bridge?.onPluginContributionsChanged?.(() => {
+      setPluginSidecarsVersion((v) => v + 1);
+    });
+    return () => {
+      unsubscribe?.();
+    };
+  }, []);
+
   const [syncableSettingsStorageVersion, setSyncableSettingsStorageVersion] = useState(0);
   useEffect(() => {
     const bumpIfSyncableSetting = (key: string | null | undefined) => {
@@ -239,19 +271,24 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.groupConfigs,
   ]);
 
-  // Build sync payload
+  // Build sync payload (includes plugin sidecars when host is available)
   const buildPayload = useCallback(async (): Promise<SyncPayload> => {
-    return {
+    const { withPluginSyncSidecars } = await import('../syncPayload');
+    const { collectPluginSyncSidecarsFromHost } = await import('../pluginSyncSidecarBridge');
+    const base: SyncPayload = {
       ...getSyncSnapshot(),
       settings: await collectCloudSyncableSettings(),
       syncedAt: Date.now(),
     };
+    const sidecars = await collectPluginSyncSidecarsFromHost();
+    return withPluginSyncSidecars(base, sidecars);
   }, [getSyncSnapshot]);
   
-  // Create a hash of current data for comparison (includes settings)
+  // Create a hash of current data for comparison (includes settings + sidecars)
   const getDataHash = useCallback(async () => {
-    return JSON.stringify({ ...getSyncSnapshot(), settings: await collectCloudSyncableSettings() });
-  }, [getSyncSnapshot]);
+    const payload = await buildPayload();
+    return getSyncPayloadDataHash(payload);
+  }, [buildPayload]);
   
   // Sync now handler - get fresh state directly from manager
   const syncNow = useCallback(async (options?: SyncNowOptions): Promise<boolean> => {
@@ -346,8 +383,8 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         throw new Error(t('sync.autoSync.vaultLocked'));
       }
 
-      const dataHash = await getDataHash();
       const payload = await buildPayload();
+      const dataHash = getSyncPayloadDataHash(payload);
       const encryptedCredentialPaths = findSyncPayloadEncryptedCredentialPaths(payload);
       if (
         encryptedCredentialPaths.length > 0
@@ -420,6 +457,10 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           throw new Error(result.error || t('sync.autoSync.syncFailed'));
         }
       }
+
+      // Commit sidecar last-known after a successful sync (also done inside
+      // useCloudSync.syncNow; keep here as defense for this path's merge logic).
+      commitPluginSidecarsAfterSuccessfulSync(payload, resultList);
 
       lastSyncedDataRef.current = dataHash;
       manager.setPendingLocalSync(false);
@@ -517,13 +558,19 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     if (!remoteCheckDoneRef.current) {
       return;
     }
-    const currentHash = await getDataHashRef.current();
-    const hashDecision = resolveAutoSyncHashDecision({
-      currentHash,
-      lastSyncedHash: lastSyncedDataRef.current,
-      appliedSkipHash: skipNextSyncHashRef.current,
-    });
-    manager.setPendingLocalSync(hashDecision === 'sync');
+    try {
+      const currentHash = await getDataHashRef.current();
+      const hashDecision = resolveAutoSyncHashDecision({
+        currentHash,
+        lastSyncedHash: lastSyncedDataRef.current,
+        appliedSkipHash: skipNextSyncHashRef.current,
+      });
+      manager.setPendingLocalSync(hashDecision === 'sync');
+    } catch (error) {
+      // Sidecar collect can throw on host DB/runtime errors; leave the
+      // pending indicator unchanged rather than surfacing an unhandled rejection.
+      console.warn('[AutoSync] Failed to refresh pending local sync:', error);
+    }
   }, [convergentSyncPaused, enabled, sync.hasAnyConnectedProvider, sync.isUnlocked]);
 
   const refreshPendingLocalSyncRef = useRef(refreshPendingLocalSync);
@@ -567,9 +614,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     // "nothing to check" early return doesn't leak the lock and wedge
     // the retry timer. Any path that takes the lock MUST reach the
     // finally-release below.
-    const connectedProvider = AUTO_SYNC_PROVIDER_ORDER.find((provider) =>
-      isProviderReadyForSync(state.providers[provider]),
-    ) ?? null;
+    const connectedProvider = pickConnectedAutoSyncProvider(state.providers) ?? null;
 
     if (!connectedProvider) {
       // Nothing to check — mark as done so the auto-sync gate opens.
@@ -715,6 +760,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           conflictActionOverride: 'upload-local',
         });
         const roundTripResultList = Array.from(roundTripResults.values());
+        commitPluginSidecarsAfterSuccessfulSync(remotePayload, roundTripResultList);
         const wasShrinkBlocked = roundTripResultList.some((result) => result.shrinkBlocked === true);
         const roundTripFullySynced = roundTripResultList.length > 0
           && roundTripResultList.every((result) => result.success);
@@ -734,6 +780,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       if (conflictAction === 'upload-local') {
         const pushResults = await manager.syncAllProviders(localPayload);
         const results = Array.from(pushResults.values());
+        commitPluginSidecarsAfterSuccessfulSync(localPayload, results);
         const allProvidersSynced = results.length > 0
           && results.every((result) => result.success);
         const wasShrinkBlocked = results.some((result) => result.shrinkBlocked === true);
@@ -781,6 +828,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         try {
           const roundTripResults = await manager.syncAllProviders(mergeResult.payload);
           const roundTripResultList = Array.from(roundTripResults.values());
+          commitPluginSidecarsAfterSuccessfulSync(mergeResult.payload, roundTripResultList);
           const wasShrinkBlocked = roundTripResultList.some((r) => r.shrinkBlocked === true);
           const roundTripFullySynced = roundTripResultList.length > 0
             && roundTripResultList.every((result) => result.success);
@@ -828,7 +876,11 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           isInitializedRef.current = true;
         }
         if (markCurrentDataSynced && (!hadInitialBaseline || inspectedRemoteChange)) {
-          lastSyncedDataRef.current = await getDataHashRef.current();
+          try {
+            lastSyncedDataRef.current = await getDataHashRef.current();
+          } catch (error) {
+            console.warn('[AutoSync] Failed to capture post-inspect baseline hash:', error);
+          }
         } else if (!markCurrentDataSynced) {
           lastSyncedDataRef.current = '';
         }
@@ -873,9 +925,13 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     const establishInitialBaseline = () => {
       isInitializedRef.current = true;
       void (async () => {
-        const currentHash = await getDataHash();
-        if (cancelled) return;
-        lastSyncedDataRef.current = currentHash;
+        try {
+          const currentHash = await getDataHash();
+          if (cancelled) return;
+          lastSyncedDataRef.current = currentHash;
+        } catch (error) {
+          console.warn('[AutoSync] Failed to establish sync baseline hash:', error);
+        }
       })();
     };
 
@@ -916,7 +972,13 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     syncTimeoutRef.current = setTimeout(() => {
       syncTimeoutRef.current = null;
       void (async () => {
-        const currentHash = await getDataHash();
+        let currentHash: string;
+        try {
+          currentHash = await getDataHash();
+        } catch (error) {
+          console.warn('[AutoSync] Failed to hash local vault before auto-sync:', error);
+          return;
+        }
         if (cancelled) return;
 
         // After a remote apply or merge, skip only that exact applied data.
@@ -986,6 +1048,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.settingsVersion,
     enabled,
     bookmarksVersion,
+    pluginSidecarsVersion,
     convergentSyncPaused,
     syncableSettingsStorageVersion,
   ]);
@@ -1002,6 +1065,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.settingsVersion,
     enabled,
     bookmarksVersion,
+    pluginSidecarsVersion,
     syncableSettingsStorageVersion,
   ]);
   

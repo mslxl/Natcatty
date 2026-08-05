@@ -27,6 +27,7 @@ import type {
   SyncPayload,
   SyncResult,
 } from '../../../domain/sync';
+// CloudProvider used when clearing dynamic plugin-provider bases/anchors.
 import {
   decryptLocalStorageValue,
   encryptLocalStorageValue,
@@ -596,8 +597,21 @@ export async function syncAllProvidersImpl(this: any,
     await Promise.all(uploadTasks);
 
     // 5. Final State Update
-    const hasSuccess = Array.from(results.values()).some((r) => r.success);
-    if (hasSuccess) {
+    const resultList = Array.from(results.values());
+    const hasSuccess = resultList.some((r) => r.success);
+    const hasConflict = resultList.some((r) => r.conflictDetected);
+    if (hasConflict) {
+      // Prefer CONFLICT over IDLE even when another provider succeeded, so the
+      // conflict UI from uploadToProvider is not wiped by a mixed multi-provider run.
+      this.state.syncState = 'CONFLICT';
+      if (wasMerged && payload) {
+        for (const [p, r] of results) {
+          if (r.success) {
+            results.set(p, { ...r, action: 'merge', mergedPayload: payload });
+          }
+        }
+      }
+    } else if (hasSuccess) {
       this.exitBlockedState();
       this.state.syncState = 'IDLE';
       this.state.lastShrinkFinding = undefined;
@@ -780,7 +794,18 @@ export function clearSyncBaseImpl(this: any): void {
     if (typeof this.syncSnapshotsKey === 'function') {
       this.removeFromStorage(this.syncSnapshotsKey());
     }
-    for (const p of ['github', 'google', 'onedrive', 'webdav', 's3'] as const) {
+    const providers = new Set<CloudProvider>([
+      'github', 'google', 'onedrive', 'webdav', 's3',
+    ]);
+    for (const id of Object.keys(this.state?.providers ?? {})) {
+      providers.add(id as CloudProvider);
+    }
+    if (typeof this.listRegisteredPluginProviderIds === 'function') {
+      for (const id of this.listRegisteredPluginProviderIds()) {
+        providers.add(id as CloudProvider);
+      }
+    }
+    for (const p of providers) {
       this.removeFromStorage(this.syncBaseKey(p));
       this.removeFromStorage(this.convergentProviderBaselineKey(p));
       if (typeof this.syncSnapshotsKey === 'function') {

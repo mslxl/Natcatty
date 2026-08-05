@@ -166,7 +166,7 @@ class PluginNetworkBroker {
 
   validate(params) {
     const request = assertNetworkRequest(params);
-    return {
+    const validated = {
       url: request.url.href,
       method: request.method,
       headers: request.headers,
@@ -175,6 +175,43 @@ class PluginNetworkBroker {
       }),
       timeoutMs: request.timeoutMs,
     };
+    // Preserve host-consumed credential fields. assertNetworkRequest ignores
+    // unknown keys; without this, registry validateParams would strip them and
+    // network.request lease injection would become dead code.
+    if (params?.credentialLease !== undefined) {
+      const lease = params.credentialLease;
+      if (
+        !lease
+        || typeof lease !== "object"
+        || Array.isArray(lease)
+        || lease.kind !== "secret-lease"
+        || typeof lease.id !== "string"
+        || typeof lease.operationId !== "string"
+        || !Number.isFinite(lease.expiresAt)
+      ) {
+        throw invalidArgument("Plugin network credential lease is invalid");
+      }
+      validated.credentialLease = Object.freeze({
+        kind: "secret-lease",
+        id: lease.id,
+        operationId: lease.operationId,
+        expiresAt: lease.expiresAt,
+      });
+    }
+    if (params?.authorization !== undefined) {
+      const authorization = params.authorization;
+      if (!authorization || typeof authorization !== "object" || Array.isArray(authorization)) {
+        throw invalidArgument("Plugin network authorization is invalid");
+      }
+      const scheme = authorization.scheme === "Basic" ? "Basic" : "Bearer";
+      validated.authorization = Object.freeze({
+        scheme,
+        ...(typeof authorization.username === "string"
+          ? { username: authorization.username }
+          : {}),
+      });
+    }
+    return validated;
   }
 
   describeAuthorization(params) {

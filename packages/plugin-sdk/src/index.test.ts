@@ -122,7 +122,7 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
   const source = await readFile(new URL("./index.ts", import.meta.url), "utf8");
   assert.match(
     source,
-    /kind: Exclude<\s*ProviderKind,\s*TerminalInterceptorKind \| OrdinaryTerminalProviderKind \| "connection" \| "authentication" \| "importer"\s*>,\s*handler: PluginProviderHandler/u,
+    /kind: Exclude<\s*ProviderKind,\s*TerminalInterceptorKind \| OrdinaryTerminalProviderKind \| "connection" \| "authentication" \| "importer" \| "sync"\s*>,\s*handler: PluginProviderHandler/u,
   );
   assert.match(
     source,
@@ -134,7 +134,7 @@ test("terminal interceptor typing stays specialized while broad ProviderKind hel
   );
 });
 
-test("provider registrations infer typed connection and importer stream invocations", () => {
+test("provider registrations infer typed connection importer and sync stream invocations", () => {
   assertSdkTypeChecks(`
     import { definePlugin } from "./index.ts";
     import type {
@@ -143,6 +143,8 @@ test("provider registrations infer typed connection and importer stream invocati
       AuthenticationResult,
       ImporterKeyDraft,
       ImporterProviderHandler,
+      SyncProviderHandler,
+      SyncProviderResultByOperation,
     } from "./index.ts";
 
     const resizeAck: ConnectionProviderResultByOperation["resize"] = null;
@@ -191,6 +193,24 @@ test("provider registrations infer typed connection and importer stream invocati
       parse: () => ({ parsed: 0, warnings: 0, errors: 0 }),
     };
     void invalidImporterProvider;
+
+    const disconnectAck: SyncProviderResultByOperation["disconnect"] = null;
+    void disconnectAck;
+    // @ts-expect-error disconnect acknowledges with JSON null.
+    const invalidDisconnectAck: SyncProviderResultByOperation["disconnect"] = { ok: true };
+    void invalidDisconnectAck;
+
+    const invalidSyncProvider: SyncProviderHandler = {
+      connect: () => ({ account: { id: "a" } }),
+      disconnect: () => null,
+      getAccount: () => ({ account: null }),
+      getCapabilities: () => ({ revisions: true, conditionalWrites: true, atomicReplacement: true }),
+      // @ts-expect-error readObject must return a SyncReadObjectResult, not write result.
+      readObject: () => ({ created: true }),
+      writeObject: () => ({ created: true }),
+      deleteObject: () => ({ deleted: true }),
+    };
+    void invalidSyncProvider;
 
     // @ts-expect-error challenge results must include the exact challenge payload.
     const incompleteAuthenticationResult: AuthenticationResult = { status: "challenge" };
@@ -252,6 +272,54 @@ test("provider registrations infer typed connection and importer stream invocati
             return { confidence: 1 };
           },
         });
+
+        context.providers.register("com.example.sync", "sync", {
+          connect(invocation) {
+            void invocation.payload.configuration;
+            return { account: { id: "acct" } };
+          },
+          disconnect() {
+            return null;
+          },
+          getAccount() {
+            return { account: { id: "acct" } };
+          },
+          getCapabilities() {
+            return {
+              revisions: true,
+              conditionalWrites: true,
+              atomicReplacement: true,
+              maxObjectBytes: 1024,
+            };
+          },
+          async readObject(invocation) {
+            if (invocation.output) {
+              await invocation.output.write(new Uint8Array([1, 2, 3]));
+              await invocation.output.end();
+              return { found: true, byteLength: 3, streamed: true, revision: "r1" };
+            }
+            return {
+              found: true,
+              byteLength: 3,
+              encoding: "base64",
+              data: "AQID",
+              revision: "r1",
+            };
+          },
+          async writeObject(invocation) {
+            if (invocation.input) {
+              const stream = await invocation.input;
+              await stream.read();
+            }
+            return { created: true, revision: "r2" };
+          },
+          deleteObject() {
+            return { deleted: true };
+          },
+        });
+
+        // @ts-expect-error sync Providers use operation-keyed handlers.
+        context.providers.register("com.example.sync.invalid", "sync", async () => ({ account: { id: "x" } }));
       },
     });
   `);

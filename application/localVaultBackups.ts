@@ -400,7 +400,7 @@ function writeApplyInProgressSentinel(record: VaultApplyInProgressRecord): void 
 type ProtectedApplyCallback = () => void | Promise<void>;
 
 export type ApplyProtectedSyncPayloadOptions = {
-  buildPreApplyPayload: () => SyncPayload;
+  buildPreApplyPayload: () => SyncPayload | Promise<SyncPayload>;
   translateProtectiveBackupFailure: (message: string) => string;
 } & (
   | { applyPayload: ProtectedApplyCallback; prepareApply?: never }
@@ -415,7 +415,7 @@ export function applyProtectedSyncPayload(
     const applyPayload = options.prepareApply
       ? await options.prepareApply()
       : options.applyPayload;
-    const pre = buildPreApplyPayload();
+    const pre = await buildPreApplyPayload();
     let protectiveBackupId: string | null = null;
     try {
       const backup = await createRequiredProtectiveLocalVaultBackup(pre);

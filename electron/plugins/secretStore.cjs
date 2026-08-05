@@ -87,6 +87,15 @@ class PluginSecretStore {
     this.database.deleteSecret(pluginId, key);
   }
 
+  deleteByKeyPrefix(pluginId, prefix) {
+    assertSecretKey(prefix);
+    if (typeof this.database.deleteSecretsByKeyPrefix !== "function") {
+      this.delete(pluginId, prefix);
+      return 1;
+    }
+    return this.database.deleteSecretsByKeyPrefix(pluginId, prefix);
+  }
+
   resolve(pluginId, secret) {
     this.#assertAvailable();
     const record = this.getRecordByReference(pluginId, secret);

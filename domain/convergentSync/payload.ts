@@ -202,6 +202,8 @@ export function materializeSyncPayloadFromConvergentState(
   options: {
     syncedAt: number;
     syncMeta?: SyncReliabilityMeta;
+    /** Opaque plugin sidecars travel with the encrypted blob outside CRDT fields. */
+    pluginSidecars?: SyncPayload['pluginSidecars'];
   },
 ): SyncPayload {
   requireKnownCollections(state);
@@ -228,6 +230,17 @@ export function materializeSyncPayloadFromConvergentState(
     settings,
     syncedAt: options.syncedAt,
     ...(options.syncMeta ? { syncMeta: options.syncMeta } : {}),
+    // Preserve explicit empty bundles so lifecycle materializations (conflict
+    // resolve / downgrade) can clear or re-upload sidecars rather than omit
+    // the field and look like a legacy payload.
+    ...(options.pluginSidecars && Array.isArray(options.pluginSidecars.entries)
+      ? {
+        pluginSidecars: {
+          version: 1 as const,
+          entries: options.pluginSidecars.entries,
+        },
+      }
+      : {}),
   };
 }
 
@@ -513,7 +526,11 @@ export function hydrateConvergentSyncEnvelope(
 
 export function withConvergentSyncEnvelope(
   state: ConvergentSyncStateV2,
-  options: { syncedAt: number; syncMeta?: SyncReliabilityMeta },
+  options: {
+    syncedAt: number;
+    syncMeta?: SyncReliabilityMeta;
+    pluginSidecars?: SyncPayload['pluginSidecars'];
+  },
 ): SyncPayload {
   const payload = materializeSyncPayloadFromConvergentState(state, options);
   return {

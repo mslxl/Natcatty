@@ -57,6 +57,16 @@ const CONNECTION_PROVIDER_OPERATIONS = Object.freeze([
   "getStatus",
 ]);
 const IMPORTER_PROVIDER_OPERATIONS = Object.freeze(["detect", "parse"]);
+const SYNC_PROVIDER_OPERATIONS = Object.freeze([
+  "connect",
+  "disconnect",
+  "getAccount",
+  "getCapabilities",
+  "readObject",
+  "writeObject",
+  "deleteObject",
+]);
+const OPERATION_MAP_PROVIDER_KINDS = Object.freeze(new Set(["connection", "importer", "sync"]));
 
 function pluginErrorNameFromRpcError(error) {
   if (typeof error?.data?.pluginCode === "string") return error.data.pluginCode;
@@ -243,21 +253,33 @@ function assertProviderKind(kind) {
   return kind;
 }
 
+function operationMapLabel(kind) {
+  if (kind === "connection") return "Connection";
+  if (kind === "importer") return "Importer";
+  if (kind === "sync") return "Sync";
+  return kind;
+}
+
+function operationsForProviderKind(kind) {
+  if (kind === "connection") return CONNECTION_PROVIDER_OPERATIONS;
+  if (kind === "importer") return IMPORTER_PROVIDER_OPERATIONS;
+  if (kind === "sync") return SYNC_PROVIDER_OPERATIONS;
+  return null;
+}
+
 function normalizeProviderHandler(kind, handler) {
-  if (kind !== "connection" && kind !== "importer") {
+  if (!OPERATION_MAP_PROVIDER_KINDS.has(kind)) {
     if (typeof handler !== "function") {
       throw new PluginError("invalid_argument", "Plugin Provider handler must be a function");
     }
     return handler;
   }
-  const label = kind === "connection" ? "Connection" : "Importer";
+  const label = operationMapLabel(kind);
   if (!handler || typeof handler !== "object" || Array.isArray(handler)) {
     throw new PluginError("invalid_argument", `${label} Provider handler must be an operation map`);
   }
   const normalized = {};
-  const operations = kind === "connection"
-    ? CONNECTION_PROVIDER_OPERATIONS
-    : IMPORTER_PROVIDER_OPERATIONS;
+  const operations = operationsForProviderKind(kind);
   for (const operation of operations) {
     if (typeof handler[operation] !== "function") {
       throw new PluginError("invalid_argument", `${label} Provider handler is missing operation: ${operation}`);
@@ -639,8 +661,11 @@ export async function startPluginRuntime({
       const payload = message.params?.payload === undefined
         ? undefined
         : freezeRuntimeJson(message.params.payload);
-      const streamed = (kind === "connection" && operation === "open")
-        || (kind === "importer" && operation === "parse");
+      const connectionOpen = kind === "connection" && operation === "open";
+      const importerParse = kind === "importer" && operation === "parse";
+      const syncReadStream = kind === "sync" && operation === "readObject" && typeof payload?.outputStreamId === "string";
+      const syncWriteStream = kind === "sync" && operation === "writeObject" && typeof payload?.inputStreamId === "string";
+      const streamed = connectionOpen || importerParse || syncReadStream || syncWriteStream;
       let input;
       let output;
       let cancelStreams;
@@ -648,24 +673,38 @@ export async function startPluginRuntime({
         const inputStreamId = payload?.inputStreamId;
         const outputStreamId = payload?.outputStreamId;
         const windowBytes = payload?.windowBytes;
-        if (typeof inputStreamId !== "string" || typeof outputStreamId !== "string") {
-          throw new PluginError("invalid_argument", "Streamed Provider invocation requires input and output stream IDs");
+        if (connectionOpen || importerParse) {
+          if (typeof inputStreamId !== "string" || typeof outputStreamId !== "string") {
+            throw new PluginError("invalid_argument", "Streamed Provider invocation requires input and output stream IDs");
+          }
+        } else if (syncReadStream && typeof outputStreamId !== "string") {
+          throw new PluginError("invalid_argument", "Sync readObject stream requires an output stream ID");
+        } else if (syncWriteStream && typeof inputStreamId !== "string") {
+          throw new PluginError("invalid_argument", "Sync writeObject stream requires an input stream ID");
         }
-        input = runtimeApi.streams.acceptReadable(inputStreamId);
-        // Prevent a cancelled request from creating an unhandled rejected
-        // promise when the Provider never awaited its input stream.
-        void input.catch(() => {});
-        try {
-          output = await runtimeApi.streams.openWritable(outputStreamId, windowBytes);
-        } catch (error) {
-          runtimeApi.streams.rejectReadable(inputStreamId, error);
-          throw error;
+        if (typeof inputStreamId === "string") {
+          input = runtimeApi.streams.acceptReadable(inputStreamId);
+          // Prevent a cancelled request from creating an unhandled rejected
+          // promise when the Provider never awaited its input stream.
+          void input.catch(() => {});
+        }
+        if (typeof outputStreamId === "string") {
+          try {
+            output = await runtimeApi.streams.openWritable(outputStreamId, windowBytes);
+          } catch (error) {
+            if (typeof inputStreamId === "string") {
+              runtimeApi.streams.rejectReadable(inputStreamId, error);
+            }
+            throw error;
+          }
         }
         cancelStreams = () => {
           const error = new PluginError("cancelled", "Streamed Provider invocation was cancelled");
-          runtimeApi.streams.rejectReadable(inputStreamId, error);
-          output.cancel();
-          void input.then((stream) => stream.cancel(), () => {});
+          if (typeof inputStreamId === "string") {
+            runtimeApi.streams.rejectReadable(inputStreamId, error);
+            void input?.then((stream) => stream.cancel(), () => {});
+          }
+          output?.cancel?.();
         };
       }
       const cancellationDisposable = cancelStreams
@@ -679,10 +718,11 @@ export async function startPluginRuntime({
         payload,
         deadlineMs,
         cancellationToken,
-        ...(streamed ? { input, output } : {}),
+        ...(input !== undefined ? { input } : {}),
+        ...(output !== undefined ? { output } : {}),
       });
       try {
-        const handler = registration.kind === "connection" || registration.kind === "importer"
+        const handler = OPERATION_MAP_PROVIDER_KINDS.has(registration.kind)
           ? registration.handler[operation]
           : registration.handler;
         if (typeof handler !== "function") {
@@ -691,6 +731,11 @@ export async function startPluginRuntime({
         const result = await handler(invocation);
         if (cancellationToken.isCancellationRequested) {
           return { requestId, status: "cancelled" };
+        }
+        // Sync readObject may return inline base64 or found:false while the host
+        // still opened an output stream for large-object fallback — release it.
+        if (syncReadStream && output && !(result && result.streamed === true)) {
+          try { output.cancel?.(); } catch { /* best-effort */ }
         }
         return { requestId, status: "ok", result: result === undefined ? null : result };
       } catch (error) {

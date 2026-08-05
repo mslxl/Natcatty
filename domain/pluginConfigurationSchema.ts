@@ -18,6 +18,7 @@ const ALLOWED_KEYWORDS = new Set([
   'properties',
   'required',
   'type',
+  'writeOnly',
 ]);
 
 type Schema = Record<string, unknown>;

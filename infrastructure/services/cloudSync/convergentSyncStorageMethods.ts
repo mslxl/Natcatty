@@ -17,7 +17,12 @@ import {
   encryptLocalStorageValue,
 } from './encryptedLocalStorage';
 
-const PROVIDERS: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
+/** Built-ins plus any dynamic plugin providers currently in manager state. */
+function listedProviders(manager: any): CloudProvider[] {
+  const fromState = Object.keys(manager?.state?.providers ?? {}) as CloudProvider[];
+  if (fromState.length > 0) return fromState.sort();
+  return ['github', 'google', 'onedrive', 'webdav', 's3'];
+}
 
 export function convergentProviderBaselineKeyImpl(this: any, provider: CloudProvider): string {
   return `${SYNC_STORAGE_KEYS.CONVERGENT_PROVIDER_BASELINE}_${provider}`;
@@ -107,7 +112,7 @@ export async function loadConvergentProviderBaselineImpl(
 export function clearConvergentSyncStorageImpl(this: any, confirmed: boolean): void {
   if (!confirmed) throw new Error('Explicit confirmation is required to remove convergent sync state');
   this.removeFromStorage(SYNC_STORAGE_KEYS.CONVERGENT_REPLICA);
-  for (const provider of PROVIDERS) {
+  for (const provider of listedProviders(this)) {
     this.removeFromStorage(this.convergentProviderBaselineKey(provider));
   }
 }
@@ -118,7 +123,7 @@ function encryptedSyncStorageKeys(manager: any): string[] {
     manager.syncSnapshotsKey(),
     SYNC_STORAGE_KEYS.CONVERGENT_REPLICA,
   ]);
-  for (const provider of PROVIDERS) {
+  for (const provider of listedProviders(manager)) {
     keys.add(manager.syncBaseKey(provider));
     keys.add(manager.syncSnapshotsKey(provider));
     keys.add(manager.convergentProviderBaselineKey(provider));

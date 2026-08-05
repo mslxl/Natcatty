@@ -65,9 +65,45 @@ function registerSecurePluginCapabilities(registry, options) {
     authorization: (params) => options.credentialBroker.describeAuthorization(params),
   });
 
-  registry.registerRequest("network.request", (params, context) => (
-    options.networkBroker.request(params, context)
-  ), {
+  registry.registerRequest("network.request", async (params, context) => {
+    // params are already registry-validated (preserve credentialLease/authorization).
+    const validated = params;
+    const lease = validated?.credentialLease;
+    if (lease === undefined) {
+      return options.networkBroker.request(validated, context);
+    }
+    if (!options.credentialBroker || typeof options.credentialBroker.consumeLease !== "function") {
+      throw new PluginRpcError(RPC_ERRORS.unavailable, "Plugin credential leases are unavailable");
+    }
+    // Bind consumption to the host-owned network operation id (network:<origin>),
+    // not the plugin-echoed lease.operationId, so leases cannot be replayed across ops.
+    const hostOperationId = options.networkBroker.describeAuthorization(validated).operationId;
+    const plaintext = await options.credentialBroker.consumeLease(
+      context,
+      lease,
+      hostOperationId,
+    );
+    if (typeof plaintext !== "string" || plaintext.length < 1) {
+      throw new PluginRpcError(RPC_ERRORS.dataLoss, "Plugin credential lease resolved to an empty secret");
+    }
+    const authorization = validated?.authorization && typeof validated.authorization === "object"
+      && !Array.isArray(validated.authorization)
+      ? validated.authorization
+      : { scheme: "Bearer" };
+    const scheme = authorization.scheme === "Basic" ? "Basic" : "Bearer";
+    const headers = { ...(validated.headers ?? {}) };
+    if (scheme === "Basic") {
+      const username = typeof authorization.username === "string" ? authorization.username : "";
+      headers.authorization = `Basic ${Buffer.from(`${username}:${plaintext}`, "utf8").toString("base64")}`;
+    } else {
+      headers.authorization = `Bearer ${plaintext}`;
+    }
+    const { credentialLease: _lease, authorization: _auth, ...requestParams } = validated;
+    return options.networkBroker.request({
+      ...requestParams,
+      headers,
+    }, context);
+  }, {
     metadata: { capability: "network", mutating: true, permission: "network" },
     validateParams: (params) => options.networkBroker.validate(params),
     authorization: (params) => options.networkBroker.describeAuthorization(params),

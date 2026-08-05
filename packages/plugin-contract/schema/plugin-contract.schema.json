@@ -79,6 +79,15 @@
         "maxRecords": 10000
       }
     },
+    "SyncLimits": {
+      "description": "Host-enforced byte and identifier limits for one encrypted sync-object operation. inlineObjectBytes is the maximum ciphertext size that may travel inline on the control plane (below the 128 KiB provider JSON budget after base64 expansion).",
+      "const": {
+        "maxObjectBytes": 67108864,
+        "maxObjectKeyLength": 1024,
+        "maxRevisionLength": 256,
+        "inlineObjectBytes": 92160
+      }
+    },
     "StreamId": {
       "type": "string",
       "minLength": 1,
@@ -1194,6 +1203,196 @@
           "additionalProperties": false
         }
       ]
+    },
+
+    "SyncObjectKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "SyncObjectRevision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "SyncAccount": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "email": { "type": "string", "maxLength": 512 },
+        "name": { "type": "string", "maxLength": 512 },
+        "avatarUrl": { "type": "string", "maxLength": 2048 }
+      },
+      "additionalProperties": false
+    },
+    "SyncConnectPayload": {
+      "type": "object",
+      "required": ["configuration", "operationId"],
+      "properties": {
+        "configuration": { "$ref": "#/$defs/JsonValue" },
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "credential": {
+          "oneOf": [
+            { "$ref": "#/$defs/SecretRef" },
+            { "$ref": "#/$defs/CredentialRef" },
+            { "$ref": "#/$defs/SecretLeaseRef" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SyncConnectResult": {
+      "type": "object",
+      "required": ["account"],
+      "properties": {
+        "account": { "$ref": "#/$defs/SyncAccount" }
+      },
+      "additionalProperties": false
+    },
+    "SyncDisconnectPayload": {
+      "type": "object",
+      "properties": {
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "SyncDisconnectResult": {
+      "type": "null"
+    },
+    "SyncGetAccountPayload": {
+      "type": "object",
+      "properties": {
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "SyncGetAccountResult": {
+      "type": "object",
+      "required": ["account"],
+      "properties": {
+        "account": {
+          "oneOf": [
+            { "$ref": "#/$defs/SyncAccount" },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "SyncGetCapabilitiesPayload": {
+      "type": "object",
+      "properties": {
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "additionalProperties": false
+    },
+    "SyncCapabilitiesResult": {
+      "type": "object",
+      "required": ["revisions", "conditionalWrites", "atomicReplacement"],
+      "properties": {
+        "revisions": { "type": "boolean" },
+        "conditionalWrites": { "type": "boolean" },
+        "atomicReplacement": { "type": "boolean" },
+        "maxObjectBytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+        "maxObjects": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "SyncReadObjectPayload": {
+      "type": "object",
+      "required": ["key", "operationId"],
+      "properties": {
+        "key": { "$ref": "#/$defs/SyncObjectKey" },
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "outputStreamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "windowBytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 }
+      },
+      "additionalProperties": false
+    },
+    "SyncReadObjectResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["found"],
+          "properties": {
+            "found": { "const": false }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["found", "byteLength", "encoding", "data"],
+          "properties": {
+            "found": { "const": true },
+            "byteLength": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+            "encoding": { "const": "base64" },
+            "data": { "type": "string", "maxLength": 9007199254740991 },
+            "revision": { "$ref": "#/$defs/SyncObjectRevision" },
+            "contentType": { "type": "string", "maxLength": 256 }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["found", "byteLength", "streamed"],
+          "properties": {
+            "found": { "const": true },
+            "byteLength": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+            "streamed": { "const": true },
+            "revision": { "$ref": "#/$defs/SyncObjectRevision" },
+            "contentType": { "type": "string", "maxLength": 256 }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SyncWriteObjectPayload": {
+      "type": "object",
+      "required": ["key", "operationId", "byteLength"],
+      "properties": {
+        "key": { "$ref": "#/$defs/SyncObjectKey" },
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "byteLength": { "type": "integer", "minimum": 0, "maximum": 67108864 },
+        "expectedRevision": {
+          "oneOf": [
+            { "$ref": "#/$defs/SyncObjectRevision" },
+            { "type": "null" }
+          ]
+        },
+        "encoding": { "const": "base64" },
+        "data": { "type": "string", "maxLength": 9007199254740991 },
+        "inputStreamId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "windowBytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 }
+      },
+      "additionalProperties": false
+    },
+    "SyncWriteObjectResult": {
+      "type": "object",
+      "required": ["created"],
+      "properties": {
+        "created": { "type": "boolean" },
+        "revision": { "$ref": "#/$defs/SyncObjectRevision" }
+      },
+      "additionalProperties": false
+    },
+    "SyncDeleteObjectPayload": {
+      "type": "object",
+      "required": ["key", "operationId"],
+      "properties": {
+        "key": { "$ref": "#/$defs/SyncObjectKey" },
+        "operationId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "expectedRevision": { "$ref": "#/$defs/SyncObjectRevision" }
+      },
+      "additionalProperties": false
+    },
+    "SyncDeleteObjectResult": {
+      "type": "object",
+      "required": ["deleted"],
+      "properties": {
+        "deleted": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
     "CompanionPlatform": {
       "type": "string",

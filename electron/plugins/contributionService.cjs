@@ -452,6 +452,14 @@ class PluginContributionService {
     const normalizedScopeId = normalizeScopeId(setting.scope, scopeId);
     if (setting.secret) this.secretStore.delete(pluginId, secretSettingKey(setting.id, setting.scope, normalizedScopeId));
     else this.database.deleteSetting(pluginId, setting.id, setting.scope, normalizedScopeId);
+    // Clear the matching cloud-sync sidecar so collect does not rehydrate the
+    // retained remote value after an intentional local reset.
+    if (typeof this.database.deleteSyncSidecar === "function" && !setting.secret) {
+      const sidecarKey = `${setting.id}\0${setting.scope}\0${normalizedScopeId}`;
+      try {
+        this.database.deleteSyncSidecar(pluginId, "settings", sidecarKey);
+      } catch {}
+    }
     this.#emitChange("setting-reset", pluginId);
     try {
       await this.runtimeSupervisor.notify(pluginId, "plugin.settings.changed", {

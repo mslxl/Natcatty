@@ -15,9 +15,16 @@ const {
 
 function createIpcMain() {
   const handlers = new Map();
+  const listeners = new Map();
   return {
     handlers,
+    listeners,
     handle(channel, handler) { handlers.set(channel, handler); },
+    on(channel, listener) {
+      const list = listeners.get(channel) ?? [];
+      list.push(listener);
+      listeners.set(channel, list);
+    },
   };
 }
 
@@ -1455,4 +1462,91 @@ test("closing the terminal while a plugin connection opens cancels the provider 
   await externalOptions.onClose("renderer-close");
   await assert.rejects(pending, (error) => error?.name === "AbortError");
   assert.deepEqual(closed, ["session-close-during-start"]);
+});
+
+test("sync read/write shuttle Uint8Array inline and stream large writes", async () => {
+  const written = [];
+  const ipcMain = createIpcMain();
+  registerPluginBridge(ipcMain, {
+    manager: { async initialize() {} },
+    extensionProviderService: {
+      listProviders() {
+        return [{
+          pluginId: "com.example",
+          pluginVersion: "1.0.0",
+          provider: { id: "com.example.sync", kind: "sync", label: "Example Sync" },
+        }];
+      },
+      async readSyncObject(params) {
+        return {
+          found: true,
+          key: params.key,
+          bytes: Buffer.from("cipher-inline"),
+          revision: "r1",
+        };
+      },
+      async writeSyncObject(params) {
+        written.push({
+          key: params.key,
+          byteLength: params.bytes.byteLength,
+          preferStream: params.preferStream === true,
+        });
+        return { created: true, revision: "r2" };
+      },
+    },
+    secretStore: {
+      set(pluginId, key, value) {
+        return Object.freeze({ kind: "secret", id: "sec-1", key, pluginId, value });
+      },
+    },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: () => true,
+  });
+  const event = { sender: { id: 99, once() {}, isDestroyed: () => false } };
+
+  const inlineRead = await ipcMain.handlers.get(CHANNELS.syncReadObject)(event, {
+    requestId: "sync-read-1",
+    providerId: "com.example.sync",
+    key: "vault",
+  });
+  assert.equal(inlineRead.found, true);
+  assert.equal(inlineRead.streamed, undefined);
+  assert.ok(inlineRead.data instanceof Uint8Array || Buffer.isBuffer(inlineRead.data));
+  assert.equal(Buffer.from(inlineRead.data).toString("utf8"), "cipher-inline");
+
+  const inlineWrite = await ipcMain.handlers.get(CHANNELS.syncWriteObject)(event, {
+    requestId: "sync-write-1",
+    providerId: "com.example.sync",
+    key: "vault",
+    data: Buffer.from("small"),
+  });
+  assert.deepEqual(inlineWrite, { created: true, revision: "r2" });
+
+  const begin = await ipcMain.handlers.get(CHANNELS.syncWriteBegin)(event, {
+    requestId: "sync-write-stream",
+    providerId: "com.example.sync",
+    key: "vault",
+    byteLength: 5,
+  });
+  assert.equal(typeof begin.transferId, "string");
+  await ipcMain.handlers.get(CHANNELS.syncWriteChunk)(event, {
+    requestId: "sync-write-stream",
+    transferId: begin.transferId,
+    sequence: 0,
+    chunk: Buffer.from("large"),
+  });
+  const committed = await ipcMain.handlers.get(CHANNELS.syncWriteCommit)(event, {
+    requestId: "sync-write-stream",
+    transferId: begin.transferId,
+  });
+  assert.deepEqual(committed, { created: true, revision: "r2" });
+  assert.equal(written.at(-1)?.preferStream, true);
+  assert.equal(written.at(-1)?.byteLength, 5);
+
+  const secret = await ipcMain.handlers.get(CHANNELS.syncPutSecret)(event, {
+    providerId: "com.example.sync",
+    key: "sync-credential",
+    value: "pw",
+  });
+  assert.deepEqual(secret, { kind: "secret", id: "sec-1", key: "sync-credential", pluginId: "com.example", value: "pw" });
 });

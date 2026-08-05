@@ -59,6 +59,69 @@ test("plugin manifest schema accepts the internal contract", () => {
   assert.equal(validate({ ...validManifest, version: "1.0.0-01" }), false);
 });
 
+test("sync provider encrypted-object payloads and results are canonical and bounded", () => {
+  const connect = validator("SyncConnectPayload");
+  const capabilities = validator("SyncCapabilitiesResult");
+  const readResult = validator("SyncReadObjectResult");
+  const writePayload = validator("SyncWriteObjectPayload");
+  const writeResult = validator("SyncWriteObjectResult");
+  const deleteResult = validator("SyncDeleteObjectResult");
+  const disconnectResult = validator("SyncDisconnectResult");
+
+  assert.equal(connect({
+    configuration: { endpoint: "https://example.test" },
+    operationId: "sync:1",
+  }), true, JSON.stringify(connect.errors));
+  assert.equal(connect({ configuration: {}, operationId: "" }), false);
+
+  assert.equal(capabilities({
+    revisions: true,
+    conditionalWrites: true,
+    atomicReplacement: false,
+    maxObjectBytes: 1024,
+  }), true, JSON.stringify(capabilities.errors));
+  assert.equal(capabilities({
+    revisions: true,
+    conditionalWrites: true,
+    atomicReplacement: false,
+    maxObjectBytes: 0,
+  }), false);
+
+  assert.equal(readResult({ found: false }), true, JSON.stringify(readResult.errors));
+  assert.equal(readResult({
+    found: true,
+    byteLength: 4,
+    encoding: "base64",
+    data: "qQECAw==",
+    revision: "rev-1",
+  }), true, JSON.stringify(readResult.errors));
+  assert.equal(readResult({
+    found: true,
+    byteLength: 4,
+    streamed: true,
+    revision: "rev-1",
+  }), true, JSON.stringify(readResult.errors));
+  assert.equal(readResult({ found: true, byteLength: 4 }), false);
+
+  assert.equal(writePayload({
+    key: "netcatty-vault.json",
+    operationId: "sync:write:1",
+    byteLength: 4,
+    encoding: "base64",
+    data: "qQECAw==",
+    expectedRevision: null,
+  }), true, JSON.stringify(writePayload.errors));
+  assert.equal(writePayload({
+    key: "netcatty-vault.json",
+    operationId: "sync:write:1",
+    byteLength: -1,
+  }), false);
+  assert.equal(writeResult({ created: true, revision: "rev-2" }), true, JSON.stringify(writeResult.errors));
+  assert.equal(deleteResult({ deleted: true }), true, JSON.stringify(deleteResult.errors));
+  assert.equal(disconnectResult(null), true, JSON.stringify(disconnectResult.errors));
+  assert.equal(disconnectResult({}), false);
+});
+
 test("connection authentication and importer provider payloads are canonical and bounded", () => {
   const connectionOpen = validator("ConnectionOpenPayload");
   const authenticationChallenge = validator("AuthenticationChallenge");

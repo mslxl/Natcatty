@@ -21,6 +21,7 @@ import type {
   SyncPayload,
   SyncResult,
 } from '../../../domain/sync';
+import { isConditionalWriteConflictError } from '../adapters/encryptedObjectStorageBridge';
 
 function getSyncSecurityGeneration(manager: any): number | undefined {
   return typeof manager.getSyncSecurityGeneration === 'function'
@@ -117,6 +118,8 @@ async function uploadLocalPayloadImpl(this: any,
     this.exitBlockedState();
     this.state.syncState = 'IDLE';
     this.state.lastShrinkFinding = undefined;
+  } else if (result.conflictDetected) {
+    // Conflict UI / CONFLICT state already set by uploadToProvider.
   } else {
     this.state.syncState = 'ERROR';
     if (result.error) {
@@ -169,7 +172,9 @@ export async function uploadToProviderImpl(this: any,
 ): Promise<SyncResult> {
     try {
       assertSyncSecurityGeneration(this, syncSecurityGeneration);
-      const resourceId = await adapter.upload(syncedFile);
+      const resourceId = await adapter.upload(syncedFile, {
+        signal: this.activeSyncAbortSignal,
+      });
       assertSyncSecurityGeneration(this, syncSecurityGeneration);
       this.state.lastError = null;
 
@@ -222,6 +227,53 @@ export async function uploadToProviderImpl(this: any,
       this.emit({ type: 'SYNC_COMPLETED', provider, result });
       return result;
     } catch (error) {
+      // Conditional write rejected: surface as conflict so the user can pick
+      // local vs remote instead of a generic sync failure.
+      if (isConditionalWriteConflictError(error)) {
+        try {
+          const remoteFile = await adapter.download({
+            signal: this.activeSyncAbortSignal,
+          });
+          if (remoteFile) {
+            this.state.syncState = 'CONFLICT';
+            this.state.currentConflict = {
+              provider,
+              localVersion: this.state.localVersion,
+              localUpdatedAt: this.state.localUpdatedAt,
+              localDeviceName: this.state.deviceName,
+              remoteVersion: remoteFile.meta.version,
+              remoteUpdatedAt: remoteFile.meta.updatedAt,
+              remoteDeviceName: remoteFile.meta.deviceName,
+            };
+            this.emit({
+              type: 'CONFLICT_DETECTED',
+              conflict: this.state.currentConflict,
+            });
+            // Leave the provider ready (not stuck on "syncing") while the user resolves.
+            this.updateProviderStatus(provider, 'connected');
+            this.addSyncHistoryEntry({
+              timestamp: Date.now(),
+              provider,
+              action: 'upload',
+              success: false,
+              localVersion: this.state.localVersion,
+              remoteVersion: remoteFile.meta.version,
+              deviceName: this.state.deviceName,
+              error: String(error),
+            });
+            return {
+              success: false,
+              provider,
+              action: 'none',
+              conflictDetected: true,
+              error: String(error),
+            };
+          }
+        } catch {
+          // Fall through to generic ERROR if we cannot load remote for the UI.
+        }
+      }
+
       this.state.lastError = String(error);
       if (!handleProviderReauthRequired(this, provider, error)) {
         this.updateProviderStatus(provider, 'error', String(error));
@@ -491,9 +543,12 @@ export async function syncToProviderImpl(this: any,
             };
           }
 
-          // Upload after merge failed — set ERROR so sync isn't stuck in SYNCING
-          this.state.syncState = 'ERROR';
-          this.state.lastError = uploadResult.error || 'Upload failed after merge';
+          // Upload after merge failed — preserve CONFLICT when conditional write
+          // already surfaced a conflict; otherwise mark ERROR so we leave SYNCING.
+          if (!uploadResult.conflictDetected) {
+            this.state.syncState = 'ERROR';
+            this.state.lastError = uploadResult.error || 'Upload failed after merge';
+          }
           return uploadResult;
         } catch (mergeError) {
           assertSyncSecurityGeneration(this, syncSecurityGeneration);
@@ -581,7 +636,9 @@ export async function downloadFromProviderImpl(this: any,provider: CloudProvider
     try {
       let remoteFile: SyncedFile | null;
       try {
-        remoteFile = await adapter.download();
+        remoteFile = await adapter.download({
+          signal: this.activeSyncAbortSignal,
+        });
       } catch (downloadError) {
         throw new Error(`Download failed: ${downloadError instanceof Error ? downloadError.message : String(downloadError)}`);
       }

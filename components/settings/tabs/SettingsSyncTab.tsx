@@ -3,7 +3,6 @@ import type { PortForwardingRule } from "../../../domain/models";
 import type { SyncPayload } from "../../../domain/sync";
 import {
   buildCloudSyncPayload,
-  buildLocalVaultPayload,
   applySyncPayload,
   getEffectivePortForwardingRulesForSync,
   prepareLocalVaultPayloadApply,
@@ -41,10 +40,10 @@ export default function SettingsSyncTab(props: {
     return buildCloudSyncPayload(vault, getEffectivePortForwardingRules());
   }, [vault, getEffectivePortForwardingRules]);
 
-  const onBuildLocalPayload = useCallback((): SyncPayload => {
+  const onBuildLocalPayload = useCallback(async (): Promise<SyncPayload> => {
     const effectiveKnownHosts = getEffectiveKnownHosts(vault.knownHosts);
-
-    return buildLocalVaultPayload(
+    const { buildLocalVaultPayloadAsync } = await import('../../../application/syncPayload');
+    return buildLocalVaultPayloadAsync(
       { ...vault, knownHosts: effectiveKnownHosts ?? [] },
       getEffectivePortForwardingRules(),
     );

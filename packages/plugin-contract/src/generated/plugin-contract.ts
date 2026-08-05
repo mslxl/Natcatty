@@ -747,6 +747,105 @@ export type StreamLimits = {"maxStreamIdLength":128,"maxChunkBytes":16777216,"ma
 
 export type StreamWindowBytes = number;
 
+export type SyncAccount = {
+  id: string;
+  email?: string;
+  name?: string;
+  avatarUrl?: string;
+};
+
+export type SyncCapabilitiesResult = {
+  revisions: boolean;
+  conditionalWrites: boolean;
+  atomicReplacement: boolean;
+  maxObjectBytes?: number;
+  maxObjects?: number;
+};
+
+export type SyncConnectPayload = {
+  configuration: JsonValue;
+  operationId: string;
+  credential?: (SecretRef) | (CredentialRef) | (SecretLeaseRef);
+};
+
+export type SyncConnectResult = {
+  account: SyncAccount;
+};
+
+export type SyncDeleteObjectPayload = {
+  key: SyncObjectKey;
+  operationId: string;
+  expectedRevision?: SyncObjectRevision;
+};
+
+export type SyncDeleteObjectResult = {
+  deleted: boolean;
+};
+
+export type SyncDisconnectPayload = {
+  operationId?: string;
+};
+
+export type SyncDisconnectResult = null;
+
+export type SyncGetAccountPayload = {
+  operationId?: string;
+};
+
+export type SyncGetAccountResult = {
+  account: (SyncAccount) | (null);
+};
+
+export type SyncGetCapabilitiesPayload = {
+  operationId?: string;
+};
+
+export type SyncLimits = {"maxObjectBytes":67108864,"maxObjectKeyLength":1024,"maxRevisionLength":256,"inlineObjectBytes":92160};
+
+export type SyncObjectKey = string;
+
+export type SyncObjectRevision = string;
+
+export type SyncReadObjectPayload = {
+  key: SyncObjectKey;
+  operationId: string;
+  outputStreamId?: string;
+  windowBytes?: number;
+};
+
+export type SyncReadObjectResult = ({
+  found: false;
+}) | ({
+  found: true;
+  byteLength: number;
+  encoding: "base64";
+  data: string;
+  revision?: SyncObjectRevision;
+  contentType?: string;
+}) | ({
+  found: true;
+  byteLength: number;
+  streamed: true;
+  revision?: SyncObjectRevision;
+  contentType?: string;
+});
+
+export type SyncWriteObjectPayload = {
+  key: SyncObjectKey;
+  operationId: string;
+  byteLength: number;
+  expectedRevision?: (SyncObjectRevision) | (null);
+  encoding?: "base64";
+  data?: string;
+  inputStreamId?: string;
+  windowBytes?: number;
+};
+
+export type SyncWriteObjectResult = {
+  created: boolean;
+  revision?: SyncObjectRevision;
+};
+
 export type TerminalInterceptorAttachmentDescriptor = {
   providerId: ContributionId;
   direction: "input" | "output";

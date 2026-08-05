@@ -35,6 +35,7 @@ const { SecretLeaseStore } = require("./secretLease.cjs");
 const { PluginTerminalProviderService } = require("./terminalProviderService.cjs");
 const { PluginTerminalDataPipelineService } = require("./terminalDataPipelineService.cjs");
 const { PluginExtensionProviderService } = require("./extensionProviderService.cjs");
+const { PluginSyncSidecarService } = require("./pluginSyncSidecarService.cjs");
 
 function getElectronProcessMetrics(app, pid) {
   const metric = app.getAppMetrics?.().find((candidate) => candidate.pid === pid);
@@ -213,6 +214,35 @@ function createPluginHostService(options) {
       rpcRegistry,
       runtimeSupervisor,
     });
+    const syncSidecarService = new PluginSyncSidecarService({
+      database,
+      contributionService,
+    });
+    // Replay retained cloud sidecars into plugin_settings before the plugin
+    // runtime starts so onStartupFinished sees hydrated values.
+    const originalOnPluginEnabled = contributionService.onPluginEnabled.bind(contributionService);
+    contributionService.onPluginEnabled = async (pluginId) => {
+      try {
+        await syncSidecarService.hydrateInstalledPluginSettings(pluginId);
+      } catch {
+        // Hydration is best-effort; enable must still succeed.
+      }
+      return originalOnPluginEnabled(pluginId);
+    };
+    // Startup activation goes through contributionService.initialize() → #startPlugin
+    // without onPluginEnabled. Hydrate every enabled plugin before that path runs.
+    const originalInitialize = contributionService.initialize.bind(contributionService);
+    contributionService.initialize = async () => {
+      for (const plugin of database.listPlugins()) {
+        if (!plugin?.enabled || typeof plugin.id !== "string") continue;
+        try {
+          await syncSidecarService.hydrateInstalledPluginSettings(plugin.id);
+        } catch {
+          // Best-effort; startup must continue.
+        }
+      }
+      return originalInitialize();
+    };
     const terminalDataPipelineService = options.electron.MessageChannelMain
       ? new PluginTerminalDataPipelineService({
           contributionService,
@@ -260,6 +290,7 @@ function createPluginHostService(options) {
       database,
       filesystemBroker,
       extensionProviderService,
+      syncSidecarService,
       leaseStore,
       manager,
       moduleResources,

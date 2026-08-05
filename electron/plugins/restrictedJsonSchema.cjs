@@ -22,6 +22,7 @@ const ALLOWED_KEYWORDS = new Set([
   "properties",
   "required",
   "type",
+  "writeOnly",
 ]);
 
 const ajv = new Ajv2020({

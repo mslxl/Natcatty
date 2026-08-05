@@ -19,7 +19,7 @@ const publishCredentialCatalogIds = (ids: ReadonlyArray<string>) => {
 };
 
 export const pluginExtensionBridge = Object.freeze({
-  async listProviders(kind: "connection" | "authentication" | "importer") {
+  async listProviders(kind: "connection" | "authentication" | "importer" | "sync") {
     return requireBridge().listPluginExtensionProviders?.({ kind }) ?? [];
   },
   async updateCredentialCatalog(entries: ReadonlyArray<{ id: string; ciphertext: string }>) {

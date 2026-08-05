@@ -64,8 +64,8 @@ platform is unreleased, so both tables are part of the complete schema at
 Secret settings never enter the settings table or a renderer snapshot. The
 host stores plaintext only through the phase-3 safeStorage-backed secret store,
 shows a configured indicator, and exposes an opaque `SecretRef` to the owning
-runtime. Only non-secret fields explicitly declaring `sync: true` may be used by
-the future encrypted sidecar sync phase.
+runtime. Only non-secret fields explicitly declaring `sync: true` enter the
+encrypted sidecar sync path (PR 8).
 
 ## Commands, menus, and Context Keys
 

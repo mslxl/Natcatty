@@ -173,6 +173,18 @@ if (!Number.isSafeInteger(importerLimits?.maxInputBytes)
   || importerLimits.maxRecords < 1) {
   throw new Error("ImporterLimits must define positive bounded input, output, record, and count limits");
 }
+const syncLimits = schema.$defs.SyncLimits?.const;
+if (!Number.isSafeInteger(syncLimits?.maxObjectBytes)
+  || !Number.isSafeInteger(syncLimits?.maxObjectKeyLength)
+  || !Number.isSafeInteger(syncLimits?.maxRevisionLength)
+  || !Number.isSafeInteger(syncLimits?.inlineObjectBytes)
+  || syncLimits.maxObjectBytes < 1
+  || syncLimits.maxObjectKeyLength < 1
+  || syncLimits.maxRevisionLength < 1
+  || syncLimits.inlineObjectBytes < 1
+  || syncLimits.inlineObjectBytes > syncLimits.maxObjectBytes) {
+  throw new Error("SyncLimits must define positive bounded object, key, revision, and inline size limits");
+}
 for (const [name, minimum, maximum] of [
   ["TerminalInterceptorChunkByteLength", 0, terminalInterceptorLimits.maxChunkBytes],
   ["TerminalInterceptorWindowBytes", 1, terminalInterceptorLimits.maxWindowBytes],
@@ -328,6 +340,10 @@ const generatedLimits = [
   `export const PLUGIN_IMPORTER_MAX_OUTPUT_BYTES = ${importerLimits.maxOutputBytes} as const;`,
   `export const PLUGIN_IMPORTER_MAX_RECORD_BYTES = ${importerLimits.maxRecordBytes} as const;`,
   `export const PLUGIN_IMPORTER_MAX_RECORDS = ${importerLimits.maxRecords} as const;`,
+  `export const PLUGIN_SYNC_MAX_OBJECT_BYTES = ${syncLimits.maxObjectBytes} as const;`,
+  `export const PLUGIN_SYNC_MAX_OBJECT_KEY_LENGTH = ${syncLimits.maxObjectKeyLength} as const;`,
+  `export const PLUGIN_SYNC_MAX_REVISION_LENGTH = ${syncLimits.maxRevisionLength} as const;`,
+  `export const PLUGIN_SYNC_INLINE_OBJECT_BYTES = ${syncLimits.inlineObjectBytes} as const;`,
   "",
 ].join("\n");
 const normalizedSchema = `${JSON.stringify(schema, null, 2)}\n`;

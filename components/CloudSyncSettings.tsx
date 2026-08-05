@@ -136,10 +136,14 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
         }
         sync.cancelOAuthConnect();
         if (sync.convergentSyncConfig.initialized) return;
-        const providers: CloudProvider[] = ['github', 'google', 'onedrive', 'webdav', 's3'];
+        const providers = new Set<CloudProvider>(['github', 'google', 'onedrive', 'webdav', 's3']);
+        for (const id of Object.keys(sync.providers)) {
+            providers.add(id as CloudProvider);
+        }
         for (const provider of providers) {
             if (provider === current) continue;
-            if (isProviderReadyForSync(sync.providers[provider])) {
+            const conn = sync.providers[provider];
+            if (conn && isProviderReadyForSync(conn)) {
                 await sync.disconnectProvider(provider);
             }
         }
@@ -176,18 +180,23 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
     );
 
     const isConnectDisabled = (provider: CloudProvider): boolean => {
+        const connection = sync.providers[provider];
         if (pendingConnectProvider && pendingConnectProvider !== provider) {
             return true;
         }
         if (pendingConnectProvider === provider) {
             return true;
         }
-        if (hasConnectingProvider && sync.providers[provider].status !== 'connecting') {
+        if (hasConnectingProvider && connection?.status !== 'connecting') {
             return true;
+        }
+        // Never-connected plugin providers still honor the single-provider gate.
+        if (!connection) {
+            return !sync.convergentSyncConfig.initialized && sync.hasAnyConnectedProvider;
         }
         return !sync.convergentSyncConfig.initialized
             && sync.hasAnyConnectedProvider
-            && !isProviderReadyForSync(sync.providers[provider]);
+            && !isProviderReadyForSync(connection);
     };
 
     const beginPendingConnect = (provider: CloudProvider): boolean => {
@@ -910,6 +919,7 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 }}
                 onResolveConvergentConflict={handleResolveConvergentConflict}
                 onDowngradeConvergent={handleDowngradeConvergent}
+                disconnectOtherProviders={disconnectOtherProviders}
             />
 
             <CloudSyncDialogs

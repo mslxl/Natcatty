@@ -283,5 +283,6 @@ runtime identity, cancellation, progress, permission names, and stream
 protocol. PR 6 added its direct interceptor transport without changing the
 ordinary registry. PR 7 reused that registration and runtime lifecycle for
 connection, authentication, and importer Providers, with operation-specific
-result validators and bounded stream consumers. PR 8 sync Providers and PR 9
+result validators and bounded stream consumers. PR 8 sync Providers (implemented)
+and PR 9
 rollout can reuse the same boundaries.

@@ -50,6 +50,7 @@ import {
   completeGitHubAuthImpl,
   completePKCEAuthImpl,
   connectConfigProviderImpl,
+  connectPluginProviderImpl,
   resetProviderStatusImpl,
   setProviderErrorImpl,
   clearConnectingStatusImpl,
@@ -118,6 +119,7 @@ import {
   changeMasterKeyImpl,
   verifyPasswordImpl,
   handleProviderReauthRequiredImpl,
+  setAvailablePluginSyncProviderIdsImpl,
 } from './cloudSync/stateAndSecurityMethods';
 import {
   clearConvergentSyncStorageImpl,
@@ -232,6 +234,8 @@ export class CloudSyncManager {
   private providerWriteSeq: Record<CloudProvider, number> = {
     github: 0, google: 0, onedrive: 0, webdav: 0, s3: 0,
   };
+  /** Optional abort signal for the in-flight syncNow / convergent upload path. */
+  activeSyncAbortSignal: AbortSignal | undefined;
 
   constructor() {
     this.state = this.loadInitialState();
@@ -343,15 +347,13 @@ export class CloudSyncManager {
    */
   private notifyStateChange(): void {
     // Deep clone the state to ensure all nested objects are new references
+    const providers: Record<CloudProvider, ProviderConnection> = {};
+    for (const [providerId, connection] of Object.entries(this.state.providers)) {
+      providers[providerId] = { ...connection };
+    }
     this.stateSnapshot = {
       ...this.state,
-      providers: {
-        github: { ...this.state.providers.github },
-        google: { ...this.state.providers.google },
-        onedrive: { ...this.state.providers.onedrive },
-        webdav: { ...this.state.providers.webdav },
-        s3: { ...this.state.providers.s3 },
-      },
+      providers,
       syncHistory: [...this.state.syncHistory],
       convergentConflicts: [...this.state.convergentConflicts],
       currentConflict: this.state.currentConflict ? { ...this.state.currentConflict } : null,
@@ -506,6 +508,26 @@ export class CloudSyncManager {
     config: WebDAVConfig | S3Config
   ): Promise<void> {
     return connectConfigProviderImpl.call(this, provider, config);
+  }
+
+  /**
+   * Connect a namespaced plugin sync Provider (encrypted-object storage only).
+   */
+  async connectPluginProvider(
+    providerId: string,
+    configuration: unknown = {},
+    credential?: unknown,
+  ): Promise<void> {
+    return connectPluginProviderImpl.call(this, providerId, configuration, credential);
+  }
+
+  /**
+   * Replace the live set of contribution-available plugin sync provider IDs.
+   * Call when plugin contributions change so disabled/uninstalled providers
+   * leave the auto-sync ready set.
+   */
+  setAvailablePluginSyncProviders(providerIds: readonly string[]): void {
+    setAvailablePluginSyncProviderIdsImpl.call(this, providerIds);
   }
 
   /**
@@ -695,9 +717,16 @@ export class CloudSyncManager {
         payload: SyncPayload,
         commitReplica: () => Promise<void>,
       ) => Promise<void>;
+      signal?: AbortSignal;
     } = {},
   ): Promise<SyncResult> {
-    return syncToProviderImpl.call(this, provider, payload, opts);
+    const previous = this.activeSyncAbortSignal;
+    this.activeSyncAbortSignal = opts.signal;
+    try {
+      return await syncToProviderImpl.call(this, provider, payload, opts);
+    } finally {
+      this.activeSyncAbortSignal = previous;
+    }
   }
 
   /**
@@ -793,9 +822,16 @@ export class CloudSyncManager {
         payload: SyncPayload,
         commitReplica: () => Promise<void>,
       ) => Promise<void>;
+      signal?: AbortSignal;
     } = {},
   ): Promise<Map<CloudProvider, SyncResult>> {
-    return syncAllProvidersImpl.call(this, inputPayload, opts);
+    const previous = this.activeSyncAbortSignal;
+    this.activeSyncAbortSignal = opts.signal;
+    try {
+      return await syncAllProvidersImpl.call(this, inputPayload, opts);
+    } finally {
+      this.activeSyncAbortSignal = previous;
+    }
   }
 
   // ==========================================================================
@@ -911,12 +947,16 @@ export class CloudSyncManager {
       payload: SyncPayload,
       commitReplica: () => Promise<void>,
     ) => Promise<void>,
+    options?: {
+      pluginSidecars?: SyncPayload['pluginSidecars'];
+    },
   ): Promise<{ payload: SyncPayload; results: Map<CloudProvider, SyncResult> }> {
     return resolveConvergentConflictAndSyncImpl.call(
       this,
       addressKey,
       candidateDot,
       applyPayload,
+      options,
     );
   }
 

@@ -353,10 +353,95 @@ declare global {
     providePluginTerminal?(request: NetcattyTerminalProviderRequest): Promise<ReadonlyArray<NetcattyTerminalProviderResult>>;
     cancelPluginTerminalRequest?(requestId: string): Promise<boolean>;
     publishPluginTerminalSessionEvent?(event: NetcattyTerminalSessionEvent): Promise<ReadonlyArray<{ pluginId: string; delivered: boolean }>>;
-    listPluginExtensionProviders?(options: { kind: 'connection' | 'authentication' | 'importer'; locale?: string }): Promise<ReadonlyArray<NetcattyExtensionProviderContribution>>;
+    listPluginExtensionProviders?(options: { kind: 'connection' | 'authentication' | 'importer' | 'sync'; locale?: string }): Promise<ReadonlyArray<NetcattyExtensionProviderContribution>>;
     updatePluginCredentialCatalog?(entries: ReadonlyArray<{ id: string; ciphertext: string }>): Promise<number>;
     invokePluginExtensionProvider?(request: NetcattyExtensionProviderRequest): Promise<import("@netcatty/plugin-contract").JsonValue>;
     cancelPluginExtensionRequest?(requestId: string): Promise<boolean>;
+    pluginSyncConnect?(request: {
+      requestId?: string;
+      providerId: string;
+      configuration?: unknown;
+      credential?: unknown;
+      deadlineMs?: number;
+    }): Promise<{ account: { id: string; email?: string; name?: string; avatarUrl?: string } }>;
+    pluginSyncDisconnect?(request: { requestId?: string; providerId: string; deadlineMs?: number }): Promise<null>;
+    pluginSyncGetAccount?(request: { requestId?: string; providerId: string; deadlineMs?: number }): Promise<{
+      account: { id: string; email?: string; name?: string; avatarUrl?: string } | null;
+    }>;
+    pluginSyncGetCapabilities?(request: { requestId?: string; providerId: string; deadlineMs?: number }): Promise<{
+      revisions: boolean;
+      conditionalWrites: boolean;
+      atomicReplacement: boolean;
+      maxObjectBytes?: number;
+      maxObjects?: number;
+    }>;
+    pluginSyncReadObject?(request: {
+      requestId?: string;
+      providerId: string;
+      key: string;
+      preferStream?: boolean;
+      deadlineMs?: number;
+    }): Promise<{
+      found: boolean;
+      key: string;
+      data?: Uint8Array | null;
+      streamed?: boolean;
+      transferId?: string;
+      byteLength?: number;
+      revision?: string;
+      contentType?: string;
+    }>;
+    pluginSyncReadChunk?(request: {
+      requestId: string;
+      transferId: string;
+      maxBytes?: number;
+    }): Promise<{ chunk: Uint8Array; done: boolean }>;
+    pluginSyncWriteObject?(request: {
+      requestId?: string;
+      providerId: string;
+      key: string;
+      data: Uint8Array;
+      expectedRevision?: string | null;
+      preferStream?: boolean;
+      deadlineMs?: number;
+    }): Promise<{ created: boolean; revision?: string }>;
+    pluginSyncWriteBegin?(request: {
+      requestId?: string;
+      providerId: string;
+      key: string;
+      byteLength: number;
+      expectedRevision?: string | null;
+      deadlineMs?: number;
+    }): Promise<{ transferId: string; windowBytes: number }>;
+    pluginSyncWriteChunk?(request: {
+      requestId: string;
+      transferId: string;
+      sequence: number;
+      chunk: Uint8Array;
+    }): Promise<{ accepted: number }>;
+    pluginSyncWriteCommit?(request: {
+      requestId: string;
+      transferId: string;
+    }): Promise<{ created: boolean; revision?: string }>;
+    pluginSyncDeleteObject?(request: {
+      requestId?: string;
+      providerId: string;
+      key: string;
+      expectedRevision?: string;
+      deadlineMs?: number;
+    }): Promise<{ deleted: boolean }>;
+    pluginSyncPutSecret?(request: {
+      providerId: string;
+      key: string;
+      value: string;
+    }): Promise<{ kind: 'secret'; id: string; key: string }>;
+    pluginSyncDeleteSecrets?(request: {
+      providerId: string;
+      keys?: string[];
+    }): Promise<{ deleted: number }>;
+    collectPluginSyncSidecars?(): Promise<unknown>;
+    applyPluginSyncSidecars?(bundle: unknown): Promise<{ applied: boolean; count?: number; entries?: unknown }>;
+    pluginHostReady?(): boolean;
     startPluginConnection?(request: NetcattyPluginConnectionStartRequest): Promise<{ sessionId: string; providerId: string; status: 'connecting' | 'connected'; diagnostics: ReadonlyArray<import("@netcatty/plugin-contract").ProviderValidationIssue> }>;
     writePluginConnection?(sessionId: string, data: Uint8Array): Promise<void>;
     controlPluginConnection?(sessionId: string, operation: 'resize' | 'signal' | 'reconnect' | 'close' | 'getStatus', payload?: Record<string, unknown>): Promise<unknown>;

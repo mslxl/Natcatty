@@ -413,6 +413,18 @@ connection draft may reference an identity or key draft from the same import by
 its source ID; Netcatty maps that reference to the new host-owned credential ID
 before encrypted persistence and rejects unresolved or ambiguous references.
 
+PR 8 adds sync Providers as another operation-keyed map under permission
+`provider.sync`. Plugins implement only encrypted object storage: `connect`,
+`disconnect`, `getAccount`, `getCapabilities`, `readObject`, `writeObject`, and
+`deleteObject`. Capability reporting covers revisions, conditional writes,
+atomic replacement, and size limits (`SyncLimits`). Large objects leave the
+JSON control plane on the existing stream seam; plugins never receive the cloud
+master key or plaintext vault. Netcatty continues to own encryption, CRDT merge,
+migrations, protection snapshots, conflict handling, and read-merge-write-verify.
+WebDAV is adapted through the shared encrypted-object storage interface so the
+same path can exercise configuration, secret handles, upload/download,
+verification, and recovery.
+
 `PluginSecretStore.get()` never returns plaintext. It returns a host-issued
 `SecretRef`. Its random ID stays opaque; its non-secret `key` binds later lease
 authorization to the same manifest resource used by `get()`/`set()`. `set()`
@@ -575,7 +587,7 @@ The cross-phase contract was checked against every planned consumer:
 | PR 5 terminal providers | namespaced provider IDs, provider request/result envelopes and bounded streams |
 | PR 6 data pipeline | direct MessagePort transfer envelopes, sequence, per-chunk credit, and bounded receive-window fields |
 | PR 7 connection/auth/import | provider kinds and configuration schemas, platform-specific companion variants, framing, stable failures and progress |
-| PR 8 sync | namespaced sync providers and JSON/binary bounded transport |
+| PR 8 sync | implemented: namespaced `sync` Providers, `SyncLimits`, operation-keyed connect/read/write/delete/capabilities, inline or streamed encrypted objects |
 | PR 9 rollout | schema/API selection, compatibility reporting and the final API 1.0 freeze |
 
 The contract tests construct representative manifests for the contribution UI,

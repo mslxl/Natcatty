@@ -28,6 +28,20 @@ import type {
   SecretLeaseRef,
   SecretRef,
   SemanticVersion,
+  SyncCapabilitiesResult,
+  SyncConnectPayload,
+  SyncConnectResult,
+  SyncDeleteObjectPayload,
+  SyncDeleteObjectResult,
+  SyncDisconnectPayload,
+  SyncDisconnectResult,
+  SyncGetAccountPayload,
+  SyncGetAccountResult,
+  SyncGetCapabilitiesPayload,
+  SyncReadObjectPayload,
+  SyncReadObjectResult,
+  SyncWriteObjectPayload,
+  SyncWriteObjectResult,
   TerminalSessionSnapshot,
 } from "@netcatty/plugin-contract";
 
@@ -137,6 +151,8 @@ type ProviderHandlerForKind<
         ? AuthenticationProviderHandler
         : K extends "importer"
           ? ImporterProviderHandler
+          : K extends "sync"
+            ? SyncProviderHandler
     : PluginProviderHandler<TPayload, TResult>;
 
 export interface PluginProviders {
@@ -165,11 +181,16 @@ export interface PluginProviders {
     kind: "importer",
     handler: ImporterProviderHandler,
   ): Disposable;
+  register(
+    providerId: string,
+    kind: "sync",
+    handler: SyncProviderHandler,
+  ): Disposable;
   register<TPayload extends JsonValue = JsonValue, TResult extends JsonValue = JsonValue>(
     providerId: string,
     kind: Exclude<
       ProviderKind,
-      TerminalInterceptorKind | OrdinaryTerminalProviderKind | "connection" | "authentication" | "importer"
+      TerminalInterceptorKind | OrdinaryTerminalProviderKind | "connection" | "authentication" | "importer" | "sync"
     >,
     handler: PluginProviderHandler<TPayload, TResult>,
   ): Disposable;
@@ -532,6 +553,61 @@ export type ImporterProviderOperationHandler<TOperation extends ImporterProvider
 ) => ImporterProviderResultByOperation[TOperation] | Promise<ImporterProviderResultByOperation[TOperation]>;
 export type ImporterProviderHandler = Readonly<{
   [TOperation in ImporterProviderOperation]: ImporterProviderOperationHandler<TOperation>;
+}>;
+
+export interface SyncProviderInvocationByOperation {
+  readonly connect: TypedPluginProviderInvocation<SyncConnectPayload> & {
+    readonly kind: "sync";
+    readonly operation: "connect";
+  };
+  readonly disconnect: TypedPluginProviderInvocation<SyncDisconnectPayload | undefined> & {
+    readonly kind: "sync";
+    readonly operation: "disconnect";
+  };
+  readonly getAccount: TypedPluginProviderInvocation<SyncGetAccountPayload | undefined> & {
+    readonly kind: "sync";
+    readonly operation: "getAccount";
+  };
+  readonly getCapabilities: TypedPluginProviderInvocation<SyncGetCapabilitiesPayload | undefined> & {
+    readonly kind: "sync";
+    readonly operation: "getCapabilities";
+  };
+  readonly readObject: TypedPluginProviderInvocation<SyncReadObjectPayload> & {
+    readonly kind: "sync";
+    readonly operation: "readObject";
+    readonly output?: PluginWritableByteStream;
+  };
+  readonly writeObject: TypedPluginProviderInvocation<SyncWriteObjectPayload> & {
+    readonly kind: "sync";
+    readonly operation: "writeObject";
+    readonly input?: Promise<PluginReadableByteStream>;
+  };
+  readonly deleteObject: TypedPluginProviderInvocation<SyncDeleteObjectPayload> & {
+    readonly kind: "sync";
+    readonly operation: "deleteObject";
+  };
+}
+
+export interface SyncProviderResultByOperation {
+  readonly connect: SyncConnectResult;
+  readonly disconnect: SyncDisconnectResult;
+  readonly getAccount: SyncGetAccountResult;
+  readonly getCapabilities: SyncCapabilitiesResult;
+  readonly readObject: SyncReadObjectResult;
+  readonly writeObject: SyncWriteObjectResult;
+  readonly deleteObject: SyncDeleteObjectResult;
+}
+
+export type SyncProviderOperation = keyof SyncProviderInvocationByOperation;
+export type SyncProviderInvocation =
+  SyncProviderInvocationByOperation[SyncProviderOperation];
+export type SyncProviderResult =
+  SyncProviderResultByOperation[SyncProviderOperation];
+export type SyncProviderOperationHandler<TOperation extends SyncProviderOperation> = (
+  invocation: SyncProviderInvocationByOperation[TOperation],
+) => SyncProviderResultByOperation[TOperation] | Promise<SyncProviderResultByOperation[TOperation]>;
+export type SyncProviderHandler = Readonly<{
+  [TOperation in SyncProviderOperation]: SyncProviderOperationHandler<TOperation>;
 }>;
 
 export interface PluginTerminalSessions {

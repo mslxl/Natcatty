@@ -22,6 +22,7 @@ import type {
 import {
   CLOUD_SYNC_PAYLOAD_ENTITY_KEYS,
   SYNC_PAYLOAD_ENTITY_KEYS,
+  SYNC_STORAGE_KEYS,
   hasSyncPayloadEntityData,
   type SyncPayload,
 } from '../domain/sync';
@@ -126,15 +127,33 @@ export interface SyncableVaultData {
 }
 
 /**
- * Returns true when the payload contains any meaningful user data worth
- * protecting or syncing.
+ * Returns true when the payload carries non-empty plugin sidecar entries.
+ *
+ * An explicit empty `{entries:[]}` bundle is intentionally NOT treated as
+ * meaningful by itself — last-known cache alone must not authorize pushing a
+ * wiped hosts/keys vault to cloud (empty-vault upload guard). Sidecar-only
+ * wipes still sync when the vault also has entities/settings, or via Force Push.
+ */
+function hasMeaningfulPluginSidecars(payload: SyncPayload): boolean {
+  return Array.isArray(payload.pluginSidecars?.entries)
+    && payload.pluginSidecars.entries.length > 0;
+}
+
+/**
+ * Returns true when a payload contains entities, settings, or meaningful
+ * plugin sidecars worth syncing / protecting with empty-vault guards.
+ * Local-only trust records are intentionally ignored by the cloud variant.
  */
 export function hasMeaningfulSyncData(payload: SyncPayload): boolean {
   if (hasSyncPayloadEntityData(payload, SYNC_PAYLOAD_ENTITY_KEYS)) return true;
 
-  return Boolean(
-    payload.settings && Object.values(payload.settings).some((value) => value !== undefined),
-  );
+  if (
+    payload.settings && Object.values(payload.settings).some((value) => value !== undefined)
+  ) {
+    return true;
+  }
+
+  return hasMeaningfulPluginSidecars(payload);
 }
 
 /**
@@ -144,9 +163,14 @@ export function hasMeaningfulSyncData(payload: SyncPayload): boolean {
 export function hasMeaningfulCloudSyncData(payload: SyncPayload): boolean {
   if (hasSyncPayloadEntityData(payload, CLOUD_SYNC_PAYLOAD_ENTITY_KEYS)) return true;
 
-  return Boolean(
-    payload.settings && Object.values(payload.settings).some((value) => value !== undefined),
-  );
+  if (
+    payload.settings && Object.values(payload.settings).some((value) => value !== undefined)
+  ) {
+    return true;
+  }
+
+  // Plugin-only profiles (settings/baselines, no vault entities) must still sync.
+  return hasMeaningfulPluginSidecars(payload);
 }
 
 /**
@@ -892,11 +916,75 @@ export function buildSyncPayload(
   };
 }
 
+export type PluginSyncSidecarCollector = () =>
+  | Promise<SyncPayload['pluginSidecars'] | null | undefined>
+  | SyncPayload['pluginSidecars']
+  | null
+  | undefined;
+
+export type PluginSyncSidecarApplier = (
+  sidecars: SyncPayload['pluginSidecars'] | null | undefined,
+) => Promise<void> | void;
+
+/**
+ * Attach a host-collected plugin sidecar bundle to a cloud payload.
+ * Secrets must already be excluded by the collector; this only drops empty bundles.
+ */
+export function withPluginSyncSidecars(
+  payload: SyncPayload,
+  sidecars: SyncPayload['pluginSidecars'] | null | undefined,
+): SyncPayload {
+  // null/undefined: collector unavailable — leave payload field unchanged
+  // (callers should reattach last-known before upload).
+  if (sidecars == null) {
+    return payload;
+  }
+  // Explicit empty entries is a real reset and must remain on the wire so
+  // apply paths can distinguish it from a legacy payload missing the field.
+  return {
+    ...payload,
+    pluginSidecars: {
+      version: 1,
+      entries: Array.isArray(sidecars.entries) ? sidecars.entries : [],
+    },
+  };
+}
+
+async function defaultCollectPluginSyncSidecars(): Promise<SyncPayload['pluginSidecars'] | null | undefined> {
+  const { collectPluginSyncSidecarsFromHost } = await import('./pluginSyncSidecarBridge');
+  // Let operational failures (DB/runtime) propagate so cloud upload does not
+  // silently strip previously synced sidecars from the remote snapshot.
+  return collectPluginSyncSidecarsFromHost();
+}
+
+async function defaultApplyPluginSyncSidecars(
+  sidecars: SyncPayload['pluginSidecars'] | null | undefined,
+): Promise<void> {
+  const {
+    applyPluginSyncSidecarsFromHost,
+    isPluginSidecarHostUnavailableError,
+  } = await import('./pluginSyncSidecarBridge');
+  try {
+    await applyPluginSyncSidecarsFromHost(sidecars);
+  } catch (error) {
+    // Only tolerate the host-gated-off / manager-unavailable path so a later
+    // plugin-enabled session can still apply from last-known cache. DB/runtime
+    // failures must fail the surrounding sync so the same remote is retried.
+    if (isPluginSidecarHostUnavailableError(error)) {
+      return;
+    }
+    throw error;
+  }
+}
+
 export async function buildCloudSyncPayload(
   vault: SyncableVaultData,
   portForwardingRules?: PortForwardingRule[],
+  options?: {
+    collectPluginSidecars?: PluginSyncSidecarCollector;
+  },
 ): Promise<SyncPayload> {
-  return {
+  const base: SyncPayload = {
     hosts: vault.hosts,
     keys: vault.keys,
     identities: vault.identities,
@@ -911,6 +999,9 @@ export async function buildCloudSyncPayload(
     settings: await collectCloudSyncableSettings(),
     syncedAt: Date.now(),
   };
+  const collect = options?.collectPluginSidecars ?? defaultCollectPluginSyncSidecars;
+  const sidecars = await collect();
+  return withPluginSyncSidecars(base, sidecars);
 }
 
 /** Build a local backup/restore payload, including local-only trust records. */
@@ -918,11 +1009,66 @@ export function buildLocalVaultPayload(
   vault: SyncableVaultData,
   portForwardingRules?: PortForwardingRule[],
 ): SyncPayload {
-  return {
+  const base: SyncPayload = {
     ...buildSyncPayload(vault, portForwardingRules),
     settings: collectLocalBackupSettings(),
     knownHosts: vault.knownHosts,
   };
+  // Protective backups must capture plugin sidecars so restore can recover
+  // plugin settings/baselines. Prefer the last successful host collect cache
+  // (sync). Callers that can await should use buildLocalVaultPayloadAsync.
+  try {
+    const raw = localStorageAdapter.read<{ version?: number; entries?: unknown }>(
+      SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_LAST_KNOWN,
+    );
+    if (raw && Array.isArray(raw.entries)) {
+      return withPluginSyncSidecars(base, {
+        version: 1,
+        entries: raw.entries as NonNullable<SyncPayload['pluginSidecars']>['entries'],
+      });
+    }
+  } catch {
+    // ignore cache read failures; backup still carries vault entities
+  }
+  return base;
+}
+
+/**
+ * Async local backup payload that prefers a live host collect when available,
+ * then falls back to last-known cache. Use for protective/version-change backups.
+ */
+export async function buildLocalVaultPayloadAsync(
+  vault: SyncableVaultData,
+  portForwardingRules?: PortForwardingRule[],
+): Promise<SyncPayload> {
+  const base = buildLocalVaultPayload(vault, portForwardingRules);
+  const {
+    collectPluginSyncSidecarsFromHost,
+    isPluginSidecarHostUnavailableError,
+  } = await import('./pluginSyncSidecarBridge');
+  try {
+    const live = await collectPluginSyncSidecarsFromHost();
+    if (live) {
+      // Live collect may return authoritative-empty while still deferring the
+      // last-known cache wipe until a successful sync commit. Protective
+      // backups must keep the non-empty last-known already attached to `base`.
+      const liveEmpty = !Array.isArray(live.entries) || live.entries.length === 0;
+      const baseHasEntries = Array.isArray(base.pluginSidecars?.entries)
+        && base.pluginSidecars.entries.length > 0;
+      if (liveEmpty && baseHasEntries) {
+        return base;
+      }
+      return withPluginSyncSidecars(base, live);
+    }
+  } catch (error) {
+    // Only fall back to last-known when the host is gated off. Operational
+    // failures must abort protective backups so we never apply over data that
+    // was not captured in the safety snapshot.
+    if (!isPluginSidecarHostUnavailableError(error)) {
+      throw error;
+    }
+  }
+  return base;
 }
 
 /**
@@ -934,7 +1080,10 @@ export function buildLocalVaultPayload(
 function applyPayload(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
-  options: { includeLocalOnlyData: boolean },
+  options: {
+    includeLocalOnlyData: boolean;
+    applyPluginSidecars?: PluginSyncSidecarApplier;
+  },
 ): Promise<void> {
   const legacyLineTimestampsEnabled = payload.settings?.terminalSettings?.showLineTimestamps === true;
   // Build the vault import object. Cloud sync intentionally ignores
@@ -979,14 +1128,27 @@ function applyPayload(
       if (payload.settings.sftpGlobalBookmarks != null) rehydrateGlobalSftpBookmarks();
       importers.onSettingsApplied?.();
     }
+
+    // Plugin encrypted sidecars: only apply when the field is present so
+    // legacy payloads without pluginSidecars do not wipe installed settings.
+    if (Object.prototype.hasOwnProperty.call(payload, 'pluginSidecars')) {
+      const applySidecars = options.applyPluginSidecars ?? defaultApplyPluginSyncSidecars;
+      await applySidecars(payload.pluginSidecars ?? { version: 1, entries: [] });
+    }
   });
 }
 
 export function applySyncPayload(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
+  options?: {
+    applyPluginSidecars?: PluginSyncSidecarApplier;
+  },
 ): Promise<void> {
-  return applyPayload(payload, importers, { includeLocalOnlyData: false });
+  return applyPayload(payload, importers, {
+    includeLocalOnlyData: false,
+    applyPluginSidecars: options?.applyPluginSidecars,
+  });
 }
 
 export async function prepareLocalVaultPayloadApply(

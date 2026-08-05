@@ -5,6 +5,12 @@ const { randomUUID } = require("node:crypto");
 
 const { isPluginDevelopmentEnabled } = require("./constants.cjs");
 const { raceWithAbort } = require("./rpcRouter.cjs");
+const {
+  INLINE_SYNC_OBJECT_SAFE_BYTES,
+  MAX_SYNC_OBJECT_BYTES,
+  STREAM_WINDOW_BYTES,
+} = require("./extensionProviderService.cjs");
+const { assertSecretKey } = require("./secretStore.cjs");
 
 const CHANNELS = Object.freeze({
   status: "netcatty:plugins:status",
@@ -27,6 +33,22 @@ const CHANNELS = Object.freeze({
   extensionProviders: "netcatty:plugins:extension-providers",
   extensionInvoke: "netcatty:plugins:extension-invoke",
   extensionCancel: "netcatty:plugins:extension-cancel",
+  syncConnect: "netcatty:plugins:sync-connect",
+  syncDisconnect: "netcatty:plugins:sync-disconnect",
+  syncGetAccount: "netcatty:plugins:sync-get-account",
+  syncGetCapabilities: "netcatty:plugins:sync-get-capabilities",
+  syncReadObject: "netcatty:plugins:sync-read-object",
+  syncReadChunk: "netcatty:plugins:sync-read-chunk",
+  syncWriteObject: "netcatty:plugins:sync-write-object",
+  syncWriteBegin: "netcatty:plugins:sync-write-begin",
+  syncWriteChunk: "netcatty:plugins:sync-write-chunk",
+  syncWriteCommit: "netcatty:plugins:sync-write-commit",
+  syncDeleteObject: "netcatty:plugins:sync-delete-object",
+  syncPutSecret: "netcatty:plugins:sync-put-secret",
+  syncDeleteSecrets: "netcatty:plugins:sync-delete-secrets",
+  syncSidecarsCollect: "netcatty:plugins:sync-sidecars-collect",
+  syncSidecarsApply: "netcatty:plugins:sync-sidecars-apply",
+  hostAvailableSync: "netcatty:plugins:host-available-sync",
   connectionStart: "netcatty:plugins:connection-start",
   connectionWrite: "netcatty:plugins:connection-write",
   connectionControl: "netcatty:plugins:connection-control",
@@ -54,6 +76,8 @@ const CHANNELS = Object.freeze({
 
 const SCOPE_KINDS = Object.freeze(["workspace", "host", "session", "device"]);
 const MAX_ACTIVE_TERMINAL_REQUESTS_PER_SENDER = 64;
+const MAX_SYNC_TRANSFERS_PER_SENDER = 8;
+const SYNC_TRANSFER_TTL_MS = 5 * 60_000;
 const MAX_IMPORT_FILE_BYTES = 64 * 1024 * 1024;
 const MAX_IMPORT_SELECTIONS_PER_SENDER = 8;
 const IMPORT_SELECTION_TTL_MS = 5 * 60_000;
@@ -173,7 +197,9 @@ function registerPluginBridge(ipcMain, options) {
   const terminalProviderService = options.terminalProviderService;
   const terminalDataPipelineService = options.terminalDataPipelineService;
   const extensionProviderService = options.extensionProviderService;
+  const syncSidecarService = options.syncSidecarService;
   const credentialResolver = options.credentialResolver;
+  const secretStore = options.secretStore;
   const connectionStatusPollMs = Number.isSafeInteger(options.connectionStatusPollMs)
     && options.connectionStatusPollMs >= 0
     && options.connectionStatusPollMs <= 60_000
@@ -199,6 +225,8 @@ function registerPluginBridge(ipcMain, options) {
   const observedAuthenticationSenders = new WeakSet();
   const importerSelectionsBySender = new WeakMap();
   const observedImporterSelectionSenders = new WeakSet();
+  const syncTransfersBySender = new WeakMap();
+  const observedSyncTransferSenders = new WeakSet();
   const scopeCatalogSenderKey = (event) => {
     const id = event?.sender?.id;
     return Number.isSafeInteger(id) && id > 0 ? id : "default";
@@ -531,6 +559,80 @@ function registerPluginBridge(ipcMain, options) {
     }
     return selections;
   };
+  const syncTransferMap = (sender) => {
+    if (!sender || typeof sender !== "object") throw new Error("Plugin sync transfer sender is unavailable");
+    let transfers = syncTransfersBySender.get(sender);
+    if (!transfers) {
+      transfers = new Map();
+      syncTransfersBySender.set(sender, transfers);
+    }
+    if (!observedSyncTransferSenders.has(sender)) {
+      observedSyncTransferSenders.add(sender);
+      sender.once?.("destroyed", () => {
+        for (const [transferId, transfer] of [...transfers.entries()]) {
+          try {
+            transfer.controller?.abort();
+            if (transfer.requestId) {
+              extensionRequestMap(sender).delete(transfer.requestId);
+            }
+          } catch { /* ignore */ }
+          transfers.delete(transferId);
+        }
+      });
+    }
+    const now = Date.now();
+    for (const [transferId, transfer] of [...transfers.entries()]) {
+      if (typeof transfer.expiresAt === "number" && transfer.expiresAt <= now) {
+        try {
+          transfer.controller?.abort();
+          if (transfer.requestId) extensionRequestMap(sender).delete(transfer.requestId);
+        } catch { /* ignore */ }
+        transfers.delete(transferId);
+      }
+    }
+    return transfers;
+  };
+  const releaseSyncTransfer = (sender, transferId, transfer) => {
+    const transfers = syncTransfersBySender.get(sender);
+    if (transfers && transferId && transfers.get(transferId) === transfer) {
+      transfers.delete(transferId);
+    }
+    if (transfer?.requestId) {
+      const requests = extensionRequestMap(sender);
+      if (requests.get(transfer.requestId) === transfer.controller || transfer.controller == null) {
+        requests.delete(transfer.requestId);
+      }
+    }
+  };
+  const assertSyncTransferBudget = (transfers) => {
+    if (transfers.size >= MAX_SYNC_TRANSFERS_PER_SENDER) {
+      throw new Error("Too many active Plugin sync transfers");
+    }
+  };
+  const coerceIpcBytes = (value, label) => {
+    if (value instanceof Uint8Array) return value;
+    if (Buffer.isBuffer(value)) return value;
+    if (ArrayBuffer.isView(value)) {
+      return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+    }
+    if (value && typeof value === "object" && value.type === "Buffer" && Array.isArray(value.data)) {
+      return Buffer.from(value.data);
+    }
+    throw new TypeError(`${label} must be binary bytes`);
+  };
+  const registerStreamingWriteRequest = (event, requestId) => {
+    if (typeof requestId !== "string" || requestId.length < 1 || requestId.length > 128 || requestId.includes("\0")) {
+      throw new TypeError("Plugin extension request ID is invalid");
+    }
+    const requests = extensionRequestMap(event.sender);
+    if (requests.has(requestId)) throw new Error("Plugin extension request ID is already active");
+    if (requests.size >= MAX_ACTIVE_TERMINAL_REQUESTS_PER_SENDER) {
+      throw new Error("Too many active Plugin extension requests");
+    }
+    const controller = new AbortController();
+    requests.set(requestId, controller);
+    return controller;
+  };
   ipcMain.handle(CHANNELS.status, async (event) => {
     if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
     let available = false;
@@ -641,6 +743,368 @@ function registerPluginBridge(ipcMain, options) {
     if (!extensionProviderService) throw new Error("Plugin extension Providers are unavailable");
     return extensionProviderService.listProviders(payload ?? {});
   });
+
+  // Synchronous readiness probe for renderer restore paths (no await).
+  ipcMain.on(CHANNELS.hostAvailableSync, (event) => {
+    event.returnValue = Boolean(syncSidecarService);
+  });
+
+  // Fallback null = host gated off / manager unavailable. Renderer must treat
+  // null as "unavailable" (last-known) rather than an authoritative empty set.
+  handlePassive(CHANNELS.syncSidecarsCollect, null, async () => {
+    if (!syncSidecarService) return null;
+    return syncSidecarService.collectForSync();
+  });
+
+  handlePassive(CHANNELS.syncSidecarsApply, null, async (_activeManager, payload) => {
+    if (!syncSidecarService) return { applied: false };
+    const entries = await syncSidecarService.applyFromSync(payload ?? { version: 1, entries: [] });
+    // Include merged entries so the renderer can refresh last-known without a
+    // follow-up collect (preserves missing-plugin rows remote omitted).
+    return { applied: true, count: entries.length, entries };
+  });
+
+  const runSyncProvider = (channel, methodName) => {
+    ipcMain.handle(channel, async (event, payload) => runExtensionRequest(event, payload, async (signal) => {
+      if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+      const method = extensionProviderService[methodName];
+      if (typeof method !== "function") throw new Error(`Plugin sync method missing: ${methodName}`);
+      return method.call(extensionProviderService, payload ?? {}, { signal });
+    }));
+  };
+
+  runSyncProvider(CHANNELS.syncConnect, "connectSync");
+  runSyncProvider(CHANNELS.syncDisconnect, "disconnectSync");
+  runSyncProvider(CHANNELS.syncGetAccount, "getSyncAccount");
+  runSyncProvider(CHANNELS.syncGetCapabilities, "getSyncCapabilities");
+  runSyncProvider(CHANNELS.syncDeleteObject, "deleteSyncObject");
+
+  ipcMain.handle(CHANNELS.syncReadObject, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    const requestId = payload?.requestId;
+    const controller = registerStreamingWriteRequest(event, requestId);
+    try {
+      await raceWithAbort(resolveManager(), controller.signal);
+      const result = await extensionProviderService.readSyncObject(payload ?? {}, {
+        signal: controller.signal,
+      });
+      if (!result?.found || !result.bytes) {
+        extensionRequestMap(event.sender).delete(requestId);
+        return { found: false, key: payload?.key, data: null };
+      }
+      const bytes = result.bytes instanceof Uint8Array
+        ? result.bytes
+        : new Uint8Array(result.bytes);
+      const preferStream = payload?.preferStream === true;
+      if (!preferStream && bytes.byteLength <= INLINE_SYNC_OBJECT_SAFE_BYTES) {
+        extensionRequestMap(event.sender).delete(requestId);
+        return {
+          found: true,
+          key: result.key,
+          data: bytes,
+          revision: result.revision,
+          contentType: result.contentType,
+        };
+      }
+      const transfers = syncTransferMap(event.sender);
+      assertSyncTransferBudget(transfers);
+      const transferId = randomUUID();
+      const transfer = {
+        kind: "read",
+        sender: event.sender,
+        requestId,
+        controller,
+        bytes,
+        offset: 0,
+        expiresAt: Date.now() + SYNC_TRANSFER_TTL_MS,
+      };
+      transfers.set(transferId, transfer);
+      const onAbort = () => releaseSyncTransfer(event.sender, transferId, transfer);
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      transfer.onAbort = onAbort;
+      return {
+        found: true,
+        key: result.key,
+        streamed: true,
+        transferId,
+        byteLength: bytes.byteLength,
+        revision: result.revision,
+        contentType: result.contentType,
+      };
+    } catch (error) {
+      extensionRequestMap(event.sender).delete(requestId);
+      throw error;
+    }
+  });
+
+  ipcMain.handle(CHANNELS.syncReadChunk, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    const transferId = payload?.transferId;
+    if (typeof transferId !== "string" || transferId.length < 1) {
+      throw new TypeError("Sync read transfer ID is invalid");
+    }
+    const transfers = syncTransferMap(event.sender);
+    const transfer = transfers.get(transferId);
+    if (!transfer || transfer.kind !== "read") {
+      throw new Error("Sync read transfer is not owned by this window");
+    }
+    if (payload?.requestId !== transfer.requestId) {
+      throw new Error("Sync read transfer request ID mismatch");
+    }
+    if (transfer.controller?.signal?.aborted) {
+      releaseSyncTransfer(event.sender, transferId, transfer);
+      throw new DOMException("Aborted", "AbortError");
+    }
+    transfer.expiresAt = Date.now() + SYNC_TRANSFER_TTL_MS;
+    const maxBytes = Number.isSafeInteger(payload?.maxBytes) && payload.maxBytes > 0
+      ? Math.min(payload.maxBytes, STREAM_WINDOW_BYTES)
+      : STREAM_WINDOW_BYTES;
+    const start = transfer.offset;
+    const end = Math.min(transfer.bytes.byteLength, start + maxBytes);
+    const chunk = transfer.bytes.subarray(start, end);
+    transfer.offset = end;
+    const done = end >= transfer.bytes.byteLength;
+    if (done) releaseSyncTransfer(event.sender, transferId, transfer);
+    return { chunk, done };
+  });
+
+  ipcMain.handle(CHANNELS.syncWriteObject, async (event, payload) => runExtensionRequest(event, payload, async (signal) => {
+    if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    const data = coerceIpcBytes(payload?.data ?? payload?.bytes, "Sync writeObject data");
+    if (data.byteLength > INLINE_SYNC_OBJECT_SAFE_BYTES) {
+      throw new Error("Sync writeObject payload requires the streamed write path");
+    }
+    if (data.byteLength > MAX_SYNC_OBJECT_BYTES) {
+      throw new Error("Sync writeObject payload exceeds the size limit");
+    }
+    return extensionProviderService.writeSyncObject({
+      ...payload,
+      bytes: data instanceof Uint8Array ? data : new Uint8Array(data),
+      preferStream: false,
+    }, { signal });
+  }));
+
+  ipcMain.handle(CHANNELS.syncWriteBegin, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    const requestId = payload?.requestId;
+    const controller = registerStreamingWriteRequest(event, requestId);
+    const failBegin = (error) => {
+      controller.abort();
+      extensionRequestMap(event.sender).delete(requestId);
+      throw error;
+    };
+    const byteLength = payload?.byteLength;
+    if (!Number.isSafeInteger(byteLength) || byteLength < 1 || byteLength > MAX_SYNC_OBJECT_BYTES) {
+      failBegin(new TypeError("Sync writeObject byteLength is invalid"));
+    }
+    const providerId = payload?.providerId;
+    const key = payload?.key;
+    if (typeof providerId !== "string" || providerId.length < 1) {
+      failBegin(new TypeError("Sync writeObject provider ID is invalid"));
+    }
+    if (typeof key !== "string" || key.length < 1) {
+      failBegin(new TypeError("Sync writeObject key is invalid"));
+    }
+    const transfers = syncTransferMap(event.sender);
+    try {
+      assertSyncTransferBudget(transfers);
+    } catch (error) {
+      failBegin(error);
+    }
+    const transferId = randomUUID();
+    const transfer = {
+      kind: "write",
+      sender: event.sender,
+      requestId,
+      controller,
+      providerId,
+      key,
+      expectedRevision: payload?.expectedRevision,
+      deadlineMs: payload?.deadlineMs,
+      byteLength,
+      received: 0,
+      sequence: -1,
+      chunks: [],
+      signal: controller.signal,
+      expiresAt: Date.now() + SYNC_TRANSFER_TTL_MS,
+    };
+    transfers.set(transferId, transfer);
+    const onAbort = () => releaseSyncTransfer(event.sender, transferId, transfer);
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+    transfer.onAbort = onAbort;
+    return { transferId, windowBytes: STREAM_WINDOW_BYTES };
+  });
+
+  ipcMain.handle(CHANNELS.syncWriteChunk, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    const transferId = payload?.transferId;
+    if (typeof transferId !== "string" || transferId.length < 1) {
+      throw new TypeError("Sync write transfer ID is invalid");
+    }
+    const transfers = syncTransferMap(event.sender);
+    const transfer = transfers.get(transferId);
+    if (!transfer || transfer.kind !== "write") {
+      throw new Error("Sync write transfer is not owned by this window");
+    }
+    const failChunk = (error) => {
+      try { transfer.controller?.abort(); } catch { /* ignore */ }
+      releaseSyncTransfer(event.sender, transferId, transfer);
+      throw error;
+    };
+    if (payload?.requestId !== transfer.requestId) {
+      failChunk(new Error("Sync write transfer request ID mismatch"));
+    }
+    if (transfer.signal.aborted) {
+      failChunk(new DOMException("Aborted", "AbortError"));
+    }
+    const sequence = payload?.sequence;
+    if (!Number.isSafeInteger(sequence) || sequence !== transfer.sequence + 1) {
+      failChunk(new TypeError("Sync write chunk sequence is invalid"));
+    }
+    let chunk;
+    try {
+      chunk = coerceIpcBytes(payload?.chunk, "Sync write chunk");
+    } catch (error) {
+      failChunk(error);
+    }
+    if (chunk.byteLength < 1 || chunk.byteLength > STREAM_WINDOW_BYTES) {
+      failChunk(new TypeError("Sync write chunk size is invalid"));
+    }
+    if (transfer.received + chunk.byteLength > transfer.byteLength) {
+      failChunk(new Error("Sync write exceeded declared byteLength"));
+    }
+    transfer.chunks.push(Buffer.from(chunk));
+    transfer.received += chunk.byteLength;
+    transfer.sequence = sequence;
+    transfer.expiresAt = Date.now() + SYNC_TRANSFER_TTL_MS;
+    return { accepted: chunk.byteLength };
+  });
+
+  ipcMain.handle(CHANNELS.syncWriteCommit, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    const transferId = payload?.transferId;
+    if (typeof transferId !== "string" || transferId.length < 1) {
+      throw new TypeError("Sync write transfer ID is invalid");
+    }
+    const transfers = syncTransferMap(event.sender);
+    const transfer = transfers.get(transferId);
+    if (!transfer || transfer.kind !== "write") {
+      throw new Error("Sync write transfer is not owned by this window");
+    }
+    const failCommit = (error) => {
+      try { transfer.controller?.abort(); } catch { /* ignore */ }
+      releaseSyncTransfer(event.sender, transferId, transfer);
+      throw error;
+    };
+    if (payload?.requestId !== transfer.requestId) {
+      failCommit(new Error("Sync write transfer request ID mismatch"));
+    }
+    if (transfer.received !== transfer.byteLength) {
+      failCommit(new Error("Sync write commit size does not match byteLength"));
+    }
+    const bytes = Buffer.concat(transfer.chunks);
+    transfers.delete(transferId);
+    try {
+      if (transfer.signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+      await raceWithAbort(resolveManager(), transfer.signal);
+      return await extensionProviderService.writeSyncObject({
+        providerId: transfer.providerId,
+        key: transfer.key,
+        bytes: new Uint8Array(bytes),
+        expectedRevision: transfer.expectedRevision,
+        preferStream: true,
+        deadlineMs: transfer.deadlineMs,
+      }, { signal: transfer.signal });
+    } catch (error) {
+      throw error;
+    } finally {
+      if (extensionRequestMap(event.sender).get(transfer.requestId) === transfer.controller
+        || extensionRequestMap(event.sender).has(transfer.requestId)) {
+        extensionRequestMap(event.sender).delete(transfer.requestId);
+      }
+    }
+  });
+
+  ipcMain.handle(CHANNELS.syncPutSecret, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    if (!secretStore || typeof secretStore.set !== "function") {
+      throw new Error("Plugin sync secret storage is unavailable");
+    }
+    if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    const providerId = payload?.providerId;
+    if (typeof providerId !== "string" || providerId.length < 1) {
+      throw new TypeError("Sync provider ID is invalid");
+    }
+    const key = assertSecretKey(typeof payload?.key === "string" && payload.key
+      ? payload.key
+      : "sync-credential");
+    const value = payload?.value;
+    if (typeof value !== "string" || value.length < 1) {
+      throw new TypeError("Sync secret value is invalid");
+    }
+    const providers = extensionProviderService.listProviders({ kind: "sync" });
+    const match = Array.isArray(providers)
+      ? providers.find((entry) => entry?.provider?.id === providerId || entry?.id === providerId)
+      : null;
+    if (!match || typeof match.pluginId !== "string") {
+      throw new Error(`Plugin sync provider is unavailable: ${providerId}`);
+    }
+    return secretStore.set(match.pluginId, key, value);
+  });
+
+  ipcMain.handle(CHANNELS.syncDeleteSecrets, async (event, payload) => {
+    if (!isTrustedSender(event)) throw new Error("Untrusted plugin management sender");
+    if (!secretStore || typeof secretStore.delete !== "function") {
+      throw new Error("Plugin sync secret storage is unavailable");
+    }
+    if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    const providerId = payload?.providerId;
+    if (typeof providerId !== "string" || providerId.length < 1) {
+      throw new TypeError("Sync provider ID is invalid");
+    }
+    const providers = extensionProviderService.listProviders({ kind: "sync" });
+    const match = Array.isArray(providers)
+      ? providers.find((entry) => entry?.provider?.id === providerId || entry?.id === providerId)
+      : null;
+    if (!match || typeof match.pluginId !== "string") {
+      // Provider may already be uninstalled; treat as no-op cleanup.
+      return { deleted: 0 };
+    }
+    const keys = Array.isArray(payload?.keys) && payload.keys.length > 0
+      ? payload.keys
+      : null;
+    if (!keys) {
+      // Wipe every sync-credential* key (well-known + schema writeOnly fields).
+      if (typeof secretStore.deleteByKeyPrefix === "function") {
+        const deleted = secretStore.deleteByKeyPrefix(match.pluginId, "sync-credential");
+        return { deleted: Number(deleted) || 0 };
+      }
+    }
+    let deleted = 0;
+    for (const rawKey of keys ?? [
+      "sync-credential",
+      "sync-credential:token",
+      "sync-credential:secret",
+      "sync-credential:apiKey",
+      "sync-credential:accessToken",
+    ]) {
+      if (typeof rawKey !== "string" || rawKey.length < 1) continue;
+      const key = assertSecretKey(rawKey);
+      try {
+        secretStore.delete(match.pluginId, key);
+        deleted += 1;
+      } catch {
+        /* ignore missing / unavailable keys */
+      }
+    }
+    return { deleted };
+  });
+
   handlePassive(CHANNELS.credentialCatalogUpdate, 0, async (_activeManager, payload) => {
     if (!credentialResolver || typeof credentialResolver.update !== "function") {
       throw new Error("Plugin Vault credential catalog is unavailable");

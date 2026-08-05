@@ -43,13 +43,17 @@ const {
   applySyncPayload,
   buildLocalVaultPayload,
   buildCloudSyncPayload,
+  withPluginSyncSidecars,
   buildSyncPayload,
   hasCloudSyncEntityData,
   hasMeaningfulCloudSyncData,
+  hasMeaningfulSyncData,
   shouldPromptCloudVaultRecovery,
   SYNCABLE_SETTING_STORAGE_KEYS,
 } = await import("./syncPayload.ts");
 const storageKeys = await import("../infrastructure/config/storageKeys.ts");
+const { SYNC_STORAGE_KEYS } = await import("../domain/sync.ts");
+const { localStorageAdapter } = await import("../infrastructure/persistence/localStorageAdapter.ts");
 
 const knownHost = (id = "kh-1"): KnownHost => ({
   id,
@@ -791,6 +795,165 @@ test("hasMeaningfulCloudSyncData ignores legacy cloud known hosts", () => {
   );
 });
 
+test("buildLocalVaultPayload includes last-known plugin sidecars for protective backups", () => {
+  localStorage.setItem(
+    "netcatty_plugin_sidecars_last_known_v1",
+    JSON.stringify({
+      version: 1,
+      entries: [{
+        pluginId: "com.example.p",
+        kind: "settings",
+        key: "com.example.p.theme\0application\0application",
+        value: "dark",
+        updatedAt: 1,
+      }],
+    }),
+  );
+  try {
+    const payload = buildLocalVaultPayload(vault([]));
+    assert.equal(payload.pluginSidecars?.entries?.length, 1);
+    assert.equal(payload.pluginSidecars?.entries?.[0].value, "dark");
+    assert.equal(hasMeaningfulSyncData(payload), true);
+  } finally {
+    localStorage.removeItem("netcatty_plugin_sidecars_last_known_v1");
+  }
+});
+
+test("buildLocalVaultPayloadAsync keeps last-known when live collect is empty", async () => {
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  Object.defineProperty(globalThis, "window", {
+    value: {
+      netcatty: {
+        collectPluginSyncSidecars: async () => ({ version: 1, entries: [] }),
+        pluginHostReady: () => true,
+      },
+      dispatchEvent: () => true,
+    },
+    configurable: true,
+  });
+  localStorage.setItem(
+    "netcatty_plugin_sidecars_last_known_v1",
+    JSON.stringify({
+      version: 1,
+      entries: [{
+        pluginId: "com.example.p",
+        kind: "settings",
+        key: "com.example.p.theme\0application\0application",
+        value: "dark",
+        updatedAt: 1,
+      }],
+    }),
+  );
+  try {
+    const { buildLocalVaultPayloadAsync } = await import("./syncPayload.ts");
+    const payload = await buildLocalVaultPayloadAsync(vault([]));
+    assert.equal(payload.pluginSidecars?.entries?.length, 1);
+    assert.equal(payload.pluginSidecars?.entries?.[0].value, "dark");
+  } finally {
+    localStorage.removeItem("netcatty_plugin_sidecars_last_known_v1");
+    Object.defineProperty(globalThis, "window", {
+      value: previousWindow,
+      configurable: true,
+    });
+  }
+});
+
+test("hasMeaningfulCloudSyncData treats non-empty plugin sidecars as meaningful", () => {
+  assert.equal(
+    hasMeaningfulCloudSyncData({
+      hosts: [],
+      keys: [],
+      identities: [],
+      snippets: [],
+      customGroups: [],
+      syncedAt: 1,
+      pluginSidecars: {
+        version: 1,
+        entries: [{
+          pluginId: "com.example.p",
+          kind: "settings",
+          key: "com.example.p.theme\0application\0application",
+          value: "dark",
+          updatedAt: 1,
+        }],
+      },
+    }),
+    true,
+  );
+  // Empty bundle alone must not bypass the empty-vault upload guard.
+  assert.equal(
+    hasMeaningfulCloudSyncData({
+      hosts: [],
+      keys: [],
+      identities: [],
+      snippets: [],
+      customGroups: [],
+      syncedAt: 1,
+      pluginSidecars: { version: 1, entries: [] },
+    }),
+    false,
+  );
+  assert.equal(
+    hasMeaningfulCloudSyncData({
+      hosts: [],
+      keys: [],
+      identities: [],
+      snippets: [],
+      customGroups: [],
+      syncedAt: 1,
+    }),
+    false,
+  );
+});
+
+test("hasMeaningfulCloudSyncData does not treat last-known-only empty sidecars as meaningful", () => {
+  const previous = localStorageAdapter.read(SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_LAST_KNOWN);
+  try {
+    localStorageAdapter.write(SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_LAST_KNOWN, {
+      version: 1,
+      entries: [{
+        pluginId: "com.example.p",
+        kind: "settings",
+        key: "k",
+        value: 1,
+        updatedAt: 1,
+      }],
+    });
+    // Empty vault + empty sidecar entries must stay blocked even when last-known
+    // still remembers prior plugin settings (empty-vault upload guard).
+    assert.equal(
+      hasMeaningfulCloudSyncData({
+        hosts: [],
+        keys: [],
+        identities: [],
+        snippets: [],
+        customGroups: [],
+        syncedAt: 1,
+        pluginSidecars: { version: 1, entries: [] },
+      }),
+      false,
+    );
+  } finally {
+    if (previous == null) localStorageAdapter.remove(SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_LAST_KNOWN);
+    else localStorageAdapter.write(SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_LAST_KNOWN, previous);
+  }
+});
+
+test("plugin sidecar storage keys stay aligned between sync domain and storageKeys registry", () => {
+  assert.equal(
+    storageKeys.STORAGE_KEY_PLUGIN_SIDECARS_LAST_KNOWN,
+    SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_LAST_KNOWN,
+  );
+  assert.equal(
+    storageKeys.STORAGE_KEY_PLUGIN_SIDECARS_PENDING_REMOTE,
+    SYNC_STORAGE_KEYS.PLUGIN_SIDECARS_PENDING_REMOTE,
+  );
+  assert.equal(
+    storageKeys.STORAGE_KEY_AVAILABLE_PLUGIN_SYNC_PROVIDERS,
+    SYNC_STORAGE_KEYS.AVAILABLE_PLUGIN_SYNC_PROVIDERS,
+  );
+});
+
 test("hasCloudSyncEntityData ignores settings-only payloads for empty-vault recovery", () => {
   assert.equal(
     hasCloudSyncEntityData({
@@ -1337,4 +1500,79 @@ test("applyLocalVaultPayload does not commit convergent writes when local import
   );
 
   assert.equal(committed, false);
+});
+
+test("withPluginSyncSidecars attaches non-empty plugin sidecar bundles", () => {
+  const base = buildSyncPayload({
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+  });
+  const withEmpty = withPluginSyncSidecars(base, { version: 1, entries: [] });
+  assert.deepEqual(withEmpty.pluginSidecars, { version: 1, entries: [] });
+
+  const withData = withPluginSyncSidecars(base, {
+    version: 1,
+    entries: [{
+      pluginId: "com.example.sync",
+      kind: "settings",
+      key: "com.example.sync.theme\0application\0application",
+      value: "dark",
+      updatedAt: 1,
+    }],
+  });
+  assert.equal(withData.pluginSidecars?.entries.length, 1);
+  assert.equal(withData.pluginSidecars?.entries[0].value, "dark");
+});
+
+test("buildCloudSyncPayload includes plugin sidecars from the production collector hook", async () => {
+  const payload = await buildCloudSyncPayload(vault([]), [], {
+    collectPluginSidecars: async () => ({
+      version: 1,
+      entries: [{
+        pluginId: "com.example.sync",
+        kind: "account_baseline",
+        key: "account",
+        value: { id: "acct-1" },
+        updatedAt: 9,
+      }],
+    }),
+  });
+  assert.equal(payload.pluginSidecars?.entries.length, 1);
+  assert.equal(payload.pluginSidecars?.entries[0].kind, "account_baseline");
+  assert.deepEqual(payload.pluginSidecars?.entries[0].value, { id: "acct-1" });
+});
+
+test("applySyncPayload applies pluginSidecars through the production applier hook", async () => {
+  let applied: unknown = null;
+  const payload: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+    pluginSidecars: {
+      version: 1,
+      entries: [{
+        pluginId: "com.missing.plugin",
+        kind: "crdt_baseline",
+        key: "replica",
+        value: { clock: 3 },
+        updatedAt: 2,
+      }],
+    },
+  };
+
+  await applySyncPayload(payload, {
+    importVaultData: () => {},
+  }, {
+    applyPluginSidecars: async (sidecars) => {
+      applied = sidecars;
+    },
+  });
+
+  assert.equal((applied as SyncPayload["pluginSidecars"])?.entries[0].value.clock, 3);
 });

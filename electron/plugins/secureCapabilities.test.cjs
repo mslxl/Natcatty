@@ -241,3 +241,96 @@ test("companion requests consume operation-bound credential leases exactly once"
   });
   assert.equal(forwarded[0].context, context);
 });
+
+test("network.request injects Authorization from a consumed credential lease", async () => {
+  const registrations = new Map();
+  const registry = {
+    use() {},
+    registerRequest(method, handler, options) { registrations.set(method, { handler, options }); },
+  };
+  const middlewareOwner = { createMiddleware: () => async (_context, next) => next() };
+  const forwarded = [];
+  const consumed = [];
+  const credentialBroker = {
+    async consumeLease(context, lease, operationId) {
+      consumed.push({ lease, operationId, pluginId: context.pluginId });
+      return "lease-token-value";
+    },
+  };
+  const networkBroker = {
+    // Mirror production validate: preserve credentialLease / authorization.
+    validate: (params) => ({
+      url: params.url,
+      method: params.method ?? "GET",
+      headers: params.headers ?? {},
+      timeoutMs: params.timeoutMs ?? 30_000,
+      ...(params.credentialLease === undefined ? {} : { credentialLease: params.credentialLease }),
+      ...(params.authorization === undefined ? {} : { authorization: params.authorization }),
+    }),
+    describeAuthorization: () => ({
+      permission: "network",
+      resources: ["https://example.com"],
+      reason: "test",
+      operationId: "network:https://example.com",
+    }),
+    async request(params, context) {
+      forwarded.push({ params, context });
+      return { status: 204, headers: {}, body: { encoding: "base64", data: "" } };
+    },
+  };
+  const broker = new Proxy({}, { get: () => () => ({}) });
+  registerSecurePluginCapabilities(registry, {
+    quotaManager: middlewareOwner,
+    permissionEngine: middlewareOwner,
+    secretStore: {},
+    credentialBroker,
+    networkBroker,
+    filesystemBroker: broker,
+    companionSupervisor: broker,
+    assertLeaseParams: (params) => params,
+  });
+
+  const context = {
+    pluginId: "com.example.secure",
+    async assertActive() {},
+  };
+  const registration = registrations.get("network.request");
+  // Simulate hostRpcRegistry: validateParams first, then handler(validatedParams).
+  const validated = registration.options.validateParams({
+    url: "https://example.com/vault",
+    credentialLease: {
+      kind: "secret-lease",
+      id: "lease-1",
+      operationId: "network:https://example.com",
+      expiresAt: Date.now() + 60_000,
+    },
+    authorization: { scheme: "Bearer" },
+  });
+  await registration.handler(validated, context);
+
+  assert.equal(consumed.length, 1);
+  assert.equal(consumed[0].operationId, "network:https://example.com");
+  assert.equal(forwarded[0].params.headers.authorization, "Bearer lease-token-value");
+  assert.equal(forwarded[0].params.credentialLease, undefined);
+});
+
+test("networkBroker.validate preserves credentialLease for registry dispatch", () => {
+  const { PluginNetworkBroker } = require("./networkBroker.cjs");
+  const broker = new PluginNetworkBroker({
+    fetch: async () => ({ status: 204, headers: new Headers(), body: null, url: "https://example.com/" }),
+    permissionEngine: { check: () => {} },
+  });
+  const validated = broker.validate({
+    url: "https://example.com/vault",
+    credentialLease: {
+      kind: "secret-lease",
+      id: "lease-1",
+      operationId: "network:https://example.com",
+      expiresAt: Date.now() + 60_000,
+    },
+    authorization: { scheme: "Basic", username: "alice" },
+  });
+  assert.equal(validated.credentialLease.kind, "secret-lease");
+  assert.equal(validated.authorization.scheme, "Basic");
+  assert.equal(validated.authorization.username, "alice");
+});

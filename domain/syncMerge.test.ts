@@ -418,6 +418,114 @@ test("mergeSyncPayloads keeps local settings conflict policy when a base exists"
   });
 });
 
+test("mergeSyncPayloads carries plugin sidecars through without dropping remote baselines", () => {
+  const local: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+    pluginSidecars: {
+      version: 1,
+      entries: [{
+        pluginId: "com.local.plugin",
+        kind: "settings",
+        key: "com.local.plugin.theme\0application\0application",
+        value: "dark",
+        updatedAt: 5,
+      }],
+    },
+  };
+  const remote: SyncPayload = {
+    hosts: [],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 2,
+    pluginSidecars: {
+      version: 1,
+      entries: [{
+        pluginId: "com.remote.plugin",
+        kind: "account_baseline",
+        key: "account",
+        value: { id: "acct-r" },
+        updatedAt: 9,
+      }],
+    },
+  };
+  const result = mergeSyncPayloads(null, local, remote);
+  assert.ok(result.payload.pluginSidecars);
+  assert.equal(result.payload.pluginSidecars!.entries.length, 2);
+  assert.ok(result.payload.pluginSidecars!.entries.some((e) => e.pluginId === "com.local.plugin"));
+  assert.ok(result.payload.pluginSidecars!.entries.some((e) => e.kind === "account_baseline"));
+});
+
+test("mergeSyncPayloads propagates local sidecar setting resets via three-way merge", () => {
+  const entry = {
+    pluginId: "com.example.p",
+    kind: "settings" as const,
+    key: "com.example.p.theme\0application\0application",
+    value: "dark",
+    updatedAt: 1,
+  };
+  const base: SyncPayload = {
+    hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+    syncedAt: 1,
+    pluginSidecars: { version: 1, entries: [entry] },
+  };
+  const local: SyncPayload = {
+    hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+    syncedAt: 2,
+    // user reset: explicit empty sidecar bundle (omitted field = legacy/unsupported)
+    pluginSidecars: { version: 1, entries: [] },
+  };
+  const remote: SyncPayload = {
+    hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+    syncedAt: 2,
+    pluginSidecars: { version: 1, entries: [entry] },
+  };
+  const result = mergeSyncPayloads(base, local, remote);
+  assert.equal(
+    result.payload.pluginSidecars?.entries?.some((e) => e.key === entry.key) ?? false,
+    false,
+    "local reset must not be resurrected from base/remote",
+  );
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(result.payload, "pluginSidecars"),
+    "explicit empty sidecar field must remain so apply clears remote/local DB",
+  );
+  assert.deepEqual(result.payload.pluginSidecars, { version: 1, entries: [] });
+});
+
+test("mergeSyncPayloads preserves sidecars when remote legacy payload omits the field", () => {
+  const entry = {
+    pluginId: "com.example.p",
+    kind: "settings" as const,
+    key: "com.example.p.theme\0application\0application",
+    value: "dark",
+    updatedAt: 1,
+  };
+  const base: SyncPayload = {
+    hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+    syncedAt: 1,
+    pluginSidecars: { version: 1, entries: [entry] },
+  };
+  const local: SyncPayload = {
+    hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+    syncedAt: 2,
+    pluginSidecars: { version: 1, entries: [entry] },
+  };
+  const remote: SyncPayload = {
+    hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+    syncedAt: 2,
+    // legacy remote omits pluginSidecars entirely
+  };
+  const result = mergeSyncPayloads(base, local, remote);
+  assert.ok(result.payload.pluginSidecars?.entries?.some((e) => e.key === entry.key));
+});
+
 test("mergeSyncPayloads treats missing optional arrays as legacy payloads, not deletions", () => {
   const identity = {
     id: "identity-1",

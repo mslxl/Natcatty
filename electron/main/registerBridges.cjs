@@ -188,7 +188,9 @@ function createBridgeRegistrar(context) {
       terminalProviderService: pluginHostService?.terminalProviderService,
       terminalDataPipelineService: pluginHostService?.terminalDataPipelineService,
       extensionProviderService: pluginHostService?.extensionProviderService,
+      syncSidecarService: pluginHostService?.syncSidecarService,
       credentialResolver: pluginHostService?.credentialResolver,
+      secretStore: pluginHostService?.secretStore,
       getTerminalWorkerManager: () => terminalWorkerManager,
       selectImporterFile: async (event) => {
         const owner = electronModule.BrowserWindow.fromWebContents(event.sender);

@@ -26,6 +26,13 @@ function fixture(options = {}) {
     },
     { id: "com.example.transport.auth", kind: "authentication" },
     { id: "com.example.transport.importer", kind: "importer" },
+    {
+      id: "com.example.transport.sync",
+      kind: "sync",
+      ...(options.syncConfigurationSchema === undefined
+        ? {}
+        : { configurationSchema: options.syncConfigurationSchema }),
+    },
   ];
   const contributionService = {
     listProviders({ kind }) {
@@ -53,7 +60,13 @@ function fixture(options = {}) {
   };
   const permissions = [];
   const permissionEngine = {
-    async authorize(context, descriptor) { permissions.push({ context, descriptor }); return { scope: "application" }; },
+    async authorize(context, descriptor) {
+      if (typeof options.authorize === "function") {
+        return options.authorize(context, descriptor, permissions);
+      }
+      permissions.push({ context, descriptor });
+      return { scope: "application" };
+    },
   };
   const streamHandlers = [];
   const rpcRegistry = {
@@ -919,4 +932,153 @@ test("import parsing enforces its deadline while the selected input source stall
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sourceReturned, true);
   assert.equal(h.revokedOperations.length, 1);
+});
+
+test("sync providers require provider.sync and only exchange encrypted object bytes", async () => {
+  const cipher = Buffer.from([0x9b, 0x01, 0x02, 0x03]);
+  let writePayload;
+  const h = fixture({
+    async request({ params }) {
+      assert.equal(params.kind, "sync");
+      if (params.operation === "connect") {
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: { account: { id: "acct-1", name: "Plugin Sync" } },
+        };
+      }
+      if (params.operation === "getCapabilities") {
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: {
+            revisions: true,
+            conditionalWrites: true,
+            atomicReplacement: true,
+            maxObjectBytes: 1024,
+          },
+        };
+      }
+      if (params.operation === "readObject") {
+        assert.equal(params.payload.key, "netcatty-vault.json");
+        assert.equal(typeof params.payload.outputStreamId, "string");
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: {
+            found: true,
+            byteLength: cipher.byteLength,
+            encoding: "base64",
+            data: cipher.toString("base64"),
+            revision: "rev-1",
+          },
+        };
+      }
+      if (params.operation === "writeObject") {
+        writePayload = params.payload;
+        assert.equal(params.payload.key, "netcatty-vault.json");
+        assert.equal(params.payload.encoding, "base64");
+        assert.equal(Buffer.from(params.payload.data, "base64").equals(cipher), true);
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: { created: true, revision: "rev-2" },
+        };
+      }
+      if (params.operation === "deleteObject") {
+        return {
+          requestId: params.requestId,
+          status: "ok",
+          result: { deleted: true },
+        };
+      }
+      if (params.operation === "disconnect") {
+        return { requestId: params.requestId, status: "ok", result: null };
+      }
+      throw new Error(`unexpected operation ${params.operation}`);
+    },
+  });
+
+  const connected = await h.service.connectSync({
+    providerId: "com.example.transport.sync",
+    configuration: { endpoint: "https://example.test" },
+  });
+  assert.equal(connected.account.id, "acct-1");
+  assert.equal(h.permissions[0].descriptor.permission, "provider.sync");
+
+  const caps = await h.service.getSyncCapabilities({
+    providerId: "com.example.transport.sync",
+  });
+  assert.equal(caps.conditionalWrites, true);
+
+  const read = await h.service.readSyncObject({
+    providerId: "com.example.transport.sync",
+    key: "netcatty-vault.json",
+  });
+  assert.equal(read.found, true);
+  assert.equal(Buffer.from(read.bytes).equals(cipher), true);
+  assert.equal(read.revision, "rev-1");
+
+  const written = await h.service.writeSyncObject({
+    providerId: "com.example.transport.sync",
+    key: "netcatty-vault.json",
+    bytes: cipher,
+  });
+  assert.equal(written.created, true);
+  assert.equal(written.revision, "rev-2");
+  assert.equal(writePayload.byteLength, cipher.byteLength);
+
+  const deleted = await h.service.deleteSyncObject({
+    providerId: "com.example.transport.sync",
+    key: "netcatty-vault.json",
+  });
+  assert.equal(deleted.deleted, true);
+
+  const disconnected = await h.service.disconnectSync({
+    providerId: "com.example.transport.sync",
+  });
+  assert.equal(disconnected, null);
+});
+
+test("sync providers fail closed without provider.sync permission", async () => {
+  const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
+  const h = fixture({
+    async request() {
+      throw new Error("plugin should not be invoked");
+    },
+    async authorize() {
+      throw new PluginRpcError(RPC_ERRORS.permissionDenied, "missing provider.sync");
+    },
+  });
+  await assert.rejects(h.service.connectSync({
+    providerId: "com.example.transport.sync",
+    configuration: {},
+  }), /provider\.sync|permission/i);
+});
+
+test("sync writeObject streams large encrypted objects outside the JSON budget", async () => {
+  const { INLINE_SYNC_OBJECT_BYTES } = require("./extensionProviderService.cjs");
+  const large = Buffer.alloc(INLINE_SYNC_OBJECT_BYTES + 16, 0xab);
+  let sawStream = false;
+  const h = fixture({
+    async request({ params }) {
+      assert.equal(params.operation, "writeObject");
+      assert.equal(typeof params.payload.inputStreamId, "string");
+      assert.equal(params.payload.data, undefined);
+      sawStream = true;
+      return {
+        requestId: params.requestId,
+        status: "ok",
+        result: { created: false, revision: "stream-rev" },
+      };
+    },
+  });
+  const result = await h.service.writeSyncObject({
+    providerId: "com.example.transport.sync",
+    key: "netcatty-vault.json",
+    bytes: large,
+  });
+  assert.equal(sawStream, true);
+  assert.equal(result.revision, "stream-rev");
+  assert.ok(h.writes.some((entry) => entry[1] === "end"));
 });

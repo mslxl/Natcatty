@@ -130,6 +130,69 @@ function createPreloadApi(ctx) {
     ...request,
   }),
   cancelPluginExtensionRequest: (requestId) => ipcRenderer.invoke("netcatty:plugins:extension-cancel", { requestId }),
+  pluginSyncConnect: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-connect", { ...request, requestId });
+  },
+  pluginSyncDisconnect: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-disconnect", { ...request, requestId });
+  },
+  pluginSyncGetAccount: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-get-account", { ...request, requestId });
+  },
+  pluginSyncGetCapabilities: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-get-capabilities", { ...request, requestId });
+  },
+  pluginSyncReadObject: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-read-object", { ...request, requestId });
+  },
+  pluginSyncReadChunk: (request) => ipcRenderer.invoke("netcatty:plugins:sync-read-chunk", request),
+  pluginSyncWriteObject: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-write-object", { ...request, requestId });
+  },
+  pluginSyncWriteBegin: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-write-begin", { ...request, requestId });
+  },
+  pluginSyncWriteChunk: (request) => ipcRenderer.invoke("netcatty:plugins:sync-write-chunk", request),
+  pluginSyncWriteCommit: (request) => ipcRenderer.invoke("netcatty:plugins:sync-write-commit", request),
+  pluginSyncDeleteObject: (request) => {
+    const requestId = typeof request?.requestId === "string" && request.requestId
+      ? request.requestId
+      : randomUUID();
+    return ipcRenderer.invoke("netcatty:plugins:sync-delete-object", { ...request, requestId });
+  },
+  pluginSyncPutSecret: (request) => ipcRenderer.invoke("netcatty:plugins:sync-put-secret", request ?? {}),
+  pluginSyncDeleteSecrets: (request) => ipcRenderer.invoke("netcatty:plugins:sync-delete-secrets", request ?? {}),
+  collectPluginSyncSidecars: () => ipcRenderer.invoke("netcatty:plugins:sync-sidecars-collect", {}),
+  applyPluginSyncSidecars: (bundle) => ipcRenderer.invoke("netcatty:plugins:sync-sidecars-apply", bundle ?? { version: 1, entries: [] }),
+  /** True only when the main-process plugin host wired a sidecar service. */
+  pluginHostReady: () => {
+    try {
+      return ipcRenderer.sendSync("netcatty:plugins:host-available-sync") === true;
+    } catch {
+      return false;
+    }
+  },
   startPluginConnection: async (request) => {
     markRequestedTerminalDataSessionOpen(request);
     const result = await ipcRenderer.invoke("netcatty:plugins:connection-start", {

@@ -225,7 +225,7 @@ new protocol route. Plugin packages still cannot add mappings themselves.
 | PR 5 terminal Providers | validated host requests, cancellation, lifecycle events | Provider ranking, deadlines, snapshots, built-in highlighter/autocomplete adapters |
 | PR 6 terminal pipeline | runtime identity and placement policy | direct MessagePort fast path, sensitive-input bypass, circuit breaker |
 | PR 7 connection/auth/import | activation-owned Provider requests, exact result validators, bounded streams, diagnostics, secret leases, credential refs | implemented: connection sessions, authentication challenges, importer preview/commit |
-| PR 8 sync | streams, lifecycle identity, namespaced storage boundary | dynamic providers, encrypted sidecar, CRDT state and account baselines |
+| PR 8 sync | streams, lifecycle identity, namespaced storage boundary | implemented: `kind: "sync"` Providers with `provider.sync`, encrypted-object connect/read/write/delete/capabilities, WebDAV through shared storage surface, non-cascade sidecars for `sync: true` settings and account/CRDT baselines |
 | PR 9 distribution | retained immutable versions, compare-and-set restore, placement resolver, module resources | signatures, trust, health checks, audited update and user rollback policy, API 1.0, and the reproducible terminal benchmark harness/environment/release gate for the 1% throughput and 4 ms p95 / 8 ms p99 input-latency targets |
 
 ## Data-model decisions that must remain explicit
@@ -249,10 +249,11 @@ writing the active-version pointer directly.
 
 `plugin_kv` is runtime-owned local data and is removed by explicit uninstall.
 Phase-3 encrypted secrets, persistent grants and security audit, plus phase-4
-settings and view state, use separate non-cascade tables. Future connection
-profiles and CRDT sidecar baselines are the same user-owned class and must not
-be added to the `plugin_kv` cascade when missing plugin code must preserve user
-or synchronized data.
+settings and view state, use separate non-cascade tables. PR 8 stores encrypted
+sync sidecars (`plugin_sync_sidecars`) in the same non-cascade class for
+`sync: true` settings plus plugin sync account/CRDT baselines. Missing or
+uninstalled plugin code must not cascade-delete those rows or coerce related
+sync configuration away.
 
 Activation events are declared by the public manifest. Phase 4 now starts only
 `onStartupFinished` plugins during contribution initialization; commands, views,

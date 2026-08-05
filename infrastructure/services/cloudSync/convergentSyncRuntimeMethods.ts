@@ -39,8 +39,12 @@ interface ProviderRuntime {
   provider: CloudProvider;
   adapter: CloudAdapter;
   latestRemote: SyncedFile | null;
+  /** Decrypted payload from the most recent successful download for this cycle. */
+  latestRemotePayload?: SyncPayload;
   verifiedState?: ConvergentSyncStateV2;
   verifiedFile?: SyncedFile;
+  /** Decrypted payload retained when the provider is marked verified. */
+  verifiedPayload?: SyncPayload;
   resourceId?: string;
   error?: string;
 }
@@ -136,8 +140,31 @@ function mergeStates(
   return merged;
 }
 
-function materializedPayload(state: ConvergentSyncStateV2, now: number): SyncPayload {
-  return materializeSyncPayloadFromConvergentState(state, { syncedAt: now });
+function materializedPayload(
+  state: ConvergentSyncStateV2,
+  now: number,
+  pluginSidecars?: SyncPayload['pluginSidecars'],
+): SyncPayload {
+  return materializeSyncPayloadFromConvergentState(state, {
+    syncedAt: now,
+    ...(pluginSidecars && Array.isArray(pluginSidecars.entries)
+      ? { pluginSidecars }
+      : {}),
+  });
+}
+
+function sidecarBundleFromPayload(
+  payload: SyncPayload | null | undefined,
+): SyncPayload['pluginSidecars'] | undefined {
+  if (!payload || !Object.prototype.hasOwnProperty.call(payload, 'pluginSidecars')) {
+    return undefined;
+  }
+  return {
+    version: 1,
+    entries: Array.isArray(payload.pluginSidecars?.entries)
+      ? payload.pluginSidecars.entries
+      : [],
+  };
 }
 
 function currentConflicts(state: ConvergentSyncStateV2): ConvergentFieldConflict[] {
@@ -166,12 +193,18 @@ async function downloadProviderState(
   runtime: ProviderRuntime,
   syncSecurityGeneration?: number,
 ): Promise<DecodedRemote | null> {
-  const file = await runtime.adapter.download();
+  const file = await runtime.adapter.download({
+    signal: manager.activeSyncAbortSignal,
+  });
   assertSyncSecurityGeneration(manager, syncSecurityGeneration);
   runtime.latestRemote = file;
-  return file
-    ? decodeRemote(manager, runtime.provider, file, syncSecurityGeneration)
-    : null;
+  if (!file) {
+    runtime.latestRemotePayload = undefined;
+    return null;
+  }
+  const decoded = await decodeRemote(manager, runtime.provider, file, syncSecurityGeneration);
+  runtime.latestRemotePayload = decoded.payload;
+  return decoded;
 }
 
 async function saveVerifiedBaseline(
@@ -197,6 +230,8 @@ async function markProviderVerified(
 ): Promise<void> {
   runtime.verifiedState = decoded.state;
   runtime.verifiedFile = decoded.file;
+  runtime.verifiedPayload = decoded.payload;
+  runtime.latestRemotePayload = decoded.payload;
   runtime.error = undefined;
   await saveVerifiedBaseline(manager, runtime, decoded);
 
@@ -236,7 +271,10 @@ async function runInitialDownloads(
       const runtime: ProviderRuntime = { provider, adapter, latestRemote: null };
       try {
         const decoded = await downloadProviderState(manager, runtime, syncSecurityGeneration);
-        if (decoded) runtime.verifiedState = decoded.state;
+        if (decoded) {
+          runtime.verifiedState = decoded.state;
+          runtime.verifiedPayload = decoded.payload;
+        }
       } catch (error) {
         runtime.error = errorMessage(error);
       }
@@ -397,6 +435,25 @@ export async function syncConvergentProvidersUnlockedImpl(
   await persistReplica(this, durableBeforeVerification, now());
   updateConflictState(this, durableBeforeVerification);
 
+  // Capture pre-cycle sidecar baselines per provider (never union across
+  // providers). Cross-provider union invents a shared base that can treat one
+  // provider's empty remote as deleting another provider's retained settings.
+  const cycleBaseByProvider = new Map<CloudProvider, NonNullable<SyncPayload['pluginSidecars']>['entries']>();
+  if (typeof this.loadConvergentProviderBaseline === 'function') {
+    for (const runtime of usable) {
+      try {
+        const baseline = await this.loadConvergentProviderBaseline(runtime.provider) as {
+          materializedPayload?: SyncPayload;
+        } | null;
+        const baseBundle = baseline?.materializedPayload?.pluginSidecars;
+        if (!baseBundle || !Array.isArray(baseBundle.entries)) continue;
+        cycleBaseByProvider.set(runtime.provider, baseBundle.entries);
+      } catch {
+        // First cycle or missing baseline is fine.
+      }
+    }
+  }
+
   for (let round = 0; round < maxRounds && usable.length > 0; round += 1) {
     if (round > 0) await jitter(round);
 
@@ -432,14 +489,90 @@ export async function syncConvergentProvidersUnlockedImpl(
         runtime.error = errorMessage(error);
       }
     }));
+    // Merge plugin sidecars per successful provider with that provider's own
+    // pre-cycle baseline. Failed providers are skipped so their baselines
+    // cannot invent deletions against another provider's empty remote.
+    const {
+      mergePluginSyncSidecarsThreeWay,
+    } = await import('../../../domain/pluginSyncSidecar');
+    const localSidecarEntries = Array.isArray(inputPayload.pluginSidecars?.entries)
+      ? inputPayload.pluginSidecars.entries
+      : [];
+    let mergedSidecars = [...localSidecarEntries];
+    for (const runtime of usable) {
+      if (runtime.error) continue;
+      const fromPreflight = preflightVerified.get(runtime.provider)?.payload?.pluginSidecars;
+      const fromLatest = runtime.latestRemotePayload?.pluginSidecars;
+      const remoteBundle = fromPreflight ?? fromLatest;
+      if (!remoteBundle) continue;
+      const baseForProvider = cycleBaseByProvider.get(runtime.provider) ?? [];
+      const sidecarStrategy =
+        strategy === 'preferCloud' || strategy === 'preferLocal' ? strategy : 'smart';
+      mergedSidecars = mergePluginSyncSidecarsThreeWay({
+        base: baseForProvider,
+        local: mergedSidecars,
+        remote: Array.isArray(remoteBundle.entries) ? remoteBundle.entries : [],
+        strategy: sidecarStrategy,
+      });
+    }
+    const pluginSidecars = mergedSidecars.length > 0
+      || Object.prototype.hasOwnProperty.call(inputPayload, 'pluginSidecars')
+      ? { version: 1 as const, entries: mergedSidecars }
+      : inputPayload.pluginSidecars;
+    const sidecarFingerprint = (
+      bundle: typeof pluginSidecars,
+      payload?: SyncPayload | null,
+    ) => {
+      const present = payload
+        ? Object.prototype.hasOwnProperty.call(payload, 'pluginSidecars')
+        : bundle != null && Array.isArray(bundle.entries);
+      const entries = (bundle?.entries ?? [])
+        .map((e) => [e.pluginId, e.kind, e.key, e.updatedAt, e.value] as const)
+        .sort((a, b) => {
+          if (a[0] !== b[0]) return String(a[0]).localeCompare(String(b[0]));
+          if (a[1] !== b[1]) return String(a[1]).localeCompare(String(b[1]));
+          return String(a[2]).localeCompare(String(b[2]));
+        });
+      // Empty present and empty absent both fingerprint as empty so devices
+      // do not ping-pong uploading omitted vs explicit-empty markers.
+      if (entries.length === 0) {
+        return JSON.stringify({ present: false, version: null, entries: [] });
+      }
+      return JSON.stringify({
+        present,
+        version: present ? (bundle?.version ?? 1) : null,
+        entries,
+      });
+    };
+    const localSidecarFp = sidecarFingerprint(
+      pluginSidecars,
+      Object.prototype.hasOwnProperty.call(inputPayload, 'pluginSidecars') || mergedSidecars.length > 0
+        ? { ...inputPayload, pluginSidecars }
+        : inputPayload,
+    );
+    const providerSidecarMismatch = (runtime: { provider: string }) => {
+      const decoded = preflightVerified.get(runtime.provider);
+      if (!decoded) return true; // no preflight match → need upload
+      return sidecarFingerprint(decoded.payload?.pluginSidecars, decoded.payload) !== localSidecarFp;
+    };
+    const remoteSidecarMismatch = usable.some((runtime) => {
+      if (runtime.error) return false;
+      return providerSidecarMismatch(runtime);
+    });
     const needsUpload = usable.some((runtime) => (
       !runtime.error && !preflightVerified.has(runtime.provider)
-    ));
+    )) || remoteSidecarMismatch;
     const outgoingPayload = needsUpload
-      ? withConvergentSyncEnvelope(expected, { syncedAt: now() })
+      ? withConvergentSyncEnvelope(expected, {
+        syncedAt: now(),
+        pluginSidecars,
+      })
       : null;
     await Promise.all(usable.map(async (runtime) => {
-      if (runtime.error || preflightVerified.has(runtime.provider)) return;
+      // Upload when CRDT preflight missed OR sidecars diverge for this provider.
+      if (runtime.error) return;
+      if (preflightVerified.has(runtime.provider) && !providerSidecarMismatch(runtime)) return;
+      if (!outgoingPayload) return;
       try {
         const remoteVersion = runtime.latestRemote?.meta.version ?? this.state.localVersion;
         const file = await EncryptionService.encryptPayload(
@@ -451,9 +584,17 @@ export async function syncConvergentProvidersUnlockedImpl(
           remoteVersion,
         );
         assertSyncSecurityGeneration(this, syncSecurityGeneration);
-        runtime.resourceId = await runtime.adapter.upload(file);
+        runtime.resourceId = await runtime.adapter.upload(file, {
+          signal: this.activeSyncAbortSignal,
+        });
         assertSyncSecurityGeneration(this, syncSecurityGeneration);
         runtime.latestRemote = file;
+        // Sidecar-only (or any) upload invalidates preflight verification so the
+        // post-write payload is re-downloaded and baselines stay current.
+        preflightVerified.delete(runtime.provider);
+        runtime.verifiedState = undefined;
+        runtime.verifiedPayload = undefined;
+        runtime.verifiedFile = undefined;
       } catch (error) {
         runtime.error = errorMessage(error);
       }
@@ -496,8 +637,39 @@ export async function syncConvergentProvidersUnlockedImpl(
       && versionVectorDominates(runtime.verifiedState.vector, canonical.vector)
   ));
   const hasSuccess = successfulRuntimes.length > 0;
-  const mergedPayload = materializedPayload(canonical, now());
-  const localPayloadChanged = !cloudSyncPayloadsEqual(inputPayload, mergedPayload);
+  const {
+    mergePluginSyncSidecarsThreeWay: mergeSidecarsThreeWayFinal,
+  } = await import('../../../domain/pluginSyncSidecar');
+  const finalLocalSidecars = Array.isArray(inputPayload.pluginSidecars?.entries)
+    ? [...inputPayload.pluginSidecars.entries]
+    : [];
+  let finalSidecarEntries = [...finalLocalSidecars];
+  for (const runtime of successfulRuntimes) {
+    const remoteBundle = runtime.verifiedPayload?.pluginSidecars
+      ?? runtime.latestRemotePayload?.pluginSidecars;
+    if (!remoteBundle) continue;
+    const baseForProvider = cycleBaseByProvider.get(runtime.provider) ?? [];
+    const finalSidecarStrategy =
+      strategy === 'preferCloud' || strategy === 'preferLocal' ? strategy : 'smart';
+    finalSidecarEntries = mergeSidecarsThreeWayFinal({
+      base: baseForProvider,
+      local: finalSidecarEntries,
+      remote: Array.isArray(remoteBundle.entries) ? remoteBundle.entries : [],
+      strategy: finalSidecarStrategy,
+    });
+  }
+  const finalPluginSidecars = finalSidecarEntries.length > 0
+    || Object.prototype.hasOwnProperty.call(inputPayload, 'pluginSidecars')
+    ? { version: 1 as const, entries: finalSidecarEntries }
+    : undefined;
+  const mergedPayloadBase = materializedPayload(canonical, now());
+  const mergedPayload: SyncPayload = {
+    ...mergedPayloadBase,
+    ...(finalPluginSidecars ? { pluginSidecars: finalPluginSidecars } : {}),
+  };
+  const localPayloadChanged = !cloudSyncPayloadsEqual(inputPayload, mergedPayload)
+    || JSON.stringify(inputPayload.pluginSidecars ?? null)
+      !== JSON.stringify(mergedPayload.pluginSidecars ?? null);
   let mergedPayloadApplied = false;
   if (hasSuccess && localPayloadChanged) {
     try {
@@ -687,6 +859,7 @@ async function prepareConvergentConflictResolutionImpl(
   addressKey: string,
   candidateDot: string,
   now = Date.now(),
+  pluginSidecars?: SyncPayload['pluginSidecars'],
 ): Promise<{ state: ConvergentSyncStateV2; payload: SyncPayload; now: number }> {
   const replica = await this.loadConvergentReplica();
   if (!replica) throw new Error('Convergent sync replica is unavailable');
@@ -701,7 +874,15 @@ async function prepareConvergentConflictResolutionImpl(
     this.state.deviceId,
     now,
   );
-  return { state: resolved, payload: materializedPayload(resolved, now), now };
+  // Prefer caller-provided current sidecars. Never fall back to a stale
+  // provider baseline — that would revert plugin settings changed after the
+  // last verified sync. When omitted, materialize without the field so apply
+  // preserves local sidecars (legacy missing-field semantics).
+  return {
+    state: resolved,
+    payload: materializedPayload(resolved, now, pluginSidecars),
+    now,
+  };
 }
 
 export async function resolveConvergentConflictAndSyncImpl(
@@ -712,12 +893,17 @@ export async function resolveConvergentConflictAndSyncImpl(
     payload: SyncPayload,
     commitReplica: () => Promise<void>,
   ) => Promise<void>,
+  options?: {
+    pluginSidecars?: SyncPayload['pluginSidecars'];
+  },
 ): Promise<{ payload: SyncPayload; results: Map<CloudProvider, SyncResult> }> {
   return withConvergentSyncWebLock(async () => {
     const prepared = await prepareConvergentConflictResolutionImpl.call(
       this,
       addressKey,
       candidateDot,
+      Date.now(),
+      options?.pluginSidecars,
     );
     let committed = false;
     await applyPayload(prepared.payload, async () => {
@@ -740,7 +926,11 @@ export async function resolveConvergentConflictAndSyncImpl(
     if (!finalReplica) {
       throw new Error('Convergent sync replica disappeared after conflict propagation');
     }
-    const finalPayload = materializedPayload(finalReplica.state, Date.now());
+    const finalPayload = materializedPayload(
+      finalReplica.state,
+      Date.now(),
+      sidecarBundleFromPayload(prepared.payload),
+    );
     return { payload: finalPayload, results };
   });
 }
@@ -762,6 +952,7 @@ export async function downgradeConvergentSyncImpl(
     const replica = await this.loadConvergentReplica();
     if (!replica) throw new Error('Convergent sync replica is unavailable');
     const localPayload = await buildLocalPayload();
+    const localSidecars = sidecarBundleFromPayload(localPayload);
     assertSyncSecurityGeneration(this, syncSecurityGeneration);
     const results = new Map<CloudProvider, SyncResult>();
     this.state.syncState = 'SYNCING';
@@ -790,9 +981,47 @@ export async function downgradeConvergentSyncImpl(
     // vault change made since the last persisted replica into causal local
     // writes before joining provider states; otherwise downgrade would
     // materialize the stale replica and overwrite those paused edits.
+    // Prefer local sidecars, then three-way-merge each remote against that
+    // provider's trusted baseline so explicit local resets are not resurrected
+    // by a stale remote entry during downgrade.
+    let downgradeSidecars = localSidecars;
+    {
+      const { mergePluginSyncSidecarsThreeWay } = await import('../../../domain/pluginSyncSidecar');
+      let entries = Array.isArray(downgradeSidecars?.entries) ? [...downgradeSidecars.entries] : [];
+      let sawRemote = false;
+      for (const runtime of runtimes) {
+        const remoteBundle = sidecarBundleFromPayload(
+          runtime.verifiedPayload ?? runtime.latestRemotePayload,
+        );
+        if (!remoteBundle) continue;
+        sawRemote = true;
+        let baseForProvider: NonNullable<SyncPayload['pluginSidecars']>['entries'] = [];
+        if (typeof this.loadConvergentProviderBaseline === 'function') {
+          try {
+            const baseline = await this.loadConvergentProviderBaseline(runtime.provider) as {
+              materializedPayload?: SyncPayload;
+            } | null;
+            const baseBundle = baseline?.materializedPayload?.pluginSidecars;
+            if (baseBundle && Array.isArray(baseBundle.entries)) {
+              baseForProvider = baseBundle.entries;
+            }
+          } catch {
+            // First cycle or missing baseline is fine.
+          }
+        }
+        entries = mergePluginSyncSidecarsThreeWay({
+          base: baseForProvider,
+          local: entries,
+          remote: Array.isArray(remoteBundle.entries) ? remoteBundle.entries : [],
+        });
+      }
+      if (sawRemote || entries.length > 0) {
+        downgradeSidecars = { version: 1, entries };
+      }
+    }
     const withLocalWrites = applyLegacySyncPayload(
       replica.state,
-      materializedPayload(replica.state, now),
+      materializedPayload(replica.state, now, downgradeSidecars),
       stripConvergentSyncEnvelope(localPayload),
       this.state.deviceId,
       now,
@@ -817,7 +1046,7 @@ export async function downgradeConvergentSyncImpl(
       return results;
     }
 
-    const outgoing = materializedPayload(canonical, now);
+    const outgoing = materializedPayload(canonical, now, downgradeSidecars);
     assertSyncSecurityGeneration(this, syncSecurityGeneration);
     let committed = false;
     try {
@@ -855,9 +1084,13 @@ export async function downgradeConvergentSyncImpl(
           before?.meta.version ?? this.state.localVersion,
         );
         assertSyncSecurityGeneration(this, syncSecurityGeneration);
-        await adapter.upload(file);
+        await adapter.upload(file, {
+          signal: this.activeSyncAbortSignal,
+        });
         assertSyncSecurityGeneration(this, syncSecurityGeneration);
-        const verifiedFile = await adapter.download();
+        const verifiedFile = await adapter.download({
+          signal: this.activeSyncAbortSignal,
+        });
         assertSyncSecurityGeneration(this, syncSecurityGeneration);
         if (!verifiedFile) throw new Error('Provider returned no file after downgrade');
         const verifiedPayload = await EncryptionService.decryptPayload(verifiedFile, this.masterPassword);

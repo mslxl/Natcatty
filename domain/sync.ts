@@ -55,9 +55,23 @@ export type ConflictResolution =
 // ============================================================================
 
 /**
- * Supported cloud storage providers
+ * Supported cloud storage providers.
+ * Built-in short IDs remain stable; plugin sync Providers use namespaced
+ * contribution IDs (e.g. com.example.backup.sync).
  */
-export type CloudProvider = 'github' | 'google' | 'onedrive' | 'webdav' | 's3';
+export type BuiltinCloudProvider = 'github' | 'google' | 'onedrive' | 'webdav' | 's3';
+export type CloudProvider = BuiltinCloudProvider | (string & {});
+
+export const BUILTIN_CLOUD_PROVIDERS: readonly BuiltinCloudProvider[] = [
+  'github',
+  'google',
+  'onedrive',
+  'webdav',
+  's3',
+] as const;
+
+export const isBuiltinCloudProvider = (provider: string): provider is BuiltinCloudProvider =>
+  (BUILTIN_CLOUD_PROVIDERS as readonly string[]).includes(provider);
 
 export type WebDAVAuthType = 'basic' | 'digest' | 'token';
 
@@ -148,21 +162,74 @@ export interface ProviderAccount {
 /**
  * Cloud provider connection state
  */
+/**
+ * Opaque host-owned sync credential reference (SecretRef / CredentialRef shape).
+ * Never stores plaintext secrets — only the reference the plugin connect path needs.
+ * Secret leases are one-shot and must not be persisted for reconnect.
+ */
+export interface PluginSyncCredentialRef {
+  kind: 'secret' | 'credential';
+  id: string;
+  key?: string;
+}
+
+/** Reasonable upper bounds for durable opaque ref strings persisted at rest. */
+const MAX_PLUGIN_SYNC_CREDENTIAL_ID_CHARS = 512;
+const MAX_PLUGIN_SYNC_CREDENTIAL_KEY_CHARS = 256;
+
+/**
+ * Normalize a value into a durable PluginSyncCredentialRef for reconnect
+ * persistence. Rejects arrays, leases, and oversized / malformed shapes.
+ */
+export function normalizeDurablePluginSyncCredentialRef(
+  value: unknown,
+): PluginSyncCredentialRef | undefined {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const kind = record.kind;
+  const id = record.id;
+  if (kind !== 'secret' && kind !== 'credential') return undefined;
+  if (typeof id !== 'string' || id.length < 1 || id.length > MAX_PLUGIN_SYNC_CREDENTIAL_ID_CHARS) {
+    return undefined;
+  }
+  if (!Object.prototype.hasOwnProperty.call(record, 'key') || record.key === undefined) {
+    return { kind, id };
+  }
+  const key = record.key;
+  if (typeof key !== 'string' || key.length < 1 || key.length > MAX_PLUGIN_SYNC_CREDENTIAL_KEY_CHARS) {
+    return undefined;
+  }
+  return { kind, id, key };
+}
+
 export interface ProviderConnection {
   provider: CloudProvider;
   status: ProviderConnectionStatus;
   account?: ProviderAccount;
   tokens?: OAuthTokens;
   config?: WebDAVConfig | S3Config;
+  /** Plugin sync providers: persisted SyncConnectPayload.credential for reconnect. */
+  credential?: PluginSyncCredentialRef;
   lastSync?: number;        // Unix timestamp
   lastSyncVersion?: number;
   resourceId?: string;      // gistId / fileId / itemId
   error?: string;
 }
 
-const hasProviderConnectionData = (
-  connection: Pick<ProviderConnection, 'tokens' | 'config'>,
-): boolean => Boolean(connection.tokens || connection.config);
+/**
+ * Whether a connection still has usable credentials/config to retry.
+ * Plugin configs may be valid falsy JSON scalars (`false`, `0`, `""`) or even
+ * JSON `null` when a schema uses `type: "null"`. Presence is property
+ * existence for `config`; do not use truthiness (`||` / `Boolean`).
+ */
+export const hasProviderConnectionData = (
+  connection: Pick<ProviderConnection, 'tokens' | 'config' | 'credential'>,
+): boolean =>
+  connection.tokens != null
+  || Object.prototype.hasOwnProperty.call(connection, 'config')
+  || connection.credential != null;
 
 export const isProviderReadyForSync = (
   connection: Pick<ProviderConnection, 'status' | 'tokens' | 'config'>,
@@ -298,6 +365,12 @@ export interface SyncPayload {
       showTerminalSelectionAction?: boolean;
     };
   };
+
+  /**
+   * Encrypted-sidecar envelope for plugin user data that must survive missing
+   * plugins (sync:true settings, account/CRDT baselines). Secrets never appear here.
+   */
+  pluginSidecars?: import('./pluginSyncSidecar').PluginSyncSidecarBundle;
 
   // Sync metadata
   syncedAt: number;         // When this payload was created
@@ -624,11 +697,34 @@ export const SYNC_STORAGE_KEYS = {
   PROVIDER_WEBDAV: 'netcatty_provider_webdav_v1',
   PROVIDER_S3: 'netcatty_provider_s3_v1',
   PROVIDER_SMB: 'netcatty_provider_smb_v1',
+  /** Registry of connected namespaced plugin sync provider IDs. */
+  PLUGIN_CLOUD_PROVIDERS: 'netcatty_plugin_cloud_providers_v1',
+  /** Contribution-available plugin sync provider IDs (live catalog membership). */
+  AVAILABLE_PLUGIN_SYNC_PROVIDERS: 'netcatty_available_plugin_sync_providers_v1',
+  /** Last successful sidecar collect (upload fallback when host is offline). */
+  PLUGIN_SIDECARS_LAST_KNOWN: 'netcatty_plugin_sidecars_last_known_v1',
+  /** Remote sidecar apply queued while the plugin host was unavailable. */
+  PLUGIN_SIDECARS_PENDING_REMOTE: 'netcatty_plugin_sidecars_pending_remote_v1',
   LOCAL_SYNC_META: 'netcatty_local_sync_meta_v1',
   SYNC_BASE_PAYLOAD: 'netcatty_sync_base_payload_v1',
   CONVERGENT_REPLICA: 'netcatty_convergent_sync_replica_v2',
   CONVERGENT_PROVIDER_BASELINE: 'netcatty_convergent_sync_provider_baseline_v2',
 } as const;
+
+/** Resolve the localStorage key used for a provider connection (built-in or plugin). */
+export function providerConnectionStorageKey(provider: CloudProvider): string {
+  if (isBuiltinCloudProvider(provider)) {
+    const map: Record<BuiltinCloudProvider, string> = {
+      github: SYNC_STORAGE_KEYS.PROVIDER_GITHUB,
+      google: SYNC_STORAGE_KEYS.PROVIDER_GOOGLE,
+      onedrive: SYNC_STORAGE_KEYS.PROVIDER_ONEDRIVE,
+      webdav: SYNC_STORAGE_KEYS.PROVIDER_WEBDAV,
+      s3: SYNC_STORAGE_KEYS.PROVIDER_S3,
+    };
+    return map[provider];
+  }
+  return `netcatty_provider_plugin_v1:${provider}`;
+}
 
 // ============================================================================
 // Constants

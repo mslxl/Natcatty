@@ -59,6 +59,121 @@ test("obsolete unpublished v1 layouts fail with an explicit reset instruction", 
   );
 });
 
+test("complete schema-1 databases migrate in place to schema 2 with sidecar table", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-v1-migrate-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "plugins.sqlite");
+  const v1 = new DatabaseSync(file);
+  // Full pre-sidecar schema-1 layout (all tables except plugin_sync_sidecars).
+  v1.exec(`
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE plugins (
+      id TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+      active_version TEXT,
+      installed_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE plugin_versions (
+      plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+      version TEXT NOT NULL,
+      manifest_json TEXT NOT NULL,
+      archive_sha256 TEXT NOT NULL,
+      package_relative_path TEXT NOT NULL,
+      installed_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, version)
+    );
+    CREATE TABLE plugin_runtime_state (
+      plugin_id TEXT NOT NULL,
+      plugin_version TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'stopped',
+      runtime_kind TEXT,
+      last_error TEXT,
+      quarantined_at INTEGER,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, plugin_version),
+      FOREIGN KEY (plugin_id, plugin_version)
+        REFERENCES plugin_versions(plugin_id, version) ON DELETE CASCADE
+    );
+    CREATE TABLE plugin_crashes (
+      plugin_id TEXT NOT NULL,
+      plugin_version TEXT NOT NULL,
+      crashed_at INTEGER NOT NULL,
+      FOREIGN KEY (plugin_id, plugin_version)
+        REFERENCES plugin_versions(plugin_id, version) ON DELETE CASCADE
+    );
+    CREATE TABLE plugin_kv (
+      plugin_id TEXT NOT NULL REFERENCES plugins(id) ON DELETE CASCADE,
+      key TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, key)
+    );
+    CREATE TABLE plugin_settings (
+      plugin_id TEXT NOT NULL,
+      setting_id TEXT NOT NULL,
+      scope TEXT NOT NULL CHECK (scope IN ('application', 'workspace', 'host', 'session', 'device')),
+      scope_id TEXT NOT NULL,
+      value_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, setting_id, scope, scope_id)
+    );
+    CREATE TABLE plugin_view_state (
+      plugin_id TEXT NOT NULL,
+      view_id TEXT NOT NULL,
+      scope_id TEXT NOT NULL,
+      state_json TEXT NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, view_id, scope_id)
+    );
+    CREATE TABLE plugin_permission_grants (
+      plugin_id TEXT NOT NULL,
+      permission TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      resource_kind TEXT NOT NULL CHECK (resource_kind IN ('exact', 'directory')),
+      declaration_hash TEXT NOT NULL,
+      granted_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, permission, resource)
+    );
+    CREATE TABLE plugin_secrets (
+      plugin_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      secret_ref TEXT NOT NULL UNIQUE,
+      ciphertext BLOB NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (plugin_id, key)
+    );
+    CREATE TABLE plugin_security_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      plugin_id TEXT NOT NULL,
+      event TEXT NOT NULL,
+      details_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    PRAGMA user_version = 1;
+  `);
+  v1.prepare(
+    "INSERT INTO plugins(id, enabled, active_version, installed_at, updated_at) VALUES (?, 1, ?, 1, 1)",
+  ).run("com.example.v1", "1.0.0");
+  v1.close();
+
+  const database = new PluginDatabase(file);
+  assert.equal(database.db.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_sync_sidecars)").all().map(({ name }) => name),
+    ["plugin_id", "kind", "key", "value_json", "updated_at"],
+  );
+  // Existing rows survive the in-place migration.
+  assert.equal(database.db.prepare("SELECT id FROM plugins").get().id, "com.example.v1");
+  database.setSyncSidecar("com.example.v1", "settings", "theme\0application\0application", "dark", 2);
+  assert.equal(
+    database.getSyncSidecar("com.example.v1", "settings", "theme\0application\0application")?.value,
+    "dark",
+  );
+  database.close();
+});
+
 test("initial schema scopes runtime and crash state to immutable plugin versions", (context) => {
   const database = createDatabase(context);
   assert.deepEqual(
@@ -93,8 +208,13 @@ test("initial schema scopes runtime and crash state to immutable plugin versions
     database.db.prepare("PRAGMA table_info(plugin_view_state)").all().map(({ name }) => name),
     ["plugin_id", "view_id", "scope_id", "state_json", "updated_at"],
   );
+  assert.deepEqual(
+    database.db.prepare("PRAGMA table_info(plugin_sync_sidecars)").all().map(({ name }) => name),
+    ["plugin_id", "kind", "key", "value_json", "updated_at"],
+  );
   assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_settings)").all(), []);
   assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_view_state)").all(), []);
+  assert.deepEqual(database.db.prepare("PRAGMA foreign_key_list(plugin_sync_sidecars)").all(), []);
   database.close();
 });
 

@@ -219,8 +219,10 @@ after durable user data can exist.
   a post-permission lookup. Importers use bounded streams, not directory walks,
   and their draft schemas reject executable startup commands and hidden
   plaintext built-in credential fields before Vault persistence.
-- PR 8 stores encrypted sync sidecars separately from package cascade storage
-  and transports larger encrypted objects over the existing stream seam.
+- PR 8 stores encrypted sync sidecars in `plugin_sync_sidecars` (no package
+  cascade) for non-secret `sync: true` settings plus account/CRDT baselines, and
+  transports larger encrypted objects over the existing stream seam. Secret
+  settings never enter cloud sidecars.
 - PR 9 supplies signed publisher principals and trust policy through placement;
   signed identity changes force a fresh grant instead of widening an unsigned
   grant silently.

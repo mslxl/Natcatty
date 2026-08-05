@@ -1,18 +1,27 @@
-import React, { type Dispatch, type RefObject, type SetStateAction } from 'react';
-import { Database, Github, History, Server, Trash2 } from 'lucide-react';
+import React, { useEffect, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { Database, Github, History, Plug, Server, Trash2 } from 'lucide-react';
 import type {
   CloudProvider,
   ConvergentFieldConflict,
   ConvergentMigrationPreview,
   SyncPayload,
 } from '../../domain/sync';
+import { isBuiltinCloudProvider } from '../../domain/sync';
+import { isPluginCloudProviderId } from '../../domain/cloudProviderIds';
+import { planPluginSyncConnect, hasPluginProviderStoredConfig } from '../../domain/pluginSyncConnect';
+import { planPluginSyncCredential, syncConfigurationSchemaWithoutSecretRequirements } from '../../domain/pluginSyncCredential';
+import { pluginConfigurationMatchesSchema } from '../../domain/pluginConfigurationSchema';
 import type { useCloudSync } from '../../application/state/useCloudSync';
+import { storePluginSyncSecretsThenConnect } from '../../application/pluginSyncConnectWithSecrets';
 import { cleanOneDriveErrorMessage, isProviderReadyForSync } from '../../domain/sync';
+import { pluginExtensionBridge } from '../../application/state/pluginExtensionBridge';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '../ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import { toast } from '../ui/toast';
 import { GoogleDriveIcon, OneDriveIcon, ProviderCard, Toggle } from './CloudSyncControls';
 import { LocalBackupsPanel } from './CloudSyncLocalBackupsPanel';
 import { ConvergentSyncPanel } from './ConvergentSyncPanel';
@@ -48,6 +57,8 @@ interface CloudSyncDashboardTabsProps {
   onCancelConvergentMigration: () => void;
   onResolveConvergentConflict: (addressKey: string, candidateDot: string) => void | Promise<void>;
   onDowngradeConvergent: () => void | Promise<void>;
+  /** Disconnect other legacy providers before connecting a plugin backend. */
+  disconnectOtherProviders?: (current: CloudProvider) => Promise<void>;
 }
 
 export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
@@ -78,7 +89,199 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
   onCancelConvergentMigration,
   onResolveConvergentConflict,
   onDowngradeConvergent,
-}) => (
+  disconnectOtherProviders,
+}) => {
+  const [pluginSyncProviders, setPluginSyncProviders] = useState<Array<{
+    id: string;
+    title: string;
+    configurationSchema?: unknown;
+  }>>([]);
+  const [pluginConnectBusy, setPluginConnectBusy] = useState<string | null>(null);
+  const [pluginConfigDialog, setPluginConfigDialog] = useState<{
+    providerId: string;
+    title: string;
+    configurationSchema?: unknown;
+  } | null>(null);
+  const [pluginConfigText, setPluginConfigText] = useState('{}');
+  const [pluginConfigError, setPluginConfigError] = useState<string | null>(null);
+  const [pluginConfigSaving, setPluginConfigSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const listed = await pluginExtensionBridge.listProviders('sync');
+        if (cancelled) return;
+        setPluginSyncProviders(
+          (listed ?? []).map((entry) => {
+            const nested = (entry as {
+              provider?: {
+                id?: string;
+                label?: string;
+                configurationSchema?: unknown;
+              };
+              pluginDisplayName?: string;
+            }).provider;
+            const id = String(nested?.id ?? '');
+            return {
+              id,
+              title: String(
+                nested?.label
+                ?? (entry as { pluginDisplayName?: string }).pluginDisplayName
+                ?? id
+                ?? 'Plugin sync',
+              ),
+              configurationSchema: nested?.configurationSchema,
+            };
+          }).filter((entry) => entry.id.length > 0 && isPluginCloudProviderId(entry.id)),
+        );
+      } catch {
+        if (!cancelled) setPluginSyncProviders([]);
+      }
+    };
+    void refresh();
+    const unsubscribe = pluginExtensionBridge.onContributionsChanged(() => {
+      void refresh();
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, []);
+
+  const openPluginConfigDialog = (
+    providerId: string,
+    title: string,
+    configurationSchema: unknown | undefined,
+  ) => {
+    const connection = sync.providers[providerId];
+    // Include falsy scalars and JSON null so Edit can re-save them.
+    const seed = hasPluginProviderStoredConfig(connection) ? connection!.config : {};
+    setPluginConfigText(JSON.stringify(seed, null, 2));
+    setPluginConfigError(null);
+    setPluginConfigDialog({ providerId, title, configurationSchema });
+  };
+
+  const runPluginConnect = async (providerId: string, configuration: unknown): Promise<boolean> => {
+    setPluginConnectBusy(providerId);
+    try {
+      if (disconnectOtherProviders) {
+        await disconnectOtherProviders(providerId as CloudProvider);
+      }
+      const credentialPlan = planPluginSyncCredential(configuration, {
+        configurationSchema: pluginSyncProviders.find((entry) => entry.id === providerId)
+          ?.configurationSchema,
+      });
+      const stored = sync.providers[providerId]?.credential;
+      const existingCredential =
+        stored
+        && typeof stored === 'object'
+        && stored.kind === 'secret'
+        && typeof stored.id === 'string'
+          ? stored as { kind: 'secret'; id: string; key: string }
+          : undefined;
+      if (credentialPlan.secrets.length > 0) {
+        const { putPluginSyncSecret, deletePluginSyncSecrets } = await import(
+          '../../infrastructure/services/adapters/pluginSyncIpcHost'
+        );
+        // Put secrets before connect; roll back just-created keys if connect fails
+        // so a rejected password/token is not left readable in plugin_secrets.
+        await storePluginSyncSecretsThenConnect({
+          providerId,
+          secrets: credentialPlan.secrets.map((secret) => ({
+            secretKey: secret.secretKey,
+            value: secret.value,
+          })),
+          putSecret: putPluginSyncSecret,
+          deleteSecrets: deletePluginSyncSecrets,
+          connect: async (credential) => {
+            await sync.connectPluginProvider(
+              providerId,
+              credentialPlan.configuration,
+              credential,
+            );
+          },
+        });
+      } else {
+        await sync.connectPluginProvider(
+          providerId,
+          credentialPlan.configuration,
+          existingCredential,
+        );
+      }
+      toast.success(t('cloudSync.connect.plugin.success'));
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      toast.error(message, t('cloudSync.connect.plugin.failedTitle'));
+      return false;
+    } finally {
+      setPluginConnectBusy(null);
+    }
+  };
+
+  const handlePluginConnect = async (providerId: string) => {
+    const listed = pluginSyncProviders.find((entry) => entry.id === providerId);
+    const connection = sync.providers[providerId];
+    // Config may be a valid falsy scalar or JSON null — property presence, not truthiness.
+    const hasStoredConfig = hasPluginProviderStoredConfig(connection);
+    const plan = planPluginSyncConnect({
+      configurationSchema: listed?.configurationSchema,
+      storedConfig: connection?.config,
+      hasStoredConfig,
+    });
+    if (plan.action === 'prompt') {
+      openPluginConfigDialog(
+        providerId,
+        listed?.title ?? providerId,
+        listed?.configurationSchema,
+      );
+      return;
+    }
+    await runPluginConnect(providerId, plan.configuration);
+  };
+
+  const handleSavePluginConfig = async () => {
+    if (!pluginConfigDialog) return;
+    let configuration: unknown;
+    try {
+      configuration = JSON.parse(pluginConfigText) as unknown;
+    } catch {
+      setPluginConfigError(t('cloudSync.pluginConfig.invalidJson'));
+      return;
+    }
+    if (pluginConfigDialog.configurationSchema !== undefined) {
+      const connection = sync.providers[pluginConfigDialog.providerId];
+      const hasStoredSecret = connection?.credential != null
+        && typeof connection.credential === 'object'
+        && (connection.credential as { kind?: string }).kind === 'secret';
+      // Edit seeds stripped config; required secret fields stay satisfied by the
+      // durable SecretRef until the user re-enters plaintext secrets.
+      const schema = hasStoredSecret
+        ? syncConfigurationSchemaWithoutSecretRequirements(pluginConfigDialog.configurationSchema)
+        : pluginConfigDialog.configurationSchema;
+      if (!pluginConfigurationMatchesSchema(schema, configuration)) {
+        setPluginConfigError(t('cloudSync.pluginConfig.schemaInvalid'));
+        return;
+      }
+    }
+    setPluginConfigError(null);
+    setPluginConfigSaving(true);
+    try {
+      const ok = await runPluginConnect(pluginConfigDialog.providerId, configuration);
+      if (ok) setPluginConfigDialog(null);
+      // On failure toast already shown; keep dialog open for correction.
+    } finally {
+      setPluginConfigSaving(false);
+    }
+  };
+
+  const pluginProviderIds = new Set<string>([
+    ...pluginSyncProviders.map((entry) => entry.id),
+    ...Object.keys(sync.providers).filter((id) => !isBuiltinCloudProvider(id)),
+  ]);
+
+  return (
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'providers' | 'status')} className="space-y-4">
                 <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="providers">{t('cloudSync.providers.title')}</TabsTrigger>
@@ -187,6 +390,112 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
                         onDisconnect={() => sync.disconnectProvider('s3')}
                         onSync={() => handleSync('s3')}
                     />
+
+                    {[...pluginProviderIds].sort().map((providerId) => {
+                        const connection = sync.providers[providerId];
+                        const listed = pluginSyncProviders.find((entry) => entry.id === providerId);
+                        const title = listed?.title ?? providerId;
+                        const connected = connection ? isProviderReadyForSync(connection) : false;
+                        const hasStoredConfig = hasPluginProviderStoredConfig(connection);
+                        const needsConfig = planPluginSyncConnect({
+                          configurationSchema: listed?.configurationSchema,
+                          storedConfig: connection?.config,
+                          hasStoredConfig,
+                        }).action === 'prompt';
+                        return (
+                            <ProviderCard
+                                key={providerId}
+                                provider={providerId as CloudProvider}
+                                name={title}
+                                icon={<Plug size={24} />}
+                                isConnected={connected}
+                                isSyncing={connection?.status === 'syncing'}
+                                isConnecting={
+                                    connection?.status === 'connecting'
+                                    || pluginConnectBusy === providerId
+                                }
+                                account={connection?.account
+                                  ? {
+                                      // Never load plugin-supplied avatar URLs in the main
+                                      // renderer (offline plugin network boundary).
+                                      id: connection.account.id,
+                                      name: connection.account.name,
+                                      email: connection.account.email,
+                                    }
+                                  : undefined}
+                                lastSync={connection?.lastSync}
+                                error={connection?.error}
+                                disabled={isConnectDisabled(providerId as CloudProvider)}
+                                onEdit={
+                                  connected || needsConfig || hasStoredConfig
+                                    ? () => openPluginConfigDialog(
+                                      providerId,
+                                      title,
+                                      listed?.configurationSchema,
+                                    )
+                                    : undefined
+                                }
+                                onConnect={() => {
+                                  void handlePluginConnect(providerId);
+                                }}
+                                onDisconnect={() => sync.disconnectProvider(providerId as CloudProvider)}
+                                onSync={() => handleSync(providerId as CloudProvider)}
+                            />
+                        );
+                    })}
+
+                    <Dialog
+                      open={pluginConfigDialog != null}
+                      onOpenChange={(open) => {
+                        if (!open && !pluginConfigSaving) setPluginConfigDialog(null);
+                      }}
+                    >
+                      <DialogContent className="sm:max-w-[480px]">
+                        <DialogHeader>
+                          <DialogTitle>
+                            {t('cloudSync.pluginConfig.title', {
+                              name: pluginConfigDialog?.title ?? '',
+                            })}
+                          </DialogTitle>
+                          <DialogDescription>
+                            {t('cloudSync.pluginConfig.desc')}
+                          </DialogDescription>
+                        </DialogHeader>
+                        <textarea
+                          value={pluginConfigText}
+                          onChange={(event) => {
+                            setPluginConfigText(event.target.value);
+                            if (pluginConfigError) setPluginConfigError(null);
+                          }}
+                          spellCheck={false}
+                          disabled={pluginConfigSaving}
+                          className="min-h-40 w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          aria-label={t('cloudSync.pluginConfig.label')}
+                        />
+                        {pluginConfigError ? (
+                          <p role="alert" className="text-xs text-destructive">{pluginConfigError}</p>
+                        ) : null}
+                        <DialogFooter>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            disabled={pluginConfigSaving}
+                            onClick={() => setPluginConfigDialog(null)}
+                          >
+                            {t('common.cancel')}
+                          </Button>
+                          <Button
+                            type="button"
+                            disabled={pluginConfigSaving}
+                            onClick={() => { void handleSavePluginConfig(); }}
+                          >
+                            {pluginConfigSaving
+                              ? t('cloudSync.provider.connecting')
+                              : t('cloudSync.provider.connect')}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
                 </TabsContent>
 
                 <TabsContent value="status" className="space-y-4">
@@ -371,4 +680,5 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
                     </div>
                 </TabsContent>
             </Tabs>
-);
+  );
+};
