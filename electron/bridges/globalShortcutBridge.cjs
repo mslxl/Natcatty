@@ -75,6 +75,23 @@ function isAppRuntimeLocked() {
   }
 }
 
+/** Redact session/port-forward details while locked (Codex P2). */
+function getTrayMenuDataForDisplay() {
+  if (isAppRuntimeLocked()) {
+    return { sessions: [], portForwardRules: [] };
+  }
+  return trayMenuData;
+}
+
+function pushTrayMenuDataToPanel(win = trayPanelWindow) {
+  try {
+    if (!win || win.isDestroyed?.()) return;
+    win.webContents?.send?.("netcatty:trayPanel:setMenuData", getTrayMenuDataForDisplay());
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Deliver a tray port-forward toggle, or queue it until the runtime unlocks.
  * Showing the window + reopen still happens at the click site so the user can
@@ -126,6 +143,12 @@ function bindAppLockRuntimeSubscription() {
     unsubscribeAppLockRuntime = appLockController.subscribe((state) => {
       if (state?.locked === false) {
         flushPendingPortForwardToggles();
+        pushTrayMenuDataToPanel();
+        updateTrayMenu();
+      } else if (state?.locked === true) {
+        // Clear cached details from the tray panel/menu while locked.
+        pushTrayMenuDataToPanel();
+        updateTrayMenu();
       }
     });
   } catch {
@@ -323,7 +346,7 @@ function ensureTrayPanelWindow() {
 
   trayPanelWindow.webContents.on("did-finish-load", () => {
     try {
-      trayPanelWindow?.webContents?.send("netcatty:trayPanel:setMenuData", trayMenuData);
+      pushTrayMenuDataToPanel(trayPanelWindow);
     } catch {
       // ignore
     }
@@ -353,7 +376,7 @@ function showTrayPanel() {
   win.focus();
 
   try {
-    win.webContents?.send("netcatty:trayPanel:setMenuData", trayMenuData);
+    pushTrayMenuDataToPanel(win);
   } catch {
     // ignore
   }
@@ -753,12 +776,13 @@ function buildTrayMenuTemplate() {
   menuTemplate.push({ type: "separator" });
 
   // Active Sessions
-  if (trayMenuData.sessions && trayMenuData.sessions.length > 0) {
+  const displayTrayData = getTrayMenuDataForDisplay();
+  if (displayTrayData.sessions && displayTrayData.sessions.length > 0) {
     menuTemplate.push({
       label: "Sessions",
       enabled: false,
     });
-    for (const session of trayMenuData.sessions) {
+    for (const session of displayTrayData.sessions) {
       const statusText =
         session.status === "connected"
           ? STATUS_TEXT.session.connected
@@ -781,12 +805,12 @@ function buildTrayMenuTemplate() {
   }
 
   // Port Forwarding Rules
-  if (trayMenuData.portForwardRules && trayMenuData.portForwardRules.length > 0) {
+  if (displayTrayData.portForwardRules && displayTrayData.portForwardRules.length > 0) {
     menuTemplate.push({
       label: "Port Forwarding",
       enabled: false,
     });
-    for (const rule of trayMenuData.portForwardRules) {
+    for (const rule of displayTrayData.portForwardRules) {
       const isActive = rule.status === "active";
       const isConnecting = rule.status === "connecting";
       const statusText =
