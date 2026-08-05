@@ -868,11 +868,14 @@ function App({ settings, appLock }: { settings: SettingsState; appLock: AppLockS
   }, [closeLogView, editorTabs, executeHotkeyAction, logViews, sessions, workspaces]);
 
   useEffect(() => {
+    // Cmd/Ctrl+W from the app menu arrives via IPC, not the keydown listener.
+    // Gate it while locked so sessions/tabs cannot close behind the overlay.
     const unsubscribe = netcattyBridge.get()?.onWindowCommandCloseRequested?.(() => {
+      if (shouldDeferExternalActionWhileAppLocked({ locked: appLock.locked })) return;
       void handleWindowCommandCloseRequest();
     });
     return () => unsubscribe?.();
-  }, [handleWindowCommandCloseRequest]);
+  }, [appLock.locked, handleWindowCommandCloseRequest]);
 
   // Callback for terminal to invoke app-level hotkey actions
   const handleHotkeyAction = useCallback((action: string, e: KeyboardEvent) => {
