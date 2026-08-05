@@ -19,6 +19,13 @@ export interface AppLockGateRenderContext {
 interface AppLockGateProps {
   children: (ctx: AppLockGateRenderContext) => React.ReactNode;
   notifyRendererReady?: boolean;
+  /**
+   * Mount route children immediately (even before app-lock init / while locked).
+   * Terminal popups need this so their one-shot config IPC listeners register
+   * before main's post-loadURL send is only held in preload pending state —
+   * AppLockGate otherwise withholds children until async lock state resolves.
+   */
+  forceRenderChildren?: boolean;
   settingsOptions?: Parameters<typeof useSettingsState>[0];
 }
 
@@ -40,7 +47,9 @@ export function shouldRenderAppLockGateChildren(input: {
   locked: boolean;
   lockReason: AppLockReason | null;
   hasRenderedChildren: boolean;
+  forceRenderChildren?: boolean;
 }): boolean {
+  if (input.forceRenderChildren) return true;
   if (!input.initialized && !input.hasRenderedChildren) return false;
   if (input.locked && !input.hasRenderedChildren) return false;
   return true;
@@ -69,6 +78,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
   const AppLockGateImpl: React.FC<AppLockGateProps> = ({
     children,
     notifyRendererReady = true,
+    forceRenderChildren = false,
     settingsOptions,
   }) => {
     const settings = deps.useSettingsState(settingsOptions);
@@ -84,6 +94,7 @@ export function createAppLockGate(deps: AppLockGateDeps): React.FC<AppLockGatePr
       locked: appLock.locked,
       lockReason: appLock.lockReason,
       hasRenderedChildren: hasRenderedChildrenRef.current,
+      forceRenderChildren,
     });
     if (renderChildren) {
       hasRenderedChildrenRef.current = true;

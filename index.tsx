@@ -180,8 +180,16 @@ const renderApp = () => {
       </AppLockGate>
     );
   } else if (route === 'terminal-popup') {
+    // forceRenderChildren: main sends terminalPopupConfig immediately after
+    // loadURL; the page must mount (and register onTerminalPopupConfig) without
+    // waiting for async app-lock init. notifyRendererReady stays false — this
+    // route is not on the deep-link readiness path.
     root.render(
-      <AppLockGate notifyRendererReady={false} settingsOptions={settingsOptions}>
+      <AppLockGate
+        notifyRendererReady={false}
+        forceRenderChildren
+        settingsOptions={settingsOptions}
+      >
         {({ settings }) => (
           <Suspense fallback={<TerminalPopupWindowFallback />}>
             <LazyTerminalPopupPage settings={settings} />

@@ -28,6 +28,19 @@ test("shouldRenderAppLockGateChildren withholds startup-locked route children un
   );
 });
 
+test("shouldRenderAppLockGateChildren force-renders terminal popup children before init", () => {
+  assert.equal(
+    shouldRenderAppLockGateChildren({
+      initialized: false,
+      locked: true,
+      lockReason: "startup",
+      hasRenderedChildren: false,
+      forceRenderChildren: true,
+    }),
+    true,
+  );
+});
+
 test("shouldRenderAppLockGateChildren withholds first mount for idle and background locks", () => {
   assert.equal(
     shouldRenderAppLockGateChildren({

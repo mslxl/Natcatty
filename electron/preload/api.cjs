@@ -212,9 +212,10 @@ function createPreloadApi(ctx) {
   },
   onTerminalPopupConfig: (cb) => {
     terminalPopupConfigState.listeners.add(cb);
+    // Replay last config without clearing: remounts after AppLockGate init or
+    // Strict Mode still need the one-shot main post-loadURL payload.
     if (terminalPopupConfigState.pending) {
       const pending = terminalPopupConfigState.pending;
-      terminalPopupConfigState.pending = null;
       queueMicrotask(() => {
         try {
           cb(pending);

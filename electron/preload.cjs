@@ -201,8 +201,10 @@ ipcRenderer.on("netcatty:zmodem:detect", (_event, payload) => {
 });
 
 ipcRenderer.on("netcatty:window:terminalPopupConfig", (_event, payload) => {
+  // Always retain last config so a late/remounted subscriber (AppLockGate delay,
+  // React Strict Mode remount) still receives it.
+  terminalPopupConfigState.pending = payload;
   if (terminalPopupConfigState.listeners.size === 0) {
-    terminalPopupConfigState.pending = payload;
     return;
   }
   terminalPopupConfigState.listeners.forEach((cb) => {
