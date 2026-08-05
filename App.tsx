@@ -45,6 +45,7 @@ import { useThemeRuntime, useTerminalAppearanceInjection } from './application/s
 import { useCustomThemes } from './application/state/customThemeStore';
 import type { SyncPayload } from './domain/sync';
 import { applySyncPayload, buildLocalVaultPayload, hasMeaningfulSyncData } from './application/syncPayload';
+import { getEffectiveKnownHosts } from './infrastructure/syncHelpers';
 import {
   applyProtectedSyncPayload,
   ensureVersionChangeBackup,
