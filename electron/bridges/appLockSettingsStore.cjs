@@ -162,6 +162,7 @@ function createAppLockSettingsStore({
   filePath,
   readFile,
   writeFile,
+  rename,
 }) {
   if (!filePath) {
     throw new Error("createAppLockSettingsStore requires filePath");
@@ -199,7 +200,17 @@ function createAppLockSettingsStore({
 
   async function save(nextSettings) {
     const normalized = normalizeAppLockSettings(nextSettings);
-    await writeFile(filePath, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
+    const payload = `${JSON.stringify(normalized, null, 2)}\n`;
+    // Atomic replace: write temp then rename so a crash mid-write cannot leave
+    // a truncated file that load() would treat as DEFAULT (disabling lock)
+    // (Codex P2 on 79603979).
+    if (typeof rename === "function") {
+      const tmpPath = `${filePath}.tmp`;
+      await writeFile(tmpPath, payload, { mode: 0o600 });
+      await rename(tmpPath, filePath);
+    } else {
+      await writeFile(filePath, payload, { mode: 0o600 });
+    }
     snapshot = normalized;
     return cloneSettings(snapshot);
   }

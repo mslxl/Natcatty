@@ -1008,6 +1008,13 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   });
 
   ipcMain.handle("netcatty:window:close", (event) => {
+    try {
+      if (typeof menuDeps?.isAppLocked === "function" && menuDeps.isAppLocked()) {
+        return { success: false, reason: "app-locked" };
+      }
+    } catch {
+      // ignore
+    }
     const win = getWindowForIpcEvent(event);
     if (win && !win.isDestroyed()) {
       debugLog("window:close", {
@@ -1172,6 +1179,13 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage, options = {}
       : (typeof menuDeps?.isAppLocked === "function" ? menuDeps.isAppLocked : undefined),
   };
   const closeFocusedWindow = (_menuItem, browserWindow) => {
+    // Block native Close while app lock is visible so popups/sessions are not
+    // torn down behind the overlay (Codex P2 on 79603979).
+    try {
+      if (typeof menuDeps?.isAppLocked === "function" && menuDeps.isAppLocked()) return;
+    } catch {
+      // ignore
+    }
     // 只有主窗口/设置窗口会接收 command-close；其他 BrowserWindow 直接关闭。
     if (browserWindow && !isMainWindow(browserWindow) && browserWindow !== settingsWindow) {
       closeBrowserWindow(browserWindow);

@@ -799,6 +799,7 @@ if (!gotLock) {
       filePath: path.join(app.getPath("userData"), APP_LOCK_SETTINGS_FILE),
       readFile: (filePath, encoding) => fs.promises.readFile(filePath, encoding),
       writeFile: (filePath, content, options) => fs.promises.writeFile(filePath, content, options),
+      rename: (from, to) => fs.promises.rename(from, to),
     });
 
     let persistedAppLockSettings = DEFAULT_APP_LOCK_SETTINGS;
