@@ -395,6 +395,8 @@ export const ruAiMessages: Messages = {
   'ai.chat.newChat': 'Новый чат',
   'ai.chat.allSessions': 'Все сессии',
   'ai.chat.loadEarlierMessages': 'Загрузить более ранние сообщения (ещё {n})',
+  'ai.chat.jumpNav': 'Перейти к сообщению',
+  'ai.chat.jumpUntitled': '(пустое сообщение)',
   'ai.chat.usedTools': 'Использовано инструментов: {n}',
   'ai.chat.loadMoreSessions': 'Загрузить больше сессий (ещё {n})',
   'ai.chat.noSessions': 'Предыдущих сессий нет',

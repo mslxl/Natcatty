@@ -442,6 +442,8 @@ export const zhTWAiMessages: Messages = {
   'ai.chat.newChat': '新對話',
   'ai.chat.allSessions': '所有工作階段',
   'ai.chat.loadEarlierMessages': '載入更早的訊息（還有 {n} 條）',
+  'ai.chat.jumpNav': '跳轉到訊息',
+  'ai.chat.jumpUntitled': '（空訊息）',
   'ai.chat.usedTools': '已使用 {n} 個工具',
   'ai.chat.loadMoreSessions': '載入更多工作階段（還有 {n} 條）',
   'ai.chat.noSessions': '沒有歷史工作階段',

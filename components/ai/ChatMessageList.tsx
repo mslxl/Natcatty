@@ -73,6 +73,12 @@ import {
   getAIPanelProfilerProps,
   isAIPanelDiagnosticPartHidden,
 } from './aiPanelDiagnostics';
+import {
+  buildChatJumpEntries,
+  chatMessageDomId,
+  resolveTailCountForJumpTarget,
+} from '../../domain/chatJumpNav';
+import ChatJumpNav from './ChatJumpNav';
 
 interface ChatMessageListProps {
   messages: ChatMessage[];
@@ -354,9 +360,13 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   const hideMarkdown = isAIPanelDiagnosticPartHidden('markdown', hiddenParts);
   const hideToolCalls = isAIPanelDiagnosticPartHidden('toolcalls', hiddenParts);
   const [renderedTailCount, setRenderedTailCount] = useState(MESSAGE_RENDER_BATCH);
+  const [activeJumpMessageId, setActiveJumpMessageId] = useState<string | null>(null);
+  const [pendingJumpMessageId, setPendingJumpMessageId] = useState<string | null>(null);
 
   useEffect(() => {
     setRenderedTailCount(MESSAGE_RENDER_BATCH);
+    setActiveJumpMessageId(null);
+    setPendingJumpMessageId(null);
   }, [activeSessionId]);
 
   const visibleMessages = useMemo(
@@ -364,10 +374,46 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
     [messages],
   );
 
-  const hiddenMessageCount = Math.max(0, visibleMessages.length - renderedTailCount);
+  // While a jump target is active, re-resolve the tail against the current list
+  // so streaming appends cannot slide the window past the selected message.
+  const effectiveTailCount = activeJumpMessageId
+    ? resolveTailCountForJumpTarget(visibleMessages, activeJumpMessageId, renderedTailCount)
+    : renderedTailCount;
+
+  const hiddenMessageCount = Math.max(0, visibleMessages.length - effectiveTailCount);
   const displayedMessages = hiddenMessageCount > 0
-    ? visibleMessages.slice(-renderedTailCount)
+    ? visibleMessages.slice(-effectiveTailCount)
     : visibleMessages;
+
+  const jumpEntries = useMemo(
+    () => buildChatJumpEntries(visibleMessages, {
+      emptyLabel: t('ai.chat.jumpUntitled'),
+    }),
+    [t, visibleMessages],
+  );
+
+  const handleJumpToMessage = useCallback((messageId: string) => {
+    setActiveJumpMessageId(messageId);
+    // Persist the expanded window so releasing the pin (or a spurious isAtBottom
+    // flip) cannot unmount the jump target. Load-earlier progress is preserved
+    // because we never reset renderedTailCount on pin release.
+    setRenderedTailCount((count) =>
+      resolveTailCountForJumpTarget(visibleMessages, messageId, count));
+    setPendingJumpMessageId(messageId);
+  }, [visibleMessages]);
+
+  const handleReleaseJumpPin = useCallback(() => {
+    setActiveJumpMessageId(null);
+    setPendingJumpMessageId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingJumpMessageId) return;
+    const target = document.getElementById(chatMessageDomId(pendingJumpMessageId));
+    if (!target) return;
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    setPendingJumpMessageId(null);
+  }, [displayedMessages, pendingJumpMessageId]);
 
   const resolvedToolCallIds = new Set(
     displayedMessages
@@ -483,7 +529,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
         {hiddenMessageCount > 0 && (
           <button
             type="button"
-            onClick={() => setRenderedTailCount((count) => count + MESSAGE_RENDER_STEP)}
+            onClick={() => setRenderedTailCount((count) =>
+              Math.max(count, effectiveTailCount) + MESSAGE_RENDER_STEP)}
             className="w-full py-2 text-center text-[12px] text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-pointer"
           >
             {t('ai.chat.loadEarlierMessages').replace('{n}', String(hiddenMessageCount))}
@@ -591,7 +638,11 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
           const isThisStreaming = isStreaming && isLastAssistant;
 
           return (
-            <Message key={message.id} from={message.role}>
+            <Message
+              key={message.id}
+              id={chatMessageDomId(message.id)}
+              from={message.role}
+            >
               <MessageContent from={message.role}>
                 {/* Thinking block */}
                 {!isUser && message.thinking && (
@@ -833,7 +884,14 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
           </div>
         )}
       </ConversationContent>
-      <ConversationScrollButton />
+      <ChatJumpNav
+        entries={jumpEntries}
+        activeMessageId={activeJumpMessageId}
+        isStreaming={!!isStreaming}
+        onSelect={handleJumpToMessage}
+        onReleasePin={handleReleaseJumpPin}
+      />
+      <ConversationScrollButton onClick={handleReleaseJumpPin} />
     </Conversation>
 
     {/* Image preview lightbox */}

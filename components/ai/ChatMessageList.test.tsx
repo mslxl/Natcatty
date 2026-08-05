@@ -132,6 +132,63 @@ test("ChatMessageList only renders the recent message batch by default", () => {
   assert.match(markup, /message-59/);
 });
 
+test("ChatMessageList exposes jump navigation once there are enough user turns", () => {
+  const messages: ChatMessage[] = [
+    { id: "u1", role: "user", content: "first turn", timestamp: 1 },
+    { id: "a1", role: "assistant", content: "ok", timestamp: 2 },
+    { id: "u2", role: "user", content: "second turn", timestamp: 3 },
+    { id: "a2", role: "assistant", content: "ok", timestamp: 4 },
+    { id: "u3", role: "user", content: "third turn", timestamp: 5 },
+    { id: "a3", role: "assistant", content: "ok", timestamp: 6 },
+  ];
+
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: "en" },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(ChatMessageList, { messages }),
+      ),
+    ),
+  );
+
+  assert.match(markup, /aria-label="Jump to message"/);
+  assert.match(markup, /id="ai-chat-msg-u1"/);
+  assert.match(markup, /id="ai-chat-msg-u3"/);
+});
+
+test("jump pin release does not reset the loaded message tail", () => {
+  const source = readFileSync(new URL("./ChatMessageList.tsx", import.meta.url), "utf8");
+  const releaseHandler = source.match(
+    /const handleReleaseJumpPin = useCallback\(\(\) => \{[\s\S]*?\}, \[\]\);/,
+  )?.[0] ?? "";
+
+  assert.match(releaseHandler, /setActiveJumpMessageId\(null\)/);
+  assert.match(releaseHandler, /setPendingJumpMessageId\(null\)/);
+  assert.doesNotMatch(releaseHandler, /setRenderedTailCount/);
+});
+
+test("load earlier advances from the effective pinned tail", () => {
+  const source = readFileSync(new URL("./ChatMessageList.tsx", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /setRenderedTailCount\(\(count\) =>\s*Math\.max\(count, effectiveTailCount\) \+ MESSAGE_RENDER_STEP\)/,
+  );
+});
+
+test("jump pin ignores streaming isAtBottom flips and releases on scroll button", () => {
+  const jumpSource = readFileSync(new URL("./ChatJumpNav.tsx", import.meta.url), "utf8");
+  const listSource = readFileSync(new URL("./ChatMessageList.tsx", import.meta.url), "utf8");
+
+  assert.match(jumpSource, /isStreaming\?: boolean/);
+  assert.match(jumpSource, /if \(isStreaming\) return;/);
+  assert.match(jumpSource, /window\.setTimeout/);
+  assert.match(listSource, /isStreaming=\{\!\!isStreaming\}/);
+  assert.match(listSource, /<ConversationScrollButton onClick=\{handleReleaseJumpPin\} \/>/);
+});
+
 test("ChatMessageList renders Codex activities and actual usage", () => {
   const messages: ChatMessage[] = [{
     id: "assistant-activity",
