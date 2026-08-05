@@ -243,6 +243,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       ref={overlayRootRef}
       className="fixed inset-0 z-[200000] flex items-center justify-center bg-background px-6 text-foreground"
       role="dialog"
+      data-state="open"
       aria-modal="true"
       aria-labelledby="app-lock-title"
     >
