@@ -253,6 +253,11 @@ function createAppLockController({
     throw new Error("createAppLockController requires a runtimeBridge");
   }
 
+  // Serialize full read-modify-write settings mutations (Codex P2).
+  let settingsMutationChain = Promise.resolve();
+  // Single in-flight system-auth prompt shared across windows (Codex P2).
+  let systemUnlockInFlight = null;
+
   function syncIdleTimer() {
     const settings = getSettings();
     if (!canLockFromSettings(settings)) {
@@ -380,14 +385,26 @@ function createAppLockController({
     return publicSaved;
   }
 
+  /** Queue a full RMW settings mutation so concurrent changes cannot clobber. */
+  function mutateSettings(mutator) {
+    const run = async () => {
+      const current = getSettings();
+      const next = await mutator(current);
+      if (!next) return getPublicSettings();
+      return saveSettings(next);
+    };
+    const pending = settingsMutationChain.then(run, run);
+    settingsMutationChain = pending.then(() => {}, () => {});
+    return pending;
+  }
+
   async function requestEnable() {
-    const current = getSettings();
-    if (!current.passwordVerifier) {
-      return current;
-    }
-    return saveSettings({
-      ...current,
-      enabled: true,
+    return mutateSettings(async (current) => {
+      if (!current.passwordVerifier) return null;
+      return {
+        ...current,
+        enabled: true,
+      };
     });
   }
 
@@ -467,11 +484,10 @@ function createAppLockController({
   }
 
   async function setTimeoutMinutes(timeoutMinutes) {
-    const current = getSettings();
-    return saveSettings({
+    return mutateSettings(async (current) => ({
       ...current,
       timeoutMinutes: normalizeAppLockTimeoutMinutes(timeoutMinutes),
-    });
+    }));
   }
 
   async function verifyCurrentPassword(current, currentPassword) {
@@ -499,18 +515,18 @@ function createAppLockController({
         const verified = await verifyCurrentPassword(current, currentPassword);
         if (verified !== true) return verified;
       }
-      return saveSettings({
-        ...current,
+      return mutateSettings(async (latest) => ({
+        ...latest,
         systemUnlockEnabled: false,
         systemUnlockAutoPromptEnabled: false,
-      });
+      }));
     }
 
     if (current.systemUnlockEnabled === true) {
-      return saveSettings({
-        ...current,
+      return mutateSettings(async (latest) => ({
+        ...latest,
         systemUnlockAutoPromptEnabled: autoPromptEnabled,
-      });
+      }));
     }
 
     const status = await getSystemAuthStatusOnly();
@@ -528,11 +544,11 @@ function createAppLockController({
       };
     }
 
-    return saveSettings({
-      ...current,
+    return mutateSettings(async (latest) => ({
+      ...latest,
       systemUnlockEnabled: true,
       systemUnlockAutoPromptEnabled: autoPromptEnabled,
-    });
+    }));
   }
 
   function setLocked(reason) {
@@ -541,6 +557,21 @@ function createAppLockController({
     }
     const nextState = runtimeBridge.lock(reason);
     syncIdleTimer();
+    // Close DevTools that were open before lock — menu guard only blocks new
+    // toggles, not already-open consoles (Codex P1).
+    try {
+      for (const win of getWindowsForBroadcast()) {
+        try {
+          if (win?.webContents?.isDevToolsOpened?.()) {
+            win.webContents.closeDevTools();
+          }
+        } catch {
+          // ignore per-window failures
+        }
+      }
+    } catch {
+      // ignore
+    }
     broadcast("netcatty:appLock:runtimeStateChanged", nextState);
     return nextState;
   }
@@ -569,30 +600,40 @@ function createAppLockController({
   }
 
   async function requestSystemUnlock() {
-    const current = getSettings();
-    if (!canLockFromSettings(current)) return { ok: false, error: "unavailable" };
-    if (current.systemUnlockEnabled !== true) return { ok: false, error: "disabled" };
-    if (runtimeBridge.getState().locked !== true) return { ok: false, error: "not-locked" };
-
-    const status = await getSystemAuthStatusOnly();
-    if (status.supported !== true) return { ok: false, error: "unsupported" };
-    if (status.available !== true) return { ok: false, error: "unavailable" };
-    if (!systemAuthBridge || typeof systemAuthBridge.requestUnlock !== "function") {
-      return { ok: false, error: "unsupported" };
+    if (systemUnlockInFlight) {
+      return systemUnlockInFlight;
     }
+    systemUnlockInFlight = (async () => {
+      const current = getSettings();
+      if (!canLockFromSettings(current)) return { ok: false, error: "unavailable" };
+      if (current.systemUnlockEnabled !== true) return { ok: false, error: "disabled" };
+      if (runtimeBridge.getState().locked !== true) return { ok: false, error: "not-locked" };
 
-    const result = await systemAuthBridge.requestUnlock();
-    if (!result || result.ok !== true) {
-      return {
-        ok: false,
-        error: result?.error || "failed",
-      };
+      const status = await getSystemAuthStatusOnly();
+      if (status.supported !== true) return { ok: false, error: "unsupported" };
+      if (status.available !== true) return { ok: false, error: "unavailable" };
+      if (!systemAuthBridge || typeof systemAuthBridge.requestUnlock !== "function") {
+        return { ok: false, error: "unsupported" };
+      }
+
+      const result = await systemAuthBridge.requestUnlock();
+      if (!result || result.ok !== true) {
+        return {
+          ok: false,
+          error: result?.error || "failed",
+        };
+      }
+
+      const nextState = runtimeBridge.unlock();
+      syncIdleTimer();
+      broadcast("netcatty:appLock:runtimeStateChanged", nextState);
+      return { ok: true };
+    })();
+    try {
+      return await systemUnlockInFlight;
+    } finally {
+      systemUnlockInFlight = null;
     }
-
-    const nextState = runtimeBridge.unlock();
-    syncIdleTimer();
-    broadcast("netcatty:appLock:runtimeStateChanged", nextState);
-    return { ok: true };
   }
 
   function reportActivity(timestamp = Date.now()) {
