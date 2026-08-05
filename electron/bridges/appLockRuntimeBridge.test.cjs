@@ -278,6 +278,8 @@ async function createControllerHarness() {
 
   const mainWindowA = createWindowCollector("main-a");
   const mainWindowB = createWindowCollector("main-b");
+  // Detached session window: app-content only (registerAsMainWindow:false).
+  const sessionWindow = createWindowCollector("session");
   const settingsWindow = createWindowCollector("settings");
   const trayPanelWindow = createWindowCollector("tray");
   const popupWindowA = createWindowCollector("popup-a");
@@ -308,6 +310,9 @@ async function createControllerHarness() {
     runtimeBridge,
     systemAuthBridge,
     getMainWindows: () => [mainWindowA, mainWindowB],
+    // Main windows are also app-content; include a session-only window that is
+    // not in getMainWindows (mirrors openSession registerAsMainWindow:false).
+    getAppContentWindows: () => [mainWindowA, mainWindowB, sessionWindow],
     getSettingsWindow: () => settingsWindow,
     getTrayPanelWindow: () => trayPanelWindow,
     getTerminalPopupWindows: () => [popupWindowA, popupWindowB],
@@ -322,6 +327,7 @@ async function createControllerHarness() {
     windows: [
       mainWindowA,
       mainWindowB,
+      sessionWindow,
       settingsWindow,
       trayPanelWindow,
       popupWindowA,
@@ -479,7 +485,7 @@ test("stale renderer cannot overwrite the latest verifier with a whole-object se
   );
 });
 
-test("runtime state broadcast fans out to all main windows, settings, tray panel, and every popup window", async () => {
+test("runtime state broadcast fans out to all main windows, session app-content windows, settings, tray panel, and every popup window", async () => {
   const { controller, windows } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });
   await controller.requestEnable();
@@ -490,6 +496,13 @@ test("runtime state broadcast fans out to all main windows, settings, tray panel
     assert.equal(runtimeMessages.length, 1, `${win.name} should receive one runtime broadcast`);
     assert.deepEqual(runtimeMessages[0][1], state);
   }
+  const sessionWindow = windows.find((win) => win.name === "session");
+  assert.ok(sessionWindow, "harness must include a detached session window");
+  assert.equal(
+    sessionWindow.sent.filter(([channel]) => channel === "netcatty:appLock:runtimeStateChanged").length,
+    1,
+    "detached session windows must receive app-lock runtime broadcasts",
+  );
 });
 
 test("unlocking an enabled app schedules the shared idle timer in controller flow", async () => {

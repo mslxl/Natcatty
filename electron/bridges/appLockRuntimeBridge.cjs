@@ -238,6 +238,10 @@ function createAppLockController({
   runtimeBridge,
   systemAuthBridge = null,
   getMainWindows = () => [],
+  // Session windows use registerAsMainWindow:false and are only tracked as
+  // app-content windows; they still mount AppLockGate and must receive lock
+  // runtime / settings broadcasts (Codex P1).
+  getAppContentWindows = () => [],
   getSettingsWindow = () => null,
   getTrayPanelWindow = () => null,
   getTerminalPopupWindows = () => [],
@@ -268,6 +272,8 @@ function createAppLockController({
   function getWindowsForBroadcast() {
     const windows = [
       ...(Array.isArray(getMainWindows()) ? getMainWindows() : []),
+      // Detached #/session-window and other app-content-only windows.
+      ...(Array.isArray(getAppContentWindows()) ? getAppContentWindows() : []),
       getSettingsWindow(),
       getTrayPanelWindow(),
       ...(Array.isArray(getTerminalPopupWindows()) ? getTerminalPopupWindows() : []),

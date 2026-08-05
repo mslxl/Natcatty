@@ -819,6 +819,8 @@ if (!gotLock) {
       runtimeBridge: appLockRuntimeBridge,
       systemAuthBridge: appLockSystemAuthBridge,
       getMainWindows: () => getWindowManager().getMainWindows?.() ?? [],
+      // Includes detached session windows (registerAsMainWindow:false).
+      getAppContentWindows: () => getWindowManager().getAppContentWindows?.() ?? [],
       getSettingsWindow: () => getWindowManager().getSettingsWindow?.() ?? null,
       getTrayPanelWindow: () => getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
       getTerminalPopupWindows: () => getWindowManager().getTerminalPopupWindows?.() ?? [],
