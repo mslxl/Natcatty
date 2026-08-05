@@ -449,11 +449,21 @@ function createAppLockController({
     }
 
     const passwordVerifier = await createAppLockPasswordVerifier(nextPassword);
-    return saveSettings({
+    const enablingFromNoVerifier = !current.passwordVerifier;
+    const saved = await saveSettings({
       ...current,
       enabled: current.enabled || !current.passwordVerifier,
       passwordVerifier,
     });
+    // While lock was disabled the renderer never reported activity. Re-arming
+    // the idle timer on enable would schedule an immediate lock if Netcatty
+    // has been open longer than the timeout. Record fresh activity first
+    // (Codex P2 on dbe1a746).
+    if (enablingFromNoVerifier) {
+      try { runtimeBridge.recordActivity(Date.now()); } catch { /* ignore */ }
+      syncIdleTimer();
+    }
+    return saved;
   }
 
   async function setTimeoutMinutes(timeoutMinutes) {
