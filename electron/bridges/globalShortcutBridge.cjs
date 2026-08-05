@@ -357,6 +357,14 @@ function showTrayPanel() {
   } catch {
     // ignore
   }
+  // Background-locked tray panel sits behind AppLockOverlay, which suppresses
+  // auto system-unlock until reopenSignal > 0. Emit reopen when the panel is
+  // shown so Touch ID/Hello can auto-prompt (Codex P3 on ffb25f81).
+  try {
+    win.webContents?.send("netcatty:app-lock:reopen");
+  } catch {
+    // ignore
+  }
 
   if (trayPanelRefreshTimer) clearInterval(trayPanelRefreshTimer);
   trayPanelRefreshTimer = setInterval(() => {
