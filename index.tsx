@@ -192,9 +192,14 @@ const renderApp = () => {
         forceRenderChildren
         settingsOptions={settingsOptions}
       >
-        {({ settings }) => (
+        {({ settings, appLock }) => (
           <Suspense fallback={<TerminalPopupWindowFallback />}>
-            <LazyTerminalPopupPage settings={settings} />
+            {/* forceRenderChildren mounts the page so config IPC registers while
+                locked; defer starting the terminal until unlock (Codex P2). */}
+            <LazyTerminalPopupPage
+              settings={settings}
+              allowTerminalStart={!appLock.locked}
+            />
           </Suspense>
         )}
       </AppLockGate>

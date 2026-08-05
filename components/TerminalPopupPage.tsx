@@ -230,7 +230,14 @@ export function resolveTerminalPopupReuseId(config: TerminalPopupPayload): strin
   return config.sourceSession.reuseConnectionFromSessionId;
 }
 
-function TerminalPopupPageInner({ settings }: { settings: SettingsState }) {
+function TerminalPopupPageInner({
+  settings,
+  allowTerminalStart = true,
+}: {
+  settings: SettingsState;
+  /** When false (app locked), keep config listeners mounted but do not start Terminal. */
+  allowTerminalStart?: boolean;
+}) {
   const { t } = useI18n();
   const { close, setWindowTitle, onPopupConfig } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
@@ -306,7 +313,9 @@ function TerminalPopupPageInner({ settings }: { settings: SettingsState }) {
     return resolveTerminalPopupReuseId(config);
   }, [config]);
 
-  const ready = Boolean(config && host && vaultInitialized);
+  // Defer backend start while app-locked so startup commands/credentials do not
+  // run behind the overlay (Codex P2). Config listener still mounts above.
+  const ready = Boolean(config && host && vaultInitialized && allowTerminalStart);
   const startupRevealDelayMs = useMemo(() => {
     if (!config?.startupCommand) return 0;
     const configuredDelay = settings.terminalSettings?.startupCommandDelayMs;
@@ -420,10 +429,19 @@ function TerminalPopupPageInner({ settings }: { settings: SettingsState }) {
   );
 }
 
-export default function TerminalPopupPage({ settings }: { settings: SettingsState }) {
+export default function TerminalPopupPage({
+  settings,
+  allowTerminalStart = true,
+}: {
+  settings: SettingsState;
+  allowTerminalStart?: boolean;
+}) {
   return (
     <I18nProvider locale={settings.uiLanguage}>
-      <TerminalPopupPageInner settings={settings} />
+      <TerminalPopupPageInner
+        settings={settings}
+        allowTerminalStart={allowTerminalStart}
+      />
     </I18nProvider>
   );
 }
