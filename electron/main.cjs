@@ -911,7 +911,9 @@ if (!gotLock) {
     // Build and set application menu. A broken menu should not take down
     // the entire app — fall back to no custom menu and continue startup.
     try {
-      const menu = getWindowManager().buildAppMenu(Menu, app, isMac);
+      const menu = getWindowManager().buildAppMenu(Menu, app, isMac, undefined, {
+        isAppLocked: () => Boolean(appLockRuntimeBridge?.getState?.()?.locked),
+      });
       Menu.setApplicationMenu(menu);
     } catch (err) {
       console.error("[Main] Failed to build application menu:", err);

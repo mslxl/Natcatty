@@ -1161,9 +1161,16 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
 /**
  * Build the application menu
  */
-function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
+function buildAppMenu(Menu, app, isMac, language = currentLanguage, options = {}) {
   // Save deps so later language changes can rebuild the menu.
-  menuDeps = { Menu, app, isMac };
+  menuDeps = {
+    Menu,
+    app,
+    isMac,
+    isAppLocked: typeof options.isAppLocked === "function"
+      ? options.isAppLocked
+      : (typeof menuDeps?.isAppLocked === "function" ? menuDeps.isAppLocked : undefined),
+  };
   const closeFocusedWindow = (_menuItem, browserWindow) => {
     // 只有主窗口/设置窗口会接收 command-close；其他 BrowserWindow 直接关闭。
     if (browserWindow && !isMainWindow(browserWindow) && browserWindow !== settingsWindow) {
@@ -1206,8 +1213,26 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage) {
     {
       label: tMenu(language, "view"),
       submenu: [
-        { label: tMenu(language, "reload"), click: (_, win) => { if (win) win.reload(); } },
-        { role: "toggleDevTools" },
+        {
+          label: tMenu(language, "reload"),
+          click: (_, win) => {
+            // Block reload while app lock is up so lock cannot be bypassed.
+            try {
+              if (typeof menuDeps?.isAppLocked === "function" && menuDeps.isAppLocked()) return;
+            } catch { /* ignore */ }
+            if (win) win.reload();
+          },
+        },
+        {
+          label: "Toggle Developer Tools",
+          accelerator: "Alt+CommandOrControl+I",
+          click: (_, win) => {
+            try {
+              if (typeof menuDeps?.isAppLocked === "function" && menuDeps.isAppLocked()) return;
+            } catch { /* ignore */ }
+            if (win && !win.isDestroyed?.()) win.webContents?.toggleDevTools?.();
+          },
+        },
         { type: "separator" },
         { role: "resetZoom" },
         { role: "zoomIn" },
