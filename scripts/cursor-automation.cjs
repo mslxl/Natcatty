@@ -1805,18 +1805,80 @@ function buildExternalCodexRerequestComment(headSha) {
   ].join('\n');
 }
 
+/**
+ * True when a comment body is a Codex review *request* (not a clean summary).
+ * Matches "@codex review" as a mention token, not "Codex Review: …" summaries.
+ */
+function isCodexReviewRequestBody(body) {
+  const text = String(body || '');
+  if (!/(^|[^A-Za-z0-9_@])@codex\s+review\b/i.test(text)) return false;
+  // Connector clean/noise posts never use the @codex request form.
+  return true;
+}
+
+/**
+ * Authors whose @codex review posts count for same-head dedupe.
+ * Includes maintainers/GITHUB_TOKEN and Cursor's PR bot (often posts a plain
+ * @codex review before our own_rerequest job lands).
+ */
+function isCodexRequestDedupeAuthor(login, { ownActors } = {}) {
+  if (isTrustedAutomationControlAuthor(login, { ownActors })) return true;
+  const name = String(login || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^@/, '');
+  return name === 'cursor[bot]' || name === 'cursor';
+}
+
+/**
+ * Skip posting another @codex review when this head was already requested.
+ *
+ * Historical bug: only `cursor-external-codex:SHA` counted. Automation
+ * comments that pin `cursor-codex-head:SHA` (and maintainer requests built the
+ * same way) did not, so a second synchronize-path request could fire for the
+ * same SHA while an earlier job was still in flight — clean issue comment from
+ * one job, findings review from the other.
+ *
+ * Skip when a trusted/dedupe author already requested this head via:
+ * - `cursor-external-codex:SHA`, or
+ * - `cursor-codex-head:SHA` pin matching headSha.
+ *
+ * Plain unpinned "@codex review" is intentionally ignored: without a head pin
+ * we cannot tell which SHA it targeted, and timestamp heuristics (age, commit
+ * date, PR.updated_at) all have false-positive races. Prefer always planting
+ * a head pin (buildCodexReviewRequestComment) so re-request is safe.
+ *
+ * `notBefore` is accepted but unused (kept so older workflow callers do not
+ * throw if they still pass it).
+ */
 function shouldSkipExternalCodexRerequest({
   existingComments = [],
   headSha,
   ownActors,
+  notBefore: _notBefore = null,
+  notBeforeSlackMs: _notBeforeSlackMs = 5_000,
 } = {}) {
-  const marker = `<!-- cursor-external-codex:${sanitizeUntrustedText(headSha, 64)} -->`;
-  return existingComments.some(
-    (c) =>
-      isTrustedAutomationControlAuthor(c?.user?.login || c?.login, {
-        ownActors,
-      }) && String(c.body || '').includes(marker),
-  );
+  const want = String(headSha || '')
+    .trim()
+    .toLowerCase();
+  if (!want) return false;
+  const externalMarker = `<!-- cursor-external-codex:${sanitizeUntrustedText(want, 64)} -->`;
+
+  return existingComments.some((c) => {
+    const login = c?.user?.login || c?.login;
+    if (!isCodexRequestDedupeAuthor(login, { ownActors })) return false;
+    const body = String(c?.body || '');
+    if (!isCodexReviewRequestBody(body)) return false;
+
+    // Explicit external marker for this SHA (legacy + current automation).
+    if (body.includes(externalMarker)) return true;
+
+    // Automation / human request that pins this head.
+    const pinned = extractRequestedHeadSha(body);
+    if (pinned && commitShasMatch(want, pinned)) return true;
+
+    return false;
+  });
 }
 
 function buildSlackPayload({

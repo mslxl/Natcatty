@@ -4139,6 +4139,101 @@ test('shouldSkipExternalCodexRerequest matches trusted head sha marker only', ()
   );
 });
 
+test('shouldSkipExternalCodexRerequest honors head pins; ignores plain unpinned @codex', () => {
+  const sha = 'deadbeefcafebabe000000000000000000000001';
+  const short = sha.slice(0, 12);
+  // Automation request with head pin but no external marker still dedupes.
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      ownActors: 'binaricat,netcatty-bot,github-actions[bot]',
+      existingComments: [
+        {
+          user: { login: 'binaricat' },
+          body: auto.buildCodexReviewRequestComment(1, sha),
+        },
+      ],
+    }),
+    true,
+  );
+  // Short SHA pin matches full head.
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      ownActors: 'binaricat',
+      existingComments: [
+        {
+          user: { login: 'binaricat' },
+          body: `<!-- cursor-automation -->\n\n@codex review\n\n<!-- cursor-codex-head:${short} -->`,
+        },
+      ],
+    }),
+    true,
+  );
+  // Plain unpinned @codex never suppresses — cannot know which SHA it meant.
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      ownActors: 'binaricat',
+      notBefore: '2026-08-05T14:00:00Z',
+      existingComments: [
+        {
+          user: { login: 'cursor[bot]' },
+          created_at: '2026-08-05T14:00:30Z',
+          body: '@codex review',
+        },
+      ],
+    }),
+    false,
+  );
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      ownActors: 'binaricat',
+      existingComments: [
+        {
+          user: { login: 'binaricat' },
+          created_at: '2026-08-05T14:00:10Z',
+          body: '@codex review',
+        },
+      ],
+    }),
+    false,
+  );
+  // Connector clean summary is not a request.
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      ownActors: 'binaricat',
+      existingComments: [
+        {
+          user: { login: 'chatgpt-codex-connector[bot]' },
+          created_at: '2026-08-05T14:00:59Z',
+          body: "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** `deadbeef`",
+        },
+      ],
+    }),
+    false,
+  );
+  // Different head pin does not skip.
+  assert.equal(
+    auto.shouldSkipExternalCodexRerequest({
+      headSha: sha,
+      ownActors: 'binaricat',
+      existingComments: [
+        {
+          user: { login: 'binaricat' },
+          body: auto.buildCodexReviewRequestComment(
+            1,
+            'ffffffffffffffffffffffffffffffffffffffff',
+          ),
+        },
+      ],
+    }),
+    false,
+  );
+});
+
 test('parseCodexReviewOutcome accepts clean reaction without summary text', () => {
   const outcome = auto.parseCodexReviewOutcome({
     summaryText: '',
