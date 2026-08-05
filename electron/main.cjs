@@ -396,12 +396,22 @@ function notifyAllAppLockReopenWindows() {
 }
 
 function getAppLockReopenWindows() {
-  return [
-    ...(getWindowManager().getMainWindows?.() ?? []),
-    getWindowManager().getSettingsWindow?.() ?? null,
-    getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null,
-    ...(getWindowManager().getTerminalPopupWindows?.() ?? []),
-  ];
+  const windowManager = getWindowManager();
+  const seen = new Set();
+  const out = [];
+  const add = (win) => {
+    if (!win || seen.has(win)) return;
+    seen.add(win);
+    out.push(win);
+  };
+  for (const win of windowManager.getMainWindows?.() ?? []) add(win);
+  add(windowManager.getSettingsWindow?.() ?? null);
+  add(getGlobalShortcutBridge().getTrayPanelWindow?.() ?? null);
+  for (const win of windowManager.getTerminalPopupWindows?.() ?? []) add(win);
+  // Detached #/session-window renderers are app-content windows; they must get
+  // reopenSignal for Touch ID/Hello auto-prompt after background re-lock.
+  for (const win of windowManager.getAppContentWindows?.() ?? []) add(win);
+  return out;
 }
 
 // Shared state
