@@ -63,7 +63,12 @@ function hasNoUsableAppContentWindows(appContentWindows) {
       }
       // Hidden prewarm windows (e.g. Settings) keep the process alive but are
       // not a user session — do not block fresh-session re-lock (Codex P2).
+      // Minimized windows also report !isVisible but are still a live session
+      // (Codex P2 on 4e6c3235).
       if (typeof win.isVisible === "function" && !win.isVisible()) {
+        if (typeof win.isMinimized === "function" && win.isMinimized()) {
+          return true;
+        }
         return false;
       }
       return true;
