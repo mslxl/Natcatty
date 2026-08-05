@@ -41,6 +41,7 @@ import {
   cleanupFailedExternalOpenTemp,
   useExternalFileWatchLifecycle,
 } from "./externalFileWatchLifecycle";
+import { createExternalEditTempRetention } from "./externalEditTempRetention";
 import {
   cancelExternalUploadRuntime,
   getExternalUploadController,
@@ -163,23 +164,49 @@ export const useSftpExternalOperations = (
     },
   }), [registerUploadController]);
 
+  // Temp files downloaded for external editors (even without auto-sync watches).
+  // Parking / disconnect / reconnect call closeSftp, which deletes these paths —
+  // forget matching retainers so hasActiveWork does not stick after cleanup.
+  const externalEditTempsRef = useRef(createExternalEditTempRetention());
+  const [activeExternalEditCount, setActiveExternalEditCount] = useState(0);
+  const rememberExternalEditTemp = useCallback((sftpId: string, localPath: string) => {
+    if (!externalEditTempsRef.current.remember(sftpId, localPath)) return;
+    setActiveExternalEditCount(externalEditTempsRef.current.size);
+  }, []);
+  const forgetExternalEditTemp = useCallback((localPath: string) => {
+    if (!externalEditTempsRef.current.forgetPath(localPath)) return;
+    setActiveExternalEditCount(externalEditTempsRef.current.size);
+  }, []);
+  const forgetExternalEditTempsForSftp = useCallback((sftpId: string) => {
+    if (!externalEditTempsRef.current.forgetSftp(sftpId)) return;
+    setActiveExternalEditCount(externalEditTempsRef.current.size);
+  }, []);
+
   // Track every renderer-owned watch id so duplicate opens stay deduplicated
   // and panel/window teardown releases the worker-side polling resources.
   const stopExternalFileWatch = useCallback(async (watchId: string, cleanupTempFile: boolean) => {
     await netcattyBridge.get()?.stopFileWatch?.(watchId, cleanupTempFile);
   }, []);
   const subscribeExternalFileWatchStopped = useCallback((
-    callback: (payload: { watchId: string }) => void,
+    callback: (payload: { watchId: string; localPath?: string }) => void,
   ) => netcattyBridge.get()?.onFileWatchStopped?.(callback), []);
   const {
     activeCountRef: activeFileWatchCountRef,
     captureGeneration: captureExternalFileWatchGeneration,
     remember: rememberExternalFileWatch,
-    releaseAll: releaseExternalFileWatches,
+    releaseAll: releaseExternalFileWatchesBase,
   } = useExternalFileWatchLifecycle(
     stopExternalFileWatch,
     subscribeExternalFileWatchStopped,
+    // Force-stop (temp deleted / session cleanup) includes localPath — drop retainer.
+    forgetExternalEditTemp,
   );
+  const releaseExternalFileWatches = useCallback(async (cleanupTempFiles = false) => {
+    await releaseExternalFileWatchesBase(cleanupTempFiles);
+    if (externalEditTempsRef.current.clear()) {
+      setActiveExternalEditCount(0);
+    }
+  }, [releaseExternalFileWatchesBase]);
   const [uploadConflicts, setUploadConflicts] = useState<FileConflict[]>([]);
   const uploadConflictResolversRef = useRef<Map<string, UploadConflictResolver>>(new Map());
   /** Maps conflict id → owning UploadController so cancel A never stops B's prompts. */
@@ -483,6 +510,7 @@ export const useSftpExternalOperations = (
       if (bridge.registerTempFile) {
         try {
           await bridge.registerTempFile(sftpId, localTempPath);
+          rememberExternalEditTemp(sftpId, localTempPath);
         } catch (err) {
           console.warn("[SFTP] Failed to register temp file for cleanup:", err);
         }
@@ -490,7 +518,7 @@ export const useSftpExternalOperations = (
 
       return { localTempPath, sftpId, externalTransferId };
     },
-    [getActivePane, isTransferCancelled, ownerId, sftpSessionsRef],
+    [getActivePane, isTransferCancelled, ownerId, rememberExternalEditTemp, sftpSessionsRef],
   );
 
   const downloadToTempAndOpen = useCallback(
@@ -525,6 +553,7 @@ export const useSftpExternalOperations = (
         await bridge.openWithApplication(localTempPath, appPath);
       } catch (err) {
         await cleanupFailedExternalOpenTemp(bridge, sftpId, localTempPath).catch(() => {});
+        forgetExternalEditTemp(localTempPath);
         if (externalTransferId) {
           sftpTransferCenterStore.patchTask(externalTransferId, {
             status: "failed" as TransferStatus,
@@ -555,7 +584,13 @@ export const useSftpExternalOperations = (
 
       return { localTempPath, watchId };
     },
-    [captureExternalFileWatchGeneration, downloadToTemp, getActivePane, rememberExternalFileWatch],
+    [
+      captureExternalFileWatchGeneration,
+      downloadToTemp,
+      forgetExternalEditTemp,
+      getActivePane,
+      rememberExternalFileWatch,
+    ],
   );
 
   const openWithSystemDefault = useCallback(
@@ -590,12 +625,14 @@ export const useSftpExternalOperations = (
         } catch (error) {
           if (!pane.connection.isLocal) {
             await cleanupFailedExternalOpenTemp(bridgeMethods, sftpId, localTempPath).catch(() => {});
+            forgetExternalEditTemp(localTempPath);
           }
           throw error;
         }
         if (!result.success) {
           if (!pane.connection.isLocal) {
             await cleanupFailedExternalOpenTemp(bridgeMethods, sftpId, localTempPath).catch(() => {});
+            forgetExternalEditTemp(localTempPath);
           }
           if (externalTransferId) {
             sftpTransferCenterStore.patchTask(externalTransferId, {
@@ -627,7 +664,13 @@ export const useSftpExternalOperations = (
         notify.error(err instanceof Error ? err.message : String(err), "SFTP");
       }
     },
-    [captureExternalFileWatchGeneration, downloadToTemp, getActivePane, rememberExternalFileWatch],
+    [
+      captureExternalFileWatchGeneration,
+      downloadToTemp,
+      forgetExternalEditTemp,
+      getActivePane,
+      rememberExternalFileWatch,
+    ],
   );
 
   // Create upload callbacks that translate to TransferTask updates
@@ -1491,6 +1534,8 @@ export const useSftpExternalOperations = (
     cancelExternalUpload,
     selectApplication,
     activeFileWatchCountRef,
+    activeExternalEditCount,
+    forgetExternalEditTempsForSftp,
     releaseExternalFileWatches,
     uploadConflicts,
     resolveUploadConflict,

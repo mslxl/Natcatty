@@ -10,7 +10,16 @@
  * Used in TerminalLayer to provide SFTP alongside terminal sessions.
  */
 
-import React, { memo, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from "react";
 import { SftpSidePanelDeferredMount } from "./SftpSidePanelDeferredMount";
 import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from "./terminalLayer/terminalSidePanelChrome";
 import { formatHostPort } from "../domain/host";
@@ -103,6 +112,8 @@ interface SftpSidePanelProps {
   onInitialLocationApplied?: (location: { hostId: string; path: string }) => void;
   onCurrentPathChange?: (location: { hostId: string; connectionKey: string; path: string }) => void;
   onActiveTransfersChange?: (count: number) => void;
+  /** External-editor temps that must keep this owner mounted after panel close. */
+  onActiveExternalEditsChange?: (count: number) => void;
   showWorkspaceHostHeader?: boolean;
   isVisible?: boolean;
   renderOverlays?: boolean;
@@ -150,6 +161,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   onInitialLocationApplied,
   onCurrentPathChange,
   onActiveTransfersChange,
+  onActiveExternalEditsChange,
   showWorkspaceHostHeader = false,
   isVisible = true,
   renderOverlays = true,
@@ -215,6 +227,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
   const ownedEditorSessionIdsRef = useRef<ReadonlySet<string>>(new Set());
   const ownedEditorSftpTabIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const activeExternalEditCountRef = useRef(0);
   // Re-render on tab open/close/session remap only — not on every editor keystroke.
   useEditorTabPresenceRevision();
   const hasOwnedEditorTab = editorTabStore.hasOwnedEditorForSftpOwner({
@@ -230,9 +243,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     surfaceVisible: isVisible,
     // A promoted editor still saves through this owner after the side panel
     // becomes hidden, so its browse channel must stay alive until the editor closes.
+    // External editor temps (Notepad++ etc.) likewise need the session: parking
+    // calls closeSftp which deletes those local files.
     interactive: isBrowseSessionInteractive({
       surfaceVisible: isVisible,
       hasOwnedEditorTab,
+      hasActiveExternalEdit: activeExternalEditCountRef.current > 0,
     }),
     useCompressedUpload: sftpUseCompressedUpload,
     defaultShowHiddenFiles: sftpShowHiddenFiles,
@@ -257,6 +273,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   ]);
 
   const sftp = useSftpState(hosts, keys, identities, sftpOptions);
+  activeExternalEditCountRef.current = sftp.activeExternalEditCount ?? 0;
   ownedEditorSessionIdsRef.current = new Set(
     listRemoteBrowseConnectionIds([
       ...sftp.leftTabs.tabs,
@@ -400,6 +417,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     onActiveTransfersChange,
   });
 
+  // Parent retain-on-close only sees transfers unless we also publish external
+  // editor temp activity (closeSftp deletes those files on unmount).
+  const onActiveExternalEditsChangeRef = useRef(onActiveExternalEditsChange);
+  onActiveExternalEditsChangeRef.current = onActiveExternalEditsChange;
+  useLayoutEffect(() => {
+    onActiveExternalEditsChangeRef.current?.(sftp.activeExternalEditCount ?? 0);
+  }, [sftp.activeExternalEditCount]);
+
   // Register this instance's writeTextFileByConnection with the editor bridge
   // so editor tabs promoted from SFTP files opened in a terminal side panel
   // can still route saves through this useSftpState.
@@ -474,7 +499,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
     const s = sftpRef.current;
     const hasActiveWork = interactiveWorkActive
-      || (s.activeFileWatchCountRef?.current ?? 0) > 0;
+      || (s.activeFileWatchCountRef?.current ?? 0) > 0
+      || (s.activeExternalEditCount ?? 0) > 0;
 
     const proto = activeHost.protocol;
     if (proto === 'serial' || activeHost.id?.startsWith('serial-')) {
@@ -1159,7 +1185,8 @@ const SftpSidePanelInteractiveBody: React.FC<SftpSidePanelInteractiveBodyProps> 
   }, [followTerminalCwdHost, onGetTerminalCwd]);
 
   const hasActiveWork = showTextEditor || !!permissionsState || showFileOpenerDialog
-    || (sftp.activeFileWatchCountRef?.current ?? 0) > 0;
+    || (sftp.activeFileWatchCountRef?.current ?? 0) > 0
+    || (sftp.activeExternalEditCount ?? 0) > 0;
 
   const blockedFollowRef = useRef<SftpFollowTerminalCwdBlock | null>(null);
   const handledFollowRef = useRef<SftpFollowTerminalCwdBlock | null>(null);
@@ -1723,6 +1750,7 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.onRequestTerminalFocus === next.onRequestTerminalFocus &&
   prev.onCurrentPathChange === next.onCurrentPathChange &&
   prev.onActiveTransfersChange === next.onActiveTransfersChange &&
+  prev.onActiveExternalEditsChange === next.onActiveExternalEditsChange &&
   prev.initialLocation?.hostId === next.initialLocation?.hostId &&
   prev.initialLocation?.path === next.initialLocation?.path &&
   // Only the keepalive fields of terminalSettings affect SFTP connection
