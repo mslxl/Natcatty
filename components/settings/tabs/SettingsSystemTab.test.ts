@@ -84,7 +84,11 @@ test("app lock system unlock setting hides when unavailable unless already enabl
   const appLockSection = source.slice(appLockSectionStart, nextSectionStart);
 
   assert.match(source, /appLockSystemUnlockStatus\?\.available \|\| appLockSettings\.systemUnlockEnabled/);
-  assert.match(appLockSection, /disabled=\{isSavingAppLockSystemUnlock \|\| !appLockSystemUnlockStatus\.available\}/);
+  // Already-enabled toggle stays clickable when unavailable so the user can disable.
+  assert.match(
+    appLockSection,
+    /disabled=\{\s*isSavingAppLockSystemUnlock\s*\|\|\s*\(!appLockSystemUnlockStatus\.available && !appLockSettings\.systemUnlockEnabled\)\s*\}/,
+  );
 });
 
 test("app lock system unlock exposes auto prompt as a child option", () => {

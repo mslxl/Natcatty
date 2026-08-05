@@ -175,6 +175,9 @@ function createAppLockSettingsStore({
   }
 
   let snapshot = cloneSettings(DEFAULT_APP_LOCK_SETTINGS);
+  // Serialize load/save so concurrent mutations cannot race on the same .tmp
+  // path or overwrite each other with stale snapshots (Codex P2).
+  let writeChain = Promise.resolve();
 
   async function load() {
     let raw;
@@ -199,20 +202,24 @@ function createAppLockSettingsStore({
   }
 
   async function save(nextSettings) {
-    const normalized = normalizeAppLockSettings(nextSettings);
-    const payload = `${JSON.stringify(normalized, null, 2)}\n`;
-    // Atomic replace: write temp then rename so a crash mid-write cannot leave
-    // a truncated file that load() would treat as DEFAULT (disabling lock)
-    // (Codex P2 on 79603979).
-    if (typeof rename === "function") {
-      const tmpPath = `${filePath}.tmp`;
-      await writeFile(tmpPath, payload, { mode: 0o600 });
-      await rename(tmpPath, filePath);
-    } else {
-      await writeFile(filePath, payload, { mode: 0o600 });
-    }
-    snapshot = normalized;
-    return cloneSettings(snapshot);
+    const run = async () => {
+      const normalized = normalizeAppLockSettings(nextSettings);
+      const payload = `${JSON.stringify(normalized, null, 2)}\n`;
+      // Atomic replace: write unique temp then rename so a crash mid-write cannot
+      // leave a truncated file that load() would treat as DEFAULT (Codex P2).
+      if (typeof rename === "function") {
+        const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+        await writeFile(tmpPath, payload, { mode: 0o600 });
+        await rename(tmpPath, filePath);
+      } else {
+        await writeFile(filePath, payload, { mode: 0o600 });
+      }
+      snapshot = normalized;
+      return cloneSettings(snapshot);
+    };
+    const pending = writeChain.then(run, run);
+    writeChain = pending.then(() => {}, () => {});
+    return pending;
   }
 
   function getSnapshot() {
