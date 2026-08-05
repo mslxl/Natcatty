@@ -672,6 +672,9 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     if (!isRecordingShortkey) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // App lock overlay installs later; skip while locked so password keys
+      // never mutate shortkeys (Codex P2).
+      if (document.querySelector('[data-app-lock-overlay]')) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -817,6 +820,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (document.querySelector('[data-app-lock-overlay]')) return;
       if (rightPanelMode !== 'edit-snippet') return;
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return;
       event.preventDefault();

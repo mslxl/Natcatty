@@ -61,6 +61,8 @@ export default function SettingsShortcutsTab(props: {
     const specialSuffix = getSpecialSuffix(recordingBindingId);
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Skip while app lock overlay is up so password keys never bind (Codex P2).
+      if (document.querySelector('[data-app-lock-overlay]')) return;
       e.preventDefault();
       e.stopPropagation();
 

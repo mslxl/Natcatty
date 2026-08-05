@@ -540,6 +540,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     if (!isRecordingHotkey) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (document.querySelector('[data-app-lock-overlay]')) return;
       e.preventDefault();
       e.stopPropagation();
 
