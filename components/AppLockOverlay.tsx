@@ -114,13 +114,15 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     return () => window.clearTimeout(timeout);
   }, [locked]);
 
-  // Soft focus trap: if Tab would leave the dialog, cycle within it. Background
-  // content is also `inert` from AppLockGate (removed from sequential focus),
-  // so this mainly covers residual focusable chrome outside that wrapper.
+  // Soft focus trap + block window-level app shortcuts while locked.
+  // Background content is `inert` from AppLockGate, but inert does not stop
+  // keydown bubbling to window listeners (e.g. Snippets Ctrl/Cmd+S). Stop
+  // propagation on the bubble path so those handlers never see lock-UI keys
+  // (Codex P2 on 1d81be94). Capture phase still owns the Tab cycle.
   useEffect(() => {
     if (!locked) return;
 
-    const onKeyDown = (event: KeyboardEvent) => {
+    const onKeyDownCapture = (event: KeyboardEvent) => {
       if (event.key !== 'Tab') return;
       const root = overlayRootRef.current;
       if (!root) return;
@@ -145,8 +147,22 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       }
     };
 
-    document.addEventListener('keydown', onKeyDown, true);
-    return () => document.removeEventListener('keydown', onKeyDown, true);
+    // Document bubble runs before window bubble listeners used by app panels.
+    const onKeyDownBubble = (event: KeyboardEvent) => {
+      const root = overlayRootRef.current;
+      if (!root) return;
+      const target = event.target as Node | null;
+      if (target && root.contains(target)) {
+        event.stopPropagation();
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDownCapture, true);
+    document.addEventListener('keydown', onKeyDownBubble, false);
+    return () => {
+      document.removeEventListener('keydown', onKeyDownCapture, true);
+      document.removeEventListener('keydown', onKeyDownBubble, false);
+    };
   }, [locked]);
 
   const handleSystemUnlock = useCallback(async () => {
