@@ -1476,8 +1476,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ) {
             return true;
           }
-          // When copy is bound specifically to Ctrl+C and there is no text
-          // selected, pass the event through so xterm can send SIGINT.
+          // No xterm selection: pass Ctrl+C through for SIGINT, and Cmd+C for
+          // Kitty Super+C (nested TUIs). Other copy chords stay a safe no-op.
           const shouldForwardCopyToTerminal =
             shouldPassThroughCopyShortcut(action, term.hasSelection(), e);
           if (shouldForwardCopyToTerminal && !kittySequenceForKeyDown) return true;
