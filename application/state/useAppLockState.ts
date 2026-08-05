@@ -123,7 +123,9 @@ export function createOptimisticUnlockedRuntimeState(
     initialized: true,
     locked: false,
     reason: null,
-    version: current.version + 1,
+    // Keep the observed main-process version. Bumping here can outrank a real
+    // concurrent re-lock and leave the renderer unlocked after refresh (Codex P2).
+    version: current.version,
     lastUnlockedAt: now,
     lastActivityAt: now,
   };
