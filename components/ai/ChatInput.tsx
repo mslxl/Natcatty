@@ -26,6 +26,7 @@ import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile }
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { ScrollArea } from '../ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import { isAppLockOverlayActive } from '../../infrastructure/appLockOverlayDom';
 
 // Keep in sync with the popover's Tailwind max-width below.
 const MODEL_PICKER_MAX_WIDTH = 360;
@@ -398,7 +399,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   useEffect(() => {
     if (!showSlashCommandPicker || !menuPos) return;
-    const onKeyDown = (event: KeyboardEvent) => handleSlashCommandKeyDown(event);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isAppLockOverlayActive()) return;
+      handleSlashCommandKeyDown(event);
+    };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [handleSlashCommandKeyDown, menuPos, showSlashCommandPicker]);

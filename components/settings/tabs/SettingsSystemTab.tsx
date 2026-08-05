@@ -18,6 +18,7 @@ import { Label } from "../../ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { Toggle, Select, SettingRow, SectionHeader, SettingCard, SettingsTabContent } from "../settings-ui";
 import { cn } from "../../../lib/utils";
+import { isAppLockOverlayActive } from '../../../infrastructure/appLockOverlayDom';
 
 interface CrashLogFile {
   fileName: string;
@@ -540,7 +541,7 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     if (!isRecordingHotkey) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (document.querySelector('[data-app-lock-overlay]')) return;
+      if (isAppLockOverlayActive()) return;
       e.preventDefault();
       e.stopPropagation();
 

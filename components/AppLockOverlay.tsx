@@ -165,6 +165,21 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     };
   }, [locked]);
 
+  // Context menus portal at z-index max (2147483647). Hide it while locked so
+  // open right-click menus cannot sit above the lock screen (Codex P2).
+  useEffect(() => {
+    if (!locked) return;
+    const portal = document.getElementById('netcatty-context-menu-root');
+    if (!portal) return;
+    const prev = portal.style.visibility;
+    portal.style.visibility = 'hidden';
+    portal.style.pointerEvents = 'none';
+    return () => {
+      portal.style.visibility = prev;
+      portal.style.pointerEvents = 'none'; // portal default is none; children re-enable
+    };
+  }, [locked]);
+
   const handleSystemUnlock = useCallback(async () => {
     if (isSystemUnlocking || !onSystemUnlock) return;
     setIsSystemUnlocking(true);
@@ -257,7 +272,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   return (
     <div
       ref={overlayRootRef}
-      className="fixed inset-0 z-[1000000] flex items-center justify-center bg-background px-6 text-foreground"
+      className="fixed inset-0 flex items-center justify-center bg-background px-6 text-foreground"
+      style={{ zIndex: 2147483647 }}
       role="dialog"
       data-state="open"
       data-app-lock-overlay=""

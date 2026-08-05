@@ -22,6 +22,7 @@ import type { SftpFileEntry } from "../../../types";
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
 import { toast } from "../../ui/toast";
 import {
+import { isAppLockOverlayActive } from '../../../infrastructure/appLockOverlayDom';
   createDropEntriesFromClipboardFiles,
   getSftpClipboardSystemTextPaths,
   getSupportedClipboardUploadFiles,
@@ -894,8 +895,12 @@ export const useSftpKeyboardShortcuts = ({
   useEffect(() => {
     if (!isActive) return;
     // Use capture phase to intercept before other handlers
-    window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isAppLockOverlayActive()) return;
+      handleKeyDown(event);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [handleKeyDown, isActive]);
 
   useEffect(() => {
