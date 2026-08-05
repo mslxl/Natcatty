@@ -307,6 +307,30 @@ function createAppLockController({
     return settingsStore.getSnapshot();
   }
 
+  /**
+   * Renderer-facing settings replace real salt/hash with zeroed placeholders of
+   * the correct size so presence checks still work, but offline brute-force of
+   * the verifier from any renderer is impossible (Codex P2 on 8c0b9c5a).
+   * Password verification always runs in main against the private store.
+   */
+  function getPublicSettings() {
+    const settings = getSettings();
+    if (!settings || typeof settings !== "object") return settings;
+    if (!settings.passwordVerifier) return settings;
+    const redactedSalt = Buffer.alloc(16).toString("base64");
+    const redactedHash = Buffer.alloc(32).toString("base64");
+    return {
+      ...settings,
+      passwordVerifier: {
+        version: settings.passwordVerifier.version,
+        algorithm: settings.passwordVerifier.algorithm,
+        iterations: settings.passwordVerifier.iterations,
+        salt: redactedSalt,
+        hash: redactedHash,
+      },
+    };
+  }
+
   function getRuntimeState() {
     return runtimeBridge.getState();
   }
@@ -351,8 +375,9 @@ function createAppLockController({
   async function saveSettings(nextSettings) {
     const saved = await settingsStore.save(nextSettings);
     syncIdleTimer();
-    broadcast("netcatty:appLock:settingsChanged", saved);
-    return saved;
+    const publicSaved = getPublicSettings();
+    broadcast("netcatty:appLock:settingsChanged", publicSaved);
+    return publicSaved;
   }
 
   async function requestEnable() {
@@ -568,7 +593,7 @@ function createAppLockController({
 
   function registerHandlers(ipcMain) {
     ipcMain.handle("netcatty:appLock:getRuntimeState", () => getRuntimeState());
-    ipcMain.handle("netcatty:appLock:getSettings", () => getSettings());
+    ipcMain.handle("netcatty:appLock:getSettings", () => getPublicSettings());
     ipcMain.handle("netcatty:appLock:setTimeoutMinutes", (_event, timeoutMinutes) =>
       setTimeoutMinutes(timeoutMinutes));
     ipcMain.handle("netcatty:appLock:requestEnable", () => requestEnable());
