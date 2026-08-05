@@ -38,6 +38,7 @@ test("delete confirmation dialogs constrain long names", () => {
   const confirmDialogSource = readProjectFile("components/ui/confirm-dialog.tsx");
   const vaultDeleteDialogSource = readProjectFile("components/vault/VaultDeleteConfirmDialog.tsx");
   const sftpDialogSource = readProjectFile("components/sftp/SftpPaneDialogs.tsx");
+  const sftpClipboardUploadDialogSource = readProjectFile("components/sftp/SftpClipboardUploadDialog.tsx");
   const hostTreeGroupDeleteSource = readProjectFile("components/host/HostTreeGroupDeleteDialog.tsx");
   const vaultViewLayoutSource = readProjectFile("components/vault/VaultViewLayout.tsx");
 
@@ -50,6 +51,13 @@ test("delete confirmation dialogs constrain long names", () => {
   assert.match(sftpDialogSource, /<DialogTitle className="truncate">/);
   assert.match(sftpDialogSource, /<span className="min-w-0 truncate">\{name\}<\/span>/);
   assert.match(sftpDialogSource, /overflow-hidden sm:max-w-sm/);
+
+  assert.match(sftpClipboardUploadDialogSource, /overflow-hidden sm:max-w-md/);
+  assert.match(sftpClipboardUploadDialogSource, /<span className="min-w-0 truncate" title=\{file\.name\}>/);
+  assert.match(
+    sftpClipboardUploadDialogSource,
+    /min-w-0 rounded-md border border-border\/60 bg-muted\/30 px-3 py-2 text-sm font-mono break-all \[overflow-wrap:anywhere\]/,
+  );
 
   assert.match(hostTreeGroupDeleteSource, /overflow-hidden sm:max-w-lg/);
   assert.match(hostTreeGroupDeleteSource, /break-words text-sm text-muted-foreground \[overflow-wrap:anywhere\]/);

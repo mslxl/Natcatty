@@ -64,23 +64,28 @@ export const SftpClipboardUploadDialog: React.FC<SftpClipboardUploadDialogProps>
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-w-[calc(100vw-2rem)] overflow-hidden sm:max-w-md">
+        <DialogHeader className="min-w-0 pr-6">
           <DialogTitle>Upload clipboard files?</DialogTitle>
           <DialogDescription>
             Upload {fileCount} item{fileCount === 1 ? "" : "s"} to:
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
-          <div className="rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm font-mono break-all">
+        <div className="min-w-0 space-y-3">
+          <div className="min-w-0 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm font-mono break-all [overflow-wrap:anywhere]">
             {request?.targetPath ?? currentPath}
           </div>
           {previewFiles.length > 0 && (
-            <div className="max-h-40 overflow-auto rounded-md border border-border/60">
+            <div className="max-h-40 min-w-0 overflow-auto rounded-md border border-border/60">
               {previewFiles.map((file) => (
-                <div key={file.path} className="px-3 py-2 text-sm border-b border-border/40 last:border-b-0 truncate">
-                  {file.name}
+                <div
+                  key={file.path}
+                  className="flex min-w-0 items-center border-b border-border/40 px-3 py-2 text-sm last:border-b-0"
+                >
+                  <span className="min-w-0 truncate" title={file.name}>
+                    {file.name}
+                  </span>
                 </div>
               ))}
               {remainingCount > 0 && (
