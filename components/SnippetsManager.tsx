@@ -43,8 +43,8 @@ import {
   vaultPrimaryIconClass,
   vaultSnippetIconClass,
 } from './vault/VaultEntityIcon';
-import {
 import { isAppLockOverlayActive } from '../infrastructure/appLockOverlayDom';
+import {
   clearVaultDropIndicator as clearSnippetDropIndicator,
   getVaultDropIntent as getPackageDropIntent,
   getVaultDropPosition as getDropPosition,

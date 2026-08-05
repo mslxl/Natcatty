@@ -21,8 +21,8 @@ import { filterHiddenFiles, isNavigableDirectory } from "../utils";
 import type { SftpFileEntry } from "../../../types";
 import { extractDropEntries, type DropEntry } from "../../../lib/sftpFileUtils";
 import { toast } from "../../ui/toast";
-import {
 import { isAppLockOverlayActive } from '../../../infrastructure/appLockOverlayDom';
+import {
   createDropEntriesFromClipboardFiles,
   getSftpClipboardSystemTextPaths,
   getSupportedClipboardUploadFiles,
