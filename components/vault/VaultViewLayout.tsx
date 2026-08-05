@@ -1373,6 +1373,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 groupConfigs={groupConfigs}
                 snippets={snippets}
                 onSnippetsChange={onUpdateSnippets}
+                onHostsChange={onUpdateHosts}
                 onImportKey={onImportOrReuseKey}
                 onSave={(host) => {
                   const latestHost = hosts.find(
@@ -1383,7 +1384,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                     openedHost: editingHost,
                     latestHost,
                   });
-                  onUpdateHosts(upsertHostById(hosts, nextHost));
+                  onUpdateHosts((prevHosts) => upsertHostById(prevHosts, nextHost));
                   setIsHostPanelOpen(false);
                   setEditingHost(null);
                   setNewHostGroupPath(null);

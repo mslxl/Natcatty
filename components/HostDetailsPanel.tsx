@@ -9,7 +9,7 @@ import {
   Tag,
   X,
 } from "lucide-react";
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useApplicationBackend, type SshAgentStatus } from "../application/state/useApplicationBackend";
 import { applyGroupDefaults, resolveGroupDefaults, resolveGroupTerminalThemeId } from "../domain/groupConfig";
@@ -70,9 +70,7 @@ import {
 } from "./host-details";
 import { HostNotesEditor } from "./host/HostNotesEditor";
 import { HostDetailsScriptsSection } from "./host/HostDetailsScriptsSection";
-import { ensureHostConnectScriptIds, getHostConnectScriptIds, prepareSnippetForHostConnectQueue } from "@/domain/hostConnectScripts.ts";
-import { isScriptSnippet } from "@/domain/snippetScript.ts";
-import { unlinkHostFromScripts } from "@/domain/snippetTargets.ts";
+import { ensureHostConnectScriptIds, getEditableHostConnectScriptIds, syncSnippetsForHostConnectQueueSave } from "@/domain/hostConnectScripts.ts";
 import {
   isPluginHostProtocol,
   sanitizePluginConnection,
@@ -112,6 +110,7 @@ interface HostDetailsPanelProps {
   onImportKey?: (draft: Partial<SSHKey>) => SSHKey;
   snippets?: Snippet[];
   onSnippetsChange?: (snippets: Snippet[]) => void;
+  onHostsChange?: (hosts: Host[] | ((prev: Host[]) => Host[])) => void;
   className?: string;
 }
 
@@ -139,6 +138,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   onImportKey,
   snippets = [],
   onSnippetsChange,
+  onHostsChange,
   className,
   resizable,
   persistWidthStorageKey,
@@ -151,6 +151,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     resizeAriaLabel,
   };
   const { checkSshAgent } = useApplicationBackend();
+  const baselineSnippetsRef = useRef(snippets);
+  const baselineHydratedRef = useRef(snippets.length > 0);
+  const openingQueueIdsRef = useRef<string[]>([]);
   const [form, setForm] = useState<Host>(
     () =>
       (initialData ? normalizePrimaryTelnetState(initialData) : null) ||
@@ -237,6 +240,36 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const [groupInputValue, setGroupInputValue] = useState(form.group || "");
 
   const initialHostId = initialData?.id;
+
+  useEffect(() => {
+    baselineSnippetsRef.current = snippets;
+    baselineHydratedRef.current = snippets.length > 0;
+    if (!initialData) {
+      openingQueueIdsRef.current = [];
+    } else {
+      const normalized = normalizePrimaryTelnetState(initialData);
+      const ensured = snippets.length > 0
+        ? ensureHostConnectScriptIds(normalized, snippets)
+        : normalized;
+      openingQueueIdsRef.current = getEditableHostConnectScriptIds(ensured, snippets);
+    }
+    // Snapshot only when opening/reopening a host editor, not on live snippet edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialHostId]);
+
+  useEffect(() => {
+    // If the editor opened before snippets hydrated, capture the first non-empty
+    // catalog as baseline so concurrent-edit guards still have a reference.
+    if (baselineHydratedRef.current) return;
+    if (snippets.length === 0) return;
+    baselineSnippetsRef.current = snippets;
+    baselineHydratedRef.current = true;
+    if (initialData) {
+      const normalized = normalizePrimaryTelnetState(initialData);
+      const ensured = ensureHostConnectScriptIds(normalized, snippets);
+      openingQueueIdsRef.current = getEditableHostConnectScriptIds(ensured, snippets);
+    }
+  }, [initialData, snippets]);
 
   useEffect(() => {
     if (!initialData) return;
@@ -593,36 +626,79 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
     if ((cleaned.protocol && cleaned.protocol !== "ssh") || cleaned.moshEnabled || cleaned.etEnabled) {
       delete cleaned.x11Forwarding;
     }
-    if (onSnippetsChange && initialData) {
+    if (onSnippetsChange || onHostsChange) {
       const hostId = cleaned.id;
-      const savedQueueIds = initialData.connectScriptIds ?? getHostConnectScriptIds(initialData, snippets);
-      const finalQueueIds = cleaned.connectScriptIds ?? getHostConnectScriptIds(cleaned, snippets);
-      const savedSet = new Set(savedQueueIds);
-      const finalSet = new Set(finalQueueIds);
-      let nextSnippets = snippets;
-      let changed = false;
-
-      for (const scriptId of finalQueueIds) {
-        if (!savedSet.has(scriptId)) {
-          nextSnippets = nextSnippets.map((item) => (
-            item.id === scriptId && isScriptSnippet(item)
-              ? prepareSnippetForHostConnectQueue(item, hostId)
-              : item
-          ));
-          changed = true;
+      if (snippets.length === 0 && !baselineHydratedRef.current) {
+        // Vault may publish hosts before snippets hydrate. Do not wipe unresolved
+        // connectScriptIds while the script catalog is still incomplete.
+      } else {
+        const savedQueueIds = openingQueueIdsRef.current;
+        const finalQueueIds = getEditableHostConnectScriptIds(cleaned, snippets);
+        const synced = syncSnippetsForHostConnectQueueSave(
+          snippets,
+          hostId,
+          savedQueueIds,
+          finalQueueIds,
+          {
+            baselineSnippets: baselineSnippetsRef.current,
+            hosts: allHosts,
+          },
+        );
+        cleaned = {
+          ...cleaned,
+          connectScriptIds: synced.connectScriptIds.length > 0
+            ? synced.connectScriptIds
+            : undefined,
+          // sanitizeHost reconstitutes connectScriptIds from loginScriptId when
+          // the explicit queue is absent; clear the legacy field when emptied.
+          ...(synced.connectScriptIds.length === 0
+            ? { loginScriptId: undefined }
+            : {}),
+        };
+        if (synced.changed && onSnippetsChange) {
+          onSnippetsChange(synced.snippets);
         }
-      }
-      for (const scriptId of savedQueueIds) {
-        if (!finalSet.has(scriptId)) {
-          const unlinked = unlinkHostFromScripts(nextSnippets, hostId, scriptId);
-          if (unlinked !== nextSnippets) {
-            nextSnippets = unlinked;
-            changed = true;
+        if (onHostsChange && synced.hosts.length > 0) {
+          const peerChanged = synced.hosts.some((host) => {
+            if (host.id === cleaned.id) return false;
+            const original = allHosts.find((entry) => entry.id === host.id);
+            return original !== undefined && original !== host;
+          });
+          if (peerChanged) {
+            // Append only the script IDs this save newly queued onto each peer.
+            // Leave the edited host alone so onSave can three-way merge it.
+            onHostsChange((prevHosts) => {
+              const peerAdds = new Map<string, string[]>();
+              for (const syncedHost of synced.hosts) {
+                if (syncedHost.id === cleaned.id) continue;
+                const snapshot = allHosts.find((entry) => entry.id === syncedHost.id);
+                if (!snapshot || snapshot === syncedHost) continue;
+                const snapshotIds = snapshot.connectScriptIds ?? [];
+                const addedIds = (syncedHost.connectScriptIds ?? []).filter(
+                  (id) => !snapshotIds.includes(id),
+                );
+                if (addedIds.length > 0) peerAdds.set(syncedHost.id, addedIds);
+              }
+              return prevHosts.map((host) => {
+                if (host.id === cleaned.id) return host;
+                const addedIds = peerAdds.get(host.id);
+                if (!addedIds || addedIds.length === 0) return host;
+                const currentIds = host.connectScriptIds ?? [];
+                const mergedIds = [...currentIds];
+                for (const id of addedIds) {
+                  if (!mergedIds.includes(id)) mergedIds.push(id);
+                }
+                if (
+                  mergedIds.length === currentIds.length
+                  && mergedIds.every((id, index) => id === currentIds[index])
+                ) {
+                  return host;
+                }
+                return { ...host, connectScriptIds: mergedIds };
+              });
+            });
           }
         }
-      }
-      if (changed) {
-        onSnippetsChange(nextSnippets);
       }
     }
     onSave(stripBuiltInConnectionFieldsForPluginHost(cleaned));
