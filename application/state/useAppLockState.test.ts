@@ -11,6 +11,7 @@ import {
   shouldLockAfterIdle,
   shouldLockOnStartup,
 } from "./useAppLockState.ts";
+import { selectPreferredRuntimeAppLockState } from "./useAppLockRuntime.ts";
 
 test("shouldLockOnStartup locks only when enabled with a verifier", async () => {
   const verifier = await createAppLockPasswordVerifier("secret");
@@ -80,14 +81,15 @@ test("createOptimisticUnlockedRuntimeState clears stale locked state after succe
     initialized: true,
     locked: false,
     reason: null,
-    version: 8,
+    // Optimistic unlock must not invent a higher version than main has sent.
+    version: 7,
     lastLockedAt: 2_000,
     lastUnlockedAt: 5_000,
     lastActivityAt: 5_000,
   });
 });
 
-test("createOptimisticUnlockedRuntimeState outranks same-version stale locked fetches", () => {
+test("createOptimisticUnlockedRuntimeState keeps observed version so concurrent re-lock can win", () => {
   const optimistic = createOptimisticUnlockedRuntimeState(
     {
       initialized: true,
@@ -101,7 +103,18 @@ test("createOptimisticUnlockedRuntimeState outranks same-version stale locked fe
     5_000,
   );
 
-  assert.equal(optimistic.version, 8);
+  assert.equal(optimistic.version, 7);
+  assert.equal(optimistic.locked, false);
+  // A concurrent main re-lock at version 8 must outrank the optimistic unlock.
+  const preferred = selectPreferredRuntimeAppLockState(optimistic, {
+    ...optimistic,
+    locked: true,
+    reason: "manual",
+    version: 8,
+    lastLockedAt: 6_000,
+  });
+  assert.equal(preferred.locked, true);
+  assert.equal(preferred.version, 8);
 });
 
 test("normalizes app lock system unlock bridge status and results", () => {
