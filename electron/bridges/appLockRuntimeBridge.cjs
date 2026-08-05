@@ -467,11 +467,11 @@ function createAppLockController({
 
     const passwordVerifier = await createAppLockPasswordVerifier(nextPassword);
     const enablingFromNoVerifier = !current.passwordVerifier;
-    const saved = await saveSettings({
-      ...current,
-      enabled: current.enabled || !current.passwordVerifier,
+    const saved = await mutateSettings(async (latest) => ({
+      ...latest,
+      enabled: latest.enabled || !latest.passwordVerifier,
       passwordVerifier,
-    });
+    }));
     // While lock was disabled the renderer never reported activity. Re-arming
     // the idle timer on enable would schedule an immediate lock if Netcatty
     // has been open longer than the timeout. Record fresh activity first
@@ -622,6 +622,10 @@ function createAppLockController({
           ok: false,
           error: result?.error || "failed",
         };
+      }
+      // Drop the prompt result if we re-locked while the dialog was open.
+      if (runtimeBridge.getState().locked !== true) {
+        return { ok: false, error: "not-locked" };
       }
 
       const nextState = runtimeBridge.unlock();
