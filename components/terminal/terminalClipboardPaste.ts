@@ -7,8 +7,15 @@ import {
 } from "./clipboardImagePaste";
 import { extractRootPathsFromClipboardFiles } from "./terminalHelpers";
 import { pasteTextIntoTerminal } from "./runtime/terminalUserPaste";
+import { logger } from "../../lib/logger";
 
-type ClipboardFileBridge = Pick<Partial<NetcattyBridge>, "readClipboardFiles">;
+/** ASCII Ctrl+V - forwarded so nested TUIs can run their own image-paste bindings. */
+export const LOCAL_CLIPBOARD_IMAGE_CTRL_V = "\u0016";
+
+type ClipboardFileBridge = Pick<
+  Partial<NetcattyBridge>,
+  "readClipboardFiles" | "hasClipboardImage"
+>;
 
 type TerminalClipboardPasteOptions = {
   bridge?: ClipboardFileBridge;
@@ -104,7 +111,46 @@ export async function handleTerminalClipboardPaste({
     }
   }
 
-  const text = await readClipboardText();
+  let text = "";
+  try {
+    text = await readClipboardText();
+  } catch (error) {
+    // Text read failed (permissions / image-only clipboard quirks). Treat as
+    // empty so local image probe can still forward Ctrl+V.
+    logger.warn("Failed to read clipboard text for terminal paste", error);
+  }
+  // Prefer real text paste. Whitespace-only is deferred until after the local
+  // image probe so screenshot clipboards that also carry blank text/plain can
+  // still forward Ctrl+V for nested TUIs.
+  if (text.trim() && sessionId) {
+    pasteTextIntoTerminal(term, text, {
+      scrollOnPaste,
+      onPasteData,
+    });
+    return;
+  }
+
+  // Local image-only clipboard: Electron's Edit>Paste turns Ctrl+V into a
+  // paste event, so TUI apps (Claude Code chat:imagePaste, etc.) never see
+  // the chord. Forward raw Ctrl+V; the app can then read the OS clipboard
+  // via xclip/wl-paste. Skip remote sessions - the image is not on the host.
+  if (isLocalConnection && sessionId && bridge?.hasClipboardImage) {
+    try {
+      if (await bridge.hasClipboardImage()) {
+        terminalBackend.writeToSession(sessionId, LOCAL_CLIPBOARD_IMAGE_CTRL_V, {
+          sensitive: isSensitiveInput?.() === true,
+        });
+        scrollToBottomAfterProgrammaticInput?.(LOCAL_CLIPBOARD_IMAGE_CTRL_V);
+        term.focus?.();
+        return;
+      }
+    } catch {
+      // Clipboard probe failed; fall through to whitespace text paste if any.
+    }
+  }
+
+  // Preserve intentional whitespace-only pastes (indent / newline) when no
+  // local clipboard image is present.
   if (text && sessionId) {
     pasteTextIntoTerminal(term, text, {
       scrollOnPaste,
