@@ -343,3 +343,26 @@ test("the race guards are wired into the real settings paths", () => {
   assert.match(popupSource, /terminalTheme=\{settings\.currentTerminalTheme\}/);
   assert.match(popupSource, /followAppTerminalTheme=\{settings\.followAppTerminalTheme\}/);
 });
+
+test("cloud sync rehydrate picks up follow-app terminal theme from storage", () => {
+  // applySyncPayload writes followAppTerminalTheme to localStorage, then calls
+  // rehydrateAllFromStorage. Without reading TERM_FOLLOW_APP_THEME there, the
+  // open window keeps the pre-sync follow-app flag while terminalThemeId updates
+  // — black default vs synced yellow theme flicker (#2757).
+  const stateSource = readFileSync(new URL("./useSettingsState.ts", import.meta.url), "utf8");
+  const rehydrateIndex = stateSource.indexOf("const rehydrateAllFromStorage = useCallback(() => {");
+  assert.ok(rehydrateIndex >= 0, "rehydrateAllFromStorage must exist");
+  const nextCallbackIndex = stateSource.indexOf("}, [applyIncomingCustomKeyBindings", rehydrateIndex);
+  assert.ok(nextCallbackIndex > rehydrateIndex, "rehydrate callback body must be bounded");
+  const rehydrateBody = stateSource.slice(rehydrateIndex, nextCallbackIndex);
+  assert.match(
+    rehydrateBody,
+    /STORAGE_KEY_TERM_FOLLOW_APP_THEME/,
+    "rehydrate must read the follow-app terminal theme key written by applySyncableSettings",
+  );
+  assert.match(
+    rehydrateBody,
+    /setFollowAppTerminalThemeState/,
+    "rehydrate must update React follow-app state from storage after cloud sync",
+  );
+});

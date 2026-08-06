@@ -833,6 +833,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     // Terminal
     const storedTermTheme = readStoredString(STORAGE_KEY_TERM_THEME);
     if (storedTermTheme) setTerminalThemeId(storedTermTheme);
+    // Cloud sync writes follow-app via applySyncableSettings; without this the
+    // open window keeps the pre-sync flag while terminalThemeId updates, which
+    // flickers between the local default theme and the synced one (#2757).
+    const storedFollowAppTermTheme = readStoredString(STORAGE_KEY_TERM_FOLLOW_APP_THEME);
+    if (storedFollowAppTermTheme === 'true' || storedFollowAppTermTheme === 'false') {
+      setFollowAppTerminalThemeState(storedFollowAppTermTheme === 'true');
+    }
     const storedTermThemeDark = readStoredString(STORAGE_KEY_TERM_THEME_DARK);
     if (storedTermThemeDark) setTerminalThemeDarkId(storedTermThemeDark);
     const storedTermThemeLight = readStoredString(STORAGE_KEY_TERM_THEME_LIGHT);

@@ -139,6 +139,56 @@ test("sync payloads preserve opaque plugin hosts without requiring the plugin to
   assert.deepEqual(imported?.hosts, [pluginHost]);
 });
 
+test("applySyncPayload preserves host startup command and appearance overrides (#2757)", async () => {
+  const host = {
+    id: "host-1",
+    label: "Prod",
+    hostname: "prod.example",
+    username: "root",
+    port: 22,
+    protocol: "ssh" as const,
+    tags: [],
+    os: "linux" as const,
+    startupCommand: "tmux attach || tmux",
+    startupCommandRunMode: "lineDelay" as const,
+    theme: "solarized-dark",
+    themeOverride: true,
+  };
+  const groupConfigs = [
+    {
+      path: "prod",
+      startupCommand: "cd /srv && exec bash -l",
+      theme: "solarized-dark",
+      themeOverride: true,
+    },
+  ];
+  const payload = buildSyncPayload({
+    ...vault(),
+    hosts: [host],
+    groupConfigs,
+  });
+
+  assert.equal(payload.hosts[0]?.startupCommand, "tmux attach || tmux");
+  assert.equal(payload.hosts[0]?.theme, "solarized-dark");
+  assert.equal(payload.hosts[0]?.themeOverride, true);
+  assert.equal(payload.groupConfigs?.[0]?.startupCommand, "cd /srv && exec bash -l");
+
+  let imported: Record<string, unknown> | null = null;
+  await applySyncPayload(payload, {
+    importVaultData: (json) => { imported = JSON.parse(json); },
+  });
+
+  const importedHosts = imported?.hosts as typeof payload.hosts;
+  assert.equal(importedHosts?.[0]?.startupCommand, "tmux attach || tmux");
+  assert.equal(importedHosts?.[0]?.startupCommandRunMode, "lineDelay");
+  assert.equal(importedHosts?.[0]?.theme, "solarized-dark");
+  assert.equal(importedHosts?.[0]?.themeOverride, true);
+  assert.equal(
+    (imported?.groupConfigs as typeof groupConfigs)?.[0]?.startupCommand,
+    "cd /srv && exec bash -l",
+  );
+});
+
 test("buildCloudSyncPayload includes notes and note groups", async () => {
   const payload = await buildCloudSyncPayload({
     ...vault([]),
