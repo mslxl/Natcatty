@@ -19,6 +19,7 @@ import {
 import { useI18n } from '../application/i18n/I18nProvider';
 import {
     findSyncPayloadEncryptedCredentialPaths,
+    stripSyncPayloadEncryptedCredentials,
 } from '../domain/credentials';
 import {
     isProviderReadyForSync,
@@ -675,9 +676,10 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
             // requested provider fails, another provider can verify a newer
             // joined replica that must be applied before reporting the error.
             if (result.mergedPayload && !result.mergedPayloadApplied && onApplyPayload) {
-                await Promise.resolve(onApplyPayload(result.mergedPayload));
+                const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
+                await Promise.resolve(onApplyPayload(portableMerged));
                 if (result.remoteFile) {
-                    await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
+                    await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
                         recordDownload: true,
                     });
                 }
@@ -703,13 +705,14 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                 // USE_REMOTE applies cloud data over local — same data-loss
                 // shape as a local backup restore, so gate auto-sync in
                 // every other window the same way.
+                const portableRemote = stripSyncPayloadEncryptedCredentials(remoteResult.payload);
                 await withRestoreBarrier(async () => {
-                    await Promise.resolve(onApplyPayload(remoteResult.payload));
+                    await Promise.resolve(onApplyPayload(portableRemote));
                 });
                 await sync.commitRemoteInspection(
                     remoteResult.provider,
                     remoteResult.remoteFile,
-                    remoteResult.payload,
+                    portableRemote,
                     { recordDownload: true },
                 );
                 toast.success(t('cloudSync.resolve.downloaded'));
@@ -746,9 +749,10 @@ const SyncDashboard: React.FC<SyncDashboardProps> = ({
                     // reflects what's now on cloud (in case remote changed during the merge).
                     for (const result of (results as Map<CloudProvider, SyncResult>).values()) {
                         if (result.mergedPayload && !result.mergedPayloadApplied) {
-                            await Promise.resolve(onApplyPayload(result.mergedPayload));
+                            const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
+                            await Promise.resolve(onApplyPayload(portableMerged));
                             if (result.remoteFile) {
-                                await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
+                                await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
                                     recordDownload: true,
                                 });
                             }

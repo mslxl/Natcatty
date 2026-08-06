@@ -4,6 +4,7 @@
 import packageJson from '../../../package.json';
 import { EncryptionService } from '../EncryptionService';
 import { mergeSyncPayloads } from '../../../domain/syncMerge';
+import { stripSyncPayloadEncryptedCredentials, healPoisonedSecretsForMerge } from '../../../domain/credentials';
 import { summarizeSyncChanges, withSyncReliabilityMeta } from '../../../domain/syncReliability';
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
 import { resolveCloudSyncConflictAction } from '../../../domain/syncStrategy';
@@ -467,11 +468,18 @@ export async function syncToProviderImpl(this: any,
           assertSyncSecurityGeneration(this, syncSecurityGeneration);
           const base = await this.loadSyncBase(provider);
           baseForConflict = base;
-          const mergeResult = mergeSyncPayloads(base, payload, remotePayload);
-          const mergedPayload = withSyncReliabilityMeta(mergeResult.payload, base, {
-            deviceId: this.state.deviceId,
-            now: Date.now(),
-          });
+          const localHealed = healPoisonedSecretsForMerge(payload, remotePayload, base);
+          remotePayload = healPoisonedSecretsForMerge(remotePayload, payload, base);
+          remotePayloadForConflict = remotePayload;
+          const mergeResult = mergeSyncPayloads(base, localHealed, remotePayload);
+          const mergedPayload = withSyncReliabilityMeta(
+            stripSyncPayloadEncryptedCredentials(mergeResult.payload),
+            base,
+            {
+              deviceId: this.state.deviceId,
+              now: Date.now(),
+            },
+          );
           assertConvergentSyncWriteCompatible(checkResult.remoteFile.meta, mergedPayload);
 
           console.info('[CloudSyncManager] Three-way merge completed', mergeResult.summary);

@@ -11,7 +11,7 @@ import { pasteTextIntoTerminal } from "./terminalUserPaste";
 import { shouldSuppressHostStartupCommandOnReconnect } from "../restoredSessionGate";
 
 const noop = () => undefined;
-const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "enc:v1:djEwAAAA";
+const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==";
 
 const armSudoPrompt = (
   autofill: { armForCommand: (command: string) => void } | null,
@@ -665,7 +665,7 @@ test("startSSH uses the system agent when a synced vault key cannot be decrypted
       label: "Synced key",
       type: "ED25519",
       publicKey: "ssh-ed25519 AAAASELECTED",
-      privateKey: "enc:v1:djEwAAAA",
+      privateKey: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
       source: "imported",
       category: "key",
       created: 1,

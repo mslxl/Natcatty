@@ -6,7 +6,7 @@ import {
 } from "./createTerminalSessionStarters";
 
 const noop = () => undefined;
-const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "enc:v1:djEwAAAA";
+const ENCRYPTED_CREDENTIAL_PLACEHOLDER = "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==";
 
 const armSudoPrompt = (
   autofill: { armForCommand: (command: string) => void } | null,
@@ -618,7 +618,7 @@ test("startMosh asks for credential re-entry when saved key material cannot be d
     keys: [{
       id: "key-1",
       label: "Deploy key",
-      privateKey: "enc:v1:djEwAAAA",
+      privateKey: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
     }],
     resolvedChainHosts: [],
     sessionId: "session-1",
@@ -699,7 +699,7 @@ test("startMosh does not use stale local key paths when selected key material is
     keys: [{
       id: "key-1",
       label: "Deploy key",
-      privateKey: "enc:v1:djEwAAAA",
+      privateKey: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
     }],
     resolvedChainHosts: [],
     sessionId: "session-1",

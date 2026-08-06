@@ -69,11 +69,11 @@ test("listPasswordPromptFillCandidates includes password identities", () => {
 
 test("listPasswordPromptFillCandidates skips key-only identities and placeholders", () => {
   const candidates = listPasswordPromptFillCandidates({
-    host: baseHost({ password: "enc:v1:djEwAAAA" }),
+    host: baseHost({ password: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==" }),
     keys: [],
     identities: [
       identity({ id: "key", authMethod: "key", password: undefined }),
-      identity({ id: "bad", password: "enc:v1:djEwAAAA" }),
+      identity({ id: "bad", password: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==" }),
       identity({ id: "ok", password: "ok-secret" }),
     ],
   });

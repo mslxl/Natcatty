@@ -111,7 +111,7 @@ test("CSV credentials exclude an explicitly unsaved Keychain passphrase for a di
 test("CSV credentials warn when a saved reference-key passphrase cannot be read", async () => {
   const result = await buildVaultCsvCredentialOptions(
     [host("key-1")],
-    [referenceKey({ savePassphrase: true, passphrase: "enc:v1:djEwYWJj" })],
+    [referenceKey({ savePassphrase: true, passphrase: "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==" })],
     async () => ({ values: [], unreadable: false, present: false }),
   );
 

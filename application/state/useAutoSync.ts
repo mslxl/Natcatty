@@ -14,6 +14,8 @@ import { getCloudSyncManager } from '../../infrastructure/services/CloudSyncMana
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import {
   findSyncPayloadEncryptedCredentialPaths,
+  healPoisonedSecretsForMerge,
+  stripSyncPayloadEncryptedCredentials,
 } from '../../domain/credentials';
 import { isProviderReadyForSync, type CloudProvider, type SyncPayload } from '../../domain/sync';
 import { mergeSyncPayloads } from '../../domain/syncMerge';
@@ -435,13 +437,14 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
       for (const result of resultList) {
         if (result.mergedPayload && !result.mergedPayloadApplied) {
-          await Promise.resolve(onApplyPayload(result.mergedPayload));
+          const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
+          await Promise.resolve(onApplyPayload(portableMerged));
           if (result.remoteFile) {
-            await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
+            await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
               recordDownload: true,
             });
           }
-          skipNextSyncHashRef.current = allProvidersSynced ? getSyncPayloadDataHash(result.mergedPayload) : null;
+          skipNextSyncHashRef.current = allProvidersSynced ? getSyncPayloadDataHash(portableMerged) : null;
           if (!allProvidersSynced) {
             console.warn('[AutoSync] Remote payload applied locally, but not every provider synced; leaving next auto-sync enabled for retry.');
           }
@@ -707,7 +710,11 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       inspectedRemoteChange = true;
 
       const remoteFile = inspection.remoteFile;
-      const remotePayload = inspection.payload;
+      const remoteRaw = inspection.payload;
+      // Strip device-bound enc:v1 for download/apply paths so poisoned cloud
+      // snapshots restore usable host shells. Smart-merge heals from local/base
+      // separately below so good secrets are not treated as remote deletions.
+      const remotePayload = stripSyncPayloadEncryptedCredentials(remoteRaw);
       const localPayload = await buildPayloadRef.current();
 
       // If local vault is empty but cloud has data, this almost certainly
@@ -778,6 +785,14 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       }
 
       if (conflictAction === 'upload-local') {
+        const encryptedCredentialPaths = findSyncPayloadEncryptedCredentialPaths(localPayload);
+        if (encryptedCredentialPaths.length > 0) {
+          console.warn(
+            '[AutoSync] Startup local-wins blocked: encrypted credential placeholders found at:',
+            encryptedCredentialPaths.join(', '),
+          );
+          throw new Error(tRef.current('sync.credentialsUnavailable'));
+        }
         const pushResults = await manager.syncAllProviders(localPayload);
         const results = Array.from(pushResults.values());
         commitPluginSidecarsAfterSuccessfulSync(localPayload, results);
@@ -797,15 +812,20 @@ export const useAutoSync = (config: AutoSyncConfig) => {
         throw new Error('Startup local-wins sync failed for one or more providers');
       }
 
-      const mergeResult = mergeSyncPayloads(base, localPayload, remotePayload);
+      // Prefer usable secrets from the opposite side / base over enc:v1
+      // placeholders before merge. Otherwise smart-merge can pick a "changed"
+      // local entity whose only secret change is ciphertext, then strip +
+      // upload and wipe usable cloud passwords. Same for remote-side poison.
+      const localHealed = healPoisonedSecretsForMerge(localPayload, remoteRaw, base);
+      const remoteHealed = healPoisonedSecretsForMerge(remoteRaw, localPayload, base);
+      const mergeResult = mergeSyncPayloads(base, localHealed, remoteHealed);
 
       // Apply merged payload to local state BEFORE committing. If the apply
       // throws, the next startup will re-run the merge with fresh data.
-      await Promise.resolve(onApplyPayloadRef.current(mergeResult.payload));
-      // Base is the last-agreed remote snapshot; `commitRemoteInspection`
-      // stores remotePayload as the base so the next diff is computed
-      // against what the cloud actually has, not against the merged
-      // local-only state.
+      const portableMerge = stripSyncPayloadEncryptedCredentials(mergeResult.payload);
+      await Promise.resolve(onApplyPayloadRef.current(portableMerge));
+      // Base is the last-agreed remote snapshot; store the portable remote
+      // view so future diffs never treat device-bound enc:v1 as cloud truth.
       await manager.commitRemoteInspection(connectedProvider, remoteFile, remotePayload);
       startupConsistent = true;
       markCurrentDataSynced = false;
@@ -826,9 +846,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       // that only approximated the correct ordering.
       if (mergeResult.payload) {
         try {
-          const roundTripResults = await manager.syncAllProviders(mergeResult.payload);
+          const roundTripResults = await manager.syncAllProviders(portableMerge);
           const roundTripResultList = Array.from(roundTripResults.values());
-          commitPluginSidecarsAfterSuccessfulSync(mergeResult.payload, roundTripResultList);
+          commitPluginSidecarsAfterSuccessfulSync(portableMerge, roundTripResultList);
           const wasShrinkBlocked = roundTripResultList.some((r) => r.shrinkBlocked === true);
           const roundTripFullySynced = roundTripResultList.length > 0
             && roundTripResultList.every((result) => result.success);

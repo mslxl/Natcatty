@@ -34,7 +34,7 @@ import { buildTelnetDeepLinkConnectionHost, buildTelnetDeepLinkEphemeralHostFrom
 import { buildJmsDeepLinkEphemeralHost, isSupportedJmsProtocol, parseJmsDeepLink } from './domain/jmsDeepLink';
 import { applyEphemeralHostsUpdate, splitHostsUpdateByEphemeral } from './domain/ephemeralHosts';
 import { resolveHostAuth } from './domain/sshAuth';
-import { isEncryptedCredentialPlaceholder } from './domain/credentials';
+import { isEncryptedCredentialPlaceholder, stripSyncPayloadEncryptedCredentials } from './domain/credentials';
 import {
   mergeTerminalHostUpdate,
   TERMINAL_THEME_AUTO,
@@ -664,7 +664,8 @@ function App({ settings }: { settings: SettingsState }) {
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
         applyPayload: async () => {
-          await applySyncPayload(payload, {
+          const portable = stripSyncPayloadEncryptedCredentials(payload);
+          await applySyncPayload(portable, {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,

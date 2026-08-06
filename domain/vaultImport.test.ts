@@ -438,7 +438,7 @@ test("CSV import ignores a passphrase without a key path", () => {
 });
 
 test("CSV import rejects encrypted passphrase placeholders", () => {
-  const placeholder = "enc:v1:djEwYWJj";
+  const placeholder = "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==";
   for (const value of [placeholder, encodeCsvPassphrase(placeholder)]) {
     const result = importVaultHostsFromText(
       "csv",

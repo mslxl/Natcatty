@@ -2,6 +2,7 @@ import React, { type Dispatch, type MutableRefObject, type SetStateAction } from
 import { AlertTriangle, Cloud, Database, Download, History, Key, Loader2, ShieldCheck, Trash2 } from 'lucide-react';
 import type { CloudProvider, ConflictResolution, SyncPayload, SyncResult, WebDAVAuthType } from '../../domain/sync';
 import type { ShrinkFinding } from '../../domain/syncGuards';
+import { stripSyncPayloadEncryptedCredentials } from '../../domain/credentials';
 import type { useCloudSync } from '../../application/state/useCloudSync';
 import { cn } from '../../lib/utils';
 import { Button } from '../ui/button';
@@ -901,9 +902,10 @@ export const CloudSyncDialogs: React.FC<CloudSyncDialogsProps> = ({
                                         // re-deleting the remote additions we just merged in.
                                         for (const result of results.values()) {
                                             if (result.mergedPayload && !result.mergedPayloadApplied) {
-                                                await Promise.resolve(onApplyPayload(result.mergedPayload));
+                                                const portableMerged = stripSyncPayloadEncryptedCredentials(result.mergedPayload);
+                                                await Promise.resolve(onApplyPayload(portableMerged));
                                                 if (result.remoteFile) {
-                                                    await sync.commitRemoteInspection(result.provider, result.remoteFile, result.mergedPayload, {
+                                                    await sync.commitRemoteInspection(result.provider, result.remoteFile, portableMerged, {
                                                         recordDownload: true,
                                                     });
                                                 }

@@ -7,6 +7,7 @@ import {
 import packageJson from '../../../package.json';
 import { EncryptionService } from '../EncryptionService';
 import { mergeSyncPayloads } from '../../../domain/syncMerge';
+import { stripSyncPayloadEncryptedCredentials, healPoisonedSecretsForMerge } from '../../../domain/credentials';
 import {
   SYNC_SNAPSHOT_LIMIT,
   summarizeSyncChanges,
@@ -51,7 +52,9 @@ async function downloadRemoteForSyncAllImpl(this: any,
   syncSecurityGeneration?: number,
 ): Promise<SyncResult> {
   assertSyncSecurityGeneration(this, syncSecurityGeneration);
-  const payload = await EncryptionService.decryptPayload(remoteFile, this.masterPassword);
+  const payload = stripSyncPayloadEncryptedCredentials(
+    await EncryptionService.decryptPayload(remoteFile, this.masterPassword),
+  );
   assertSyncSecurityGeneration(this, syncSecurityGeneration);
   this.updateProviderStatus(provider, 'connected');
 
@@ -301,15 +304,23 @@ export async function syncAllProvidersImpl(this: any,
           let merged = payload;
           for (const c of conflicts) {
             const providerBase = await this.loadSyncBase(c.provider as CloudProvider);
-            const remotePayload = await EncryptionService.decryptPayload(
+            const remoteRaw = await EncryptionService.decryptPayload(
               c.check!.remoteFile!,
               this.masterPassword,
             );
+            const localHealed = healPoisonedSecretsForMerge(merged, remoteRaw, providerBase);
+            const remotePayload = healPoisonedSecretsForMerge(
+              remoteRaw,
+              merged,
+              providerBase,
+            );
             assertSyncSecurityGeneration(this, syncSecurityGeneration);
-            const result = mergeSyncPayloads(providerBase, merged, remotePayload);
+            const result = mergeSyncPayloads(providerBase, localHealed, remotePayload);
             merged = result.payload;
           }
-          const mergeResult = { payload: merged };
+          const mergeResult = {
+            payload: stripSyncPayloadEncryptedCredentials(merged),
+          };
 
           console.info('[CloudSyncManager] syncAll: three-way merge completed');
 

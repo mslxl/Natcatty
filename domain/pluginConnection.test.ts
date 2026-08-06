@@ -50,7 +50,7 @@ test('plugin credentials are selectable only after secure catalog publication', 
   assert.equal(isPluginCredentialCatalogEntryAvailable(credentialId, 'secret', published), true);
   assert.equal(isPluginCredentialCatalogEntryAvailable(credentialId, 'secret', new Set()), false);
   assert.equal(
-    isPluginCredentialCatalogEntryAvailable(credentialId, 'enc:v1:djEwAAAA', published),
+    isPluginCredentialCatalogEntryAvailable(credentialId, 'enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==', published),
     false,
   );
   assert.equal(

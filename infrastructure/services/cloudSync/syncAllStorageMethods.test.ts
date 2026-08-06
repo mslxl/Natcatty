@@ -165,7 +165,7 @@ test("syncAllProviders uses the newest cloud payload without merging other remot
     const results = await syncAllProvidersImpl.call(manager, localPayload);
 
     assert.equal(results.get("github")?.action, "download");
-    assert.equal(results.get("github")?.mergedPayload, githubPayload);
+    assert.deepEqual(results.get("github")?.mergedPayload, githubPayload);
     assert.equal(results.get("github")?.remoteFile, githubRemote);
     assert.equal(uploaded.length, 1);
     assert.equal(uploaded[0].provider, "google");
@@ -815,4 +815,94 @@ test("syncToProvider preserves a merged payload discovered by a non-target provi
   assert.equal(selected.error, "github unavailable");
   assert.equal(selected.mergedPayload, mergedPayload);
   assert.equal(selected.remoteFile, undefined);
+});
+
+test("syncAllProviders smart-merge strips device-bound enc:v1 secrets before upload", async () => {
+  const originalDecryptPayload = EncryptionService.decryptPayload;
+  const originalEncryptPayload = EncryptionService.encryptPayload;
+  const completeBlob = Buffer.alloc(31, 0);
+  Buffer.from("v10", "utf8").copy(completeBlob, 0);
+  const ENC = `enc:v1:${completeBlob.toString("base64")}`;
+  const checkedRemote = remoteFile("github", 5, 500);
+  const localPayload = {
+    ...payload("shared"),
+    hosts: [{
+      ...payload("shared").hosts[0]!,
+      password: "kept-secret",
+    }],
+  };
+  const remotePoisoned: SyncPayload = {
+    ...payload("shared"),
+    hosts: [
+      {
+        ...payload("shared").hosts[0]!,
+        label: "remote-label",
+        password: ENC,
+      },
+    ],
+  };
+  const uploaded: SyncPayload[] = [];
+
+  EncryptionService.decryptPayload = async () => remotePoisoned;
+  EncryptionService.encryptPayload = async (outgoing: SyncPayload) => ({
+    ...remoteFile("github", 6, 600),
+    payload: JSON.stringify(outgoing),
+  });
+
+  try {
+    const manager = {
+      masterPassword: "pw",
+      adapters: new Map(),
+      state: {
+        securityState: "UNLOCKED",
+        providers: {
+          github: { enabled: true, connected: true, status: "connected" },
+          google: { enabled: false, connected: false, status: "disconnected" },
+          onedrive: { enabled: false, connected: false, status: "disconnected" },
+          webdav: { enabled: false, connected: false, status: "disconnected" },
+          s3: { enabled: false, connected: false, status: "disconnected" },
+        },
+        lastError: null,
+        syncState: "IDLE",
+        syncStrategy: "smartMerge",
+        localVersion: 1,
+        deviceId: "local-device",
+        deviceName: "Local",
+      },
+      getConnectedAdapter: async (provider: CloudProvider) => ({ provider }),
+      updateProviderStatus: () => {},
+      emit: () => {},
+      checkProviderConflict: async () => ({ conflict: true, remoteFile: checkedRemote }),
+      loadSyncBase: async () => ({
+        ...payload("shared"),
+        hosts: [{
+          ...payload("shared").hosts[0]!,
+          password: "kept-secret",
+        }],
+      }),
+      uploadToProvider: async (
+        _provider: CloudProvider,
+        _adapter: unknown,
+        _file: SyncedFile,
+        outgoing: SyncPayload,
+      ) => {
+        uploaded.push(outgoing);
+        return { success: true, provider: "github" as const, action: "upload" as const, version: 6 };
+      },
+      exitBlockedState: () => {},
+      notifyStateChange: () => {},
+    };
+
+    const results = await syncAllProvidersImpl.call(manager, localPayload);
+    assert.equal(results.get("github")?.success, true);
+    assert.equal(uploaded.length, 1);
+    const sharedHost = uploaded[0]?.hosts.find((host) => host.id === "shared");
+    assert.ok(sharedHost);
+    // Local/base usable secret must survive; remote non-secret edits can still apply.
+    assert.equal(sharedHost?.password, "kept-secret");
+    assert.equal(sharedHost?.label, "remote-label");
+  } finally {
+    EncryptionService.decryptPayload = originalDecryptPayload;
+    EncryptionService.encryptPayload = originalEncryptPayload;
+  }
 });

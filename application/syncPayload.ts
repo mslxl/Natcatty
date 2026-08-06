@@ -32,7 +32,10 @@ import {
   parseCustomKeyBindingsStorageRecord,
   serializeCustomKeyBindingsStorageRecord,
 } from '../domain/customKeyBindings';
-import { isEncryptedCredentialPlaceholder } from '../domain/credentials';
+import {
+  isEncryptedCredentialPlaceholder,
+  stripSyncPayloadEncryptedCredentials,
+} from '../domain/credentials';
 import { localStorageAdapter } from '../infrastructure/persistence/localStorageAdapter';
 import { decryptField, encryptField } from '../infrastructure/persistence/secureFieldAdapter';
 import { sanitizeQuickMessages } from '../infrastructure/ai/quickMessages';
@@ -1079,31 +1082,35 @@ function applyPayload(
     applyPluginSidecars?: PluginSyncSidecarApplier;
   },
 ): Promise<void> {
-  const legacyLineTimestampsEnabled = payload.settings?.terminalSettings?.showLineTimestamps === true;
+  // Portable payloads must never keep device-bound enc:v1 blobs. Strip them
+  // so a previously poisoned cloud/backup snapshot can still restore host
+  // shells and let the user re-enter secrets (#2702).
+  const sanitizedPayload = stripSyncPayloadEncryptedCredentials(payload);
+  const legacyLineTimestampsEnabled = sanitizedPayload.settings?.terminalSettings?.showLineTimestamps === true;
   // Build the vault import object. Cloud sync intentionally ignores
   // local-only trust records even if legacy cloud snapshots still carry them.
   const vaultImport: Record<string, unknown> = {
-    hosts: migrateHostsFromLegacyLineTimestamps(payload.hosts, legacyLineTimestampsEnabled),
-    keys: payload.keys,
-    identities: payload.identities,
-    proxyProfiles: payload.proxyProfiles,
-    snippets: payload.snippets,
-    customGroups: payload.customGroups,
+    hosts: migrateHostsFromLegacyLineTimestamps(sanitizedPayload.hosts, legacyLineTimestampsEnabled),
+    keys: sanitizedPayload.keys,
+    identities: sanitizedPayload.identities,
+    proxyProfiles: sanitizedPayload.proxyProfiles,
+    snippets: sanitizedPayload.snippets,
+    customGroups: sanitizedPayload.customGroups,
   };
-  if (payload.snippetPackages !== undefined) {
-    vaultImport.snippetPackages = payload.snippetPackages;
+  if (sanitizedPayload.snippetPackages !== undefined) {
+    vaultImport.snippetPackages = sanitizedPayload.snippetPackages;
   }
-  if (payload.notes !== undefined) {
-    vaultImport.notes = payload.notes;
+  if (sanitizedPayload.notes !== undefined) {
+    vaultImport.notes = sanitizedPayload.notes;
   }
-  if (payload.noteGroups !== undefined) {
-    vaultImport.noteGroups = payload.noteGroups;
+  if (sanitizedPayload.noteGroups !== undefined) {
+    vaultImport.noteGroups = sanitizedPayload.noteGroups;
   }
-  if (options.includeLocalOnlyData && payload.knownHosts !== undefined) {
-    vaultImport.knownHosts = payload.knownHosts;
+  if (options.includeLocalOnlyData && sanitizedPayload.knownHosts !== undefined) {
+    vaultImport.knownHosts = sanitizedPayload.knownHosts;
   }
-  if (Array.isArray(payload.groupConfigs)) {
-    vaultImport.groupConfigs = payload.groupConfigs;
+  if (Array.isArray(sanitizedPayload.groupConfigs)) {
+    vaultImport.groupConfigs = sanitizedPayload.groupConfigs;
   }
 
   return Promise.resolve(importers.importVaultData(JSON.stringify(vaultImport))).then(async () => {
@@ -1111,23 +1118,23 @@ function applyPayload(
     // them.  Absent field = "payload was created before this feature existed",
     // so local rules are preserved.  Explicitly present [] = "remote has no
     // rules, clear local state".
-    if (payload.portForwardingRules !== undefined && importers.importPortForwardingRules) {
-      importers.importPortForwardingRules(payload.portForwardingRules);
+    if (sanitizedPayload.portForwardingRules !== undefined && importers.importPortForwardingRules) {
+      importers.importPortForwardingRules(sanitizedPayload.portForwardingRules);
     }
 
     // Apply synced settings
-    if (payload.settings) {
-      await applySyncableSettings(payload.settings);
+    if (sanitizedPayload.settings) {
+      await applySyncableSettings(sanitizedPayload.settings);
       // Rehydrate in-memory bookmark snapshot after localStorage was updated
-      if (payload.settings.sftpGlobalBookmarks != null) rehydrateGlobalSftpBookmarks();
+      if (sanitizedPayload.settings.sftpGlobalBookmarks != null) rehydrateGlobalSftpBookmarks();
       importers.onSettingsApplied?.();
     }
 
     // Plugin encrypted sidecars: only apply when the field is present so
     // legacy payloads without pluginSidecars do not wipe installed settings.
-    if (Object.prototype.hasOwnProperty.call(payload, 'pluginSidecars')) {
+    if (Object.prototype.hasOwnProperty.call(sanitizedPayload, 'pluginSidecars')) {
       const applySidecars = options.applyPluginSidecars ?? defaultApplyPluginSyncSidecars;
-      await applySidecars(payload.pluginSidecars ?? { version: 1, entries: [] });
+      await applySidecars(sanitizedPayload.pluginSidecars ?? { version: 1, entries: [] });
     }
   });
 }
@@ -1154,11 +1161,14 @@ export async function prepareLocalVaultPayloadApply(
     ) => Promise<() => Promise<void>>;
   } = {},
 ): Promise<() => Promise<void>> {
+  // Sanitize once so vault import and convergent replica commit share the
+  // same portable secrets view (no device-bound enc:v1 leftovers).
+  const sanitizedPayload = stripSyncPayloadEncryptedCredentials(payload);
   const prepareConvergentRestore = dependencies.prepareConvergentRestore
     ?? prepareRestoredPayloadConvergentWrites;
-  const commitConvergentRestore = await prepareConvergentRestore(payload);
+  const commitConvergentRestore = await prepareConvergentRestore(sanitizedPayload);
   return async () => {
-    await applyPayload(payload, importers, { includeLocalOnlyData: true });
+    await applyPayload(sanitizedPayload, importers, { includeLocalOnlyData: true });
     await commitConvergentRestore();
   };
 }

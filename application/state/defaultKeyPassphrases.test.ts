@@ -189,7 +189,7 @@ test("loadDefaultKeyPassphrase removes undecryptable credential placeholders", a
   globalThis.localStorage.setItem(
     STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
     JSON.stringify({
-      [keyPath]: "enc:v1:djEwYWJj",
+      [keyPath]: "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==",
       "/Users/alice/.ssh/id_rsa": "still-valid",
     }),
   );
@@ -206,7 +206,7 @@ test("loadDefaultKeyPassphrase removes undecryptable credential placeholders", a
 test("export read reports unavailable encrypted passphrases without deleting them", async (t) => {
   installLocalStorage(t);
   const keyPath = "/Users/alice/.ssh/id_ed25519";
-  const encrypted = "enc:v1:djEwYWJj";
+  const encrypted = "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==";
   globalThis.localStorage.setItem(
     STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
     JSON.stringify({ [keyPath]: encrypted }),
@@ -225,7 +225,7 @@ test("export read reports unavailable encrypted passphrases without deleting the
 test("export read retries when the passphrase changes during decryption", async (t) => {
   installLocalStorage(t);
   const keyPath = "/Users/alice/.ssh/id_ed25519";
-  const encrypted = "enc:v1:djEwYWJj";
+  const encrypted = "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==";
   let releaseDecrypt: (() => void) | undefined;
   const decryptGate = new Promise<void>((resolve) => {
     releaseDecrypt = resolve;
@@ -286,7 +286,7 @@ test("remembered passphrase read marks encrypted Keychain placeholders unreadabl
   installLocalStorage(t);
   const key = {
     ...referenceKey(),
-    passphrase: "enc:v1:djEwYWJj",
+    passphrase: "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==",
     savePassphrase: true,
   };
 
@@ -311,7 +311,7 @@ test("passphrase verification reads every alias and preserves unreadable state",
     STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
     JSON.stringify({
       "~/.ssh/id_ed25519": "readable-secret",
-      "/Users/alice/.ssh/id_ed25519": "enc:v1:djEwYWJj",
+      "/Users/alice/.ssh/id_ed25519": "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==",
     }),
   );
 
@@ -455,7 +455,7 @@ test("loadDefaultKeyPassphrase cleanup preserves a passphrase saved concurrently
   });
   globalThis.localStorage.setItem(
     STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
-    JSON.stringify({ "/Users/alice/.ssh/id_old": "enc:v1:djEwYWJj" }),
+    JSON.stringify({ "/Users/alice/.ssh/id_old": "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==" }),
   );
 
   const pendingLoad = loadDefaultKeyPassphrase("/Users/alice/.ssh/id_old");
@@ -549,7 +549,7 @@ test("loadDefaultKeyPassphrase prefers an exact saved path over a stale alias", 
   globalThis.localStorage.setItem(
     STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
     JSON.stringify({
-      "~/.ssh/id_ed25519": "enc:v1:djEwYWJj",
+      "~/.ssh/id_ed25519": "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==",
       "/Users/alice/.ssh/id_ed25519": "valid-exact-passphrase",
     }),
   );
@@ -574,7 +574,7 @@ test("loadDefaultKeyPassphrase falls back to a valid alias and removes an invali
     STORAGE_KEY_DEFAULT_KEY_PASSPHRASES,
     JSON.stringify({
       "~/.ssh/id_ed25519": "valid-alias-passphrase",
-      "/Users/alice/.ssh/id_ed25519": "enc:v1:djEwYWJj",
+      "/Users/alice/.ssh/id_ed25519": "enc:v1:djEwYWJjAAAAAAAAAAAAAAAAAA==",
     }),
   );
 
@@ -913,7 +913,7 @@ test("shouldUpdateReferenceKeyPassphrase replaces missing or undecryptable passp
   assert.equal(
     shouldUpdateReferenceKeyPassphrase({
       ...referenceKey(),
-      passphrase: "enc:v1:djEwAAAA",
+      passphrase: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
     }),
     true,
   );

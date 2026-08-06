@@ -212,13 +212,13 @@ test("buildSyncPayload includes AI configuration settings", () => {
     id: "openai-main",
     providerId: "openai",
     name: "OpenAI",
-    apiKey: "enc:v1:test",
+    apiKey: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
     defaultModel: "gpt-test",
     enabled: true,
   }];
   const webSearch = {
     providerId: "tavily",
-    apiKey: "enc:v1:web",
+    apiKey: "enc:v1:djEwd2ViAAAAAAAAAAAAAAAAAA==",
     enabled: true,
     maxResults: 7,
   };
@@ -239,8 +239,11 @@ test("buildSyncPayload includes AI configuration settings", () => {
 
   const payload = buildSyncPayload(vault([]));
 
+  // Device-bound enc:v1 apiKeys are stripped from portable sync settings.
+  const { apiKey: _providerKey, ...providerWithoutKey } = providers[0]!;
+  const { apiKey: _webKey, ...webSearchWithoutKey } = webSearch;
   assert.deepEqual(payload.settings?.ai, {
-    providers,
+    providers: [providerWithoutKey],
     activeProviderId: "openai-main",
     activeModelId: "gpt-test",
     globalPermissionMode: "auto",
@@ -251,7 +254,7 @@ test("buildSyncPayload includes AI configuration settings", () => {
     maxIterations: 10,
     agentModelMap: { codex: "gpt-test" },
     agentProviderMap: { catty: "openai-main" },
-    webSearchConfig: webSearch,
+    webSearchConfig: webSearchWithoutKey,
     showTerminalSelectionAction: false,
   });
 });
@@ -340,12 +343,12 @@ test("buildSyncPayload omits device-bound encrypted AI API keys", () => {
     id: "openai-main",
     providerId: "openai",
     name: "OpenAI",
-    apiKey: "enc:v1:djEwAAAA",
+    apiKey: "enc:v1:djEwQUFBQQAAAAAAAAAAAAAAAA==",
     enabled: true,
   }]));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
     providerId: "tavily",
-    apiKey: "enc:v1:djEwAAAA",
+    apiKey: "enc:v1:djEwQUFBQQAAAAAAAAAAAAAAAA==",
     enabled: true,
   }));
 
@@ -360,8 +363,8 @@ test("buildCloudSyncPayload includes decrypted AI API keys for portable cloud sy
     value: {
       netcatty: {
         credentialsDecrypt: async (value: string) => {
-          if (value === "enc:v1:djEwPROVIDER") return "sk-provider";
-          if (value === "enc:v1:djEwWEB") return "sk-web";
+          if (value === "enc:v1:djEwUFJPVklERVIAAAAAAAAAAA==") return "sk-provider";
+          if (value === "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==") return "sk-web";
           return value;
         },
       },
@@ -373,12 +376,12 @@ test("buildCloudSyncPayload includes decrypted AI API keys for portable cloud sy
     id: "openai-main",
     providerId: "openai",
     name: "OpenAI",
-    apiKey: "enc:v1:djEwPROVIDER",
+    apiKey: "enc:v1:djEwUFJPVklERVIAAAAAAAAAAA==",
     enabled: true,
   }]));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
     providerId: "tavily",
-    apiKey: "enc:v1:djEwWEB",
+    apiKey: "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==",
     enabled: true,
   }));
 
@@ -402,7 +405,7 @@ test("buildCloudSyncPayload fails instead of deleting API keys when decrypt fail
     id: "openai-main",
     providerId: "openai",
     name: "OpenAI",
-    apiKey: "enc:v1:djEwPROVIDER",
+    apiKey: "enc:v1:djEwUFJPVklERVIAAAAAAAAAAA==",
     enabled: true,
   }]));
 
@@ -417,12 +420,12 @@ test("applySyncPayload restores AI configuration settings", async () => {
     id: "anthropic-main",
     providerId: "anthropic",
     name: "Anthropic",
-    apiKey: "enc:v1:test",
+    apiKey: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
     enabled: true,
   }];
   const webSearch = {
     providerId: "exa",
-    apiKey: "enc:v1:web",
+    apiKey: "enc:v1:djEwd2ViAAAAAAAAAAAAAAAAAA==",
     enabled: true,
   };
 
@@ -473,7 +476,12 @@ test("applySyncPayload encrypts synced plaintext AI API keys before saving local
   Object.defineProperty(globalThis, "window", {
     value: {
       netcatty: {
-        credentialsEncrypt: async (value: string) => `enc:v1:djEwLOCAL_${value}`,
+        credentialsEncrypt: async (value: string) => {
+          const body = Buffer.alloc(19, 0);
+          Buffer.from("v10", "utf8").copy(body, 0);
+          Buffer.from(`LOCAL_${value}`.slice(0, 16), "utf8").copy(body, 3);
+          return `enc:v1:${body.toString("base64")}`;
+        },
       },
       dispatchEvent: () => true,
     },
@@ -501,8 +509,20 @@ test("applySyncPayload encrypts synced plaintext AI API keys before saving local
 
   const provider = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_PROVIDERS)!)[0];
   const webSearch = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!);
-  assert.equal(provider.apiKey, "enc:v1:djEwLOCAL_sk-provider");
-  assert.equal(webSearch.apiKey, "enc:v1:djEwLOCAL_sk-web");
+  const expectedProviderKey = (() => {
+    const body = Buffer.alloc(19, 0);
+    Buffer.from("v10", "utf8").copy(body, 0);
+    Buffer.from("LOCAL_sk-provider".slice(0, 16), "utf8").copy(body, 3);
+    return `enc:v1:${body.toString("base64")}`;
+  })();
+  const expectedWebKey = (() => {
+    const body = Buffer.alloc(19, 0);
+    Buffer.from("v10", "utf8").copy(body, 0);
+    Buffer.from("LOCAL_sk-web".slice(0, 16), "utf8").copy(body, 3);
+    return `enc:v1:${body.toString("base64")}`;
+  })();
+  assert.equal(provider.apiKey, expectedProviderKey);
+  assert.equal(webSearch.apiKey, expectedWebKey);
 });
 
 test("applySyncPayload restores host tree sidebar visibility setting", async () => {
@@ -658,14 +678,14 @@ test("applySyncPayload preserves local AI provider apiKeys when synced payload o
       id: "openai-main",
       providerId: "openai",
       name: "OpenAI",
-      apiKey: "enc:v1:djEwLOCAL",
+      apiKey: "enc:v1:djEwTE9DQUwAAAAAAAAAAAAAAA==",
       enabled: true,
     },
     {
       id: "anthropic-main",
       providerId: "anthropic",
       name: "Anthropic",
-      apiKey: "enc:v1:djEwANTHROPIC",
+      apiKey: "enc:v1:djEwQU5USFJPUElDAAAAAAAAAA==",
       enabled: true,
     },
   ];
@@ -696,14 +716,14 @@ test("applySyncPayload preserves local AI provider apiKeys when synced payload o
       id: "openai-main",
       providerId: "openai",
       name: "OpenAI (renamed)",
-      apiKey: "enc:v1:djEwLOCAL",
+      apiKey: "enc:v1:djEwTE9DQUwAAAAAAAAAAAAAAA==",
       enabled: true,
     },
     {
       id: "anthropic-main",
       providerId: "anthropic",
       name: "Anthropic",
-      apiKey: "enc:v1:djEwANTHROPIC",
+      apiKey: "enc:v1:djEwQU5USFJPUElDAAAAAAAAAA==",
       enabled: false,
     },
   ]);
@@ -711,7 +731,7 @@ test("applySyncPayload preserves local AI provider apiKeys when synced payload o
 
 test("applySyncPayload prefers explicit synced apiKey over local apiKey", async () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_PROVIDERS, JSON.stringify([
-    { id: "openai-main", providerId: "openai", name: "OpenAI", apiKey: "enc:v1:djEwLOCAL", enabled: true },
+    { id: "openai-main", providerId: "openai", name: "OpenAI", apiKey: "enc:v1:djEwTE9DQUwAAAAAAAAAAAAAAA==", enabled: true },
   ]));
 
   const payload: SyncPayload = {
@@ -739,7 +759,7 @@ test("applySyncPayload prefers explicit synced apiKey over local apiKey", async 
 test("applySyncPayload preserves local web-search apiKey when synced config omits it", async () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
     providerId: "tavily",
-    apiKey: "enc:v1:djEwWEB",
+    apiKey: "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==",
     enabled: true,
     maxResults: 7,
   }));
@@ -763,7 +783,7 @@ test("applySyncPayload preserves local web-search apiKey when synced config omit
   const stored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH)!);
   assert.deepEqual(stored, {
     providerId: "tavily",
-    apiKey: "enc:v1:djEwWEB",
+    apiKey: "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==",
     enabled: false,
     maxResults: 12,
   });
@@ -772,7 +792,7 @@ test("applySyncPayload preserves local web-search apiKey when synced config omit
 test("applySyncPayload drops local web-search apiKey when synced config switches provider", async () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
     providerId: "tavily",
-    apiKey: "enc:v1:djEwWEB",
+    apiKey: "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==",
     enabled: true,
   }));
 
@@ -1046,19 +1066,19 @@ test("buildLocalVaultPayload preserves local AI API keys for protective backups"
     id: "openai-main",
     providerId: "openai",
     name: "OpenAI",
-    apiKey: "enc:v1:djEwPROVIDER",
+    apiKey: "enc:v1:djEwUFJPVklERVIAAAAAAAAAAA==",
     enabled: true,
   }]));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify({
     providerId: "tavily",
-    apiKey: "enc:v1:djEwWEB",
+    apiKey: "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==",
     enabled: true,
   }));
 
   const payload = buildLocalVaultPayload(vault([]));
 
-  assert.equal(payload.settings?.ai?.providers?.[0]?.apiKey, "enc:v1:djEwPROVIDER");
-  assert.equal(payload.settings?.ai?.webSearchConfig?.apiKey, "enc:v1:djEwWEB");
+  assert.equal(payload.settings?.ai?.providers?.[0]?.apiKey, "enc:v1:djEwUFJPVklERVIAAAAAAAAAAA==");
+  assert.equal(payload.settings?.ai?.webSearchConfig?.apiKey, "enc:v1:djEwV0VCAAAAAAAAAAAAAAAAAA==");
 });
 
 test("applySyncPayload ignores legacy cloud known hosts", async () => {
@@ -1495,6 +1515,51 @@ test("prepareLocalVaultPayloadApply does not import until the prepared callback 
   assert.deepEqual(calls, ["prepare"]);
   await applyPreparedPayload();
   assert.deepEqual(calls, ["prepare", "import", "commit"]);
+});
+
+test("prepareLocalVaultPayloadApply sanitizes enc:v1 before convergent prepare and apply", async () => {
+  const completeBlob = Buffer.alloc(31, 0);
+  Buffer.from("v10", "utf8").copy(completeBlob, 0);
+  const ENC = `enc:v1:${completeBlob.toString("base64")}`;
+  const preparedPayloads: SyncPayload[] = [];
+  const imported: Array<Record<string, unknown>> = [];
+
+  const applyPreparedPayload = await prepareLocalVaultPayloadApply({
+    hosts: [{
+      id: "h1",
+      label: "prod",
+      hostname: "prod.example",
+      username: "root",
+      password: ENC,
+      port: 22,
+      os: "linux",
+      group: "",
+      tags: [],
+      protocol: "ssh",
+    }],
+    keys: [],
+    identities: [],
+    snippets: [],
+    customGroups: [],
+    syncedAt: 1,
+  }, {
+    importVaultData: (json) => {
+      imported.push(JSON.parse(json) as Record<string, unknown>);
+    },
+  }, {
+    prepareConvergentRestore: async (payload) => {
+      preparedPayloads.push(payload);
+      return async () => undefined;
+    },
+  });
+
+  await applyPreparedPayload();
+
+  assert.equal(preparedPayloads.length, 1);
+  assert.equal(preparedPayloads[0]?.hosts[0]?.password, undefined);
+  assert.equal(imported.length, 1);
+  const hosts = imported[0]?.hosts as Array<{ password?: string }> | undefined;
+  assert.equal(hosts?.[0]?.password, undefined);
 });
 
 test("applyLocalVaultPayload leaves local data untouched when convergent preparation fails", async () => {

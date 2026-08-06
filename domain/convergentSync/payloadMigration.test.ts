@@ -132,6 +132,29 @@ test('envelope creation and hydration reject a materialized snapshot that disagr
   );
 });
 
+test('poisoned enc:v1 secrets still round-trip through convergent envelope validation', () => {
+  // Materialize must preserve device-bound ciphertext that already lives in the
+  // CRDT + v1 snapshot pair. Stripping here would make decrypt/hydrate reject
+  // the exact poisoned v2 clouds #2702 needs to recover from.
+  const completeBlob = Buffer.alloc(19, 0);
+  Buffer.from('v10', 'utf8').copy(completeBlob, 0);
+  const ENC = `enc:v1:${completeBlob.toString('base64')}`;
+  const poisoned = payload();
+  poisoned.hosts = [{ ...poisoned.hosts[0]!, password: ENC }];
+  poisoned.keys = [{ ...poisoned.keys[0]!, privateKey: ENC }];
+
+  const state = createConvergentSyncStateFromPayload(poisoned, 'device-a', NOW);
+  const materialized = materializeSyncPayloadFromConvergentState(state, { syncedAt: NOW });
+  assert.equal(materialized.hosts[0]?.password, ENC);
+  assert.equal(materialized.keys[0]?.privateKey, ENC);
+
+  const envelope = createConvergentSyncEnvelope(state, materialized);
+  assert.equal(
+    serializeConvergentSyncState(hydrateConvergentSyncEnvelope(envelope, materialized)),
+    serializeConvergentSyncState(state),
+  );
+});
+
 test('envelope maps preserve prototype-like entity, field, setting, and string identifiers', () => {
   const specialObject = JSON.parse('{"id":"__proto__","constructor":"safe"}') as {
     id: string;

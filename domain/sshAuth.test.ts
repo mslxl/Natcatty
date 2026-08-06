@@ -37,7 +37,7 @@ test("resolveBridgeKeyAuth ignores undecryptable passphrase placeholders", () =>
     resolveBridgeKeyAuth({
       key: {
         ...referenceKey,
-        passphrase: "enc:v1:djEwAAAA",
+        passphrase: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
       },
     }).passphrase,
     undefined,
@@ -51,7 +51,7 @@ test("resolveBridgeKeyAuth ignores undecryptable private key placeholders", () =
         ...referenceKey,
         source: "imported",
         filePath: undefined,
-        privateKey: "enc:v1:djEwAAAA",
+        privateKey: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==",
       },
     }).privateKey,
     undefined,
@@ -767,7 +767,7 @@ test("resolveHostAutofillPassword returns undefined when no password is availabl
 
 test("resolveHostAutofillPassword ignores undecryptable password placeholders", () => {
   assert.equal(
-    resolveHostAutofillPassword({ host: { ...autofillBaseHost, password: "enc:v1:djEwAAAA" }, keys: [] }),
+    resolveHostAutofillPassword({ host: { ...autofillBaseHost, password: "enc:v1:djEwdGVzdAAAAAAAAAAAAAAAAA==" }, keys: [] }),
     undefined,
   );
 });

@@ -989,6 +989,10 @@ export const useVaultState = () => {
               ),
             );
             setHosts(sanitized);
+            // Always re-encrypt the batch. Stale enc:v1 placeholders are left
+            // unchanged by encryptCredentialValue (no double-wrap); plaintext
+            // siblings still need encryption when safeStorage was previously
+            // unavailable for some records.
             encryptHosts(sanitized).then((enc) => {
               if (ver === hostsWriteVersion.current)
                 localStorageAdapter.write(STORAGE_KEY_HOSTS, enc);
