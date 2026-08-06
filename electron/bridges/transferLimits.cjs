@@ -15,6 +15,10 @@ const UPLOAD_TRANSFER_CONCURRENCY = 64;
 // ssh2's fastGet default and, with the safe 32KB request size, restores the 2MB
 // in-flight window Netcatty used before the shared chunk-size fix in #2030.
 const DOWNLOAD_TRANSFER_CONCURRENCY = 64;
+// Prefix verification must fail closed when a server stops answering, but allow
+// slow links to make progress without imposing a whole-transfer deadline.
+const SFTP_OPEN_TIMEOUT_MS = 15_000;
+const SFTP_REQUEST_TIMEOUT_MS = 30_000;
 // Only one file per SFTP session holds the 64-request concurrent READ fanout
 // (isolated channel or shared/sudo browse path). Additional downloads wait for
 // a free slot rather than degrading to serial createReadStream (#2719 / #2449
@@ -27,6 +31,8 @@ const FAST_DOWNLOAD_CHANNELS_PER_SESSION = 1;
 module.exports = {
   DOWNLOAD_TRANSFER_CONCURRENCY,
   FAST_DOWNLOAD_CHANNELS_PER_SESSION,
+  SFTP_OPEN_TIMEOUT_MS,
+  SFTP_REQUEST_TIMEOUT_MS,
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
 };

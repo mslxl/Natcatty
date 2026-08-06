@@ -21,6 +21,8 @@ const { openBoundedSftpChannel } = require("./boundedSftpOpen.cjs");
 const {
   DOWNLOAD_TRANSFER_CONCURRENCY,
   FAST_DOWNLOAD_CHANNELS_PER_SESSION,
+  SFTP_OPEN_TIMEOUT_MS,
+  SFTP_REQUEST_TIMEOUT_MS,
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
 } = require("./transferLimits.cjs");
@@ -613,6 +615,9 @@ async function resolveRemoteResumeCheckpoint(client, sftpId, filePath, encoding,
 
 async function hashReadable(readable, options = {}) {
   const { signal, onProgress } = options;
+  const inactivityTimeoutMs = Number(options.inactivityTimeoutMs) > 0
+    ? Number(options.inactivityTimeoutMs)
+    : 0;
   const cancellationError = () => {
     const error = new Error("Transfer cancelled");
     error.code = "ABORT_ERR";
@@ -628,22 +633,49 @@ async function hashReadable(readable, options = {}) {
   signal?.addEventListener?.("abort", abortReadable, { once: true });
   const hash = crypto.createHash("sha256");
   let bytesRead = 0;
-  try {
-    for await (const chunk of readable) {
+  let timer = null;
+  let rejectTimeout = null;
+  const armInactivityTimer = () => {
+    if (!inactivityTimeoutMs) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      const error = new Error(`SFTP stream timed out after ${inactivityTimeoutMs} ms`);
+      error.code = "SFTP_STREAM_TIMEOUT";
+      error.sftpRequestTimedOut = true;
+      try { readable.destroy?.(error); } catch { /* ignore */ }
+      rejectTimeout?.(error);
+    }, inactivityTimeoutMs);
+  };
+  const consume = (async () => {
+    armInactivityTimer();
+    try {
+      for await (const chunk of readable) {
+        if (signal?.aborted) throw cancellationError();
+        hash.update(chunk);
+        bytesRead += chunk.length;
+        onProgress?.(bytesRead);
+        armInactivityTimer();
+      }
       if (signal?.aborted) throw cancellationError();
-      hash.update(chunk);
-      bytesRead += chunk.length;
-      onProgress?.(bytesRead);
+      return hash.digest("hex");
+    } catch (error) {
+      if (signal?.aborted) throw cancellationError();
+      throw error;
     }
-    if (signal?.aborted) throw cancellationError();
-    return hash.digest("hex");
-  } catch (error) {
-    if (signal?.aborted) throw cancellationError();
-    throw error;
+  })();
+  try {
+    if (!inactivityTimeoutMs) return await consume;
+    const timeout = new Promise((_, reject) => {
+      rejectTimeout = reject;
+    });
+    return await Promise.race([consume, timeout]);
   } finally {
+    if (timer) clearTimeout(timer);
     signal?.removeEventListener?.("abort", abortReadable);
   }
 }
+
+const EMPTY_SHA256_HEX = crypto.createHash("sha256").update("").digest("hex");
 
 function hashLocalPrefix(filePath, bytes, options) {
   if (!Number.isFinite(bytes) || bytes < 0) return Promise.resolve(null);
@@ -653,6 +685,67 @@ function hashLocalPrefix(filePath, bytes, options) {
 
 function hashLocalFile(filePath, options = {}) {
   return hashReadable(fs.createReadStream(filePath), options);
+}
+
+async function hashRemotePrefixViaSshCommand(client, remotePath, bytes, options = {}) {
+  if (!Number.isFinite(bytes) || bytes <= 0 || isScpModeClient(client)) return null;
+  // Sudo SFTP elevates the subsystem, but exec() still runs as the login user.
+  // For a root-only source, head can fail while sha256sum/openssl still emit the
+  // empty-input digest and exit 0 — skip the command path and use elevated SFTP.
+  if (client?.__netcattySudoMode) return null;
+  const sshClient = client?.client;
+  if (!sshClient || typeof sshClient.exec !== "function") return null;
+
+  if (typeof remotePath !== "string") return null;
+  const byteCount = Math.floor(bytes);
+  const escapedPath = remotePath.replace(/'/g, "'\\''");
+  const commands = [
+    `if command -v head >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1; then head -c ${byteCount} '${escapedPath}' | sha256sum; else exit 127; fi`,
+    `if command -v busybox >/dev/null 2>&1; then busybox head -c ${byteCount} '${escapedPath}' | busybox sha256sum; else exit 127; fi`,
+    `if command -v head >/dev/null 2>&1 && command -v openssl >/dev/null 2>&1; then head -c ${byteCount} '${escapedPath}' | openssl dgst -sha256; else exit 127; fi`,
+  ];
+
+  for (const command of commands) {
+    try {
+      const result = await executeBoundedSshCommand(sshClient, command, {
+        signal: options.signal,
+        openingTimeoutMs: Number(options.sshDigestOpeningTimeoutMs) > 0
+          ? Number(options.sshDigestOpeningTimeoutMs)
+          : 15_000,
+        runTimeoutMs: Number(options.sshDigestRunTimeoutMs) > 0
+          ? Number(options.sshDigestRunTimeoutMs)
+          : 10 * 60_000,
+        maxOutputBytes: 64 * 1024,
+      });
+      if (result.code !== 0) continue;
+      const match = String(result.stdout || "").match(/\b([a-fA-F0-9]{64})\b/);
+      if (!match) continue;
+      const digest = match[1].toLowerCase();
+      // Empty-input digest with bytes > 0 means head failed open into the hasher.
+      if (digest === EMPTY_SHA256_HEX) continue;
+      return digest;
+    } catch (error) {
+      if (options.signal?.aborted || error?.code === "ABORT_ERR") {
+        throw error;
+      }
+      // Run timeout: the exec stream opened, so the SSH transport is still valid.
+      // Treat the optional digest as a miss and fall through to SFTP verification.
+      if (error?.code === "SSH_EXEC_RUN_TIMEOUT") {
+        return null;
+      }
+      // Open timeout invalidates the physical transport in boundedSshExec. Do not
+      // continue into SFTP on this dead session — propagate so the caller fails
+      // closed instead of hanging/failing obscurely on a poisoned channel.
+      // Mark noTransferFallback so downloadFile's isolated→shared catch does not
+      // retry verification/body transfer on the invalidated transport.
+      if (error?.code === "SSH_EXEC_OPEN_TIMEOUT") {
+        error.noTransferFallback = true;
+        abandonWedgedVerificationSftpChannel(client);
+        throw error;
+      }
+    }
+  }
+  return null;
 }
 
 async function hashRemoteFile(client, sftpId, filePath, encoding, options = {}) {
@@ -686,8 +779,6 @@ async function hashRemoteFile(client, sftpId, filePath, encoding, options = {}) 
     options,
   );
 }
-
-const EMPTY_SHA256_HEX = crypto.createHash("sha256").update("").digest("hex");
 
 /** @param {number|null|undefined} prefixBytes null = full file; >=0 = bounded prefix (incl. empty). */
 function formatSourceFingerprint(digest, prefixBytes) {
@@ -3239,26 +3330,264 @@ function closeSftpHandle(sftp, handle) {
   });
 }
 
-async function readSftpRange(sftp, handle, buffer, position, length) {
+async function readSftpRange(sftp, handle, buffer, position, length, options = {}) {
+  const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 0;
+  const signal = options.signal;
+  const abortGate = options.abortGate;
   let received = 0;
   while (received < length) {
     const bytesRead = await new Promise((resolve, reject) => {
-      sftp.read(
-        handle,
-        buffer,
-        received,
-        length - received,
-        position + received,
-        (error, count) => {
-          if (error) reject(error);
-          else resolve(Number(count) || 0);
-        },
-      );
+      let settled = false;
+      let timer = null;
+      let unwatchAbort = null;
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        unwatchAbort?.();
+        unwatchAbort = null;
+        signal?.removeEventListener?.("abort", onAbort);
+      };
+      const finish = (error, count) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve(Number(count) || 0);
+      };
+      const onAbort = () => {
+        const error = new Error("Transfer cancelled");
+        error.code = "ABORT_ERR";
+        finish(error);
+      };
+      if (signal?.aborted || abortGate?.aborted) {
+        onAbort();
+        return;
+      }
+      if (abortGate) {
+        unwatchAbort = abortGate.watch(onAbort);
+      } else {
+        signal?.addEventListener?.("abort", onAbort, { once: true });
+      }
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          const error = new Error(`SFTP READ timed out after ${timeoutMs} ms`);
+          error.code = "SFTP_READ_TIMEOUT";
+          error.sftpRequestTimedOut = true;
+          finish(error);
+        }, timeoutMs);
+      }
+      try {
+        sftp.read(
+          handle,
+          buffer,
+          received,
+          length - received,
+          position + received,
+          (error, count) => finish(error, count),
+        );
+      } catch (error) {
+        finish(error);
+      }
     });
     if (bytesRead <= 0) {
       throw new Error("Download stream finished before the full source was received");
     }
     received += bytesRead;
+  }
+}
+
+function createSharedAbortGate(signal) {
+  const waiters = new Set();
+  const notify = () => {
+    const error = new Error("Transfer cancelled");
+    error.code = "ABORT_ERR";
+    for (const reject of [...waiters]) {
+      try { reject(error); } catch { /* ignore */ }
+    }
+    waiters.clear();
+  };
+  const onAbort = () => notify();
+  if (signal?.aborted) {
+    return {
+      get aborted() { return true; },
+      watch(onAbortWatch) {
+        onAbortWatch();
+        return () => {};
+      },
+      dispose() {},
+    };
+  }
+  signal?.addEventListener?.("abort", onAbort, { once: true });
+  return {
+    get aborted() { return Boolean(signal?.aborted); },
+    watch(onAbortWatch) {
+      if (signal?.aborted) {
+        onAbortWatch();
+        return () => {};
+      }
+      waiters.add(onAbortWatch);
+      return () => waiters.delete(onAbortWatch);
+    },
+    dispose() {
+      signal?.removeEventListener?.("abort", onAbort);
+      waiters.clear();
+    },
+  };
+}
+
+async function closeSftpHandleBestEffort(sftp, handle, timeoutMs = 2_000) {
+  let timer = null;
+  let timedOut = false;
+  let failed = false;
+  try {
+    await Promise.race([
+      closeSftpHandle(sftp, handle),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          resolve();
+        }, timeoutMs);
+      }),
+    ]);
+  } catch {
+    // Verification cleanup must not mask the content check result.
+    failed = true;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  return { timedOut, failed, unclean: timedOut || failed };
+}
+
+function openSftpReadHandle(sftp, remotePath, signal, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const cleanup = () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener?.("abort", onAbort);
+    };
+    const finish = (error, handle) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve(handle);
+    };
+    const onAbort = () => {
+      const error = new Error("Transfer cancelled");
+      error.code = "ABORT_ERR";
+      finish(error);
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        const error = new Error(`SFTP OPEN timed out after ${timeoutMs} ms`);
+        error.code = "SFTP_OPEN_TIMEOUT";
+        error.sftpRequestTimedOut = true;
+        finish(error);
+      }, timeoutMs);
+    }
+    try {
+      sftp.open(remotePath, "r", (error, handle) => {
+        if (settled) {
+          if (handle) closeSftpHandle(sftp, handle).catch(() => {});
+          return;
+        }
+        finish(error, handle);
+      });
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+async function hashRemotePrefixWithSftpRanges(client, remotePath, bytes, options = {}) {
+  if (!Number.isFinite(bytes) || bytes <= 0 || isScpModeClient(client)) return null;
+  await requireSftpChannel(client, { signal: options.signal });
+  const sftp = client.sftp;
+  if (typeof sftp?.open !== "function" || typeof sftp?.read !== "function") return null;
+
+  const chunkSize = TRANSFER_CHUNK_SIZE;
+  const rangeCount = Math.ceil(bytes / chunkSize);
+  const concurrency = Math.min(DOWNLOAD_TRANSFER_CONCURRENCY, rangeCount);
+  let completedBytes = 0;
+  const openTimeoutMs = Number(options.sftpOpenTimeoutMs) > 0
+    ? Number(options.sftpOpenTimeoutMs)
+    : SFTP_OPEN_TIMEOUT_MS;
+  const readTimeoutMs = Number(options.sftpReadTimeoutMs) > 0
+    ? Number(options.sftpReadTimeoutMs)
+    : SFTP_REQUEST_TIMEOUT_MS;
+  const handle = await openSftpReadHandle(sftp, remotePath, options.signal, openTimeoutMs);
+  const abortGate = createSharedAbortGate(options.signal);
+  try {
+    // Hash windows in order so peak retained buffers stay within the concurrency
+    // fanout (~2MB), not the full multi-GB prefix.
+    const hash = crypto.createHash("sha256");
+    for (let windowStart = 0; windowStart < rangeCount; windowStart += concurrency) {
+      const windowCount = Math.min(concurrency, rangeCount - windowStart);
+      const windowBuffers = new Array(windowCount);
+      // One inactivity watchdog for the whole window. Per-request deadlines would
+      // fire together after readTimeoutMs even while earlier reads keep landing
+      // on a slow/serialized server.
+      let inactivityTimer = null;
+      let rejectInactivity = null;
+      const clearInactivity = () => {
+        if (inactivityTimer) clearTimeout(inactivityTimer);
+        inactivityTimer = null;
+      };
+      const armInactivity = () => {
+        if (!(readTimeoutMs > 0) || options.signal?.aborted || abortGate.aborted) return;
+        clearInactivity();
+        inactivityTimer = setTimeout(() => {
+          const error = new Error(`SFTP READ timed out after ${readTimeoutMs} ms`);
+          error.code = "SFTP_READ_TIMEOUT";
+          error.sftpRequestTimedOut = true;
+          rejectInactivity?.(error);
+        }, readTimeoutMs);
+      };
+      const inactivityWait = readTimeoutMs > 0
+        ? new Promise((_, reject) => { rejectInactivity = reject; })
+        : null;
+      armInactivity();
+      try {
+        await Promise.race([
+          Promise.all(Array.from({ length: windowCount }, async (_, offset) => {
+            const index = windowStart + offset;
+            const position = index * chunkSize;
+            const length = Math.min(chunkSize, bytes - position);
+            const buffer = Buffer.allocUnsafe(length);
+            await readSftpRange(sftp, handle, buffer, position, length, {
+              abortGate,
+            });
+            windowBuffers[offset] = buffer;
+            completedBytes += length;
+            options.onProgress?.(completedBytes);
+            armInactivity();
+          })),
+          ...(inactivityWait ? [inactivityWait] : []),
+        ]);
+      } finally {
+        clearInactivity();
+        rejectInactivity = null;
+      }
+      for (const buffer of windowBuffers) hash.update(buffer);
+    }
+    return hash.digest("hex");
+  } finally {
+    abortGate.dispose();
+    const closeResult = await closeSftpHandleBestEffort(
+      sftp,
+      handle,
+      Number(options.sftpCloseTimeoutMs) > 0 ? Number(options.sftpCloseTimeoutMs) : 2_000,
+    );
+    // A timed-out/failed CLOSE leaves an unresolved request on the shared
+    // channel; drop it so later browse/transfer work cannot reuse it.
+    if (closeResult?.unclean) {
+      abandonWedgedVerificationSftpChannel(client);
+    }
   }
 }
 
@@ -3703,6 +4032,17 @@ function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize
  * @param {number} prefixBytes planned snapshot size
  * @param {{ signal?: AbortSignal, onProgress?: (n: number) => void }} [options]
  */
+function abandonWedgedVerificationSftpChannel(client) {
+  const sftp = client?.sftp;
+  if (!client || !sftp) return;
+  // Drop the cached channel first so requireSftpChannel cannot hand the wedged
+  // object back to later browse/transfer work (hasSftpChannelApi only checks
+  // method presence). Non-sudo sessions can reopen; sudo recovery stays disabled.
+  client.sftp = null;
+  try { sftp.end?.(); } catch { /* ignore */ }
+  try { sftp.destroy?.(); } catch { /* ignore */ }
+}
+
 async function assertLocalDownloadMatchesRemotePrefix(
   localPath,
   client,
@@ -3715,22 +4055,61 @@ async function assertLocalDownloadMatchesRemotePrefix(
     // SCP cannot range-hash portably; fail closed when growth needs proof.
     throw createSourceContentChangedError();
   }
-  await requireSftpChannel(client, { signal: options.signal });
-  if (typeof client.sftp?.createReadStream !== "function") {
-    throw createSourceContentChangedError();
-  }
-  const [localHash, remoteHash] = await Promise.all([
-    hashLocalFile(localPath, options),
-    hashReadable(
-      client.sftp.createReadStream(remotePath, {
-        start: 0,
-        end: prefixBytes - 1,
-      }),
-      options,
-    ),
-  ]);
-  if (!localHash || !remoteHash || localHash !== remoteHash) {
-    throw createSourceContentChangedError();
+  try {
+    await requireSftpChannel(client, { signal: options.signal });
+    const remoteHash = (async () => {
+      const commandDigest = await hashRemotePrefixViaSshCommand(
+        client,
+        remotePath,
+        prefixBytes,
+        options,
+      );
+      if (commandDigest) return commandDigest;
+      if (options.preferSftpRanges !== false) {
+        try {
+          const rangeDigest = await hashRemotePrefixWithSftpRanges(
+            client,
+            remotePath,
+            prefixBytes,
+            options,
+          );
+          if (rangeDigest) return rangeDigest;
+        } catch (error) {
+          if (options.signal?.aborted || error?.sftpRequestTimedOut) throw error;
+        }
+      }
+      if (typeof client.sftp?.createReadStream !== "function") {
+        throw createSourceContentChangedError();
+      }
+      return hashReadable(
+        client.sftp.createReadStream(remotePath, {
+          start: 0,
+          end: prefixBytes - 1,
+        }),
+        {
+          ...options,
+          inactivityTimeoutMs: Number(options.sftpReadTimeoutMs) > 0
+            ? Number(options.sftpReadTimeoutMs)
+            : SFTP_REQUEST_TIMEOUT_MS,
+        },
+      );
+    })();
+    const [localHash, verifiedRemoteHash] = await Promise.all([
+      hashLocalFile(localPath, options),
+      remoteHash,
+    ]);
+    if (!localHash || !verifiedRemoteHash || localHash !== verifiedRemoteHash) {
+      throw createSourceContentChangedError();
+    }
+  } catch (error) {
+    // Verification OPEN/READ/stream watchdogs must fail closed — downloadFile's
+    // isolated→shared catch would otherwise retry body transfer on a channel
+    // that still owns the timed-out request and can hang indefinitely.
+    if (error && typeof error === "object" && error.sftpRequestTimedOut) {
+      error.noTransferFallback = true;
+      abandonWedgedVerificationSftpChannel(client);
+    }
+    throw error;
   }
 }
 
@@ -3747,6 +4126,8 @@ async function assertDownloadSourceAfterTransfer(
     client,
     remotePath,
     signal,
+    preferSftpRanges = true,
+    ...verificationOptions
   } = {},
 ) {
   if (!initialSource) return;
@@ -3763,7 +4144,7 @@ async function assertDownloadSourceAfterTransfer(
       client,
       remotePath,
       expectedSize,
-      { signal },
+      { signal, preferSftpRanges, ...verificationOptions },
     );
     assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, {
       allowSourceGrowth: true,
@@ -4483,13 +4864,25 @@ async function downloadFile(
     }
     sendProgress(fileSize, fileSize, { force: true, checkpointBytes: fileSize });
     if (initialSource) {
-      const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-      await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
-        localPath,
-        client,
-        remotePath,
-        signal: transfer.signal,
-      });
+      // Growth verification may use concurrent prefix ranges (especially sudo,
+      // which skips unprivileged SSH digests). Hold the session fast-download
+      // slot so those READs do not race another download's fanout.
+      let holdSessionSlot = false;
+      try {
+        await acquireSessionFastDownloadSlot(client, transfer);
+        holdSessionSlot = true;
+        const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
+        await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+          localPath,
+          client,
+          remotePath,
+          signal: transfer.signal,
+        });
+      } finally {
+        if (holdSessionSlot) {
+          releaseSessionFastDownloadSlot(client);
+        }
+      }
     }
     return;
   }
@@ -4515,15 +4908,33 @@ async function downloadFile(
 
   const finishSuccessfulDownload = async () => {
     if (!initialSource) return;
-    const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-    // Downloads capture a fixed snapshot; remote appends (live logs) are OK
-    // only when the full planned prefix still matches the staged file.
-    await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
-      localPath,
-      client,
-      remotePath,
-      signal: transfer.signal,
-    });
+    const previousPhase = transfer.phase;
+    let lastVerificationProgressAt = 0;
+    transfer.phase = "verifying";
+    transfer.publishCurrentProgress?.();
+    try {
+      const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
+      // Downloads capture a fixed snapshot; remote appends (live logs) are OK
+      // only when the full planned prefix still matches the staged file.
+      await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+        localPath,
+        client,
+        remotePath,
+        signal: transfer.signal,
+        onProgress: () => {
+          const now = Date.now();
+          if (now - lastVerificationProgressAt < 250) return;
+          lastVerificationProgressAt = now;
+          transfer.publishCurrentProgress?.();
+        },
+      });
+      transfer.publishCurrentProgress?.();
+    } finally {
+      transfer.phase = previousPhase || "transferring";
+      if (!transfer.cancelled && !transfer.signal?.aborted) {
+        transfer.publishCurrentProgress?.();
+      }
+    }
   };
 
   // One session-wide fast-path slot for isolated + shared READ fanout (#1507).
