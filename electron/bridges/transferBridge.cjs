@@ -271,6 +271,157 @@ function buildRemoteTransferStagePath(targetPath, transferId) {
 }
 
 /**
+ * True when `filePath` is a deterministic resumable stage that same-id retries
+ * reuse (`.${base}.netcatty-${transferId}.part`). Non-resumable uploads use a
+ * fresh `.netcatty-upload-...` path per attempt and must not match.
+ */
+function isReusableRemoteTransferStagePath(filePath, transferId) {
+  if (transferId == null || transferId === "") return false;
+  const safeId = String(transferId).replace(/[^A-Za-z0-9_-]/g, "_");
+  if (!safeId) return false;
+  const base = path.posix.basename(String(filePath || ""));
+  // buildRemoteTransferStagePath → `.${name}.netcatty-${safeId}.part`
+  // non-resumable stages → `.netcatty-upload-${uuid}-....part`
+  return (
+    base.startsWith(".")
+    && base.endsWith(`.netcatty-${safeId}.part`)
+    && !base.startsWith(".netcatty-upload-")
+  );
+}
+
+/**
+ * True when an OPEN path refers to the same remote stage as `stagedRemote`.
+ *
+ * OPEN may receive a session-encoded Buffer (non-utf8 / non-ascii) while
+ * stagedRemote.path stays the logical string. Compare both representations.
+ *
+ * @param {string | Buffer | null | undefined} openPath
+ * @param {{ path?: string, sftpId?: string, encoding?: string } | null | undefined} stagedRemote
+ */
+function remoteOpenPathMatchesStaged(openPath, stagedRemote) {
+  const logical = stagedRemote?.path;
+  if (openPath == null || logical == null || logical === "") return false;
+  if (openPath === logical) return true;
+  let encoded = logical;
+  if (stagedRemote.sftpId) {
+    try {
+      encoded = encodePathForSession(
+        stagedRemote.sftpId,
+        logical,
+        stagedRemote.encoding,
+      );
+    } catch {
+      encoded = logical;
+    }
+  }
+  if (openPath === encoded) return true;
+  if (Buffer.isBuffer(openPath) && Buffer.isBuffer(encoded)) {
+    return openPath.equals(encoded);
+  }
+  // OPEN Buffer vs logical/encoded string (utf-8/ascii encodePath returns string).
+  if (Buffer.isBuffer(openPath) && typeof encoded === "string") {
+    return openPath.equals(Buffer.from(encoded));
+  }
+  if (typeof openPath === "string" && Buffer.isBuffer(encoded)) {
+    return encoded.equals(Buffer.from(openPath));
+  }
+  return false;
+}
+
+/**
+ * Serialize truncating shared-write OPENs on the same remote path.
+ *
+ * A drain force-complete can let attempt N return while its OPEN "w" is still
+ * in flight. Same-id retries reuse deterministic `.netcatty-<id>.part` stages;
+ * if the stale OPEN lands after the retry has begun writing, the server
+ * truncates the retry stage and a later size check can promote sparse data
+ * (Codex P1 on 42a27ef7). Wait for any prior OPEN on the path to settle before
+ * issuing another truncating OPEN; release on OPEN callback and on drain
+ * force-complete so a dead channel cannot block retries forever.
+ *
+ * @type {Map<string, { promise: Promise<void>, resolve: () => void, released: boolean }>}
+ */
+const truncatingSharedWriteOpenGates = new Map();
+/** @type {WeakMap<object, string>} */
+const truncatingSharedWriteSftpKeys = new WeakMap();
+let truncatingSharedWriteSftpSeq = 0;
+
+function sharedWriteOpenPathKey(filePath) {
+  if (Buffer.isBuffer(filePath)) return `b:${filePath.toString("hex")}`;
+  return `s:${String(filePath ?? "")}`;
+}
+
+/**
+ * Scope path gates per SFTP endpoint so two hosts with the same remote path do
+ * not serialize each other (Codex P2 on c3682460).
+ * @param {object | null | undefined} sftp
+ * @param {object | null | undefined} transfer
+ */
+function sharedWriteOpenSessionKey(sftp, transfer) {
+  // Prefer host identity so an isolated-channel retry still waits for a stale
+  // shared OPEN on the same host path (Codex P1 on 294b7a4b). Fall back to
+  // sftp/session ids when host is unknown.
+  const hostKey = transfer?.targetHostId || transfer?.hostId || transfer?.sourceHostId;
+  if (hostKey != null && String(hostKey).length > 0) {
+    return `host:${String(hostKey)}`;
+  }
+  const fromTransfer = transfer?.targetSftpId
+    || transfer?.sourceSftpId
+    || transfer?.sftpId
+    || transfer?.sessionId;
+  if (fromTransfer != null && String(fromTransfer).length > 0) {
+    return `id:${String(fromTransfer)}`;
+  }
+  if (sftp && typeof sftp === "object") {
+    let key = truncatingSharedWriteSftpKeys.get(sftp);
+    if (!key) {
+      truncatingSharedWriteSftpSeq += 1;
+      key = `obj:${truncatingSharedWriteSftpSeq}`;
+      truncatingSharedWriteSftpKeys.set(sftp, key);
+    }
+    return key;
+  }
+  return "unknown";
+}
+
+/**
+ * @param {string | Buffer} filePath
+ * @param {string} [sessionKey]
+ * @returns {{ waitForPrior: Promise<void>, release: () => void }}
+ */
+function beginTruncatingSharedWriteOpen(filePath, sessionKey = "unknown") {
+  const key = `${sessionKey}|${sharedWriteOpenPathKey(filePath)}`;
+  const prior = truncatingSharedWriteOpenGates.get(key);
+  const waitForPrior = prior && !prior.released
+    ? prior.promise
+    : Promise.resolve();
+
+  let resolve;
+  const promise = new Promise((r) => {
+    resolve = r;
+  });
+  const entry = {
+    promise,
+    resolve: () => {
+      resolve();
+    },
+    released: false,
+  };
+  truncatingSharedWriteOpenGates.set(key, entry);
+
+  const release = () => {
+    if (entry.released) return;
+    entry.released = true;
+    if (truncatingSharedWriteOpenGates.get(key) === entry) {
+      truncatingSharedWriteOpenGates.delete(key);
+    }
+    entry.resolve();
+  };
+
+  return { waitForPrior, release };
+}
+
+/**
  * Reconcile a claimed resume offset with durable staged bytes.
  *
  * Progress events update checkpointBytes as soon as data is handed to the write
@@ -1555,7 +1706,9 @@ async function uploadFile(
   sendProgress,
   encoding = "utf-8",
   onBytesCommitted = null,
+  options = {},
 ) {
+  const generatedStagePath = options.generatedStagePath === true;
   if (isScpModeClient(client)) {
     transfer.pauseSupported = false;
     transfer.pauseUnavailableReason = "Pause is unavailable for SCP transfers";
@@ -1738,7 +1891,7 @@ async function uploadFile(
           fileSize,
           transfer,
           sendProgress,
-          { disposeChannel: true, onBytesCommitted },
+          { disposeChannel: true, onBytesCommitted, generatedStagePath },
         );
         concurrentIsolatedOk = true;
       } catch (err) {
@@ -1790,6 +1943,13 @@ async function uploadFile(
       let fastPutSourcePath = localPath;
       let fastPutSnapshotPath = null;
       try {
+        // Wait for any prior/in-flight write OPEN on this path (including our
+        // own concurrent attempt's still-pending OPEN) before fastPut truncates
+        // the same stage (Codex P1 on 7872a304).
+        if (typeof transfer.pendingWriteOpenPathGate?.then === "function") {
+          await transfer.pendingWriteOpenPathGate;
+        }
+        if (transfer.cancelled) throw new Error("Transfer cancelled");
         transfer.uploadStrategy = "fastPut-isolated";
         logTransferDiag(transfer, "strategy", { strategy: "fastPut-isolated" });
         transfer.pauseSupported = false;
@@ -1881,7 +2041,7 @@ async function uploadFile(
         fileSize,
         transfer,
         sendProgress,
-        { disposeChannel: false, onBytesCommitted },
+        { disposeChannel: false, onBytesCommitted, generatedStagePath },
       );
       sharedOk = true;
     } catch (err) {
@@ -1933,20 +2093,140 @@ async function uploadFile(
  * Shared write opens ("w" / "r+" / …) publish transfer.sharedWriteOpenDrain and
  * keep it pending until the OPEN callback finishes (including late opens after
  * a cancel settle timeout), so upload cleanup awaits the drain before deleting
- * the remote stage. Channel-error / cancel-settle paths that never receive an
- * OPEN callback arm a short drain force-complete so a dead channel cannot hold
- * the transfer and SFTP lease forever.
+ * the remote stage. Channel-error and cancel-settle paths that never receive an
+ * OPEN callback arm a short drain force-complete so a dead/stalled channel
+ * cannot hold the transfer and SFTP lease forever. A late truncating `"w"` OPEN
+ * after cancel still closes the handle and, when the path is an explicit
+ * generated stage (`generatedStagePath`), best-effort unlinks it so stage
+ * cleanup cannot race a recreate/orphan. In-place final targets are never
+ * unlinked here. Same-id retries that already re-own the active transfer
+ * slot skip unlink only when the retry's actual `stagedRemote.path` matches
+ * this OPEN path. Path-shape / resumable+targetPath heuristics are not used:
+ * an in-place retry leaves stagedRemote null while still looking "resumable",
+ * and a stale late OPEN on a leftover `.part` must still unlink (Codex P2 on
+ * 39e20bfa / 7c446c7 / d19ecb88). Truncating shared opens also take a
+ * path-level gate so a same-id retry cannot issue OPEN "w" on a stage while a
+ * prior attempt's truncating OPEN is still unsettled (Codex P1 on 42a27ef7).
  *
- * @param {{ disposeChannel?: boolean, abortChannel?: (() => void) | null }} [options]
+ * @param {{ disposeChannel?: boolean, abortChannel?: (() => void) | null, generatedStagePath?: boolean }} [options]
  */
 function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}) {
   const disposeChannel = options.disposeChannel !== false;
   const abortChannel = typeof options.abortChannel === "function"
     ? options.abortChannel
     : null;
+  // Match sftpBridge.runFastPutOnChannel: only unlink planner-generated stages.
+  const generatedStagePath = options.generatedStagePath === true;
+  // flags may be a getter so afterPathGate can shrink the resume checkpoint and
+  // switch r+ → w before the actual OPEN (Codex P2). Resolve at OPEN/unlink time
+  // so a post-gate shrink from r+ → w still unlinks generated stages.
+  const resolveFlags = () => (typeof flags === "function" ? flags() : flags);
   // ssh2 string flags: "r" is read-only; anything else can create/truncate.
-  const isWriteOpen = String(flags ?? "r") !== "r";
+  // Treat function flags as write opens (caller only uses r+/w for transfers).
+  const isWriteOpen = typeof flags === "function" || String(flags ?? "r") !== "r";
+  const isTruncatingOpenNow = () => String(resolveFlags() ?? "r") === "w";
   const trackSharedWriteDrain = !disposeChannel && isWriteOpen;
+  // Path-gate EVERY write open (shared and isolated, "w" and "r+"). An isolated
+  // recovery OPEN must still wait for a stale shared truncating OPEN on the same
+  // host path (Codex P1 on 294b7a4b / 40db393f).
+  const pathGate = isWriteOpen
+    ? beginTruncatingSharedWriteOpen(filePath, sharedWriteOpenSessionKey(sftp, transfer))
+    : null;
+  // Expose a promise that resolves when this OPEN's path gate is released so
+  // same-transfer fallbacks (fastPut) can wait instead of racing a still-
+  // pending truncating OPEN (Codex P1 on 7872a304).
+  if (pathGate && transfer && typeof transfer === "object") {
+    let resolvePathGate;
+    const pending = new Promise((resolve) => { resolvePathGate = resolve; });
+    transfer.pendingWriteOpenPathGate = pending;
+    transfer._resolvePendingWriteOpenPathGate = () => {
+      try { resolvePathGate(); } catch { /* ignore */ }
+      if (transfer.pendingWriteOpenPathGate === pending) {
+        transfer.pendingWriteOpenPathGate = null;
+      }
+      transfer._resolvePendingWriteOpenPathGate = null;
+    };
+  }
+  // Re-check ownership at unlink time: a same-id retry may already own
+  // activeTransfers. Only suppress unlink when the retry's *actual* staged
+  // remote path matches this OPEN path. Do not infer ownership from
+  // resumable+targetPath or path-shape alone — in-place retries keep
+  // resumable/targetPath while stagedRemote is null (e.g. symlink / no-lstat
+  // destinations), and a stale late OPEN on a leftover .part must still unlink.
+  // Compare in the same representation: OPEN filePath may be a session-encoded
+  // Buffer while stagedRemote.path is the logical string.
+  // Truncating is re-resolved so getter flags that collapse to "w" still unlink.
+  const canUnlinkLateGeneratedStageNow = () => {
+    if (!generatedStagePath || !isTruncatingOpenNow()) return false;
+    const transferId = transfer?.transferId;
+    if (transferId == null || transferId === "") return true;
+    const active = activeTransfers.get(transferId);
+    if (active && active !== transfer) {
+      if (remoteOpenPathMatchesStaged(filePath, active.stagedRemote)) {
+        return false;
+      }
+      return true;
+    }
+    // Same transfer moved to a non-gated strategy (e.g. fastPut after concurrent
+    // OPEN channel-error) still owns the stage — do not unlink the file that
+    // the fallback just wrote (Codex P2 on 98b26f31). Only strategy-move counts:
+    // ordinary cancel still has stagedRemote set and must unlink (Codex P1).
+    if (active === transfer) {
+      const strategy = String(active.uploadStrategy || active.strategy || "");
+      if (/fastput|stream/i.test(strategy)) return false;
+    }
+    return true;
+  };
+
+  /**
+   * When a late truncating OPEN lands after another attempt already opened the
+   * same stage/in-place path, the server may have wiped those bytes. Fail the
+   * live attempt rather than allow a sparse promote (Codex P1 on 42a27ef7 /
+   * cross-id same-path P1 on 2165).
+   */
+  const invalidateRetryStageIfStaleOpen = () => {
+    // Truncating OPEN on either a generated stage or an in-place final can wipe
+    // a concurrent same-path writer — same-id retry or a new transferId.
+    if (!isTruncatingOpenNow()) return;
+    const openHost = transfer?.targetHostId || transfer?.hostId || transfer?.sourceHostId;
+    const openSession = transfer?.targetSftpId || transfer?.sourceSftpId || transfer?.sftpId;
+    for (const active of activeTransfers.values()) {
+      if (!active || active === transfer) continue;
+      const matchesStage = remoteOpenPathMatchesStaged(filePath, active.stagedRemote);
+      const matchesInPlace = !active.stagedRemote && (
+        remoteOpenPathMatchesStaged(filePath, {
+          path: active.targetPath,
+          sftpId: active.targetSftpId,
+          encoding: active.targetEncoding,
+        })
+        || String(filePath ?? "") === String(active.targetPath ?? "")
+      );
+      if (!matchesStage && !matchesInPlace) continue;
+      const activeHost = active.targetHostId || active.hostId || active.sourceHostId;
+      const activeSession = active.targetSftpId || active.sourceSftpId || active.sftpId;
+      // Require a matching host or session identity. Do not treat a missing host
+      // as a wildcard — clipboard/agent uploads share common paths like /tmp
+      // across unrelated endpoints (Codex P2 on 4d194041).
+      if (openHost != null && String(openHost).length > 0
+        && activeHost != null && String(activeHost).length > 0) {
+        if (String(openHost) !== String(activeHost)) continue;
+      } else if (openSession != null && String(openSession).length > 0
+        && activeSession != null && String(activeSession).length > 0) {
+        if (String(openSession) !== String(activeSession)) continue;
+      } else {
+        continue;
+      }
+      active.staleOpenTruncatedStage = true;
+      // Not yet accepted OPEN: shrink checkpoint so afterPathGate / r+ restart
+      // from zero instead of writing a sparse prefix into a wiped stage.
+      if (active.sharedWriteOpenAccepted !== true) {
+        try { active.checkpointBytes = 0; } catch { /* ignore */ }
+        continue;
+      }
+      try { active.abort?.(); } catch { /* ignore */ }
+    }
+  };
+
   let resolveSharedWriteDrain = null;
   if (trackSharedWriteDrain) {
     transfer.sharedWriteOpenDrain = new Promise((resolve) => {
@@ -1954,11 +2234,19 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
     });
   }
 
-  return new Promise((resolve, reject) => {
+  const runOpen = () => new Promise((resolve, reject) => {
     let settled = false;
     let openDrainTimer = null;
     let drainForceTimer = null;
     const previousAbort = transfer.abort;
+    let pathGateReleased = false;
+
+    const releasePathGate = () => {
+      if (!pathGate || pathGateReleased) return;
+      pathGateReleased = true;
+      pathGate.release();
+      try { transfer._resolvePendingWriteOpenPathGate?.(); } catch { /* ignore */ }
+    };
 
     const clearDrainForceTimer = () => {
       if (!drainForceTimer) return;
@@ -1974,16 +2262,125 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
       resolveDrain();
     };
 
-    // When OPEN wait settles without an OPEN callback (channel error, or cancel
-    // settle timeout), keep drain pending for a late truncating OPEN — but force
-    // complete if the callback never arrives so cleanup/lease cannot hang.
+    // OPEN wait may settle without a callback (channel error, or cancel settle
+    // timeout). Force-complete the drain so cleanup/lease cannot hang, but
+    // NEVER release the path gate here for shared channels: a still-in-flight
+    // truncating OPEN can land later and wipe a same-path retry (Codex P1 on
+    // a0b2ce01 / late-unlink-retry). Gate is only released from the OPEN
+    // callback paths (success, error, late finishLateSharedWriteOpen), or via
+    // armPathGateForceRelease after isolated sftp.end() when the callback is
+    // never expected to arrive.
     const armSharedWriteDrainForceComplete = () => {
       if (!trackSharedWriteDrain || !resolveSharedWriteDrain || drainForceTimer) return;
       drainForceTimer = setTimeout(() => {
         drainForceTimer = null;
+        // Free the transfer/lease only. Path gate stays held until the OPEN
+        // callback actually settles (or never, if the channel is dead — safer
+        // than reusing a path that a stale truncating OPEN can still wipe).
         completeSharedWriteDrain();
       }, 2000);
     };
+
+
+    // Best-effort remote unlink. A dead shared channel that never invokes the
+    // unlink callback is bounded by boundUnlinkThen so finishCancel / gate
+    // release cannot hang the transfer or same-path waiters (Codex P2 hang).
+    const unlinkSharedWritePathBestEffort = () => new Promise((resolveUnlink) => {
+      let settledUnlink = false;
+      const finishUnlink = () => {
+        if (settledUnlink) return;
+        settledUnlink = true;
+        resolveUnlink();
+      };
+      // Ownership can change between close and unlink (retry start).
+      if (!canUnlinkLateGeneratedStageNow()) {
+        finishUnlink();
+        return;
+      }
+      if (typeof sftp.unlink !== "function") {
+        finishUnlink();
+        return;
+      }
+      try {
+        sftp.unlink(filePath, () => finishUnlink());
+      } catch {
+        finishUnlink();
+      }
+    });
+
+    /**
+     * Unlink, then settle transfer and release the path gate.
+     * Transfer settle is 2s-bounded so a dead unlink cannot hang the invoke;
+     * the path gate stays held until unlink actually settles so a delayed
+     * unlink cannot delete a same-path retry that already wrote (Codex P2 on
+     * 46ed3722).
+     */
+    const unlinkThenSettleAndReleaseGate = (settleFn) => {
+      let transferSettled = false;
+      const settleTransfer = () => {
+        if (transferSettled) return;
+        transferSettled = true;
+        settleFn();
+      };
+      const settleTimer = setTimeout(settleTransfer, 2000);
+      unlinkSharedWritePathBestEffort().then(
+        () => {
+          clearTimeout(settleTimer);
+          settleTransfer();
+          releasePathGate();
+        },
+        () => {
+          clearTimeout(settleTimer);
+          settleTransfer();
+          releasePathGate();
+        },
+      );
+    };
+
+    /** Close with 2s bound so a dead channel cannot pin the path gate. */
+    const boundCloseSftpHandle = (handle, thenFn) => {
+      let closed = false;
+      const finishClose = () => {
+        if (closed) return;
+        closed = true;
+        thenFn();
+      };
+      const closeTimer = setTimeout(finishClose, 2000);
+      closeSftpHandle(sftp, handle).then(
+        () => { clearTimeout(closeTimer); finishClose(); },
+        () => { clearTimeout(closeTimer); finishClose(); },
+      );
+    };
+
+    // Late shared write OPEN after settle: close handle, and for generated
+    // truncating stages also unlink so a force-completed drain / stage delete
+    // cannot leave a recreate orphan after cancel OR channel-error settle
+    // (Codex P2 on 0cda4a39 / cd57d960 / bd42c51c). Never unlink in-place
+    // final targets (Codex P1 on a9f748c8). Skip unlink only when a same-id
+    // retry owns a reusable resume stage at this path (Codex P2 on d19ecb88).
+    // Bound close/unlink so a dead channel cannot pin the path gate forever
+    // after drain force-complete (Codex P2 on 1a8cac20).
+    const finishLateSharedWriteOpen = (handle) => {
+      invalidateRetryStageIfStaleOpen();
+      const afterClose = () => {
+        const finish = () => {
+          completeSharedWriteDrain();
+          releasePathGate();
+        };
+        if (canUnlinkLateGeneratedStageNow()) {
+          // Gate stays held until unlink settles (no 2s force-release).
+          unlinkSharedWritePathBestEffort().then(finish, finish);
+          return;
+        }
+        finish();
+      };
+      if (handle) {
+        boundCloseSftpHandle(handle, afterClose);
+        return;
+      }
+      afterClose();
+    };
+
 
     const settle = (fn, value) => {
       if (settled) return;
@@ -2001,16 +2398,23 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
 
     const abortDuringOpen = () => {
       transfer.cancelled = true;
-      // Shared write OPEN can truncate/create the remote path. A settle timeout
-      // unblocks the transfer UX, but sharedWriteOpenDrain stays pending until
-      // the OPEN callback finishes (or the drain force-complete) so cleanup
-      // cannot race a late truncating OPEN.
-      if (!disposeChannel && isWriteOpen && !settled) {
+      // Any write OPEN (shared or isolated) can truncate/create the remote path.
+      // A settle timeout unblocks the transfer UX; the path gate stays held until
+      // the OPEN callback finishes (or isolated force-release after end()) so a
+      // same-path retry cannot race a still-in-flight truncating OPEN (Codex P1
+      // on 76015575). Shared drain stays pending until callback/force-complete.
+      if (isWriteOpen && !settled) {
         try { abortChannel?.(); } catch { /* ignore */ }
         if (!openDrainTimer) {
           openDrainTimer = setTimeout(() => {
             settle(reject, new Error("Transfer cancelled"));
-            armSharedWriteDrainForceComplete();
+            if (trackSharedWriteDrain) {
+              armSharedWriteDrainForceComplete();
+            }
+            // Isolated write: keep path gate until OPEN callback too. Force-
+            // releasing after sftp.end() lets a same-path retry finish, then a
+            // late truncating OPEN can wipe its destination with no live
+            // activeTransfers entry to invalidate (Codex P1 on c30e1734).
           }, 2000);
         }
         return;
@@ -2019,22 +2423,27 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
       // sftp.end() cannot win the promise with a channel-close error first.
       settle(reject, new Error("Transfer cancelled"));
       try { abortChannel?.(); } catch { /* ignore */ }
-      if (!trackSharedWriteDrain) completeSharedWriteDrain();
+      completeSharedWriteDrain();
+      releasePathGate();
     };
 
     const onOpenChannelError = (error) => {
       settle(reject, error || new Error("SFTP channel error"));
-      // Shared write: keep drain pending for a late OPEN close, but bound it so
-      // a dead channel that never invokes the OPEN callback cannot hang forever.
-      if (!trackSharedWriteDrain) {
-        completeSharedWriteDrain();
-      } else {
+      // Write OPEN: keep path gate until OPEN callback (or isolated force-release).
+      // Shared drain also stays pending until callback/force-complete.
+      if (trackSharedWriteDrain) {
         armSharedWriteDrainForceComplete();
+      } else if (isWriteOpen) {
+        // Isolated write: hold path gate until OPEN callback (same as cancel).
+      } else {
+        completeSharedWriteDrain();
+        releasePathGate();
       }
     };
 
     if (transfer.cancelled) {
       completeSharedWriteDrain();
+      releasePathGate();
       reject(new Error("Transfer cancelled"));
       return;
     }
@@ -2043,49 +2452,221 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
     sftp.on?.("error", onOpenChannelError);
 
     try {
-      sftp.open(filePath, flags, (error, handle) => {
+      sftp.open(filePath, resolveFlags(), (error, handle) => {
         if (settled) {
           // Cancel / channel error already settled (possibly via drain timeout).
-          // Still close a late shared handle, then release the drain barrier so
-          // cleanup can run.
-          if (!error && handle && !disposeChannel) {
-            closeSftpHandle(sftp, handle).then(
-              completeSharedWriteDrain,
-              completeSharedWriteDrain,
-            );
+          // Shared/sudo late handles always close (read or write) so the long-
+          // lived session cannot leak. Isolated late write OPENs still run
+          // invalidation/unlink (Codex P1 on 76015575 / 298d155e).
+          if (!error && handle && (isWriteOpen || !disposeChannel)) {
+            finishLateSharedWriteOpen(handle);
             return;
           }
           completeSharedWriteDrain();
+          releasePathGate();
           return;
         }
         if (error) {
           settle(reject, error);
           completeSharedWriteDrain();
+          releasePathGate();
+          return;
+        }
+        // Ownership moved to a same-id retry before this OPEN applied: treat as
+        // late so we never hand the stale truncating handle to the old attempt.
+        // Mark noTransferFallback so uploadFile does not run
+        // prepareUploadFallbackCheckpoint and truncate the retry's shared stage
+        // (Codex P1 on 6834bed1).
+        const activeOwner = transfer?.transferId != null
+          ? activeTransfers.get(transfer.transferId)
+          : null;
+        if (activeOwner && activeOwner !== transfer) {
+          const supersededErr = new Error("Transfer superseded");
+          supersededErr.noTransferFallback = true;
+          settle(reject, supersededErr);
+          if (handle && isWriteOpen) {
+            finishLateSharedWriteOpen(handle);
+            return;
+          }
+          completeSharedWriteDrain();
+          releasePathGate();
           return;
         }
         if (transfer.cancelled) {
           const finishCancel = () => {
             settle(reject, new Error("Transfer cancelled"));
             completeSharedWriteDrain();
+            releasePathGate();
           };
           if (handle && !disposeChannel) {
             // Close before settle/drain so shared write cleanup runs after the
-            // truncating OPEN handle is released.
-            closeSftpHandle(sftp, handle).then(finishCancel, finishCancel);
+            // truncating OPEN handle is released. Cancel + generated stage
+            // "w": unlink too so a staged recreate cannot survive if cleanup
+            // already raced. In-place finals are close-only. Same-id retries
+            // that re-own activeTransfers skip unlink (resume stage reuse).
+            if (canUnlinkLateGeneratedStageNow()) {
+              // Bound close. Unlink: settle transfer after 2s if needed, but keep
+              // the path gate until unlink actually settles (Codex P2 hang +
+              // delayed-unlink race on 46ed3722).
+              boundCloseSftpHandle(handle, () => {
+                unlinkThenSettleAndReleaseGate(() => {
+                  settle(reject, new Error("Transfer cancelled"));
+                  completeSharedWriteDrain();
+                });
+              });
+              return;
+            }
+            boundCloseSftpHandle(handle, finishCancel);
             return;
           }
           finishCancel();
           return;
         }
+        transfer.sharedWriteOpenAccepted = true;
         settle(resolve, handle);
         completeSharedWriteDrain();
+        releasePathGate();
       });
     } catch (error) {
       // Sync throw (destroyed channel / bad state) must still settle and drop
       // the error listener; otherwise the shared browse channel leaks listeners.
       settle(reject, error);
       completeSharedWriteDrain();
+      releasePathGate();
     }
+  });
+
+  if (!pathGate) return runOpen();
+  // Wait for any prior truncating OPEN on this path before issuing ours.
+  // The wait must be cancelable: a cancelled transfer must release its gate
+  // entry and settle drain without waiting forever on a stuck prior OPEN
+  // (lease/admission hang + blocking later same-path attempts).
+  return new Promise((resolve, reject) => {
+    let waiting = true;
+    const previousAbort = transfer.abort;
+
+    const detachChannelErrorWhileWaiting = () => {
+      try { sftp.removeListener?.("error", onChannelErrorWhileWaiting); } catch { /* ignore */ }
+    };
+
+    const abandonGateWait = (error) => {
+      if (!waiting) return;
+      waiting = false;
+      detachChannelErrorWhileWaiting();
+      if (transfer.abort === wrappedAbort) {
+        transfer.abort = previousAbort;
+      }
+      // Do not release this waiter immediately: beginTruncatingSharedWriteOpen
+      // already replaced the map entry with us. Releasing now would leave later
+      // same-path attempts with no barrier while the prior OPEN is still in
+      // flight (stale truncating OPEN race). Chain our release to the prior.
+      pathGate.waitForPrior.then(
+        () => {
+          pathGate.release();
+          try { transfer._resolvePendingWriteOpenPathGate?.(); } catch { /* ignore */ }
+        },
+        () => {
+          pathGate.release();
+          try { transfer._resolvePendingWriteOpenPathGate?.(); } catch { /* ignore */ }
+        },
+      );
+      if (resolveSharedWriteDrain) {
+        const resolveDrain = resolveSharedWriteDrain;
+        resolveSharedWriteDrain = null;
+        resolveDrain();
+      }
+      reject(error);
+    };
+
+    const onChannelErrorWhileWaiting = (error) => {
+      // Prior OPEN may never settle after a dead channel; reject this waiter so
+      // lease/admission are not held until manual cancel (Codex P2 on 1f08f82c).
+      const err = error instanceof Error ? error : new Error(String(error?.message || error || "SFTP channel error"));
+      abandonGateWait(err);
+    };
+
+    const wrappedAbort = () => {
+      try { previousAbort?.(); } catch { /* ignore */ }
+      transfer.cancelled = true;
+      abandonGateWait(new Error("Transfer cancelled"));
+    };
+    transfer.abort = wrappedAbort;
+
+    if (transfer.cancelled) {
+      abandonGateWait(new Error("Transfer cancelled"));
+      return;
+    }
+
+    try { sftp.on?.("error", onChannelErrorWhileWaiting); } catch { /* ignore */ }
+
+    const startOpen = () => {
+      if (!waiting) return;
+      waiting = false;
+      // Keep cancel + channel-error wiring active through afterPathGate. A hung
+      // post-gate stage stat must still yield to cancel/channel death so the
+      // path gate and lease are not pinned forever (Codex P2 on f642580d).
+      let afterGateDone = false;
+      const releaseGateAndDrain = () => {
+        pathGate.release();
+        if (resolveSharedWriteDrain) {
+          const resolveDrain = resolveSharedWriteDrain;
+          resolveSharedWriteDrain = null;
+          resolveDrain();
+        }
+      };
+      const onChannelErrorDuringAfterGate = (error) => {
+        const err = error instanceof Error
+          ? error
+          : new Error(String(error?.message || error || "SFTP channel error"));
+        failAfterGate(err);
+      };
+      const detachAfterGateHooks = () => {
+        detachChannelErrorWhileWaiting();
+        try { sftp.removeListener?.("error", onChannelErrorDuringAfterGate); } catch { /* ignore */ }
+        if (transfer.abort === abortDuringAfterGate) {
+          transfer.abort = previousAbort;
+        }
+      };
+      const failAfterGate = (error) => {
+        if (afterGateDone) return;
+        afterGateDone = true;
+        detachAfterGateHooks();
+        releaseGateAndDrain();
+        reject(error instanceof Error ? error : new Error(String(error?.message || error)));
+      };
+      const abortDuringAfterGate = () => {
+        try { previousAbort?.(); } catch { /* ignore */ }
+        transfer.cancelled = true;
+        failAfterGate(new Error("Transfer cancelled"));
+      };
+
+      // Swap gate-wait channel listener for the after-gate one; keep cancel live.
+      detachChannelErrorWhileWaiting();
+      transfer.abort = abortDuringAfterGate;
+      try { sftp.on?.("error", onChannelErrorDuringAfterGate); } catch { /* ignore */ }
+
+      // After waiting on a prior OPEN, re-validate resume checkpoints so a
+      // truncating OPEN that landed while we waited cannot leave us writing
+      // past a wiped stage (Codex P2 on 294b7a4b).
+      const afterGate = typeof options.afterPathGate === "function"
+        ? Promise.resolve().then(() => options.afterPathGate())
+        : Promise.resolve();
+      afterGate.then(() => {
+        if (afterGateDone) return;
+        if (transfer.cancelled) {
+          failAfterGate(new Error("Transfer cancelled"));
+          return;
+        }
+        afterGateDone = true;
+        // Hand off to runOpen: drop after-gate hooks so OPEN owns abort/error.
+        detachAfterGateHooks();
+        runOpen().then(resolve, reject);
+      }, (err) => {
+        failAfterGate(err);
+      });
+    };
+
+    pathGate.waitForPrior.then(startOpen, startOpen);
   });
 }
 
@@ -2848,9 +3429,11 @@ async function runPausableConcurrentRanges({
 /**
  * Pipelined SFTP WRITE upload (same fanout as ssh2 fastPut).
  *
- * @param {{ disposeChannel?: boolean, onBytesCommitted?: (() => void) | null }} [options]
+ * @param {{ disposeChannel?: boolean, onBytesCommitted?: (() => void) | null, generatedStagePath?: boolean }} [options]
  *   disposeChannel — when true (isolated channel), end the SFTP subsystem on
  *   cancel/finish. When false (shared browse session), never call sftp.end().
+ *   generatedStagePath — when true, cancel may best-effort unlink this path
+ *   after a truncating OPEN; in-place finals must leave this false.
  */
 async function uploadFileConcurrent(
   localPath,
@@ -2862,7 +3445,10 @@ async function uploadFileConcurrent(
   options = {},
 ) {
   const disposeChannel = options.disposeChannel !== false;
-  const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  const generatedStagePath = options.generatedStagePath === true;
+  // Mutable: may shrink after path-gate wait if a stale truncating OPEN wiped
+  // the stage while we were waiting (Codex P2 on 294b7a4b).
+  let checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
   let channelError = null;
   const onChannelError = (error) => {
     channelError = channelError || error;
@@ -2929,9 +3515,57 @@ async function uploadFileConcurrent(
     remoteHandle = await openSftpHandleForTransfer(
       sftp,
       remotePath,
-      checkpoint > 0 ? "r+" : "w",
+      // Getter so afterPathGate can shrink checkpoint and switch r+ → w.
+      () => (checkpoint > 0 ? "r+" : "w"),
       transfer,
-      { disposeChannel, abortChannel },
+      {
+        disposeChannel,
+        abortChannel,
+        generatedStagePath,
+        afterPathGate: async () => {
+          // A late stale OPEN may have zeroed the stage while we waited; force
+          // a full rewrite rather than sparse r+ from an obsolete offset.
+          // Consume the flag here: a gated restart from zero is the recovery
+          // path. Leaving it set makes the post-upload guard fail a successful
+          // full rewrite (Codex P2 on 81979ebb).
+          if (transfer.staleOpenTruncatedStage) {
+            transfer.staleOpenTruncatedStage = false;
+            checkpoint = 0;
+            transfer.checkpointBytes = 0;
+            try {
+              sendProgress(0, fileSize, { force: true, checkpointBytes: 0 });
+            } catch { /* best-effort */ }
+            return;
+          }
+          // Re-read durable stage size after waiting; a prior OPEN "w" may have
+          // truncated the file while we were queued (Codex P2 / P1 on 2178).
+          if (checkpoint <= 0 || !transfer.stagedRemote) return;
+          try {
+            const staged = transfer.stagedRemote;
+            let size = null;
+            if (isScpModeClient(staged.client)) {
+              const st = await getScpBackendForClient(staged.client).stat(staged.path, {
+                encoding: staged.encoding,
+              });
+              size = Number(st?.size);
+            } else if (typeof staged.client?.stat === "function") {
+              const st = await staged.client.stat(
+                encodePathForSession(staged.sftpId, staged.path, staged.encoding),
+              );
+              size = Number(st?.size);
+            }
+            if (Number.isFinite(size) && size >= 0 && size < checkpoint) {
+              checkpoint = size;
+              transfer.checkpointBytes = size;
+              try {
+                sendProgress(size, fileSize, { force: true, checkpointBytes: size });
+              } catch { /* best-effort */ }
+            }
+          } catch {
+            // Missing stage → fall through; OPEN "w" or r+ will fail and retry.
+          }
+        },
+      },
     );
     if (channelError) throw channelError;
     if (transfer.cancelled) throw new Error("Transfer cancelled");
@@ -2994,8 +3628,9 @@ async function uploadFileConcurrent(
     // channel error. Await the drain barrier before returning so
     // runRemoteUploadTransaction cannot clean up the stage before a late
     // truncating OPEN finishes (Codex P2 on 747847e7). openSftpHandleForTransfer
-    // force-completes the drain if the OPEN callback never arrives on a dead
-    // channel, so this await cannot hang forever.
+    // force-completes the drain if the OPEN callback never arrives; late cancel
+    // truncating opens on generated stages also unlink after close so a
+    // force-complete cannot orphan a recreated stage.
     const sharedWriteOpenDrain = transfer.sharedWriteOpenDrain;
     if (sharedWriteOpenDrain) {
       await sharedWriteOpenDrain.catch(() => {});
@@ -3048,6 +3683,12 @@ async function uploadFileConcurrent(
     }
     try { sftp.removeListener?.("error", onChannelError); } catch { /* ignore */ }
     if (remoteCloseError) throw remoteCloseError;
+    // After the drain barrier, a late stale OPEN may have zeroed the stage while
+    // this attempt already finished writing. Fail closed so promotion cannot
+    // rename a corrupt stage (Codex P1 on 2898c4c0).
+    if (!failed && !transfer.cancelled && transfer.staleOpenTruncatedStage) {
+      throw new Error("Remote stage truncated by stale OPEN");
+    }
   }
 }
 
@@ -3570,6 +4211,11 @@ async function startTransferNow(event, payload, onProgress) {
     targetPath,
     sourceSftpId,
     targetSftpId,
+    // Host IDs must ride on the transfer object so path-gate keys stay host-
+    // scoped when a dedicated-resume opens a new sftpId (Codex P1 on d44886e6).
+    sourceHostId: payload.sourceHostId,
+    targetHostId: payload.targetHostId,
+    hostId: payload.hostId || payload.targetHostId || payload.sourceHostId,
     parentTaskId: payload.parentTaskId,
     directoryEntryIndex: payload.directoryEntryIndex,
     directoryEntryIdentity: payload.directoryEntryIdentity,
@@ -3764,12 +4410,16 @@ async function startTransferNow(event, payload, onProgress) {
   };
 
   let leasesReleased = false;
-  const cleanupTransfer = () => {
+  const cleanupTransfer = (options = {}) => {
     // A stale completion must never unregister a newer transfer that reused the
     // same id after this one became terminal.
     if (activeTransfers.get(transferId) === transfer) {
       activeTransfers.delete(transferId);
     }
+    // Superseded attempts share the lease Set entry with a same-id retry —
+    // releasing here would drop the only lease and hard-close SFTP under the
+    // live retry (Codex P2 on 5f3e3e2a).
+    if (options.releaseLeases === false) return;
     if (!leasesReleased) {
       leasesReleased = true;
       releaseTransferSessionLeases(transferId, transfer.leasedSftpIds || leasedSftpIds);
@@ -4109,12 +4759,44 @@ async function startTransferNow(event, payload, onProgress) {
   };
 
   const sendError = (error) => {
-    cleanupTransfer();
     const message = error?.message || String(error);
-    sender.send("netcatty:transfer:error", { transferId, error: message });
+    const superseded = /superseded/i.test(message);
+    // Superseded always means this attempt lost ownership. Suppress terminal
+    // events even after the retry has finished and left activeTransfers, or
+    // the completed retry is rewritten as cancelled (Codex P2 on 52f0248c).
+    // Release only leases the live same-id retry did not also acquire (Codex P2).
+    if (superseded) {
+      const liveOwner = activeTransfers.get(transferId);
+      const liveLeaseIds = new Set(
+        Array.isArray(liveOwner?.leasedSftpIds) ? liveOwner.leasedSftpIds : [],
+      );
+      const oldLeaseIds = (transfer.leasedSftpIds || leasedSftpIds || []).filter(
+        (id) => id != null && !liveLeaseIds.has(id),
+      );
+      if (oldLeaseIds.length > 0) {
+        releaseTransferSessionLeases(transferId, oldLeaseIds);
+      }
+      cleanupTransfer({ releaseLeases: false });
+      return;
+    }
+    cleanupTransfer();
     const cancelled = /cancel/i.test(message);
+    if (cancelled) {
+      sender.send("netcatty:transfer:cancelled", { transferId, error: message });
+      broadcastGlobalTransferEvent({
+        type: "cancelled",
+        transferId,
+        endedAt: Date.now(),
+        error: message,
+        parentTaskId: transfer.parentTaskId,
+        directoryEntryIndex: transfer.directoryEntryIndex,
+        directoryEntryIdentity: transfer.directoryEntryIdentity,
+      });
+      return;
+    }
+    sender.send("netcatty:transfer:error", { transferId, error: message });
     broadcastGlobalTransferEvent({
-      type: cancelled ? "cancelled" : "failed",
+      type: "failed",
       transferId,
       endedAt: Date.now(),
       error: message,
@@ -4231,6 +4913,12 @@ async function startTransferNow(event, payload, onProgress) {
         signal: transfer.signal,
         assertCanPromote() {
           if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+          // Late force-completed OPEN "w" from a prior same-id attempt can
+          // truncate the stage after concurrent write finished; do not rename
+          // a zeroed/corrupt stage to the final path (Codex P1 on 2898c4c0).
+          if (transfer.staleOpenTruncatedStage) {
+            throw new Error("Remote stage truncated by stale OPEN");
+          }
         },
         commitPromotion() {
           transfer.completionCommitted = true;
@@ -4279,6 +4967,7 @@ async function startTransferNow(event, payload, onProgress) {
             sendProgress,
             resolvedTargetEncoding,
             usesStage ? null : () => { transfer.completionCommitted = true; },
+            { generatedStagePath: usesStage },
           );
         },
       });
@@ -4654,6 +5343,9 @@ async function startTransferNow(event, payload, onProgress) {
           signal: transfer.signal,
           assertCanPromote() {
             if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+            if (transfer.staleOpenTruncatedStage) {
+              throw new Error("Remote stage truncated by stale OPEN");
+            }
           },
           commitPromotion() {
             transfer.completionCommitted = true;
@@ -4707,6 +5399,7 @@ async function startTransferNow(event, payload, onProgress) {
               uploadProgress,
               resolvedTargetEncoding,
               usesStage ? null : () => { transfer.completionCommitted = true; },
+              { generatedStagePath: usesStage },
             );
           },
         });
@@ -4765,6 +5458,13 @@ async function startTransferNow(event, payload, onProgress) {
         } catch { }
         transfer.stagedRemote = null;
       }
+    }
+    // Superseded before cancelled: a cancelled attempt can still lose ownership
+    // to a same-id retry while OPEN is pending. Treat as superseded so we do not
+    // delete the retry stage, release its leases, or emit cancelled (Codex P2).
+    if (/superseded/i.test(err?.message || String(err))) {
+      sendError(err);
+      return { transferId, superseded: true };
     }
     if (!err?.recoveryFailed && (transfer.cancelled || err.message === 'Transfer cancelled')) {
       if (transfer.stagedLocalPath) {
@@ -5709,4 +6409,5 @@ module.exports = {
   _assertSourceMetadataUnchangedForTests: assertSourceMetadataUnchanged,
   _assertDownloadSourceAfterTransferForTests: assertDownloadSourceAfterTransfer,
   _assertLocalDownloadMatchesRemotePrefixForTests: assertLocalDownloadMatchesRemotePrefix,
+  _remoteOpenPathMatchesStagedForTests: remoteOpenPathMatchesStaged,
 };

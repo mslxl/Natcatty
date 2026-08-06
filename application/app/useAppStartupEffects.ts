@@ -409,6 +409,9 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
               targetType: task.direction === "download" ? "local" : "sftp",
               sourceSftpId: task.direction === "download" ? sftpId : undefined,
               targetSftpId: task.direction === "upload" ? sftpId : undefined,
+              // Keep host-scoped path gates across session reopen (Codex P1).
+              sourceHostId: task.sourceHostId,
+              targetHostId: task.targetHostId,
               totalBytes: task.totalBytes,
               resumable: task.resumable !== false,
               checkpointBytes,
@@ -420,7 +423,30 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
             });
           },
         );
-        if (result?.cancelled || result?.error === "Transfer cancelled") {
+        // Same-id retry stole ownership; wait for the live owner's terminal
+        // status instead of treating this invoke as completed (Codex P2).
+        if (result?.superseded === true) {
+          // Wait for live owner terminal status only (no fixed deadline).
+          for (;;) {
+            const latest = sftpTransferCenterStore.getSnapshot().tasks.find((candidate) => candidate.id === task.id);
+            const status = latest?.status;
+            if (status === "completed" || status === "cancelled" || status === "failed") {
+              if (status === "failed") {
+                throw new Error(latest?.error || "Transfer failed");
+              }
+              if (status === "cancelled") {
+                sftpTransferCenterStore.ingestBackgroundEvent({
+                  type: "cancelled",
+                  transferId: task.id,
+                  endedAt: Date.now(),
+                });
+              }
+              // completed: events already applied; cancelled handled above.
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 200));
+          }
+        } else if (result?.cancelled || result?.error === "Transfer cancelled") {
           sftpTransferCenterStore.ingestBackgroundEvent({ type: "cancelled", transferId: task.id, endedAt: Date.now() });
         } else if (result?.error) {
           throw new Error(result.error);
