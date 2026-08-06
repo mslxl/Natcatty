@@ -17,7 +17,10 @@
  * interference when stopping or cancelling sessions.
  */
 
-import { CATTY_APPROVAL_TIMEOUT_MS } from './approvalConstants';
+import {
+  CATTY_APPROVAL_TIMEOUT_MS,
+  resolveCattyApprovalDeadlines,
+} from './approvalConstants';
 import { localStorageAdapter } from '../../persistence/localStorageAdapter';
 import { STORAGE_KEY_AI_PERMISSION_GRANTS } from '../../config/storageKeys';
 import { globalTraceStore } from '../harness/traceStore';
@@ -96,6 +99,8 @@ export function registerGrantPersister(persister: GrantPersister): () => void {
 const pendingApprovals = new Map<string, {
   resolve: (resolution: ApprovalResolution) => void;
   request: ApprovalRequest;
+  /** Clears the auto-deny timer without resolving the approval. */
+  cancelTimeout?: () => void;
 }>();
 
 // Subscribers for approval request events (UI listens here)
@@ -163,8 +168,10 @@ function isGrantedByRules(request: ApprovalRequest): boolean {
  * Returns a Promise<boolean> that resolves to `true` (approved) or `false` (denied).
  * The UI is notified via the listener system to render approval buttons.
  *
- * If the user does not respond within `timeoutMs` (default 5 minutes), the
- * approval is auto-denied to prevent the session from hanging indefinitely.
+ * Idle auto-deny uses `timeoutMs` (default 5 minutes). Review activity re-arms
+ * a fresh idle window from *now*, but never past a hard deadline from creation
+ * (default 3× idle, capped at 30 minutes) so late review is not cut off at the
+ * original idle mark while still staying bounded.
  */
 export function requestApproval(
   toolCallId: string,
@@ -190,32 +197,93 @@ export function requestApproval(
 
   return new Promise<boolean>((resolve) => {
     let timerId: ReturnType<typeof setTimeout> | null = null;
+    const { idleMs, hardDeadlineMs } = resolveCattyApprovalDeadlines(timeoutMs);
+    // Hard ceiling from creation — review re-arms idle from now for idleMs
+    // but never past this bound.
+    const hardDeadlineAt = Date.now() + hardDeadlineMs;
+
+    const clearTimer = () => {
+      if (timerId) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+    };
 
     const wrappedResolve = (resolution: ApprovalResolution) => {
-      if (timerId) { clearTimeout(timerId); timerId = null; }
+      clearTimer();
       resolve(resolution.approved);
     };
 
-    pendingApprovals.set(toolCallId, { resolve: wrappedResolve, request });
-
-    // Auto-deny after timeout so the session doesn't hang indefinitely
-    timerId = setTimeout(() => {
-      if (pendingApprovals.has(toolCallId)) {
-        pendingApprovals.delete(toolCallId);
-        wrappedResolve({ approved: false, scope: 'once', cancelled: false });
-        emitApprovalEvent('approval_resolved', request, { outcome: 'timeout' });
-        // Notify UI to remove the stale card
-        for (const cl of clearedListeners) {
-          try { cl([toolCallId]); } catch { /* ignore */ }
-        }
+    const denyTimedOut = () => {
+      const entry = pendingApprovals.get(toolCallId);
+      if (!entry) return;
+      pendingApprovals.delete(toolCallId);
+      wrappedResolve({ approved: false, scope: 'once', cancelled: false });
+      emitApprovalEvent('approval_resolved', request, { outcome: 'timeout' });
+      for (const cl of clearedListeners) {
+        try { cl([toolCallId]); } catch { /* ignore */ }
       }
-    }, timeoutMs);
+    };
+
+    const armTimer = (ms: number) => {
+      clearTimer();
+      if (ms <= 0) {
+        // Hard deadline already elapsed — reject synchronously so a late
+        // approve cannot race a deferred setTimeout(0) deny.
+        denyTimedOut();
+        return;
+      }
+      timerId = setTimeout(denyTimedOut, ms);
+    };
+
+    // Initial arm is the idle window. Review re-arms idle (capped by hard deadline).
+    armTimer(idleMs);
+
+    pendingApprovals.set(toolCallId, {
+      resolve: wrappedResolve,
+      request,
+      cancelTimeout: () => {
+        const remainingHard = hardDeadlineAt - Date.now();
+        if (remainingHard <= 0) {
+          armTimer(0);
+          return;
+        }
+        // Re-arm a full idle window from now, never past the hard deadline.
+        armTimer(Math.min(idleMs, remainingHard));
+      },
+    });
 
     // Notify all UI listeners
     for (const listener of listeners) {
       try { listener(request); } catch { /* ignore listener errors */ }
     }
   });
+}
+
+/**
+ * Cancel / reset the idle auto-deny timer after the user starts reviewing or
+ * interacting with the card. Catty local approvals re-arm idle from *now* for
+ * a fresh idleMs window, never past the hard creation deadline.
+ * Timeout never auto-approves.
+ */
+export function cancelApprovalTimeout(toolCallId: string): void {
+  const entry = pendingApprovals.get(toolCallId);
+  // Keep cancelTimeout registered so further review activity can re-arm idle.
+  entry?.cancelTimeout?.();
+
+  // MCP / Codex App Server approvals are timed in the main process.
+  // MCP cancel drops idle but keeps the absolute creation deadline.
+  if (toolCallId.startsWith('mcp_approval_')) {
+    const bridge = (window as unknown as {
+      netcatty?: { cancelMcpApprovalTimeout?: (id: string) => Promise<unknown> };
+    }).netcatty;
+    void bridge?.cancelMcpApprovalTimeout?.(toolCallId);
+  } else if (toolCallId.startsWith('codex_interaction_')) {
+    const bridge = (window as unknown as {
+      netcatty?: { cancelCodexAppServerInteractionTimeout?: (id: string) => Promise<unknown> };
+    }).netcatty;
+    void bridge?.cancelCodexAppServerInteractionTimeout?.(toolCallId);
+  }
 }
 
 /**

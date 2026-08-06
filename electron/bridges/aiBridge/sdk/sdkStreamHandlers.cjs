@@ -1054,6 +1054,15 @@ function registerSdkStreamHandlers(ctx) {
       return ok ? { ok: true } : { ok: false, error: "Interaction not found" };
     });
 
+    ipcMain.handle("netcatty:ai:codex-app-server:interaction-cancel-timeout", async (event, payload) => {
+      if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      const cancelled = codexAppServerRuntime.cancelInteractionTimeout(
+        payload?.interactionId,
+        event.sender,
+      ) === true;
+      return { ok: true, cancelled };
+    });
+
     ipcMain.handle("netcatty:ai:codex-app-server:status", async (event, payload) => {
       if (!validateSenderOrSettings(event)) return { ok: false, available: false, error: "Unauthorized IPC sender" };
       try {

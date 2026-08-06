@@ -131,6 +131,13 @@ function registerAgentProcessHandlers(ctx) {
     mcpServerBridge.resolveApprovalFromRenderer(approvalId, approved);
     return { ok: true };
   });
+
+  // Cancel MCP approval auto-deny after the user starts reviewing the card.
+  ipcMain.handle("netcatty:ai:mcp:approval-cancel-timeout", async (event, { approvalId }) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    const cancelled = mcpServerBridge.cancelApprovalTimeoutFromRenderer?.(approvalId) === true;
+    return { ok: true, cancelled };
+  });
   }
 }
 

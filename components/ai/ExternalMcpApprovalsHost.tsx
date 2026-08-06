@@ -100,6 +100,7 @@ export const ExternalMcpApprovalsHost: React.FC = () => {
               isLoading={false}
               isInterrupted={false}
               approvalStatus="pending"
+              approvalId={id}
               onApproveOnce={() => handleApproveOnce(id)}
               onAlwaysAllow={() => handleAlwaysAllow(id, req)}
               onReject={() => handleReject(id)}

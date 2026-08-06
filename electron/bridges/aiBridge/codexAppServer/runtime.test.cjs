@@ -311,6 +311,116 @@ test("runtime routes native approvals and request_user_input responses", async (
   await run;
 });
 
+test("cancelInteractionTimeout re-arms the absolute approval deadline (Catty/MCP style)", async () => {
+  let connection;
+  let interaction;
+  const realNow = Date.now;
+  let now = 5_000_000;
+  Date.now = () => now;
+
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => (connection = new FakeConnection(options)),
+    sendInteractionRequest: (payload) => { interaction = payload; return true; },
+  });
+  try {
+    const run = runtime.runTurn({
+      requestId: "request-timeout-cancel",
+      chatSessionId: "chat-timeout-cancel",
+      prompt: "ask",
+      permissionMode: "confirm",
+      env: {},
+      binPath: "/bin/codex",
+      injectedMcpServers: [],
+      emitter: createEmitter(),
+    });
+    await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+    await connection.serverRequest({
+      id: 90,
+      method: "item/tool/requestUserInput",
+      params: {
+        threadId: "thread-1",
+        turnId: "turn-1",
+        itemId: "question-timeout",
+        questions: [{ id: "choice", question: "Choose", header: "Mode", isOther: true, isSecret: false, options: null }],
+        autoResolutionMs: 100,
+      },
+    });
+    assert.ok(interaction?.interactionId);
+
+    // Jump close to the absolute ceiling, then cancel idle. Remaining absolute ~30ms.
+    now += 70;
+    assert.equal(runtime.cancelInteractionTimeout(interaction.interactionId), true);
+    assert.equal(runtime.cancelInteractionTimeout(interaction.interactionId), false);
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.equal(
+      connection.responses.some((response) => response.id === 90),
+      false,
+      "must stay pending before absolute expiry",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    assert.equal(
+      connection.responses.some((response) => response.id === 90),
+      true,
+      "absolute deadline must auto-reject after remaining time elapses",
+    );
+    assert.deepEqual(connection.responses.at(-1), {
+      id: 90,
+      result: { answers: {} },
+    });
+
+    connection.notify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } } });
+    await run;
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("cancelInteractionTimeout still allows explicit approve before absolute expiry", async () => {
+  let connection;
+  let interaction;
+  const runtime = new CodexAppServerRuntime({
+    connectionFactory: (options) => (connection = new FakeConnection(options)),
+    sendInteractionRequest: (payload) => { interaction = payload; return true; },
+  });
+  const run = runtime.runTurn({
+    requestId: "request-timeout-approve",
+    chatSessionId: "chat-timeout-approve",
+    prompt: "ask",
+    permissionMode: "confirm",
+    env: {},
+    binPath: "/bin/codex",
+    injectedMcpServers: [],
+    emitter: createEmitter(),
+  });
+  await waitFor(() => connection?.requests.some((request) => request.method === "turn/start"));
+
+  await connection.serverRequest({
+    id: 91,
+    method: "item/commandExecution/requestApproval",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      itemId: "cmd-approve",
+      command: "echo ok",
+      cwd: "/tmp",
+      reason: "demo",
+    },
+  });
+  assert.ok(interaction?.interactionId);
+  assert.equal(runtime.cancelInteractionTimeout(interaction.interactionId), true);
+  assert.equal(runtime.respondInteraction(interaction.interactionId, { decision: "once" }), true);
+  assert.deepEqual(connection.responses.at(-1), {
+    id: 91,
+    result: { decision: "accept" },
+  });
+
+  connection.notify({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", error: null } } });
+  await run;
+});
+
 test("runtime steers the active turn with text, local images, and a stable user message id", async () => {
   let connection;
   const runtime = new CodexAppServerRuntime({
