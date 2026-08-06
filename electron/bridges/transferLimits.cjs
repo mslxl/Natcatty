@@ -15,9 +15,10 @@ const UPLOAD_TRANSFER_CONCURRENCY = 64;
 // ssh2's fastGet default and, with the safe 32KB request size, restores the 2MB
 // in-flight window Netcatty used before the shared chunk-size fix in #2030.
 const DOWNLOAD_TRANSFER_CONCURRENCY = 64;
-// Only one file per SFTP session gets the 64-request fast path. Concurrent
-// files keep moving through the compatible stream path instead of multiplying
-// fastGet pressure. Folder fan-out is capped in the renderer by
+// Only one file per SFTP session holds the 64-request concurrent READ fanout
+// (isolated channel or shared/sudo browse path). Additional downloads wait for
+// a free slot rather than degrading to serial createReadStream (#2719 / #2449
+// fail-closed). Folder fan-out is capped in the renderer by
 // runSftpTransferWorkers (settings transfer concurrency); multi-select
 // top-level files are not throttled by that setting.
 const FAST_DOWNLOAD_CHANNELS_PER_SESSION = 1;

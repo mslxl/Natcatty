@@ -1129,9 +1129,12 @@ function takePendingCancel(transferId) {
 const admittedActiveByResource = new Map();
 let admittedTransferLimit = 2;
 const isolatedDownloadChannelPools = new WeakMap();
-// Sudo downloads share the browse channel; cap concurrent 64-READ fanout the
-// same way isolated channels use FAST_DOWNLOAD_CHANNELS_PER_SESSION (#1507).
-const sharedFastDownloadSlots = new WeakMap();
+// One concurrent 64-READ fanout download per SFTP session (#1507) — covers both
+// isolated channels and shared/sudo browse READs. Extra downloads wait for the
+// session slot instead of degrading to serial createReadStream (#2719 / #2449).
+const sessionFastDownloadSlots = new WeakMap();
+/** @type {WeakMap<object, Array<{ resolve: () => void, reject: (err: Error) => void, transfer: object }>>} */
+const sessionFastDownloadWaiters = new WeakMap();
 // Cache live SFTP clients where remote cp is known to be unavailable, so we
 // skip repeated failed exec attempts without retaining closed session ids.
 const cpUnavailableSet = new WeakSet();
@@ -1367,7 +1370,7 @@ async function truncateStagedPathToCheckpoint(filePath, checkpointBytes) {
     }
   } catch (error) {
     if (error?.code === "ENOENT") return;
-    // Best-effort: stream fallback can still proceed from checkpoint.
+    // Best-effort: next pipelined strategy can still resume from checkpoint.
     console.warn(
       "[transferBridge] failed to truncate staged local file before fallback:",
       error?.message || String(error),
@@ -1519,20 +1522,117 @@ function releaseIsolatedDownloadChannel(client, sftp, options = {}) {
   scheduleIdleIsolatedDownloadChannel(client, sftp);
 }
 
-function tryAcquireSharedFastDownloadSlot(client) {
-  const inFlight = sharedFastDownloadSlots.get(client) || 0;
+function tryAcquireSessionFastDownloadSlot(client) {
+  const inFlight = sessionFastDownloadSlots.get(client) || 0;
   if (inFlight >= FAST_DOWNLOAD_CHANNELS_PER_SESSION) return false;
-  sharedFastDownloadSlots.set(client, inFlight + 1);
+  sessionFastDownloadSlots.set(client, inFlight + 1);
   return true;
 }
 
-function releaseSharedFastDownloadSlot(client) {
-  const inFlight = sharedFastDownloadSlots.get(client) || 0;
-  if (inFlight <= 1) {
-    sharedFastDownloadSlots.delete(client);
+function wakeSessionFastDownloadWaiters(client) {
+  const waiters = sessionFastDownloadWaiters.get(client);
+  if (!waiters || waiters.length === 0) return;
+  while (waiters.length > 0) {
+    const next = waiters[0];
+    if (next.transfer?.cancelled || next.transfer?.signal?.aborted) {
+      waiters.shift();
+      next.reject(new Error("Transfer cancelled"));
+      continue;
+    }
+    if (!tryAcquireSessionFastDownloadSlot(client)) return;
+    waiters.shift();
+    next.resolve();
     return;
   }
-  sharedFastDownloadSlots.set(client, inFlight - 1);
+  if (waiters.length === 0) {
+    sessionFastDownloadWaiters.delete(client);
+  }
+}
+
+function releaseSessionFastDownloadSlot(client) {
+  const inFlight = sessionFastDownloadSlots.get(client) || 0;
+  if (inFlight <= 1) {
+    sessionFastDownloadSlots.delete(client);
+  } else {
+    sessionFastDownloadSlots.set(client, inFlight - 1);
+  }
+  wakeSessionFastDownloadWaiters(client);
+}
+
+/**
+ * Acquire the per-session fast-download slot (isolated or shared READ fanout),
+ * waiting (cancelable) when another transfer already holds the budget.
+ * Never falls back to serial createReadStream while waiting (#2719).
+ */
+async function acquireSessionFastDownloadSlot(client, transfer) {
+  if (transfer?.cancelled || transfer?.signal?.aborted) {
+    throw new Error("Transfer cancelled");
+  }
+  if (tryAcquireSessionFastDownloadSlot(client)) {
+    // Granted immediately — still recheck cancel before the caller starts work.
+    if (transfer.cancelled || transfer.signal?.aborted) {
+      releaseSessionFastDownloadSlot(client);
+      throw new Error("Transfer cancelled");
+    }
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const entry = { resolve, reject, transfer };
+    const waiters = sessionFastDownloadWaiters.get(client) || [];
+    waiters.push(entry);
+    sessionFastDownloadWaiters.set(client, waiters);
+
+    const previousAbort = transfer.abort;
+    let settled = false;
+    const dequeue = () => {
+      const list = sessionFastDownloadWaiters.get(client);
+      if (!list) return;
+      const index = list.indexOf(entry);
+      if (index >= 0) list.splice(index, 1);
+      if (list.length === 0) sessionFastDownloadWaiters.delete(client);
+    };
+    const cleanupAbort = () => {
+      transfer.signal?.removeEventListener?.("abort", abortWait);
+      if (transfer.abort === abortWait) transfer.abort = previousAbort;
+    };
+    const settleResolve = () => {
+      if (settled) return;
+      settled = true;
+      cleanupAbort();
+      resolve();
+    };
+    const settleReject = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanupAbort();
+      reject(err);
+    };
+    const abortWait = () => {
+      if (settled) return;
+      transfer.cancelled = true;
+      dequeue();
+      try { previousAbort?.(); } catch { /* ignore */ }
+      settleReject(new Error("Transfer cancelled"));
+    };
+    transfer.abort = abortWait;
+    transfer.signal?.addEventListener?.("abort", abortWait, { once: true });
+
+    // Another transfer may have released between tryAcquire and enqueue.
+    if (tryAcquireSessionFastDownloadSlot(client)) {
+      dequeue();
+      settleResolve();
+      return;
+    }
+
+    entry.resolve = settleResolve;
+    entry.reject = settleReject;
+  });
+
+  if (transfer.cancelled || transfer.signal?.aborted) {
+    releaseSessionFastDownloadSlot(client);
+    throw new Error("Transfer cancelled");
+  }
 }
 
 async function acquireIsolatedDownloadChannel(client, transfer) {
@@ -1566,7 +1666,7 @@ async function acquireIsolatedDownloadChannel(client, transfer) {
   } catch (err) {
     pool.opening -= 1;
     console.warn(
-      "[transferBridge] Failed to open isolated SFTP channel for fastGet, falling back to streams:",
+      "[transferBridge] Failed to open isolated SFTP channel for fastGet, trying next pipelined strategy:",
       err.message || String(err),
     );
     return null;
@@ -3861,6 +3961,19 @@ async function downloadFileResumableFast(
   }
 }
 
+/**
+ * Download a remote file with pipelined SFTP READs only.
+ *
+ * Strategy order (mirrors uploadFile / #2449 fail-closed):
+ *   1. concurrent ranges (or fastGet) on an isolated channel
+ *   2. concurrent ranges on the shared browse channel (sudo + isolated miss)
+ *
+ * There is intentionally no createReadStream bulk path: serial READ is
+ * RTT-bound (1 × 32KB) and was the usual cause of sub-MB/s downloads under
+ * sudo (#2719) and isolated miss. When every pipelined strategy fails (or
+ * open/read are missing), the transfer fails closed with the last error.
+ * Hash helpers may still use createReadStream for content verification only.
+ */
 async function downloadFile(
   remotePath,
   localPath,
@@ -3892,133 +4005,176 @@ async function downloadFile(
     ? await runCancelablePreflight(() => client.stat(remotePath))
     : null;
 
-  // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
-  if (!client.__netcattySudoMode) {
-    const fastSftp = await acquireIsolatedDownloadChannel(client, transfer);
-    if (transfer.cancelled) {
-      if (fastSftp) {
-        releaseIsolatedDownloadChannel(client, fastSftp, { dispose: true });
-      }
-      throw new Error("Transfer cancelled");
+  // Planned snapshot already fully staged (including zero-byte snapshots).
+  // Do not open a source handle at EOF — an unbounded read would pull any
+  // append tail and fail the transferred === fileSize finish check.
+  const earlyCheckpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  if (earlyCheckpoint >= fileSize) {
+    transfer.downloadStrategy = transfer.downloadStrategy || "checkpoint-complete";
+    logTransferDiag(transfer, "strategy", { strategy: "checkpoint-complete" });
+    if (fileSize === 0) {
+      await fs.promises.writeFile(localPath, Buffer.alloc(0));
     }
-
-    if (fastSftp && (transfer.resumable || typeof fastSftp.fastGet === "function")) {
-      try {
-        if (transfer.resumable) {
-          await downloadFileResumableFast(
-            remotePath,
-            localPath,
-            fastSftp,
-            fileSize,
-            transfer,
-            sendProgress,
-          );
-          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          // Downloads capture a fixed snapshot; remote appends (live logs) are OK
-          // only when the full planned prefix still matches the staged file.
-          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
-            localPath,
-            client,
-            remotePath,
-            signal: transfer.signal,
-          });
-          releaseIsolatedDownloadChannel(client, fastSftp);
-          return;
-        }
-        await new Promise((resolve, reject) => {
-          let settled = false;
-          let onFastSftpError = null;
-          const finish = (err) => {
-            if (settled) return;
-            settled = true;
-            if (transfer.abort === abortFastTransfer) {
-              transfer.abort = null;
-            }
-            if (onFastSftpError) {
-              try { fastSftp.removeListener("error", onFastSftpError); } catch { }
-              onFastSftpError = null;
-            }
-            releaseIsolatedDownloadChannel(client, fastSftp, {
-              dispose: !!err || transfer.cancelled,
-            });
-
-            if (transfer.cancelled) reject(new Error("Transfer cancelled"));
-            else if (err) reject(err);
-            else resolve();
-          };
-          const abortFastTransfer = () => {
-            if (settled) return;
-            transfer.cancelled = true;
-            finish(new Error("Transfer cancelled"));
-          };
-          transfer.abort = abortFastTransfer;
-          onFastSftpError = (err) => finish(err);
-          fastSftp.once("error", onFastSftpError);
-
-          if (transfer.cancelled) {
-            finish(new Error("Transfer cancelled"));
-            return;
-          }
-
-          fastSftp.fastGet(remotePath, localPath, {
-            chunkSize: TRANSFER_CHUNK_SIZE,
-            concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
-            step: (transferred, _chunk, total) => {
-              if (transfer.cancelled) return;
-              sendProgress(transferred, total || fileSize);
-            },
-          }, finish);
-        });
-        return;
-      } catch (err) {
-        // Always release before rethrowing cancel — otherwise the channel stays
-        // in pool.busy and the per-session fast-download budget is exhausted.
-        releaseIsolatedDownloadChannel(client, fastSftp, { dispose: true });
-        if (transfer.cancelled) throw err;
-        if (err?.noTransferFallback) throw err;
-        if (err?.completedWithUnhealthyChannel) {
-          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
-            localPath,
-            client,
-            remotePath,
-            signal: transfer.signal,
-          });
-          return;
-        }
-        // Concurrent ranges may leave sparse tails past the contiguous
-        // checkpoint; truncate the actual local target before stream resume.
-        const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-        try {
-          await fs.promises.truncate(localPath, checkpoint);
-        } catch (truncateError) {
-          if (!(checkpoint === 0 && truncateError?.code === "ENOENT")) {
-            throw truncateError;
-          }
-        }
-        sendProgress(checkpoint, fileSize, { force: true, checkpointBytes: checkpoint });
-        console.warn(
-          "[transferBridge] fastGet failed, falling back to a compatible stream:",
-          err?.message || String(err),
-        );
-      }
-    } else if (fastSftp) {
-      // Acquired a channel but cannot use fast path — return it to the pool.
-      releaseIsolatedDownloadChannel(client, fastSftp);
+    sendProgress(fileSize, fileSize, { force: true, checkpointBytes: fileSize });
+    if (initialSource) {
+      const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
+      await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+        localPath,
+        client,
+        remotePath,
+        signal: transfer.signal,
+      });
     }
+    return;
   }
 
-  // Sudo cannot open an isolated secondary channel, so elevated downloads must
-  // pipeline READs on the shared browse session (#2719). Cap concurrent shared
-  // fanout with the same per-session budget as isolated fast downloads (#1507).
-  // Non-sudo isolated misses stay on serial createReadStream below.
-  if (
-    client.__netcattySudoMode
-    && typeof sftp.open === "function"
-    && typeof sftp.read === "function"
-    && tryAcquireSharedFastDownloadSlot(client)
-  ) {
+  /** @type {Error | null} */
+  let lastPipelineError = null;
+  const rememberPipelineError = (err) => {
+    if (err && typeof err === "object") lastPipelineError = err;
+    else lastPipelineError = new Error(String(err || "SFTP download failed"));
+  };
+
+  const prepareDownloadFallbackCheckpoint = async () => {
+    const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
     try {
+      await fs.promises.truncate(localPath, checkpoint);
+    } catch (truncateError) {
+      if (!(checkpoint === 0 && truncateError?.code === "ENOENT")) {
+        throw truncateError;
+      }
+    }
+    sendProgress(checkpoint, fileSize, { force: true, checkpointBytes: checkpoint });
+  };
+
+  const finishSuccessfulDownload = async () => {
+    if (!initialSource) return;
+    const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
+    // Downloads capture a fixed snapshot; remote appends (live logs) are OK
+    // only when the full planned prefix still matches the staged file.
+    await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
+      localPath,
+      client,
+      remotePath,
+      signal: transfer.signal,
+    });
+  };
+
+  // One session-wide fast-path slot for isolated + shared READ fanout (#1507).
+  // Wait (cancelable) instead of degrading to serial createReadStream (#2719).
+  let holdSessionSlot = false;
+  try {
+    await acquireSessionFastDownloadSlot(client, transfer);
+    holdSessionSlot = true;
+
+    // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
+    if (!client.__netcattySudoMode) {
+      const fastSftp = await acquireIsolatedDownloadChannel(client, transfer);
+      if (transfer.cancelled) {
+        if (fastSftp) {
+          releaseIsolatedDownloadChannel(client, fastSftp, { dispose: true });
+        }
+        throw new Error("Transfer cancelled");
+      }
+
+      if (fastSftp && (transfer.resumable || typeof fastSftp.fastGet === "function")) {
+        try {
+          if (transfer.resumable) {
+            transfer.downloadStrategy = "concurrent-isolated";
+            logTransferDiag(transfer, "strategy", {
+              strategy: "concurrent-isolated",
+              fields: {
+                chunk: formatDiagBytes(TRANSFER_CHUNK_SIZE),
+                concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
+              },
+            });
+            await downloadFileResumableFast(
+              remotePath,
+              localPath,
+              fastSftp,
+              fileSize,
+              transfer,
+              sendProgress,
+            );
+            await finishSuccessfulDownload();
+            releaseIsolatedDownloadChannel(client, fastSftp);
+            return;
+          }
+          transfer.downloadStrategy = "fastGet-isolated";
+          logTransferDiag(transfer, "strategy", { strategy: "fastGet-isolated" });
+          await new Promise((resolve, reject) => {
+            let settled = false;
+            let onFastSftpError = null;
+            const finish = (err) => {
+              if (settled) return;
+              settled = true;
+              if (transfer.abort === abortFastTransfer) {
+                transfer.abort = null;
+              }
+              if (onFastSftpError) {
+                try { fastSftp.removeListener("error", onFastSftpError); } catch { }
+                onFastSftpError = null;
+              }
+              releaseIsolatedDownloadChannel(client, fastSftp, {
+                dispose: !!err || transfer.cancelled,
+              });
+
+              if (transfer.cancelled) reject(new Error("Transfer cancelled"));
+              else if (err) reject(err);
+              else resolve();
+            };
+            const abortFastTransfer = () => {
+              if (settled) return;
+              transfer.cancelled = true;
+              finish(new Error("Transfer cancelled"));
+            };
+            transfer.abort = abortFastTransfer;
+            onFastSftpError = (err) => finish(err);
+            fastSftp.once("error", onFastSftpError);
+
+            if (transfer.cancelled) {
+              finish(new Error("Transfer cancelled"));
+              return;
+            }
+
+            fastSftp.fastGet(remotePath, localPath, {
+              chunkSize: TRANSFER_CHUNK_SIZE,
+              concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
+              step: (transferred, _chunk, total) => {
+                if (transfer.cancelled) return;
+                sendProgress(transferred, total || fileSize);
+              },
+            }, finish);
+          });
+          return;
+        } catch (err) {
+          // Always release before rethrowing cancel — otherwise the channel stays
+          // in pool.busy and the per-session fast-download budget is exhausted.
+          releaseIsolatedDownloadChannel(client, fastSftp, { dispose: true });
+          if (transfer.cancelled) throw err;
+          if (err?.noTransferFallback) throw err;
+          if (err?.completedWithUnhealthyChannel) {
+            await finishSuccessfulDownload();
+            return;
+          }
+          // Concurrent ranges may leave sparse tails past the contiguous
+          // checkpoint; truncate before trying the next pipelined strategy.
+          rememberPipelineError(err);
+          await prepareDownloadFallbackCheckpoint();
+          console.warn(
+            "[transferBridge] isolated download failed, trying next pipelined strategy:",
+            err?.message || String(err),
+          );
+        }
+      } else if (fastSftp) {
+        // Acquired a channel but cannot use fast path — return it to the pool.
+        releaseIsolatedDownloadChannel(client, fastSftp);
+      }
+    }
+
+    // Pipelined READs on the shared browse session — covers sudo (no isolated
+    // channel) and non-sudo isolated miss/failure. Same session slot already held.
+    if (typeof sftp.open === "function" && typeof sftp.read === "function") {
       try {
         transfer.downloadStrategy = "concurrent-shared";
         logTransferDiag(transfer, "strategy", {
@@ -4028,6 +4184,8 @@ async function downloadFile(
             concurrency: DOWNLOAD_TRANSFER_CONCURRENCY,
           },
         });
+        transfer.pauseSupported = Boolean(transfer.resumable);
+        if (transfer.resumable) transfer.pauseUnavailableReason = undefined;
         await downloadFileResumableFast(
           remotePath,
           localPath,
@@ -4037,126 +4195,41 @@ async function downloadFile(
           sendProgress,
           { disposeChannel: false },
         );
-        if (initialSource) {
-          const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-          await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
-            localPath,
-            client,
-            remotePath,
-            signal: transfer.signal,
-          });
-        }
+        await finishSuccessfulDownload();
         return;
       } catch (err) {
         if (transfer.cancelled) throw err;
         if (err?.noTransferFallback) throw err;
-        // Concurrent ranges may leave sparse tails past the contiguous
-        // checkpoint; truncate the actual local target before stream resume.
-        const sharedCheckpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-        try {
-          await fs.promises.truncate(localPath, sharedCheckpoint);
-        } catch (truncateError) {
-          if (!(sharedCheckpoint === 0 && truncateError?.code === "ENOENT")) {
-            throw truncateError;
-          }
-        }
-        sendProgress(sharedCheckpoint, fileSize, { force: true, checkpointBytes: sharedCheckpoint });
-        // Clear so the stream fallback below reports the strategy that actually ran.
-        transfer.downloadStrategy = null;
+        rememberPipelineError(err);
+        await prepareDownloadFallbackCheckpoint();
         console.warn(
-          "[transferBridge] concurrent shared download failed, falling back to a compatible stream:",
+          "[transferBridge] concurrent shared download failed (no serial stream fallback):",
           err?.message || String(err),
         );
       }
-    } finally {
-      releaseSharedFastDownloadSlot(client);
+    } else if (!lastPipelineError) {
+      lastPipelineError = new Error(
+        "SFTP session does not support pipelined READ (open/read missing)",
+      );
+    }
+  } finally {
+    if (holdSessionSlot) {
+      releaseSessionFastDownloadSlot(client);
     }
   }
 
-  // Fallback: sequential stream piping
-  transfer.downloadStrategy = transfer.downloadStrategy || "stream";
-  const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
-  if (checkpoint >= fileSize) {
-    // Planned snapshot is already fully staged (including zero-byte snapshots).
-    // Do not open a source stream at EOF — an unbounded read would pull any
-    // append tail and fail the transferred === fileSize finish check.
-    if (fileSize === 0) {
-      await fs.promises.writeFile(localPath, Buffer.alloc(0));
-    }
-    sendProgress(fileSize, fileSize, { force: true, checkpointBytes: fileSize });
-  } else {
-    await new Promise((resolve, reject) => {
-      // Bound the stream to the preflight snapshot so live appends (logs) cannot
-      // push transferred bytes past the planned size and fail the finish check.
-      // fileSize > checkpoint here, so end is always defined for a non-empty plan.
-      const streamOptions = {
-        highWaterMark: TRANSFER_CHUNK_SIZE,
-        start: checkpoint,
-        end: fileSize - 1,
-      };
-      const readStream = sftp.createReadStream(remotePath, streamOptions);
-      const writeStream = fs.createWriteStream(localPath, {
-        highWaterMark: TRANSFER_CHUNK_SIZE,
-        flags: checkpoint > 0 ? "r+" : "w",
-        start: checkpoint,
-      });
-      let transferred = checkpoint;
-      let finished = false;
-
-      transfer.readStream = readStream;
-      transfer.writeStream = writeStream;
-      if (transfer.paused) {
-        try { readStream.pause(); } catch { }
-        transfer.streamsUnpiped = true;
-      } else {
-        readStream.pipe(writeStream);
-        transfer.streamsUnpiped = false;
-      }
-
-      const cleanup = (err) => {
-        if (finished) return;
-        finished = true;
-        readStream.removeAllListeners();
-        writeStream.removeAllListeners();
-        if (err) {
-          try { readStream.destroy(); } catch { }
-          try { writeStream.destroy(); } catch { }
-          reject(err);
-        } else {
-          resolve();
-        }
-      };
-
-      readStream.on('data', (chunk) => {
-        if (transfer.cancelled) { cleanup(new Error('Transfer cancelled')); return; }
-        transferred += chunk.length;
-        sendProgress(transferred, fileSize);
-      });
-      readStream.on('error', cleanup);
-      writeStream.on('error', cleanup);
-      writeStream.on('finish', () => {
-        if (transfer.cancelled) {
-          cleanup(new Error('Transfer cancelled'));
-        } else if (!readStream.readableEnded || transferred !== fileSize) {
-          cleanup(new Error('Download stream finished before the full source was received'));
-        } else {
-          cleanup(null);
-        }
-      });
-      writeStream.on('close', () => {
-        if (transfer.cancelled) cleanup(new Error('Transfer cancelled'));
-      });
-    });
-  }
-  if (initialSource) {
-    const latestSource = await runCancelablePreflight(() => client.stat(remotePath));
-    await assertDownloadSourceAfterTransfer(initialSource, latestSource, fileSize, {
-      localPath,
-      client,
-      remotePath,
-      signal: transfer.signal,
-    });
-  }
+  // Fail closed — no serial createReadStream bulk path (kept out of the tree
+  // intentionally so future edits cannot reintroduce a silent crawl).
+  transfer.downloadStrategy = "failed";
+  logTransferDiag(transfer, "strategy", { strategy: "failed" });
+  const cause = lastPipelineError;
+  const message = cause?.message
+    ? `SFTP pipelined download failed: ${cause.message}`
+    : "SFTP pipelined download failed (no serial stream fallback)";
+  const error = new Error(message, cause ? { cause } : undefined);
+  if (cause?.code !== undefined) error.code = cause.code;
+  if (cause?.noTransferFallback) error.noTransferFallback = true;
+  throw error;
 }
 
 /**
@@ -6405,6 +6478,10 @@ module.exports = {
   },
   _getPendingCancelCountForTests: () => pendingCancelTransferIds.size,
   _getActiveTransferCountForTests: () => activeTransfers.size,
+  /** @param {object} client SFTP client object used as WeakMap key */
+  _getSessionFastDownloadWaiterCountForTests: (client) => (
+    sessionFastDownloadWaiters.get(client)?.length || 0
+  ),
   _execSshCommandCancellableForTests: execSshCommandCancellable,
   _assertSourceMetadataUnchangedForTests: assertSourceMetadataUnchanged,
   _assertDownloadSourceAfterTransferForTests: assertDownloadSourceAfterTransfer,
