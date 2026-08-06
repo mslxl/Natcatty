@@ -367,6 +367,26 @@ test("createKeyboardInteractiveHandler includes the request scope in modal paylo
   drainPendingRequests(sent);
 });
 
+test("createKeyboardInteractiveHandler forwards bootEpoch on modal payloads", () => {
+  const { sender, sent } = createSender();
+
+  const handler = createKeyboardInteractiveHandler({
+    sender,
+    sessionId: "session-1",
+    hostname: "vps-1.example.com",
+    password: "hunter2",
+    scope: "terminal",
+    bootEpoch: 11,
+  });
+
+  handler("Two-factor", "", "", [passwordPrompt, verificationCodePrompt], () => {});
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].payload.bootEpoch, 11);
+
+  drainPendingRequests(sent);
+});
+
 test("createKeyboardInteractiveHandler does not auto-fill when no saved password is configured", () => {
   const { sender, sent } = createSender();
   const autoFillEvents = [];

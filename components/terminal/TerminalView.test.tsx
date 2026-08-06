@@ -11,9 +11,12 @@ import {
   resolveTerminalRightInset,
   resolveTerminalTopOffsets,
   shouldBlockTerminalReconnectForTarget,
+  shouldEnableStatusBarDisconnect,
+  shouldEnableStatusBarReconnect,
   shouldReconnectTerminalOnEnterKey,
   shouldShowSelectionAIOverlay,
   shouldShowLineTimestampToolbarToggle,
+  shouldShowStatusBarConnectionControls,
 } from "./TerminalView.tsx";
 
 test("line timestamp toggle creates a persistent host update", () => {
@@ -305,6 +308,8 @@ test("hidden host information keeps terminal actions rendered", () => {
   const copyAction = source.indexOf('aria-label={t("terminal.statusbar.copyHostname.label")}');
   const timestampAction = source.indexOf("shouldShowLineTimestampToolbarToggle", copyAction);
   const systemAction = source.indexOf('aria-label={t("terminal.layer.system")}', timestampAction);
+  const disconnectAction = source.indexOf('aria-label={t("terminal.statusbar.disconnect.label")}', systemAction);
+  const reconnectAction = source.indexOf('aria-label={t("terminal.statusbar.reconnect.label")}', disconnectAction);
   const actionsStart = source.indexOf('className="flex items-center gap-0.5 flex-shrink-0"');
   const controls = source.indexOf("{renderControls({ showClose: inWorkspace })}");
   const compactDragHandle = source.indexOf('data-terminal-detach-drag-handle="true"');
@@ -314,6 +319,8 @@ test("hidden host information keeps terminal actions rendered", () => {
   assert.notEqual(copyAction, -1);
   assert.notEqual(timestampAction, -1);
   assert.notEqual(systemAction, -1);
+  assert.notEqual(disconnectAction, -1);
+  assert.notEqual(reconnectAction, -1);
   assert.notEqual(actionsStart, -1);
   assert.notEqual(controls, -1);
   assert.notEqual(compactDragHandle, -1);
@@ -324,9 +331,98 @@ test("hidden host information keeps terminal actions rendered", () => {
   assert.ok(hostInfoEnd < copyAction);
   assert.ok(copyAction < timestampAction);
   assert.ok(timestampAction < systemAction);
-  assert.ok(systemAction < actionsStart);
+  assert.ok(systemAction < disconnectAction);
+  assert.ok(disconnectAction < reconnectAction);
+  assert.ok(reconnectAction < actionsStart);
   assert.ok(actionsStart < controls);
   assert.ok(compactDragHandle < hostInfoStart);
+});
+
+test("status bar disconnect stays enabled while connected or connecting", () => {
+  assert.equal(shouldEnableStatusBarDisconnect("connected"), true);
+  assert.equal(shouldEnableStatusBarDisconnect("connecting"), true);
+  assert.equal(shouldEnableStatusBarDisconnect("disconnected"), false);
+  assert.equal(shouldEnableStatusBarDisconnect(undefined), false);
+});
+
+test("status bar reconnect matches tab-menu reconnect gating", () => {
+  assert.equal(shouldEnableStatusBarReconnect("connected"), true);
+  assert.equal(shouldEnableStatusBarReconnect("disconnected"), true);
+  assert.equal(shouldEnableStatusBarReconnect("connecting"), false);
+  assert.equal(shouldEnableStatusBarReconnect(undefined), false);
+});
+
+test("status bar connection controls require an owned session surface", () => {
+  assert.equal(
+    shouldShowStatusBarConnectionControls({
+      showConnectionControls: true,
+      hasDisconnectHandler: true,
+      hasReconnectHandler: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShowStatusBarConnectionControls({
+      showConnectionControls: false,
+      hasDisconnectHandler: true,
+      hasReconnectHandler: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowStatusBarConnectionControls({
+      showConnectionControls: true,
+      hasDisconnectHandler: false,
+      hasReconnectHandler: false,
+    }),
+    false,
+  );
+});
+
+test("manual disconnect keeps the session pane for reconnect", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const disconnectStart = source.indexOf("const handleDisconnect = () => {");
+  const disconnectEnd = source.indexOf("const handleDismissDisconnectedDialog", disconnectStart);
+  assert.notEqual(disconnectStart, -1);
+  assert.notEqual(disconnectEnd, -1);
+  const body = source.slice(disconnectStart, disconnectEnd);
+  assert.match(body, /clearAutoReconnect\(\{ stopLoop: true \}\)/);
+  assert.match(body, /reconnectWakeTokenRef\.current = null/);
+  assert.match(body, /reconnectWakeInFlightRef\.current = false/);
+  assert.match(body, /netcatty:terminal-session-disconnected/);
+  assert.match(body, /invalidateBootEpochForClose\(\)/);
+  assert.match(body, /isBootActiveRef\.current = false/);
+  assert.match(body, /setIsCancelling\(true\)/);
+  assert.match(body, /updateStatus\("disconnected"\)/);
+  assert.match(body, /void cleanupSession\(\)/);
+  assert.match(source, /trackSessionCleanup/);
+  assert.doesNotMatch(body, /onCloseSession/);
+  assert.match(source, /handleDisconnect: \(attachExistingSession \|\| compactToolbar\) \? undefined : handleDisconnect/);
+  assert.match(source, /showConnectionControls: !attachExistingSession && !compactToolbar/);
+  assert.match(source, /setTerminalBootEpoch/);
+
+  const startersSource = readFileSync(
+    new URL("./runtime/createTerminalSessionStarters.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(startersSource, /createBootAttemptGuard\(ctx\)/);
+  assert.match(startersSource, /setTerminalBootEpoch\(ctx\.sessionId, bootEpoch\)/);
+
+  const effectsSource = readFileSync(new URL("./useTerminalEffects.ts", import.meta.url), "utf8");
+  assert.match(
+    effectsSource,
+    /!isBootActiveRef\.current[\s\S]*statusRef\.current === "disconnected"[\s\S]*bootEpochMismatch/,
+  );
+  assert.match(
+    effectsSource,
+    /respondHostKeyVerification\?\.\(request\.requestId, false\)/,
+  );
+  assert.match(effectsSource, /request\.bootEpoch/);
+  assert.match(
+    startersSource,
+    /if \(!isCurrentAttempt\(\)\) return;/,
+  );
+  assert.match(startersSource, /bootEpoch,/);
 });
 
 test("hidden host information reveals actions without permanently covering terminal content", () => {

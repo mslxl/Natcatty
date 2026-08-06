@@ -213,13 +213,18 @@ test("failed worker lease acquisition compensates the backend pause", async () =
 test("worker close and natural exit clear main-process pause ownership", async () => {
   const { bridge } = loadTerminalBridgeWithMocks();
   const handles = new Map();
+  const sends = new Map();
   const ipcMain = {
     handle(channel, handler) { handles.set(channel, handler); },
-    on() {},
+    on(channel, handler) { sends.set(channel, handler); },
   };
   let notifySessionClosed = null;
   const terminalWorkerManager = {
-    request: async () => ({ success: true }),
+    request: async (_channel, payload) => (
+      Number.isFinite(payload?.bootEpoch)
+        ? { skipped: true }
+        : { success: true }
+    ),
     send() {},
     onSessionClosed(listener) {
       notifySessionClosed = listener;
@@ -227,16 +232,45 @@ test("worker close and natural exit clear main-process pause ownership", async (
     },
   };
   bridge.registerHandlers(ipcMain, { terminalWorkerManager });
-  const sender = { id: 10, once() {}, send() {} };
+  const sender = { id: 10, isDestroyed() {}, send() {} };
   const acquire = handles.get("netcatty:terminal:acquireFlowPauseLease");
   const release = handles.get("netcatty:terminal:releaseFlowPauseLease");
   const closeAwait = handles.get("netcatty:close:await");
+  const closeFireAndForget = sends.get("netcatty:close");
 
   const closingLease = await acquire({ sender }, { sessionId: "session-close" });
   await closeAwait({ sender }, { sessionId: "session-close" });
   assert.equal((await release(
     { sender },
     { sessionId: "session-close", leaseId: closingLease.leaseId },
+  )).success, false);
+
+  // Epoch-mismatch / skipped close must leave the replacement lease intact.
+  const skippedLease = await acquire({ sender }, { sessionId: "session-skipped" });
+  const skippedClose = await closeAwait(
+    { sender },
+    { sessionId: "session-skipped", bootEpoch: 1 },
+  );
+  assert.equal(skippedClose?.skipped, true);
+  assert.equal((await release(
+    { sender },
+    { sessionId: "session-skipped", leaseId: skippedLease.leaseId },
+  )).success, true);
+
+  // Fire-and-forget epoch-scoped close must also preserve leases (worker may
+  // no-op); unscoped close still clears eagerly.
+  const epochFireLease = await acquire({ sender }, { sessionId: "session-epoch-fire" });
+  closeFireAndForget({ sender }, { sessionId: "session-epoch-fire", bootEpoch: 2 });
+  assert.equal((await release(
+    { sender },
+    { sessionId: "session-epoch-fire", leaseId: epochFireLease.leaseId },
+  )).success, true);
+
+  const unscopedFireLease = await acquire({ sender }, { sessionId: "session-unscoped-fire" });
+  closeFireAndForget({ sender }, { sessionId: "session-unscoped-fire" });
+  assert.equal((await release(
+    { sender },
+    { sessionId: "session-unscoped-fire", leaseId: unscopedFireLease.leaseId },
   )).success, false);
 
   const exitLease = await acquire({ sender }, { sessionId: "session-exit" });

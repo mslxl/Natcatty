@@ -149,6 +149,8 @@ declare global {
     sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     // SSH connection diagnostics. Does not capture terminal output.
     sshDebugLogEnabled?: boolean;
+    // Boot generation for correlating host-key prompts with a terminal start.
+    bootEpoch?: number;
     // Local SSH key file paths (from SSH config IdentityFile)
     identityFilePaths?: string[];
     useSshAgent?: boolean;

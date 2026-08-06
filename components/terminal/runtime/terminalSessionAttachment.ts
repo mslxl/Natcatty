@@ -743,12 +743,21 @@ const writeSessionDataImmediate = (
 export const isTerminalBootActive = (ctx: TerminalSessionStartersContext): boolean =>
   !ctx.isBootActiveRef || ctx.isBootActiveRef.current;
 
+/** Capture the current boot epoch so a later reconnect cannot revive this attempt. */
+export const createBootAttemptGuard = (
+  ctx: TerminalSessionStartersContext,
+): (() => boolean) => {
+  const epoch = ctx.bootEpochRef?.current ?? 0;
+  return () => isTerminalBootActive(ctx) && (ctx.bootEpochRef?.current ?? 0) === epoch;
+};
+
 export const closeOrphanBackendSession = (
   ctx: TerminalSessionStartersContext,
   sessionBackendId: string,
+  opts?: { bootEpoch?: number },
 ) => {
   try {
-    const closeResult = ctx.terminalBackend.closeSession(sessionBackendId);
+    const closeResult = ctx.terminalBackend.closeSession(sessionBackendId, opts);
     void Promise.resolve(closeResult).catch((err) => {
       logger.warn("Failed to close orphan session after terminal unmount", err);
     });
@@ -769,10 +778,14 @@ export const tryAttachSessionToTerminal = (
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
     sudoAutofillCandidates?: SudoPasswordAutofillCandidate[];
+    isCurrentAttempt?: () => boolean;
+    bootEpoch?: number;
   },
 ): boolean => {
-  if (!isTerminalBootActive(ctx)) {
-    closeOrphanBackendSession(ctx, id);
+  if (!isTerminalBootActive(ctx) || opts?.isCurrentAttempt?.() === false) {
+    // Pass the attempt bootEpoch so closeSession no-ops when a newer boot
+    // already owns this shared sessionId in the main-process registry.
+    closeOrphanBackendSession(ctx, id, { bootEpoch: opts?.bootEpoch });
     return false;
   }
   attachSessionToTerminal(ctx, term, id, opts);

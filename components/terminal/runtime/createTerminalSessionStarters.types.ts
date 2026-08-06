@@ -73,15 +73,15 @@ export type TerminalBackendApi = {
   ) => () => void;
   onTelnetAutoLoginComplete?: (
     sessionId: string,
-    cb: (evt: { sessionId: string }) => void,
+    cb: (evt: { sessionId: string; bootEpoch?: number }) => void,
   ) => (() => void) | undefined;
   onTelnetAutoLoginCancelled?: (
     sessionId: string,
-    cb: (evt: { sessionId: string }) => void,
+    cb: (evt: { sessionId: string; bootEpoch?: number }) => void,
   ) => (() => void) | undefined;
   onMoshSessionReady?: (
     sessionId: string,
-    cb: (evt: { sessionId: string }) => void,
+    cb: (evt: { sessionId: string; bootEpoch?: number }) => void,
   ) => (() => void) | undefined;
   onTelnetEchoMode?: (
     sessionId: string,
@@ -103,7 +103,7 @@ export type TerminalBackendApi = {
   writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean; lineDelayMs?: number; logRewrite?: ProgrammaticCommandLogRewrite }) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
-  closeSession: (sessionId: string) => void | Promise<void>;
+  closeSession: (sessionId: string, options?: { bootEpoch?: number }) => void | Promise<void>;
   /** Pause/resume the source stream for output back-pressure (optional). */
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
   /** Acknowledge rendered terminal output bytes for main-process IPC back-pressure. */
@@ -189,6 +189,11 @@ export type TerminalSessionStartersContext = {
   isVisibleRef?: RefObject<boolean>;
   /** False after unmount/teardown so in-flight session starts skip attach. */
   isBootActiveRef?: RefObject<boolean>;
+  /**
+   * Monotonic boot epoch. Disconnect / a newer reconnect bumps this so an
+   * older in-flight start cannot become current again when boot is re-armed.
+   */
+  bootEpochRef?: RefObject<number>;
   pendingOutputScrollRef?: RefObject<boolean>;
 
   sessionRef: RefObject<string | null>;
@@ -196,6 +201,11 @@ export type TerminalSessionStartersContext = {
   hasRunStartupCommandRef: RefObject<boolean>;
   disposeDataRef: RefObject<(() => void) | null>;
   disposeExitRef: RefObject<(() => void) | null>;
+  /**
+   * Track an async cleanup (e.g. cancelled plugin start → finishExternalSession)
+   * so Disconnect/Reconnect can await it before starting a replacement boot.
+   */
+  trackSessionCleanup?: (promise: Promise<unknown>) => void;
   disposeTelnetEchoModeRef?: RefObject<(() => void) | null>;
   fitAddonRef: RefObject<FitAddon | null>;
   serializeAddonRef: RefObject<SerializeAddon | null>;

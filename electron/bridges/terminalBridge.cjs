@@ -961,7 +961,14 @@ function startLocalSession(event, payload) {
     lastIdlePromptAt: 0,
     _promptTrackTail: "",
   };
-  sessions.set(sessionId, session);
+  const { claimSessionSlot } = require("./sessionBootEpoch.cjs");
+  const claim = claimSessionSlot(sessions, sessionId, session, payload?.bootEpoch);
+  if (!claim.ok) {
+    try { proc.kill(); } catch { /* ignore */ }
+    const supersededError = new Error("Local session superseded by a newer reconnect");
+    supersededError.code = "NETCATTY_BOOT_SUPERSEDED";
+    throw supersededError;
+  }
   openTerminalOutputSession(sessionId, event.sender);
   ptyProcessTree.registerPid(sessionId, proc.pid);
 
@@ -980,6 +987,7 @@ function startLocalSession(event, payload) {
       timestampsEnabled: Boolean(payload.sessionLog.timestampsEnabled),
       startTime: Date.now(),
     });
+    session.logStreamToken = logStreamToken;
   }
 
   const {
@@ -1201,6 +1209,24 @@ async function startSerialSession(event, options) {
     // tearing down a freshly started stream after a "Restart" reconnect on
     // the same sessionId (issue #916).
     let logStreamToken = null;
+    const {
+      registerPendingBootAbort,
+      clearPendingBootAbort,
+    } = require("./sessionBootEpoch.cjs");
+    const pendingBootAbort = registerPendingBootAbort(sessionId, options?.bootEpoch);
+    let settled = false;
+    const settleReject = (err) => {
+      if (settled) return;
+      settled = true;
+      clearPendingBootAbort(sessionId, pendingBootAbort);
+      reject(err);
+    };
+    const settleResolve = (value) => {
+      if (settled) return;
+      settled = true;
+      clearPendingBootAbort(sessionId, pendingBootAbort);
+      resolve(value);
+    };
     try {
       const serialPort = new SerialPort({
         path: portPath,
@@ -1214,10 +1240,30 @@ async function startSerialSession(event, options) {
         autoOpen: false,
       });
 
+      const abortPendingOpen = () => {
+        try { serialPort.close(); } catch { /* ignore */ }
+        const supersededError = new Error("Connection superseded by a newer reconnect");
+        supersededError.code = "NETCATTY_BOOT_SUPERSEDED";
+        settleReject(supersededError);
+      };
+      if (pendingBootAbort.signal.aborted) {
+        abortPendingOpen();
+        return;
+      }
+      pendingBootAbort.signal.addEventListener("abort", abortPendingOpen, { once: true });
+
       serialPort.open((err) => {
+        if (settled) {
+          try { serialPort.close(); } catch { /* ignore */ }
+          return;
+        }
+        if (pendingBootAbort.signal.aborted) {
+          abortPendingOpen();
+          return;
+        }
         if (err) {
           console.error(`[Serial] Failed to open port ${portPath}:`, err.message);
-          reject(new Error(`Failed to open serial port: ${err.message}`));
+          settleReject(new Error(`Failed to open serial port: ${err.message}`));
           return;
         }
 
@@ -1238,7 +1284,15 @@ async function startSerialSession(event, options) {
           decoderRef: serialDecoderRef,
           webContentsId: event.sender.id,
         };
-        sessions.set(sessionId, session);
+        {
+          const { claimSessionSlot } = require("./sessionBootEpoch.cjs");
+          const claim = claimSessionSlot(sessions, sessionId, session, options?.bootEpoch);
+          if (!claim.ok) {
+            try { serialPort.close(); } catch { /* ignore */ }
+            settleReject(new Error("Connection superseded by a newer reconnect"));
+            return;
+          }
+        }
         openTerminalOutputSession(sessionId, event.sender);
 
         // Start real-time session log stream if configured
@@ -1251,6 +1305,7 @@ async function startSerialSession(event, options) {
             timestampsEnabled: Boolean(options.sessionLog.timestampsEnabled),
             startTime: Date.now(),
           });
+          session.logStreamToken = logStreamToken;
         }
 
         const serialZmodemSentry = createZmodemSentry({
@@ -1320,11 +1375,11 @@ async function startSerialSession(event, options) {
           finalizeSerialExit({ exitCode: 0, reason: "closed" });
         });
 
-        resolve({ sessionId });
+        settleResolve({ sessionId });
       });
     } catch (err) {
       console.error("[Serial] Failed to start serial session:", err.message);
-      reject(err);
+      settleReject(err);
     }
   });
 }
@@ -1913,8 +1968,23 @@ function clearSessionPtyBuffer(event, payload) {
  */
 function closeSession(event, payload) {
   const session = sessions.get(payload.sessionId);
+  const {
+    abortPendingBoot,
+    sessionMatchesBootEpoch,
+  } = require("./sessionBootEpoch.cjs");
+  const passphraseHandler = require("./passphraseHandler.cjs");
+  // Abort in-flight SSH passphrase prompts even before a registry slot exists.
+  abortPendingBoot(payload.sessionId, payload?.bootEpoch);
+  passphraseHandler.cancelPassphraseRequestsForSession?.(
+    payload.sessionId,
+    "session-closed",
+    payload?.bootEpoch,
+  );
+  if (session && !sessionMatchesBootEpoch(session, payload?.bootEpoch)) {
+    return { skipped: true, reason: "boot-epoch-mismatch" };
+  }
   releaseAttachedSessionState(payload.sessionId);
-  if (!session) return;
+  if (!session) return { closed: false, reason: "missing" };
   terminalFlowPauseArbiter.clearSession(payload.sessionId);
   session.closed = true;
   fanoutSessionLifecycleEvent(
@@ -1986,6 +2056,7 @@ function closeSession(event, payload) {
   }
   ptyProcessTree.unregisterPid(payload.sessionId);
   sessions.delete(payload.sessionId);
+  return { closed: true };
 }
 
 /**
@@ -2184,13 +2255,16 @@ function registerHandlers(ipcMain, options = {}) {
       "netcatty:telnet:getEchoMode",
     ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
     ipcMain.handle("netcatty:close:await", async (event, payload) => {
-      try {
-        return await terminalWorkerManager.request("netcatty:close:await", payload, {
-          webContentsId: event?.sender?.id,
-        });
-      } finally {
+      const result = await terminalWorkerManager.request("netcatty:close:await", payload, {
+        webContentsId: event?.sender?.id,
+      });
+      // A skipped epoch-mismatch close must not drop the replacement's
+      // flow-pause lease; only clear after the owned epoch was closed (or the
+      // session was already gone / returned without skipped).
+      if (!result?.skipped) {
         terminalFlowPauseArbiter.clearSession(payload?.sessionId);
       }
+      return result;
     });
     ipcMain.on("netcatty:write", (event, payload) => {
       // Session log streams started in the main process (manual/script logs)
@@ -2228,7 +2302,12 @@ function registerHandlers(ipcMain, options = {}) {
       terminalWorkerManager.send("netcatty:close", payload, {
         webContentsId: event?.sender?.id,
       });
-      terminalFlowPauseArbiter.clearSession(payload?.sessionId);
+      // Epoch-scoped closes may be no-ops in the worker; clearing here would
+      // orphan the replacement's pause lease. Unscoped closes still clear
+      // eagerly; owned closes also clear via onSessionClosed.
+      if (!Number.isFinite(payload?.bootEpoch)) {
+        terminalFlowPauseArbiter.clearSession(payload?.sessionId);
+      }
     });
     return;
   }

@@ -208,6 +208,7 @@ const createHostVerifier = ({
   port = 22,
   knownHosts = [],
   verifyHostKeys = true,
+  bootEpoch,
 }) => (rawKey, callback) => {
   if (verifyHostKeys === false) {
     callback(true);
@@ -238,6 +239,7 @@ const createHostVerifier = ({
     publicKey: keyInfo.publicKey,
     knownHostId: decision.knownHost?.id,
     knownFingerprint: decision.expectedFingerprint,
+    ...(Number.isFinite(bootEpoch) ? { bootEpoch: Number(bootEpoch) } : {}),
   }).then((response) => {
     callback(Boolean(response?.accept));
   }).catch(() => {

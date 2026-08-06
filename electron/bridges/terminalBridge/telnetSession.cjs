@@ -114,11 +114,19 @@ function createTelnetSessionApi(ctx) {
           },
           onComplete() {
             const contents = electronModule.webContents.fromId(event.sender.id);
-            contents?.send("netcatty:telnet:auto-login-complete", { sessionId });
+            const liveSession = sessions.get(sessionId);
+            contents?.send("netcatty:telnet:auto-login-complete", {
+              sessionId,
+              bootEpoch: liveSession?.bootEpoch ?? options.bootEpoch,
+            });
           },
           onUserInput() {
             const contents = electronModule.webContents.fromId(event.sender.id);
-            contents?.send("netcatty:telnet:auto-login-cancelled", { sessionId });
+            const liveSession = sessions.get(sessionId);
+            contents?.send("netcatty:telnet:auto-login-cancelled", {
+              sessionId,
+              bootEpoch: liveSession?.bootEpoch ?? options.bootEpoch,
+            });
           },
         });
     
@@ -226,7 +234,17 @@ function createTelnetSessionApi(ctx) {
           };
           activeSession = session;
           session.flushPendingData = flushTelnetPaced;
-          sessions.set(sessionId, session);
+          const { claimSessionSlot } = require("../sessionBootEpoch.cjs");
+          const claim = claimSessionSlot(sessions, sessionId, session, options.bootEpoch);
+          if (!claim.ok) {
+            try { socket?.destroy?.(); } catch { /* ignore */ }
+            const supersededError = new Error("Connection superseded by a newer reconnect");
+            supersededError.code = "NETCATTY_BOOT_SUPERSEDED";
+            // EventEmitter 'connect' callbacks are not covered by the
+            // enclosing Promise executor try/catch — reject explicitly.
+            reject(supersededError);
+            return;
+          }
           openTerminalOutputSession?.(sessionId, event.sender);
     
           // Start real-time session log stream if configured
@@ -239,6 +257,7 @@ function createTelnetSessionApi(ctx) {
               timestampsEnabled: Boolean(options.sessionLog.timestampsEnabled),
               startTime: Date.now(),
             });
+            session.logStreamToken = logStreamToken;
           }
     
           resolve({ sessionId });

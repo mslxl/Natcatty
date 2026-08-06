@@ -1283,12 +1283,22 @@ main();
           lastIdlePromptAt: 0,
           _promptTrackTail: "",
         };
-        sessions.set(sessionId, session);
+        {
+          const { claimSessionSlot } = require("../sessionBootEpoch.cjs");
+          const claim = claimSessionSlot(sessions, sessionId, session, options.bootEpoch);
+          if (!claim.ok) {
+            try { proc.kill(); } catch { /* ignore */ }
+            cleanupSessionExternalAuthArtifacts(session);
+            const supersededError = new Error("Connection superseded by a newer reconnect");
+            supersededError.code = "NETCATTY_BOOT_SUPERSEDED";
+            throw supersededError;
+          }
+        }
         openTerminalOutputSession?.(sessionId, event.sender);
 
         // Start real-time session log stream if configured
         if (options.sessionLog?.enabled && options.sessionLog?.directory) {
-          sessionLogStreamManager.startStream(sessionId, {
+          const logStreamToken = sessionLogStreamManager.startStream(sessionId, {
             hostLabel: options.label || options.hostname,
             hostname: options.hostname,
             directory: options.sessionLog.directory,
@@ -1296,6 +1306,7 @@ main();
             timestampsEnabled: Boolean(options.sessionLog.timestampsEnabled),
             startTime: Date.now(),
           });
+          session.logStreamToken = logStreamToken;
         }
 
         const {
@@ -1367,7 +1378,7 @@ main();
             etExitFinalized = true;
             try { session.etStatsConn?.end(); } catch { /* ignore */ }
             cleanupSessionExternalAuthArtifacts(session);
-            sessionLogStreamManager.stopStream(sessionId);
+            sessionLogStreamManager.stopStream(sessionId, session.logStreamToken);
             closeTerminalOutputSession?.(sessionId);
             sessions.delete(sessionId);
             if (session.closed) return;

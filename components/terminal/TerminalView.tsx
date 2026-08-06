@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronsLeft, GripVertical, Network, X as XIcon } from 'lucide-react';
+import { isSessionReconnectDisabled } from '../top-tabs/SessionTabContextMenuContent';
 
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { classifyDistroId } from '../../domain/host';
@@ -45,6 +46,32 @@ export function shouldShowLineTimestampToolbarToggle(
   onUpdateHost: unknown,
 ): boolean {
   return lineTimestampsAvailable !== false && Boolean(onUpdateHost);
+}
+
+/** Keep the tab/pane; only tear down the live transport. */
+export function shouldEnableStatusBarDisconnect(
+  status: 'connecting' | 'connected' | 'disconnected' | undefined,
+): boolean {
+  return status === 'connected' || status === 'connecting';
+}
+
+export function shouldEnableStatusBarReconnect(
+  status: 'connecting' | 'connected' | 'disconnected' | undefined,
+): boolean {
+  if (!status) return false;
+  return !isSessionReconnectDisabled(status);
+}
+
+export function shouldShowStatusBarConnectionControls({
+  showConnectionControls,
+  hasDisconnectHandler,
+  hasReconnectHandler,
+}: {
+  showConnectionControls?: boolean;
+  hasDisconnectHandler?: boolean;
+  hasReconnectHandler?: boolean;
+}): boolean {
+  return Boolean(showConnectionControls && (hasDisconnectHandler || hasReconnectHandler));
 }
 
 export function shouldEnableYmodemAction({
@@ -287,7 +314,7 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
-  const { Activity, Button, Clock3, Copy, Maximize2, Radio, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction, isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const { Activity, Button, Clock3, Copy, Maximize2, Radio, RefreshCcw, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, Unplug, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showConnectionControls, showLogs, showSelectionAIAction, isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
   // Context menu only needs a snapshot at open; avoid selection state lifting into Terminal.
   const [contextMenuHasSelection, setContextMenuHasSelection] = useState(false);
   const isNetworkDevice = host.deviceType === 'network'
@@ -645,6 +672,60 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                       </TooltipTrigger>
                       <TooltipContent side="bottom">{t("terminal.layer.system")}</TooltipContent>
                     </Tooltip>
+                  )}
+                  {shouldShowStatusBarConnectionControls({
+                    showConnectionControls,
+                    hasDisconnectHandler: Boolean(handleDisconnect),
+                    hasReconnectHandler: Boolean(handleRetry),
+                  }) && (
+                    <>
+                      {handleDisconnect && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className={cn(
+                                "ml-0.5 p-0.5 rounded transition-colors flex-shrink-0",
+                                "hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
+                                shouldEnableStatusBarDisconnect(status)
+                                  ? "opacity-60 hover:opacity-100"
+                                  : "opacity-30 cursor-not-allowed",
+                              )}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onClick={handleDisconnect}
+                              disabled={!shouldEnableStatusBarDisconnect(status)}
+                              aria-label={t("terminal.statusbar.disconnect.label")}
+                            >
+                              <Unplug size={10} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">{t("terminal.statusbar.disconnect.tooltip")}</TooltipContent>
+                        </Tooltip>
+                      )}
+                      {handleRetry && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className={cn(
+                                "ml-0.5 p-0.5 rounded transition-colors flex-shrink-0",
+                                "hover:bg-[color:var(--terminal-toolbar-btn-hover)]",
+                                shouldEnableStatusBarReconnect(status)
+                                  ? "opacity-60 hover:opacity-100"
+                                  : "opacity-30 cursor-not-allowed",
+                              )}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onClick={handleRetry}
+                              disabled={!shouldEnableStatusBarReconnect(status)}
+                              aria-label={t("terminal.statusbar.reconnect.label")}
+                            >
+                              <RefreshCcw size={10} />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">{t("terminal.statusbar.reconnect.tooltip")}</TooltipContent>
+                        </Tooltip>
+                      )}
+                    </>
                   )}
                 </div>
                 {showHostInfoBar && !compactToolbar && (

@@ -545,7 +545,17 @@ function createMoshSessionApi(ctx) {
         moshHandshakeResult: null,
         moshAuthTempFiles: moshAuth.tempFiles,
       };
-      sessions.set(sessionId, session);
+      {
+        const { claimSessionSlot } = require("../sessionBootEpoch.cjs");
+        const claim = claimSessionSlot(sessions, sessionId, session, options.bootEpoch);
+        if (!claim.ok) {
+          try { sshPty.kill(); } catch { /* ignore */ }
+          cleanupMoshAuthTempFiles(moshAuth.tempFiles);
+          const supersededError = new Error("Connection superseded by a newer reconnect");
+          supersededError.code = "NETCATTY_BOOT_SUPERSEDED";
+          throw supersededError;
+        }
+      }
       openTerminalOutputSession?.(sessionId, event.sender);
     
       let logStreamToken = null;
@@ -774,7 +784,10 @@ function createMoshSessionApi(ctx) {
       // ephemeral handshake PTY — issue #2199).
       try {
         const readyContents = electronModule.webContents.fromId(session.webContentsId);
-        readyContents?.send("netcatty:mosh:ready", { sessionId });
+        readyContents?.send("netcatty:mosh:ready", {
+          sessionId,
+          bootEpoch: session.bootEpoch,
+        });
       } catch {
         // Best-effort; startup-command deferral falls back if the event is missed.
       }

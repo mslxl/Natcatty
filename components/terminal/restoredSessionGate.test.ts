@@ -129,6 +129,7 @@ test("reconnect wakes a hibernated terminal before requiring a terminal instance
   const wakePromiseRefIndex = source.indexOf("const wakePromiseRef = useRef<Promise<boolean> | null>(null)");
   const wakeGuardRefIndex = source.indexOf("const reconnectWakeInFlightRef = useRef(false)");
   const wakeTokenRefIndex = source.indexOf("const reconnectWakeTokenRef = useRef<symbol | null>(null)");
+  const wakeInvalidateModeIndex = source.indexOf('const reconnectWakeInvalidateModeRef = useRef<"dispose" | "keep">("dispose")');
   const wakeTokenCleanupIndex = source.indexOf("reconnectWakeTokenRef.current = null", wakeTokenRefIndex);
   const reconnectIndex = source.indexOf("const startReconnect = ");
   const hibernatedBranchIndex = source.indexOf('!termRef.current && hibernatedRef.current', reconnectIndex);
@@ -140,12 +141,15 @@ test("reconnect wakes a hibernated terminal before requiring a terminal instance
   const wakeJoinIndex = source.indexOf("return wakePromiseRef.current ?? false", source.indexOf("const wakeFromHibernateRuntime"));
   const wakeTokenIndex = source.indexOf("const wakeToken = Symbol()", hibernatedBranchIndex);
   const staleWakeGuardIndex = source.indexOf("reconnectWakeTokenRef.current !== wakeToken", wakeInvocationIndex);
-  const staleWakeDisposeIndex = source.indexOf("disposeRuntimeOnly();", staleWakeGuardIndex);
+  const staleWakeDisposeGuardIndex = source.indexOf('reconnectWakeInvalidateModeRef.current === "dispose"', staleWakeGuardIndex);
+  const staleWakeDisposeIndex = source.indexOf("disposeRuntimeOnly();", staleWakeDisposeGuardIndex);
+  const disconnectKeepModeIndex = source.indexOf('reconnectWakeInvalidateModeRef.current = "keep"', source.indexOf("const handleDisconnect"));
   const missingTermReturnIndex = source.indexOf("if (!termRef.current) return;", reconnectIndex);
 
   assert.notEqual(wakePromiseRefIndex, -1);
   assert.notEqual(wakeGuardRefIndex, -1);
   assert.notEqual(wakeTokenRefIndex, -1);
+  assert.notEqual(wakeInvalidateModeIndex, -1);
   assert.notEqual(wakeTokenCleanupIndex, -1);
   assert.ok(wakeTokenCleanupIndex < reconnectIndex);
   assert.notEqual(reconnectIndex, -1);
@@ -158,7 +162,9 @@ test("reconnect wakes a hibernated terminal before requiring a terminal instance
   assert.notEqual(wakeJoinIndex, -1);
   assert.notEqual(wakeTokenIndex, -1);
   assert.notEqual(staleWakeGuardIndex, -1);
+  assert.notEqual(staleWakeDisposeGuardIndex, -1);
   assert.notEqual(staleWakeDisposeIndex, -1);
+  assert.notEqual(disconnectKeepModeIndex, -1);
   assert.notEqual(missingTermReturnIndex, -1);
   assert.ok(
     hibernatedBranchIndex < missingTermReturnIndex && wakeCallIndex < missingTermReturnIndex,
@@ -173,8 +179,12 @@ test("reconnect wakes a hibernated terminal before requiring a terminal instance
     "closing a terminal must be able to invalidate a pending hibernated reconnect",
   );
   assert.ok(
-    staleWakeGuardIndex < staleWakeDisposeIndex,
+    staleWakeGuardIndex < staleWakeDisposeGuardIndex && staleWakeDisposeGuardIndex < staleWakeDisposeIndex,
     "an invalidated hibernated wake must dispose any runtime created after unmount cleanup",
+  );
+  assert.ok(
+    disconnectKeepModeIndex !== -1,
+    "disconnect must keep a woken runtime so later reconnect still has a terminal instance",
   );
 });
 

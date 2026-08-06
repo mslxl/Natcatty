@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
-import { Activity, Cpu, Clock3, Copy, HardDrive, Maximize2, MemoryStick, Radio, ArrowDownToLine, ArrowUpFromLine, Sparkles, SquareArrowOutUpRight } from "lucide-react";
+import { Activity, Cpu, Clock3, Copy, HardDrive, Maximize2, MemoryStick, Radio, ArrowDownToLine, ArrowUpFromLine, RefreshCcw, Sparkles, SquareArrowOutUpRight, Unplug } from "lucide-react";
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { detectLocalOs } from "../lib/localShell";
@@ -48,6 +48,7 @@ import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth, resolveHostAutofillPassword } from "../domain/sshAuth";
 import { resolveEffectiveTerminalProtocol } from "../domain/terminalProtocol";
 import { isPluginHostProtocol } from "../domain/pluginConnection";
+import { clearTerminalBootEpoch, setTerminalBootEpoch } from "../domain/terminalBootEpoch";
 import {
   appendTerminalPromptSecurityTail,
   isConfirmedTerminalShellPrompt,
@@ -458,7 +459,48 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const wakePromiseRef = useRef<Promise<boolean> | null>(null);
   const sessionRef = useRef<string | null>(null);
   const sessionCleanupPromiseRef = useRef<Promise<void> | null>(null);
+  /** Epoch owned by an in-flight disconnect/teardown close (before bump). */
+  const pendingCloseBootEpochRef = useRef<number | undefined>(undefined);
+  const trackSessionCleanup = (promise: Promise<unknown>) => {
+    const settled = Promise.resolve(promise).then(
+      () => undefined,
+      () => undefined,
+    );
+    const previous = sessionCleanupPromiseRef.current;
+    const next = previous
+      ? Promise.all([previous, settled]).then(() => undefined)
+      : settled;
+    sessionCleanupPromiseRef.current = next;
+    void next.finally(() => {
+      if (sessionCleanupPromiseRef.current === next) {
+        sessionCleanupPromiseRef.current = null;
+      }
+    });
+  };
   const isBootActiveRef = useRef(false);
+  const bootEpochRef = useRef(0);
+  const publishBootEpoch = () => {
+    setTerminalBootEpoch(sessionId, bootEpochRef.current);
+  };
+  const bumpBootEpoch = () => {
+    bootEpochRef.current += 1;
+    publishBootEpoch();
+  };
+  /** Invalidate the current boot and remember its epoch for the matching closeSession. */
+  const invalidateBootEpochForClose = () => {
+    const closingEpoch = bootEpochRef.current;
+    bumpBootEpoch();
+    pendingCloseBootEpochRef.current = closingEpoch;
+    return closingEpoch;
+  };
+  const resolveCloseBootEpoch = () => {
+    if (pendingCloseBootEpochRef.current !== undefined) {
+      const epoch = pendingCloseBootEpochRef.current;
+      pendingCloseBootEpochRef.current = undefined;
+      return epoch;
+    }
+    return bootEpochRef.current;
+  };
   const hasConnectedRef = useRef(false);
   const hasRunStartupCommandRef = useRef(false);
   const restoreCwdIntentRef = useRef<{ cwd: string; command: string } | null>(null);
@@ -477,6 +519,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   /** Connected wake for multi-tab snippet fan-out (reattaches session listeners). */
   const wakeHibernatedRuntimeForConnectedRef = useRef<(() => Promise<boolean>) | null>(null);
   const reconnectWakeInFlightRef = useRef(false);
+  // When a hibernated reconnect wake is invalidated: 'dispose' for unmount/
+  // session teardown (orphan runtime must go), 'keep' for Disconnect so the
+  // pane retains an xterm instance and can reconnect without being remounted.
+  const reconnectWakeInvalidateModeRef = useRef<"dispose" | "keep">("dispose");
   const reconnectWakeTokenRef = useRef<symbol | null>(null);
   const manualReconnectRequestRef = useRef<() => void>(() => {});
   const terminalDataCapturedRef = useRef(false);
@@ -498,6 +544,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, [onSessionExit]);
 
   useEffect(() => () => {
+    reconnectWakeInvalidateModeRef.current = "dispose";
     reconnectWakeTokenRef.current = null;
   }, [sessionId]);
 
@@ -1547,6 +1594,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     if (!closingSessionId) {
       disposeSessionListeners();
+      // Still notify main so in-flight SSH passphrase prompts for this UI
+      // sessionId are aborted even before a backend session was attached.
+      try {
+        await terminalBackend.closeSession(sessionId, { bootEpoch: resolveCloseBootEpoch() });
+      } catch (err) {
+        logger.warn("Failed to cancel pending session boot on disconnect", err);
+      }
+      const postDisposeCleanup = sessionCleanupPromiseRef.current;
+      if (postDisposeCleanup) {
+        await postDisposeCleanup;
+      }
       return;
     }
 
@@ -1648,7 +1706,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         clearTerminalSessionFlowAck(closingSessionId);
       }
       try {
-        await terminalBackend.closeSession(closingSessionId);
+        await terminalBackend.closeSession(closingSessionId, { bootEpoch: resolveCloseBootEpoch() });
       } catch (err) {
         logger.warn("Failed to close SSH session", err);
       }
@@ -2072,9 +2130,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   useEffect(() => () => {
     clearKittyKeyboardBroadcastSession(sessionId);
+    clearTerminalBootEpoch(sessionId);
   }, [sessionId]);
 
   const teardown = () => {
+    // Capture the live epoch before invalidating so closeSession still matches
+    // the registered backend session / pending passphrase boot.
+    invalidateBootEpochForClose();
+    clearTerminalBootEpoch(sessionId);
     isBootActiveRef.current = false;
     retryTokenRef.current = null;
     reconnectPreparationTokenRef.current = null;
@@ -2205,6 +2268,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isPaneVisibleRef: isVisibleRef,
     isVisibleRef: isRendererActiveRef,
     isBootActiveRef,
+    bootEpochRef,
     pendingOutputScrollRef,
     sessionRef,
     hasConnectedRef,
@@ -2212,6 +2276,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     restoreCwdIntentRef,
     disposeDataRef,
     disposeExitRef,
+    trackSessionCleanup,
     disposeTelnetEchoModeRef,
     fitAddonRef,
     serializeAddonRef,
@@ -2334,7 +2399,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return;
     }
     setMoshShellReady(false);
-    disposeMoshReadyRef.current = terminalBackend.onMoshSessionReady(sessionId, () => {
+    disposeMoshReadyRef.current = terminalBackend.onMoshSessionReady(sessionId, (evt) => {
+      const currentEpoch = bootEpochRef.current;
+      if (
+        Number.isFinite(currentEpoch)
+        && Number.isFinite(evt?.bootEpoch)
+        && evt.bootEpoch !== currentEpoch
+      ) {
+        return;
+      }
       setMoshShellReady(true);
     }) ?? null;
   }, [effectiveTerminalProtocol, sessionId, terminalBackend]);
@@ -3101,6 +3174,50 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onCloseSession?.(sessionId);
   };
 
+  /** Tear down the live transport but keep the tab/pane for a later reconnect. */
+  const handleDisconnect = () => {
+    if (attachExistingSession) return;
+    if (statusRef.current === "disconnected") return;
+    if (pendingHostKeyRequestId) {
+      void terminalBackend.respondHostKeyVerification(pendingHostKeyRequestId, false);
+    }
+    clearAutoReconnect({ stopLoop: true });
+    retryTokenRef.current = null;
+    reconnectPreparationTokenRef.current = null;
+    restoreCwdIntentRef.current = null;
+    // A hibernated reconnect may still be waking the runtime; invalidate that
+    // continuation so it cannot re-arm boot after this disconnect. Keep any
+    // runtime already created — wakeHibernatedRuntime clears hibernatedRef
+    // before returning, and disposing here would leave no term and no
+    // hibernation marker, permanently blocking later Reconnect.
+    reconnectWakeInvalidateModeRef.current = "keep";
+    reconnectWakeTokenRef.current = null;
+    reconnectWakeInFlightRef.current = false;
+    // Cancel closes the tab (effect cleanup flips boot-active). Disconnect keeps
+    // the pane mounted, so mark boot inactive here or a late startSSH/startMosh
+    // attach can still bring the session back after the user asked to stop.
+    // Bump the epoch so a later reconnect cannot revive this aborted attempt,
+    // but closeSession must still target the pre-bump epoch.
+    invalidateBootEpochForClose();
+    isBootActiveRef.current = false;
+    setIsCancelling(true);
+    auth.setNeedsAuth(false);
+    auth.setAuthRetryMessage(null);
+    setNeedsHostKeyVerification(false);
+    setPendingHostKeyInfo(null);
+    setPendingHostKeyRequestId(null);
+    setError(null);
+    setProgressLogs((prev) => [...prev, "Disconnected by user."]);
+    void cleanupSession();
+    updateStatus("disconnected");
+    setChainProgress(null);
+    setIsDisconnectedDialogDismissed(false);
+    window.dispatchEvent(new CustomEvent("netcatty:terminal-session-disconnected", {
+      detail: { sessionId },
+    }));
+    setTimeout(() => setIsCancelling(false), 600);
+  };
+
   const handleDismissDisconnectedDialog = () => {
     setIsDisconnectedDialogDismissed(true);
     queueMicrotask(() => termRef.current?.focus());
@@ -3161,11 +3278,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }
       reconnectWakeInFlightRef.current = true;
       const wakeToken = Symbol();
+      reconnectWakeInvalidateModeRef.current = "dispose";
       reconnectWakeTokenRef.current = wakeToken;
       updateStatus("connecting");
       void wakeForReconnect().then((woke) => {
         if (reconnectWakeTokenRef.current !== wakeToken) {
-          disposeRuntimeOnly();
+          reconnectWakeInFlightRef.current = false;
+          if (reconnectWakeInvalidateModeRef.current === "dispose") {
+            disposeRuntimeOnly();
+          }
           return;
         }
         reconnectWakeTokenRef.current = null;
@@ -3177,7 +3298,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         updateStatus("disconnected");
       }).catch(() => {
         if (reconnectWakeTokenRef.current !== wakeToken) {
-          disposeRuntimeOnly();
+          reconnectWakeInFlightRef.current = false;
+          if (reconnectWakeInvalidateModeRef.current === "dispose") {
+            disposeRuntimeOnly();
+          }
           return;
         }
         reconnectWakeTokenRef.current = null;
@@ -3235,6 +3359,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     // ghost backend session with no owning UI.
     const retryStillActive = () => retryTokenStillCurrent() && termRef.current === term;
 
+    bootEpochRef.current += 1;
+    publishBootEpoch();
     isBootActiveRef.current = true;
     auth.resetForRetry();
     terminalDataCapturedRef.current = false;
@@ -3873,11 +3999,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onWake: wakeFromHibernateRuntime,
   });
 
-  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts: resolvedChainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef, onPluginRuntimeCwdChange: pluginAwareOnRuntimeCwdChange, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRefreshRef, pluginDecorationRules, pluginDecorationRulesRef, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef: recorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shellType, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, snippetsRef, splitResizeActive: isResizing, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, workspaceId, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
+  useTerminalEffects({ CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts: resolvedChainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, bootEpochRef, isBroadcastEnabledRef, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing: deferTerminalResize, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef: noteOutputTriggerUserInputRef, onPluginRuntimeCwdChange: pluginAwareOnRuntimeCwdChange, onSnippetShortkeyRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRefreshRef, pluginDecorationRules, pluginDecorationRulesRef, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef: recorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shellType, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, snippetsRef, splitResizeActive: isResizing, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, workspaceId, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState });
 
   return (
     <>
-      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, Sparkles, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost: !!onUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI: onAddSelectionToAI ? handleAddSelectionToAI : undefined, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
+      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, RefreshCcw, Sparkles, SquareArrowOutUpRight, Unplug, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost: !!onUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI: onAddSelectionToAI ? handleAddSelectionToAI : undefined, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect: (attachExistingSession || compactToolbar) ? undefined : handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
         <ScriptExecutionOverlay
           run={activeScriptRun}
           onPause={() => { void pauseScriptRun(activeScriptRun.runId); }}
@@ -3886,7 +4012,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onDismiss={dismissScriptOverlay}
           compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
-      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

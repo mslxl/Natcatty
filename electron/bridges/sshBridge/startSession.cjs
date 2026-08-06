@@ -365,7 +365,15 @@ printf '%s\n' '${scanCompleteMarker}'`;
         cols: options.cols || 80,
         rows: options.rows || 24,
       };
-      sessions.set(sessionId, session);
+      const { claimSessionSlot } = require("../sessionBootEpoch.cjs");
+      const claim = claimSessionSlot(sessions, sessionId, session, options.bootEpoch);
+      if (!claim.ok) {
+        const supersededError = new Error("Connection superseded by a newer reconnect");
+        supersededError.code = "NETCATTY_BOOT_SUPERSEDED";
+        try { stream?.close?.(); } catch { /* ignore */ }
+        try { if (!isReused) conn?.end?.(); } catch { /* ignore */ }
+        throw supersededError;
+      }
       openTerminalOutputSession?.(sessionId, event.sender);
 
       // Attach the shared connection descriptor to this session. The caller owns
@@ -819,17 +827,24 @@ printf '%s\n' '${scanCompleteMarker}'`;
               // the lease count (transferConnectionRef). setupShellSession still
               // records connRef; transfer rebinds _sshTransportLeaseId so a later
               // releaseConnectionRef(session) returns the right lease.
-              setupShellSession({
-                conn,
-                stream,
-                options: { ...options, _connRef: connRef },
-                sessionId,
-                event,
-                log,
-                detachX11Forwarding: null,
-                chainConnections: [],
-                isReused: true,
-              });
+              try {
+                setupShellSession({
+                  conn,
+                  stream,
+                  options: { ...options, _connRef: connRef },
+                  sessionId,
+                  event,
+                  log,
+                  detachX11Forwarding: null,
+                  chainConnections: [],
+                  isReused: true,
+                });
+              } catch (setupErr) {
+                // openBoundedSshShellCallback delivers this from a Promise .then
+                // without catching callback throws — reject via failReuse.
+                failReuse(setupErr);
+                return;
+              }
               const copiedSession = sessions.get(sessionId);
               if (copiedSession) {
                 if (typeof transferConnectionRef === "function") {
@@ -852,8 +867,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 )
                 : Promise.resolve(null);
               void newShellPidPromise.then((newShellPid) => {
+                // Bind PID only to the session this reuse opened. A higher
+                // bootEpoch reconnect may already own sessionId in the map.
                 const liveSession = sessions.get(sessionId);
-                if (liveSession && newShellPid) {
+                if (liveSession && liveSession === copiedSession && newShellPid) {
                   liveSession.shellPid = newShellPid;
                 }
                 settled = true;
@@ -1134,6 +1151,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
           port: options.port || 22,
           knownHosts: options.knownHosts,
           verifyHostKeys: options.verifyHostKeys,
+          bootEpoch: options.bootEpoch,
         });
 
         // Authentication for final target
@@ -1176,6 +1194,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
             identityFilePaths: options.identityFilePaths,
             hostname: options.hostname,
             initialPassphrase: options.passphrase,
+            passphraseSignal: options._passphraseSignal,
+            sessionId,
+            bootEpoch: options.bootEpoch,
             logPrefix: "[SSH]",
             onPassphrasePromptShown: () => sendProgress(
               totalHops, totalHops, options.hostname, "auth-attempt", "waiting for user input...",
@@ -1199,6 +1220,9 @@ printf '%s\n' '${scanCompleteMarker}'`;
             keyName: options.keyId || options.username,
             hostname: options.hostname,
             initialPassphrase: effectivePassphrase,
+            passphraseSignal: options._passphraseSignal,
+            sessionId,
+            bootEpoch: options.bootEpoch,
             logPrefix: "[SSH]",
             onPassphrasePromptShown: () => sendProgress(
               totalHops, totalHops, options.hostname, "auth-attempt", "waiting for user input...",
@@ -1948,20 +1972,32 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 // Create the shared reference-counted descriptor for this
                 // connection now that the owning channel is open, then wire the
                 // shell up through the shared helper.
-                const ownerSession = setupShellSession({
-                  conn,
-                  stream,
-                  options: {
-                    ...options,
-                    _actualAgentForwarding: Boolean(connectOpts.agentForward),
-                  },
-                  sessionId,
-                  event,
-                  log,
-                  detachX11Forwarding,
-                  chainConnections,
-                  isReused: false,
-                });
+                let ownerSession;
+                try {
+                  ownerSession = setupShellSession({
+                    conn,
+                    stream,
+                    options: {
+                      ...options,
+                      _actualAgentForwarding: Boolean(connectOpts.agentForward),
+                    },
+                    sessionId,
+                    event,
+                    log,
+                    detachX11Forwarding,
+                    chainConnections,
+                    isReused: false,
+                  });
+                } catch (setupErr) {
+                  // Callback runs from openBoundedSshShellCallback's Promise
+                  // .then without a catch — reject the owning start Promise.
+                  if (detachX11Forwarding) {
+                    try { detachX11Forwarding(); } catch { /* ignore */ }
+                  }
+                  settled = true;
+                  reject(setupErr);
+                  return;
+                }
                 establishedOwnerSession = ownerSession;
                 connRef = createConnectionRef(ownerSession, conn, chainConnections);
                 if (pendingDialCoordination) {
@@ -2194,6 +2230,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
             password: options.password,
             logPrefix,
             scope: "terminal",
+            bootEpoch: options.bootEpoch,
             getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
             onAutoFill: () => sendProgress(

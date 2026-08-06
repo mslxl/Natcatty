@@ -513,15 +513,25 @@ function createPreloadApi(ctx) {
     if (!sessionId || !Number.isFinite(bytes) || bytes <= 0) return;
     ipcRenderer.send("netcatty:flow:ack", { sessionId, bytes });
   },
-  closeSession: async (sessionId) => {
-    markTerminalDataSessionClosed(sessionId);
-    // closeSession sets session.closed before kill, so some protocol-specific
-    // exit events can be skipped. Release every session-scoped listener here.
-    clearSessionScopedTerminalListeners(sessionId);
+  closeSession: async (sessionId, options) => {
+    const payload = {
+      sessionId,
+      ...(Number.isFinite(options?.bootEpoch) ? { bootEpoch: Number(options.bootEpoch) } : {}),
+    };
+    const epochScoped = Number.isFinite(options?.bootEpoch);
+    // Unscoped closes keep the historical sync listener teardown so reconnect
+    // paths that fire-and-forget closeSession still drop stale handlers.
+    // Epoch-scoped closes are only used to dispose a superseded backend owner;
+    // they must never clear preload listeners for the shared sessionId, because
+    // a replacement boot may already have registered readiness/auto-login hooks.
+    if (!epochScoped) {
+      markTerminalDataSessionClosed(sessionId);
+      clearSessionScopedTerminalListeners(sessionId);
+    }
     try {
-      await ipcRenderer.invoke("netcatty:close:await", { sessionId });
+      await ipcRenderer.invoke("netcatty:close:await", payload);
     } catch {
-      ipcRenderer.send("netcatty:close", { sessionId });
+      ipcRenderer.send("netcatty:close", payload);
     }
   },
   rebindTerminalSessionOutput: (sessionId, authorization) =>

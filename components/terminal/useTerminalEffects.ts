@@ -22,6 +22,7 @@ import {
   resolveHibernatePreferWasmSerialize,
   resolveTerminalHibernateEnabledForProtocol,
 } from '../../domain/terminalHibernate';
+import { setTerminalBootEpoch } from '../../domain/terminalBootEpoch';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
 import { resolveCursorLineHighlightBackground } from '../../domain/cursorLineHighlight';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
@@ -164,7 +165,7 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, bootEpochRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
   const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
   const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(
     terminalSettings,
@@ -364,6 +365,22 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     const dispose = terminalBackend.onHostKeyVerification?.((request) => {
       if (request.sessionId !== sessionId) return;
+      // Disconnect keeps the pane mounted; reject late host-key prompts instead
+      // of reopening approval UI on a disconnected / aborted boot. After a
+      // reconnect the shared flags are active again, so also require the
+      // request's boot epoch (when present) to match the current boot.
+      const requestBootEpoch = request.bootEpoch;
+      const bootEpochMismatch = Number.isFinite(requestBootEpoch)
+        && bootEpochRef
+        && requestBootEpoch !== bootEpochRef.current;
+      if (
+        !isBootActiveRef.current
+        || statusRef.current === "disconnected"
+        || bootEpochMismatch
+      ) {
+        void terminalBackend.respondHostKeyVerification?.(request.requestId, false);
+        return;
+      }
 
       setPendingHostKeyRequestId(request.requestId);
       setPendingHostKeyInfo(toHostKeyInfo(request));
@@ -387,6 +404,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     let disposed = false;
     let initialFitTimer: ReturnType<typeof setTimeout> | undefined;
     const closeGeneration = ++terminalBootCloseGenerationRef.current;
+    if (bootEpochRef) {
+      bootEpochRef.current += 1;
+      setTerminalBootEpoch(sessionId, bootEpochRef.current);
+    }
     isBootActiveRef.current = true;
     terminalDataCapturedRef.current = false;
     connectionLogBufferRef.current.reset();
@@ -688,36 +709,37 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           return;
         }
 
+        const bootStillActive = () => !disposed && isBootActiveRef.current;
         if (effectiveTerminalProtocol.startsWith("plugin:")) {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing plugin connection..."]);
           await sessionStarters.startPluginConnection(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "serial") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing serial connection..."]);
           await sessionStarters.startSerial(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "local") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing local shell..."]);
           await sessionStarters.startLocal(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "telnet") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Telnet connection..."]);
           await sessionStarters.startTelnet(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "mosh") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Mosh connection..."]);
           await sessionStarters.startMosh(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "et") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing EternalTerminal connection..."]);
           await sessionStarters.startEt(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         } else {
           const resolvedAuth = resolveHostAuth({ host, keys, identities });
           const hasPassword = !!resolvedAuth.password;
@@ -738,10 +760,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing secure channel..."]);
           await sessionStarters.startSSH(term);
-          if (disposed) return;
+          if (!bootStillActive()) return;
         }
       } catch (err) {
-        if (disposed) return;
+        if (disposed || !isBootActiveRef.current) return;
         logger.error("Failed to initialize terminal", err);
         setError(err instanceof Error ? err.message : String(err));
         updateStatus("disconnected");

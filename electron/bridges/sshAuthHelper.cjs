@@ -183,6 +183,8 @@ async function preparePrivateKeyForAuth({
   hostname,
   initialPassphrase,
   passphraseSignal,
+  sessionId,
+  bootEpoch,
   logPrefix = "[SSHAuth]",
   onPassphrasePromptShown,
   onPassphrasePromptResolved,
@@ -220,7 +222,11 @@ async function preparePrivateKeyForAuth({
       promptKeyName,
       hostname,
       passphraseInvalid,
-      { signal: passphraseSignal }
+      {
+        signal: passphraseSignal,
+        sessionId,
+        bootEpoch,
+      }
     );
     onPassphrasePromptResolved?.();
     if (result?.cancelled) {
@@ -247,6 +253,8 @@ async function loadIdentityFileForAuth({
   hostname,
   initialPassphrase,
   passphraseSignal,
+  sessionId,
+  bootEpoch,
   logPrefix = "[SSHAuth]",
   onPassphrasePromptShown,
   onPassphrasePromptResolved,
@@ -283,7 +291,11 @@ async function loadIdentityFileForAuth({
       keyName,
       hostname,
       passphraseInvalid,
-      { signal: passphraseSignal }
+      {
+        signal: passphraseSignal,
+        sessionId,
+        bootEpoch,
+      }
     );
     onPassphrasePromptResolved?.();
     if (result?.cancelled) {
@@ -310,6 +322,8 @@ async function loadFirstIdentityFileForAuth({
   hostname,
   initialPassphrase,
   passphraseSignal,
+  sessionId,
+  bootEpoch,
   logPrefix = "[SSHAuth]",
   onLoaded,
   onError,
@@ -328,6 +342,8 @@ async function loadFirstIdentityFileForAuth({
         hostname,
         initialPassphrase,
         passphraseSignal,
+        sessionId,
+        bootEpoch,
         logPrefix,
         onPassphrasePromptShown,
         onPassphrasePromptResolved,
@@ -1821,6 +1837,7 @@ function createKeyboardInteractiveHandler(options) {
     password,
     logPrefix = "[SSH]",
     scope = "external",
+    bootEpoch,
     shouldSkipAutoFill,
     onAutoFill,
     onPromptShown,
@@ -1948,6 +1965,7 @@ function createKeyboardInteractiveHandler(options) {
       savedPassword: savedPasswordForModal,
       allowSavePassword,
       scope,
+      ...(Number.isFinite(bootEpoch) ? { bootEpoch: Number(bootEpoch) } : {}),
     });
   };
 }
@@ -1977,7 +1995,7 @@ function applyAuthToConnOpts(connOpts, authConfig) {
  * @param {string} [hostname] - Optional hostname for context
  * @returns {Promise<{ keys: Array<{ privateKey: string, keyPath: string, keyName: string, passphrase: string }>, cancelled: boolean }>}
  */
-async function requestPassphrasesForEncryptedKeys(sender, hostname) {
+async function requestPassphrasesForEncryptedKeys(sender, hostname, options = {}) {
   const allKeys = await findAllDefaultPrivateKeys({ includeEncrypted: true });
   const encryptedKeys = allKeys.filter(k => k.isEncrypted);
 
@@ -1995,7 +2013,13 @@ async function requestPassphrasesForEncryptedKeys(sender, hostname) {
       sender,
       keyInfo.keyPath,
       keyInfo.keyName,
-      hostname
+      hostname,
+      false,
+      {
+        signal: options.signal,
+        sessionId: options.sessionId,
+        bootEpoch: options.bootEpoch,
+      },
     );
 
     // Handle different response types
