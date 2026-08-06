@@ -111,4 +111,16 @@ describe('extractRootPathsFromDropEntries', () => {
       ['/home/user/folder'],
     );
   });
+
+  it('uses native path-only entries from a folder scan', () => {
+    assert.deepEqual(
+      extractRootPathsFromDropEntries([{
+        file: null,
+        localPath: '/home/user/folder/src/main.ts',
+        relativePath: 'folder/src/main.ts',
+        isDirectory: false,
+      }]),
+      ['/home/user/folder'],
+    );
+  });
 });

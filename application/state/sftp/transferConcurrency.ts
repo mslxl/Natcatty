@@ -13,8 +13,6 @@ export const DEFAULT_SFTP_DIRECTORY_LISTING_CONCURRENCY = 4;
 export const MIN_SFTP_DIRECTORY_LISTING_CONCURRENCY = 1;
 export const MAX_SFTP_DIRECTORY_LISTING_CONCURRENCY = 8;
 
-/** Default on: accurate folder totals before first byte (rsync --no-i-r style). */
-export const DEFAULT_SFTP_FOLDER_PRESCAN = true;
 /** Default on: skip size+mtime matches like rsync's generator. */
 export const DEFAULT_SFTP_SKIP_UNCHANGED = true;
 
@@ -36,13 +34,6 @@ export function resolveSftpDirectoryListingConcurrency(
     stored <= MAX_SFTP_DIRECTORY_LISTING_CONCURRENCY
     ? stored
     : DEFAULT_SFTP_DIRECTORY_LISTING_CONCURRENCY;
-}
-
-export function resolveSftpFolderPrescanEnabled(
-  readStoredValue: () => boolean | null | undefined,
-): boolean {
-  const stored = readStoredValue();
-  return stored == null ? DEFAULT_SFTP_FOLDER_PRESCAN : stored;
 }
 
 export function resolveSftpSkipUnchangedEnabled(

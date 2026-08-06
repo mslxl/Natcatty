@@ -876,8 +876,97 @@ function createPreloadApi(ctx) {
   statLocal: async (path) => {
     return ipcRenderer.invoke("netcatty:local:stat", { path });
   },
-  listLocalTree: async (path) => {
-    return ipcRenderer.invoke("netcatty:local:tree", { path });
+  listLocalTree: async (path, options = {}) => {
+    const onProgress = typeof options?.onProgress === "function" ? options.onProgress : null;
+    const onEntries = typeof options?.onEntries === "function" ? options.onEntries : null;
+    const token = typeof options?.scanId === "string" && options.scanId
+      ? options.scanId
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const progressChannel = onProgress
+      ? `netcatty:local:tree-progress:${token}`
+      : undefined;
+    const entriesChannel = onEntries
+      ? `netcatty:local:tree-entries:${token}`
+      : undefined;
+    const cancelChannel = `netcatty:local:tree-cancel:${token}`;
+    const progressHandler = onProgress && progressChannel
+      ? (_event, stats) => {
+        try {
+          onProgress(stats);
+        } catch {
+          // Ignore renderer progress handler errors so the scan can finish.
+        }
+      }
+      : null;
+    // Entry batches arrive on a different channel than the invoke reply. If we
+    // tear down the listener when invoke resolves, nested-folder batches that
+    // are still in the IPC queue are dropped (top-level files look fine).
+    let settleEntriesStream = null;
+    const entriesStreamDone = onEntries && entriesChannel
+      ? new Promise((resolve) => {
+        settleEntriesStream = resolve;
+      })
+      : null;
+    const entriesHandler = onEntries && entriesChannel
+      ? (_event, payload) => {
+        if (payload && typeof payload === "object" && !Array.isArray(payload) && payload.type === "tree-end") {
+          settleEntriesStream?.();
+          return;
+        }
+        try {
+          if (Array.isArray(payload)) onEntries(payload);
+        } catch {
+          // Ignore batch handler errors so the scan can finish.
+        }
+      }
+      : null;
+    if (progressHandler && progressChannel) {
+      ipcRenderer.on(progressChannel, progressHandler);
+    }
+    if (entriesHandler && entriesChannel) {
+      ipcRenderer.on(entriesChannel, entriesHandler);
+    }
+    try {
+      const result = await ipcRenderer.invoke("netcatty:local:tree", {
+        path,
+        progressChannel,
+        entriesChannel,
+        cancelChannel,
+        limits: options?.limits,
+      });
+      if (entriesStreamDone) {
+        // Wait for the main-process end marker so late nested batches are not
+        // lost. Fail the scan if the marker never arrives (do not pretend a
+        // partial tree is complete).
+        let timedOut = false;
+        await Promise.race([
+          entriesStreamDone,
+          new Promise((resolve) => {
+            setTimeout(() => {
+              timedOut = true;
+              resolve();
+            }, 5_000);
+          }),
+        ]);
+        if (timedOut) {
+          throw new Error("Local tree scan ended without a completion marker");
+        }
+      }
+      return result;
+    } finally {
+      settleEntriesStream?.();
+      if (progressHandler && progressChannel) {
+        ipcRenderer.removeListener(progressChannel, progressHandler);
+      }
+      if (entriesHandler && entriesChannel) {
+        ipcRenderer.removeListener(entriesChannel, entriesHandler);
+      }
+    }
+  },
+  cancelLocalTreeScan: async (scanId) => {
+    if (typeof scanId === "string" && scanId) {
+      ipcRenderer.send(`netcatty:local:tree-cancel:${scanId}`);
+    }
   },
   getHomeDir: async () => {
     return ipcRenderer.invoke("netcatty:local:homedir");

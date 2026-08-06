@@ -129,8 +129,11 @@ test("directory parent detection matches side-queue file-count semantics", () =>
   }), false);
 });
 
-test("folder parent progress uses file counts not byte formatting", () => {
+test("folder parent progress uses progressive discovery labels not byte formatting", () => {
   const t = (key: string, params?: Record<string, string | number>) => {
+    if (key === "sftp.transfers.filesDiscoveredProgress") {
+      return `${params?.completed} done · ${params?.discovered} found`;
+    }
     if (key === "sftp.transfers.filesProgress") {
       return `${params?.current}/${params?.total} files`;
     }
@@ -146,12 +149,33 @@ test("folder parent progress uses file counts not byte formatting", () => {
     totalBytes: 12,
     transferredBytes: 1,
     speed: 0,
+    phase: "transferring",
   }, t);
   assert.equal(display.percent, (1 / 12) * 100);
-  assert.equal(display.detail, "1/12 files");
+  assert.equal(display.detail, "1 done · 12 found");
   assert.equal(display.indeterminate, false);
   // Must not look like "1 Bytes / 12 Bytes"
   assert.doesNotMatch(display.detail, /Bytes/i);
+});
+
+test("folder parent scanning stays indeterminate while nothing has completed", () => {
+  const t = (key: string, params?: Record<string, string | number>) => {
+    if (key === "sftp.transfers.filesDiscoveredProgress") {
+      return `${params?.completed} done · ${params?.discovered} found`;
+    }
+    return key;
+  };
+  const display = buildGlobalTransferProgressDisplay({
+    status: "transferring",
+    isDirectory: true,
+    progressMode: "files",
+    totalBytes: 40,
+    transferredBytes: 0,
+    speed: 0,
+    phase: "scanning",
+  }, t);
+  assert.equal(display.detail, "0 done · 40 found");
+  assert.equal(display.indeterminate, true);
 });
 
 test("single-file progress still shows byte totals", () => {

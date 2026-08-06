@@ -204,7 +204,10 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';
-/** Folder transfers: scan the full tree before moving bytes (stable file totals). */
+/**
+ * Legacy key only. Folder full-tree pre-scan was removed; values are ignored
+ * so old localStorage / sync payloads do not resurrect a live setting.
+ */
 export const STORAGE_KEY_SFTP_FOLDER_PRESCAN = 'netcatty_sftp_folder_prescan_v1';
 /** Skip files when target size + mtime already match the source (rsync-like). */
 export const STORAGE_KEY_SFTP_SKIP_UNCHANGED = 'netcatty_sftp_skip_unchanged_v1';

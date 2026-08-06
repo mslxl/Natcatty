@@ -49,7 +49,14 @@ export interface UploadCallbacks {
   /** Called when a task is cancelled */
   onTaskCancelled?: (taskId: string) => void;
   /** Called when scanning starts (for showing placeholder) */
-  onScanningStart?: (taskId: string) => void;
+  onScanningStart?: (taskId: string, info?: { label?: string }) => void;
+  /** Live scan counters (file/dir totals) while enumerating a drop */
+  onScanningProgress?: (taskId: string, progress: {
+    fileCount: number;
+    directoryCount: number;
+    entryCount: number;
+    label?: string;
+  }) => void;
   /** Called when scanning ends */
   onScanningEnd?: (taskId: string) => void;
   /** Called when task name needs to be updated (for phase changes) */

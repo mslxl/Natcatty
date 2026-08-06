@@ -106,3 +106,88 @@ test("failed upload path allocation releases the staging controller", async () =
   await assert.rejects(api.stageUploadFile(createFile("file.bin", [[1]]), "failed-path"), /path unavailable/);
   assert.deepEqual(await api.cancelStagedUploadFile("failed-path"), { success: false });
 });
+
+test("native tree scans use a bridge-safe cancellation id", async () => {
+  const sent = [];
+  const invoked = [];
+  const api = createPreloadApi({
+    webUtils: {},
+    ipcRenderer: {
+      on() {},
+      removeListener() {},
+      send(...args) { sent.push(args); },
+      async invoke(channel, payload) {
+        invoked.push({ channel, payload });
+        return [];
+      },
+    },
+  });
+
+  await api.listLocalTree("/tmp/project", {
+    scanId: "scan-123",
+    onProgress: () => {},
+  });
+  await api.cancelLocalTreeScan("scan-123");
+
+  assert.deepEqual(invoked, [{
+    channel: "netcatty:local:tree",
+    payload: {
+      path: "/tmp/project",
+      progressChannel: "netcatty:local:tree-progress:scan-123",
+      entriesChannel: undefined,
+      cancelChannel: "netcatty:local:tree-cancel:scan-123",
+      limits: undefined,
+    },
+  }]);
+  assert.deepEqual(sent, [["netcatty:local:tree-cancel:scan-123"]]);
+});
+
+test("listLocalTree keeps the entries listener until the tree-end marker arrives", async () => {
+  const listeners = new Map();
+  const batches = [];
+  let removed = false;
+  const api = createPreloadApi({
+    webUtils: {},
+    ipcRenderer: {
+      on(channel, handler) {
+        listeners.set(channel, handler);
+      },
+      removeListener(channel) {
+        if (channel.startsWith("netcatty:local:tree-entries:")) removed = true;
+        listeners.delete(channel);
+      },
+      send() {},
+      async invoke(channel, payload) {
+        assert.equal(channel, "netcatty:local:tree");
+        const entriesChannel = payload.entriesChannel;
+        const handler = listeners.get(entriesChannel);
+        assert.equal(typeof handler, "function");
+        // Simulate the invoke reply racing ahead of a late nested batch.
+        queueMicrotask(() => {
+          handler({}, [
+            {
+              localPath: "/tmp/project/nested/deep.txt",
+              relativePath: "project/nested/deep.txt",
+              type: "file",
+              size: 1,
+              lastModified: 1,
+            },
+          ]);
+          handler({}, { type: "tree-end" });
+        });
+        return [];
+      },
+    },
+  });
+
+  await api.listLocalTree("/tmp/project", {
+    scanId: "scan-nested",
+    onEntries: (batch) => {
+      batches.push(batch);
+    },
+  });
+
+  assert.equal(batches.length, 1);
+  assert.equal(batches[0][0].relativePath, "project/nested/deep.txt");
+  assert.equal(removed, true);
+});

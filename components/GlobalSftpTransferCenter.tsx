@@ -181,28 +181,56 @@ export type GlobalTransferProgressDisplay = {
 /**
  * Build progress labels for a top-level row. Directory parents use file counts
  * so we never show "1 Bytes / 12 Bytes" for n/m files.
+ *
+ * Folder walks interleave discovery with transfer: totalBytes is "found so far",
+ * not a fixed grand total. Active rows use progressive copy so the UI does not
+ * look like a lying overall percentage.
  */
 export function buildGlobalTransferProgressDisplay(
-  task: Pick<TransferTask, "status" | "isDirectory" | "parentTaskId" | "progressMode" | "totalBytes" | "transferredBytes" | "speed">,
+  task: Pick<TransferTask, "status" | "isDirectory" | "parentTaskId" | "progressMode" | "totalBytes" | "transferredBytes" | "speed" | "phase">,
   t: (key: string, params?: Record<string, string | number>) => string,
 ): GlobalTransferProgressDisplay {
   const isDirParent = isDirectoryParentTask(task);
   const percent = getGlobalTransferProgressPercent(task);
   const hasTotal = task.totalBytes > 0;
+  const discovered = Math.max(task.totalBytes, task.transferredBytes);
 
   if (isDirParent) {
-    const indeterminate = task.status === "transferring" && !hasTotal;
+    const isActive = task.status === "transferring"
+      || task.status === "pausing"
+      || task.status === "queued"
+      || task.status === "pending";
+    // Still discovering, or no completed files yet — pulse rather than freeze a fake %.
+    const indeterminate = isActive && (
+      task.phase === "scanning"
+      || !hasTotal
+      || task.transferredBytes <= 0
+    );
     let detail = "";
-    if (task.status === "transferring" || task.status === "pausing" || task.status === "queued" || task.status === "pending") {
-      detail = hasTotal
-        ? t("sftp.transfers.filesProgress", { current: task.transferredBytes, total: task.totalBytes })
-        : t("sftp.transfers.filesCount", { count: task.transferredBytes });
+    if (isActive) {
+      if (discovered > 0) {
+        detail = t("sftp.transfers.filesDiscoveredProgress", {
+          completed: task.transferredBytes,
+          discovered,
+        });
+      }
     } else if (task.status === "completed" && hasTotal) {
       detail = t("sftp.transfers.filesCount", { count: task.totalBytes });
-    } else if (hasTotal) {
-      detail = t("sftp.transfers.filesProgress", { current: task.transferredBytes, total: task.totalBytes });
+    } else if (discovered > 0) {
+      detail = t("sftp.transfers.filesDiscoveredProgress", {
+        completed: task.transferredBytes,
+        discovered,
+      });
     }
-    return { percent, detail, indeterminate };
+    // Soft percent of files found so far (discovered may still grow).
+    const softPercent = discovered > 0
+      ? Math.min(100, (task.transferredBytes / discovered) * 100)
+      : 0;
+    return {
+      percent: task.status === "completed" ? 100 : softPercent,
+      detail,
+      indeterminate,
+    };
   }
 
   const detailParts: string[] = [];
@@ -393,6 +421,14 @@ function TransferRow({
     // as 传输中 while soft-drain finishes the current range.
     if (task.status === "pausing" || task.status === "paused" || task.status === "interrupted") {
       return t(statusLabelKey(task.status));
+    }
+    // Scanning runs as pending/transferring; never override terminal statuses
+    // (cancelled/failed/completed) that still carry a stale phase value.
+    if (
+      task.phase === "scanning"
+      && (task.status === "pending" || task.status === "queued" || task.status === "transferring")
+    ) {
+      return t("sftp.transferCenter.phase.scanning");
     }
     if (task.phase && task.status === "transferring") {
       return t(`sftp.transferCenter.phase.${task.phase}`);
@@ -687,6 +723,13 @@ export function GlobalSftpTransferCenter() {
   // progress ticks used to re-render this TopTabs child on every byte.
   const badge = useSftpTransferCenterBadge();
   const [open, setOpen] = useState(false);
+  // Folder drops fire this so the scanning row is visible immediately without
+  // requiring the user to notice the badge first.
+  useEffect(() => {
+    const openCenter = () => setOpen(true);
+    window.addEventListener("netcatty:open-sftp-transfer-center", openCenter);
+    return () => window.removeEventListener("netcatty:open-sftp-transfer-center", openCenter);
+  }, []);
   const snapshot = useSftpTransferCenterWhenOpen(open);
   const [bucket, setBucket] = useState<GlobalTransferBucket>("all");
   const [showBackground, setShowBackground] = useState(false);

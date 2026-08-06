@@ -40,7 +40,7 @@ export default function SettingsFileAssociationsTab() {
     sftpAutoSync, setSftpAutoSync,
     sftpShowHiddenFiles, setSftpShowHiddenFiles,
     sftpUseCompressedUpload, setSftpUseCompressedUpload,
-    sftpFolderPrescan, setSftpFolderPrescan,
+
     sftpSkipUnchanged, setSftpSkipUnchanged,
     sftpAutoOpenSidebar, setSftpAutoOpenSidebar,
     sftpFollowTerminalCwd, setSftpFollowTerminalCwd,
@@ -210,12 +210,6 @@ export default function SettingsFileAssociationsTab() {
               {sftpTransferConcurrency}
             </span>
           </div>
-        </SettingRow>
-        <SettingRow
-          label={t('settings.sftp.folderPrescan.enable')}
-          description={t('settings.sftp.folderPrescan.enableDesc')}
-        >
-          <Toggle checked={sftpFolderPrescan} onChange={setSftpFolderPrescan} />
         </SettingRow>
         <SettingRow
           label={t('settings.sftp.skipUnchanged.enable')}

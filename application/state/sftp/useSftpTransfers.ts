@@ -60,6 +60,10 @@ import {
 } from "./transferConflictLifecycle";
 import { getParentPath, joinPath } from "./utils";
 import { promoteDirectoryReplaceStage as promoteDirectoryReplacePaths } from "./directoryReplacePromotion";
+import {
+  isExternalDragDropFileUpload,
+  retryExternalDragDropFileUpload,
+} from "./externalDragDropRetry";
 
 /** Keep the MutableRefObject mirror in sync with the process-global latch set. */
 function syncPausedTasksRef(ref: { current: Set<string> }, taskId: string, latched: boolean) {
@@ -1294,8 +1298,62 @@ export const useSftpTransfers = ({
 
   const retryTransfer = useCallback(
     async (transferId: string) => {
-      const task = transfersRef.current.find((t) => t.id === transferId);
+      // Prefer the live owner list; fall back to the center store (drag-drop
+      // children are upserted there and mirrored via subscribe).
+      const task = transfersRef.current.find((t) => t.id === transferId)
+        ?? sftpTransferCenterStore.getTask(transferId);
       if (!task || task.retryable === false) return;
+
+      // Progressive / external drag-drop children never have dual-pane endpoints
+      // (sourceConnectionId is "external"). Re-run startStreamTransfer in place.
+      if (isExternalDragDropFileUpload(task)) {
+        if (inFlightTransferIdsRef.current.has(transferId)) return;
+        inFlightTransferIdsRef.current.add(transferId);
+        clearTransferCancelled(transferId);
+        cancelledTasksRef.current.delete(transferId);
+        try {
+          const result = await retryExternalDragDropFileUpload(task, {
+            getBrowseSftpId: (connectionId) => sftpSessionsRef.current.get(connectionId),
+            acquireTransferSession: acquireTransferSession
+              ? (hostId, id) => acquireTransferSession(hostId, id)
+              : undefined,
+            startStreamTransfer: async (options) => {
+              const bridge = netcattyBridge.get();
+              if (!bridge?.startStreamTransfer) {
+                return { error: "Stream transfer is unavailable" };
+              }
+              return bridge.startStreamTransfer(options);
+            },
+            clearPendingCancel: (id) => netcattyBridge.get()?.clearPendingTransferCancel?.(id),
+            cleanupArtifacts: cleanupTaskArtifacts,
+            getTask: (id) => sftpTransferCenterStore.getTask(id)
+              ?? transfersRef.current.find((row) => row.id === id),
+            getChildTasks: (parentId) => {
+              const fromStore = sftpTransferCenterStore.getOwnerTasks(ownerId)
+                .filter((row) => row.parentTaskId === parentId);
+              if (fromStore.length > 0) return fromStore;
+              return transfersRef.current.filter((row) => row.parentTaskId === parentId);
+            },
+            onPatch: (taskId, updates) => {
+              transferRuntime.patchTask(taskId, updates);
+              setTransfers((prev) => {
+                if (!prev.some((row) => row.id === taskId)) {
+                  // Store-only child: mirror the patch by re-pulling owner rows.
+                  return sftpTransferCenterStore.getOwnerTasks(ownerId);
+                }
+                return prev.map((row) => (row.id === taskId ? { ...row, ...updates } : row));
+              });
+            },
+          });
+          if (!result.success && result.error && !/cancelled/i.test(result.error)) {
+            notify.warning(result.error, "SFTP");
+          }
+        } finally {
+          inFlightTransferIdsRef.current.delete(transferId);
+        }
+        return;
+      }
+
       await cleanupTaskArtifacts(task);
 
       const retriedTask: TransferTask = {
@@ -1316,7 +1374,13 @@ export const useSftpTransfers = ({
       };
 
       const endpoints = resolveTaskEndpoints(task);
-      if (!endpoints) return;
+      if (!endpoints) {
+        notify.warning(
+          "Could not resolve transfer endpoints for retry. Reconnect the target and try again.",
+          "SFTP",
+        );
+        return;
+      }
       const { targetSide, sourcePane, targetPane } = endpoints;
 
       const completionHandler = completionHandlersRef.current.get(transferId);
@@ -1335,7 +1399,7 @@ export const useSftpTransfers = ({
       await processTransfer(retriedTask, sourcePane, targetPane, targetSide);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- processTransfer is defined inline
-    [cleanupTaskArtifacts, resolveTaskEndpoints, setTransfers],
+    [acquireTransferSession, cleanupTaskArtifacts, ownerId, resolveTaskEndpoints, setTransfers, sftpSessionsRef],
   );
 
   const clearCompletedTransfers = useCallback(() => {

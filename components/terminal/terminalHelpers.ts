@@ -44,8 +44,6 @@ export function extractRootPathsFromDropEntries(dropEntries: DropEntry[]): strin
   const seenPaths = new Set<string>();
 
   for (const entry of dropEntries) {
-    if (!entry.file) continue;
-
     const fullPath = getDropEntryLocalPath(entry);
     if (!fullPath) continue;
 

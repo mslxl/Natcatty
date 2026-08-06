@@ -2241,76 +2241,23 @@ async function uploadFile(
     transfer.uploadStrategy = "scp";
     logTransferDiag(transfer, "strategy", { strategy: "scp" });
     const backend = getScpBackendForClient(client);
-    let scpSourcePath = localPath;
-    let digestPath = null;
-    let snapshotPath = null;
-    let openReadStream = null;
-    let initialSource = null;
-    try {
-      if (!transfer.sourceIsOwnedTemp) {
-        initialSource = await fs.promises.stat(localPath);
-        const snapshotId = crypto.createHash("sha256")
-          .update(String(transfer.transferId || localPath))
-          .digest("hex")
-          .slice(0, 16);
-        digestPath = tempDirBridge.getTransferTempFilePath(
-          `upload-digest-${snapshotId}`,
-          "ranges.sha256",
-        );
-        snapshotPath = tempDirBridge.getTransferTempFilePath(
-          `upload-source-${snapshotId}`,
-          "snapshot.bin",
-        );
-        await createUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
-        if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
-        const sourceAfterBaseline = await fs.promises.stat(localPath);
-        assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize, {
-          contentVerifiedSeparately: true,
-        });
-        if (typeof onBytesCommitted === "function") {
-          await createVerifiedUploadSnapshot(
-            localPath,
-            snapshotPath,
-            digestPath,
-            fileSize,
-            transfer,
-          );
-          scpSourcePath = snapshotPath;
-        } else {
-          // Remote staging can safely discard a failed upload. Verify every
-          // source chunk as SCP reads it, then rescan before promotion, without
-          // requiring another full local copy of large files.
-          snapshotPath = null;
-          openReadStream = () => createVerifiedUploadReadStream(
-            localPath,
-            digestPath,
-            fileSize,
-            transfer,
-          );
-        }
-      }
-      await backend.uploadFile(scpSourcePath, remotePath, {
-        fileSize,
-        transfer,
-        encoding,
-        signal: transfer.signal,
-        openReadStream,
-        onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
-      });
-      if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
-      if (digestPath && !snapshotPath) {
-        const latestSource = await fs.promises.stat(localPath);
-        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
-          contentVerifiedSeparately: true,
-        });
-        await verifyUploadDigestBaseline(localPath, digestPath, fileSize, transfer);
-      }
-      onBytesCommitted?.();
-      return;
-    } finally {
-      if (snapshotPath) await fs.promises.rm(snapshotPath, { force: true }).catch(() => {});
-      if (digestPath) await fs.promises.rm(digestPath, { force: true }).catch(() => {});
-    }
+    // Stream the live local path directly — no whole-file digest / snapshot.
+    // openReadStream is optional for scpBackend (falls back to createReadStream);
+    // provide a plain file stream so tests/backends that always call it still work.
+    await backend.uploadFile(localPath, remotePath, {
+      fileSize,
+      transfer,
+      encoding,
+      signal: transfer.signal,
+      openReadStream: () => {
+        const stream = fs.createReadStream(localPath, { highWaterMark: 256 * 1024 });
+        return { stream, completed: Promise.resolve() };
+      },
+      onProgress: (transferred, total) => sendProgress(transferred, total || fileSize),
+    });
+    if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
+    onBytesCommitted?.();
+    return;
   }
 
   await requireSftpChannel(client);
@@ -2329,79 +2276,21 @@ async function uploadFile(
     else lastPipelineError = new Error(String(err || "SFTP upload failed"));
   };
 
-  if (!transfer.sourceIsOwnedTemp) {
-    const digestId = crypto.createHash("sha256")
-      .update(String(transfer.transferId || "upload"))
-      .digest("hex")
-      .slice(0, 16);
-    const digestPath = tempDirBridge.getTransferTempFilePath(
-      `upload-digest-${digestId}`,
-      "ranges.sha256",
-    );
-    transfer.sourceDigestPath = digestPath;
-    const previousPhase = transfer.phase;
-    transfer.phase = "verifying";
-    transfer.publishCurrentProgress?.();
-    try {
-      await createUploadDigestBaseline(
-        originalLocalPath,
-        digestPath,
-        fileSize,
-        transfer,
-        () => {
-          // Keep remote transferredBytes at the resume checkpoint while hashing
-          // so large uploads do not look stuck at 0 B with no status (#2712).
-          sendProgress(Math.max(0, Number(transfer.checkpointBytes) || 0), fileSize, {
-            force: true,
-          });
-        },
-      );
-    } finally {
-      transfer.phase = previousPhase || "transferring";
-      if (!transfer.cancelled && !transfer.signal?.aborted) {
-        transfer.publishCurrentProgress?.();
-      }
-    }
-    if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
-    const sourceAfterBaseline = await fs.promises.stat(originalLocalPath);
-    // Digest was just built; only size/content matter from here.
-    assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize, {
-      contentVerifiedSeparately: true,
-    });
-  }
-
-  const cleanupSourceDigest = async () => {
-    if (!transfer.sourceDigestPath) return;
-    const digestPath = transfer.sourceDigestPath;
-    transfer.sourceDigestPath = null;
-    await fs.promises.rm(digestPath, { force: true }).catch(() => {});
-  };
+  // Industry-standard SFTP clients (FileZilla / WinSCP / OpenSSH) resume by
+  // size only — no whole-file content digest before or during the body transfer.
+  // Pause/resume durability lives in checkpointBytes + the remote .part stage.
 
   const finishSuccessfulUpload = async () => {
-    try {
-      if (initialSource) {
-        const latestSource = await fs.promises.stat(originalLocalPath);
-        // Prefer digest re-scan for same-size rewrites. Hard-failing on ctime
-        // alone false-positives long pause/resume uploads on macOS.
-        assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
-          contentVerifiedSeparately: Boolean(transfer.sourceDigestPath),
-        });
-      }
-      // Metadata alone cannot catch same-size rewrites with unchanged/coarse
-      // timestamps (e.g. all ranges already verified before the rewrite).
-      // Re-scan the source against the digest baseline before promotion.
-      if (transfer.sourceDigestPath) {
-        await verifyUploadDigestBaseline(
-          originalLocalPath,
-          transfer.sourceDigestPath,
-          fileSize,
-          transfer,
-        );
-      }
-      await assertRemoteUploadSize(client, remotePath, fileSize);
-    } finally {
-      await cleanupSourceDigest();
+    if (initialSource) {
+      const latestSource = await fs.promises.stat(originalLocalPath);
+      // Soft size + mtime/ino (no full-file re-hash). Do not claim separate
+      // content proof — same-size rewrites that bump mtime still fail closed.
+      // ignoreCtime: macOS xattr/Spotlight noise must not abort a true match.
+      assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
+        ignoreCtime: true,
+      });
     }
+    await assertRemoteUploadSize(client, remotePath, fileSize);
   };
 
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
@@ -2502,8 +2391,6 @@ async function uploadFile(
     && !transfer.resumable
   ) {
     let fastPutOk = false;
-    let fastPutSourcePath = localPath;
-    let fastPutSnapshotPath = null;
     try {
       // Wait for any prior/in-flight write OPEN on this path (including our
       // own concurrent attempt's still-pending OPEN) before fastPut truncates
@@ -2519,29 +2406,12 @@ async function uploadFile(
       logTransferDiag(transfer, "strategy", { strategy: "fastPut-isolated" });
       transfer.pauseSupported = false;
       transfer.pauseUnavailableReason = "Pause is unavailable during fastPut upload";
-      if (!transfer.sourceIsOwnedTemp) {
-        const snapshotId = crypto.createHash("sha256")
-          .update(String(transfer.transferId || localPath))
-          .digest("hex")
-          .slice(0, 16);
-        fastPutSnapshotPath = tempDirBridge.getTransferTempFilePath(
-          `upload-source-${snapshotId}`,
-          "snapshot.bin",
-        );
-        await createVerifiedUploadSnapshot(
-          originalLocalPath,
-          fastPutSnapshotPath,
-          transfer.sourceDigestPath,
-          fileSize,
-          transfer,
-        );
-        fastPutSourcePath = fastPutSnapshotPath;
-      }
+      // Stream the live local path (no whole-file snapshot / digest sidecar).
       sendProgress(Math.max(0, Number(transfer.checkpointBytes) || 0), fileSize, {
         force: true,
       });
       await uploadViaFastPut(
-        fastPutSourcePath,
+        originalLocalPath,
         remotePath,
         isolated,
         fileSize,
@@ -2551,10 +2421,10 @@ async function uploadFile(
       );
       fastPutOk = true;
     } catch (err) {
-      // Gate-wait / snapshot / fastPut failure: end the reopened isolated
-      // channel before nulling. Rethrow paths skip the post-block else-if
-      // end, and fallthrough also clears isolated; either way we must not
-      // leak the SSH subsystem opened for this attempt (#2755 Bugbot).
+      // Gate-wait / fastPut failure: end the reopened isolated channel before
+      // nulling. Rethrow paths skip the post-block else-if end, and fallthrough
+      // also clears isolated; either way we must not leak the SSH subsystem
+      // opened for this attempt (#2755 Bugbot).
       if (isolated && typeof isolated.end === "function") {
         try { isolated.end(); } catch { /* ignore */ }
       }
@@ -2576,10 +2446,6 @@ async function uploadFile(
         "[transferBridge] isolated fastPut failed, trying next pipelined strategy:",
         err?.message || String(err),
       );
-    } finally {
-      if (fastPutSnapshotPath) {
-        await fs.promises.rm(fastPutSnapshotPath, { force: true }).catch(() => {});
-      }
     }
     if (fastPutOk) {
       onBytesCommitted?.();
@@ -2648,7 +2514,10 @@ async function uploadFile(
   const error = new Error(message, cause ? { cause } : undefined);
   if (cause?.code !== undefined) error.code = cause.code;
   if (cause?.noTransferFallback) error.noTransferFallback = true;
-  await cleanupSourceDigest();
+  if (transfer.sourceDigestPath) {
+    try { await fs.promises.rm(transfer.sourceDigestPath, { force: true }); } catch { /* ignore */ }
+    transfer.sourceDigestPath = null;
+  }
   throw error;
 }
 
@@ -3730,10 +3599,20 @@ function isTransferCancelled(transfer) {
 }
 
 const UPLOAD_DIGEST_SCAN_SIZE = TRANSFER_CHUNK_SIZE * 128;
+const EMPTY_DIGEST_SLOT = Buffer.alloc(32);
+
+function uploadDigestByteLength(fileSize) {
+  return Math.ceil(Math.max(0, Number(fileSize) || 0) / TRANSFER_CHUNK_SIZE) * 32;
+}
+
+function isUnsetDigestSlot(buffer, bytesRead) {
+  if (bytesRead !== 32) return true;
+  return buffer.equals(EMPTY_DIGEST_SLOT);
+}
 
 async function assertUploadDigestCapacity(digestPath, fileSize) {
   if (typeof fs.promises.statfs !== "function") return;
-  const requiredBytes = BigInt(Math.ceil(fileSize / TRANSFER_CHUNK_SIZE)) * 32n;
+  const requiredBytes = BigInt(uploadDigestByteLength(fileSize));
   let stats;
   try {
     stats = await fs.promises.statfs(path.dirname(digestPath), { bigint: true });
@@ -3750,12 +3629,31 @@ async function assertUploadDigestCapacity(digestPath, fileSize) {
   }
 }
 
+/**
+ * Allocate an empty per-chunk digest sidecar without reading the source.
+ * Chunk digests are filled on first verified read during the upload pass so
+ * multi-GB files no longer wait on a full pre-hash before the first WRITE.
+ */
+async function prepareUploadDigestSidecar(digestPath, fileSize) {
+  await fs.promises.rm(digestPath, { force: true });
+  await assertUploadDigestCapacity(digestPath, fileSize);
+  const requiredBytes = uploadDigestByteLength(fileSize);
+  const handle = await fs.promises.open(digestPath, "w");
+  try {
+    if (requiredBytes > 0) await handle.truncate(requiredBytes);
+  } finally {
+    await handle.close().catch(() => {});
+  }
+}
+
 async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer, onProgress = null) {
   let sourceHandle = null;
   let digestHandle = null;
   try {
     sourceHandle = await fs.promises.open(sourcePath, "r");
-    digestHandle = await fs.promises.open(digestPath, "r");
+    // r+ so a lazy sidecar can finish filling any still-empty slots on the
+    // post-upload re-scan (e.g. resume after a crash with a partial digest).
+    digestHandle = await fs.promises.open(digestPath, "r+");
     const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
     let position = 0;
     let chunkIndex = 0;
@@ -3771,7 +3669,18 @@ async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
         const actual = crypto.createHash("sha256")
           .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
           .digest();
-        if (!expected.subarray(index * 32, (index + 1) * 32).equals(actual)) {
+        const slot = expected.subarray(index * 32, (index + 1) * 32);
+        if (isUnsetDigestSlot(slot, 32)) {
+          const writeResult = await digestHandle.write(
+            actual,
+            0,
+            32,
+            (chunkIndex + index) * 32,
+          );
+          if (!writeResult || writeResult.bytesWritten !== 32) {
+            throw new Error("Upload digest sidecar stopped accepting data");
+          }
+        } else if (!slot.equals(actual)) {
           throw createSourceContentChangedError();
         }
       }
@@ -3785,63 +3694,80 @@ async function verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, tran
   }
 }
 
-async function createUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer, onProgress = null) {
-  // A crashed attempt may have left this transfer's old baseline behind. It is
-  // fully replaceable and its blocks must be reclaimable before capacity is
-  // evaluated for the new baseline.
-  await fs.promises.rm(digestPath, { force: true });
-  await assertUploadDigestCapacity(digestPath, fileSize);
+async function createUploadDigestBaseline(
+  sourcePath,
+  digestPath,
+  fileSize,
+  transfer,
+  onProgress = null,
+  options = {},
+) {
+  // merge:true — fill/verify an existing sidecar while uploads are in flight.
+  // Default replaces the file (SCP / snapshot callers need a clean baseline).
+  const merge = options.merge === true;
+  if (!merge) {
+    await fs.promises.rm(digestPath, { force: true });
+    await prepareUploadDigestSidecar(digestPath, fileSize);
+  } else {
+    await assertUploadDigestCapacity(digestPath, fileSize);
+    try {
+      await fs.promises.access(digestPath);
+    } catch {
+      await prepareUploadDigestSidecar(digestPath, fileSize);
+    }
+  }
   let sourceHandle = null;
   let digestHandle = null;
   let completed = false;
   try {
     sourceHandle = await fs.promises.open(sourcePath, "r");
-    digestHandle = await fs.promises.open(digestPath, "w");
+    digestHandle = await fs.promises.open(digestPath, "r+");
     const buffer = Buffer.allocUnsafe(Math.min(UPLOAD_DIGEST_SCAN_SIZE, Math.max(1, fileSize)));
     let position = 0;
-    let digestPosition = 0;
+    let chunkIndex = 0;
     while (position < fileSize) {
       if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const length = Math.min(buffer.length, fileSize - position);
       await readLocalRange(sourceHandle, buffer, position, length);
       if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
       const digestCount = Math.ceil(length / TRANSFER_CHUNK_SIZE);
-      const digests = Buffer.allocUnsafe(digestCount * 32);
       for (let offset = 0, index = 0; offset < length; offset += TRANSFER_CHUNK_SIZE, index += 1) {
-        crypto.createHash("sha256")
+        const actual = crypto.createHash("sha256")
           .update(buffer.subarray(offset, Math.min(offset + TRANSFER_CHUNK_SIZE, length)))
-          .digest()
-          .copy(digests, index * 32);
-      }
-      let written = 0;
-      while (written < digests.length) {
-        const result = await digestHandle.write(
-          digests,
-          written,
-          digests.length - written,
-          digestPosition + written,
-        );
-        if (!result || result.bytesWritten <= 0) {
-          throw new Error("Upload digest baseline stopped accepting data");
-        }
-        written += result.bytesWritten;
+          .digest();
+        const slotIndex = chunkIndex + index;
+        const digestOffset = slotIndex * 32;
+        await withDigestSlotLock(digestHandle, slotIndex, async () => {
+          const expected = Buffer.allocUnsafe(32);
+          const digestResult = await digestHandle.read(expected, 0, 32, digestOffset);
+          if (isUnsetDigestSlot(expected, digestResult.bytesRead)) {
+            const writeResult = await digestHandle.write(actual, 0, 32, digestOffset);
+            if (!writeResult || writeResult.bytesWritten !== 32) {
+              throw new Error("Upload digest baseline stopped accepting data");
+            }
+          } else if (!expected.equals(actual)) {
+            throw createSourceContentChangedError();
+          }
+        });
       }
       position += length;
-      digestPosition += digests.length;
+      chunkIndex += digestCount;
       // Report scan progress so large uploads do not look stuck at 0 B/s while
       // hashing (#2712 / #2556). Bytes here are local read progress, not remote.
       onProgress?.(position, fileSize);
+    }
+    if (typeof digestHandle.sync === "function") {
+      await digestHandle.sync().catch(() => {});
     }
     completed = true;
   } finally {
     await sourceHandle?.close().catch(() => {});
     await digestHandle?.close().catch(() => {});
-    if (!completed) await fs.promises.rm(digestPath, { force: true }).catch(() => {});
+    // Background filler must not delete a sidecar still used by live uploads.
+    if (!completed && !merge) {
+      await fs.promises.rm(digestPath, { force: true }).catch(() => {});
+    }
   }
-
-  // Confirm the sidecar matches the source before any remote WRITE. Progress
-  // callbacks keep the UI in "verifying" instead of looking stuck (#2712).
-  await verifyUploadDigestBaseline(sourcePath, digestPath, fileSize, transfer, onProgress);
 }
 
 async function createVerifiedUploadSnapshot(
@@ -3858,7 +3784,7 @@ async function createVerifiedUploadSnapshot(
   let completed = false;
   try {
     sourceHandle = await fs.promises.open(sourcePath, "r");
-    digestHandle = await fs.promises.open(digestPath, "r");
+    digestHandle = await fs.promises.open(digestPath, "r+");
     snapshotHandle = await fs.promises.open(snapshotPath, "w");
     const sourceStats = await sourceHandle.stat();
     let position = 0;
@@ -3910,7 +3836,7 @@ function createVerifiedUploadReadStream(
     let digestHandle = null;
     try {
       sourceHandle = await fs.promises.open(sourcePath, "r");
-      digestHandle = await fs.promises.open(digestPath, "r");
+      digestHandle = await fs.promises.open(digestPath, "r+");
       let position = 0;
       while (position < fileSize) {
         if (isTransferCancelled(transfer)) throw new Error("Transfer cancelled");
@@ -3935,13 +3861,39 @@ function createVerifiedUploadReadStream(
   return { stream, completed };
 }
 
+async function withDigestSlotLock(digestHandle, chunkIndex, fn) {
+  // Per-chunk locks keep pipelined uploads concurrent across ranges while still
+  // serializing r+ ops on the same 32-byte digest slot.
+  if (!digestHandle.__netcattySlotLocks) {
+    digestHandle.__netcattySlotLocks = new Map();
+  }
+  const locks = digestHandle.__netcattySlotLocks;
+  const previous = locks.get(chunkIndex) || Promise.resolve();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  locks.set(chunkIndex, previous.then(() => gate, () => gate));
+  try {
+    await previous;
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 async function readVerifiedUploadRange(
   localHandle,
   digestHandle,
   position,
   length,
   fileSize,
+  options = {},
 ) {
+  // allowCreate: first pass fills empty digest slots while uploading (no full
+  // pre-hash). Resume re-reads must require an existing non-empty slot so a
+  // rewritten source cannot silently mint a new identity for already-sent bytes.
+  const allowCreate = options.allowCreate !== false;
   const output = Buffer.allocUnsafe(length);
   let outputOffset = 0;
   while (outputOffset < length) {
@@ -3949,13 +3901,25 @@ async function readVerifiedUploadRange(
     const chunkStart = Math.floor(rangePosition / TRANSFER_CHUNK_SIZE) * TRANSFER_CHUNK_SIZE;
     const chunkLength = Math.min(TRANSFER_CHUNK_SIZE, fileSize - chunkStart);
     const chunk = Buffer.allocUnsafe(chunkLength);
+    // Local reads may run concurrently; only digest-slot mutations are locked.
     await readLocalRange(localHandle, chunk, chunkStart, chunkLength);
-    const expected = Buffer.allocUnsafe(32);
-    const chunkIndex = Math.floor(chunkStart / TRANSFER_CHUNK_SIZE);
-    const digestResult = await digestHandle.read(expected, 0, 32, chunkIndex * 32);
-    if (digestResult.bytesRead !== 32) throw createSourceContentChangedError();
     const actual = crypto.createHash("sha256").update(chunk).digest();
-    if (!expected.equals(actual)) throw createSourceContentChangedError();
+    const chunkIndex = Math.floor(chunkStart / TRANSFER_CHUNK_SIZE);
+    const digestOffset = chunkIndex * 32;
+    await withDigestSlotLock(digestHandle, chunkIndex, async () => {
+      const expected = Buffer.allocUnsafe(32);
+      const digestResult = await digestHandle.read(expected, 0, 32, digestOffset);
+      if (isUnsetDigestSlot(expected, digestResult.bytesRead)) {
+        if (!allowCreate) throw createSourceContentChangedError();
+        // Record identity for this chunk as we upload it (single local read).
+        const writeResult = await digestHandle.write(actual, 0, 32, digestOffset);
+        if (!writeResult || writeResult.bytesWritten !== 32) {
+          throw new Error("Upload digest sidecar stopped accepting data");
+        }
+      } else if (!expected.equals(actual)) {
+        throw createSourceContentChangedError();
+      }
+    });
     const chunkOffset = rangePosition - chunkStart;
     const copyLength = Math.min(length - outputOffset, chunkLength - chunkOffset);
     chunk.copy(output, outputOffset, chunkOffset, chunkOffset + copyLength);
@@ -3983,7 +3947,7 @@ async function readVerifiedUploadRange(
  * @param {object|null|undefined} initialSource
  * @param {object|null|undefined} latestSource
  * @param {number} expectedSize
- * @param {{ contentVerifiedSeparately?: boolean, allowSourceGrowth?: boolean }} [options]
+ * @param {{ contentVerifiedSeparately?: boolean, allowSourceGrowth?: boolean, ignoreCtime?: boolean }} [options]
  */
 function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize, options = {}) {
   const latestSize = Number(latestSource?.size);
@@ -4010,8 +3974,11 @@ function assertSourceMetadataUnchanged(initialSource, latestSource, expectedSize
     return;
   }
   // No digest / per-range content proof: timestamps + inode are the durable
-  // same-size rewrite signal (remote SFTP download path).
-  const versionFields = ["mtimeMs", "ctimeMs", "mtime", "ctime", "ino"];
+  // same-size rewrite signal. Upload finish may set ignoreCtime so macOS
+  // xattr/Spotlight ctime bumps do not abort after a true size match.
+  const versionFields = options.ignoreCtime
+    ? ["mtimeMs", "mtime", "ino"]
+    : ["mtimeMs", "ctimeMs", "mtime", "ctime", "ino"];
   const changed = versionFields.some((field) => {
     const before = Number(initialSource?.[field]);
     const after = Number(latestSource?.[field]);
@@ -4416,8 +4383,6 @@ async function uploadFileConcurrent(
   transfer.abort = abortEarly;
 
   let localHandle = null;
-  let digestHandle = null;
-  let ephemeralDigestPath = null;
   let initialSource = null;
   let remoteHandle = null;
   let failed = false;
@@ -4434,29 +4399,8 @@ async function uploadFileConcurrent(
       throw localOpenError;
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
-    if (transfer.sourceDigestPath) {
-      digestHandle = await fs.promises.open(transfer.sourceDigestPath, "r");
-    } else if (!transfer.sourceIsOwnedTemp) {
-      // Non-resumable range uploads do not receive uploadFile's persistent
-      // digest sidecar. Build the same stable baseline here so every range is
-      // verified immediately before its remote WRITE instead of relying on a
-      // before/after whole-file fingerprint that temporary rewrites can evade.
+    if (!transfer.sourceIsOwnedTemp) {
       initialSource = await localHandle.stat();
-      const digestId = crypto.createHash("sha256")
-        .update(String(transfer.transferId || localPath))
-        .digest("hex")
-        .slice(0, 16);
-      ephemeralDigestPath = tempDirBridge.getTransferTempFilePath(
-        `upload-digest-${digestId}`,
-        "ranges.sha256",
-      );
-      await createUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
-      if (transfer.cancelled) throw new Error("Transfer cancelled");
-      const sourceAfterBaseline = await localHandle.stat();
-      assertSourceMetadataUnchanged(initialSource, sourceAfterBaseline, fileSize, {
-        contentVerifiedSeparately: true,
-      });
-      digestHandle = await fs.promises.open(ephemeralDigestPath, "r");
     }
     if (transfer.cancelled) throw new Error("Transfer cancelled");
     remoteHandle = await openSftpHandleForTransfer(
@@ -4524,19 +4468,10 @@ async function uploadFileConcurrent(
         checkpoint,
         concurrency: UPLOAD_TRANSFER_CONCURRENCY,
         copyRange: async (position, length) => {
-          const buffer = digestHandle
-            ? await readVerifiedUploadRange(
-              localHandle,
-              digestHandle,
-              position,
-              length,
-              fileSize,
-            )
-            : await (async () => {
-              const directBuffer = Buffer.allocUnsafe(length);
-              await readLocalRange(localHandle, directBuffer, position, length);
-              return directBuffer;
-            })();
+          // Size-based resume: read the source range at `position` and WRITE it.
+          // No per-chunk content digest (FileZilla / WinSCP style).
+          const buffer = Buffer.allocUnsafe(length);
+          await readLocalRange(localHandle, buffer, position, length);
           if (transfer.cancelled) throw new Error("Transfer cancelled");
           await writeSftpRange(sftp, remoteHandle, buffer, position, length);
         },
@@ -4550,15 +4485,12 @@ async function uploadFileConcurrent(
       // published at this point, so stop accepting cancellation before source
       // revalidation and handle cleanup; staged uploads pass no callback.
       options.onBytesCommitted?.();
-      const contentVerifiedSeparately = Boolean(digestHandle || ephemeralDigestPath || transfer.sourceDigestPath);
       if (initialSource) {
         const latestSource = await localHandle.stat();
+        // Soft size + mtime/ino only — no digest, but not fail-open either.
         assertSourceMetadataUnchanged(initialSource, latestSource, fileSize, {
-          contentVerifiedSeparately,
+          ignoreCtime: true,
         });
-      }
-      if (ephemeralDigestPath) {
-        await verifyUploadDigestBaseline(localPath, ephemeralDigestPath, fileSize, transfer);
       }
     } catch (error) {
       failed = true;
@@ -4591,12 +4523,6 @@ async function uploadFileConcurrent(
     transfer.abort = null;
     if (localHandle) {
       await localHandle.close().catch(() => {});
-    }
-    if (digestHandle) {
-      await digestHandle.close().catch(() => {});
-    }
-    if (ephemeralDigestPath) {
-      await fs.promises.rm(ephemeralDigestPath, { force: true }).catch(() => {});
     }
     let remoteCloseError = null;
     // Close remote handles while the channel is still live. On disposeChannel
@@ -5903,24 +5829,10 @@ async function startTransferNow(event, payload, onProgress) {
                 ))
             : 0;
           sendProgress(transfer.checkpointBytes, fileSize, { force: true });
-          if (usesStage && transfer.checkpointBytes > 0) {
-            const verifyBytes = resumeContentVerifyBytes(
-              transfer.checkpointBytes,
-              transfer.sourceFingerprint,
-            );
-            await verifyResumeContent(
-              verifyBytes,
-              (options) => hashLocalPrefix(sourcePath, verifyBytes, options),
-              (options) => hashRemotePrefix(
-                client,
-                targetSftpId,
-                uploadTargetPath,
-                targetEncoding,
-                verifyBytes,
-                options,
-              ),
-            );
-          }
+          // Resume is size-based only (WinSCP/FileZilla): the durable .part size
+          // is the checkpoint. Do not re-hash [0, checkpoint) on both ends —
+          // that blocked large-file resume for seconds-to-minutes with no bytes
+          // moving.
           await uploadFile(
             sourcePath,
             encodedUploadPath,

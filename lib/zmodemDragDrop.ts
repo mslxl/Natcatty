@@ -60,23 +60,27 @@ export async function buildZmodemDragDropFiles(
   const files: ZmodemDragDropFile[] = [];
 
   for (const entry of dropEntries) {
-    if (entry.isDirectory || !entry.file) continue;
+    if (entry.isDirectory) continue;
 
-    const remoteName = getZmodemRemoteName(entry.relativePath, entry.file.name);
+    const fileName = entry.file?.name
+      || entry.relativePath.replace(/\\/g, "/").split("/").pop()
+      || entry.relativePath;
+    const remoteName = getZmodemRemoteName(entry.relativePath, fileName);
     const localPath = getDropEntryLocalPath(entry);
 
     if (localPath) {
       files.push({
         path: localPath,
-        name: entry.file.name,
+        name: fileName,
         remoteName,
       });
       continue;
     }
 
+    if (!entry.file) continue;
     const data = await entry.file.arrayBuffer();
     files.push({
-      name: entry.file.name,
+      name: fileName,
       remoteName,
       data,
     });

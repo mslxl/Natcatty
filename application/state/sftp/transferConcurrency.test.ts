@@ -4,10 +4,8 @@ import assert from "node:assert/strict";
 import {
   DEFAULT_SFTP_DIRECTORY_LISTING_CONCURRENCY,
   DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY,
-  DEFAULT_SFTP_FOLDER_PRESCAN,
   DEFAULT_SFTP_SKIP_UNCHANGED,
   resolveSftpDirectoryListingConcurrency,
-  resolveSftpFolderPrescanEnabled,
   resolveSftpSkipUnchangedEnabled,
   resolveSftpTransferConcurrency,
   runBoundedConcurrency,
@@ -27,12 +25,9 @@ test("defaults directory listing fanout to four concurrent readdirs", () => {
   assert.equal(DEFAULT_SFTP_DIRECTORY_LISTING_CONCURRENCY, 4);
 });
 
-test("defaults folder pre-scan and skip-unchanged to enabled", () => {
-  assert.equal(resolveSftpFolderPrescanEnabled(() => null), DEFAULT_SFTP_FOLDER_PRESCAN);
+test("defaults skip-unchanged to enabled", () => {
   assert.equal(resolveSftpSkipUnchangedEnabled(() => null), DEFAULT_SFTP_SKIP_UNCHANGED);
-  assert.equal(DEFAULT_SFTP_FOLDER_PRESCAN, true);
   assert.equal(DEFAULT_SFTP_SKIP_UNCHANGED, true);
-  assert.equal(resolveSftpFolderPrescanEnabled(() => false), false);
   assert.equal(resolveSftpSkipUnchangedEnabled(() => false), false);
 });
 

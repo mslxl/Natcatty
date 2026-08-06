@@ -28,3 +28,18 @@ test("ZMODEM drops use reconstructed paths without buffering the file", async ()
   }]);
   assert.equal(buffered, false);
 });
+
+test("ZMODEM drops accept path-only files from native folder scans", async () => {
+  const files = await buildZmodemDragDropFiles([{
+    file: null,
+    localPath: "/tmp/project/src/main.ts",
+    relativePath: "project/src/main.ts",
+    isDirectory: false,
+  }]);
+
+  assert.deepEqual(files, [{
+    path: "/tmp/project/src/main.ts",
+    name: "main.ts",
+    remoteName: "main.ts",
+  }]);
+});

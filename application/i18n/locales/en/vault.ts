@@ -268,6 +268,8 @@ export const enVaultMessages: Messages = {
   'sftp.transfers.calculatingTotal': 'Calculating total size...',
   'sftp.transfers.filesCount': '{count} files',
   'sftp.transfers.filesProgress': '{current}/{total} files',
+  // Progressive folder walk: total is "found so far", not a fixed grand total.
+  'sftp.transfers.filesDiscoveredProgress': '{completed} done · {discovered} found',
   'sftp.transfers.expandChildren': 'Show files',
   'sftp.transfers.collapseChildren': 'Hide files',
   'sftp.transfers.expandChildList': 'Show detail',
@@ -560,8 +562,6 @@ export const enVaultMessages: Messages = {
   'settings.sftp.compressedUpload.enable': 'Enable folder compression',
   'settings.sftp.compressedUpload.enableDesc': 'Automatically compress folders using tar before transfer. Requires tar support on the server. Falls back to regular transfer if not available.',
 
-  'settings.sftp.folderPrescan.enable': 'Pre-scan folders before transfer',
-  'settings.sftp.folderPrescan.enableDesc': 'Walk the full folder tree first so the transfer center shows a stable file total before bytes move. Slightly delays the first transfer on very large trees.',
   'settings.sftp.skipUnchanged.enable': 'Skip unchanged files',
   'settings.sftp.skipUnchanged.enableDesc': 'Skip files whose size and modification time already match the destination (rsync-style). Disabled when replacing a folder into a staging path.',
 

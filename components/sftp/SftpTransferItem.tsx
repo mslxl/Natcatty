@@ -26,9 +26,16 @@ import { getParentPath } from '../../application/state/sftp/utils';
 import { useSftpTransferTask } from '../../application/state/sftpTransferCenterStore';
 import { cn } from '../../lib/utils';
 import { TransferTask } from '../../types';
+import {
+    buildGlobalTransferProgressDisplay,
+    isDirectoryParentTask,
+} from '../GlobalSftpTransferCenter';
 import { Button } from '../ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { formatSpeed, formatTransferBytes } from './utils';
+
+/** Child rows need room for Pause + Cancel (2×24px icons + gap). */
+const CHILD_ACTIONS_COLUMN_PX = 56;
 
 interface SftpTransferItemProps {
     task: TransferTask;
@@ -132,16 +139,20 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     // Optimistic spinner from click until store status moves off paused/interrupted.
     const [resumeClicked, setResumeClicked] = useState(false);
 
-    // Align with global transfer center: directory parents default to file-count
-    // progress unless explicitly compressed/byte mode.
-    const progressMode = task.progressMode
-      ?? (task.isDirectory && !task.parentTaskId ? 'files' : 'bytes');
-    const isDirParent = task.isDirectory && !task.parentTaskId && progressMode === 'files';
-    const hasKnownTotal = task.totalBytes > 0 || (!isDirParent && !!task.sourceLastModified);
-    const progress = hasKnownTotal
-        ? Math.min((task.transferredBytes / task.totalBytes) * 100, 100)
-        : 0;
-    const isIndeterminate = task.status === 'transferring' && !hasKnownTotal;
+    // Same progress model as the global transfer center (done · found for folders).
+    const isDirParent = isDirectoryParentTask(task);
+    const centerProgress = buildGlobalTransferProgressDisplay(task, t);
+    const hasKnownTotal = isDirParent
+        ? task.totalBytes > 0 && task.transferredBytes > 0 && task.phase !== 'scanning'
+        : task.totalBytes > 0 || !!task.sourceLastModified;
+    const progress = isDirParent
+        ? centerProgress.percent
+        : hasKnownTotal
+            ? Math.min((task.transferredBytes / task.totalBytes) * 100, 100)
+            : 0;
+    const isIndeterminate = isDirParent
+        ? centerProgress.indeterminate && (task.status === 'transferring' || task.status === 'pending' || task.status === 'queued' || task.status === 'pausing')
+        : task.status === 'transferring' && !hasKnownTotal;
     const isActiveTransfer = task.status === 'transferring' || task.status === 'pausing';
     // Reconnect / dedicated resume window — keep the action slot as a spinner
     // until the first real progress clears reconnectRequired.
@@ -178,13 +189,9 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                     ? formatTransferBytes(task.totalBytes)
                     : '';
 
-    const fileCountDisplay = isDirParent && (isActiveTransfer || isPausedLike)
-        ? (task.totalBytes > 0
-            ? t('sftp.transfers.filesProgress', { current: task.transferredBytes, total: task.totalBytes })
-            : t('sftp.transfers.filesCount', { count: task.transferredBytes }))
-        : isDirParent && task.status === 'completed' && task.totalBytes > 0
-            ? t('sftp.transfers.filesCount', { count: task.totalBytes })
-            : '';
+    // Prefer the transfer-center detail string so the panel never lags behind
+    // "N done · M found" while status is still pending during progressive walks.
+    const fileCountDisplay = isDirParent ? centerProgress.detail : '';
 
     const speedFormatted = effectiveSpeed > 0 ? formatSpeed(effectiveSpeed) : '';
     const targetDirectoryPath = task.isDirectory ? task.targetPath : getParentPath(task.targetPath);
@@ -193,29 +200,42 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     // the backend drained in-flight chunks ("finish current step").
     const pausingLabel = t('sftp.transferCenter.status.pausing');
     const resumingLabel = t('sftp.transferCenter.status.resuming');
+    const isLiveScanning = task.phase === 'scanning'
+        && (task.status === 'pending' || task.status === 'queued' || task.status === 'transferring');
     const progressOverlayText = isResuming
         ? resumingLabel
-        : task.status === 'pending'
-        ? t('sftp.task.waiting')
+        : isLiveScanning
+        ? (fileCountDisplay
+            ? `${t('sftp.transferCenter.phase.scanning')} · ${fileCountDisplay}`
+            : t('sftp.transferCenter.phase.scanning'))
         : task.status === 'pausing'
             ? pausingLabel
-            : isIndeterminate
-                ? t('sftp.transfer.preparing')
-                : isDirParent
-                    ? (fileCountDisplay
-                        ? `${fileCountDisplay}${hasKnownTotal ? ` • ${Math.round(progress)}%` : ''}`
-                        : hasKnownTotal
-                            ? `${Math.round(progress)}%`
-                            : '...')
-                    : bytesDisplay
-                        ? `${bytesDisplay}${hasKnownTotal ? ` • ${Math.round(progress)}%` : ''}`
-                        : hasKnownTotal
-                            ? `${Math.round(progress)}%`
-                            : '...';
+            : isDirParent
+                ? (fileCountDisplay
+                    || (task.status === 'pending' || task.status === 'queued'
+                        ? t('sftp.task.waiting')
+                        : isIndeterminate
+                            ? '...'
+                            : `${Math.round(progress)}%`))
+                : task.status === 'pending'
+                    ? t('sftp.task.waiting')
+                    : isIndeterminate
+                        ? t('sftp.transfer.preparing')
+                        : bytesDisplay
+                            ? `${bytesDisplay}${hasKnownTotal ? ` • ${Math.round(progress)}%` : ''}`
+                            : hasKnownTotal
+                                ? `${Math.round(progress)}%`
+                                : '...';
 
-    const progressBarWidth = task.status === 'pending' || (task.status === 'transferring' && !hasKnownTotal) || isIndeterminate
-        ? (task.status === 'pending' || !hasKnownTotal ? '100%' : `${progress}%`)
-        : `${progress}%`;
+    const progressBarWidth = isDirParent
+        ? (centerProgress.indeterminate || isLiveScanning
+            ? '100%'
+            : `${progress}%`)
+        : task.status === 'pending'
+            || (task.status === 'transferring' && !hasKnownTotal)
+            || isIndeterminate
+            ? (task.status === 'pending' || !hasKnownTotal ? '100%' : `${progress}%`)
+            : `${progress}%`;
 
     const statusIcon = isResuming
         ? <Loader2 size={12} className="animate-spin text-primary" />
@@ -269,7 +289,12 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
         </div>
     );
 
-    const progressSummaryText = isResuming || isActiveTransfer || isPausedLike || task.status === 'pending'
+    const progressSummaryText = isResuming
+        || isActiveTransfer
+        || isPausedLike
+        || task.status === 'pending'
+        || task.status === 'queued'
+        || (isDirParent && !!fileCountDisplay)
         ? [speedFormatted, progressOverlayText].filter(Boolean).join(' • ')
         : '';
     const showTransferSizeCalculation = task.status === 'transferring' && !hasKnownTotal && !isDirParent;
@@ -437,7 +462,9 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                 data-transfer-status={task.status}
                 data-transfer-direction={task.direction}
                 style={{
-                    gridTemplateColumns: `24px ${childNameColumnWidth}px 10px minmax(0, 1fr) 24px`,
+                    // Last column reserves space for Pause + Cancel so the
+                    // progress bar never paints under the action buttons.
+                    gridTemplateColumns: `24px ${childNameColumnWidth}px 10px minmax(0, 1fr) ${CHILD_ACTIONS_COLUMN_PX}px`,
                 }}
             >
                 <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -468,10 +495,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                     </TooltipTrigger>
                     <TooltipContent side="top">{resizeNameColumnLabel}</TooltipContent>
                 </Tooltip>
-                <div className="min-w-0">
+                <div className="min-w-0 overflow-hidden">
                     {childProgressBar}
                 </div>
-                <div className="flex h-full items-center justify-center">
+                <div className="flex h-full min-w-0 items-center justify-end gap-0.5 pl-1">
                     {actionButtons}
                 </div>
             </div>
@@ -551,12 +578,16 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                 {toggleChildrenButton}
 
                 {progressSummaryText && (
-                    <span className="ml-auto shrink-0 whitespace-nowrap text-[10px] text-muted-foreground font-mono">
+                    <span className="ml-auto min-w-0 max-w-[50%] truncate whitespace-nowrap text-right text-[10px] text-muted-foreground font-mono">
                         {progressSummaryText}
                     </span>
                 )}
 
-                {actionButtons}
+                {/* Keep pause/cancel outside the progress summary so long
+                    "N done · M found" labels never crowd the action buttons. */}
+                <div className="ml-1 shrink-0">
+                    {actionButtons}
+                </div>
             </div>
 
             {showBelowParentProgress && (
@@ -622,6 +653,9 @@ const arePropsEqual = (
     if (prev.fileName !== next.fileName) return false;
     if (prev.targetPath !== next.targetPath) return false;
     if (prev.totalBytes !== next.totalBytes) return false;
+    if (prev.transferredBytes !== next.transferredBytes) return false;
+    if (prev.phase !== next.phase) return false;
+    if (prev.progressMode !== next.progressMode) return false;
     if ((prevProps.canRevealTarget ?? false) !== (nextProps.canRevealTarget ?? false)) return false;
     if ((prevProps.canCopyTargetPath ?? false) !== (nextProps.canCopyTargetPath ?? false)) return false;
     if ((prevProps.isChild ?? false) !== (nextProps.isChild ?? false)) return false;
@@ -634,18 +668,8 @@ const arePropsEqual = (
     if ((prevProps.childListId ?? '') !== (nextProps.childListId ?? '')) return false;
     if ((prevProps.resizeHandleTabIndex ?? 0) !== (nextProps.resizeHandleTabIndex ?? 0)) return false;
 
-    if (next.status === 'transferring' || next.status === 'pausing') {
-        if (next.totalBytes <= 0 && prev.transferredBytes !== next.transferredBytes) return false;
-
-        const prevProgress = prev.totalBytes > 0 ? (prev.transferredBytes / prev.totalBytes) * 100 : 0;
-        const nextProgress = next.totalBytes > 0 ? (next.transferredBytes / next.totalBytes) * 100 : 0;
-        if (Math.abs(nextProgress - prevProgress) >= 0.1) return false;
-
+    if (next.status === 'transferring' || next.status === 'pausing' || next.status === 'pending' || next.status === 'queued') {
         if (next.speed !== prev.speed) return false;
-    }
-
-    if (next.status === 'pending') {
-        return true;
     }
 
     return true;

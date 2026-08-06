@@ -37,7 +37,9 @@ import type { UploadBridge, UploadCallbacks, UploadConfig, UploadResult } from "
 const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-const getDropEntrySize = (entry: DropEntry): number => entry.file?.size ?? entry.size ?? 0;
+const getDropEntrySize = (entry: DropEntry): number => (
+  entry.isDirectory ? 0 : entry.file?.size ?? entry.size ?? 0
+);
 const getRootDropLocalPath = (rootName: string, entries: DropEntry[]): string | undefined => {
   const entry = entries.find((candidate) => getDropEntryLocalPath(candidate));
   const localPath = entry ? getDropEntryLocalPath(entry) : undefined;
@@ -61,9 +63,10 @@ export interface UploadScanningTask {
 export function startUploadScanningTask(
   callbacks?: UploadCallbacks,
   taskId = crypto.randomUUID(),
+  info?: { label?: string },
 ): UploadScanningTask {
   let open = true;
-  callbacks?.onScanningStart?.(taskId);
+  callbacks?.onScanningStart?.(taskId, info);
 
   const close = (settle: () => void) => {
     if (!open) return;
@@ -160,10 +163,23 @@ export async function uploadFromDataTransfer(
   const scanningTask = startUploadScanningTask(callbacks);
   let entries: DropEntry[];
   try {
-    entries = await extractDropEntries(dataTransfer);
+    entries = await extractDropEntries(dataTransfer, {
+      onProgress: (progress) => {
+        callbacks?.onScanningProgress?.(scanningTask.taskId, progress);
+      },
+      isCancelled: () => controller?.isCancelled() === true,
+    });
   } catch (error) {
-    scanningTask.complete();
+    if (controller?.isCancelled() || /cancel/i.test(error instanceof Error ? error.message : String(error))) {
+      scanningTask.cancel();
+    } else {
+      scanningTask.fail(error);
+    }
     throw error;
+  }
+  if (controller?.isCancelled()) {
+    scanningTask.cancel();
+    return [{ fileName: "", success: false, cancelled: true }];
   }
   scanningTask.complete();
   logger.debug(`[SFTP:perf] extractDropEntries — ${entries.length} entries — ${(performance.now() - scanT0).toFixed(0)}ms`);
@@ -668,14 +684,14 @@ async function uploadEntries(
     const isStandaloneFile = rootName.startsWith("__file__");
     if (isStandaloneFile) continue;
 
-    // Calculate total bytes for this folder
+    // Calculate total bytes for this folder (path-only entries from listLocalTree
+    // carry size without a browser File handle).
     let totalBytes = 0;
     let fileCount = 0;
     for (const entry of rootEntries) {
-      if (!entry.isDirectory && entry.file) {
-        totalBytes += entry.file.size;
-        fileCount++;
-      }
+      if (!isUploadableFileEntry(entry)) continue;
+      totalBytes += getDropEntrySize(entry);
+      fileCount++;
     }
 
     if (fileCount === 0) continue;
@@ -1036,7 +1052,9 @@ export async function uploadEntriesDirect(
   }
 
   if (controller) {
-    controller.reset();
+    // Keep cancel latches/listeners from the external drop scan so the user
+    // can still cancel while pre-task work (stat / conflict / mkdir) runs.
+    controller.prepareForEntries();
     controller.setBridge(config.bridge);
   }
 

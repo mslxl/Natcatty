@@ -863,6 +863,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.transfers.calculatingTotal': '正在统计总大小...',
   'sftp.transfers.filesCount': '{count} 个文件',
   'sftp.transfers.filesProgress': '{current}/{total} 个文件',
+  'sftp.transfers.filesDiscoveredProgress': '已完成 {completed} · 已发现 {discovered}',
   'sftp.transfers.expandChildren': '展开文件',
   'sftp.transfers.collapseChildren': '收起文件',
   'sftp.transfers.expandChildList': '展开详情',

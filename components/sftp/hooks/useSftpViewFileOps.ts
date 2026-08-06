@@ -20,8 +20,8 @@ import { assertSftpFileFitsBuiltinEditor } from "../sftpEditorFileLimits";
 /** Local multi-select blob downloads read whole files into ArrayBuffers. */
 const LOCAL_BLOB_DOWNLOAD_CONCURRENCY = 1;
 /**
- * Multi-select roots each run folder pre-scan before the transfer scheduler.
- * Bound them so listing fan-out cannot multiply by selection size.
+ * Multi-select roots each start their own interleaved folder walk / session
+ * work. Bound them so many selected directories cannot stampede the scheduler.
  */
 const MULTI_SELECT_ROOT_DOWNLOAD_CONCURRENCY = DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY;
 
@@ -576,8 +576,8 @@ export const useSftpViewFileOps = ({
       const selectedDirectory = await selectDirectory(t("sftp.context.download"));
       if (!selectedDirectory) return;
 
-      // Bound root jobs: directory roots run full pre-scan before the scheduler,
-      // so unbounded Promise.allSettled would multiply LIST concurrency.
+      // Bound root jobs: each directory root walks and transfers independently,
+      // so unbounded Promise.allSettled would multiply session / LIST pressure.
       const results: Array<PromiseSettledResult<{ file: SftpFileEntry; status: TransferStatus }>> = [];
       await runBoundedConcurrency(
         files,

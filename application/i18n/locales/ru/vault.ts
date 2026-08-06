@@ -305,6 +305,7 @@ export const ruVaultMessages: Messages = {
   'sftp.transfers.calculatingTotal': 'Вычисление общего размера...',
   'sftp.transfers.filesCount': '{count} файл(ов)',
   'sftp.transfers.filesProgress': '{current}/{total} файл(ов)',
+  'sftp.transfers.filesDiscoveredProgress': '{completed} готово · {discovered} найдено',
   'sftp.transfers.expandChildren': 'Показать файлы',
   'sftp.transfers.collapseChildren': 'Скрыть файлы',
   'sftp.transfers.expandChildList': 'Показать детали',
@@ -597,8 +598,6 @@ export const ruVaultMessages: Messages = {
   'settings.sftp.compressedUpload.enable': 'Включить сжатие папок',
   'settings.sftp.compressedUpload.enableDesc': 'Автоматически сжимать папки с помощью tar перед передачей. Требует поддержки tar на сервере. Если она недоступна, будет использована обычная передача.',
 
-  'settings.sftp.folderPrescan.enable': 'Предварительное сканирование папок',
-  'settings.sftp.folderPrescan.enableDesc': 'Сначала обойти всё дерево папок, чтобы центр передачи показал стабильное число файлов до начала передачи байтов. На очень больших деревьях немного откладывает первую передачу.',
   'settings.sftp.skipUnchanged.enable': 'Пропускать неизменённые файлы',
   'settings.sftp.skipUnchanged.enableDesc': 'Пропускать файлы, у которых размер и время изменения уже совпадают с назначением (в стиле rsync). Отключается при замене папки во временный путь.',
 

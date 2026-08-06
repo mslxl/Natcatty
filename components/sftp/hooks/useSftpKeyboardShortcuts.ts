@@ -463,7 +463,7 @@ export const useSftpKeyboardShortcuts = ({
       const hasClipboardItems = (dataTransfer?.items?.length ?? 0) > 0;
       // webkitGetAsEntry must be invoked synchronously during the paste event.
       const dropEntriesPromise = dataTransfer?.items?.length
-        ? extractDropEntries(dataTransfer)
+        ? extractDropEntries(dataTransfer).catch(() => [])
         : null;
       const pastedFileSnapshot = dataTransfer?.files?.length
         ? Array.from(dataTransfer.files).filter((file) => file.name)
