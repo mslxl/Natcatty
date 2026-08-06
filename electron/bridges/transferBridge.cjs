@@ -336,15 +336,32 @@ function remoteOpenPathMatchesStaged(openPath, stagedRemote) {
  * if the stale OPEN lands after the retry has begun writing, the server
  * truncates the retry stage and a later size check can promote sparse data
  * (Codex P1 on 42a27ef7). Wait for any prior OPEN on the path to settle before
- * issuing another truncating OPEN; release on OPEN callback and on drain
- * force-complete so a dead channel cannot block retries forever.
+ * issuing another truncating OPEN; release on OPEN callback so a late truncating
+ * OPEN cannot race a retry. When an OPEN dies without a callback, fail() poisons
+ * the entry so later waiters reject promptly (fail-closed) instead of hanging
+ * forever on waitForPrior (#2755 / Codex P2 on dca41093).
  *
- * @type {Map<string, { promise: Promise<void>, resolve: () => void, released: boolean }>}
+ * @type {Map<string, {
+ *   promise: Promise<void>,
+ *   resolve: () => void,
+ *   reject: (err: Error) => void,
+ *   released: boolean,
+ *   failed: boolean,
+ *   failError: Error | null,
+ * }>}
  */
 const truncatingSharedWriteOpenGates = new Map();
 /** @type {WeakMap<object, string>} */
 const truncatingSharedWriteSftpKeys = new WeakMap();
 let truncatingSharedWriteSftpSeq = 0;
+
+function createPoisonedWriteOpenPathGateError(message) {
+  const err = new Error(
+    message || "Prior write OPEN never settled; path gate is fail-closed",
+  );
+  err.noTransferFallback = true;
+  return err;
+}
 
 function sharedWriteOpenPathKey(filePath) {
   if (Buffer.isBuffer(filePath)) return `b:${filePath.toString("hex")}`;
@@ -387,38 +404,163 @@ function sharedWriteOpenSessionKey(sftp, transfer) {
 /**
  * @param {string | Buffer} filePath
  * @param {string} [sessionKey]
- * @returns {{ waitForPrior: Promise<void>, release: () => void }}
+ * @returns {{
+ *   waitForPrior: Promise<void>,
+ *   release: () => void,
+ *   fail: (err?: Error, options?: { reinstall?: boolean }) => void,
+ *   markOpenIssued: () => void,
+ *   releaseAfterTransportGone: () => void,
+ * }}
  */
 function beginTruncatingSharedWriteOpen(filePath, sessionKey = "unknown") {
   const key = `${sessionKey}|${sharedWriteOpenPathKey(filePath)}`;
   const prior = truncatingSharedWriteOpenGates.get(key);
+
+  // Poisoned prior: keep the fail-closed barrier. Do not replace the map entry
+  // with a fresh waiter that could release and let a later OPEN race a still-
+  // pending truncate. New callers fail promptly on waitForPrior.
+  if (prior?.failed) {
+    const err = prior.failError || createPoisonedWriteOpenPathGateError();
+    return {
+      waitForPrior: Promise.reject(err),
+      release: () => {},
+      fail: () => {},
+      markOpenIssued: () => {},
+      releaseAfterTransportGone: () => {},
+    };
+  }
+
   const waitForPrior = prior && !prior.released
     ? prior.promise
     : Promise.resolve();
 
   let resolve;
-  const promise = new Promise((r) => {
-    resolve = r;
+  let reject;
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
   });
+  // Avoid unhandledRejection when nobody awaits yet (fail before waiters attach).
+  promise.catch(() => {});
   const entry = {
     promise,
     resolve: () => {
       resolve();
     },
+    reject: (err) => {
+      reject(err);
+    },
     released: false,
+    failed: false,
+    failError: null,
+    // True once this entry has started the remote OPEN. Waiters that only
+    // block on a prior must not act as the OPEN owner for poison cleanup.
+    openIssued: false,
+    priorEntry: prior && !prior.released ? prior : null,
+    transportGone: false,
+    transportGoneTimer: null,
+    releaseAfterTransportGone: null,
   };
   truncatingSharedWriteOpenGates.set(key, entry);
 
   const release = () => {
     if (entry.released) return;
     entry.released = true;
+    if (entry.transportGoneTimer) {
+      clearTimeout(entry.transportGoneTimer);
+      entry.transportGoneTimer = null;
+    }
     if (truncatingSharedWriteOpenGates.get(key) === entry) {
       truncatingSharedWriteOpenGates.delete(key);
     }
+    // Already failed: promise rejected; drop the barrier once OPEN settled.
+    if (entry.failed) return;
     entry.resolve();
   };
 
-  return { waitForPrior, release };
+  /**
+   * After the owning SFTP transport is closed/replaced, clear a poisoned
+   * barrier so reconnects to the same host/path are not fail-closed forever.
+   * Keep a short grace so a late OPEN callback that still races end() cannot
+   * wipe a same-path retry with no barrier (Codex P2 on 713719c2).
+   */
+  const releaseAfterTransportGone = () => {
+    entry.transportGone = true;
+    if (!entry.failed || entry.released || entry.transportGoneTimer) return;
+    entry.transportGoneTimer = setTimeout(() => {
+      entry.transportGoneTimer = null;
+      if (entry.released || !entry.failed) return;
+      release();
+    }, 2000);
+  };
+  entry.releaseAfterTransportGone = releaseAfterTransportGone;
+
+  const markOpenIssued = () => {
+    entry.openIssued = true;
+  };
+
+  /**
+   * @param {Error} [error]
+   * @param {{ reinstall?: boolean }} [options]
+   *   reinstall — when true (default), make the OPEN-owning entry the durable
+   *   map barrier. Successor waiters that only propagate a prior poison must
+   *   pass false so they cannot steal the slot (Codex P2 on 64450bfd).
+   */
+  const fail = (error, options = {}) => {
+    const wantReinstall = options.reinstall !== false;
+    const err = error instanceof Error
+      ? error
+      : createPoisonedWriteOpenPathGateError(String(error?.message || error || ""));
+    if (!err.noTransferFallback) err.noTransferFallback = true;
+
+    if (!entry.released && !entry.failed) {
+      entry.failed = true;
+      entry.failError = err;
+      entry.reject(err);
+    }
+
+    // A successor waiter may already own the map slot. Poison that head too so
+    // its promise cannot resolve and clear the barrier for a third upload while
+    // the original truncating OPEN may still land (Codex P1 on 0292802c).
+    const current = truncatingSharedWriteOpenGates.get(key);
+    if (current && current !== entry && !current.released && !current.failed) {
+      current.failed = true;
+      current.failError = err;
+      current.reject(err);
+    }
+
+    if (!wantReinstall || entry.released) return;
+
+    // Prefer the OPEN-owning ancestor as the durable barrier. A waiter that
+    // reaches fastPut timeout must not reinstall itself and arm transport
+    // cleanup while the prior OPEN's channel may still deliver a late truncate
+    // (Codex P1 on 251bf9ec).
+    let barrier = entry;
+    if (!entry.openIssued) {
+      let cursor = entry.priorEntry;
+      while (cursor && !cursor.released) {
+        barrier = cursor;
+        if (cursor.openIssued || !cursor.priorEntry || cursor.priorEntry.released) break;
+        cursor = cursor.priorEntry;
+      }
+      if (!barrier.failed) {
+        barrier.failed = true;
+        barrier.failError = err;
+        try { barrier.reject(err); } catch { /* ignore */ }
+      }
+    }
+    truncatingSharedWriteOpenGates.set(key, barrier);
+    // Arm post-transport clear only when THIS entry owns the unresolved OPEN
+    // and is the one being poisoned (its isolated channel already ended before
+    // fastPut timeout). A waiter fail() that walks to an ancestor must not
+    // start that ancestor's cleanup while the ancestor's transport may still
+    // deliver a late truncating OPEN (Codex P1 on 4f2397ce).
+    if (barrier === entry && barrier.openIssued) {
+      try { barrier.releaseAfterTransportGone?.(); } catch { /* ignore */ }
+    }
+  };
+
+  return { waitForPrior, release, fail, markOpenIssued, releaseAfterTransportGone };
 }
 
 /**
@@ -2045,9 +2187,76 @@ async function uploadFile(
       try {
         // Wait for any prior/in-flight write OPEN on this path (including our
         // own concurrent attempt's still-pending OPEN) before fastPut truncates
-        // the same stage (Codex P1 on 7872a304).
+        // the same stage (Codex P1 on 7872a304). The wait must be cancelable and
+        // bounded: an isolated OPEN that never callbacks after channel death
+        // leaves pendingWriteOpenPathGate unresolved by design; hanging forever
+        // (or ignoring cancel because uploadFileConcurrent cleared abort) pins
+        // the transfer/lease (#2755 / Codex P2 on 667e9115). Fail closed on
+        // timeout — skip fastPut rather than race a still-pending truncate.
         if (typeof transfer.pendingWriteOpenPathGate?.then === "function") {
-          await transfer.pendingWriteOpenPathGate;
+          const pendingGate = transfer.pendingWriteOpenPathGate;
+          // Local cancel race (not runTransferCancelablePreflight): cancel must
+          // clear the timeout so an abandoned 2s reject cannot fire as an
+          // unhandled rejection after the outer wait already settled.
+          await new Promise((resolve, reject) => {
+            let settled = false;
+            const previousAbort = transfer.abort;
+            const signal = transfer.signal;
+            const finish = (fn, value) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              try { signal?.removeEventListener?.("abort", onAbort); } catch { /* ignore */ }
+              if (transfer.abort === onAbort) transfer.abort = previousAbort;
+              fn(value);
+            };
+            const timer = setTimeout(() => {
+              // Fail closed: do not fall through to another writer on the
+              // same stage while a truncating OPEN may still land. Poison the
+              // shared path gate so a later same-path upload fails promptly
+              // instead of awaiting the unresolved entry forever (Codex P2).
+              const err = new Error(
+                "Timed out waiting for prior write OPEN to settle before fastPut",
+              );
+              err.noTransferFallback = true;
+              try {
+                transfer._failPendingWriteOpenPathGate?.(
+                  createPoisonedWriteOpenPathGateError(
+                    "Prior write OPEN never settled; path gate is fail-closed",
+                  ),
+                );
+              } catch { /* ignore */ }
+              finish(reject, err);
+            }, 2000);
+            const onAbort = () => {
+              try { previousAbort?.(); } catch { /* ignore */ }
+              transfer.cancelled = true;
+              // Same fail-closed poison as the timeout path: a dead prior OPEN
+              // leaves the shared gate unresolved, and cancel must not leave
+              // later same-path uploads hanging on waitForPrior (Codex P2).
+              try {
+                transfer._failPendingWriteOpenPathGate?.(
+                  createPoisonedWriteOpenPathGateError(
+                    "Prior write OPEN never settled; path gate is fail-closed",
+                  ),
+                );
+              } catch { /* ignore */ }
+              finish(reject, new Error("Transfer cancelled"));
+            };
+            if (transfer.cancelled || signal?.aborted) {
+              onAbort();
+              return;
+            }
+            transfer.abort = onAbort;
+            try { signal?.addEventListener?.("abort", onAbort, { once: true }); } catch { /* ignore */ }
+            pendingGate.then(
+              () => finish(resolve),
+              (err) => finish(
+                reject,
+                err instanceof Error ? err : new Error(String(err?.message || err)),
+              ),
+            );
+          });
         }
         if (transfer.cancelled) throw new Error("Transfer cancelled");
         transfer.uploadStrategy = "fastPut-isolated";
@@ -2086,6 +2295,13 @@ async function uploadFile(
         );
         fastPutOk = true;
       } catch (err) {
+        // Gate-wait / snapshot / fastPut failure: end the reopened isolated
+        // channel before nulling. Rethrow paths skip the post-block else-if
+        // end, and fallthrough also clears isolated — either way we must not
+        // leak the SSH subsystem opened for this attempt (#2755 Bugbot).
+        if (isolated && typeof isolated.end === "function") {
+          try { isolated.end(); } catch { /* ignore */ }
+        }
         isolated = null;
         // Restore pause capability for subsequent pause-aware strategies.
         transfer.pauseSupported = Boolean(transfer.resumable);
@@ -2234,7 +2450,9 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
     : null;
   // Expose a promise that resolves when this OPEN's path gate is released so
   // same-transfer fallbacks (fastPut) can wait instead of racing a still-
-  // pending truncating OPEN (Codex P1 on 7872a304).
+  // pending truncating OPEN (Codex P1 on 7872a304). Also expose fail so a
+  // fail-closed fastPut timeout can poison the shared path gate for later
+  // same-path waiters (Codex P2 on dca41093).
   if (pathGate && transfer && typeof transfer === "object") {
     let resolvePathGate;
     const pending = new Promise((resolve) => { resolvePathGate = resolve; });
@@ -2245,6 +2463,10 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
         transfer.pendingWriteOpenPathGate = null;
       }
       transfer._resolvePendingWriteOpenPathGate = null;
+      transfer._failPendingWriteOpenPathGate = null;
+    };
+    transfer._failPendingWriteOpenPathGate = (error) => {
+      try { pathGate.fail?.(error); } catch { /* ignore */ }
     };
   }
   // Re-check ownership at unlink time: a same-id retry may already own
@@ -2659,14 +2881,22 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
       // Do not release this waiter immediately: beginTruncatingSharedWriteOpen
       // already replaced the map entry with us. Releasing now would leave later
       // same-path attempts with no barrier while the prior OPEN is still in
-      // flight (stale truncating OPEN race). Chain our release to the prior.
+      // flight (stale truncating OPEN race). Chain our release to the prior
+      // settle; on prior *failure* (poison), propagate fail instead of resolve
+      // so a successor waiting on our promise cannot start OPEN (Codex P1).
       pathGate.waitForPrior.then(
         () => {
           pathGate.release();
           try { transfer._resolvePendingWriteOpenPathGate?.(); } catch { /* ignore */ }
         },
-        () => {
-          pathGate.release();
+        (priorErr) => {
+          const failErr = priorErr instanceof Error
+            ? priorErr
+            : createPoisonedWriteOpenPathGateError(String(priorErr?.message || priorErr || ""));
+          if (!failErr.noTransferFallback) failErr.noTransferFallback = true;
+          // Propagate rejection to anyone waiting on our promise, but do not
+          // reinstall ourselves over the OPEN owner's poisoned barrier.
+          try { pathGate.fail?.(failErr, { reinstall: false }); } catch { /* ignore */ }
           try { transfer._resolvePendingWriteOpenPathGate?.(); } catch { /* ignore */ }
         },
       );
@@ -2702,6 +2932,7 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
     const startOpen = () => {
       if (!waiting) return;
       waiting = false;
+      try { pathGate.markOpenIssued?.(); } catch { /* ignore */ }
       // Keep cancel + channel-error wiring active through afterPathGate. A hung
       // post-gate stage stat must still yield to cancel/channel death so the
       // path gate and lease are not pinned forever (Codex P2 on f642580d).
@@ -2766,7 +2997,16 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
       });
     };
 
-    pathGate.waitForPrior.then(startOpen, startOpen);
+    pathGate.waitForPrior.then(
+      startOpen,
+      (err) => {
+        const error = err instanceof Error
+          ? err
+          : createPoisonedWriteOpenPathGateError(String(err?.message || err || ""));
+        if (!error.noTransferFallback) error.noTransferFallback = true;
+        abandonGateWait(error);
+      },
+    );
   });
 }
 
