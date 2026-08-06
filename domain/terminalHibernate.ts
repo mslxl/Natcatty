@@ -160,11 +160,11 @@ export function shouldSkipHibernateForAltScreen(
 
 /** Snapshot + buffered output to replay when recreating xterm after hibernate. */
 export type TerminalHibernateWakePayload = {
-  /** Full serialized terminal state (legacy combined snapshot). */
+  /** Full serialized terminal state -- preferred wake history (coherent ANSI). */
   snapshot: string;
-  /** Visible viewport rows for fast first paint during wake. */
+  /** Visible viewport rows; used with scrollback only when snapshot is empty. */
   viewportSnapshot?: string;
-  /** Older scrollback rows replayed lazily after viewport + pending. */
+  /** Older scrollback rows; used with viewport only when snapshot is empty. */
   scrollbackSnapshot?: string;
   pendingBuffer: string;
   /** True when the pane was hibernated while a full-screen app owned the alt buffer. */

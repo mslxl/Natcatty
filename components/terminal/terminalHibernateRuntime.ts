@@ -295,13 +295,23 @@ export type ApplyHibernateWakeOptions = {
   deferWebgl?: boolean;
 };
 
-const scheduleIdle = (callback: () => void): void => {
-  if (typeof requestIdleCallback === "function") {
-    requestIdleCallback(() => callback(), { timeout: 500 });
-    return;
-  }
-  setTimeout(callback, 0);
-};
+/**
+ * Resolve the pre-pending history bytes to replay on hibernate wake.
+ * Prefer the coherent full snapshot: SerializeAddon range slices omit a
+ * trailing newline at the boundary, so concatenating scrollback+viewport can
+ * merge the seam lines. Fall back to scrollback -> viewport when snapshot is
+ * empty (still never viewport-first -- that evicts newest rows under a finite
+ * scrollback cap; #2762).
+ */
+export function resolveHibernateWakeHistory(payload: TerminalHibernateWakePayload): string {
+  if (payload.snapshot) return payload.snapshot;
+  const viewport = payload.viewportSnapshot ?? "";
+  const scrollback = payload.scrollbackSnapshot ?? "";
+  if (!scrollback) return viewport;
+  if (!viewport) return scrollback;
+  if (/\r?\n$/.test(scrollback)) return `${scrollback}${viewport}`;
+  return `${scrollback}\r\n${viewport}`;
+}
 
 export async function applyHibernateWakeToTerminal(
   term: XTerm,
@@ -310,10 +320,16 @@ export async function applyHibernateWakeToTerminal(
   options: ApplyHibernateWakeOptions = {},
 ): Promise<void> {
   const replayOptions = options.replayOptions;
-  const viewport = payload.viewportSnapshot ?? payload.snapshot;
-  const scrollback = payload.scrollbackSnapshot ?? "";
+  const history = resolveHibernateWakeHistory(payload);
 
-  await writeTerminalReplaySequence(term, [viewport, payload.pendingBuffer], replayOptions);
+  // Chunked writes already yield to the event loop for large buffers. Do not
+  // idle-append older scrollback after the viewport: under a finite xterm
+  // scrollback cap that trims the just-restored newest rows (#2762).
+  await writeTerminalReplaySequence(
+    term,
+    [history, payload.pendingBuffer],
+    replayOptions,
+  );
 
   if (!options.deferWebgl) {
     runtime.ensureWebglRenderer();
@@ -322,12 +338,6 @@ export async function applyHibernateWakeToTerminal(
 
   if (payload.alternateScreen) {
     refreshTerminalViewport(term);
-  }
-
-  if (scrollback) {
-    scheduleIdle(() => {
-      void writeTerminalPayloadChunked(term, scrollback, replayOptions);
-    });
   }
 }
 
