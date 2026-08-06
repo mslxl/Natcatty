@@ -190,7 +190,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   });
   // Track the OS color scheme preference (updated by matchMedia listener)
   const [systemPreference, setSystemPreference] = useState<'light' | 'dark'>(getSystemPreference);
-  // resolvedTheme is always 'light' or 'dark' — derived synchronously from theme + OS preference
+  // resolvedTheme is always 'light' or 'dark' - derived synchronously from theme + OS preference
   const resolvedTheme: 'light' | 'dark' = theme === 'system' ? systemPreference : theme;
   const [lightUiThemeId, setLightUiThemeId] = useState<string>(() => {
     const stored = readStoredString(STORAGE_KEY_UI_THEME_LIGHT);
@@ -418,7 +418,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     );
   });
   // Folder transfer concurrency is renderer-only (runSftpTransferWorkers).
-  // Do not push it into main-process host admission — that made multi-select
+  // Do not push it into main-process host admission - that made multi-select
   // top-level files queue against each other and against folder children.
 
   const [sshTransportIdleTtlMs, setSshTransportIdleTtlMsState] = useState<number>(() => {
@@ -582,7 +582,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const explorerContextMenuEnabledRef = useRef(explorerContextMenuEnabled);
   const explorerContextMenuSetRequestIdRef = useRef(0);
 
-  // Fix 1: Mount guard — skip redundant IPC broadcasts & localStorage writes on initial mount.
+  // Fix 1: Mount guard - skip redundant IPC broadcasts & localStorage writes on initial mount.
   // Set to true by the LAST useEffect declaration; all persist effects see false on first render.
   const persistMountedRef = useRef(false);
   const appearanceTransitionModeRef = useRef<ThemeTransitionMode>('view');
@@ -726,7 +726,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const clamped = Math.max(1, Math.min(16, Math.round(value)));
     setSftpTransferConcurrencyState(clamped);
     localStorageAdapter.writeString(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY, String(clamped));
-    // Intentionally not calling setGlobalTransferConcurrency — this setting
+    // Intentionally not calling setGlobalTransferConcurrency - this setting
     // only caps files inside a single folder transfer job.
     notifySettingsChanged(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY, clamped);
   }, [notifySettingsChanged]);

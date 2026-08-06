@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -17,6 +20,11 @@ import {
 } from "./SftpPaneToolbar.tsx";
 import type { SftpPane } from "../../application/state/sftp/types.ts";
 import { TooltipProvider } from "../ui/tooltip.tsx";
+
+const toolbarSource = fs.readFileSync(
+  path.join(path.dirname(fileURLToPath(import.meta.url)), "SftpPaneToolbar.tsx"),
+  "utf8",
+);
 
 test("single SFTP view-mode button toggles to the other mode", () => {
   assert.equal(getNextSftpViewMode("list"), "tree");
@@ -36,7 +44,7 @@ test("narrow SFTP toolbar spills non-pinned show items into overflow without cha
   assert.ok(!narrow.inlineIds.includes("newFolder"));
   assert.ok(narrow.overflowIds.includes("newFolder"));
   assert.ok(narrow.overflowIds.includes("encoding"));
-  // hide is already excluded from shown/collapsed by partition — not reintroduced here
+  // hide is already excluded from shown/collapsed by partition - not reintroduced here
   assert.ok(!narrow.inlineIds.includes("encoding"));
 });
 
@@ -132,7 +140,6 @@ test("toolbar renders one view-mode toggle instead of separate list and tree but
       handlePathKeyDown: () => {},
       handlePathDoubleClick: () => {},
       handlePathSubmit: () => {},
-      startTransition: (callback: () => void) => callback(),
       getNextUntitledName: () => "untitled",
       setNewFileName: () => {},
       setFileNameError: () => {},
@@ -211,7 +218,6 @@ test("toolbar exposes copy-current-path action for the active directory", () => 
       handlePathKeyDown: () => {},
       handlePathDoubleClick: () => {},
       handlePathSubmit: () => {},
-      startTransition: (callback: () => void) => callback(),
       getNextUntitledName: () => "untitled",
       setNewFileName: () => {},
       setFileNameError: () => {},
@@ -275,6 +281,105 @@ test("copy-current-path action reports clipboard failures", async () => {
   });
 
   assert.equal(errorMessage, "Could not copy current path");
+});
+
+test("SFTP filter input guards CJK IME composition instead of deferring controlled value writes", () => {
+  assert.match(toolbarSource, /onCompositionStart=\{/);
+  assert.match(toolbarSource, /onCompositionEnd=\{/);
+  assert.match(toolbarSource, /shouldCommitImeControlledChange/);
+  assert.match(toolbarSource, /value=\{filterDraft\}/);
+  assert.doesNotMatch(
+    toolbarSource,
+    /onChange=\{\(e\) => startTransition\(\(\) => onSetFilter\(e\.target\.value\)\)\}/,
+  );
+});
+
+test("SFTP filter honors an external filter change over a stale draft when composition ends", () => {
+  // If navigation clears pane.filter mid-composition, compositionEnd must adopt the
+  // external value instead of committing the stale draft, preserving the invariant
+  // that different-directory navigation clears the filter.
+  assert.match(toolbarSource, /filterAtComposeStartRef\.current = pane\.filter;/);
+  assert.match(toolbarSource, /filterPathAtComposeStartRef\.current = pane\.connection\?\.currentPath/);
+  assert.match(
+    toolbarSource,
+    /pane\.filter !== filterAtComposeStartRef\.current\s*\|\|\s*pathChangedDuringCompose\s*\|\|\s*filterCompositionSupersededRef\.current/,
+  );
+  assert.match(toolbarSource, /filterCompositionSupersededRef\.current = true;/);
+  assert.match(toolbarSource, /setFilterDraft\(pane\.filter\);/);
+});
+
+test("SFTP filter adopts external navigation-cleared filters during an open IME composition", () => {
+  // Sync path must pass valueAtComposeStart while composing so pane.filter="" from
+  // different-directory navigation supersedes the draft mid-composition.
+  assert.match(toolbarSource, /valueAtComposeStart:\s*composing/);
+  assert.match(toolbarSource, /filterAtComposeStartRef\.current/);
+  assert.match(toolbarSource, /pathChangedDuringCompose/);
+  assert.match(
+    toolbarSource,
+    /filterCompositionSupersededRef\.current = true;/,
+  );
+});
+
+test("SFTP filter supersedes IME draft on path navigation even when committed filter was already empty", () => {
+  // When the filter was already "" at compose start, navigation sets filter to ""
+  // again - pane.filter does not change - so path-at-compose-start must drive
+  // supersede; otherwise compositionend commits the stale draft.
+  assert.match(toolbarSource, /filterPathAtComposeStartRef/);
+  assert.match(
+    toolbarSource,
+    /currentPath !== filterPathAtComposeStartRef\.current/,
+  );
+  assert.match(
+    toolbarSource,
+    /\[pane\.filter, pane\.connection\?\.currentPath\]/,
+  );
+  // Hide-filter reset must still clear composing + supersede and resync draft.
+  assert.match(
+    toolbarSource,
+    /if \(!showFilterBar\) \{\s*filterComposingRef\.current = false;\s*filterCompositionSupersededRef\.current = false;\s*setFilterDraft\(pane\.filter\);/,
+  );
+});
+
+test("SFTP filter suppresses the post-composition onChange after external supersede", () => {
+  // Browsers may fire onChange with composing=false after compositionend; that event
+  // must not re-commit the stale composed draft over a navigation-cleared filter.
+  assert.match(toolbarSource, /resolveSupersededImeInputEvent/);
+  assert.match(toolbarSource, /superseded\.ignoreEventValue/);
+  assert.match(toolbarSource, /compositionExternallySuperseded:\s*filterCompositionSupersededRef\.current/);
+});
+
+test("SFTP filter clears the supersede latch if no post-composition change arrives", () => {
+  // Some IME/browser paths never fire the post-compositionend onChange that would
+  // clear filterCompositionSupersededRef; without a deferred clear, the next
+  // ordinary keystroke is treated as the stale supersede follow-up and dropped.
+  // Guard the clear so an intervening onChange clear or new compositionstart wins.
+  assert.match(
+    toolbarSource,
+    /filterCompositionSupersededRef\.current = true;\s*setFilterDraft\(pane\.filter\);\s*window\.setTimeout\(\(\) => \{/,
+  );
+  assert.match(
+    toolbarSource,
+    /if \(\s*filterCompositionSupersededRef\.current\s*&&\s*!filterComposingRef\.current\s*\) \{\s*filterCompositionSupersededRef\.current = false;/,
+  );
+});
+
+test("SFTP filter commit path clears the IME composing guard so clears/commits can't leave it stuck", () => {
+  // commitFilterValue backs composition end, Escape, inline clear and close; it must
+  // drop the guard so a programmatic clear mid-composition isn't blocked or undone.
+  assert.match(
+    toolbarSource,
+    /const commitFilterValue = useCallback\(\(value: string\) => \{[\s\S]*?filterComposingRef\.current = false;[\s\S]*?filterCompositionSupersededRef\.current = false;/,
+  );
+});
+
+test("SFTP filter clears the IME composing guard and resyncs the draft when the filter bar closes", () => {
+  // If the input unmounts mid-composition, compositionend never fires; the guard
+  // must be reset (or every later onSetFilter is blocked) and the draft resynced to
+  // the committed filter so a reopened bar never shows stale, uncommitted text.
+  assert.match(
+    toolbarSource,
+    /if \(!showFilterBar\) \{\s*filterComposingRef\.current = false;\s*filterCompositionSupersededRef\.current = false;\s*setFilterDraft\(pane\.filter\);/,
+  );
 });
 
 test("toolbar display path keeps the previous confirmed path while loading the same connection", () => {

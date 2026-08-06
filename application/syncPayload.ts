@@ -1,5 +1,5 @@
 /**
- * Sync Payload Builders — Single source of truth for constructing and applying
+ * Sync Payload Builders - Single source of truth for constructing and applying
  * the encrypted cloud-sync payload.
  *
  * Both the main window (App.tsx) and the settings window (SettingsSyncTab.tsx)
@@ -384,7 +384,7 @@ const mergeAiProvidersPreservingLocalApiKeys = (
 
 /**
  * Same rationale as `mergeAiProvidersPreservingLocalApiKeys`. Only restores the
- * local apiKey when the incoming config still points at the same providerId —
+ * local apiKey when the incoming config still points at the same providerId - 
  * switching providers must not silently leak a key meant for a different one.
  */
 const mergeWebSearchConfigPreservingLocalApiKey = (
@@ -494,7 +494,7 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   const defaultViewMode = localStorageAdapter.readString(STORAGE_KEY_SFTP_DEFAULT_VIEW_MODE);
   if (defaultViewMode === 'list' || defaultViewMode === 'tree') settings.sftpDefaultViewMode = defaultViewMode;
 
-  // SFTP Bookmarks (global only — local bookmarks are device-specific)
+  // SFTP Bookmarks (global only - local bookmarks are device-specific)
   const globalBookmarks = localStorageAdapter.read<SftpBookmark[]>(STORAGE_KEY_SFTP_GLOBAL_BOOKMARKS);
   if (globalBookmarks && Array.isArray(globalBookmarks)) settings.sftpGlobalBookmarks = globalBookmarks;
 
@@ -663,7 +663,7 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
     localStorageAdapter.writeString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, settings.terminalSidePanelAutoOpenTab);
   }
 
-  // Terminal settings — merge with existing to preserve platform-specific keys
+  // Terminal settings - merge with existing to preserve platform-specific keys
   if (settings.terminalSettings) {
     let existing: Record<string, unknown> = {};
     const raw = localStorageAdapter.readString(STORAGE_KEY_TERM_SETTINGS);
@@ -803,7 +803,7 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
     // After all AI writes, reconcile per-agent bindings against the final
     // provider list. Sync payloads can land with a new `providers` set but
     // no `agentProviderMap`, or with a stale `agentProviderMap` that
-    // points at ids the synced provider set doesn't include — either way
+    // points at ids the synced provider set doesn't include - either way
     // we'd leak overrides bound to ghost providers. Mirrors the same
     // cleanup `removeProvider` does for explicit user deletes.
     pruneOrphanPerAgentBindings();
@@ -868,7 +868,7 @@ function pruneOrphanPerAgentBindings(): void {
       nextProviderMap[agentId] = providerId;
     } else {
       providerChanged = true;
-      // Drop the saved model too — that id belonged to the now-missing
+      // Drop the saved model too - that id belonged to the now-missing
       // provider and isn't trustworthy against any other binding.
       if (agentId in nextModelMap) {
         delete nextModelMap[agentId];

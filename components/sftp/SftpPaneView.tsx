@@ -551,7 +551,6 @@ const SftpPaneViewInner: React.FC<SftpPaneViewProps> = ({
         handlePathKeyDown={handlePathKeyDown}
         handlePathDoubleClick={handlePathDoubleClick}
         handlePathSubmit={handlePathSubmit}
-        startTransition={startTransition}
         getNextUntitledName={getNextUntitledName}
         setNewFileName={setNewFileName}
         setFileNameError={setFileNameError}

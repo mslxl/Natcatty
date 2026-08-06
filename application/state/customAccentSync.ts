@@ -77,7 +77,7 @@ export function shouldApplyCustomAccentRecord(
 
 /**
  * Decide whether a custom-accent state change should be rebroadcast to peer
- * windows. Incoming IPC/storage updates must not notify again — otherwise a
+ * windows. Incoming IPC/storage updates must not notify again - otherwise a
  * fast native color-picker drag in the settings window ping-pongs with the
  * main window and the accent CSS variables oscillate (see #2743, same class
  * as window-opacity #2018).

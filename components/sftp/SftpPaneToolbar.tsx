@@ -18,6 +18,11 @@ import type { SftpFilenameEncoding } from "../../types";
 import type { SftpPane } from "../../application/state/sftp/types";
 import type { SftpBookmark } from "../../domain/models";
 import { isWindowsPath } from "../../application/state/sftp/utils";
+import {
+  resolveSupersededImeInputEvent,
+  shouldAdoptExternalImeControlledValue,
+  shouldCommitImeControlledChange,
+} from "../../domain/imeControlledInput";
 import { toast } from "../ui/toast";
 
 export const SFTP_TOOLBAR_ITEM_IDS = [
@@ -193,7 +198,6 @@ interface SftpPaneToolbarProps {
   handlePathKeyDown: (e: React.KeyboardEvent) => void;
   handlePathDoubleClick: () => void;
   handlePathSubmit: (pathOverride?: string) => void;
-  startTransition: React.TransitionStartFunction;
   getNextUntitledName: (existingNames: string[]) => string;
   setNewFileName: (value: string) => void;
   setFileNameError: (value: string | null) => void;
@@ -303,7 +307,6 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   handlePathKeyDown,
   handlePathDoubleClick,
   handlePathSubmit,
-  startTransition,
   getNextUntitledName,
   setNewFileName,
   setFileNameError,
@@ -327,6 +330,16 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
   onListDrives,
 }) => {
   const [displayPath, setDisplayPath] = useState(pane.connection?.currentPath ?? "");
+  const [filterDraft, setFilterDraft] = useState(pane.filter);
+  const filterComposingRef = useRef(false);
+  const filterAtComposeStartRef = useRef(pane.filter);
+  // Directory at compositionstart. Navigation that leaves the filter already ""
+  // does not change pane.filter, so path is the signal that must supersede the
+  // draft (compositionend would otherwise commit stale IME text).
+  const filterPathAtComposeStartRef = useRef(pane.connection?.currentPath ?? "");
+  // Set when pane.filter / path changes externally during (or just after)
+  // composition so the post-compositionend onChange cannot re-commit a stale draft.
+  const filterCompositionSupersededRef = useRef(false);
   const prevDisplayConnectionIdRef = useRef(pane.connection?.id);
   const toolbarLayout = useToolbarItemLayout(
     STORAGE_KEY_SFTP_TOOLBAR_LAYOUT,
@@ -346,6 +359,60 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
       }),
     );
   }, [pane.connection?.currentPath, pane.connection?.id, pane.loading]);
+
+  useEffect(() => {
+    setFilterDraft((draftValue) => {
+      const composing = filterComposingRef.current;
+      const currentPath = pane.connection?.currentPath ?? "";
+      const pathChangedDuringCompose = composing
+        && currentPath !== filterPathAtComposeStartRef.current;
+      const shouldAdopt = shouldAdoptExternalImeControlledValue({
+        isComposingSession: composing,
+        draftValue,
+        externalValue: pane.filter,
+        // Allow navigation-cleared filters to supersede an open IME composition so
+        // compositionend / post-composition onChange cannot resurrect the draft.
+        valueAtComposeStart: composing
+          ? filterAtComposeStartRef.current
+          : undefined,
+      }) || pathChangedDuringCompose;
+      if (
+        shouldAdopt
+        && composing
+        && (
+          pane.filter !== filterAtComposeStartRef.current
+          || pathChangedDuringCompose
+        )
+      ) {
+        filterCompositionSupersededRef.current = true;
+      }
+      return shouldAdopt ? pane.filter : draftValue;
+    });
+  }, [pane.filter, pane.connection?.currentPath]);
+
+  // The filter input only mounts while the bar is open, so a composition that is
+  // still active when the bar closes never fires `compositionend`. Clear the guard
+  // (otherwise a stuck `true` blocks every later commit) and resync the draft to the
+  // committed filter so a reopened bar never shows stale, uncommitted text.
+  useEffect(() => {
+    if (!showFilterBar) {
+      filterComposingRef.current = false;
+      filterCompositionSupersededRef.current = false;
+      setFilterDraft(pane.filter);
+    }
+  }, [showFilterBar, pane.filter]);
+
+  const commitFilterValue = useCallback((value: string) => {
+    // Committing/clearing finalizes any IME session, so drop the guard here. This
+    // covers every commit path (composition end, Escape, inline clear, close) so a
+    // stale composing flag can't block later commits or resurrect a pre-clear value.
+    filterComposingRef.current = false;
+    filterCompositionSupersededRef.current = false;
+    setFilterDraft(value);
+    // Keep parent filter in lockstep with the input. Deferred updates against a
+    // controlled value fight CJK IME composition and can echo/drop candidates.
+    onSetFilter(value);
+  }, [onSetFilter]);
 
   const handleNewFolder = useCallback(() => {
     setNewFolderName("");
@@ -984,23 +1051,91 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             />
             <Input
               ref={filterInputRef}
-              value={pane.filter}
-              onChange={(e) => startTransition(() => onSetFilter(e.target.value))}
+              value={filterDraft}
+              onChange={(e) => {
+                const superseded = resolveSupersededImeInputEvent({
+                  compositionExternallySuperseded: filterCompositionSupersededRef.current,
+                  isComposingSession: filterComposingRef.current,
+                  nativeEventIsComposing: e.nativeEvent.isComposing,
+                });
+                if (superseded.ignoreEventValue) {
+                  // Keep draft on the external filter (e.g. navigation clear). Do not
+                  // apply the stale composed text from a post-compositionend change.
+                  if (superseded.clearSupersedeLatch) {
+                    filterCompositionSupersededRef.current = false;
+                  }
+                  setFilterDraft(pane.filter);
+                  return;
+                }
+                const next = e.target.value;
+                setFilterDraft(next);
+                if (
+                  shouldCommitImeControlledChange({
+                    isComposingSession: filterComposingRef.current,
+                    nativeEventIsComposing: e.nativeEvent.isComposing,
+                    compositionExternallySuperseded: filterCompositionSupersededRef.current,
+                  })
+                ) {
+                  onSetFilter(next);
+                }
+              }}
+              onCompositionStart={() => {
+                filterComposingRef.current = true;
+                filterCompositionSupersededRef.current = false;
+                filterAtComposeStartRef.current = pane.filter;
+                filterPathAtComposeStartRef.current = pane.connection?.currentPath ?? "";
+              }}
+              onCompositionEnd={(e) => {
+                filterComposingRef.current = false;
+                // We never self-commit while composing, so any change to pane.filter
+                // or directory during the session is external (e.g. follow-CWD
+                // navigation). Honor it and drop the stale composed draft instead of
+                // letting the commit overwrite the navigation-cleared filter. Path
+                // matters when the committed filter was already "" before compose -
+                // navigation sets filter to "" again, so filter-only checks miss it.
+                // Keep the supersede latch armed so a browser post-compositionend
+                // onChange cannot reassert the composed text with composing=false.
+                // Some IME paths never fire that follow-up change; disarm on the
+                // next macrotask so ordinary keystrokes commit. Guard the clear so
+                // an intervening post-composition onChange or a new compositionstart
+                // is not clobbered.
+                const pathChangedDuringCompose =
+                  (pane.connection?.currentPath ?? "") !== filterPathAtComposeStartRef.current;
+                if (
+                  pane.filter !== filterAtComposeStartRef.current
+                  || pathChangedDuringCompose
+                  || filterCompositionSupersededRef.current
+                ) {
+                  filterCompositionSupersededRef.current = true;
+                  setFilterDraft(pane.filter);
+                  window.setTimeout(() => {
+                    if (
+                      filterCompositionSupersededRef.current
+                      && !filterComposingRef.current
+                    ) {
+                      filterCompositionSupersededRef.current = false;
+                    }
+                  }, 0);
+                  return;
+                }
+                commitFilterValue(e.currentTarget.value);
+              }}
               placeholder={t("sftp.filter.placeholder")}
               className="h-6 w-full pl-7 pr-7 text-xs bg-background"
               onKeyDown={(e) => {
                 if (e.key === "Escape") {
-                  if (pane.filter) {
-                    startTransition(() => onSetFilter(""));
+                  if (filterComposingRef.current || e.nativeEvent.isComposing) return;
+                  if (filterDraft || pane.filter) {
+                    commitFilterValue("");
                   } else {
                     setShowFilterBar(false);
                   }
                 }
               }}
             />
-            {pane.filter && (
+            {filterDraft && (
               <button
-                onClick={() => startTransition(() => onSetFilter(""))}
+                onClick={() => commitFilterValue("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
                 <X size={12} />
@@ -1014,7 +1149,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
                 size="icon"
                 className="h-6 w-6 shrink-0"
                 onClick={() => {
-                  startTransition(() => onSetFilter(""));
+                  commitFilterValue("");
                   setShowFilterBar(false);
                 }}
               >
@@ -1102,7 +1237,7 @@ function SftpBookmarkPopoverBody({
   );
 }
 
-/** Nested bookmark opener inside ⋮ — keeps overflow open until a leaf action. */
+/** Nested bookmark opener inside ⋮ - keeps overflow open until a leaf action. */
 function SftpOverflowNestedBookmark({
   menuItemClass,
   bookmarkButtonLabel,
