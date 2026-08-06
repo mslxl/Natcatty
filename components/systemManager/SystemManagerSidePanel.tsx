@@ -1,4 +1,4 @@
-import { Activity, Box, Gauge, LayoutList, Loader2, TerminalSquare } from 'lucide-react';
+import { Activity, Box, CircuitBoard, Gauge, LayoutList, Loader2, TerminalSquare } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import React, { memo, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
@@ -11,6 +11,7 @@ import { buildSystemManagerTabs, shouldCollectServerStats } from '../../domain/s
 import type { Snippet, TerminalSession } from '../../types';
 import { cn } from '../../lib/utils';
 import { DockerManagerTab } from './DockerManagerTab';
+import { GpuManagerTab } from './GpuManagerTab';
 import { ProcessManagerTab } from './ProcessManagerTab';
 import { SystemOverviewTab } from './SystemOverviewTab';
 import { TmuxManagerTab } from './TmuxManagerTab';
@@ -165,10 +166,12 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
     { id: 'processes', icon: LayoutList, label: t('systemManager.tabs.processes') },
     { id: 'tmux', icon: TerminalSquare, label: t('systemManager.tabs.tmux') },
     { id: 'docker', icon: Box, label: t('systemManager.tabs.docker') },
+    { id: 'gpu', icon: CircuitBoard, label: t('systemManager.tabs.gpu') },
   ];
 
   const tmuxReady = capabilities?.hasTmux === true;
   const dockerReady = capabilities?.hasDocker === true;
+  const gpuReady = capabilities?.hasNvidiaSmi === true || capabilities?.hasNpuSmi === true;
   const tmuxPanelState = resolveCapabilityPanelState({
     isActive: resolvedTab === 'tmux',
     ready: tmuxReady,
@@ -177,6 +180,11 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const dockerPanelState = resolveCapabilityPanelState({
     isActive: resolvedTab === 'docker',
     ready: dockerReady,
+    capabilitiesKnown: capabilities !== undefined,
+  });
+  const gpuPanelState = resolveCapabilityPanelState({
+    isActive: resolvedTab === 'gpu',
+    ready: gpuReady,
     capabilitiesKnown: capabilities !== undefined,
   });
 
@@ -264,6 +272,24 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
               backend={backend}
               listRefreshIntervalSec={terminalSettings.systemManagerDockerListRefreshInterval}
               statsRefreshIntervalSec={terminalSettings.systemManagerDockerStatsRefreshInterval}
+            />
+          </div>
+        ) : null}
+        {gpuPanelState === 'unavailable' ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelEmpty icon={CircuitBoard} message={t('systemManager.gpu.unavailable')} />
+          </div>
+        ) : gpuPanelState === 'checking' ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
+          </div>
+        ) : gpuPanelState === 'ready' ? (
+          <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'gpu' && 'hidden')}>
+            <GpuManagerTab
+              sessionId={sessionId}
+              isVisible={isVisible && resolvedTab === 'gpu'}
+              backend={backend}
+              refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
             />
           </div>
         ) : null}

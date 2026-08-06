@@ -1,10 +1,56 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSystemManagerTabs, shouldCollectServerStats } from "./systemTarget.ts";
+import { buildSystemManagerTabs, shouldCollectServerStats, shouldShowGpuTab } from "./systemTarget.ts";
 
 test("system manager shows overview before detailed management tabs", () => {
   assert.deepEqual(buildSystemManagerTabs(null, undefined, null), ["overview", "processes"]);
+});
+
+test("gpu tab appears only after nvidia-smi or npu-smi is detected", () => {
+  assert.equal(shouldShowGpuTab(undefined), false);
+  assert.equal(
+    shouldShowGpuTab({
+      targetOs: "linux",
+      hasTmux: false,
+      hasDocker: false,
+      hasNvidiaSmi: false,
+      hasNpuSmi: false,
+      probedAt: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowGpuTab({
+      targetOs: "linux",
+      hasTmux: false,
+      hasDocker: false,
+      hasNvidiaSmi: true,
+      hasNpuSmi: false,
+      probedAt: 1,
+    }),
+    true,
+  );
+
+  const host = {
+    id: "host-gpu",
+    label: "GPU",
+    hostname: "gpu.local",
+    username: "root",
+    tags: [],
+    os: "linux" as const,
+  };
+  assert.deepEqual(
+    buildSystemManagerTabs(host, {
+      targetOs: "linux",
+      hasTmux: true,
+      hasDocker: true,
+      hasNvidiaSmi: false,
+      hasNpuSmi: true,
+      probedAt: 1,
+    }, null),
+    ["overview", "processes", "tmux", "docker", "gpu"],
+  );
 });
 
 test("system overview stats skip network devices even when a Linux icon was selected", () => {

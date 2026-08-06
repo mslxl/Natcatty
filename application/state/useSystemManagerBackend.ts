@@ -112,6 +112,14 @@ export function useSystemManagerBackend() {
     return bridge.getDockerStats(options);
   }, []);
 
+  const listAccelerators = useCallback(async (sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.listAccelerators) {
+      return { success: false as const, error: 'listAccelerators unavailable' };
+    }
+    return bridge.listAccelerators(sessionId);
+  }, []);
+
   const dockerInspect = useCallback(async (options: { sessionId: string; containerId: string }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.dockerInspect) {
@@ -172,6 +180,7 @@ export function useSystemManagerBackend() {
     listDockerContainers,
     listDockerImages,
     getDockerStats,
+    listAccelerators,
     dockerInspect,
     dockerImageInspect,
     dockerAction,
@@ -190,6 +199,7 @@ export function useSystemManagerBackend() {
     listDockerContainers,
     listDockerImages,
     getDockerStats,
+    listAccelerators,
     dockerInspect,
     dockerImageInspect,
     dockerAction,

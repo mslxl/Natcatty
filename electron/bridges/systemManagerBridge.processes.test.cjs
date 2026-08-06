@@ -314,9 +314,11 @@ test("probeCapabilities reports Docker when docker is installed even if plain do
   const conn = {
     exec(command, callback) {
       assert.match(command, /command -v docker/);
+      assert.match(command, /command -v nvidia-smi/);
+      assert.match(command, /command -v npu-smi/);
       assert.doesNotMatch(command, /docker info/);
       assert.doesNotMatch(command, /docker\.sock/);
-      callback(null, createFakeExecStream("__NC_OS__=Linux\n__NC_DOCKER__=1\n"));
+      callback(null, createFakeExecStream("__NC_OS__=Linux\n__NC_DOCKER__=1\n__NC_NVIDIA_SMI__=1\n"));
     },
   };
   const sessions = new Map([["s1", { conn, type: "ssh" }]]);
@@ -329,6 +331,8 @@ test("probeCapabilities reports Docker when docker is installed even if plain do
 
   assert.equal(result.success, true);
   assert.equal(result.capabilities.hasDocker, true);
+  assert.equal(result.capabilities.hasNvidiaSmi, true);
+  assert.equal(result.capabilities.hasNpuSmi, false);
 });
 
 test("setupOsc7Tracking runs the setup command through the active session executor", async () => {

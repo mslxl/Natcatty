@@ -420,6 +420,9 @@ function createPreloadApi(ctx) {
   getDockerStats: async (options) => {
     return ipcRenderer.invoke("netcatty:system:dockerStats", options);
   },
+  listAccelerators: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listAccelerators", { sessionId });
+  },
   dockerInspect: async (options) => {
     return ipcRenderer.invoke("netcatty:system:dockerInspect", options);
   },

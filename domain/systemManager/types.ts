@@ -4,6 +4,41 @@ export interface SessionCapabilities {
   targetOs: TargetOs;
   hasTmux: boolean;
   hasDocker: boolean;
+  hasNvidiaSmi: boolean;
+  hasNpuSmi: boolean;
+  probedAt: number;
+}
+
+export type AcceleratorVendor = 'nvidia' | 'ascend';
+
+export interface AcceleratorDeviceInfo {
+  vendor: AcceleratorVendor;
+  index: number;
+  uuid: string;
+  name: string;
+  utilizationPercent: number | null;
+  memoryUsedMb: number | null;
+  memoryTotalMb: number | null;
+  temperatureC: number | null;
+  powerDrawW: number | null;
+  powerLimitW: number | null;
+  fanPercent: number | null;
+  driverVersion: string | null;
+  health: string | null;
+}
+
+export interface AcceleratorProcessInfo {
+  vendor: AcceleratorVendor;
+  gpuIndex: number;
+  pid: number;
+  processName: string;
+  memoryUsedMb: number | null;
+}
+
+export interface AcceleratorSnapshot {
+  devices: AcceleratorDeviceInfo[];
+  processes: AcceleratorProcessInfo[];
+  nvidiaDriverVersion: string | null;
   probedAt: number;
 }
 
@@ -119,7 +154,7 @@ export type DockerImageManageAction =
   | { action: 'prune'; all?: boolean }
   | { action: 'tag'; imageId: string; repository: string; tag?: string };
 
-export type SystemManagerSubTab = 'overview' | 'processes' | 'tmux' | 'docker';
+export type SystemManagerSubTab = 'overview' | 'processes' | 'tmux' | 'docker' | 'gpu';
 
 export interface TerminalPopupIcon {
   kind: 'image';

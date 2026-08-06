@@ -85,6 +85,15 @@ declare global {
       error?: string;
       stats?: import("../../domain/systemManager/types").DockerStatInfo[];
     }>;
+    listAccelerators?(sessionId: string): Promise<{
+      success: boolean;
+      pending?: boolean;
+      error?: string;
+      devices?: import("../../domain/systemManager/types").AcceleratorDeviceInfo[];
+      processes?: import("../../domain/systemManager/types").AcceleratorProcessInfo[];
+      nvidiaDriverVersion?: string | null;
+      probedAt?: number;
+    }>;
     dockerInspect?(options: { sessionId: string; containerId: string }): Promise<{
       success: boolean;
       error?: string;

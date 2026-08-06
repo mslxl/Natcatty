@@ -42,6 +42,13 @@ export function shouldShowDockerTab(
   return isDefiniteLinuxTarget(host, capabilities, session);
 }
 
+/** GPU tab only appears after nvidia-smi / npu-smi is actually detected. */
+export function shouldShowGpuTab(
+  capabilities: SessionCapabilities | undefined,
+): boolean {
+  return capabilities?.hasNvidiaSmi === true || capabilities?.hasNpuSmi === true;
+}
+
 export function shouldCollectServerStats(
   host: Host | null | undefined,
   capabilities: SessionCapabilities | undefined,
@@ -65,5 +72,6 @@ export function buildSystemManagerTabs(
   const tabs: SystemManagerSubTab[] = ['overview', 'processes'];
   if (shouldShowTmuxTab(host, capabilities, session)) tabs.push('tmux');
   if (shouldShowDockerTab(host, capabilities, session)) tabs.push('docker');
+  if (shouldShowGpuTab(capabilities)) tabs.push('gpu');
   return tabs;
 }
