@@ -495,7 +495,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     } finally {
       isSyncRunningRef.current = false;
     }
-  }, [enabled, sync, buildPayload, getDataHash, onApplyConvergentPayload, onApplyPayload, t]);
+  }, [enabled, sync, buildPayload, onApplyConvergentPayload, onApplyPayload, t]);
 
   const syncNowRef = useRef(syncNow);
   useEffect(() => {

@@ -185,7 +185,7 @@ test("jump pin ignores streaming isAtBottom flips and releases on scroll button"
   assert.match(jumpSource, /isStreaming\?: boolean/);
   assert.match(jumpSource, /if \(isStreaming\) return;/);
   assert.match(jumpSource, /window\.setTimeout/);
-  assert.match(listSource, /isStreaming=\{\!\!isStreaming\}/);
+  assert.match(listSource, /isStreaming=\{!!isStreaming\}/);
   assert.match(listSource, /<ConversationScrollButton onClick=\{handleReleaseJumpPin\} \/>/);
 });
 
