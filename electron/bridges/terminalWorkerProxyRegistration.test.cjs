@@ -134,6 +134,11 @@ test("terminal worker mode proxies SSH session and remote helper requests", asyn
       "netcatty:ssh:setEncoding",
     ],
   );
+  assert.equal(
+    terminalWorkerManager.requests[0].payload._macLocalNetworkMainProbed,
+    true,
+    "worker start payload should skip a second Local Network probe",
+  );
 });
 
 test("terminal worker mode keeps main-process keyboard-interactive responses in the main process", async () => {

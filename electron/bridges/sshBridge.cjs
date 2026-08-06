@@ -1318,8 +1318,9 @@ async function startSSHSessionWrapper(event, options) {
     }
   }
   try {
-    // Main-process LAN probe so macOS Local Network TCC attributes to Netcatty
-    // before the (possibly worker-hosted) SSH dial. See #2663 / TN3179.
+    // Main-process UDP Local Network probe (TN3179 discard-port connect) so
+    // TCC attributes to Netcatty before the (possibly worker-hosted) SSH dial.
+    // See #2663 / #2673.
     await ensureMacLocalNetworkAccess(options);
     return await startSSHSessionWithRetries(event, {
       ...options,
@@ -1399,13 +1400,26 @@ const {
  */
 function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
   ipcMain.handle(channel, async (event, payload) => {
-    // SSH sessions run in utilityProcess; probe LAN access from the main
+    // SSH sessions run in utilityProcess; UDP-probe LAN access from the main
     // process first so macOS can show the Local Network privacy alert for
-    // the Netcatty app bundle instead of silently denying the helper (#2663).
+    // the Netcatty app bundle instead of silently denying the helper
+    // (#2663 / #2673 / TN3179). Mark the payload so the worker skips a
+    // second hold / probe in its own process.
+    let workerPayload = payload;
     if (channel === "netcatty:start") {
-      await ensureMacLocalNetworkAccess(payload);
+      const probeResult = await ensureMacLocalNetworkAccess(payload);
+      const resolvedFirstHop = probeResult && typeof probeResult.hostname === "string"
+        ? String(probeResult.hostname).trim()
+        : "";
+      workerPayload = {
+        ...(payload && typeof payload === "object" ? payload : {}),
+        _macLocalNetworkMainProbed: true,
+        ...(resolvedFirstHop
+          ? { _macLocalNetworkResolvedFirstHop: resolvedFirstHop }
+          : {}),
+      };
     }
-    return terminalWorkerManager.request(channel, payload, {
+    return terminalWorkerManager.request(channel, workerPayload, {
       webContentsId: event?.sender?.id,
     });
   });
