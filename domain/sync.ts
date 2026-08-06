@@ -324,6 +324,8 @@ export interface SyncPayload {
     sftpAutoSync?: boolean;
     sftpShowHiddenFiles?: boolean;
     sftpUseCompressedUpload?: boolean;
+    sftpFolderPrescan?: boolean;
+    sftpSkipUnchanged?: boolean;
     sftpAutoOpenSidebar?: boolean;
     sftpFollowTerminalCwd?: boolean;
     sftpDefaultViewMode?: 'list' | 'tree';

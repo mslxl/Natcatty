@@ -206,6 +206,11 @@ export const zhTWTerminalMessages: Messages = {
   'settings.sftp.compressedUpload.enable': '啟用資料夾壓縮',
   'settings.sftp.compressedUpload.enableDesc': '自動使用 tar 壓縮資料夾後再傳輸。需要伺服器支援 tar 指令，不支援時自動回退到普通傳輸。',
 
+  'settings.sftp.folderPrescan.enable': '傳輸前預掃描資料夾',
+  'settings.sftp.folderPrescan.enableDesc': '先完整遍歷資料夾樹，傳輸中心在開始傳位元組前就能顯示穩定的檔案總數。超大目錄會略微推遲首個檔案開傳。',
+  'settings.sftp.skipUnchanged.enable': '跳過未改檔案',
+  'settings.sftp.skipUnchanged.enableDesc': '當目標檔案的大小與修改時間已與來源一致時跳過傳輸（類似 rsync）。替換到暫存路徑時自動停用。',
+
   // Settings > Terminal
   'settings.terminal.section.theme': '終端主題',
   'settings.terminal.themeModal.title': '選擇主題',

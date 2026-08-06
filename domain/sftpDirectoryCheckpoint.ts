@@ -11,6 +11,10 @@ export const MAX_SFTP_DIRECTORY_TRAVERSAL_DIRECTORIES = 50_000;
 export const MAX_SFTP_DIRECTORY_TRAVERSAL_ENTRIES = 200_000;
 
 export interface SftpDirectoryTraversalBudget {
+  /**
+   * Default branch ancestor set for sequential callers. Parallel walks must
+   * pass a per-branch Set into claim/release instead of sharing this one.
+   */
   activeCanonicalDirectories: Set<string>;
   visitedDirectories: number;
   visitedEntries: number;
@@ -35,30 +39,40 @@ export function normalizeSftpCanonicalDirectoryPath(canonicalPath: string): stri
   return canonicalPath.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
 }
 
+/** Copy parent ancestors for a parallel recursive branch (sibling aliases). */
+export function createSftpDirectoryBranchAncestors(
+  parent?: ReadonlySet<string> | null,
+): Set<string> {
+  return parent ? new Set(parent) : new Set();
+}
+
 /**
- * Claims one directory against the global work budget. Active directories are
- * shared by one sequential traversal and released when each recursive frame
- * exits, so sibling aliases remain valid without copying the ancestor set.
+ * Claims one directory against the global work budget. Cycle detection uses
+ * `branchAncestors` (defaults to the budget's sequential set). Parallel sibling
+ * walks must each pass their own branch set so two aliases of the same
+ * canonical path can both be copied.
  */
 export function claimSftpDirectoryVisit(
   budget: SftpDirectoryTraversalBudget,
   canonicalPath: string,
+  branchAncestors: Set<string> = budget.activeCanonicalDirectories,
 ): string | null {
   const normalized = normalizeSftpCanonicalDirectoryPath(canonicalPath);
-  if (budget.activeCanonicalDirectories.has(normalized)) return null;
+  if (branchAncestors.has(normalized)) return null;
   if (budget.visitedDirectories >= budget.maxDirectories) {
-    throw new Error(`Remote directory traversal directory limit exceeded (${budget.maxDirectories})`);
+    throw new Error(`Directory traversal directory limit exceeded (${budget.maxDirectories})`);
   }
   budget.visitedDirectories += 1;
-  budget.activeCanonicalDirectories.add(normalized);
+  branchAncestors.add(normalized);
   return normalized;
 }
 
 export function releaseSftpDirectoryVisit(
-  budget: SftpDirectoryTraversalBudget,
+  _budget: SftpDirectoryTraversalBudget,
   claimedCanonicalPath: string,
+  branchAncestors: Set<string> = _budget.activeCanonicalDirectories,
 ): void {
-  budget.activeCanonicalDirectories.delete(claimedCanonicalPath);
+  branchAncestors.delete(claimedCanonicalPath);
 }
 
 export function accountSftpDirectoryEntries(
@@ -67,7 +81,7 @@ export function accountSftpDirectoryEntries(
 ): void {
   const next = budget.visitedEntries + Math.max(0, Number(count) || 0);
   if (next > budget.maxEntries) {
-    throw new Error(`Remote directory traversal entry limit exceeded (${budget.maxEntries})`);
+    throw new Error(`Directory traversal entry limit exceeded (${budget.maxEntries})`);
   }
   budget.visitedEntries = next;
 }

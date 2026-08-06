@@ -9,6 +9,7 @@ import {
   claimSftpDirectoryVisit,
   createDirectoryManifestAccumulator,
   createEmptyDirectoryResumeCheckpoint,
+  createSftpDirectoryBranchAncestors,
   createSftpDirectoryTraversalBudget,
   EMPTY_DIRECTORY_MANIFEST_HASH,
   isValidDirectoryResumeCheckpoint,
@@ -89,6 +90,24 @@ test("remote directory traversal rejects ancestor cycles but allows sibling alia
   assert.throws(() => claimSftpDirectoryVisit(budget, "/srv/third"), /directory limit/i);
   releaseSftpDirectoryVisit(budget, root);
   assert.equal(budget.activeCanonicalDirectories.size, 0);
+});
+
+test("parallel sibling branches may both claim the same canonical alias", () => {
+  const budget = createSftpDirectoryTraversalBudget({ maxDirectories: 8, maxEntries: 8 });
+  const rootAncestors = createSftpDirectoryBranchAncestors();
+  const root = claimSftpDirectoryVisit(budget, "/srv/root", rootAncestors);
+  assert.ok(root);
+  const branchA = createSftpDirectoryBranchAncestors(rootAncestors);
+  const branchB = createSftpDirectoryBranchAncestors(rootAncestors);
+  const aliasA = claimSftpDirectoryVisit(budget, "/srv/shared", branchA);
+  const aliasB = claimSftpDirectoryVisit(budget, "/srv/shared", branchB);
+  assert.ok(aliasA);
+  assert.ok(aliasB);
+  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root", branchA), null);
+  assert.equal(claimSftpDirectoryVisit(budget, "/srv/root", branchB), null);
+  releaseSftpDirectoryVisit(budget, aliasA, branchA);
+  releaseSftpDirectoryVisit(budget, aliasB, branchB);
+  releaseSftpDirectoryVisit(budget, root, rootAncestors);
 });
 
 test("remote directory traversal releases sibling visits without retaining history", () => {

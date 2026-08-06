@@ -19,8 +19,9 @@ const DOWNLOAD_TRANSFER_CONCURRENCY = 64;
 // (isolated channel or shared/sudo browse path). Additional downloads wait for
 // a free slot rather than degrading to serial createReadStream (#2719 / #2449
 // fail-closed). Folder fan-out is capped in the renderer by
-// runSftpTransferWorkers (settings transfer concurrency); multi-select
-// top-level files are not throttled by that setting.
+// runSftpTransferWorkers (settings transfer concurrency). Multi-select
+// top-level downloads enqueue in parallel and share the same host scheduler /
+// channel pool caps - they must never fall back to serial body streams.
 const FAST_DOWNLOAD_CHANNELS_PER_SESSION = 1;
 
 module.exports = {

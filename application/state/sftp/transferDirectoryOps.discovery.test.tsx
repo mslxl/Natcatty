@@ -146,7 +146,9 @@ test("directory transfer discovers each directory once with bounded listing conc
     assert.equal(listCalls.size, directoryCount + 1);
     assert.ok(Array.from(listCalls.values()).every((count) => count === 1));
     assert.equal(listCalls.has("/source/loop"), false, "canonical symlink cycles must not be listed");
-    assert.equal(maxActiveListings, 1);
+    // Bounded parallel discovery (default 4) - never unbounded fan-out.
+    assert.ok(maxActiveListings >= 2, `expected parallel listings, got ${maxActiveListings}`);
+    assert.ok(maxActiveListings <= 4, `listing concurrency exceeded budget: ${maxActiveListings}`);
     assert.equal(tasks.find((task) => task.id === root.id)?.totalBytes, directoryCount);
   } finally {
     await act(async () => {

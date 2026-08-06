@@ -560,6 +560,11 @@ export const enVaultMessages: Messages = {
   'settings.sftp.compressedUpload.enable': 'Enable folder compression',
   'settings.sftp.compressedUpload.enableDesc': 'Automatically compress folders using tar before transfer. Requires tar support on the server. Falls back to regular transfer if not available.',
 
+  'settings.sftp.folderPrescan.enable': 'Pre-scan folders before transfer',
+  'settings.sftp.folderPrescan.enableDesc': 'Walk the full folder tree first so the transfer center shows a stable file total before bytes move. Slightly delays the first transfer on very large trees.',
+  'settings.sftp.skipUnchanged.enable': 'Skip unchanged files',
+  'settings.sftp.skipUnchanged.enableDesc': 'Skip files whose size and modification time already match the destination (rsync-style). Disabled when replacing a folder into a staging path.',
+
   // Quick Switcher
   'qs.search.placeholder': 'Search hosts or tabs',
   'qs.jumpTo': 'Jump To',
