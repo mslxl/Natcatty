@@ -36,7 +36,9 @@ let trayMenuData = {
 };
 
 let trayPanelWindow = null;
-
+/** True after the tray panel renderer finishes its first load. */
+let trayPanelReady = false;
+let trayPanelShowWhenReady = false;
 let trayPanelRefreshTimer = null;
 // Watchdog: if `leave-full-screen` never arrives (edge case / stuck transition)
 // we eventually give up and force a hide attempt. Better a visible window than
@@ -269,6 +271,13 @@ function ensureTrayPanelWindow() {
   const { BrowserWindow } = electronModule;
   if (trayPanelWindow && !trayPanelWindow.isDestroyed()) return trayPanelWindow;
 
+  const {
+    windowsCssRoundedOverlayChromeOptions,
+  } = require("./windowManager/windowsWindowChrome.cjs");
+
+  trayPanelReady = false;
+  trayPanelShowWhenReady = false;
+
   trayPanelWindow = new BrowserWindow({
     width: 360,
     height: 520,
@@ -281,8 +290,11 @@ function ensureTrayPanelWindow() {
     maximizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    transparent: true,
     hasShadow: true,
+    // Transparent host + clear backdrop so CSS rounded-lg corners are truly
+    // see-through. On Windows, disable OS rounding so it does not stack under
+    // the CSS radius (#2505 / Electron #46468).
+    ...windowsCssRoundedOverlayChromeOptions(),
     webPreferences: {
       preload: path.join(__dirname, "../preload.cjs"),
       contextIsolation: true,
@@ -309,7 +321,17 @@ function ensureTrayPanelWindow() {
   void trayPanelWindow.loadURL(url);
 
   trayPanelWindow.webContents.on("did-finish-load", () => {
+    trayPanelReady = true;
     pushTrayMenuDataToPanel();
+    if (trayPanelShowWhenReady && trayPanelWindow && !trayPanelWindow.isDestroyed()) {
+      trayPanelShowWhenReady = false;
+      try {
+        trayPanelWindow.show();
+        trayPanelWindow.focus();
+      } catch {
+        // ignore
+      }
+    }
   });
 
   return trayPanelWindow;
@@ -332,8 +354,14 @@ function showTrayPanel() {
   const y = Math.min(trayBounds.y + trayBounds.height + 6, workArea.y + workArea.height - panelBounds.height);
 
   win.setBounds({ x, y, width: panelBounds.width, height: panelBounds.height }, false);
-  win.show();
-  win.focus();
+  // Wait for first paint/load so the opaque main-app splash cannot flash as a
+  // square underlay before the tray route clears it (#2505).
+  if (!trayPanelReady) {
+    trayPanelShowWhenReady = true;
+  } else {
+    win.show();
+    win.focus();
+  }
 
   pushTrayMenuDataToPanel();
 
@@ -349,6 +377,7 @@ function showTrayPanel() {
 }
 
 function hideTrayPanel() {
+  trayPanelShowWhenReady = false;
   if (trayPanelWindow && !trayPanelWindow.isDestroyed()) {
     trayPanelWindow.hide();
   }
@@ -360,7 +389,12 @@ function hideTrayPanel() {
 }
 
 function toggleTrayPanel() {
-  if (trayPanelWindow && !trayPanelWindow.isDestroyed() && trayPanelWindow.isVisible()) {
+  // A pending first-load show counts as "open" so a second click cancels it
+  // instead of leaving did-finish-load to pop the panel open later.
+  const isOpenOrPending =
+    trayPanelShowWhenReady
+    || (trayPanelWindow && !trayPanelWindow.isDestroyed() && trayPanelWindow.isVisible());
+  if (isOpenOrPending) {
     hideTrayPanel();
   } else {
     showTrayPanel();
@@ -1073,6 +1107,8 @@ function cleanup() {
     }
     trayPanelWindow = null;
   }
+  trayPanelReady = false;
+  trayPanelShowWhenReady = false;
 }
 
 module.exports = {

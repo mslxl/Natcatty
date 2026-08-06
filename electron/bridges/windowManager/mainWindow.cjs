@@ -1,4 +1,8 @@
 /* eslint-disable no-undef */
+const {
+  windowsFramelessContentChromeOptions,
+} = require("./windowsWindowChrome.cjs");
+
 function createMainWindowApi(ctx) {
   with (ctx) {
     async function createWindow(electronModule, options) {
@@ -121,6 +125,8 @@ function createMainWindowApi(ctx) {
         }
       }
     
+      const windowsChrome = !isMac ? windowsFramelessContentChromeOptions() : {};
+
       const win = new BrowserWindow({
         ...windowBounds,
         minWidth: MIN_WINDOW_WIDTH,
@@ -131,6 +137,7 @@ function createMainWindowApi(ctx) {
         frame: isMac,
         titleBarStyle: isMac ? "hiddenInset" : undefined,
         trafficLightPosition: isMac ? { x: 12, y: 12 } : undefined,
+        ...windowsChrome,
         webPreferences: {
           preload,
           contextIsolation: true,

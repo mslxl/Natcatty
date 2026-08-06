@@ -401,6 +401,19 @@ body {
   color: hsl(var(--foreground));
 }
 
+/* Tray overlay window: opaque body would show as square tips outside CSS radius (#2505). */
+html.tray-window,
+html.tray-window body,
+html.tray-window #root {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
+html.tray-window .splash-screen {
+  display: none !important;
+  background: transparent !important;
+}
+
 ::view-transition-old(root),
 ::view-transition-new(root) {
   animation-duration: 220ms;

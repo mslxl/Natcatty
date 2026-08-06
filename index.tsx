@@ -140,8 +140,19 @@ const getRoute = () => {
 
 const root = ReactDOM.createRoot(rootElement);
 
+const syncTrayWindowClass = (route: string) => {
+  const rootEl = document.documentElement;
+  if (route === 'tray') {
+    rootEl.classList.add('tray-window');
+    document.getElementById('splash')?.remove();
+  } else {
+    rootEl.classList.remove('tray-window');
+  }
+};
+
 const renderApp = () => {
   const route = getRoute();
+  syncTrayWindowClass(route);
   if (route === 'settings') {
     root.render(
       <ToastProvider>

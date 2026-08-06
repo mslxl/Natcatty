@@ -71,6 +71,19 @@
       color: hsl(var(--foreground));
     }
 
+    /* Tray panel: keep the host fully clear so CSS rounded corners are see-through. */
+    html.tray-window,
+    html.tray-window body,
+    html.tray-window #root {
+      background: transparent !important;
+      background-color: transparent !important;
+    }
+
+    html.tray-window .splash-screen {
+      display: none !important;
+      background: transparent !important;
+    }
+
     /* Windows flag/emoji fallbacks live on --font-sans (not a body font-family
        override) so Appearance UI font still reaches portaled panels (#2647). */
     html.platform-win32 {
@@ -120,9 +133,14 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: hsl(var(--background));
+      background: transparent;
       z-index: 9999;
       transition: opacity 0.2s ease-out;
+    }
+
+    /* Main app only: opaque splash fill. Tray overlay stays clear (#2505). */
+    html:not(.tray-window) .splash-screen {
+      background: hsl(var(--background));
     }
 
     .splash-screen.fade-out {
@@ -195,6 +213,22 @@
         var ua = navigator.userAgent || '';
         if (/Win/i.test(ua)) {
           root.classList.add('platform-win32');
+        }
+
+        // Tray overlay uses CSS border-radius over a transparent BrowserWindow.
+        // Mark it before first paint so body/root/splash never flash an opaque
+        // backdrop (#2505). Splash lives in <body>, so remove it on DOM ready.
+        if ((window.location.hash || '') === '#/tray' || (window.location.hash || '').indexOf('#/tray') === 0) {
+          root.classList.add('tray-window');
+          var removeTraySplash = function () {
+            var splash = document.getElementById('splash');
+            if (splash) splash.remove();
+          };
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', removeTraySplash, { once: true });
+          } else {
+            removeTraySplash();
+          }
         }
       } catch (e) {
         // ignore

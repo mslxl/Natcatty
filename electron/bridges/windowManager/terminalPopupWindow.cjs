@@ -9,6 +9,9 @@ const {
   releaseAttachPopupAuthorization,
   restoreAttachedSessionOutput,
 } = require("../terminalAttachRestore.cjs");
+const {
+  windowsFramelessContentChromeOptions,
+} = require("./windowsWindowChrome.cjs");
 
 const ATTACH_CLOSE_PREPARE_TIMEOUT_MS = 2000;
 
@@ -73,6 +76,8 @@ function createTerminalPopupWindowApi(ctx) {
         popupY,
       });
 
+      const windowsChrome = windowsFramelessContentChromeOptions();
+
       const win = new BrowserWindow({
         title,
         width: popupWidth,
@@ -85,6 +90,7 @@ function createTerminalPopupWindowApi(ctx) {
         show: false,
         frame: false,
         ...(isMac ? { trafficLightPosition: { x: 12, y: 12 } } : {}),
+        ...windowsChrome,
         webPreferences: {
           preload,
           contextIsolation: true,
