@@ -253,6 +253,226 @@ async function openSessionLogsDir(event, payload) {
   }
 }
 
+// Auto-save writes `{hostDir}/{YYYY-MM-DDTHH-MM-SS}.{txt|log|html}`.
+// Manual export / continuous logs commonly write `{label}_{YYYY-MM-DDTHH-MM-SS}.{ext}`.
+const SESSION_LOG_TIMESTAMP_FILE = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.(txt|log|html)$/i;
+const SESSION_LOG_LABELED_FILE = /^.+_\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.(txt|log|html)$/i;
+
+/**
+ * True when a basename matches a Netcatty session-log artifact filename.
+ * Used so "clear all" never wipes unrelated files in a shared save directory.
+ */
+function isSessionLogArtifactName(name) {
+  const base = path.basename(String(name || ""));
+  return SESSION_LOG_TIMESTAMP_FILE.test(base) || SESSION_LOG_LABELED_FILE.test(base);
+}
+
+/**
+ * Live write targets from this process's sessionLogStreamManager.
+ * Main and terminal worker each own a separate module instance.
+ * @returns {string[]}
+ */
+function getLocalActiveLogPaths() {
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+  if (typeof sessionLogStreamManager.getActiveLogPaths !== "function") return [];
+  return sessionLogStreamManager.getActiveLogPaths()
+    .filter((p) => typeof p === "string" && p.length > 0)
+    .map((p) => path.resolve(p));
+}
+
+/**
+ * True when the terminal worker process is already running (or the manager
+ * does not expose a probe — unit-test mocks that only provide request()).
+ * Avoids cold-starting the utilityProcess solely for clear-all.
+ * @param {object|null} terminalWorkerManager
+ * @returns {boolean}
+ */
+function isTerminalWorkerRunning(terminalWorkerManager) {
+  if (!terminalWorkerManager) return false;
+  if (typeof terminalWorkerManager.isRunning === "function") {
+    return Boolean(terminalWorkerManager.isRunning());
+  }
+  // Mocks that only supply request() — treat as queryable.
+  return typeof terminalWorkerManager.request === "function";
+}
+
+/**
+ * Union of active log paths from the main process and the terminal worker.
+ * Worker-owned auto-save streams are invisible to the main-process manager.
+ * @param {object|null} terminalWorkerManager
+ * @returns {Promise<Set<string>>}
+ */
+async function collectActiveLogPaths(terminalWorkerManager = null) {
+  const activeLogPaths = new Set(getLocalActiveLogPaths());
+
+  if (!isTerminalWorkerRunning(terminalWorkerManager)) {
+    return activeLogPaths;
+  }
+
+  try {
+    const result = await terminalWorkerManager.request(
+      "netcatty:sessionLogs:getActivePaths",
+      {},
+      {},
+    );
+    const workerPaths = Array.isArray(result)
+      ? result
+      : (Array.isArray(result?.paths) ? result.paths : []);
+    for (const p of workerPaths) {
+      if (typeof p === "string" && p.length > 0) {
+        activeLogPaths.add(path.resolve(p));
+      }
+    }
+  } catch {
+    // Worker unavailable or channel missing — main-process paths only.
+  }
+
+  return activeLogPaths;
+}
+
+/**
+ * Delete known session-log artifacts inside the configured save directory
+ * (used by the "clear all logs" action in Settings).
+ *
+ * Only removes:
+ * - Top-level files matching session-log filename patterns
+ * - Host subdirectories that exclusively contain session-log files
+ * - Session-log files inside mixed host subdirectories (other entries kept)
+ *
+ * Never deletes unrelated top-level files/folders (e.g. Documents/Downloads
+ * when the user pointed the save directory at a shared folder).
+ *
+ * Active auto-save / continuous-log write targets are skipped so clear-all
+ * never unlinks a live stream (orphan inode / silent stop). Paths include
+ * both main-process streams and worker-owned streams when a terminal worker
+ * is running.
+ */
+async function clearSessionLogsDir(event, payload = {}, terminalWorkerManager = null) {
+  const { directory } = payload;
+
+  if (!directory) {
+    return { success: false, deletedCount: 0, failedCount: 0, error: "No directory specified" };
+  }
+
+  let deletedCount = 0;
+  let failedCount = 0;
+
+  // Live write targets (main + worker) — skip these paths.
+  const activeLogPaths = await collectActiveLogPaths(terminalWorkerManager);
+  const isActiveLogPath = (filePath) => activeLogPaths.has(path.resolve(filePath));
+
+  try {
+    const entries = await fs.promises.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+
+      // Skip anything that is not a plain file or directory (symlinks, sockets, …).
+      // Use dirent type when available; fall back to lstat for exotic FS entries.
+      let isFile = entry.isFile();
+      let isDirectory = entry.isDirectory();
+      if ((!isFile && !isDirectory) || entry.isSymbolicLink()) {
+        // Dirent may report the target type for some platforms; re-check with lstat
+        // so we never follow or delete symlink targets outside the save directory.
+        try {
+          const st = await fs.promises.lstat(entryPath);
+          if (st.isSymbolicLink()) continue;
+          isFile = st.isFile();
+          isDirectory = st.isDirectory();
+        } catch {
+          continue;
+        }
+      }
+      if (!isFile && !isDirectory) continue;
+
+      try {
+        if (isFile) {
+          if (!isSessionLogArtifactName(entry.name)) continue;
+          if (isActiveLogPath(entryPath)) continue;
+          await fs.promises.rm(entryPath, { force: true });
+          deletedCount++;
+          continue;
+        }
+
+        // Host subdirectory created by auto-save: only touch known log files.
+        const nested = await fs.promises.readdir(entryPath, { withFileTypes: true });
+        const logFiles = [];
+        let hasNonLogEntry = false;
+        let hasActiveLog = false;
+        const resolvedEntryPath = path.resolve(entryPath);
+
+        // txt/html streams may not create a file until the first snapshot flush, so
+        // the active path may be absent from readdir. Any registered active path
+        // whose parent is this host dir still counts as live work.
+        for (const activePath of activeLogPaths) {
+          if (path.dirname(activePath) === resolvedEntryPath) {
+            hasActiveLog = true;
+            break;
+          }
+        }
+
+        for (const nestedEntry of nested) {
+          const nestedPath = path.join(entryPath, nestedEntry.name);
+          let nestedIsFile = nestedEntry.isFile();
+          if (nestedEntry.isSymbolicLink() || (!nestedIsFile && !nestedEntry.isDirectory())) {
+            try {
+              const st = await fs.promises.lstat(nestedPath);
+              if (st.isSymbolicLink() || !st.isFile()) {
+                hasNonLogEntry = true;
+                continue;
+              }
+              nestedIsFile = true;
+            } catch {
+              hasNonLogEntry = true;
+              continue;
+            }
+          }
+          if (nestedIsFile && isSessionLogArtifactName(nestedEntry.name)) {
+            if (isActiveLogPath(nestedPath)) {
+              hasActiveLog = true;
+            } else {
+              logFiles.push(nestedPath);
+            }
+          } else {
+            hasNonLogEntry = true;
+          }
+        }
+
+        if (logFiles.length === 0 && !hasActiveLog) {
+          // Not an app host-log folder (or empty / only non-log content) — leave it alone.
+          continue;
+        }
+
+        if (!hasNonLogEntry && !hasActiveLog) {
+          // Pure session-log host folder with no live streams: remove as one artifact.
+          await fs.promises.rm(entryPath, { recursive: true, force: true });
+          deletedCount++;
+        } else {
+          // Mixed directory and/or active streams: only delete inactive known log files.
+          for (const logPath of logFiles) {
+            try {
+              await fs.promises.rm(logPath, { force: true });
+              deletedCount++;
+            } catch (err) {
+              failedCount++;
+              console.error(`[SessionLogs] Could not delete ${path.basename(logPath)}:`, err.message);
+            }
+          }
+        }
+      } catch (err) {
+        failedCount++;
+        console.error(`[SessionLogs] Could not delete ${entry.name}:`, err.message);
+      }
+    }
+    return { success: true, deletedCount, failedCount };
+  } catch (err) {
+    if (err?.code === "ENOENT") {
+      return { success: true, deletedCount: 0, failedCount: 0 };
+    }
+    console.error("[SessionLogs] Failed to clear session logs directory:", err);
+    return { success: false, deletedCount, failedCount, error: err.message };
+  }
+}
+
 async function startManualSessionLog(event, payload = {}) {
   const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
   const { sessionId, sessionName, preferredDirectory, initialLine } = payload;
@@ -377,13 +597,29 @@ async function getManualSessionLogStatus(event, payload = {}) {
 }
 
 /**
+ * Worker-side handlers only. The terminal utilityProcess has its own
+ * sessionLogStreamManager instance; main queries these paths before clear-all.
+ */
+function registerWorkerHandlers(ipcMain) {
+  ipcMain.handle("netcatty:sessionLogs:getActivePaths", async () => getLocalActiveLogPaths());
+}
+
+/**
  * Register IPC handlers for session logs operations
  */
 function registerHandlers(ipcMain, options = {}) {
+  const terminalWorkerManager = options.terminalWorkerManager || null;
+
   ipcMain.handle("netcatty:sessionLogs:export", exportSessionLog);
   ipcMain.handle("netcatty:sessionLogs:selectDir", selectSessionLogsDir);
   ipcMain.handle("netcatty:sessionLogs:autoSave", autoSaveSessionLog);
   ipcMain.handle("netcatty:sessionLogs:openDir", openSessionLogsDir);
+  ipcMain.handle(
+    "netcatty:sessionLogs:clear",
+    (event, payload) => clearSessionLogsDir(event, payload, terminalWorkerManager),
+  );
+  // Main can also answer this (manual / script streams) for symmetry / tests.
+  ipcMain.handle("netcatty:sessionLogs:getActivePaths", async () => getLocalActiveLogPaths());
   ipcMain.handle("netcatty:sessionLog:manualStart", startManualSessionLog);
   ipcMain.handle("netcatty:sessionLog:manualStop", stopManualSessionLog);
   ipcMain.handle("netcatty:sessionLog:manualStatus", getManualSessionLogStatus);
@@ -397,7 +633,7 @@ function registerHandlers(ipcMain, options = {}) {
   // mirrors every output chunk to the main process for script output buffers;
   // feed that same stream into the main-process log streams. appendData() is
   // a no-op for sessions without an active main-process stream.
-  options.terminalWorkerManager?.addOutputTap?.((sessionId, data) => {
+  terminalWorkerManager?.addOutputTap?.((sessionId, data) => {
     if (typeof data !== "string" || data.length === 0) return;
     require("./sessionLogStreamManager.cjs").appendData(sessionId, data);
   });
@@ -405,10 +641,15 @@ function registerHandlers(ipcMain, options = {}) {
 
 module.exports = {
   registerHandlers,
+  registerWorkerHandlers,
   exportSessionLog,
   selectSessionLogsDir,
   autoSaveSessionLog,
   openSessionLogsDir,
+  clearSessionLogsDir,
+  collectActiveLogPaths,
+  getLocalActiveLogPaths,
+  isSessionLogArtifactName,
   startManualSessionLog,
   stopManualSessionLog,
   getManualSessionLogStatus,
