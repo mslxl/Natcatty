@@ -193,8 +193,18 @@ test("rpm packaging uses gzip compression for RHEL-family package hosts", () => 
   );
 });
 
+test("Windows package arch is controlled by pack script CLI flags", () => {
+  assert.deepEqual(
+    config.win.target,
+    ["nsis", "portable", "zip"],
+    "win.target must not hard-code x64 and arm64 or pack:win-x64 will still emit broken arm64 installers",
+  );
+});
+
 test("windows packaging includes a zip archive target", () => {
-  const winTargets = config.win.target.map((entry) => entry.target);
+  const winTargets = config.win.target.map((entry) => (
+    typeof entry === "string" ? entry : entry.target
+  ));
   assert.ok(
     winTargets.includes("zip"),
     "windows package builds must publish a zip archive for no-install environments",
@@ -244,13 +254,15 @@ test("windows zip follows the requested build architecture", () => {
     Platform.WINDOWS,
   );
 
-  assert.ok(
-    targetsByArch.get(Arch.x64)?.includes("zip"),
-    "pack:win-x64 must publish an x64 zip archive",
+  assert.deepEqual(
+    targetsByArch.get(Arch.x64)?.slice().sort(),
+    ["nsis", "portable", "zip"].sort(),
+    "pack:win-x64 must publish x64 nsis, portable, and zip",
   );
-  assert.ok(
-    !targetsByArch.get(Arch.arm64)?.includes("zip"),
-    "pack:win-x64 must not publish an arm64 zip archive without arm64 bundled binaries",
+  assert.equal(
+    targetsByArch.has(Arch.arm64),
+    false,
+    "pack:win-x64 must not publish arm64 nsis/portable/zip without a dedicated arm64 job",
   );
 });
 

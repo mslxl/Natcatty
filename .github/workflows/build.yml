@@ -176,9 +176,10 @@ jobs:
             pack_script: pack:mac
           - name: windows
             os: windows-latest
-            # The mosh binary workflow currently produces win32-x64 only.
-            # Keep official packages aligned with bundled-mosh coverage
-            # until Cygwin arm64 is stable enough to build win32-arm64.
+            # Official Windows releases are x64-only for now. Bundled mosh/et
+            # are win32-x64, and win.target must not hard-code arm64 or the
+            # x64 job still emits broken win-arm64 / universal NSIS packages
+            # (#2570). Use pack:win-x64 until a dedicated arm64 job exists.
             pack_script: pack:win-x64
     env:
       MOSH_BIN_RELEASE: ${{ needs.resolve-mosh.outputs.mosh_bin_release }}

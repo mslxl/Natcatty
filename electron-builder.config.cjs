@@ -214,19 +214,14 @@ module.exports = {
     },
     win: {
         icon: 'public/icon-win.png',
-        target: [
-            {
-                target: 'nsis',
-                arch: ['x64', 'arm64']
-            },
-            {
-                target: 'portable',
-                arch: ['x64', 'arm64']
-            },
-            {
-                target: 'zip'
-            }
-        ],
+        // Do not hard-code arch here. pack:win-x64 / pack:win pass --x64/--arm64,
+        // and electron-builder unions config arch with the CLI set. Hard-coding
+        // ['x64', 'arm64'] made the official x64 CI job also emit win-arm64 and
+        // a universal win.exe whose 32-bit NSIS stub can mis-detect on ARM
+        // Windows, install to Program Files (x86), and leave Netcatty.exe
+        // missing (#2570). Keep official releases on pack:win-x64 until win32
+        // arm64 bundled mosh/et + native rebuilds are ready.
+        target: ['nsis', 'portable', 'zip'],
         extraResources: [...moshExtraResources('win32'), ...etExtraResources('win32')]
     },
     portable: {
