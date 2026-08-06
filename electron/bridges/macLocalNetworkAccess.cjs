@@ -298,6 +298,20 @@ function extractRemoteUnreachableAddresses(text) {
   return [...new Set(found)];
 }
 
+/**
+ * Attach the LAN address resolved by ensureAccess onto start options so both
+ * the worker path and the direct main-process fallback can annotate errors.
+ */
+function attachMacLocalNetworkProbeResult(options, probeResult) {
+  const base = options && typeof options === "object" ? { ...options } : {};
+  const resolvedFirstHop = probeResult && typeof probeResult.hostname === "string"
+    ? String(probeResult.hostname).trim()
+    : "";
+  if (!resolvedFirstHop) return base;
+  base._macLocalNetworkResolvedFirstHop = resolvedFirstHop;
+  return base;
+}
+
 function annotateMacLocalNetworkErrorMessage(message, options = {}) {
   const platform = options.platform || process.platform;
   const text = String(message || "");
@@ -559,6 +573,7 @@ module.exports = {
   resolveFirstTcpEndpoint,
   resolveLanProbeTarget,
   annotateMacLocalNetworkErrorMessage,
+  attachMacLocalNetworkProbeResult,
   createMacLocalNetworkAccessGate,
   ensureMacLocalNetworkAccess: (options) => defaultGate.ensureAccess(options),
   annotateMacLocalNetworkError: (message, options) => defaultGate.annotateErrorMessage(message, options),

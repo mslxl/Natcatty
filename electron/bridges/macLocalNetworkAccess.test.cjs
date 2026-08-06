@@ -13,6 +13,7 @@ const {
   resolveFirstTcpEndpoint,
   resolveLanProbeTarget,
   annotateMacLocalNetworkErrorMessage,
+  attachMacLocalNetworkProbeResult,
   createMacLocalNetworkAccessGate,
 } = require("./macLocalNetworkAccess.cjs");
 
@@ -399,6 +400,32 @@ test("annotateMacLocalNetworkErrorMessage uses carried resolved first-hop addres
       firstHopHostname: "bastion.example.com",
     }),
     message,
+  );
+});
+
+test("attachMacLocalNetworkProbeResult forwards resolved first-hop for direct starts", () => {
+  const options = {
+    hostname: "app.example.com",
+    jumpHosts: [{ hostname: "bastion.example.com", port: 22 }],
+  };
+  const attached = attachMacLocalNetworkProbeResult(options, {
+    probed: true,
+    hostname: "192.168.1.20",
+  });
+  assert.equal(attached._macLocalNetworkResolvedFirstHop, "192.168.1.20");
+  assert.match(
+    annotateMacLocalNetworkErrorMessage("connect EHOSTUNREACH 192.168.1.20:22", {
+      platform: "darwin",
+      hostname: attached.hostname,
+      firstHopHostname: "bastion.example.com",
+      firstHopResolvedAddress: attached._macLocalNetworkResolvedFirstHop,
+    }),
+    /Local Network/i,
+  );
+  assert.equal(
+    attachMacLocalNetworkProbeResult(options, { skipped: true, reason: "not-local-network" })
+      ._macLocalNetworkResolvedFirstHop,
+    undefined,
   );
 });
 

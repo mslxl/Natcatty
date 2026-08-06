@@ -68,7 +68,7 @@ const {
   createStartSessionApi,
   resolveSshConnectionTimeouts,
 } = require("./sshBridge/startSession.cjs");
-const { ensureMacLocalNetworkAccess } = require("./macLocalNetworkAccess.cjs");
+const { ensureMacLocalNetworkAccess, attachMacLocalNetworkProbeResult } = require("./macLocalNetworkAccess.cjs");
 
 function quoteShellArg(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'";
@@ -1320,10 +1320,11 @@ async function startSSHSessionWrapper(event, options) {
   try {
     // Main-process UDP Local Network probe (TN3179 discard-port connect) so
     // TCC attributes to Netcatty before the (possibly worker-hosted) SSH dial.
-    // See #2663 / #2673.
-    await ensureMacLocalNetworkAccess(options);
+    // See #2663 / #2673. Carry the resolved first-hop address so direct-start
+    // annotation (no terminal worker) still sees split-DNS LAN evidence.
+    const probeResult = await ensureMacLocalNetworkAccess(options);
     return await startSSHSessionWithRetries(event, {
-      ...options,
+      ...attachMacLocalNetworkProbeResult(options, probeResult),
       ...(sourceReuseState ? { _sourceReuseState: sourceReuseState } : {}),
     }, pendingDialState);
   } catch (err) {
@@ -1408,15 +1409,12 @@ function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
     let workerPayload = payload;
     if (channel === "netcatty:start") {
       const probeResult = await ensureMacLocalNetworkAccess(payload);
-      const resolvedFirstHop = probeResult && typeof probeResult.hostname === "string"
-        ? String(probeResult.hostname).trim()
-        : "";
       workerPayload = {
-        ...(payload && typeof payload === "object" ? payload : {}),
+        ...attachMacLocalNetworkProbeResult(
+          payload && typeof payload === "object" ? payload : {},
+          probeResult,
+        ),
         _macLocalNetworkMainProbed: true,
-        ...(resolvedFirstHop
-          ? { _macLocalNetworkResolvedFirstHop: resolvedFirstHop }
-          : {}),
       };
     }
     return terminalWorkerManager.request(channel, workerPayload, {
