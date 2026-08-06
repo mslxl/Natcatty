@@ -1082,6 +1082,13 @@ function registerPluginBridge(ipcMain, options) {
       throw new Error("Plugin sync secret storage is unavailable");
     }
     if (!extensionProviderService) throw new Error("Plugin sync Providers are unavailable");
+    // Wait for package recovery + binding seed before resolving ownership so a
+    // schema-2 disconnect during startup cannot miss retained bindings (Codex P2).
+    try {
+      await resolveManager();
+    } catch {
+      // Runtime disabled: continue with whatever secretStore already has.
+    }
     const providerId = payload?.providerId;
     if (typeof providerId !== "string" || providerId.length < 1) {
       throw new TypeError("Sync provider ID is invalid");

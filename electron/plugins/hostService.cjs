@@ -46,6 +46,37 @@ function getElectronProcessMetrics(app, pid) {
   };
 }
 
+/**
+ * Full installed-manifest catalog of sync providers (active + inactive versions).
+ * Shared by startup and enable-time backfill so ambiguity checks always see
+ * cross-plugin / nested-namespace claims.
+ * @param {{ listInstalledVersions?: () => Array<{ pluginId?: string, manifest?: { contributes?: { providers?: Array<{ kind?: string, id?: string }> } } }> }} database
+ * @returns {Array<{ pluginId: string, provider: { id: string } }>}
+ */
+function collectInstalledSyncProviderCatalog(database) {
+  const installedSyncProviders = [];
+  const seen = new Set();
+  const versions = typeof database.listInstalledVersions === "function"
+    ? database.listInstalledVersions()
+    : [];
+  for (const version of versions) {
+    const pluginId = version?.pluginId;
+    if (typeof pluginId !== "string" || !version.manifest) continue;
+    for (const provider of version.manifest.contributes?.providers ?? []) {
+      if (provider?.kind !== "sync") continue;
+      if (typeof provider.id !== "string" || provider.id.length < 1) continue;
+      const key = `${pluginId}\0${provider.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      installedSyncProviders.push({
+        pluginId,
+        provider: { id: provider.id },
+      });
+    }
+  }
+  return installedSyncProviders;
+}
+
 function createPluginHostService(options) {
   const paths = createPluginPaths(options.app.getPath("userData"));
   const appRoot = options.appRoot ?? options.app.getAppPath();
@@ -227,7 +258,47 @@ function createPluginHostService(options) {
       } catch {
         // Hydration is best-effort; enable must still succeed.
       }
-      return originalOnPluginEnabled(pluginId);
+      const enabled = await originalOnPluginEnabled(pluginId);
+      try {
+        // Use the same installed-manifest catalog as startup so cross-plugin /
+        // inactive-version ambiguity checks still apply when only this plugin
+        // was just enabled (Codex P2 on d3a9b94c).
+        if (typeof secretStore.backfillSyncProviderBindingsFromLiveProviders === "function") {
+          secretStore.backfillSyncProviderBindingsFromLiveProviders(
+            collectInstalledSyncProviderCatalog(database),
+          );
+        }
+      } catch {
+        // Best-effort; enable must still succeed.
+      }
+      return enabled;
+    };
+    // Live-provider seed must wait until PackageStore.recover() has restored
+    // missing plugin_versions. Construction-time seed can bind a stale owner
+    // against an incomplete catalog; post-recovery seed then skips it as
+    // existing (Codex P2 on f2b1b5d8). syncDeleteSecrets already awaits
+    // resolveManager() → package initialize, so cleanup sees the post-recovery
+    // seed without racing an early incomplete bind.
+    const seedSyncBindings = () => {
+      if (typeof secretStore.backfillSyncProviderBindingsFromLiveProviders !== "function") return;
+      secretStore.backfillSyncProviderBindingsFromLiveProviders(
+        collectInstalledSyncProviderCatalog(database),
+      );
+    };
+    // PackageStore.recover() repopulates plugin_versions; only then promote
+    // legacy maps and seed live bindings (Codex P2 on dd7aad70 / f2b1b5d8).
+    const originalPackageInitialize = packageStore.initialize.bind(packageStore);
+    packageStore.initialize = async () => {
+      const result = await originalPackageInitialize();
+      try {
+        if (typeof database.backfillSyncProviderBindingsFromLegacySecrets === "function") {
+          database.backfillSyncProviderBindingsFromLegacySecrets();
+        }
+        seedSyncBindings();
+      } catch {
+        // Best-effort
+      }
+      return result;
     };
     // Startup activation goes through contributionService.initialize() → #startPlugin
     // without onPluginEnabled. Hydrate every enabled plugin before that path runs.
@@ -240,6 +311,16 @@ function createPluginHostService(options) {
         } catch {
           // Best-effort; startup must continue.
         }
+      }
+      // Re-seed after any package catalog changes during init.
+      try {
+        if (typeof secretStore.backfillSyncProviderBindingsFromLiveProviders === "function") {
+          secretStore.backfillSyncProviderBindingsFromLiveProviders(
+            collectInstalledSyncProviderCatalog(database),
+          );
+        }
+      } catch {
+        // Best-effort; startup must continue.
       }
       return originalInitialize();
     };

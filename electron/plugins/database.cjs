@@ -213,6 +213,10 @@ class PluginDatabase {
       });
     }
     this.#assertSchemaLayout();
+    // Legacy-map backfill is deferred until PackageStore.recover() has finished
+    // (hostService seeds after package initialize). Running here would promote
+    // sole map candidates before recovered manifests are visible, then skip
+    // re-evaluation because bindings already exist (Codex P2 on cded4c8a).
   }
 
   #assertSchemaLayout() {
@@ -326,6 +330,20 @@ class PluginDatabase {
         AND r.plugin_version = p.active_version
       ORDER BY p.id COLLATE BINARY
     `).all().map((row) => this.#mapPlugin(row));
+  }
+
+  /**
+   * Every installed package version (active and inactive), with parsed manifests.
+   * Used for ownership recovery when an older version still identifies a sync
+   * provider that the active manifest no longer contributes.
+   */
+  listInstalledVersions() {
+    return this.db.prepare(`
+      SELECT plugin_id, version, manifest_json, archive_sha256,
+             package_relative_path, installed_at
+      FROM plugin_versions
+      ORDER BY plugin_id COLLATE BINARY, installed_at DESC, version COLLATE BINARY
+    `).all().map((row) => this.#mapVersion(row));
   }
 
   #mapVersion(row) {
@@ -823,6 +841,181 @@ class PluginDatabase {
       DELETE FROM plugin_sync_provider_bindings WHERE provider_id = ?
     `).run(providerId);
     return Number(result?.changes) || 0;
+  }
+
+  /** Distinct plugin ids that own secrets with key === prefix or key LIKE prefix:%. */
+  listPluginIdsWithSecretKeyPrefix(prefix) {
+    const escaped = String(prefix).replace(/[%_\\]/g, (ch) => `\\${ch}`);
+    return this.db.prepare(`
+      SELECT DISTINCT plugin_id
+      FROM plugin_secrets
+      WHERE key = ? OR key LIKE ? ESCAPE '\\'
+    `).all(prefix, `${escaped}:%`).map((row) => row.plugin_id);
+  }
+
+  /**
+   * Promote leftover sync-provider-map:* secret rows into the host-owned binding
+   * table. Idempotent.
+   *
+   * Host map keys under this prefix are migration markers from an intermediate
+   * build (pluginId-namespaced provider ids only). After a successful promote,
+   * those map rows are deleted so constructor-time backfill cannot resurrect a
+   * binding after the user disconnects/unbinds. Multiple plugins may hold map
+   * rows for the same provider (parent + nested id): group by provider, never
+   * overwrite an existing host binding (including empty-plugin_id unbind
+   * tombstones). Among candidates, only plugins that still hold sync-credential*
+   * secrets are eligible. Auto-bind only when exactly one distinct
+   * credential-backed candidate exists; if several credential-backed plugins
+   * map the same provider (e.g. com.example and com.example.sync both hold
+   * credentials), skip entirely — longest pluginId is not a reliable owner
+   * signal (the shorter parent can be the legitimate owner). Map-only leftovers
+   * never invent ownership (validation only requires
+   * providerId.startsWith(pluginId + ".")).
+   */
+  backfillSyncProviderBindingsFromLegacySecrets() {
+    const legacyPrefix = "sync-provider-map:";
+    const escaped = legacyPrefix.replace(/[%_\\]/g, (ch) => `\\${ch}`);
+    const legacyRows = this.db.prepare(`
+      SELECT plugin_id, key
+      FROM plugin_secrets
+      WHERE key LIKE ? ESCAPE '\\'
+    `).all(`${escaped}%`);
+    /** @type {Map<string, Array<{ pluginId: string, key: string }>>} */
+    const byProvider = new Map();
+    for (const row of legacyRows) {
+      const pluginId = row.plugin_id;
+      const key = row.key;
+      if (typeof pluginId !== "string" || typeof key !== "string") continue;
+      if (!key.startsWith(legacyPrefix)) continue;
+      const providerId = key.slice(legacyPrefix.length);
+      if (!providerId || providerId.includes("\0")) continue;
+      if (!providerId.startsWith(`${pluginId}.`)) {
+        continue;
+      }
+      const list = byProvider.get(providerId) || [];
+      list.push({ pluginId, key });
+      byProvider.set(providerId, list);
+    }
+    // Credential presence is the signal for real ownership. A longer nested map
+    // row without credentials must not steal bind from a parent that still owns
+    // sync-credential* secrets for the provider namespace.
+    const credentialOwners = new Set(
+      this.listPluginIdsWithSecretKeyPrefix("sync-credential")
+        .filter((id) => typeof id === "string" && id.length > 0),
+    );
+    // Same single-provider guard as live backfill: one shared sync-credential*
+    // row must not seed bindings for every historical map provider under that
+    // plugin (disconnecting a stale provider would wipe the live credentials).
+    // Count both legacy map rows and installed-manifest sync providers so a
+    // stale map cannot promote when the live manifest also declares another
+    // provider under the same credential owner (Codex P2 on 8ae60205).
+    /** @type {Map<string, Set<string>>} */
+    const providersByCredentialOwner = new Map();
+    for (const [providerId, candidates] of byProvider) {
+      for (const c of candidates) {
+        if (!credentialOwners.has(c.pluginId)) continue;
+        const set = providersByCredentialOwner.get(c.pluginId) || new Set();
+        set.add(providerId);
+        providersByCredentialOwner.set(c.pluginId, set);
+      }
+    }
+    try {
+      const versions = typeof this.listInstalledVersions === "function"
+        ? this.listInstalledVersions()
+        : [];
+      for (const version of versions) {
+        const pluginId = version?.pluginId;
+        if (typeof pluginId !== "string" || !credentialOwners.has(pluginId)) continue;
+        for (const provider of version.manifest?.contributes?.providers ?? []) {
+          if (provider?.kind !== "sync") continue;
+          if (typeof provider.id !== "string" || provider.id.length < 1) continue;
+          const set = providersByCredentialOwner.get(pluginId) || new Set();
+          set.add(provider.id);
+          providersByCredentialOwner.set(pluginId, set);
+        }
+      }
+    } catch {
+      /* ignore catalog probe failures */
+    }
+    let promoted = 0;
+    for (const [providerId, candidates] of byProvider) {
+      // Any host row means a prior decision: active bind or explicit unbind
+      // tombstone (empty plugin_id). Never resurrect from leftover map secrets.
+      if (this.getSyncProviderBinding(providerId)) {
+        continue;
+      }
+      // Only credential-backed map candidates may win; map-only leftovers stay
+      // unbound rather than inventing ownership from namespace length alone.
+      // Multiple distinct credential-backed candidates is ambiguous (parent vs
+      // nested can both hold credentials for the same provider namespace) — skip
+      // entirely rather than picking longest pluginId.
+      const uniqueCredentialOwners = [
+        ...new Set(
+          candidates
+            .filter((c) => credentialOwners.has(c.pluginId))
+            .map((c) => c.pluginId),
+        ),
+      ];
+      if (uniqueCredentialOwners.length !== 1) {
+        continue;
+      }
+      const chosenOwner = uniqueCredentialOwners[0];
+      if ((providersByCredentialOwner.get(chosenOwner)?.size ?? 0) !== 1) {
+        continue;
+      }
+      // Constructor-time map promote runs before hostService's installed-manifest
+      // conflict check. Skip when another installed package would also claim this
+      // provider (live nested plugin without credentials yet) so we do not bind
+      // a legacy parent that later disconnect cannot clear (Codex P2 on 5bc1b60d).
+      let hasManifestConflict = false;
+      try {
+        const versions = typeof this.listInstalledVersions === "function"
+          ? this.listInstalledVersions()
+          : [];
+        for (const version of versions) {
+          const pluginId = version?.pluginId;
+          if (typeof pluginId !== "string" || pluginId === chosenOwner) continue;
+          for (const provider of version.manifest?.contributes?.providers ?? []) {
+            if (provider?.kind !== "sync") continue;
+            if (provider.id === providerId) {
+              hasManifestConflict = true;
+              break;
+            }
+          }
+          if (hasManifestConflict) break;
+        }
+      } catch {
+        /* ignore catalog probe failures */
+      }
+      if (hasManifestConflict) {
+        continue;
+      }
+      this.upsertSyncProviderBinding(providerId, chosenOwner);
+      // Consume legacy map markers for this provider so a later unbind + reopen
+      // cannot re-promote from leftover secrets. Only delete namespaced map keys
+      // we accepted as candidates (not arbitrary plugin secrets). Consume all
+      // candidate maps (including map-only losers) once a credential-backed
+      // owner is bound, so orphans cannot re-run later.
+      for (const candidate of candidates) {
+        this.deleteSecret(candidate.pluginId, candidate.key);
+      }
+      promoted += 1;
+    }
+    return promoted;
+  }
+
+  /**
+   * Credential-row prefix inference is intentionally not used.
+   *
+   * A shorter parent plugin id (e.g. com.example with sync-credential rows) can
+   * namespace-prefix a provider owned by a different/removed plugin
+   * (com.example.backup.sync). Falling back to that parent would let
+   * syncDeleteSecrets wipe unrelated credentials. Ownership must come from the
+   * host binding table (including rows promoted by
+   * backfillSyncProviderBindingsFromLegacySecrets) or a live contribution.
+   */
+  inferPluginIdForSyncProvider(_providerId) {
+    return undefined;
   }
 
   recordSecurityAudit(pluginId, event, details) {
