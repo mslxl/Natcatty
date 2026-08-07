@@ -1071,7 +1071,8 @@ test('implementation failure messages report the real category and preserved art
       artifactName: 'implement-patch-1',
     },
   );
-  assert.match(message, /新增了验证失败/);
+  assert.match(message, /验证闸门未通过|未能通过验证/);
+  assert.doesNotMatch(message, /新增了验证失败/);
   assert.match(message, /implement-patch-1/);
   assert.match(message, /github\.example/);
 
@@ -1093,7 +1094,8 @@ test('implementation failure messages report the real category and preserved art
     workflowUrl: 'https://github.example/run/2',
     artifactName: 'codex-fix-patch-2',
   });
-  assert.match(codexMessage, /verification failures/);
+  assert.match(codexMessage, /verification gate|did not pass verification/i);
+  assert.doesNotMatch(codexMessage, /introduced verification failures/);
   assert.match(codexMessage, /codex-fix-patch-2/);
   assert.match(codexMessage, /github\.example/);
 
@@ -3894,6 +3896,38 @@ test('parseExternalResearchStream rejects forged and unrelated web evidence', ()
     () => auto.parseExternalResearchStream(searchArgsOnly, {}),
     /not present in completed web tool results/i,
   );
+});
+
+test('parseExternalResearchStream drops unverified sources when others are proven', () => {
+  const finalText = [
+    'RESEARCH_COMPLETE: known product with one hallucinated citation',
+    'Sources:',
+    '- https://official.example/result — verified page',
+    '- https://apps.microsoft.com/detail/xpdmd65pjwkc9c — unverified store page',
+  ].join('\n');
+  const stream = [
+    JSON.stringify({
+      type: 'tool_call',
+      subtype: 'completed',
+      tool_call: {
+        webFetchToolCall: {
+          args: { url: 'https://official.example/result' },
+          result: {
+            success: {
+              url: 'https://official.example/result',
+              markdown: 'Official product page',
+            },
+          },
+        },
+      },
+    }),
+    JSON.stringify({ type: 'result', subtype: 'success', result: finalText }),
+  ].join('\n');
+
+  const normalized = auto.parseExternalResearchStream(stream, {});
+  assert.match(normalized, /^RESEARCH_COMPLETE:/);
+  assert.match(normalized, /https:\/\/official\.example\/result/);
+  assert.doesNotMatch(normalized, /apps\.microsoft\.com/);
 });
 
 test('workflow confines forced WebSearch to isolated read-only research passes', () => {

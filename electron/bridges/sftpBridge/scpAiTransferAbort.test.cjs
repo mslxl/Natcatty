@@ -48,7 +48,13 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // Aborted SCP transfers can still open the fixture briefly after the test
+    // assertion settles. Drain that work before removing the temp directory so
+    // Node does not promote a late ENOENT into a file-level failure.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 25));
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
   });
 
@@ -958,6 +964,9 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     await assert.rejects(() => promise, /cancel|abort/i);
     assert.equal(uploadCalls, 0);
     assert.ok(Date.now() - startedAt < 1000);
+    // Keep the fixture alive until any in-flight open from the aborted setup
+    // path has a chance to settle against the still-present file.
+    await new Promise((resolve) => setTimeout(resolve, 50));
   });
 
   it("legacy entry points delegate cancellation to the unified transfer engine", () => {

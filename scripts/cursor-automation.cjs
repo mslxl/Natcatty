@@ -329,6 +329,24 @@ function extractResearchSourceUrls(text) {
   return urls;
 }
 
+function dropUnverifiedResearchSources(text, unverifiedUrls) {
+  const blocked = unverifiedUrls instanceof Set
+    ? unverifiedUrls
+    : new Set(unverifiedUrls || []);
+  if (!blocked.size) return String(text || '');
+  return String(text || '')
+    .split('\n')
+    .filter((line) => {
+      const match = line.match(/^-\s+(https:\/\/[^\s<>()]+)\s+(?:—|–|-)\s+\S.*$/);
+      if (!match) return true;
+      const normalized = normalizeResearchSourceUrl(match[1]);
+      return !normalized || !blocked.has(normalized);
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function extractHttpsUrls(value) {
   const urls = new Set();
   for (const match of String(value || '').matchAll(/https:\/\/[^\s"'<>()[\]]+/gi)) {
@@ -444,9 +462,14 @@ function parseExternalResearchStream(value, input) {
     const sourceUrls = extractResearchSourceUrls(normalized);
     const unverified = sourceUrls.filter((url) => !webEvidenceUrls.has(url));
     if (unverified.length) {
-      throw new Error(
-        `Research source URL was not present in completed web tool results: ${unverified.join(', ')}`,
-      );
+      // Keep classify moving when the model mixes proven tool evidence with one
+      // hallucinated citation. Only fail closed when nothing cited is proven.
+      if (unverified.length === sourceUrls.length) {
+        throw new Error(
+          `Research source URL was not present in completed web tool results: ${unverified.join(', ')}`,
+        );
+      }
+      return dropUnverifiedResearchSources(normalized, new Set(unverified));
     }
   }
   return normalized;
@@ -1532,13 +1555,13 @@ function buildImplementationFailureMessage(issue = {}, {
   const protectedDetails = formatProtectedPathDetails(protectedPaths, { chinese });
   const messages = chinese
     ? {
-        verification_failed: '自动修改已经完成，但本次改动新增了验证失败，因此没有创建 PR。',
+        verification_failed: '自动修改已经产出候选补丁，但验证闸门未通过，因此没有创建 PR。',
         protected_path: '自动修改涉及受保护的发布或自动化文件，安全规则已停止发布。',
         no_changes: 'Cursor 没有产出可安全提交的聚焦修改，已转给维护者继续判断。',
         processing_failed: '自动修改流程自身没有正常完成，已转给维护者继续处理。',
       }
     : {
-        verification_failed: 'The automatic change completed, but it introduced a verification failure, so no PR was created.',
+        verification_failed: 'The automatic change produced a candidate patch, but it did not pass the verification gate, so no PR was created.',
         protected_path: 'The automatic change touched protected release or automation files, so the safety gate stopped publication.',
         no_changes: 'Cursor did not produce a safe focused change. A maintainer needs to continue the investigation.',
         processing_failed: 'The automation process itself did not finish normally. A maintainer needs to continue.',
@@ -1555,7 +1578,7 @@ function buildCodexFixFailureMessage({
   protectedPaths = [],
 } = {}) {
   const messages = {
-    verification_failed: 'The automatic Codex fix was preserved, but it introduced verification failures. The PR remains draft for maintainer review.',
+    verification_failed: 'The automatic Codex fix was preserved, but it did not pass verification. The PR remains draft for maintainer review.',
     protected_path: 'The automatic Codex fix touched protected release or automation files, so the safety gate stopped publication.',
     no_changes: 'The automatic Codex fix completed, but it did not change any files for the latest review findings. The findings may already be addressed, stale, or require maintainer judgment, so the PR remains draft for human review.',
     processing_failed: 'The automatic Codex fix process itself did not finish normally. The PR remains draft for maintainer review.',

@@ -477,9 +477,8 @@ test("session-backed uploadLocalToSftp uses pipelined fastPut on the raw SFTP ch
   assert.equal(fastPutCalls.length, 1);
   assert.equal(fastPutCalls[0].concurrency, UPLOAD_TRANSFER_CONCURRENCY);
   assert.equal(fastPutCalls[0].chunkSize, TRANSFER_CHUNK_SIZE);
-  assert.notEqual(fastPutCalls[0].localPath, localPath);
-  assert.match(path.basename(fastPutCalls[0].localPath), /upload-source-.*snapshot/);
-  await assert.rejects(fs.promises.stat(fastPutCalls[0].localPath), { code: "ENOENT" });
+  // Size-based uploads stream the live local path (no content snapshot).
+  assert.equal(fastPutCalls[0].localPath, localPath);
   // Final path after staged rename
   assert.ok(remoteFiles.has("/home/alice/payload.bin"));
   assert.deepEqual(remoteFiles.get("/home/alice/payload.bin"), payload);

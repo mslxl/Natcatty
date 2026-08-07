@@ -429,3 +429,43 @@ test('rejects non-test failures and a candidate that runs fewer tests', () => {
   assert.equal(fewerTests.passed, false);
   assert.equal(fewerTests.kind, 'unclassified_failure');
 });
+
+test('ignores success-case TAP YAML diagnostics and volatile console noise', () => {
+  const withOkDiagnostic = (durationMs, pid, sftpId, requestId, port) => [
+    'TAP version 13',
+    `# (node:${pid}) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time`,
+    `#   sftpId: '${sftpId}',`,
+    `#   requestId: '${requestId}',`,
+    `# OAuth callback server listening on http://127.0.0.1:${port}/oauth/callback`,
+    `# [transferDiag] {"event":"progress","id":"${requestId}","pct":1}`,
+    'ok 1 - passing helper',
+    '  ---',
+    `  duration_ms: ${durationMs}`,
+    "  type: 'test'",
+    '  ...',
+    'not ok 2 - base failure',
+    '  ---',
+    "  error: 'existing failure'",
+    "  code: 'ERR_TEST_FAILURE'",
+    '  ...',
+    '# fail 1',
+    '# cancelled 0',
+    '# skipped 0',
+    '# todo 0',
+    '# tests 10',
+  ].join('\n');
+
+  const result = compareTapResults(
+    parseTapResult(
+      withOkDiagnostic(1.25, 9089, 'sftp-111261', 'ssh-6239b197-6933-41e3-845b-396a42d6c66b', 37289),
+      1,
+    ),
+    parseTapResult(
+      withOkDiagnostic(9.88, 29926, 'sftp-573391', 'ssh-de14337d-3088-463a-a2ca-ffc93d609e74', 39199),
+      1,
+    ),
+  );
+  assert.equal(result.passed, true);
+  assert.equal(result.kind, 'baseline_only');
+  assert.deepEqual(result.newFailures, []);
+});

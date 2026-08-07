@@ -4,6 +4,21 @@ const fs = require('node:fs');
 
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
+function normalizeNonTapLine(line) {
+  return String(line || '')
+    .replace(/\(node:\d+\)/g, '(node:<pid>)')
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi,
+      '<uuid>',
+    )
+    .replace(/\bsftp-\d+\b/g, 'sftp-<id>')
+    .replace(
+      /\b(?:requestId|sessionId|transferId|id)\b(['"]?\s*[:=]\s*['"]?)[^'"\s,}\]]+/gi,
+      '$1<id>',
+    )
+    .replace(/https?:\/\/127\.0\.0\.1:\d+/g, 'http://127.0.0.1:<port>');
+}
+
 function normalizeRuntimeDetail(detail) {
   return detail
     .replace(
@@ -58,25 +73,30 @@ function collectNonTapOutput(lines) {
       }
       awaitingDiagnosticIndent = null;
     }
-    const failed = rawLine.match(/^(\s*)not ok \d+ - /);
-    if (failed) {
-      awaitingDiagnosticIndent = failed[1].length;
+    // Node's test runner emits YAML diagnostics after both ok and not ok.
+    // Treat both as attached TAP so volatile duration_ms values never look like
+    // added runner noise between baseline and candidate runs.
+    const tapResult = rawLine.match(/^(\s*)(?:ok|not ok) \d+ - /);
+    if (tapResult) {
+      awaitingDiagnosticIndent = tapResult[1].length;
       continue;
     }
     if (
       !line ||
       /^TAP version \d+$/.test(line) ||
       /^ok \d+ - /.test(line) ||
-      /^# (?:Subtest:|tests |suites |pass |fail |cancelled |skipped |todo |duration_ms )/.test(line) ||
+      /^# (?:Subtest:|tests |suites |pass |fail |cancelled |skipped |todo |duration_ms |\[)/.test(line) ||
       /^1\.\.\d+$/.test(line)
     ) {
       continue;
     }
     output.push(
-      line
-        .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')
-        .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
-        .replace(/:\d+:\d+\b/g, ':<line>:<column>'),
+      normalizeNonTapLine(
+        line
+          .replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '<timestamp>')
+          .replace(/(?:\/private)?\/var\/folders\/\S+|\/tmp\/\S+/g, '<tmp-path>')
+          .replace(/:\d+:\d+\b/g, ':<line>:<column>'),
+      ),
     );
   }
   if (inDiagnostic) output.push('<unterminated-tap-diagnostic>');
