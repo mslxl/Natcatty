@@ -10,7 +10,7 @@ export type NotesSnapshot = {
 };
 
 export type NotesActions = {
-  updateNotes: (notes: VaultNote[]) => void;
+  updateNotes: (notes: VaultNote[]) => boolean | void;
   updateNoteGroups: (groups: string[]) => void;
 };
 

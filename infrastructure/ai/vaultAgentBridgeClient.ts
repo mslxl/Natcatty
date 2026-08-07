@@ -424,7 +424,7 @@ export interface VaultAgentApiDeps {
     unreadable: boolean;
   }>;
   removeKeyPassphrases: (keyPaths: string[]) => Promise<void> | void;
-  updateNotes: (notes: VaultNote[]) => void;
+  updateNotes: (notes: VaultNote[]) => boolean | void;
   updateSnippets: (snippets: Snippet[]) => void;
   startTunnel: (
     rule: PortForwardingRule,

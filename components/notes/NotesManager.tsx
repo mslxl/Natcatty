@@ -77,6 +77,7 @@ import {
   markVaultInsideDropIndicator,
 } from "../vault/vaultReorderDrag";
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
+import { NoteTitleInput } from "./NoteTitleInput";
 
 const InlineMarkdownEditor = lazy(() =>
   import("./InlineMarkdownEditor").then((module) => ({ default: module.InlineMarkdownEditor })),
@@ -628,6 +629,18 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const saveNoteTitleDraft = (note: VaultNote, title: string) => {
     updateNoteDraft(note.id, { title });
+  };
+
+  /** Ref-only title stash for IME composition — avoids controlled value rewrite. */
+  const stashNoteTitleDraft = (note: VaultNote, title: string) => {
+    if (draftNoteIdRef.current && draftNoteIdRef.current !== note.id) {
+      flushNoteDraft();
+    }
+    // Cancel any idle-commit debounce so a prior ASCII commit cannot flush
+    // mid-composition and rewrite the controlled title.
+    clearDraftTimer();
+    draftNoteIdRef.current = note.id;
+    draftTitleRef.current = title;
   };
 
   const saveNoteContentDraft = (note: VaultNote, content: string) => {
@@ -1666,11 +1679,13 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             <>
               <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-8 pt-6 pb-1" data-note-title-row>
                 <div className="min-w-0 flex-1">
-                  <input
+                  <NoteTitleInput
+                    noteId={selectedNoteView.id}
                     className="h-8 w-full bg-transparent text-lg font-semibold leading-8 outline-none placeholder:text-muted-foreground"
                     value={selectedNoteView.title}
                     placeholder={t("notes.title.placeholder")}
-                    onChange={(event) => saveNoteTitleDraft(selectedNoteView, event.target.value)}
+                    onCommit={(title) => saveNoteTitleDraft(selectedNoteView, title)}
+                    onLiveDraft={(title) => stashNoteTitleDraft(selectedNoteView, title)}
                     onBlur={() => flushNoteDraft()}
                   />
                 </div>
@@ -1755,11 +1770,13 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
           <div className="flex min-h-0 flex-1 flex-col bg-background">
             <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-4 pt-5 pb-1" data-note-title-row>
               <div className="min-w-0 flex-1">
-                <input
+                <NoteTitleInput
+                  noteId={overlayNoteView.id}
                   className="h-8 w-full bg-transparent text-lg font-semibold leading-8 outline-none placeholder:text-muted-foreground"
                   value={overlayNoteView.title}
                   placeholder={t("notes.title.placeholder")}
-                  onChange={(event) => saveNoteTitleDraft(overlayNoteView, event.target.value)}
+                  onCommit={(title) => saveNoteTitleDraft(overlayNoteView, title)}
+                  onLiveDraft={(title) => stashNoteTitleDraft(overlayNoteView, title)}
                   onBlur={() => flushNoteDraft()}
                 />
               </div>

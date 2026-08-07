@@ -209,7 +209,10 @@ test("pasting inside code blocks keeps CodeMirror in control", () => {
   assert.match(source, /element\?\.closest/);
   assert.match(source, /\.cm-editor/);
   assert.match(source, /_codeMirrorWrapper_/);
-  assert.match(source, /if \(isNotePasteInsideCodeBlock\(event\.target\)\) return;/);
+  assert.match(
+    source,
+    /pasteInsideCodeBlock:\s*isNotePasteInsideCodeBlock\(event\.target\)/,
+  );
 });
 
 test("note code block editor colors follow the app theme", () => {
