@@ -431,13 +431,15 @@ test('rejects non-test failures and a candidate that runs fewer tests', () => {
 });
 
 test('ignores success-case TAP YAML diagnostics and volatile console noise', () => {
-  const withOkDiagnostic = (durationMs, pid, sftpId, requestId, port) => [
+  const withOkDiagnostic = (durationMs, pid, sftpId, requestId, port, mtime) => [
     'TAP version 13',
     `# (node:${pid}) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time`,
     `#   sftpId: '${sftpId}',`,
     `#   requestId: '${requestId}',`,
     `# OAuth callback server listening on http://127.0.0.1:${port}/oauth/callback`,
     `# [transferDiag] {"event":"progress","id":"${requestId}","pct":1}`,
+    `# [FileWatcher] Initial file stats: mtime=${mtime}, size=7`,
+    `# [SessionLogStream] Started stream for session-${mtime}-abc -> /tmp/log`,
     'ok 1 - passing helper',
     '  ---',
     `  duration_ms: ${durationMs}`,
@@ -457,15 +459,25 @@ test('ignores success-case TAP YAML diagnostics and volatile console noise', () 
 
   const result = compareTapResults(
     parseTapResult(
-      withOkDiagnostic(1.25, 9089, 'sftp-111261', 'ssh-6239b197-6933-41e3-845b-396a42d6c66b', 37289),
+      withOkDiagnostic(1.25, 9089, 'sftp-111261', 'ssh-6239b197-6933-41e3-845b-396a42d6c66b', 37289, 1786091556617.3306),
       1,
     ),
     parseTapResult(
-      withOkDiagnostic(9.88, 29926, 'sftp-573391', 'ssh-de14337d-3088-463a-a2ca-ffc93d609e74', 39199),
+      withOkDiagnostic(9.88, 29926, 'sftp-573391', 'ssh-de14337d-3088-463a-a2ca-ffc93d609e74', 39199, 1786091557152.3345),
       1,
     ),
   );
   assert.equal(result.passed, true);
   assert.equal(result.kind, 'baseline_only');
   assert.deepEqual(result.newFailures, []);
+});
+
+test('still rejects new bracket-prefixed runner comments outside transfer diagnostics', () => {
+  const sameTap = tap({ failures: ['base failure'] });
+  const result = compareTapResults(
+    parseTapResult(sameTap, 1),
+    parseTapResult(`${sameTap}\n# [fatal] worker aborted after suite`, 1),
+  );
+  assert.equal(result.passed, false);
+  assert.equal(result.kind, 'unclassified_failure');
 });

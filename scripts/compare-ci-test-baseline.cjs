@@ -4,6 +4,51 @@ const fs = require('node:fs');
 
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
+// Known app/test logger tags that emit volatile `# [Tag] ...` TAP comments on
+// every npm test run. Skip these specifically; unknown bracket tags still enter
+// nonTapOutput so new runner diagnostics keep failing the gate.
+const VOLATILE_TAP_DIAG_TAG_RE = new RegExp(
+  '^# \\[(?:'
+  + [
+    'transferDiag',
+    'transferBridge',
+    'FileWatcher',
+    'SessionLogStream',
+    'SSH',
+    'SSH Exec',
+    'KeyboardInteractive',
+    'Telnet',
+    'GlobalShortcut',
+    'Chain',
+    'PortForward',
+    'PortForwardingService',
+    'SFTP',
+    'SFTP Chain',
+    'TempDir',
+    'Terminal',
+    'AutoUpdate',
+    'Passphrase',
+    'Test',
+    'resolve-mosh-bin-release',
+    'resolve-et-bin-release',
+    'KeywordHighlight',
+    'Cursor SDK',
+    'Main',
+    'vaultBackupBridge',
+    'CloudSyncManager',
+    'ZMODEM',
+    'TrayPanel',
+    'sdk',
+    'scp-it',
+    'Plugins',
+    'netcatty-mcp',
+    'DirtyEditorGuard',
+    'Credentials',
+    'afterPack',
+  ].map((tag) => tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+  + ')\\]',
+);
+
 function normalizeNonTapLine(line) {
   return String(line || '')
     .replace(/\(node:\d+\)/g, '(node:<pid>)')
@@ -85,7 +130,8 @@ function collectNonTapOutput(lines) {
       !line ||
       /^TAP version \d+$/.test(line) ||
       /^ok \d+ - /.test(line) ||
-      /^# (?:Subtest:|tests |suites |pass |fail |cancelled |skipped |todo |duration_ms |\[)/.test(line) ||
+      /^# (?:Subtest:|tests |suites |pass |fail |cancelled |skipped |todo |duration_ms )/.test(line) ||
+      VOLATILE_TAP_DIAG_TAG_RE.test(line) ||
       /^1\.\.\d+$/.test(line)
     ) {
       continue;
