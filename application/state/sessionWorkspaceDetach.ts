@@ -129,22 +129,64 @@ export function applyCloseSessionToSessions(
   ));
 }
 
+export function isPreferredTabAvailableAfterClose(
+  input: {
+    preferredTabId: string | null | undefined;
+    closedSessionId: string;
+    layoutResult: CloseSessionWorkspaceLayoutResult;
+    remainingSessions: readonly TerminalSession[];
+  },
+): input is {
+  preferredTabId: string;
+  closedSessionId: string;
+  layoutResult: CloseSessionWorkspaceLayoutResult;
+  remainingSessions: readonly TerminalSession[];
+} {
+  const { preferredTabId, closedSessionId, layoutResult, remainingSessions } = input;
+  if (!preferredTabId || preferredTabId === closedSessionId) return false;
+  if (
+    preferredTabId === layoutResult.dissolvedWorkspaceId
+    || preferredTabId === layoutResult.removedWorkspaceId
+  ) {
+    return false;
+  }
+  if (preferredTabId === "vault" || preferredTabId === "sftp") return true;
+  if (layoutResult.workspaces.some((workspace) => workspace.id === preferredTabId)) return true;
+  return remainingSessions.some((session) => (
+    session.id === preferredTabId
+    && !session.workspaceId
+    && !session.hiddenFromTabs
+  ));
+}
+
 export function resolveActiveTabAfterCloseSession({
   currentActiveTabId,
   closedSessionId,
   workspaceId,
   layoutResult,
   remainingSessions,
+  preferredTabId,
 }: {
   currentActiveTabId: string | null;
   closedSessionId: string;
   workspaceId: string | undefined;
   layoutResult: CloseSessionWorkspaceLayoutResult;
   remainingSessions: readonly TerminalSession[];
+  preferredTabId?: string | null;
 }): string | null {
   const fallbackWorkspace = layoutResult.workspaces[layoutResult.workspaces.length - 1];
   const fallbackSolo = remainingSessions.filter((session) => !session.workspaceId && !session.hiddenFromTabs).slice(-1)[0];
+  const preferredInput = {
+    preferredTabId,
+    closedSessionId,
+    layoutResult,
+    remainingSessions,
+  };
+  const preferredFallback = isPreferredTabAvailableAfterClose(preferredInput)
+    ? preferredInput.preferredTabId
+    : undefined;
   const fallback = layoutResult.lastRemainingSessionId
+    ?? preferredFallback
     ?? fallbackWorkspace?.id
     ?? fallbackSolo?.id
     ?? "vault";
@@ -166,12 +208,14 @@ export function closeSessionsState({
   workspaces,
   sessionIds,
   currentActiveTabId,
+  preferredTabId,
   tabOrder,
 }: {
   sessions: readonly TerminalSession[];
   workspaces: readonly Workspace[];
   sessionIds: readonly string[];
   currentActiveTabId: string | null;
+  preferredTabId?: string | null;
   tabOrder: readonly string[];
 }): CloseSessionsStateResult {
   let nextSessions = [...sessions];
@@ -207,6 +251,7 @@ export function closeSessionsState({
       workspaceId,
       layoutResult,
       remainingSessions: nextSessions,
+      preferredTabId,
     });
     if (activeTabAfterClose) {
       nextActiveTabId = activeTabAfterClose;

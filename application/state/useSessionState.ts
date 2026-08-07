@@ -542,6 +542,7 @@ export const useSessionState = ({
       workspaces: workspacesRef.current,
       sessionIds,
       currentActiveTabId: activeTabStore.getActiveTabId(),
+      preferredTabId: activeTabStore.getPreviousActiveTabId(),
       tabOrder: tabOrderRef.current,
     });
 
@@ -549,9 +550,10 @@ export const useSessionState = ({
     setSessions(result.sessions);
     setTabOrder(result.tabOrder);
     if (result.activeTabId) {
-      setActiveTabId(result.activeTabId);
+      // Closing must not rewrite previous-tab history to the closed tab.
+      activeTabStore.setActiveTabId(result.activeTabId, { recordPrevious: false });
     }
-  }, [setActiveTabId]);
+  }, []);
 
   const closeSession = useCallback((sessionId: string, e?: MouseEvent) => {
     e?.stopPropagation();

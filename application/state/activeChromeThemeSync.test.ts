@@ -7,7 +7,7 @@ const chromeThemeSource = readFileSync(new URL("./useActiveChromeTheme.ts", impo
 const storeSource = readFileSync(new URL("./activeTabStore.ts", import.meta.url), "utf8");
 
 test("active tab changes notify chrome theme before react subscribers", () => {
-  const setActiveTabIdBody = storeSource.match(/setActiveTabId = \(id: string\) => \{[\s\S]*?\n {2}\};/)?.[0] ?? "";
+  const setActiveTabIdBody = storeSource.match(/setActiveTabId = \(id: string(?:, options\?: \w+)?\) => \{[\s\S]*?\n {2}\};/)?.[0] ?? "";
   assert.match(setActiveTabIdBody, /this\.syncListeners\.forEach\(\(listener\) => listener\(id\)\)/);
   assert.match(setActiveTabIdBody, /this\.scheduleNotify\(\)/);
   assert.ok(
