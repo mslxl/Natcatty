@@ -65,6 +65,10 @@ import {
 } from "../../domain/connectionLogTerminalData";
 import { getNextVaultOrder, normalizeVaultOrder } from "../../domain/vaultOrder";
 import { loadSanitizedShellHistory } from "./shellHistoryPersistence";
+import {
+  publishNotesSnapshot,
+  registerNotesActions,
+} from "./notesStore";
 import { publishShellHistorySnapshot } from "./shellHistoryStore";
 import { setVaultInitialized } from "./vaultInitStore";
 import {
@@ -280,9 +284,13 @@ export const useVaultState = () => {
   const customGroupsRef = useRef<string[]>([]);
   const managedSourcesRef = useRef<ManagedSource[]>([]);
   const hostsRef = useRef<Host[]>([]);
+  const notesRef = useRef<VaultNote[]>([]);
+  const noteGroupsRef = useRef<string[]>([]);
   customGroupsRef.current = customGroups;
   managedSourcesRef.current = managedSources;
   hostsRef.current = hosts;
+  notesRef.current = notes;
+  noteGroupsRef.current = noteGroups;
 
   // Write-version counters prevent out-of-order async writes from overwriting
   // newer data.  Each update bumps the counter; the .then() callback only
@@ -591,14 +599,20 @@ export const useVaultState = () => {
 
   const updateNotes = useCallback((data: Partial<VaultNote>[]) => {
     const cleaned = normalizeVaultNotes(data);
+    notesRef.current = cleaned;
     setNotes(cleaned);
     localStorageAdapter.write(STORAGE_KEY_NOTES, cleaned);
+    // Publish synchronously so Notes→AI handoff does not read a stale catalog
+    // while React state is still committing (useLayoutEffect republishes too).
+    publishNotesSnapshot({ notes: cleaned, noteGroups: noteGroupsRef.current });
   }, []);
 
   const updateNoteGroups = useCallback((data: unknown) => {
     const cleaned = normalizeNoteGroups(data);
+    noteGroupsRef.current = cleaned;
     setNoteGroups(cleaned);
     localStorageAdapter.write(STORAGE_KEY_NOTE_GROUPS, cleaned);
+    publishNotesSnapshot({ notes: notesRef.current, noteGroups: cleaned });
   }, []);
 
   const updateCustomGroups = useCallback((
@@ -827,6 +841,18 @@ export const useVaultState = () => {
   useLayoutEffect(() => {
     publishShellHistorySnapshot(shellHistory);
   }, [shellHistory]);
+
+  // Notes catalog for Notes / AI side panels — keep TerminalLayer off the hot path.
+  useLayoutEffect(() => {
+    publishNotesSnapshot({ notes, noteGroups });
+  }, [notes, noteGroups]);
+
+  useLayoutEffect(() => {
+    registerNotesActions({ updateNotes, updateNoteGroups });
+    return () => {
+      registerNotesActions(null);
+    };
+  }, [updateNotes, updateNoteGroups]);
 
   const addShellHistoryEntry = useCallback(
     (entry: Omit<ShellHistoryEntry, "id" | "timestamp">) => {
@@ -1375,9 +1401,12 @@ export const useVaultState = () => {
 
   const updateHostLastConnected = useCallback((hostId: string) => {
     setHosts((prev) => {
-      const next = prev.map((h) =>
-        h.id === hostId ? { ...h, lastConnectedAt: Date.now() } : h,
-      );
+      const idx = prev.findIndex((h) => h.id === hostId);
+      if (idx < 0) return prev;
+      const now = Date.now();
+      if (prev[idx].lastConnectedAt === now) return prev;
+      const next = prev.slice();
+      next[idx] = { ...prev[idx], lastConnectedAt: now };
       const ver = ++hostsWriteVersion.current;
       const encryptPromise = encryptHosts(next);
       hostsEncryptPendingRef.current = encryptPromise.then(() => undefined);

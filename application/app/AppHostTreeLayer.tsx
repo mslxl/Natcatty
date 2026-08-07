@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 
 import { useActiveTabId } from '../state/activeTabStore';
 import type { EditorTabChrome } from '../state/editorTabStore';
@@ -47,7 +47,33 @@ export function getAppHostTreeLayerStyle(surfaceVisible: boolean): React.CSSProp
   };
 }
 
-export const AppHostTreeLayer: React.FC<AppHostTreeLayerProps> = ({
+function appHostTreeLayerAreEqual(
+  prev: AppHostTreeLayerProps,
+  next: AppHostTreeLayerProps,
+): boolean {
+  return prev.enabled === next.enabled
+    && prev.hosts === next.hosts
+    && prev.customGroups === next.customGroups
+    && prev.groupConfigs === next.groupConfigs
+    && prev.sessions === next.sessions
+    && prev.workspaces === next.workspaces
+    && prev.editorTabs === next.editorTabs
+    && prev.logViews === next.logViews
+    && prev.orderedTabs === next.orderedTabs
+    && prev.accentMode === next.accentMode
+    && prev.currentTerminalTheme === next.currentTerminalTheme
+    && prev.customAccent === next.customAccent
+    && prev.followAppTerminalTheme === next.followAppTerminalTheme
+    && prev.hostById === next.hostById
+    && prev.themeById === next.themeById
+    && prev.resolveSessionAppearance === next.resolveSessionAppearance
+    && prev.onConnect === next.onConnect
+    && prev.onNewHost === next.onNewHost
+    && prev.onEditHost === next.onEditHost
+    && prev.onCreateLocalTerminal === next.onCreateLocalTerminal;
+}
+
+const AppHostTreeLayerInner: React.FC<AppHostTreeLayerProps> = ({
   enabled,
   hosts,
   customGroups,
@@ -154,3 +180,6 @@ export const AppHostTreeLayer: React.FC<AppHostTreeLayerProps> = ({
     </div>
   );
 };
+
+export const AppHostTreeLayer = memo(AppHostTreeLayerInner, appHostTreeLayerAreEqual);
+AppHostTreeLayer.displayName = 'AppHostTreeLayer';

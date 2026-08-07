@@ -4,7 +4,6 @@
  */
 import { Highlighter, Plus, Trash2, RotateCcw } from 'lucide-react';
 import React, { useState, useCallback, useMemo } from 'react';
-import { v4 as uuidv4 } from 'uuid';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { Host, KeywordHighlightRule } from '../../types';
 import { Button } from '../ui/button';
@@ -77,7 +76,7 @@ export const HostKeywordHighlightPopover: React.FC<HostKeywordHighlightPopoverPr
     }
 
     const newRule: KeywordHighlightRule = {
-      id: uuidv4(),
+      id: crypto.randomUUID(),
       label: newRuleLabel.trim(),
       patterns: [newRulePattern.trim()],
       color: newRuleColor,

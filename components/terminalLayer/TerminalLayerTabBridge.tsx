@@ -7,13 +7,13 @@ import { useSystemManagerBackend } from '../../application/state/useSystemManage
 import { canReuseTerminalConnection } from '../../application/state/terminalConnectionReuse';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
 import type { TerminalContextReader } from '../../domain/terminalContextRead';
-import { useSystemCapabilitiesWarmup } from '../systemManager/hooks/useSystemManager';
+import { useSystemCapabilitiesWarmup } from '../../application/state/useSystemManager';
 import { cn } from '../../lib/utils';
 import type { Host, TerminalSession, Workspace } from '../../types';
 import { resolveTerminalHibernateEnabled } from '../../domain/terminalHibernate';
 import { shouldMeasureTerminalLayerLayout } from '../terminalPaneVisibility';
 import { TerminalLayerView } from './TerminalLayerView';
-import { useTerminalAiContexts } from './useTerminalAiContexts';
+import { useTerminalAiContexts } from '../../application/state/useTerminalAiContexts';
 import { useTerminalLayerEffects } from './useTerminalLayerEffects';
 import { useTerminalThemePanelState } from './useTerminalThemePanelState';
 import { useManualTerminalChromeSurfaceInjection } from '../../application/state/useManualTerminalChromeSurfaceInjection';
@@ -215,11 +215,9 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   }, [historySessionId, sessionHostsMap]);
 
   const themeState = useTerminalThemePanelState({
-    accentMode: s.accentMode,
     activeSession,
     activeSidePanelTab: activeSidePanelTools.has('theme') ? 'theme' : activeSidePanelTab,
     activeWorkspace,
-    customAccent: s.customAccent,
     followAppTerminalTheme: s.followAppTerminalTheme,
     focusedSessionId,
     fontSize: s.fontSize,
@@ -523,8 +521,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     notesMountedTabIds: s.notesMountedTabIds,
     notesOpenNoteByTab: s.notesOpenNoteByTab,
     NotesManager: s.NotesManager,
-    noteGroups: s.noteGroups,
-    notes: s.notes,
     scriptsMountedTabIds: s.scriptsMountedTabIds,
     systemMountedTabIds: s.systemMountedTabIds,
     themeMountedTabIds: s.themeMountedTabIds,
@@ -595,8 +591,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     snippets: s.snippets,
     updateSnippetPackages: s.updateSnippetPackages,
     updateSnippets: s.updateSnippets,
-    updateNoteGroups: s.updateNoteGroups,
-    updateNotes: s.updateNotes,
     splitHorizontalHandlersRef: s.splitHorizontalHandlersRef,
     splitVerticalHandlersRef: s.splitVerticalHandlersRef,
     sshDebugLogsEnabled: s.sshDebugLogsEnabled,
@@ -641,8 +635,6 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     focusedHost,
     focusedSessionId,
     s.restoreTerminalCwd,
-    s.notes,
-    s.noteGroups,
     handleWorkspaceDrop,
     handleTerminalContextReaderChange,
     hibernateHiddenTabs,

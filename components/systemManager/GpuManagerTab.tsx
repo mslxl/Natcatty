@@ -20,7 +20,7 @@ import {
   SystemPanelStatusBadge,
   SystemPanelToolbar,
 } from './SystemPanelUi';
-import { usePolling, useStableTranslate } from './hooks/useSystemManager';
+import { usePolling, useStableTranslate } from '../../application/state/useSystemManager';
 
 type Backend = ReturnType<typeof useSystemManagerBackend>;
 

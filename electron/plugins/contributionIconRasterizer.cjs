@@ -67,6 +67,7 @@ function createIsolatedContributionIconRasterizer(options) {
       webPreferences: {
         partition,
         sandbox: true,
+          spellcheck: false,
         contextIsolation: true,
         nodeIntegration: false,
         webSecurity: true,

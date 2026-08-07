@@ -9,7 +9,7 @@ import {
   generateId,
   resolveUserSkillsContext,
   isToolResultError,
-} from '../../../../components/ai/hooks/aiChatStreamingSupport';
+} from '../../aiChatStreamingSupport';
 import type { AgentActivity, AgentUsage, ChatMessage } from '../../types';
 import type {
   ExternalTurnInput,
@@ -162,6 +162,59 @@ async function runExternalTurn(
     maybeCreateAssistantMsg();
     ui.updateMessageById(sessionId, activeAssistantMessageId, updater);
   };
+  let pendingText = '';
+  let rafId: number | null = null;
+  const appendTextToActiveAssistant = (textChunk: string) => {
+    updateActiveAssistant(msg => ({
+      ...msg,
+      content: msg.content + textChunk,
+      statusText: undefined,
+      thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
+        ? Date.now() - msg.timestamp : msg.thinkingDurationMs,
+    }));
+  };
+  const flushPendingText = () => {
+    if (pendingText) {
+      const textChunk = pendingText;
+      pendingText = '';
+      runOrBufferUiOperation(() => appendTextToActiveAssistant(textChunk));
+    }
+    rafId = null;
+  };
+  const scheduleFrame = (cb: () => void): number => (
+    typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame(cb)
+      : setTimeout(cb, 0) as unknown as number
+  );
+  const cancelFrame = (id: number): void => {
+    if (typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(id);
+      return;
+    }
+    clearTimeout(id);
+  };
+  const cancelPendingTextFlush = () => {
+    if (rafId !== null) {
+      cancelFrame(rafId);
+      rafId = null;
+    }
+  };
+  const enqueueTextDelta = (textChunk: string) => {
+    if (!textChunk) return;
+    // While steering buffers UI ops, skip rAF so text enters the buffer immediately.
+    if (steerInFlight) {
+      runOrBufferUiOperation(() => appendTextToActiveAssistant(textChunk));
+      return;
+    }
+    pendingText += textChunk;
+    if (rafId === null) {
+      rafId = scheduleFrame(flushPendingText);
+    }
+  };
+  const flushTextBeforeNonTextEvent = () => {
+    cancelPendingTextFlush();
+    flushPendingText();
+  };
 
   const toolNamesByCallId = new Map<string, string>();
   const toolCallMessageIds = new Map<string, string>();
@@ -190,28 +243,29 @@ async function runExternalTurn(
     updateActiveAssistant(msg => ({ ...msg, usage }));
   };
   const callbacks: SdkAgentCallbacks = {
-    onTextDelta: (text: string) => runOrBufferUiOperation(() => {
-      updateActiveAssistant(msg => ({
-        ...msg,
-        content: msg.content + text,
-        statusText: undefined,
-        thinkingDurationMs: msg.thinking && !msg.thinkingDurationMs
-          ? Date.now() - msg.timestamp : msg.thinkingDurationMs,
-      }));
-    }),
-    onThinkingDelta: (text: string) => runOrBufferUiOperation(() => {
-      updateActiveAssistant(msg => ({
-        ...msg,
-        thinking: (msg.thinking || '') + text,
-      }));
-    }),
-    onThinkingDone: () => runOrBufferUiOperation(() => {
-      updateActiveAssistant(msg => ({
-        ...msg,
-        thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
-      }));
-    }),
+    onTextDelta: (text: string) => {
+      enqueueTextDelta(text);
+    },
+    onThinkingDelta: (text: string) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => {
+        updateActiveAssistant(msg => ({
+          ...msg,
+          thinking: (msg.thinking || '') + text,
+        }));
+      });
+    },
+    onThinkingDone: () => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => {
+        updateActiveAssistant(msg => ({
+          ...msg,
+          thinkingDurationMs: msg.thinkingDurationMs || (Date.now() - msg.timestamp),
+        }));
+      });
+    },
     onToolCall: (toolName: string, args: Record<string, unknown>, toolCallId?: string) => {
+      flushTextBeforeNonTextEvent();
       runOrBufferUiOperation(() => {
         const id = toolCallId || `tc_${Date.now()}`;
         maybeCreateAssistantMsg();
@@ -226,6 +280,7 @@ async function runExternalTurn(
       });
     },
     onToolResult: (toolCallId: string, result: string, toolName?: string) => {
+      flushTextBeforeNonTextEvent();
       const existingToolCallMessageId = toolCallMessageIds.get(toolCallId);
       runOrBufferUiOperation(() => {
         const effectiveToolName = toolName ?? toolNamesByCallId.get(toolCallId);
@@ -264,27 +319,47 @@ async function runExternalTurn(
         flushBeforeSteerBoundary: existingToolCallMessageId !== undefined,
       });
     },
-    onFileChange: (activity) => runOrBufferUiOperation(() => updateActivity(activity)),
-    onWebSearch: (activity) => runOrBufferUiOperation(() => updateActivity(activity)),
-    onPlanUpdate: (activity) => runOrBufferUiOperation(() => updateActivity(activity)),
-    onWarning: (activity) => runOrBufferUiOperation(() => updateActivity(activity)),
-    onUsage: (usage: AgentUsage) => runOrBufferUiOperation(() => {
-      actualUsageReported = true;
-      updateUsage(usage);
-    }),
-    onStatus: (message: string) => runOrBufferUiOperation(() => {
-      updateActiveAssistant(msg => ({ ...msg, statusText: message }));
-    }),
+    onFileChange: (activity) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => updateActivity(activity));
+    },
+    onWebSearch: (activity) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => updateActivity(activity));
+    },
+    onPlanUpdate: (activity) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => updateActivity(activity));
+    },
+    onWarning: (activity) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => updateActivity(activity));
+    },
+    onUsage: (usage: AgentUsage) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => {
+        actualUsageReported = true;
+        updateUsage(usage);
+      });
+    },
+    onStatus: (message: string) => {
+      flushTextBeforeNonTextEvent();
+      runOrBufferUiOperation(() => {
+        updateActiveAssistant(msg => ({ ...msg, statusText: message }));
+      });
+    },
     onHook: (hookEvent: string, payload: Record<string, unknown>) => {
       // Surface lifecycle hooks as status text so the user sees tool activity.
       const toolName = (payload.toolName as string) || '';
       if (hookEvent === 'PreToolUse' && toolName) {
+        flushTextBeforeNonTextEvent();
         runOrBufferUiOperation(() => {
           updateActiveAssistant(msg => ({ ...msg, statusText: `Running ${toolName}…` }));
         });
       } else if (hookEvent === 'Notification') {
         const message = (payload.message as string) || '';
         if (message) {
+          flushTextBeforeNonTextEvent();
           runOrBufferUiOperation(() => {
             updateActiveAssistant(msg => ({ ...msg, statusText: message }));
           });
@@ -305,10 +380,13 @@ async function runExternalTurn(
       context.updateExternalSessionId?.(sessionId, externalSessionId);
     },
     onError: (error: string) => {
+      flushTextBeforeNonTextEvent();
       ui.reportStreamError(sessionId, signal, error);
       ui.setStreamingForScope(sessionId, false);
     },
-    onDone: () => {},
+    onDone: () => {
+      flushTextBeforeNonTextEvent();
+    },
   };
 
   const liveTurn: LiveExternalTurn = {
@@ -320,6 +398,8 @@ async function runExternalTurn(
     async steer(steerInput) {
       if (steerInFlight) return { status: 'busy' };
       if (ended || signal.aborted) return { status: 'cancelled' };
+      // Commit any rAF-batched text before steering buffers UI ops.
+      flushTextBeforeNonTextEvent();
       steerInFlight = true;
       const result = await steerSdkAgentTurn(
         netcattyBridge,
@@ -388,6 +468,7 @@ async function runExternalTurn(
 
     const estimatedUsage = resolveEstimatedUsageFallback(trimmed, actualUsageReported);
     if (estimatedUsage) {
+      flushTextBeforeNonTextEvent();
       runOrBufferUiOperation(() => updateUsage(estimatedUsage));
       ctx.emit({
         id: `usage-${ctx.turnId}`,
@@ -401,6 +482,7 @@ async function runExternalTurn(
   } finally {
     ended = true;
     liveTurn.ended = true;
+    flushTextBeforeNonTextEvent();
     clearCodebuddyElicitationsForChat(sessionId);
     if (steerInFlight) {
       steerInFlight = false;

@@ -94,6 +94,23 @@ module.exports = {
         '!node_modules/monaco-editor/**/*',
         '!node_modules/react/**/*',
         '!node_modules/react-dom/**/*',
+        '!node_modules/ai/**/*',
+        '!node_modules/@ai-sdk/**/*',
+        '!node_modules/@mdxeditor/**/*',
+        '!node_modules/streamdown/**/*',
+        '!node_modules/@streamdown/**/*',
+        '!node_modules/@tanstack/react-virtual/**/*',
+        '!node_modules/pinyin-pro/**/*',
+        '!node_modules/re2js/**/*',
+        '!node_modules/@eslint-community/regexpp/**/*',
+        '!node_modules/clsx/**/*',
+        '!node_modules/tailwind-merge/**/*',
+        '!node_modules/use-stick-to-bottom/**/*',
+        '!node_modules/lexical/**/*',
+        '!node_modules/@lexical/**/*',
+        '!node_modules/@codemirror/**/*',
+        '!node_modules/shiki/**/*',
+        '!node_modules/@shiki/**/*',
         // Heavy cloud completion specs are intentionally not bundled. The main
         // process filters the same prefixes so dev and packaged builds behave
         // consistently.

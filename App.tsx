@@ -291,15 +291,11 @@ function App({ settings }: { settings: SettingsState }) {
     draggingSessionId,
     setDraggingSessionId,
     sessionRenameTarget,
-    sessionRenameValue,
-    setSessionRenameValue,
     startSessionRename,
     renameSessionInline,
     submitSessionRename,
     resetSessionRename,
     workspaceRenameTarget,
-    workspaceRenameValue,
-    setWorkspaceRenameValue,
     startWorkspaceRename,
     submitWorkspaceRename,
     resetWorkspaceRename,
@@ -1945,10 +1941,7 @@ function App({ settings }: { settings: SettingsState }) {
     resetWorkspaceRename,
     resolvedTheme,
     sessionRenameTarget,
-    sessionRenameValue,
     setActiveTabId,
-    setSessionRenameValue,
-    setWorkspaceRenameValue,
     settings,
     startSessionRename,
     renameSessionInline,
@@ -1960,8 +1953,7 @@ function App({ settings }: { settings: SettingsState }) {
     toggleConnectionLogSaved,
     updateConnectionLog,
     workspaceRenameTarget,
-    workspaceRenameValue,
-  }), [accentMode, clearUnsavedConnectionLogs, closeLogView, customAccent, deleteConnectionLog, handleEndSessionDrag, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handleSyncNowManual, isMacClient, logViews, openLogView, orderedTabsWithEditors, orphanSessionsForShell, reorderWorkTabs, resetSessionRename, resetWorkspaceRename, resolvedTheme, sessionRenameTarget, sessionRenameValue, setActiveTabId, setSessionRenameValue, setWorkspaceRenameValue, settings, startSessionRename, renameSessionInline, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, themeById, toggleConnectionLogSaved, updateConnectionLog, workspaceRenameTarget, workspaceRenameValue]);
+  }), [accentMode, clearUnsavedConnectionLogs, closeLogView, customAccent, deleteConnectionLog, handleEndSessionDrag, handleOpenQuickSwitcher, handleOpenSettings, handleRootContextMenu, handleSyncNowManual, isMacClient, logViews, openLogView, orderedTabsWithEditors, orphanSessionsForShell, reorderWorkTabs, resetSessionRename, resetWorkspaceRename, resolvedTheme, sessionRenameTarget, setActiveTabId, settings, startSessionRename, renameSessionInline, startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, themeById, toggleConnectionLogSaved, updateConnectionLog, workspaceRenameTarget]);
 
   const appDialogsDomain = useMemo(() => ({
     addToWorkspaceDialog,

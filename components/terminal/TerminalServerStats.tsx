@@ -6,7 +6,7 @@ import { cn } from '../../lib/utils';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { formatNetSpeed } from './terminalHelpers';
-import { useServerStats } from './hooks/useServerStats';
+import { useServerStats } from '../../application/state/useServerStats';
 import { formatDiskCapacityGb, resolveTerminalDiskSummary } from './serverStatsFormat';
 
 interface TerminalServerStatsProps {

@@ -1,7 +1,7 @@
 import type { SftpFileEntry } from '../../types';
 import type { SftpPane } from '../../application/state/sftp/types';
 import type { SftpTransferSource } from './SftpContext';
-import type { UseSftpPaneSortingResult } from './hooks/useSftpPaneSorting';
+import type { UseSftpPaneSortingResult } from '../../application/state/sftp/useSftpPaneSorting';
 
 export interface SftpPaneTreeViewProps {
   pane: SftpPane;

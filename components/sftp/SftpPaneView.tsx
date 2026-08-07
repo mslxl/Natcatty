@@ -25,16 +25,16 @@ import { useSftpPaneDialogs } from "./hooks/useSftpPaneDialogs";
 import { useSftpPaneDragAndSelect } from "./hooks/useSftpPaneDragAndSelect";
 import { useSftpPaneFiles } from "./hooks/useSftpPaneFiles";
 import { useSftpPanePath } from "./hooks/useSftpPanePath";
-import { useSftpPaneSorting, type UseSftpPaneSortingResult } from "./hooks/useSftpPaneSorting";
+import { useSftpPaneSorting, type UseSftpPaneSortingResult } from "../../application/state/sftp/useSftpPaneSorting";
 import { useSftpPaneVirtualList } from "./hooks/useSftpPaneVirtualList";
 import { sftpPaneViewModeStore } from "../../application/state/sftp/sftpPaneViewModeStore";
-import { useSftpDialogActionHandler } from "./hooks/useSftpDialogAction";
+import { useSftpDialogActionHandler } from "../../application/state/sftp/sftpDialogActionStore";
 import { useSftpBookmarks } from "./hooks/useSftpBookmarks";
-import { useLocalSftpBookmarks } from "./hooks/useLocalSftpBookmarks";
+import { useLocalSftpBookmarks } from "../../application/state/sftp/localSftpBookmarks";
 import { useGlobalSftpBookmarks } from "./hooks/useGlobalSftpBookmarks";
-import { useSftpHostViewMode } from "./hooks/useSftpHostViewMode";
+import { useSftpHostViewMode } from "../../application/state/sftp/sftpHostViewModeStore";
 import { sftpListOrderStore } from "./hooks/useSftpListOrderStore";
-import { sftpTreeSelectionStore } from "./hooks/useSftpTreeSelectionStore";
+import { sftpTreeSelectionStore } from "../../application/state/sftp/sftpTreeSelectionStore";
 import { sftpClipboardUploadStore } from "./clipboardUpload";
 
 interface TreeReloadRequest {

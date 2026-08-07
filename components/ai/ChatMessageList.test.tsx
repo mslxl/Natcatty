@@ -38,16 +38,24 @@ test("resolved approval state retains only tool calls still present in messages"
   assert.deepEqual([...next], [["live-call", false]]);
 });
 
-test("assistant content stays plain only when markdown is hidden", () => {
+test("assistant content stays plain when markdown is hidden or streaming", () => {
   assert.equal(shouldRenderAssistantAsPlainText({
     hideMarkdown: false,
   }), false);
   assert.equal(shouldRenderAssistantAsPlainText({
     hideMarkdown: true,
   }), true);
+  assert.equal(shouldRenderAssistantAsPlainText({
+    hideMarkdown: false,
+    isStreaming: true,
+  }), true);
+  assert.equal(shouldRenderAssistantAsPlainText({
+    hideMarkdown: false,
+    isStreaming: false,
+  }), false);
 });
 
-test("ChatMessageList renders markdown for the streaming assistant message", () => {
+test("ChatMessageList renders plain text for the streaming assistant message", () => {
   const messages: ChatMessage[] = [
     {
       id: "user-1",
@@ -75,15 +83,16 @@ test("ChatMessageList renders markdown for the streaming assistant message", () 
     ),
   );
 
-  assert.match(markup, /data-ai-content="markdown"/);
+  assert.match(markup, /data-ai-content="plain"/);
   assert.match(markup, /streaming-body/);
-  assert.doesNotMatch(markup, /data-ai-content="plain"/);
+  assert.doesNotMatch(markup, /data-ai-content="markdown"/);
 });
 
-test("streaming markdown keeps the renderer in its animating mode", () => {
+test("streaming assistant content skips Streamdown while the turn is live", () => {
   const source = readFileSync(new URL("./ChatMessageList.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /LazyMessageResponse isAnimating=\{!!isThisStreaming\}/);
+  assert.match(source, /isStreaming: !!isThisStreaming/);
+  assert.match(source, /shouldRenderAssistantAsPlainText\(\{[\s\S]*?isStreaming/);
 });
 
 test("ChatMessageList hydrates markdown after streaming settles", () => {

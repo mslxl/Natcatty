@@ -18,7 +18,7 @@ import { TmuxManagerTab } from './TmuxManagerTab';
 import { WorkspaceSidebarHostHeader } from '../terminalLayer/WorkspaceSidebarHostHeader';
 import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from '../terminalLayer/terminalSidePanelChrome';
 import { SystemPanelEmpty, SystemPanelShell } from './SystemPanelUi';
-import { useSessionCapabilities } from './hooks/useSystemManager';
+import { useSessionCapabilities } from '../../application/state/useSystemManager';
 
 const SystemPanelChecking = memo(function SystemPanelChecking({
   message,

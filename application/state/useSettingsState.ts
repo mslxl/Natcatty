@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 
 import { runThemeTransition, type ThemeTransitionMode } from './themeTransition';
+import { publishAppearanceChromeSnapshot } from './appearanceChromeStore';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
   DEFAULT_HTTP_NETWORK_PROXY,
@@ -967,6 +968,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const persistedAppearanceChanged = previousAppearance === null
       || hasPersistedAppearanceChanged(previousAppearance, appearanceRender);
     previousAppearanceRenderRef.current = appearanceRender;
+    // Terminal leaves subscribe here so accent drag does not rebuild TerminalLayer.
+    publishAppearanceChromeSnapshot({ accentMode, customAccent });
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
     const apply = () => applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
     const transitionMode = appearanceTransitionModeRef.current;
@@ -1841,7 +1844,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     // Opaque version that changes when any synced setting changes, used by useAutoSync.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     settingsVersion: useMemo(() => Math.random(), [
-      theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent,
+      theme, lightUiThemeId, darkUiThemeId, accentMode,
       uiFontFamilyId, uiLanguage, customCSS,
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,

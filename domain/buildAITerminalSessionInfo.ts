@@ -1,6 +1,6 @@
-import { classifyDistroId } from '../../domain/host';
-import type { PortForwardingRule } from '../../domain/models';
-import type { Host, TerminalSession } from '../../types';
+import { classifyDistroId } from './host';
+import type { PortForwardingRule } from './models';
+import type { Host, TerminalSession } from '../types';
 
 export type AITerminalSessionInfo = {
   sessionId: string;
@@ -92,4 +92,13 @@ export const buildAITerminalSessionInfo = (
     ...(hostChain?.length ? { hostChain } : {}),
     ...(activePortForwards?.length ? { activePortForwards } : {}),
   };
+};
+
+
+export type AIPanelContext = {
+  scopeType: 'terminal' | 'workspace';
+  scopeTargetId?: string;
+  scopeHostIds: string[];
+  scopeLabel: string;
+  terminalSessions: AITerminalSessionInfo[];
 };

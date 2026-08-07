@@ -1,5 +1,5 @@
 import type { AgentEvent, AgentEventListener } from './types';
-import { resolveStreamChunkToolCallId } from '../../../components/ai/hooks/aiChatStreamingSupport';
+import { resolveStreamChunkToolCallId } from '../aiChatStreamingSupport';
 
 let eventCounter = 0;
 

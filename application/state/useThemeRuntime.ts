@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import type { TerminalTheme } from '../../domain/models';
 import {
@@ -42,7 +42,9 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
 
   const [userIntent, setUserIntent] = useState<ThemeUserIntent>(idleThemeUserIntent());
 
-  const appearanceSettings = useMemo((): TerminalAppearanceSettings => ({
+  // Theme-id settings without accent — keeps resolveFocusedAppearance identity
+  // stable during color-picker drag (TerminalLayer memo depends on it).
+  const appearanceSettingsBase = useMemo((): Omit<TerminalAppearanceSettings, 'accentMode' | 'customAccent'> => ({
     terminalThemeId,
     terminalThemeDarkId,
     terminalThemeLightId,
@@ -50,8 +52,6 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
     resolvedTheme,
     lightUiThemeId,
     darkUiThemeId,
-    accentMode,
-    customAccent,
   }), [
     terminalThemeId,
     terminalThemeDarkId,
@@ -60,9 +60,17 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
     resolvedTheme,
     lightUiThemeId,
     darkUiThemeId,
+  ]);
+
+  const accentRef = useRef({ accentMode, customAccent });
+  accentRef.current = { accentMode, customAccent };
+
+  // Chrome / injection consumers need live accent on every settings change.
+  const appearanceSettings = useMemo((): TerminalAppearanceSettings => ({
+    ...appearanceSettingsBase,
     accentMode,
     customAccent,
-  ]);
+  }), [appearanceSettingsBase, accentMode, customAccent]);
 
   const globalAppearance = useMemo(() => resolveGlobalTerminalAppearance({
     userIntent,
@@ -70,14 +78,21 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
     customThemes,
   }), [userIntent, appearanceSettings, customThemes]);
 
+  // Read accent from a ref so this callback identity does not churn on drag.
+  // Callers that invoke it after an accent-only update still get the latest
+  // accent; Terminal panes also re-apply appearanceChromeStore at the leaf.
   const resolveFocusedAppearance = useCallback((hostScope: TerminalAppearanceHostScope): ResolvedAppearance => (
     resolveTerminalAppearance({
       userIntent,
-      settings: appearanceSettings,
+      settings: {
+        ...appearanceSettingsBase,
+        accentMode: accentRef.current.accentMode,
+        customAccent: accentRef.current.customAccent,
+      },
       hostScope,
       customThemes,
     })
-  ), [userIntent, appearanceSettings, customThemes]);
+  ), [userIntent, appearanceSettingsBase, customThemes]);
 
   const applyFollowAppSettingsForPick = useCallback((themeId: string) => {
     const update = getFollowAppTerminalThemeSelectionUpdate(themeId);

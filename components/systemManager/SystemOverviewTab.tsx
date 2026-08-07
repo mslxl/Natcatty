@@ -10,7 +10,7 @@ import React, { memo, useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { aggregateMountedDiskUsage } from '../../domain/systemDiskUsage';
 import { cn } from '../../lib/utils';
-import { useServerStats } from '../terminal/hooks/useServerStats';
+import { useServerStats } from '../../application/state/useServerStats';
 import { ResourceBar } from './ResourceBar';
 import {
   SystemPanelEmpty,

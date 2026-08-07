@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo } from 'react';
+import React, { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Download, Trash2 } from 'lucide-react';
 import { activeTabStore, toEditorTabId, useIsEditorTabActive } from '../state/activeTabStore';
 import { editorTabStore } from '../state/editorTabStore';
@@ -12,7 +12,7 @@ import { QuickScriptEditorDialog } from '../../components/scripts/QuickScriptEdi
 import { AddToWorkspaceDialog } from '../../components/workspace/AddToWorkspaceDialog';
 import { KeyboardInteractiveModal } from '../../components/KeyboardInteractiveModal';
 import { PassphraseModal } from '../../components/PassphraseModal';
-import { UnsavedChangesProvider } from '../../components/editor/UnsavedChangesDialog';
+import { UnsavedChangesProvider, promptUnsavedChanges } from '../../components/editor/UnsavedChangesDialog';
 import { SnippetExecutionProvider } from '../../components/SnippetExecutionProvider';
 import { Button } from '../../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../../components/ui/dialog';
@@ -65,6 +65,68 @@ const TextEditorTabFallback = ({ tabId }: { tabId: string }) => {
     />
   );
 };
+
+/** Local draft so keystrokes do not rebuild App chrome domain every character. */
+function RenameDraftDialog({
+  open,
+  inputId,
+  initialName,
+  title,
+  nameLabel,
+  placeholder,
+  cancelLabel,
+  saveLabel,
+  onCancel,
+  onSave,
+}: {
+  open: boolean;
+  inputId: string;
+  initialName: string;
+  title: string;
+  nameLabel: string;
+  placeholder: string;
+  cancelLabel: string;
+  saveLabel: string;
+  onCancel: () => void;
+  onSave: (name: string) => void;
+}) {
+  const [draft, setDraft] = useState(initialName);
+  useEffect(() => {
+    if (open) setDraft(initialName);
+  }, [open, initialName]);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      if (!nextOpen) onCancel();
+    }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-2 py-2">
+          <Label htmlFor={inputId}>{nameLabel}</Label>
+          <Input
+            id={inputId}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              if (!draft.trim()) return;
+              onSave(draft);
+            }}
+            autoFocus
+            placeholder={placeholder}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onCancel}>{cancelLabel}</Button>
+          <Button onClick={() => onSave(draft)} disabled={!draft.trim()}>{saveLabel}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 
 export type AppViewProps = {
   domains: AppViewDomains;
@@ -127,14 +189,14 @@ function AppViewInner({ domains }: AppViewProps) {
     keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, noteGroups, notes, openLogView, openNoteRequest, orderedTabsWithEditors, orphanSessions,
     passphraseQueue, protocolSelectHost, proxyProfiles, portForwardingRules, quickResults, quickSearch, removeSessionFromWorkspace, reorderWorkTabs, reorderWorkspaceSessions,
     resolveEmptyVaultConflict, resolvedTheme, resolveSessionAppearance, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
-    sessionRenameValue, sessions, setActiveTabId, setDeepLinkHostDraft, setDraggingSessionId, setEditorWordWrap,
-    setNavigateToSection, setSessionRenameValue, setTerminalFontFamilyId, setTerminalFontSize, setVaultFocusRequest, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, clearSessionFontSizeOverride,
-    setWorkspaceFocusedSession, setWorkspaceRenameValue, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
+    sessions, setActiveTabId, setDeepLinkHostDraft, setDraggingSessionId, setEditorWordWrap,
+    setNavigateToSection, setTerminalFontFamilyId, setTerminalFontSize, setVaultFocusRequest, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, clearSessionFontSizeOverride,
+    setWorkspaceFocusedSession, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
     sftpShowHiddenFiles, sftpUseCompressedUpload, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
     startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
     toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog,
     readPersistedHosts, readPersistedManagedSources, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
-    updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaceRenameValue, workspaces,
+    updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
 
@@ -211,6 +273,70 @@ function AppViewInner({ domains }: AppViewProps) {
     pluginViewTabStore.close(tabId);
   }, [orderedTabsWithEditors]);
 
+  const orderedTabsWithEditorsRef = useRef(orderedTabsWithEditors);
+  orderedTabsWithEditorsRef.current = orderedTabsWithEditors;
+
+  // Stable for TopTabs memo: read ordered tabs via ref; prompt via module singleton.
+  const handleRequestCloseEditorTab = useCallback(async (id: string): Promise<boolean> => {
+    const tab = editorTabStore.getTab(id);
+    if (!tab) return false;
+
+    const closeEditorAndActivateNeighbor = () => {
+      const closingTabId = toEditorTabId(id);
+      const list = orderedTabsWithEditorsRef.current;
+      const idx = list.indexOf(closingTabId);
+      releaseEditorTabSaveCoordinator(id);
+      editorTabStore.close(id);
+      if (activeTabStore.getActiveTabId() !== closingTabId) return;
+      const next = list[idx - 1] ?? list[idx + 1] ?? 'vault';
+      activeTabStore.setActiveTabId(next === closingTabId ? 'vault' : next);
+    };
+
+    const dirty = tab.content !== tab.baselineContent;
+    if (!dirty) {
+      closeEditorAndActivateNeighbor();
+      return true;
+    }
+    const choice = await promptUnsavedChanges(tab.fileName);
+    if (choice === 'cancel') return false;
+    if (choice === 'discard') {
+      closeEditorAndActivateNeighbor();
+      return true;
+    }
+    if (choice === 'save') {
+      const ok = await saveEditorTab(id);
+      if (!ok) {
+        const msg = editorTabStore.getTab(id)?.saveError ?? 'Save failed';
+        toast.error(msg, 'SFTP');
+        return false;
+      }
+      const latest = editorTabStore.getTab(id);
+      if (!latest || latest.content !== latest.baselineContent) return false;
+      closeEditorAndActivateNeighbor();
+      return true;
+    }
+
+    return false;
+  }, []);
+
+  // Keep the hotkey ref current during render so Cmd/Ctrl+W never sees the
+  // App.tsx stub `() => false` between commit and useEffect.
+  handleRequestCloseEditorTabRef.current = handleRequestCloseEditorTab;
+
+  const handleSaveSessionRename = useCallback((name: string) => {
+    if (!sessionRenameTarget) return;
+    if (!name.trim()) return;
+    submitSessionRename(sessionRenameTarget.id, name);
+    resetSessionRename();
+  }, [resetSessionRename, sessionRenameTarget, submitSessionRename]);
+
+  const handleSaveWorkspaceRename = useCallback((name: string) => {
+    if (!workspaceRenameTarget) return;
+    if (!name.trim()) return;
+    submitWorkspaceRename(workspaceRenameTarget.id, name);
+    resetWorkspaceRename();
+  }, [resetWorkspaceRename, submitWorkspaceRename, workspaceRenameTarget]);
+
   useEffect(() => {
     const catalog = buildPluginSettingScopeCatalog({
       hosts,
@@ -224,54 +350,7 @@ function AppViewInner({ domains }: AppViewProps) {
   return (
     <SnippetExecutionProvider>
     <UnsavedChangesProvider>
-      {({ prompt }) => {
-        // Helper: close an editor tab and activate the neighbor (left-preference), or vault.
-        const closeEditorAndActivateNeighbor = (id: string) => {
-          const closingTabId = toEditorTabId(id);
-          const list = orderedTabsWithEditors;
-          const idx = list.indexOf(closingTabId);
-          releaseEditorTabSaveCoordinator(id);
-          editorTabStore.close(id);
-          if (activeTabStore.getActiveTabId() !== closingTabId) return;
-          const next = list[idx - 1] ?? list[idx + 1] ?? 'vault';
-          activeTabStore.setActiveTabId(next === closingTabId ? 'vault' : next);
-        };
-
-        // Real dirty-confirm close handler.
-        const handleRequestCloseEditorTab = async (id: string): Promise<boolean> => {
-          const tab = editorTabStore.getTab(id);
-          if (!tab) return false;
-          const dirty = tab.content !== tab.baselineContent;
-          if (!dirty) {
-            closeEditorAndActivateNeighbor(id);
-            return true;
-          }
-          const choice = await prompt(tab.fileName);
-          if (choice === 'cancel') return false;
-          if (choice === 'discard') {
-            closeEditorAndActivateNeighbor(id);
-            return true;
-          }
-          if (choice === 'save') {
-            const ok = await saveEditorTab(id);
-            if (!ok) {
-              const msg = editorTabStore.getTab(id)?.saveError ?? 'Save failed';
-              toast.error(msg, 'SFTP');
-              return false;
-            }
-            const latest = editorTabStore.getTab(id);
-            if (!latest || latest.content !== latest.baselineContent) return false;
-            closeEditorAndActivateNeighbor(id);
-            return true;
-          }
-
-          return false;
-        };
-
-        // Expose to the hotkey dispatcher (Cmd/Ctrl+W).
-        handleRequestCloseEditorTabRef.current = handleRequestCloseEditorTab;
-
-        return (
+      {() => (
     <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" data-terminal-appearance-root onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
@@ -464,8 +543,6 @@ function AppViewInner({ domains }: AppViewProps) {
           identities={identities}
           snippets={snippets}
           snippetPackages={snippetPackages}
-          notes={notes}
-          noteGroups={noteGroups}
           sessions={sessions}
           workspaces={workspaces}
           knownHosts={effectiveKnownHosts}
@@ -529,8 +606,6 @@ function AppViewInner({ domains }: AppViewProps) {
           updateHosts={updateTerminalHosts}
           updateSnippets={updateSnippets}
           updateSnippetPackages={updateSnippetPackages}
-          updateNotes={updateNotes}
-          updateNoteGroups={updateNoteGroups}
           sftpDefaultViewMode={sftpDefaultViewMode}
           sftpDoubleClickBehavior={sftpDoubleClickBehavior}
           sftpAutoSync={sftpAutoSync}
@@ -715,59 +790,32 @@ function AppViewInner({ domains }: AppViewProps) {
         </LazyLoadBoundary>
       )}
 
-      <Dialog open={!!sessionRenameTarget} onOpenChange={(open) => {
-        if (!open) {
-          resetSessionRename();
-        }
-      }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t('dialog.renameSession.title')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="session-name">{t('field.name')}</Label>
-            <Input
-              id="session-name"
-              value={sessionRenameValue}
-              onChange={(e) => setSessionRenameValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submitSessionRename(); }}
-              autoFocus
-              placeholder={t('placeholder.sessionName')}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={resetSessionRename}>{t('common.cancel')}</Button>
-            <Button onClick={submitSessionRename} disabled={!sessionRenameValue.trim()}>{t('common.save')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RenameDraftDialog
+        open={!!sessionRenameTarget}
+        inputId="session-name"
+        initialName={sessionRenameTarget ? (sessionRenameTarget.customName || sessionRenameTarget.hostLabel) : ''}
+        title={t('dialog.renameSession.title')}
+        nameLabel={t('field.name')}
+        placeholder={t('placeholder.sessionName')}
+        cancelLabel={t('common.cancel')}
+        saveLabel={t('common.save')}
+        onCancel={resetSessionRename}
+        onSave={handleSaveSessionRename}
+      />
 
-      <Dialog open={!!workspaceRenameTarget} onOpenChange={(open) => {
-        if (!open) {
-          resetWorkspaceRename();
-        }
-      }}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t('dialog.renameWorkspace.title')}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="workspace-name">{t('field.name')}</Label>
-            <Input
-              id="workspace-name"
-              value={workspaceRenameValue}
-              onChange={(e) => setWorkspaceRenameValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submitWorkspaceRename(); }}
-              autoFocus
-              placeholder={t('placeholder.workspaceName')}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={resetWorkspaceRename}>{t('common.cancel')}</Button>
-            <Button onClick={submitWorkspaceRename} disabled={!workspaceRenameValue.trim()}>{t('common.save')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RenameDraftDialog
+        open={!!workspaceRenameTarget}
+        inputId="workspace-name"
+        initialName={workspaceRenameTarget ? workspaceRenameTarget.title : ''}
+        title={t('dialog.renameWorkspace.title')}
+        nameLabel={t('field.name')}
+        placeholder={t('placeholder.workspaceName')}
+        cancelLabel={t('common.cancel')}
+        saveLabel={t('common.save')}
+        onCancel={resetWorkspaceRename}
+        onSave={handleSaveWorkspaceRename}
+      />
+
 
       {isCreateWorkspaceOpen && (
         <LazyLoadBoundary name="Create workspace" resetKey="create-workspace">
@@ -871,8 +919,7 @@ function AppViewInner({ domains }: AppViewProps) {
         </DialogContent>
       </Dialog>
     </div>
-        );
-      }}
+      )}
     </UnsavedChangesProvider>
     </SnippetExecutionProvider>
   );

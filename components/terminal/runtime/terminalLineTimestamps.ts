@@ -971,9 +971,6 @@ const resolveLastPaintBufferLine = (
 export const getTerminalLineTimestampLedgerCount = (term: XTerm): number =>
   getTimestampStore(term).ledger.length;
 
-/** @deprecated No-op; paint reads the ledger directly. */
-export const materializeTimestampLedgerToMarkers = (_term: XTerm): number => 0;
-
 const internTerminalLineTimestampLabel = (
   store: TimestampStore,
   date: Date,

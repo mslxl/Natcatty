@@ -27,8 +27,8 @@ import {
   SystemPanelToolbar,
 } from './SystemPanelUi';
 import { SystemPanelConfirmDialog } from './SystemPanelConfirmDialog';
-import { useAsyncRecordCache } from './hooks/useAsyncRecordCache';
-import { usePolling, useStableTranslate } from './hooks/useSystemManager';
+import { useAsyncRecordCache } from '../../application/state/systemManager/useAsyncRecordCache';
+import { usePolling, useStableTranslate } from '../../application/state/useSystemManager';
 import { openInteractiveTerminal } from './openInteractiveTerminal';
 import { showSystemManagerError } from './systemManagerToast';
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { Host, Identity, KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding, SSHKey } from "../../../domain/models";
+import { createKnownHostFromHostKeyInfo } from "../../../domain/knownHosts";
 import type { SftpHostKeyInfo, SftpHostKeyVerificationState, SftpPane } from "./types";
 import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
 import { useSftpHostCredentials } from "./useSftpHostCredentials";
@@ -206,15 +207,7 @@ const createKnownHostFromSftpHostKeyInfo = (
   hostKeyInfo: SftpHostKeyInfo,
   now = Date.now(),
   idSuffix = Math.random().toString(36).slice(2, 11),
-): KnownHost => ({
-  id: hostKeyInfo.knownHostId || `kh-${now}-${idSuffix}`,
-  hostname: hostKeyInfo.hostname,
-  port: hostKeyInfo.port || 22,
-  keyType: hostKeyInfo.keyType,
-  publicKey: hostKeyInfo.publicKey || `SHA256:${hostKeyInfo.fingerprint}`,
-  fingerprint: hostKeyInfo.fingerprint,
-  discoveredAt: now,
-});
+): KnownHost => createKnownHostFromHostKeyInfo(hostKeyInfo, { now, idSuffix });
 
 export const useSftpConnections = ({
   hosts,

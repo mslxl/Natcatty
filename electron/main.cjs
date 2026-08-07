@@ -185,11 +185,16 @@ const { queryDirtyEditors } = require("./bridges/dirtyEditorGuard.cjs");
 if (process.env.NETCATTY_NO_SANDBOX === "1") {
   app.commandLine.appendSwitch("no-sandbox");
 }
-// Force hardware acceleration even on blocklisted GPUs (macs sometimes fall back to software)
-app.commandLine.appendSwitch("ignore-gpu-blocklist");
-app.commandLine.appendSwitch("ignore-gpu-blacklist"); // Some Chromium builds use this alias; keep both for safety
-app.commandLine.appendSwitch("enable-gpu-rasterization");
-app.commandLine.appendSwitch("enable-zero-copy");
+// Avoid Chromium spare renderers that inflate baseline memory for little gain.
+app.commandLine.appendSwitch("disable-features", "SpareRendererForSitePerProcess");
+// Aggressive GPU enablement can break some environments; opt out with NETCATTY_COMPAT_GPU=1.
+if (process.env.NETCATTY_COMPAT_GPU !== "1") {
+  // Force hardware acceleration even on blocklisted GPUs (macs sometimes fall back to software)
+  app.commandLine.appendSwitch("ignore-gpu-blocklist");
+  app.commandLine.appendSwitch("ignore-gpu-blacklist"); // Some Chromium builds use this alias; keep both for safety
+  app.commandLine.appendSwitch("enable-gpu-rasterization");
+  app.commandLine.appendSwitch("enable-zero-copy");
+}
 
 // Silence noisy DevTools Autofill CDP errors (Electron's backend doesn't expose this domain)
 app.on("web-contents-created", (_event, contents) => {
@@ -1021,6 +1026,13 @@ if (!gotLock) {
     });
     explorerContextMenuEnabled = initialExplorerContextMenuPreference.enabled === true;
 
+    // Spellcheck dictionaries/workers are unused in Netcatty and cost memory.
+    try {
+      session?.defaultSession?.setSpellCheckerEnabled?.(false);
+    } catch {
+      // ignore
+    }
+
     // Grant only the Chromium permissions the app actually uses, and only
     // to the app's own origin. The default session is shared with in-app
     // OAuth pop-ups (accounts.google.com, login.microsoftonline.com, ...),
@@ -1133,18 +1145,20 @@ if (!gotLock) {
       // startAutoCheck() is a no-op on unsupported platforms (Linux deb/rpm/snap).
       getAutoUpdateBridge().startAutoCheck(5000);
 
-      // Pre-warm the settings window in the background so it opens instantly.
-      // Delay slightly to avoid competing with main window first-paint resources.
-      setTimeout(() => {
-        getWindowManager().prewarmSettingsWindow(electronModule, {
-          preload,
-          devServerUrl: effectiveDevServerUrl,
-          isDev,
-          appIcon: appIconManager.getAppIconPath(appPath),
-          isMac,
-          electronDir,
-        });
-      }, 3000);
+      // Settings prewarm is opt-in: a hidden BrowserWindow holds a full renderer.
+      // Enable with NETCATTY_PREWARM_SETTINGS=1 (delayed so first paint is undisturbed).
+      if (process.env.NETCATTY_PREWARM_SETTINGS === "1") {
+        setTimeout(() => {
+          getWindowManager().prewarmSettingsWindow(electronModule, {
+            preload,
+            devServerUrl: effectiveDevServerUrl,
+            isDev,
+            appIcon: appIconManager.getAppIconPath(appPath),
+            isMac,
+            electronDir,
+          });
+        }, 15000);
+      }
     }).catch((err) => {
       console.error("[Main] Failed to create main window:", err);
       showStartupError(err);

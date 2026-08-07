@@ -1,29 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { vaultViewAreEqual } from "./VaultView.tsx";
+import { syncVaultViewMemoSection, vaultViewAreEqual } from "./VaultView.tsx";
+
+const baseProps = {
+  hosts: [],
+  keys: [],
+  identities: [],
+  proxyProfiles: [],
+  snippets: [],
+  snippetPackages: [],
+  notes: [],
+  noteGroups: [],
+  customGroups: [],
+  knownHosts: [],
+  connectionLogs: [],
+  sessions: [],
+  managedSources: [],
+  groupConfigs: {},
+  terminalThemeId: "default",
+  terminalFontSize: 14,
+  navigateToSection: null,
+};
 
 test("VaultView re-renders when an external section navigation request changes", () => {
-  const baseProps = {
-    hosts: [],
-    keys: [],
-    identities: [],
-    proxyProfiles: [],
-    snippets: [],
-    snippetPackages: [],
-    notes: [],
-    noteGroups: [],
-    customGroups: [],
-    knownHosts: [],
-    connectionLogs: [],
-    sessions: [],
-    managedSources: [],
-    groupConfigs: {},
-    terminalThemeId: "default",
-    terminalFontSize: 14,
-    navigateToSection: null,
-  };
-
   assert.equal(
     vaultViewAreEqual(
       baseProps as never,
@@ -34,26 +34,6 @@ test("VaultView re-renders when an external section navigation request changes",
 });
 
 test("VaultView memo does not depend on shellHistory prop identity", () => {
-  const baseProps = {
-    hosts: [],
-    keys: [],
-    identities: [],
-    proxyProfiles: [],
-    snippets: [],
-    snippetPackages: [],
-    notes: [],
-    noteGroups: [],
-    customGroups: [],
-    knownHosts: [],
-    connectionLogs: [],
-    sessions: [],
-    managedSources: [],
-    groupConfigs: {},
-    terminalThemeId: "default",
-    terminalFontSize: 14,
-    navigateToSection: null,
-  };
-  // History-only updates must not be part of VaultView equality (store path).
   assert.equal(
     vaultViewAreEqual(baseProps as never, { ...baseProps } as never),
     true,
@@ -65,26 +45,6 @@ test("VaultView memo does not depend on shellHistory prop identity", () => {
 });
 
 test("VaultView re-renders when proxy profiles change", () => {
-  const baseProps = {
-    hosts: [],
-    keys: [],
-    identities: [],
-    proxyProfiles: [],
-    snippets: [],
-    snippetPackages: [],
-    notes: [],
-    noteGroups: [],
-    customGroups: [],
-    knownHosts: [],
-    connectionLogs: [],
-    sessions: [],
-    managedSources: [],
-    groupConfigs: {},
-    terminalThemeId: "default",
-    terminalFontSize: 14,
-    navigateToSection: null,
-  };
-
   assert.equal(
     vaultViewAreEqual(
       baseProps as never,
@@ -105,42 +65,48 @@ test("VaultView re-renders when proxy profiles change", () => {
 });
 
 test("VaultView re-renders when host-key verification setting changes", () => {
-  const baseProps = {
-    hosts: [],
-    keys: [],
-    identities: [],
-    proxyProfiles: [],
-    snippets: [],
-    snippetPackages: [],
-    notes: [],
-    noteGroups: [],
-    customGroups: [],
-    knownHosts: [],
-    connectionLogs: [],
-    sessions: [],
-    managedSources: [],
-    groupConfigs: {},
-    terminalThemeId: "default",
-    terminalFontSize: 14,
-    navigateToSection: null,
-    terminalSettings: {
-      verifyHostKeys: true,
-      keepaliveInterval: 30,
-      keepaliveCountMax: 10,
-    },
-  };
-
   assert.equal(
     vaultViewAreEqual(
       baseProps as never,
       {
         ...baseProps,
         terminalSettings: {
-          ...baseProps.terminalSettings,
           verifyHostKeys: false,
         },
       } as never,
     ),
     false,
   );
+});
+
+test("VaultView ignores connectionLogs identity when not on logs section", () => {
+  syncVaultViewMemoSection("hosts");
+  const nextLogs = [{ id: "log-1" }];
+  assert.equal(
+    vaultViewAreEqual(
+      baseProps as never,
+      { ...baseProps, connectionLogs: nextLogs } as never,
+    ),
+    true,
+  );
+});
+
+test("VaultView compares connectionLogs identity when on logs section", () => {
+  syncVaultViewMemoSection("logs");
+  const nextLogs = [{ id: "log-2" }];
+  assert.equal(
+    vaultViewAreEqual(
+      baseProps as never,
+      { ...baseProps, connectionLogs: nextLogs } as never,
+    ),
+    false,
+  );
+  assert.equal(
+    vaultViewAreEqual(
+      { ...baseProps, connectionLogs: nextLogs } as never,
+      { ...baseProps, connectionLogs: nextLogs } as never,
+    ),
+    true,
+  );
+  syncVaultViewMemoSection("hosts");
 });

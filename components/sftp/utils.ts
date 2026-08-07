@@ -24,6 +24,16 @@ import {
 import React from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { SftpFileEntry } from '../../types';
+import {
+  formatDate as formatDateFromState,
+  isNavigableDirectory,
+} from '../../application/state/sftp/utils';
+
+export { isNavigableDirectory };
+
+/** Accept undefined timestamps from file-list rows. */
+export const formatDate = (timestamp: number | undefined): string =>
+  formatDateFromState(timestamp ?? 0);
 
 // Pre-built icon maps for O(1) lookup in getFileIcon
 type IconDef = [LucideIcon, string?];
@@ -200,17 +210,6 @@ export const formatTransferBytes = (bytes: number): string => {
 };
 
 /**
- * Format date as YYYY-MM-DD hh:mm in local timezone
- */
-export const formatDate = (timestamp: number | undefined): string => {
-    if (!timestamp) return '--';
-    const date = new Date(timestamp);
-    if (isNaN(date.getTime())) return '--';
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-};
-
-/**
  * Format speed with appropriate unit
  */
 export const formatSpeed = (bytesPerSecond: number): string => {
@@ -245,40 +244,15 @@ export const getFileIcon = (entry: SftpFileEntry): React.ReactElement => {
     return React.createElement(FileCode, { size: 14 });
 };
 
-// Sort configuration types
-export type SortField = 'name' | 'size' | 'modified' | 'type';
-export type SortOrder = 'asc' | 'desc';
-
-// Column widths type
-export interface ColumnWidths {
-    name: number;
-    modified: number;
-    size: number;
-    type: number;
-}
-
-export type SftpColumnVisibility = Record<keyof ColumnWidths, boolean>;
-
-export const DEFAULT_SFTP_COLUMN_VISIBILITY: SftpColumnVisibility = {
-    name: true,
-    modified: true,
-    size: true,
-    type: true,
-};
-
-export const normalizeSftpColumnVisibility = (value: unknown): SftpColumnVisibility => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return DEFAULT_SFTP_COLUMN_VISIBILITY;
-    }
-
-    const stored = value as Partial<Record<keyof ColumnWidths, unknown>>;
-    return {
-        name: true,
-        modified: stored.modified !== false,
-        size: stored.size !== false,
-        type: stored.type !== false,
-    };
-};
+// Sort / column layout — owned by application/state; re-exported for UI callers.
+export {
+  DEFAULT_SFTP_COLUMN_VISIBILITY,
+  normalizeSftpColumnVisibility,
+  type ColumnWidths,
+  type SftpColumnVisibility,
+  type SortField,
+  type SortOrder,
+} from '../../application/state/sftp/columnLayout';
 
 export const isSftpColumnMenuKey = (key: string, shiftKey: boolean): boolean =>
     key === 'ContextMenu' || (key === 'F10' && shiftKey);
@@ -337,14 +311,6 @@ export const sortSftpEntries = (
     });
 
     return sorted;
-};
-
-/**
- * Check if an entry is navigable like a directory
- * This includes regular directories and symlinks that point to directories
- */
-export const isNavigableDirectory = (entry: SftpFileEntry): boolean => {
-    return entry.type === 'directory' || (entry.type === 'symlink' && entry.linkTarget === 'directory');
 };
 
 /**

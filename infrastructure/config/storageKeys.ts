@@ -201,6 +201,10 @@ export const STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN = 'netcatty_ai_exter
 export const STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_session_idle_timeout_minutes_v1';
 /** External MCP: whether host_open sessions stay hidden from the tab bar (default false). */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external_mcp_silent_sessions_v1';
+/** AI panel diagnostic hide list (comma-separated part names). */
+export const STORAGE_KEY_AI_PANEL_DIAGNOSTIC_HIDE = 'netcatty.aiDebug.hide';
+/** AI panel React profiler toggle. */
+export const STORAGE_KEY_AI_PANEL_DIAGNOSTIC_PROFILE = 'netcatty.aiDebug.profile';
 
 // SFTP Transfer Concurrency
 export const STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY = 'netcatty_sftp_transfer_concurrency_v1';

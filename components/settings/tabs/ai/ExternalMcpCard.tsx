@@ -2,26 +2,19 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy, HelpCircle, RefreshCw } from "lucide-react";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import {
-  normalizeExternalMcpIdleTimeoutMinutes,
-  normalizeExternalMcpMode,
-  normalizeSessionIdleTimeoutMinutes,
   readExternalMcpFocusOnHostOpen,
   readExternalMcpIdleTimeoutMinutes,
   readExternalMcpMode,
   readExternalMcpSilentSessions,
   readSessionIdleTimeoutMinutes,
   writeExternalMcpFocusOnHostOpen,
+  writeExternalMcpIdleTimeoutMinutes,
+  writeExternalMcpMode,
   writeExternalMcpSilentSessions,
+  writeSessionIdleTimeoutMinutes,
   type ExternalMcpMode,
   useExternalMcpToggleState,
 } from "../../../../application/state/useExternalMcpToggleState";
-import {
-  STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
-  STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
-  STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
-} from "../../../../infrastructure/config/storageKeys";
-import { localStorageAdapter } from "../../../../infrastructure/persistence/localStorageAdapter";
-import { emitAIStateChanged } from "../../../../application/state/aiStateEvents";
 import { cn } from "../../../../lib/utils";
 import { Button } from "../../../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../ui/tooltip";
@@ -328,26 +321,20 @@ export const ExternalMcpCard: React.FC = () => {
   }, []);
 
   const setMode = useCallback((nextMode: ExternalMcpMode) => {
-    const normalized = normalizeExternalMcpMode(nextMode);
+    const normalized = writeExternalMcpMode(nextMode);
     setModeRaw(normalized);
-    localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, normalized);
-    emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_MODE);
     pushConfig(normalized, idleTimeoutMinutes, sessionIdleTimeoutMinutes);
   }, [idleTimeoutMinutes, pushConfig, sessionIdleTimeoutMinutes]);
 
   const setIdleTimeoutMinutes = useCallback((minutes: number) => {
-    const normalized = normalizeExternalMcpIdleTimeoutMinutes(minutes);
+    const normalized = writeExternalMcpIdleTimeoutMinutes(minutes);
     setIdleTimeoutRaw(normalized);
-    localStorageAdapter.writeNumber(STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES, normalized);
-    emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES);
     pushConfig(mode, normalized, sessionIdleTimeoutMinutes);
   }, [mode, pushConfig, sessionIdleTimeoutMinutes]);
 
   const setSessionIdleTimeoutMinutes = useCallback((minutes: number) => {
-    const normalized = normalizeSessionIdleTimeoutMinutes(minutes);
+    const normalized = writeSessionIdleTimeoutMinutes(minutes);
     setSessionIdleTimeoutRaw(normalized);
-    localStorageAdapter.writeNumber(STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES, normalized);
-    emitAIStateChanged(STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES);
     pushConfig(mode, idleTimeoutMinutes, normalized);
   }, [idleTimeoutMinutes, mode, pushConfig]);
 

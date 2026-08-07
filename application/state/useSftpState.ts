@@ -399,14 +399,6 @@ export const useSftpState = (
     [hosts, identities, keys, openPoolSftpSession, transferKnownHosts, transferPoolKeyCache, transferTerminalSettings],
   );
 
-  /**
-   * @deprecated No-op. SSH transport idle park keeps connections warm; opening
-   * a background transfer channel is unnecessary and could re-trigger MFA.
-   */
-  const warmTransferPoolForHost = useCallback(async (_hostId: string) => {
-    // Intentionally empty — unified transport registry owns keep-alive.
-  }, []);
-
   /** True after browse channels were soft-closed while this owner stayed mounted. */
   const browseParkedRef = useRef(false);
   const browseLifecycleGenRef = useRef(0);
@@ -824,7 +816,6 @@ export const useSftpState = (
     rejectHostKeyVerification,
     acceptHostKeyVerification,
     acceptAndSaveHostKeyVerification,
-    warmTransferPoolForHost,
   };
   const methodsRef = useRef(currentMethods);
   methodsRef.current = currentMethods;
@@ -907,8 +898,6 @@ export const useSftpState = (
     rejectHostKeyVerification: () => methodsRef.current.rejectHostKeyVerification(),
     acceptHostKeyVerification: () => methodsRef.current.acceptHostKeyVerification(),
     acceptAndSaveHostKeyVerification: () => methodsRef.current.acceptAndSaveHostKeyVerification(),
-    warmTransferPoolForHost: (...args: Parameters<typeof warmTransferPoolForHost>) =>
-      methodsRef.current.warmTransferPoolForHost(...args),
     activeFileWatchCountRef,
   }), [activeFileWatchCountRef]); // activeFileWatchCountRef is a stable ref
 

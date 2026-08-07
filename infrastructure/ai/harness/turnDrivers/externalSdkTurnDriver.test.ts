@@ -396,6 +396,14 @@ test('accepted steering keeps buffered results for existing tool calls on their 
   assert.equal(session.messages[3].content, '');
 
   onEvent?.({ type: 'text-delta', textDelta: 'continued after steer' });
+  // Text deltas are rAF-batched like Catty; wait one frame before asserting.
+  await new Promise<void>((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
   assert.equal(session.messages[3].content, 'continued after steer');
 
   onDone?.();

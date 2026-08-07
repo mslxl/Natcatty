@@ -10,7 +10,7 @@ import type {
   TmuxSessionInfo,
 } from '../../domain/systemManager/types';
 import type { TerminalSession } from '../../types';
-import type { AsyncRecordState } from './hooks/useAsyncRecordCache';
+import type { AsyncRecordState } from '../../application/state/systemManager/useAsyncRecordCache';
 import type { TmuxSessionDetails } from './TmuxManagerTab';
 import {
   SystemPanelCollapsible,

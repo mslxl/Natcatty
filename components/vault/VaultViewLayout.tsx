@@ -1187,6 +1187,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 hosts={hosts}
                 onUpdateNotes={onUpdateNotes}
                 onUpdateNoteGroups={onUpdateNoteGroups}
+                isActive={currentSection === "notes"}
                 openNoteId={openNoteId ?? null}
                 onOpenNoteIdHandled={onOpenNoteIdHandled}
                 onOpenHost={(host: any, source: any) => {

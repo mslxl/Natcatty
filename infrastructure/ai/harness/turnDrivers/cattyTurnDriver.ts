@@ -20,7 +20,7 @@ import {
 import { computeTotalInputTokens, DEFAULT_MAX_OUTPUT_TOKENS } from '../contextBudget';
 import { clearChatSessionCancelled } from '../agentStop';
 import { isRequestTooLargeError } from '../../errorClassifier';
-import { getNetcattyBridge, generateId, resolveUserSkillsContext } from '../../../../components/ai/hooks/aiChatStreamingSupport';
+import { getNetcattyBridge, generateId, resolveUserSkillsContext } from '../../aiChatStreamingSupport';
 import {
   buildCattySdkMessages,
   collectOpenAIChatAssistantFieldsForMessages,

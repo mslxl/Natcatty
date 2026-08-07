@@ -53,3 +53,8 @@ test('shared host tree forwards work-surface host management callbacks', () => {
   assert.match(hostTreeLayerSource, /onNewHost=\{onNewHost\}/);
   assert.match(hostTreeLayerSource, /onEditHost=\{onEditHost\}/);
 });
+
+test('shared host tree layer is memoized with a custom areEqual', () => {
+  assert.match(hostTreeLayerSource, /memo\(AppHostTreeLayerInner,\s*appHostTreeLayerAreEqual\)/);
+});
+

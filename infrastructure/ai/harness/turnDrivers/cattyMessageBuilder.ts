@@ -25,7 +25,7 @@ import {
   toAssistantModelContent,
   type AssistantContentPart,
   type CattyProviderContinuationContext,
-} from '../../../../components/ai/hooks/aiChatStreamingSupport';
+} from '../../aiChatStreamingSupport';
 import { redactSecretsInValueForModel } from '../modelSecretRedaction';
 import { fitLargeUserInputForModel } from '../largeUserInput';
 import type { ToolOutputStore } from '../toolOutputStore';

@@ -9,6 +9,13 @@ import {
   subscribeSidePanelLiveSnapshot,
 } from '../../application/state/sidePanelLiveStore';
 import {
+  getEmptyNotesSnapshot,
+  getNotesSnapshot,
+  subscribeNotes,
+  subscribeNotesNoop,
+  useNotesStore,
+} from '../../application/state/notesStore';
+import {
   getShellHistorySnapshot,
   subscribeShellHistory,
 } from '../../application/state/shellHistoryStore';
@@ -399,14 +406,16 @@ function SidePanelNotesSlotInner({
   isVisible: boolean;
 }) {
   const openNoteRequest = (ctx.notesOpenNoteByTab as Map<string, { noteId: string; requestId: number }>).get(tabId) ?? null;
+  const {
+    notes,
+    noteGroups,
+    updateNotes,
+    updateNoteGroups,
+  } = useNotesStore();
 
   const {
     NotesManager,
-    notes,
-    noteGroups,
     hosts,
-    updateNotes,
-    updateNoteGroups,
     handleOpenHostFromNotes,
   } = ctx;
 
@@ -423,6 +432,7 @@ function SidePanelNotesSlotInner({
         onUpdateNoteGroups={updateNoteGroups}
         onOpenHost={handleOpenHostFromNotes}
         displayMode="sidebar"
+        isActive={isVisible}
         openNoteId={openNoteRequest?.noteId ?? null}
         openNoteRequestId={openNoteRequest?.requestId ?? null}
       />
@@ -499,7 +509,6 @@ function SidePanelAiSlotInner({
     resolveAIExecutorContext,
     pendingTerminalSelectionForAI,
     handlePendingTerminalSelectionConsumed,
-    notes,
     hosts,
     snippets,
     onOpenVaultNoteFromChat,
@@ -508,6 +517,14 @@ function SidePanelAiSlotInner({
     onOpenVaultSnippetFromChat,
     validAIScopeTargetIds,
   } = ctx;
+
+  // Gate notes subscription while AI is hidden so note edits do not re-render
+  // retained AI mounts (panel still mounts for fast reopen).
+  const notesSnapshot = useSyncExternalStore(
+    isVisible ? subscribeNotes : subscribeNotesNoop,
+    isVisible ? getNotesSnapshot : getEmptyNotesSnapshot,
+    isVisible ? getNotesSnapshot : getEmptyNotesSnapshot,
+  );
 
   if (mountedAiTabIds.length === 0) return null;
   const activeLayout = activeTabId
@@ -522,6 +539,9 @@ function SidePanelAiSlotInner({
   // Only the visible AI panel needs vault catalogs for artifact navigation.
   // Hidden retained panels keep session state without re-binding huge hosts/notes.
   const injectVaultCatalog = isVisible;
+  const notes = injectVaultCatalog
+    ? (notesSnapshot.notes as import('../../domain/models').VaultNote[])
+    : EMPTY_VAULT_NOTES;
 
   return (
     <AISidePanelStateRoot validAIScopeTargetIds={validAIScopeTargetIds}>
@@ -533,7 +553,7 @@ function SidePanelAiSlotInner({
         resolveExecutorContext={resolveAIExecutorContext}
         pendingTerminalSelection={pendingTerminalSelectionForAI}
         onPendingTerminalSelectionConsumed={handlePendingTerminalSelectionConsumed}
-        notes={injectVaultCatalog ? notes : EMPTY_VAULT_NOTES}
+        notes={notes}
         hosts={injectVaultCatalog ? hosts : EMPTY_VAULT_HOSTS}
         snippets={injectVaultCatalog ? snippets : EMPTY_VAULT_SNIPPETS}
         onOpenVaultNoteFromChat={onOpenVaultNoteFromChat}

@@ -619,17 +619,26 @@ export const useSessionState = ({
     });
   }, []);
 
-  const submitWorkspaceRename = useCallback(() => {
+  const submitWorkspaceRename = useCallback((workspaceId?: string, name?: string) => {
+    if (workspaceId !== undefined && name !== undefined) {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      setWorkspaces(prev => prev.map(w => (
+        w.id === workspaceId ? { ...w, title: trimmed, autoTitle: false } : w
+      )));
+      return;
+    }
+
     setWorkspaceRenameValue(prevValue => {
-      const name = prevValue.trim();
-      if (!name) return prevValue;
-      
+      const trimmed = prevValue.trim();
+      if (!trimmed) return prevValue;
+
       setWorkspaceRenameTarget(prevTarget => {
         if (!prevTarget) return prevTarget;
-        setWorkspaces(prev => prev.map(w => w.id === prevTarget.id ? { ...w, title: name, autoTitle: false } : w));
+        setWorkspaces(prev => prev.map(w => w.id === prevTarget.id ? { ...w, title: trimmed, autoTitle: false } : w));
         return null;
       });
-      
+
       return '';
     });
   }, []);

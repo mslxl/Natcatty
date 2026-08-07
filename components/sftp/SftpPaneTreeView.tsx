@@ -12,7 +12,7 @@ import { getParentPath, isWindowsRoot, joinPath, resolveSftpWindowsPathOptions }
 import { buildSftpColumnTemplate, filterHiddenFiles, isNavigableDirectory, isSftpColumnMenuKey, sortSftpEntries } from './utils';
 import type { SftpTransferSource } from './SftpContext';
 import type { SftpPaneTreeViewProps } from './SftpPaneTreeView.types';
-import { sftpTreeSelectionStore, useSftpTreeSelectionState } from './hooks/useSftpTreeSelectionStore';
+import { sftpTreeSelectionStore, useSftpTreeSelectionState } from '../../application/state/sftp/sftpTreeSelectionStore';
 import { sftpKeyboardSelectionStore, sftpTreeEnterStore } from './hooks/useSftpKeyboardShortcuts';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { SftpColumnMenuItems } from './SftpColumnMenuItems';

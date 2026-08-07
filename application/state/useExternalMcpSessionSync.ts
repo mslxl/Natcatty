@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { buildAITerminalSessionInfo } from '../../components/terminalLayer/TerminalLayerSupport';
+import { buildAITerminalSessionInfo } from '../../domain/buildAITerminalSessionInfo';
 import { detectLocalOs } from '../../lib/localShell';
 import type { Host, PortForwardingRule, TerminalSession } from '../../types';
 import { STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED } from '../../infrastructure/config/storageKeys';

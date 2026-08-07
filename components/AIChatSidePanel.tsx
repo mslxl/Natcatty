@@ -49,7 +49,7 @@ import {
   getNetcattyBridge,
   isAIChatSessionStreaming,
   type DefaultTargetSessionHint,
-} from './ai/hooks/useAIChatStreaming';
+} from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
@@ -60,7 +60,7 @@ import { stopAgentTurn } from '../infrastructure/ai/harness/agentStop';
 import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
 import { useAIPermissionGrantsState } from '../application/state/useAIPermissionGrantsState';
 import { useConversationExport } from './ai/hooks/useConversationExport';
-import { useAgentContextUsage } from './ai/hooks/useAgentCompactionUi';
+import { useAgentContextUsage } from '../application/state/useAgentCompactionUi';
 import type { AIChatSidePanelProps } from './AIChatSidePanel.types';
 import {
   buildCursorListModelsAgentEnv,

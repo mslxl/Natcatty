@@ -31,8 +31,7 @@ export const terminalPropsAreEqual = (
   && prev.fontFamilyId === next.fontFamilyId
   && prev.fontSize === next.fontSize
   && prev.followAppTerminalTheme === next.followAppTerminalTheme
-  && prev.accentMode === next.accentMode
-  && prev.customAccent === next.customAccent
+  // accentMode / customAccent intentionally omitted — Terminal reads appearanceChromeStore.
   && prev.terminalSettings === next.terminalSettings
   && prev.sessionId === next.sessionId
   && prev.restoreState === next.restoreState

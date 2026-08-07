@@ -37,7 +37,7 @@ import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile }
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
-import type { AgentContextUsage } from './hooks/useAgentCompactionUi';
+import type { AgentContextUsage } from '../../application/state/useAgentCompactionUi';
 import {
   CHAT_INPUT_DEFAULT_HEIGHT,
   CHAT_INPUT_MAX_HEIGHT,

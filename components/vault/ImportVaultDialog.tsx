@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import type { VaultImportFileEncoding } from "../../application/state/vaultImportFile";
+import type { VaultImportOptions } from "../../application/state/vaultImportOptions";
 import type { VaultImportProgress } from "../../application/state/vaultImportProgress";
 import { usePluginVaultImporter } from "../../application/state/usePluginVaultImporter";
 import {
@@ -76,12 +77,7 @@ const OPTIONS: ImportOption[] = [
   },
 ];
 
-export type ImportOptions = {
-  managed?: boolean;
-  filePath?: string;
-  encoding?: VaultImportFileEncoding;
-  destination?: VaultImportDestination;
-};
+export type ImportOptions = VaultImportOptions;
 
 export type ImportVaultDialogProps = {
   open: boolean;

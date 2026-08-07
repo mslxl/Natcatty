@@ -49,8 +49,8 @@ interface AIChatPanelContentProps {
   handleDeleteSession: (event: React.MouseEvent, sessionId: string) => void;
   messages: ChatMessage[];
   isStreaming: boolean;
-  activeCompaction?: import('./ai/hooks/useAgentCompactionUi').ActiveCompactionUi | null;
-  contextUsage?: import('./ai/hooks/useAgentCompactionUi').AgentContextUsage | null;
+  activeCompaction?: import('../application/state/useAgentCompactionUi').ActiveCompactionUi | null;
+  contextUsage?: import('../application/state/useAgentCompactionUi').AgentContextUsage | null;
   inputValue: string;
   setInputValue: (value: string) => void;
   handleSend: () => void;

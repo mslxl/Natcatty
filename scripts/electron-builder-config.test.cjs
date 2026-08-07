@@ -128,6 +128,37 @@ test("build.files trims release-only dependency payloads", () => {
   }
 });
 
+test("build.files excludes Vite-bundled renderer-only packages", () => {
+  const files = config.files;
+  for (const glob of [
+    "!node_modules/react/**/*",
+    "!node_modules/react-dom/**/*",
+    "!node_modules/@radix-ui/**/*",
+    "!node_modules/ai/**/*",
+    "!node_modules/@ai-sdk/**/*",
+    "!node_modules/@mdxeditor/**/*",
+    "!node_modules/streamdown/**/*",
+    "!node_modules/@streamdown/**/*",
+    "!node_modules/@tanstack/react-virtual/**/*",
+    "!node_modules/pinyin-pro/**/*",
+    "!node_modules/re2js/**/*",
+    "!node_modules/@eslint-community/regexpp/**/*",
+    "!node_modules/clsx/**/*",
+    "!node_modules/tailwind-merge/**/*",
+    "!node_modules/use-stick-to-bottom/**/*",
+    "!node_modules/lexical/**/*",
+    "!node_modules/@lexical/**/*",
+    "!node_modules/@codemirror/**/*",
+    "!node_modules/shiki/**/*",
+    "!node_modules/@shiki/**/*",
+  ]) {
+    assert.ok(
+      files.includes(glob),
+      `build.files must exclude Vite-bundled renderer package: ${glob}`,
+    );
+  }
+});
+
 test("linux packaging uses multi-size build/icons instead of a single 1024px override", async () => {
   assert.equal(
     config.linux.icon,

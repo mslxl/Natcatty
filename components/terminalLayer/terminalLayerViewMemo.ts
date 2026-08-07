@@ -320,10 +320,7 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'validAIScopeTargetIds',
   'AISidePanelStateRoot',
   'NotesManager',
-  'notes',
-  'noteGroups',
-  'updateNotes',
-  'updateNoteGroups',
+  // notes / noteGroups / updateNotes / updateNoteGroups come from notesStore.
   'onOpenVaultNoteFromChat',
   'onOpenVaultHostFromChat',
   'onOpenVaultSectionFromChat',
@@ -362,8 +359,7 @@ const WORKSPACE_CTX_KEYS = [
   'fontSize',
   'terminalTheme',
   'followAppTerminalTheme',
-  'accentMode',
-  'customAccent',
+  // accentMode / customAccent come from appearanceChromeStore (Terminal leaf).
   'terminalSettings',
   'hotkeyScheme',
   'disableTerminalFontZoom',

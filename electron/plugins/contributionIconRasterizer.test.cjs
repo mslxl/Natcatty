@@ -62,6 +62,7 @@ test("contribution icons rasterize in a disposable sandboxed network-denied wind
   assert.equal(createdOptions.webPreferences.sandbox, true);
   assert.equal(createdOptions.webPreferences.nodeIntegration, false);
   assert.equal(createdOptions.webPreferences.contextIsolation, true);
+  assert.equal(createdOptions.webPreferences.spellcheck, false);
   assert.deepEqual(requestFilter.filter.urls, ["http://*/*", "https://*/*", "file://*/*", "ftp://*/*"]);
   let blocked;
   requestFilter.listener({}, (decision) => { blocked = decision; });

@@ -926,7 +926,7 @@ main();
      */
     function cleanupStaleEtTempDirs() {
       try {
-        const tempDir = tempDirBridge.getTempDir?.() || path.join(os.tmpdir(), "Netcatty");
+        const tempDir = tempDirBridge.getTempDir();
         if (!fs.existsSync(tempDir)) return;
         const entries = fs.readdirSync(tempDir);
         for (const entry of entries) {

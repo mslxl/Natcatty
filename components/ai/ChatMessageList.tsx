@@ -67,7 +67,7 @@ import {
   compactionStatusText,
   resolveCompactionStatusText,
   type ActiveCompactionUi,
-} from './hooks/useAgentCompactionUi';
+} from '../../application/state/useAgentCompactionUi';
 import {
   getAIPanelDiagnosticHiddenParts,
   getAIPanelProfilerProps,
@@ -113,8 +113,9 @@ export function shouldProvideVaultArtifactNavigation({
 
 export function shouldRenderAssistantAsPlainText(options: {
   hideMarkdown: boolean;
+  isStreaming?: boolean;
 }): boolean {
-  return options.hideMarkdown;
+  return options.hideMarkdown || !!options.isStreaming;
 }
 
 const ASSISTANT_PLAIN_TEXT_CLASS = 'whitespace-pre-wrap break-words text-[13px] leading-[1.45]';
@@ -702,6 +703,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                     ? <div className={ASSISTANT_PLAIN_TEXT_CLASS}>{message.content}</div>
                     : shouldRenderAssistantAsPlainText({
                         hideMarkdown,
+                        isStreaming: !!isThisStreaming,
                       })
                       ? (
                           <div
@@ -714,7 +716,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                       : (
                           <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Markdown')}>
                             <div data-ai-content="markdown">
-                              <LazyMessageResponse isAnimating={!!isThisStreaming}>
+                              <LazyMessageResponse isAnimating={false}>
                                 {message.content}
                               </LazyMessageResponse>
                             </div>

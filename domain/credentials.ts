@@ -429,10 +429,4 @@ export const healPoisonedSecretsForMerge = (
   };
 };
 
-/** @deprecated Prefer healPoisonedSecretsForMerge(remote, local, base). */
-export const healPoisonedRemoteSecretsForMerge = (
-  remote: SyncPayload,
-  local: SyncPayload,
-  base: SyncPayload | null | undefined,
-): SyncPayload => healPoisonedSecretsForMerge(remote, local, base);
 

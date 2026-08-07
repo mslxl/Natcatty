@@ -33,7 +33,7 @@ import {
 } from './SystemPanelUi';
 import { SystemPanelConfirmDialog } from './SystemPanelConfirmDialog';
 import { SystemPanelPromptDialog } from './SystemPanelPromptDialog';
-import { usePolling, useStableTranslate } from './hooks/useSystemManager';
+import { usePolling, useStableTranslate } from '../../application/state/useSystemManager';
 import {
   getCachedProcessList,
   setCachedProcessList,

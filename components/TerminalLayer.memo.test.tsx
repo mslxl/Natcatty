@@ -217,6 +217,32 @@ test("TerminalLayer ignores shellHistory prop churn (reads shellHistoryStore ins
   );
 });
 
+test("TerminalLayer ignores notes prop churn (reads notesStore instead)", () => {
+  assert.equal(
+    terminalLayerAreEqual(
+      baseProps as never,
+      {
+        ...baseProps,
+        notes: [{ id: "n1", title: "One", content: "body", tags: [], createdAt: 1, updatedAt: 1, order: 1000 }],
+        noteGroups: ["Ops"],
+        updateNotes: () => {},
+        updateNoteGroups: () => {},
+      } as never,
+    ),
+    true,
+  );
+});
+
+test("TerminalLayer ignores customAccent prop churn (reads appearanceChromeStore instead)", () => {
+  assert.equal(
+    terminalLayerAreEqual(
+      baseProps as never,
+      { ...baseProps, accentMode: "custom", customAccent: "#ff00aa" } as never,
+    ),
+    true,
+  );
+});
+
 test("TerminalLayer ignores sessions dynamicTitle-only updates", () => {
   const sessionsA = [{
     id: "s1",

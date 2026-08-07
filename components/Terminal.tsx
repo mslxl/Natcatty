@@ -66,6 +66,7 @@ import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { readOptionalStoredStringValue, useStoredString } from "../application/state/useStoredString";
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
+import { useAppearanceChromeStore } from "../application/state/appearanceChromeStore";
 import {
   shouldPublishPluginTerminalSessionMountLifecycle,
   usePluginTerminalSessionLifecycle,
@@ -260,8 +261,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   fontSize,
   terminalTheme,
   followAppTerminalTheme = false,
-  accentMode = "theme",
-  customAccent = "",
   terminalSettings,
   sessionId,
   workspaceId,
@@ -1264,22 +1263,31 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     });
   }, [availableFonts, fontFamilyId, hasFontFamilyOverride, host.fontFamily, terminalSettings?.fallbackFont]);
 
+  const { accentMode, customAccent } = useAppearanceChromeStore();
+
   const baseEffectiveTheme = useMemo(() => {
-    if (appearanceTheme) return appearanceTheme;
-    if (followAppTerminalTheme) {
-      return applyCustomAccentToTerminalTheme(terminalTheme, accentMode, customAccent);
-    }
-    const themeId = resolveHostTerminalThemeId(
-      { theme: host.theme, themeOverride: host.themeOverride } as Pick<Host, 'theme' | 'themeOverride'>,
-      terminalTheme.id,
-    );
-    let baseTheme = terminalTheme;
-    if (themeId) {
-      const hostTheme = getBuiltinTerminalThemeById(themeId)
-        || customThemes.find((t) => t.id === themeId);
-      if (hostTheme) baseTheme = hostTheme;
-    }
-    return applyCustomAccentToTerminalTheme(baseTheme, accentMode, customAccent);
+    // Always re-apply appearanceChromeStore accent. appearanceTheme from the
+    // layer may still carry a previously baked custom accent while TerminalLayer
+    // memo ignores accent churn — re-resolve the catalog theme by id first.
+    const resolveBase = (): typeof terminalTheme => {
+      if (appearanceTheme) {
+        const clean = getBuiltinTerminalThemeById(appearanceTheme.id)
+          || customThemes.find((t) => t.id === appearanceTheme.id);
+        if (clean) return clean;
+      }
+      if (followAppTerminalTheme) return terminalTheme;
+      const themeId = resolveHostTerminalThemeId(
+        { theme: host.theme, themeOverride: host.themeOverride } as Pick<Host, 'theme' | 'themeOverride'>,
+        terminalTheme.id,
+      );
+      if (themeId) {
+        const hostTheme = getBuiltinTerminalThemeById(themeId)
+          || customThemes.find((t) => t.id === themeId);
+        if (hostTheme) return hostTheme;
+      }
+      return terminalTheme;
+    };
+    return applyCustomAccentToTerminalTheme(resolveBase(), accentMode, customAccent);
   }, [accentMode, appearanceTheme, customAccent, customThemes, followAppTerminalTheme, host.theme, host.themeOverride, terminalTheme]);
 
   const resolvedChainHosts =
