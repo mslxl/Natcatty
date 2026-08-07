@@ -72,3 +72,21 @@ test("defaults autocomplete history scope to host when unset", () => {
     "host",
   );
 });
+
+test("falls back to raised maxSuggestions default when unset", () => {
+  assert.equal(
+    resolveTerminalAutocompleteSettings({
+      protocol: "ssh",
+      terminalSettings: {
+        autocompleteEnabled: true,
+      },
+    })?.maxSuggestions,
+    50,
+  );
+  assert.equal(
+    resolveTerminalAutocompleteSettings({
+      protocol: "serial",
+    })?.maxSuggestions,
+    50,
+  );
+});

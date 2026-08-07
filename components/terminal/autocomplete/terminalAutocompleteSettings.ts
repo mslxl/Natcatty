@@ -27,7 +27,7 @@ export function resolveTerminalAutocompleteSettings(input: {
       allowLineReplacement: false,
       debounceMs: terminalSettings?.autocompleteDebounceMs ?? 100,
       minChars: terminalSettings?.autocompleteMinChars ?? 1,
-      maxSuggestions: terminalSettings?.autocompleteMaxSuggestions ?? 8,
+      maxSuggestions: terminalSettings?.autocompleteMaxSuggestions ?? 50,
       historyScope: terminalSettings?.autocompleteHistoryScope ?? "host",
       shiftEnterNewlineEnabled: terminalSettings?.shiftEnterNewlineEnabled ?? true,
     };
@@ -43,7 +43,7 @@ export function resolveTerminalAutocompleteSettings(input: {
     allowLineReplacement: true,
     debounceMs: terminalSettings.autocompleteDebounceMs ?? 100,
     minChars: terminalSettings.autocompleteMinChars ?? 1,
-    maxSuggestions: terminalSettings.autocompleteMaxSuggestions ?? 8,
+    maxSuggestions: terminalSettings.autocompleteMaxSuggestions ?? 50,
     historyScope: terminalSettings.autocompleteHistoryScope ?? "host",
     shiftEnterNewlineEnabled: terminalSettings.shiftEnterNewlineEnabled ?? true,
   };

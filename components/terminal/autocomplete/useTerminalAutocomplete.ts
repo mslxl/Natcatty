@@ -66,7 +66,7 @@ export const DEFAULT_AUTOCOMPLETE_SETTINGS: AutocompleteSettings = {
   allowLineReplacement: true,
   debounceMs: 100,
   minChars: 1,
-  maxSuggestions: 8,
+  maxSuggestions: 50,
   fastTypingThresholdMs: 40,
   shiftEnterNewlineEnabled: true,
   historyScope: "host",

@@ -226,3 +226,21 @@ test("normalizeTerminalSettings prefers explicit middle-click behavior over lega
   assert.equal(settings.middleClickBehavior, "context-menu");
   assert.equal(settings.middleClickPaste, false);
 });
+
+test("normalizeTerminalSettings migrates legacy autocompleteMaxSuggestions default 8 to 50", () => {
+  assert.equal(
+    normalizeTerminalSettings({ autocompleteMaxSuggestions: 8 }).autocompleteMaxSuggestions,
+    50,
+  );
+});
+
+test("normalizeTerminalSettings preserves intentional custom autocompleteMaxSuggestions", () => {
+  assert.equal(
+    normalizeTerminalSettings({ autocompleteMaxSuggestions: 6 }).autocompleteMaxSuggestions,
+    6,
+  );
+  assert.equal(
+    normalizeTerminalSettings({ autocompleteMaxSuggestions: 20 }).autocompleteMaxSuggestions,
+    20,
+  );
+});

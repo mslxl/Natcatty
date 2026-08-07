@@ -396,9 +396,16 @@ export const normalizeTerminalSettings = (
     ? 'dom' as const
     : mergedSettings.rendererType;
 
+  // Persisted installs wrote the old default (8) into localStorage with no UI
+  // to change it; bump that sentinel to the new default while keeping custom caps.
+  const autocompleteMaxSuggestions = mergedSettings.autocompleteMaxSuggestions === 8
+    ? DEFAULT_TERMINAL_SETTINGS.autocompleteMaxSuggestions
+    : mergedSettings.autocompleteMaxSuggestions;
+
   return {
     ...mergedSettings,
     rendererType,
+    autocompleteMaxSuggestions,
     hibernateHiddenTabsDelaySec: normalizeHibernateHiddenTabsDelaySec(
       mergedSettings.hibernateHiddenTabsDelaySec,
     ),
@@ -517,7 +524,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   autocompletePopupMenu: true, // Popup menu enabled by default
   autocompleteDebounceMs: 100, // 100ms debounce
   autocompleteMinChars: 1, // Start suggesting after 1 character
-  autocompleteMaxSuggestions: 8, // Show up to 8 suggestions
+  autocompleteMaxSuggestions: 50, // Show up to 50 suggestions (popup scrolls)
   autocompleteHistoryScope: 'host', // Per-host history suggestions by default (#2595)
   passwordPromptAssist: 'hint', // Historical sudo confirm-to-fill; picker is opt-in (#2156)
 };
