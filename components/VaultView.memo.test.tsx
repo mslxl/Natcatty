@@ -102,7 +102,10 @@ test("notes are not VaultView props — the notes section reads notesStore", () 
     );
   }
   assert.doesNotMatch(vaultViewSource, /prev\.notes === next\.notes/);
-  assert.match(vaultViewLayoutSource, /useNotesStore\(\)/);
+  assert.match(
+    vaultViewLayoutSource,
+    /useNotesStore\(\{\s*enabled:\s*isActive,?\s*\}\)/,
+  );
   assert.match(vaultViewLayoutSource, /function VaultNotesSection/);
 });
 

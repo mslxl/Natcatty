@@ -65,8 +65,10 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
   const accentRef = useRef({ accentMode, customAccent });
   accentRef.current = { accentMode, customAccent };
 
-  // Chrome / injection consumers need live accent on every settings change.
-  const appearanceSettings = useMemo((): TerminalAppearanceSettings => ({
+  // Live accent settings are only for CSS-var injection. The published bag must
+  // resolve against a stable base theme so accent drag does not rebuild
+  // TerminalHost / AppShell domains every HSL tick.
+  const appearanceSettingsForInject = useMemo((): TerminalAppearanceSettings => ({
     ...appearanceSettingsBase,
     accentMode,
     customAccent,
@@ -74,9 +76,19 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
 
   const globalAppearance = useMemo(() => resolveGlobalTerminalAppearance({
     userIntent,
-    settings: appearanceSettings,
+    settings: {
+      ...appearanceSettingsBase,
+      accentMode: 'theme',
+      customAccent: '',
+    },
     customThemes,
-  }), [userIntent, appearanceSettings, customThemes]);
+  }), [userIntent, appearanceSettingsBase, customThemes]);
+
+  const accentedGlobalAppearance = useMemo(() => resolveGlobalTerminalAppearance({
+    userIntent,
+    settings: appearanceSettingsForInject,
+    customThemes,
+  }), [userIntent, appearanceSettingsForInject, customThemes]);
 
   // Read accent from a ref so this callback identity does not churn on drag.
   // Callers that invoke it after an accent-only update still get the latest
@@ -125,10 +137,12 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
   }, []);
 
   // Stable bag identity so App domain memos can depend on members (or the
-  // bag) without thrashing on every parent render.
+  // bag) without thrashing on every parent render. Accented appearance is
+  // intentionally excluded — injection reads it separately.
   return useMemo(() => ({
     userIntent,
     globalAppearance,
+    accentedGlobalAppearance,
     resolveFocusedAppearance,
     pickTheme,
     clearIntent,
@@ -137,6 +151,7 @@ export function useThemeRuntime(settings: ThemeRuntimeSettings) {
   }), [
     userIntent,
     globalAppearance,
+    accentedGlobalAppearance,
     resolveFocusedAppearance,
     pickTheme,
     clearIntent,

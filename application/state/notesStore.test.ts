@@ -81,6 +81,19 @@ test('notesStore gated helpers stay empty and never notify', () => {
   unsub();
 });
 
+test('useNotesStore source gates subscribe when enabled is false', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('./notesStore.ts', import.meta.url), 'utf8');
+  assert.match(source, /enabled \? subscribeNotes : subscribeNotesNoop/);
+  assert.match(source, /enabled \? subscribeNotesActions : subscribeNotesNoop/);
+  assert.match(source, /getNotesSnapshot/);
+  assert.doesNotMatch(
+    source,
+    /enabled \? getNotesSnapshot : getEmptyNotesSnapshot/,
+    'hidden notes mounts should keep the last live snapshot, not flash empty',
+  );
+});
+
 test('registerNotesActions exposes update handlers', () => {
   const calls: string[] = [];
   registerNotesActions({

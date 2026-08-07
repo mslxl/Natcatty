@@ -646,8 +646,17 @@ export function AppSideEffects() {
     };
   }, [isPeerSessionWindow]);
 
+  const pendingTrayConnectFlushKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    if (!isVaultInitialized || pendingTrayPanelConnectHostIds.length === 0) return;
+    if (!isVaultInitialized) return;
+    if (pendingTrayPanelConnectHostIds.length === 0) {
+      pendingTrayConnectFlushKeyRef.current = null;
+      return;
+    }
+    const flushKey = pendingTrayPanelConnectHostIds.join('\0');
+    if (pendingTrayConnectFlushKeyRef.current === flushKey) return;
+    pendingTrayConnectFlushKeyRef.current = flushKey;
     flushQueuedTrayPanelConnectHostsImpl(() => ({
       connectNow: _handleTrayPanelConnect,
       pendingHostIds: pendingTrayPanelConnectHostIds,

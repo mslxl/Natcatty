@@ -62,20 +62,25 @@ export function useSystemSettingsEffects({
   // Persist and sync toggle window hotkey setting
   useEffect(() => {
     if (!enabled) return;
+    let cancelled = false;
+    let didRegister = false;
     // Register/unregister the global hotkey in main process (needed on mount)
     const bridge = netcattyBridge.get();
     if (bridge?.registerGlobalHotkey) {
       if (toggleWindowHotkey && globalHotkeyEnabled) {
         setHotkeyRegistrationError(null);
+        didRegister = true;
         bridge
           .registerGlobalHotkey(toggleWindowHotkey)
           .then((result) => {
+            if (cancelled) return;
             if (result?.success === false) {
               console.warn('[GlobalHotkey] Hotkey registration failed:', result.error);
               setHotkeyRegistrationError(result.error || 'Failed to register hotkey');
             }
           })
           .catch((err) => {
+            if (cancelled) return;
             console.warn('[GlobalHotkey] Failed to register hotkey:', err);
             setHotkeyRegistrationError(err?.message || 'Failed to register hotkey');
           });
@@ -87,9 +92,20 @@ export function useSystemSettingsEffects({
       }
     }
     localStorageAdapter.writeString(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
-    // Skip IPC on initial mount
-    if (!persistMountedRef.current) return;
-    notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    // Skip settings-sync IPC on initial mount; still return cleanup below.
+    if (persistMountedRef.current) {
+      notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    }
+    return () => {
+      cancelled = true;
+      // Drop Mount1's registration before Mount2 re-registers (StrictMode), and
+      // release the accelerator on real unmount / disable transitions.
+      if (didRegister) {
+        bridge?.unregisterGlobalHotkey?.().catch((err) => {
+          console.warn('[GlobalHotkey] Failed to unregister hotkey on cleanup', err);
+        });
+      }
+    };
   }, [
     toggleWindowHotkey,
     enabled,

@@ -85,6 +85,7 @@ export function TerminalHost() {
 
   const {
     globalAppearance,
+    accentedGlobalAppearance,
     clearIntent: clearThemeIntent,
     settleManualIntent: settleManualThemeIntent,
     pickTheme: pickTerminalTheme,
@@ -92,7 +93,9 @@ export function TerminalHost() {
     currentTerminalTheme,
   } = themeRuntime;
 
-  useTerminalAppearanceInjection(globalAppearance, {
+  // Inject live accent into CSS vars without publishing accented theme identity
+  // into the terminal domain bag (accent drag must not rebuild AppShell).
+  useTerminalAppearanceInjection(accentedGlobalAppearance, {
     includeChromeSurfaces: followAppTerminalTheme,
   });
 
@@ -103,6 +106,8 @@ export function TerminalHost() {
     clearThemeIntent();
   }, [followAppTerminalTheme, clearThemeIntent]);
 
+  // Bridge exposes the stable base theme only — ChromeHost must not republish
+  // when accentedGlobalAppearance identity churns during color-picker drag.
   const themeBridgeActions = useMemo(() => ({
     clearThemeIntent,
     settleManualThemeIntent,

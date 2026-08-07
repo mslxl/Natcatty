@@ -12,7 +12,6 @@ import {
   useSessionSnapshotActions,
 } from '../../state/sessionSnapshotStore';
 import { useSettingsChromeStore } from '../../state/settingsChromeStore';
-import { useAppearanceChromeStore } from '../../state/appearanceChromeStore';
 import { useVaultSnapshot } from '../../state/vaultSnapshotStore';
 import {
   getTerminalSettingsActions,
@@ -40,8 +39,6 @@ const IS_MAC_CLIENT =
 export function ChromeHost() {
   const { t } = useI18n();
   const settingsChrome = useSettingsChromeStore();
-  const appearance = useAppearanceChromeStore();
-  void appearance; // accent leaves subscribe directly; keep import for island contract
   const session = useSessionSnapshot();
   const sessionActions = useSessionSnapshotActions();
   const vault = useVaultSnapshot();

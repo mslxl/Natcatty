@@ -68,7 +68,9 @@ export function resolveActiveChromeTheme({
   };
 
   const resolveHostTheme = (hostId: string): TerminalTheme => {
-    if (followAppTerminalTheme) return currentTerminalTheme;
+    if (followAppTerminalTheme) {
+      return applyCustomAccentToTerminalTheme(currentTerminalTheme, accentMode, customAccent);
+    }
     if (resolveSessionAppearance) {
       return resolveSessionAppearance(resolveHostScope(hostId)).theme;
     }
@@ -90,12 +92,15 @@ export function resolveActiveChromeTheme({
   const logView = logViews.find((item) => item.id === activeTabId);
   if (logView) {
     const explicitThemeId = logView.log.themeId;
-    return explicitThemeId ? themeById.get(explicitThemeId) ?? currentTerminalTheme : currentTerminalTheme;
+    const base = explicitThemeId ? themeById.get(explicitThemeId) ?? currentTerminalTheme : currentTerminalTheme;
+    return applyCustomAccentToTerminalTheme(base, accentMode, customAccent);
   }
 
   const workspace = workspaceById.get(activeTabId);
   if (workspace) {
-    if (followAppTerminalTheme) return currentTerminalTheme;
+    if (followAppTerminalTheme) {
+      return applyCustomAccentToTerminalTheme(currentTerminalTheme, accentMode, customAccent);
+    }
 
     if (workspace.viewMode === "focus") {
       const focusedSession = resolveWorkspaceTargetSessionFromMap(workspace, sessionById);

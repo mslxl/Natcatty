@@ -443,12 +443,14 @@ function createPreloadApi(ctx) {
   },
   onTerminalPopupConfig: (cb) => {
     terminalPopupConfigState.listeners.add(cb);
-    if (terminalPopupConfigState.pending) {
-      const pending = terminalPopupConfigState.pending;
+    const replay = terminalPopupConfigState.pending ?? terminalPopupConfigState.lastPayload;
+    if (replay) {
+      // Drain the one-shot pending slot once a live subscriber exists, but keep
+      // lastPayload so StrictMode remount can resubscribe and still setConfig.
       terminalPopupConfigState.pending = null;
       queueMicrotask(() => {
         try {
-          cb(pending);
+          cb(replay);
         } catch (err) {
           console.error("Terminal popup config callback failed", err);
         }

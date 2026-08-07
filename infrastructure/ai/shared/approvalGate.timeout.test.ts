@@ -269,3 +269,35 @@ test('cancelApprovalTimeout asks main to drop Codex App Server interaction timer
     clearAllPendingApprovals();
   }
 });
+
+test('requestApproval joins an existing waiter for the same toolCallId', async () => {
+  clearAllPendingApprovals();
+  const toolCallId = `dup-approval-${Date.now()}`;
+  const first = requestApproval(toolCallId, 'sftp_write', { path: '/tmp/a' }, 'chat-1', 60_000);
+  const second = requestApproval(toolCallId, 'sftp_write', { path: '/tmp/a' }, 'chat-1', 60_000);
+  resolveApproval(toolCallId, { approved: true, scope: 'once' });
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  clearAllPendingApprovals();
+});
+
+test('resolveApproval skips MCP IPC when the pending entry is already gone', () => {
+  clearAllPendingApprovals();
+  const calls: Array<{ id: string; approved: boolean }> = [];
+  const previous = (globalThis as { window?: unknown }).window;
+  (globalThis as { window?: unknown }).window = {
+    netcatty: {
+      respondMcpApproval: async (id: string, approved: boolean) => {
+        calls.push({ id, approved });
+        return { ok: true };
+      },
+    },
+  };
+
+  try {
+    resolveApproval('mcp_approval_stale', true);
+    assert.deepEqual(calls, []);
+  } finally {
+    (globalThis as { window?: unknown }).window = previous;
+    clearAllPendingApprovals();
+  }
+});

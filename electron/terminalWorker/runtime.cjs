@@ -360,6 +360,7 @@ function createTerminalWorkerRuntime(options = {}) {
   const sessionCloseEpochs = new Map();
   const sessionLifecycleTombstoneTimes = new Map();
   const sessionStartMarkers = new Set();
+  const pendingSessionStartBootEpochs = new Map();
   let urgentInputPorts = null;
   const now = typeof options.now === "function" ? options.now : Date.now;
   const sessionLifecycleTombstoneTtlMs = Number.isFinite(options.sessionLifecycleTombstoneTtlMs)
@@ -382,6 +383,25 @@ function createTerminalWorkerRuntime(options = {}) {
     sessionLifecycleTombstoneTimes.delete(sessionId);
     sessionOutputGenerations.delete(sessionId);
     sessionCloseEpochs.delete(sessionId);
+    pendingSessionStartBootEpochs.delete(sessionId);
+  }
+
+  function normalizeBootEpoch(bootEpoch) {
+    if (!Number.isFinite(bootEpoch)) return undefined;
+    return Number(bootEpoch);
+  }
+
+  function rememberPendingStartBootEpoch(sessionId, bootEpoch) {
+    const normalized = normalizeBootEpoch(bootEpoch);
+    if (!sessionId || normalized === undefined) return;
+    pendingSessionStartBootEpochs.set(sessionId, normalized);
+  }
+
+  function shouldSkipStaleEpochClose(sessionId, bootEpoch) {
+    const closeEpoch = normalizeBootEpoch(bootEpoch);
+    if (closeEpoch === undefined || !sessionId) return false;
+    const ownerEpoch = pendingSessionStartBootEpochs.get(sessionId);
+    return ownerEpoch !== undefined && ownerEpoch > closeEpoch;
   }
 
   function pruneSessionLifecycleTombstones() {
@@ -589,6 +609,7 @@ function createTerminalWorkerRuntime(options = {}) {
       void handleRequest(message);
       return;
     }
+    rememberPendingStartBootEpoch(sessionId, message.payload?.bootEpoch);
     const closeEpoch = sessionCloseEpochs.get(sessionId) ?? 0;
     const previous = sessionOperationTails.get(sessionId);
     const previousKind = sessionOperationKinds.get(sessionId);
@@ -620,7 +641,18 @@ function createTerminalWorkerRuntime(options = {}) {
       else handleSend(message);
       return;
     }
+    if (shouldSkipStaleEpochClose(sessionId, message.payload?.bootEpoch)) {
+      if (expectsResponse) {
+        parentPort.postMessage({
+          kind: "response",
+          requestId: message.requestId,
+          result: { skipped: true, reason: "boot-epoch-mismatch" },
+        });
+      }
+      return;
+    }
     sessionCloseEpochs.set(sessionId, (sessionCloseEpochs.get(sessionId) ?? 0) + 1);
+    pendingSessionStartBootEpochs.delete(sessionId);
     touchSessionLifecycleTombstone(sessionId);
     const previous = sessionOperationTails.get(sessionId);
     const current = (previous || Promise.resolve()).catch(() => {}).then(async () => {

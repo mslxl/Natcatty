@@ -843,7 +843,7 @@ export const attachSessionToTerminal = (
   },
 ) => {
   if (!isTerminalBootActive(ctx)) {
-    closeOrphanBackendSession(ctx, id);
+    closeOrphanBackendSession(ctx, id, { bootEpoch: ctx.bootEpochRef?.current });
     return;
   }
 

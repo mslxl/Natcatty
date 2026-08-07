@@ -118,3 +118,33 @@ test('Codex App Server interaction gate replays requests and forwards typed resp
   teardown();
   Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow });
 });
+
+test('Codex App Server interaction bridge is ref-counted across setup/teardown', () => {
+  let subscribeCount = 0;
+  let unsubscribeCount = 0;
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      netcatty: {
+        onCodexAppServerInteractionRequest: () => {
+          subscribeCount += 1;
+          return () => {
+            unsubscribeCount += 1;
+          };
+        },
+        onCodexAppServerInteractionCleared: () => () => {},
+      },
+    },
+  });
+
+  const first = setupCodexAppServerInteractionBridge();
+  const second = setupCodexAppServerInteractionBridge();
+  assert.equal(subscribeCount, 1, 'nested setup must not stack ipc listeners');
+  first();
+  assert.equal(unsubscribeCount, 0, 'first teardown while second still live keeps the bridge');
+  second();
+  assert.equal(unsubscribeCount, 1);
+
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow });
+});

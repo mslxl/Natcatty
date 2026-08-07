@@ -35,8 +35,8 @@ import {
   resolveDisplayedSession,
 } from './ai/aiPanelViewState';
 import {
-  endDraftSend,
-  tryBeginDraftSend,
+  endSendForKey,
+  tryBeginSendForKey,
 } from './ai/draftSendGate';
 import { selectDraftForAgentSwitch } from '../application/state/aiDraftState';
 import {
@@ -55,7 +55,6 @@ import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSess
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
 import { registerGrantPersister } from '../infrastructure/ai/shared/approvalGate';
-import { setupCodexAppServerInteractionBridge } from '../infrastructure/ai/shared/codexAppServerInteractions';
 import { stopAgentTurn } from '../infrastructure/ai/harness/agentStop';
 import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
 import { useAIPermissionGrantsState } from '../application/state/useAIPermissionGrantsState';
@@ -385,7 +384,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   currentDraftRef.current = currentDraft;
   const activeSessionRef = useRef(activeSession);
   activeSessionRef.current = activeSession;
-  const draftSendInFlightRef = useRef(false);
 
   const defaultTargetSession = useMemo<DefaultTargetSessionHint | undefined>(() => {
     const connectedSessions = terminalSessions.filter((session) => session.connected !== false);
@@ -1005,9 +1003,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
     const isDraftMode = currentPanelView.mode === 'draft';
 
-    if (isDraftMode && !tryBeginDraftSend(draftSendInFlightRef)) {
+    const sendGateKey = currentSessionView?.id ?? `draft:${scopeKey}`;
+    if (!tryBeginSendForKey(sendGateKey)) {
       return;
     }
+    let sessionSendGateKey: string | null = null;
 
     try {
       let sessionId = currentSessionView?.id ?? null;
@@ -1020,9 +1020,17 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         clearScopeDraft();
         showScopeSessionView(createdSession.id);
         setActiveSessionId(createdSession.id);
+        sessionSendGateKey = sessionId;
+        if (!tryBeginSendForKey(sessionSendGateKey)) {
+          return;
+        }
       }
 
       if (!sessionId) {
+        return;
+      }
+
+      if (isAIChatSessionStreaming(sessionId)) {
         return;
       }
 
@@ -1133,8 +1141,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         }, modelAttachments.length > 0 ? modelAttachments : undefined);
       }
     } finally {
-      if (isDraftMode) {
-        endDraftSend(draftSendInFlightRef);
+      endSendForKey(sendGateKey);
+      if (sessionSendGateKey && sessionSendGateKey !== sendGateKey) {
+        endSendForKey(sessionSendGateKey);
       }
     }
   }, [
@@ -1155,11 +1164,14 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       currentAgentId !== 'catty'
       || !session
       || isStreaming
+      || isAIChatSessionStreaming(session.id)
       || !effectiveActiveProvider
       || !effectiveActiveModelId.trim()
     ) {
       return;
     }
+
+    if (!tryBeginSendForKey(session.id)) return;
 
     const controller = new AbortController();
     abortControllersRef.current.set(session.id, controller);
@@ -1198,6 +1210,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       if (abortControllersRef.current.get(session.id) === controller) {
         abortControllersRef.current.delete(session.id);
       }
+      endSendForKey(session.id);
     }
   }, [
     abortControllersRef,
@@ -1295,8 +1308,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   useEffect(() => {
     return registerGrantPersister((rule) => { addGrant(rule); });
   }, [addGrant]);
-
-  useEffect(() => setupCodexAppServerInteractionBridge(), []);
 
   const handleStop = useCallback(() => {
     if (!activeSessionId) return;

@@ -360,6 +360,18 @@ function aiChatPanelsHostAreEqual(
   return true;
 }
 
+const consumedTerminalSelectionRequestIds = new Set<string>();
+const CONSUMED_TERMINAL_SELECTION_REQUEST_ID_LIMIT = 64;
+
+function markTerminalSelectionRequestConsumed(requestId: string): void {
+  consumedTerminalSelectionRequestIds.add(requestId);
+  if (consumedTerminalSelectionRequestIds.size <= CONSUMED_TERMINAL_SELECTION_REQUEST_ID_LIMIT) {
+    return;
+  }
+  const oldest = consumedTerminalSelectionRequestIds.values().next().value;
+  if (oldest !== undefined) consumedTerminalSelectionRequestIds.delete(oldest);
+}
+
 const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   mountedTabIds,
   activeTabId,
@@ -395,15 +407,17 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
 
   useEffect(() => {
     if (!pendingTerminalSelection) return;
+    if (consumedTerminalSelectionRequestIds.has(pendingTerminalSelection.requestId)) {
+      return;
+    }
 
     const context = contextsByTabId.get(pendingTerminalSelection.tabId);
     if (!context) return;
 
     const attachment = createTerminalSelectionAttachment(pendingTerminalSelection.text);
-    if (!attachment) {
-      onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
-      return;
-    }
+    markTerminalSelectionRequestConsumed(pendingTerminalSelection.requestId);
+    onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
+    if (!attachment) return;
 
     const scopeKey = `${context.scopeType}:${context.scopeTargetId ?? ''}`;
     const isSessionView =
@@ -416,7 +430,6 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
       ...draft,
       attachments: [...draft.attachments, attachment],
     }));
-    onPendingTerminalSelectionConsumed?.(pendingTerminalSelection.requestId);
   }, [
     activeSessionIdMap,
     contextsByTabId,

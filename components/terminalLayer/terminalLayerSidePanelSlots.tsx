@@ -406,12 +406,14 @@ function SidePanelNotesSlotInner({
   isVisible: boolean;
 }) {
   const openNoteRequest = (ctx.notesOpenNoteByTab as Map<string, { noteId: string; requestId: number }>).get(tabId) ?? null;
+  // Gate subscription while Notes is hidden so vault edits (and the full-page
+  // notebook) do not re-render this retained side-panel mount.
   const {
     notes,
     noteGroups,
     updateNotes,
     updateNoteGroups,
-  } = useNotesStore();
+  } = useNotesStore({ enabled: isVisible });
 
   const {
     NotesManager,

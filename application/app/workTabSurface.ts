@@ -179,7 +179,9 @@ export function resolveWorkTabHostTreeTheme({
   hostById: ReadonlyMap<string, Host>;
   themeById: ReadonlyMap<string, TerminalTheme>;
 }): TerminalTheme {
-  if (!activeHostId || followAppTerminalTheme) return currentTerminalTheme;
+  if (!activeHostId || followAppTerminalTheme) {
+    return applyCustomAccentToTerminalTheme(currentTerminalTheme, accentMode, customAccent);
+  }
 
   const host = hostById.get(activeHostId) ?? null;
   const themeId = resolveHostTerminalThemeId(host, currentTerminalTheme.id);

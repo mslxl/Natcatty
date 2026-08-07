@@ -602,6 +602,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const searchAddon = new SearchAddon();
   term.loadAddon(searchAddon);
 
+  for (const orphan of Array.from(ctx.container.querySelectorAll(":scope > .xterm"))) {
+    orphan.remove();
+  }
+
   term.open(ctx.container);
 
   // Inline raster images (Kitty graphics / SIXEL / iTerm IIP). Loaded right after

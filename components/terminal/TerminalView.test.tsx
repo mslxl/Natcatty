@@ -455,6 +455,11 @@ test("terminal boot is cancelable and closes eagerly on cleanup", () => {
 
   assert.match(effectsSource, /const bootAbort = new AbortController\(\)/);
   assert.match(effectsSource, /const bootStartOptions = \{ signal: bootAbort\.signal \}/);
+  assert.match(
+    effectsSource,
+    /queueMicrotask\(\(\) => \{\s*\n\s*if \(disposed\) return;\s*\n\s*void boot\(\);/,
+    "backend boot must defer past StrictMode's synchronous re-invoke",
+  );
   for (const starter of [
     "startPluginConnection",
     "startSerial",
@@ -471,19 +476,36 @@ test("terminal boot is cancelable and closes eagerly on cleanup", () => {
     );
   }
 
-  // Cleanup order: abort, then eager close, then the async capture/teardown.
+  // Cleanup order: abort, then eager close + sync dispose for never-connected
+  // boots (StrictMode remount), else the async capture/teardown path.
   const cleanupStart = effectsSource.indexOf("      disposed = true;");
   assert.notEqual(cleanupStart, -1);
   const cleanup = effectsSource.slice(cleanupStart);
   const abortAt = cleanup.indexOf("bootAbort.abort()");
-  const closeAt = cleanup.indexOf("terminalBackend.closeSession(");
-  const captureAt = cleanup.indexOf("void completeClose()");
-  assert.ok(abortAt !== -1 && closeAt !== -1 && captureAt !== -1);
-  assert.ok(abortAt < closeAt, "cleanup must abort before closing the session");
-  assert.ok(closeAt < captureAt, "eager close must run before the async capture");
-  // Attached popups never own the backend session, and a connected pane keeps
-  // the existing capture-then-teardown path.
-  assert.match(cleanup, /!attachExistingSession && !hasConnectedRef\.current/);
+  const neverConnectedAt = cleanup.indexOf("if (!hasConnectedRef.current)");
+  assert.ok(abortAt !== -1 && neverConnectedAt !== -1);
+  assert.ok(abortAt < neverConnectedAt, "cleanup must abort before the never-connected close branch");
+  const neverConnectedBranch = cleanup.slice(
+    neverConnectedAt,
+    cleanup.indexOf("const persistCloseCapture", neverConnectedAt),
+  );
+  const closeAt = neverConnectedBranch.indexOf("terminalBackend.closeSession(");
+  const syncDisposeAt = neverConnectedBranch.indexOf("disposeOwnedRuntime();");
+  const earlyReturnAt = neverConnectedBranch.indexOf("return;");
+  assert.ok(closeAt !== -1 && syncDisposeAt !== -1 && earlyReturnAt !== -1);
+  assert.ok(closeAt < syncDisposeAt, "eager close must run before sync runtime dispose");
+  assert.ok(
+    syncDisposeAt < earlyReturnAt,
+    "never-connected boots must sync-dispose before leaving cleanup",
+  );
+  // Owner panes close the pending backend; attach popups only dispose xterm.
+  assert.match(neverConnectedBranch, /if \(!attachExistingSession\)/);
+  assert.match(effectsSource, /let ownedRuntime:/);
+  assert.match(
+    cleanup,
+    /void completeClose\(\)/,
+    "connected boots still use the async capture path",
+  );
 
   // An aborted boot must stop counting as the current attempt so the existing
   // orphan-close / attach-refusal guards cover cancellation too.

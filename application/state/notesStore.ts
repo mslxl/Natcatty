@@ -112,20 +112,25 @@ const noopUpdateNoteGroups: NotesActions['updateNoteGroups'] = () => {};
 
 /**
  * Subscribe to notes catalog + vault mutation actions for Notes / AI panels.
+ *
+ * Pass `{ enabled: false }` for retained-but-hidden mounts (e.g. terminal
+ * notes side panel) so vault note publishes do not re-render them. Snapshot
+ * reads still use the live store so reopen does not flash empty data.
  */
-export function useNotesStore(): {
+export function useNotesStore(options?: { enabled?: boolean }): {
   notes: VaultNote[];
   noteGroups: string[];
   updateNotes: NotesActions['updateNotes'];
   updateNoteGroups: NotesActions['updateNoteGroups'];
 } {
+  const enabled = options?.enabled !== false;
   const snapshot = useSyncExternalStore(
-    subscribeNotes,
+    enabled ? subscribeNotes : subscribeNotesNoop,
     getNotesSnapshot,
     getNotesSnapshot,
   );
   const actions = useSyncExternalStore(
-    subscribeNotesActions,
+    enabled ? subscribeNotesActions : subscribeNotesNoop,
     getNotesActions,
     getNotesActions,
   );

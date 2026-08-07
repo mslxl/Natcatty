@@ -11,6 +11,7 @@ import { ExternalMcpApprovalsHost } from './components/ai/ExternalMcpApprovalsHo
 import { PluginAuthenticationHost } from './components/plugins/PluginAuthenticationHost';
 import { useExternalMcpGrantPersister } from './components/ai/useExternalMcpGrantPersister';
 import { setupMcpApprovalBridge } from './infrastructure/ai/shared/approvalGate';
+import { setupCodexAppServerInteractionBridge } from './infrastructure/ai/shared/codexAppServerInteractions';
 import { netcattyBridge } from './infrastructure/services/netcattyBridge';
 import { AppShell } from './application/app/AppShell';
 import { AppLocalStateProvider } from './application/app/AppLocalState';
@@ -73,6 +74,10 @@ function AppWithProviders() {
 
   useEffect(() => {
     return setupMcpApprovalBridge();
+  }, []);
+
+  useEffect(() => {
+    return setupCodexAppServerInteractionBridge();
   }, []);
 
   useExternalMcpGrantPersister();

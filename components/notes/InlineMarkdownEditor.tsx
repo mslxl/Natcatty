@@ -473,7 +473,7 @@ const deleteLexicalTextRange = (range: Range, onUpdate: () => void): boolean => 
   return didDelete;
 };
 
-export function InlineMarkdownEditor({
+export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
   value,
   placeholder,
   onChange,
@@ -486,6 +486,8 @@ export function InlineMarkdownEditor({
   const { t } = useI18n();
   const editorRef = useRef<MDXEditorMethods>(null);
   const latestMarkdownRef = useRef(value);
+  const syncedPropValueRef = useRef(value);
+
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLinkActivationRef = useRef<{ href: string; at: number } | null>(null);
   const [hostPicker, setHostPicker] = useState<HostPickerState>({
@@ -530,7 +532,14 @@ export function InlineMarkdownEditor({
   }, [hostCandidates, hostPicker.query]);
 
   useEffect(() => {
-    if (latestMarkdownRef.current === value) return;
+    if (latestMarkdownRef.current === value) {
+      syncedPropValueRef.current = value;
+      return;
+    }
+    if (latestMarkdownRef.current !== syncedPropValueRef.current) {
+      return;
+    }
+    syncedPropValueRef.current = value;
     latestMarkdownRef.current = value;
     editorRef.current?.setMarkdown(value);
   }, [value]);
@@ -650,9 +659,32 @@ export function InlineMarkdownEditor({
   }, [hosts]);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(annotateHostLinks);
-    return () => window.cancelAnimationFrame(frame);
-  }, [annotateHostLinks, value]);
+    const container = containerRef.current;
+    if (!container) return;
+
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        annotateHostLinks();
+      });
+    };
+
+    schedule();
+    if (editorMode !== "preview") {
+      return () => {
+        if (frame) window.cancelAnimationFrame(frame);
+      };
+    }
+
+    const observer = new MutationObserver(schedule);
+    observer.observe(container, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, [annotateHostLinks, editorMode]);
 
   const annotateCodeBlockCopyButtons = useCallback(() => {
     const container = containerRef.current;
@@ -1001,4 +1033,4 @@ export function InlineMarkdownEditor({
       )}
     </div>
   );
-}
+});

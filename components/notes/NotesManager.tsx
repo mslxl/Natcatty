@@ -83,6 +83,11 @@ const InlineMarkdownEditor = lazy(() =>
   import("./InlineMarkdownEditor").then((module) => ({ default: module.InlineMarkdownEditor })),
 );
 
+/** Warm the MDXEditor chunk before Suspense. */
+export function prefetchInlineMarkdownEditor(): void {
+  void import("./InlineMarkdownEditor");
+}
+
 interface NoteFolderNode {
   name: string;
   path: string;
@@ -412,7 +417,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const draftTimerRef = useRef<number | null>(null);
   const [draftNoteId, setDraftNoteId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState<string | null>(null);
-  const [draftContent, setDraftContent] = useState<string | null>(null);
 
   const clearDraftTimer = useCallback(() => {
     if (draftTimerRef.current !== null) {
@@ -432,7 +436,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     draftContentRef.current = null;
     setDraftNoteId(null);
     setDraftTitle(null);
-    setDraftContent(null);
     if (title === null && content === null) return;
     commitNotes(sortedNotesRef.current.map((note) => {
       if (note.id !== noteId) return note;
@@ -458,26 +461,33 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       flushNoteDraft();
     }
     draftNoteIdRef.current = noteId;
-    setDraftNoteId(noteId);
     if (fields.title !== undefined) {
       draftTitleRef.current = fields.title;
+      setDraftNoteId(noteId);
       setDraftTitle(fields.title);
     }
     if (fields.content !== undefined) {
       draftContentRef.current = fields.content;
-      setDraftContent(fields.content);
     }
     scheduleNoteDraftFlush();
   }, [flushNoteDraft, scheduleNoteDraftFlush]);
 
+  const flushNoteDraftRef = useRef(flushNoteDraft);
+  flushNoteDraftRef.current = flushNoteDraft;
+
   useEffect(() => () => {
-    flushNoteDraft();
-  }, [flushNoteDraft]);
+    flushNoteDraftRef.current();
+  }, []);
 
   useLayoutEffect(() => {
     if (isActive) return;
     flushNoteDraft();
   }, [flushNoteDraft, isActive]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    prefetchInlineMarkdownEditor();
+  }, [isActive]);
 
   useEffect(() => {
     const flushOnTeardown = () => {
@@ -509,14 +519,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     ? {
         ...selectedNote,
         ...(draftTitle !== null ? { title: draftTitle } : {}),
-        ...(draftContent !== null ? { content: draftContent } : {}),
       }
     : selectedNote;
   const overlayNoteView = overlayNote && draftNoteId === overlayNote.id
     ? {
         ...overlayNote,
         ...(draftTitle !== null ? { title: draftTitle } : {}),
-        ...(draftContent !== null ? { content: draftContent } : {}),
       }
     : overlayNote;
 
@@ -643,9 +651,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     draftTitleRef.current = title;
   };
 
-  const saveNoteContentDraft = (note: VaultNote, content: string) => {
-    updateNoteDraft(note.id, { content });
-  };
+  const saveNoteContentDraft = useCallback((noteId: string, content: string) => {
+    updateNoteDraft(noteId, { content });
+  }, [updateNoteDraft]);
 
   const handleOpenHostFromNote = useCallback((host: Host, noteId: string) => {
     onOpenHost?.(host, { noteId });
@@ -665,9 +673,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             data-note-mode-switch
             aria-label={label}
             className="app-no-drag h-8 w-8 shrink-0 rounded-md p-0 text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
-            onClick={() => setNoteEditorMode((currentMode) => (
-              currentMode === "edit" ? "preview" : "edit"
-            ))}
+            onClick={() => {
+              flushNoteDraft();
+              setNoteEditorMode((currentMode) => (
+                currentMode === "edit" ? "preview" : "edit"
+              ));
+            }}
           >
             <Icon size={16} />
           </Button>
@@ -1709,7 +1720,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                         placeholder={t("notes.editor.placeholder")}
                         editorMode={noteEditorMode}
                         previewEmptyLabel={t("notes.preview.empty")}
-                        onChange={(content) => saveNoteContentDraft(selectedNoteView, content)}
+                        onChange={(content) => saveNoteContentDraft(selectedNoteView.id, content)}
                         hosts={hosts}
                         onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                         onOpenExternalLink={openExternal}
@@ -1799,7 +1810,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       value={overlayNoteView.content}
                       placeholder={t("notes.editor.placeholder")}
                       editorMode={noteEditorMode}
-                      onChange={(content) => saveNoteContentDraft(overlayNoteView, content)}
+                      onChange={(content) => saveNoteContentDraft(overlayNoteView.id, content)}
                       previewEmptyLabel={t("notes.preview.empty")}
                       hosts={hosts}
                       onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}

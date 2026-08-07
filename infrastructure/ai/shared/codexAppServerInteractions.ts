@@ -85,7 +85,10 @@ function notifyCleared(interactionIds: string[]): void {
   }
 }
 
-export function setupCodexAppServerInteractionBridge(): () => void {
+let bridgeInstallCount = 0;
+let bridgeTeardown: (() => void) | null = null;
+
+function installCodexAppServerInteractionBridge(): () => void {
   const bridge = (window as unknown as {
     netcatty?: {
       onCodexAppServerInteractionRequest?: (
@@ -120,6 +123,25 @@ export function setupCodexAppServerInteractionBridge(): () => void {
   return () => {
     unsubscribeRequest();
     unsubscribeCleared?.();
+  };
+}
+
+/**
+ * App-singleton IPC bridge (same pattern as setupMcpApprovalBridge).
+ * Ref-counted so StrictMode remount / accidental multi-mount does not stack
+ * ipcRenderer listeners.
+ */
+export function setupCodexAppServerInteractionBridge(): () => void {
+  bridgeInstallCount += 1;
+  if (bridgeInstallCount === 1) {
+    bridgeTeardown = installCodexAppServerInteractionBridge();
+  }
+  return () => {
+    bridgeInstallCount = Math.max(0, bridgeInstallCount - 1);
+    if (bridgeInstallCount === 0) {
+      bridgeTeardown?.();
+      bridgeTeardown = null;
+    }
   };
 }
 

@@ -38,6 +38,7 @@ test("follow-app terminal theme selection updates the matching UI theme via Them
   assert.match(appSideEffectsSource, /connectionLogs: connectionLogsRef\.current/);
   assert.match(terminalHostSource, /useTerminalAppearanceInjection/);
   assert.match(terminalHostSource, /includeChromeSurfaces: followAppTerminalTheme/);
+  assert.match(terminalHostSource, /useTerminalAppearanceInjection\(accentedGlobalAppearance/);
   assert.match(terminalHostSource, /clearThemeIntent\(\)/);
   assert.match(runtimeSource, /injectTerminalAppearanceVars\(appearance\.theme, \{ includeChromeSurfaces \}\)/);
   assert.doesNotMatch(settingsSource, /pendingFollowAppTerminalThemeId/);

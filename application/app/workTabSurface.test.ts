@@ -267,6 +267,32 @@ test('shared host tree uses the followed terminal theme when follow-app terminal
   assert.equal(resolved.id, currentTheme.id);
 });
 
+test('follow-app host tree applies custom accent onto the published base theme', () => {
+  const currentTheme = makeTheme('app-light', 'light', '#ffffff');
+  const host = {
+    id: 'host-1',
+    label: 'Host',
+    hostname: 'host.local',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+  } as Host;
+
+  const resolved = resolveWorkTabHostTreeTheme({
+    activeHostId: host.id,
+    accentMode: 'custom',
+    currentTerminalTheme: currentTheme,
+    customAccent: '0 100% 50%',
+    followAppTerminalTheme: true,
+    hostById: new Map([[host.id, host]]),
+    themeById: new Map([[currentTheme.id, currentTheme]]),
+  });
+
+  assert.equal(resolved.id, currentTheme.id);
+  assert.notEqual(resolved.colors.cursor, currentTheme.colors.cursor);
+  assert.notEqual(resolved, currentTheme);
+});
+
 test('shared host tree falls back to the current terminal theme without an active host', () => {
   const currentTheme = makeTheme('app-dark', 'dark', '#111111');
 

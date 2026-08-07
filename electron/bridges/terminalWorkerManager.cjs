@@ -400,6 +400,10 @@ function createTerminalWorkerManager(options = {}) {
   const outputRoutePending = new Map();
   const pendingSessionStartSequences = new Map();
   const latestSessionStartSequences = new Map();
+  // bootEpoch for the latest pending / opened same-id start. Stale StrictMode
+  // orphan closes carry an older epoch and must not cancel a newer remount.
+  const pendingSessionStartBootEpochs = new Map();
+  const sessionBootEpochs = new Map();
   const suppressedPendingOutputSessions = new Set();
   const workerSessionIds = new Set();
   const sessionWebContentsIds = new Map();
@@ -900,6 +904,50 @@ function createTerminalWorkerManager(options = {}) {
     closedSessionGenerations.delete(sessionId);
   }
 
+  function normalizeBootEpoch(bootEpoch) {
+    if (!Number.isFinite(bootEpoch)) return undefined;
+    return Number(bootEpoch);
+  }
+
+  function rememberPendingStartBootEpoch(sessionId, bootEpoch) {
+    const normalized = normalizeBootEpoch(bootEpoch);
+    if (!sessionId || normalized === undefined) return;
+    pendingSessionStartBootEpochs.set(sessionId, normalized);
+  }
+
+  function promotePendingStartBootEpoch(sessionId, bootEpoch) {
+    const normalized = normalizeBootEpoch(bootEpoch) ?? pendingSessionStartBootEpochs.get(sessionId);
+    if (!sessionId || normalized === undefined) return;
+    sessionBootEpochs.set(sessionId, normalized);
+  }
+
+  function clearSessionBootEpochTracking(sessionId) {
+    if (!sessionId) return;
+    pendingSessionStartBootEpochs.delete(sessionId);
+    sessionBootEpochs.delete(sessionId);
+  }
+
+  function resolveOwnerBootEpoch(sessionId) {
+    if (!sessionId) return undefined;
+    if (pendingSessionStartBootEpochs.has(sessionId)) {
+      return pendingSessionStartBootEpochs.get(sessionId);
+    }
+    return sessionBootEpochs.get(sessionId);
+  }
+
+  /**
+   * Epoch-scoped closes dispose one specific boot. When a newer remount already
+   * owns the same sessionId, the stale close must be a no-op for lifecycle
+   * bookkeeping — otherwise StrictMode abort → orphan close kills the remount
+   * with "closed before its output route opened".
+   */
+  function shouldSkipStaleEpochClose(sessionId, bootEpoch) {
+    const closeEpoch = normalizeBootEpoch(bootEpoch);
+    if (closeEpoch === undefined || !sessionId) return false;
+    const ownerEpoch = resolveOwnerBootEpoch(sessionId);
+    return ownerEpoch !== undefined && ownerEpoch > closeEpoch;
+  }
+
   function canPruneClosedSessionTombstone(sessionId) {
     return !pendingSessionStartSequences.has(sessionId)
       && !sessionGenerations.has(sessionId)
@@ -951,6 +999,7 @@ function createTerminalWorkerManager(options = {}) {
     if (entry?.requestedSessionId
       && pendingSessionStartSequences.get(entry.requestedSessionId) === entry.requestSequence) {
       pendingSessionStartSequences.delete(entry.requestedSessionId);
+      pendingSessionStartBootEpochs.delete(entry.requestedSessionId);
     }
   }
 
@@ -1030,6 +1079,7 @@ function createTerminalWorkerManager(options = {}) {
     if (!sessionId) return;
     markSessionClosed(sessionId);
     latestSessionStartSequences.delete(sessionId);
+    clearSessionBootEpochTracking(sessionId);
     suppressedPendingOutputSessions.delete(sessionId);
     workerSessionIds.delete(sessionId);
     clearBufferedOutput(sessionId);
@@ -1297,6 +1347,7 @@ function createTerminalWorkerManager(options = {}) {
             }
             return;
           }
+          promotePendingStartBootEpoch(sessionId, entry.bootEpoch);
           entry.resolve(message.result);
         }, (error) => {
           if (pending.get(message.requestId) !== entry) return;
@@ -1715,6 +1766,7 @@ function createTerminalWorkerManager(options = {}) {
         reject,
         requestSequence,
         requestedSessionId,
+        bootEpoch: normalizeBootEpoch(payload?.bootEpoch),
         webContentsId: optionsForRequest.webContentsId,
         opensOutputSession: channel === "netcatty:start"
           || channel === "netcatty:local:reconnect"
@@ -1724,6 +1776,10 @@ function createTerminalWorkerManager(options = {}) {
     });
     let notifyClosedAfterPost = false;
     if (channel === "netcatty:close:await" && payload?.sessionId) {
+      if (shouldSkipStaleEpochClose(payload.sessionId, payload?.bootEpoch)) {
+        pending.delete(requestId);
+        return Promise.resolve({ skipped: true, reason: "boot-epoch-mismatch" });
+      }
       const closesPendingLifecycle = hasPendingSessionLifecycle(payload.sessionId);
       notifyClosedAfterPost = !closedSessions.has(payload.sessionId) || closesPendingLifecycle;
       cancelPendingSessionStart(payload.sessionId);
@@ -1736,6 +1792,7 @@ function createTerminalWorkerManager(options = {}) {
       }
       pendingSessionStartSequences.set(requestedSessionId, requestSequence);
       latestSessionStartSequences.set(requestedSessionId, requestSequence);
+      rememberPendingStartBootEpoch(requestedSessionId, payload?.bootEpoch);
       // Track host id for SFTP transfer session leases (global transfer center).
       if (typeof payload?.hostId === "string" && payload.hostId) {
         sessionHostIds.set(requestedSessionId, payload.hostId);
@@ -1833,6 +1890,11 @@ function createTerminalWorkerManager(options = {}) {
 
   function send(channel, payload, optionsForSend = {}) {
     pruneClosedSessionTombstones();
+    if (channel === "netcatty:close"
+      && payload?.sessionId
+      && shouldSkipStaleEpochClose(payload.sessionId, payload?.bootEpoch)) {
+      return;
+    }
     if (channel === "netcatty:close"
       && payload?.sessionId
       && closedSessions.has(payload.sessionId)
@@ -1956,6 +2018,8 @@ function createTerminalWorkerManager(options = {}) {
       outputRoutePending.clear();
       pendingSessionStartSequences.clear();
       latestSessionStartSequences.clear();
+      pendingSessionStartBootEpochs.clear();
+      sessionBootEpochs.clear();
       suppressedPendingOutputSessions.clear();
       workerSessionIds.clear();
       sessionWebContentsIds.clear();

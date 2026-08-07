@@ -126,3 +126,146 @@ test('cancelled startup update check resets its latch instead of skipping foreve
   assert.match(tail, /startupCheckTimeoutRef\.current = setTimeout\(async \(\) => \{\s*\n\s*checkArmed = false;/);
   assert.match(tail, /if \(checkArmed\) \{\s*\n\s*hasCheckedOnStartupRef\.current = false;\s*\n\s*\}/);
 });
+
+test('terminal popup config survives StrictMode unsubscribe/resubscribe', () => {
+  const preloadSource = readFileSync(new URL('../../electron/preload.cjs', import.meta.url), 'utf8');
+  const apiSource = readFileSync(new URL('../../electron/preload/api.cjs', import.meta.url), 'utf8');
+
+  assert.match(preloadSource, /lastPayload:\s*null/);
+  assert.match(
+    preloadSource,
+    /terminalPopupConfigState\.lastPayload = payload/,
+    'incoming popup config must be retained beyond the one-shot pending slot',
+  );
+
+  const subscribeAt = apiSource.indexOf('onTerminalPopupConfig:');
+  assert.notEqual(subscribeAt, -1);
+  const subscribe = apiSource.slice(subscribeAt, subscribeAt + 700);
+  assert.match(
+    subscribe,
+    /terminalPopupConfigState\.pending \?\? terminalPopupConfigState\.lastPayload/,
+    'resubscribe must replay lastPayload after pending was drained',
+  );
+  assert.match(subscribe, /terminalPopupConfigState\.pending = null/);
+  assert.doesNotMatch(
+    subscribe,
+    /terminalPopupConfigState\.lastPayload = null/,
+    'StrictMode remount must not clear lastPayload on subscribe',
+  );
+});
+
+test('vault init cancels the superseded StrictMode effect before publishing ready', () => {
+  const vaultSource = readFileSync(
+    new URL('../state/useVaultState.ts', import.meta.url),
+    'utf8',
+  );
+  const initAt = vaultSource.indexOf('let cancelled = false;');
+  assert.notEqual(initAt, -1, 'vault init must track cancellation');
+  const initSlice = vaultSource.slice(initAt, initAt + 12000);
+  assert.match(initSlice, /return \(\) => \{\s*\n\s*cancelled = true;\s*\n\s*\};/);
+  assert.match(
+    initSlice,
+    /if \(!cancelled\) \{\s*\n\s*setIsInitialized\(true\);\s*\n\s*setVaultInitialized\(true\);\s*\n\s*\}/,
+    'only the surviving init may mark the vault ready',
+  );
+  assert.match(initSlice, /if \(cancelled\) return;/);
+});
+
+test('global hotkey registration cleans up across StrictMode remount', () => {
+  const systemEffectsSource = readFileSync(
+    new URL('../state/systemSettingsEffects.ts', import.meta.url),
+    'utf8',
+  );
+  const hotkeyAt = systemEffectsSource.indexOf('Persist and sync toggle window hotkey setting');
+  assert.notEqual(hotkeyAt, -1);
+  const hotkeyEffect = systemEffectsSource.slice(hotkeyAt, hotkeyAt + 2200);
+  assert.match(hotkeyEffect, /let cancelled = false;/);
+  assert.match(hotkeyEffect, /if \(cancelled\) return;/);
+  assert.match(
+    hotkeyEffect,
+    /if \(didRegister\) \{\s*\n\s*bridge\?\.unregisterGlobalHotkey/,
+    'cleanup must unregister a registration started by this effect',
+  );
+  // Early return before notify must not skip returning the cleanup function.
+  assert.doesNotMatch(
+    hotkeyEffect,
+    /if \(!persistMountedRef\.current\) return;\s*\n\s*notifySettingsChanged/,
+  );
+});
+
+test('settings persistMountedRef resets on StrictMode cleanup', () => {
+  const settingsSource = readFileSync(
+    new URL('../state/useSettingsState.ts', import.meta.url),
+    'utf8',
+  );
+  const markAt = settingsSource.indexOf('Mark persist effects mounted AFTER all persist useEffects');
+  assert.notEqual(markAt, -1);
+  const markEffect = settingsSource.slice(markAt, markAt + 500);
+  assert.match(markEffect, /persistMountedRef\.current = true;/);
+  assert.match(
+    markEffect,
+    /return \(\) => \{\s*\n\s*persistMountedRef\.current = false;\s*\n\s*\};/,
+    'remount must treat boot as a fresh mount, not a settings change',
+  );
+});
+
+test('tray panel connect flush latches against StrictMode double invoke', () => {
+  const sideEffectsSource = readFileSync(
+    new URL('./AppSideEffects.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(sideEffectsSource, /pendingTrayConnectFlushKeyRef/);
+  assert.match(
+    sideEffectsSource,
+    /if \(pendingTrayConnectFlushKeyRef\.current === flushKey\) return;/,
+  );
+});
+
+test('ssh transport idle TTL notify latches against StrictMode double invoke', () => {
+  const settingsSource = readFileSync(
+    new URL('../state/useSettingsState.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(settingsSource, /lastPushedSshTransportIdleTtlRef/);
+  assert.match(
+    settingsSource,
+    /if \(lastPushedSshTransportIdleTtlRef\.current === sshTransportIdleTtlMs\) return;/,
+  );
+  assert.match(
+    settingsSource,
+    /lastPushedSshTransportIdleTtlRef\.current = sshTransportIdleTtlMs;/,
+  );
+});
+
+test('terminal selection Ask-AI payload is consumed once under StrictMode', () => {
+  const hostSource = readFileSync(
+    new URL('../../components/terminalLayer/TerminalLayerSupport.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(hostSource, /consumedTerminalSelectionRequestIds/);
+  assert.doesNotMatch(
+    hostSource,
+    /consumedTerminalSelectionRequestIdRef/,
+    'component refs reset on StrictMode remount; use a module Set',
+  );
+  assert.match(
+    hostSource,
+    /if \(consumedTerminalSelectionRequestIds\.has\(pendingTerminalSelection\.requestId\)\)/,
+  );
+  const latchAt = hostSource.indexOf('markTerminalSelectionRequestConsumed(pendingTerminalSelection.requestId)');
+  const draftAt = hostSource.indexOf('updateDraft(scopeKey, defaultAgentId');
+  assert.ok(latchAt > 0 && draftAt > latchAt, 'must latch before mutating the draft');
+});
+
+test('Codex App Server interaction bridge is app-singleton like MCP approvals', () => {
+  assert.match(appSource, /setupCodexAppServerInteractionBridge/);
+  const panelSource = readFileSync(
+    new URL('../../components/AIChatSidePanel.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    panelSource,
+    /setupCodexAppServerInteractionBridge/,
+    'per-panel Codex IPC listeners fan out approvals under retained multi-tab mounts',
+  );
+});

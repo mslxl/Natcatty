@@ -99,9 +99,10 @@ export class AgentRuntime {
     }
 
     const chatSessionId = input.chatSessionId;
-    const priorTurn = this.activeTurnPromises.get(chatSessionId);
-    if (priorTurn) {
-      await priorTurn.catch(() => {});
+    if (this.activeTurnPromises.has(chatSessionId)) {
+      const error = new Error(`Agent turn already in progress for session ${chatSessionId}`);
+      (error as Error & { code?: string }).code = 'AGENT_TURN_BUSY';
+      throw error;
     }
 
     const turnPromise = this.runTurnInternal(input, driver);

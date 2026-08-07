@@ -58,6 +58,9 @@ const updateErrorListeners = new Set();
 const updateNeedsSaveListeners = new Set();
 const terminalPopupConfigState = {
   pending: null,
+  // Keep the last delivered payload so StrictMode remount (unsubscribe →
+  // resubscribe) can replay config after the one-shot pending slot was drained.
+  lastPayload: null,
   listeners: new Set(),
 };
 
@@ -340,10 +343,12 @@ ipcRenderer.on("netcatty:zmodem:detect", (_event, payload) => {
 });
 
 ipcRenderer.on("netcatty:window:terminalPopupConfig", (_event, payload) => {
+  terminalPopupConfigState.lastPayload = payload;
   if (terminalPopupConfigState.listeners.size === 0) {
     terminalPopupConfigState.pending = payload;
     return;
   }
+  terminalPopupConfigState.pending = null;
   terminalPopupConfigState.listeners.forEach((cb) => {
     try {
       cb(payload);

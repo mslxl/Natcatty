@@ -1039,11 +1039,13 @@ export const useVaultState = () => {
   }, [hosts]);
 
   useEffect(() => {
+    let cancelled = false;
     const init = async () => {
       try {
         await withVaultImportLock("vault", async () => {
           recoverPluginImporterTransaction(localStorageAdapter, PLUGIN_IMPORT_TRANSACTION_KEYS);
         });
+        if (cancelled) return;
         const savedHosts = localStorageAdapter.read<Host[]>(STORAGE_KEY_HOSTS);
 
         if (savedHosts) {
@@ -1052,6 +1054,7 @@ export const useVaultState = () => {
           // and causes this stale result to be discarded.
           const ver = ++hostsWriteVersion.current;
           const decrypted = await decryptHosts(savedHosts);
+          if (cancelled) return;
           if (ver === hostsWriteVersion.current) {
             const sanitized = normalizeVaultOrder(
               migrateHostsFromLegacyLineTimestamps(
@@ -1098,6 +1101,7 @@ export const useVaultState = () => {
           // Decrypt sensitive fields (passphrase, privateKey)
           const keyVer = ++keysWriteVersion.current;
           const decryptedKeys = await decryptKeys(migratedKeys);
+          if (cancelled) return;
           if (keyVer === keysWriteVersion.current) {
             const orderedKeys = normalizeVaultOrder(decryptedKeys);
             setKeys(orderedKeys);
@@ -1118,6 +1122,7 @@ export const useVaultState = () => {
         if (savedIdentities) {
           const idVer = ++identitiesWriteVersion.current;
           const decryptedIds = await decryptIdentities(savedIdentities);
+          if (cancelled) return;
           if (idVer === identitiesWriteVersion.current) {
             const orderedIdentities = normalizeVaultOrder(decryptedIds);
             setIdentities(orderedIdentities);
@@ -1133,6 +1138,7 @@ export const useVaultState = () => {
         if (savedProxyProfiles) {
           const proxyVer = ++proxyProfilesWriteVersion.current;
           const decryptedProfiles = await decryptProxyProfiles(savedProxyProfiles);
+          if (cancelled) return;
           if (proxyVer === proxyProfilesWriteVersion.current) {
             const orderedProfiles = normalizeVaultOrder(decryptedProfiles);
             setProxyProfiles(orderedProfiles);
@@ -1142,6 +1148,8 @@ export const useVaultState = () => {
             });
           }
         }
+
+        if (cancelled) return;
 
         // Read remaining non-encrypted data fresh after all async gaps above
         const savedGroups = localStorageAdapter.read<string[]>(STORAGE_KEY_GROUPS);
@@ -1219,6 +1227,7 @@ export const useVaultState = () => {
         if (savedGroupConfigs) {
           const gcVer = ++groupConfigsWriteVersion.current;
           const decryptedGC = await decryptGroupConfigs(savedGroupConfigs);
+          if (cancelled) return;
           if (gcVer === groupConfigsWriteVersion.current) {
             const sanitizedGC = normalizeVaultOrder(decryptedGC.map(sanitizeGroupConfig));
             setGroupConfigs(sanitizedGC);
@@ -1229,12 +1238,19 @@ export const useVaultState = () => {
           }
         }
       } finally {
-        setIsInitialized(true);
-        setVaultInitialized(true);
+        // StrictMode remount cancels the first init; only the surviving effect
+        // may publish "vault ready" or terminals can boot against empty keys.
+        if (!cancelled) {
+          setIsInitialized(true);
+          setVaultInitialized(true);
+        }
       }
     };
 
-    init();
+    void init();
+    return () => {
+      cancelled = true;
+    };
   }, [updateHosts, updateSnippets]);
 
   useEffect(() => {

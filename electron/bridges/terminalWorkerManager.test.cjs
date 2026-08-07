@@ -3170,6 +3170,117 @@ test("an old start response cannot reopen a session claimed by a later same-id s
   assert.deepEqual(routed, [{ sessionId: "session-1", data: "new-banner" }]);
 });
 
+
+test("start-close-start StrictMode order keeps the remount start alive", async () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  // Mount1 start
+  const first = manager.request(
+    "netcatty:local:start",
+    { sessionId: "session-1", bootEpoch: 1 },
+    { webContentsId: 7 },
+  );
+  const firstRequest = child.messages.at(-1);
+
+  // Mount1 cleanup close (before remount start)
+  manager.send("netcatty:close", { sessionId: "session-1", bootEpoch: 1 }, { webContentsId: 7 });
+
+  // Mount2 remount start
+  const second = manager.request(
+    "netcatty:local:start",
+    { sessionId: "session-1", bootEpoch: 2 },
+    { webContentsId: 7 },
+  );
+  const secondRequest = child.messages.at(-1);
+
+  child.emit("message", {
+    kind: "response",
+    requestId: firstRequest.requestId,
+    result: { sessionId: "session-1" },
+    sessionGeneration: 0,
+  });
+  await assert.rejects(first, /superseded by a newer start request|closed before its output route opened/u);
+
+  child.emit("message", {
+    kind: "response",
+    requestId: secondRequest.requestId,
+    result: { sessionId: "session-1" },
+    sessionGeneration: 1,
+  });
+  await second;
+  assert.equal(manager.hasOpenSession("session-1"), true);
+});
+
+test("stale bootEpoch close must not reject a newer same-id start (StrictMode remount)", async () => {
+  const child = new FakeChild();
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: {
+      webContents: {
+        fromId(id) {
+          return { id, send() {} };
+        },
+      },
+    },
+    workerScriptPath: "/worker.cjs",
+  });
+
+  const first = manager.request(
+    "netcatty:local:start",
+    { sessionId: "session-1", bootEpoch: 1 },
+    { webContentsId: 7 },
+  );
+  const firstRequest = child.messages.at(-1);
+  const second = manager.request(
+    "netcatty:local:start",
+    { sessionId: "session-1", bootEpoch: 2 },
+    { webContentsId: 7 },
+  );
+  const secondRequest = child.messages.at(-1);
+
+  // Orphan close from the aborted StrictMode boot after the remount start is pending.
+  // This is the exact IPC order that produces:
+  //   superseded → "closed before its output route opened"
+  const closeResult = await manager.request(
+    "netcatty:close:await",
+    { sessionId: "session-1", bootEpoch: 1 },
+    { webContentsId: 7 },
+  );
+  assert.deepEqual(closeResult, { skipped: true, reason: "boot-epoch-mismatch" });
+  manager.send("netcatty:close", { sessionId: "session-1", bootEpoch: 1 }, { webContentsId: 7 });
+
+  child.emit("message", {
+    kind: "response",
+    requestId: firstRequest.requestId,
+    result: { sessionId: "session-1" },
+    sessionGeneration: 0,
+  });
+  await assert.rejects(first, /superseded by a newer start request|closed before its output route opened/u);
+
+  child.emit("message", {
+    kind: "response",
+    requestId: secondRequest.requestId,
+    result: { sessionId: "session-1" },
+    sessionGeneration: 1,
+  });
+  await second;
+  assert.equal(manager.hasOpenSession("session-1"), true);
+});
+
+
 test("closed-session tombstones are bounded without admitting recent stale output", async () => {
   const child = new FakeChild();
   const tapped = [];

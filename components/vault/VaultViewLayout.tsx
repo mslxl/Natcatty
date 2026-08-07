@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import React from "react";
+import React, { useCallback } from "react";
 import { deleteVaultKey } from "../../application/defaultKeyPassphrases";
 import { usePluginImporterCommit } from "../../application/state/usePluginImporterCommit";
 import { preserveConcurrentHostLineTimestampUpdate } from "../../domain/host";
@@ -36,6 +36,10 @@ const VaultSectionLoading = () => (
 /**
  * Notes section subscribes to notesStore instead of taking notes as VaultView
  * props, so note edits never invalidate the App vault domain bag.
+ *
+ * While inactive (retained but hidden), freeze hosts and drop the store
+ * subscription so Hosts/Keys churn and note publishes do not reconcile the
+ * heavy NotesManager + MDXEditor tree.
  */
 function VaultNotesSection({
   NotesManager,
@@ -52,7 +56,9 @@ function VaultNotesSection({
   onOpenNoteIdHandled: () => void;
   onOpenHost: (host: any, source?: { noteId?: string }) => void;
 }) {
-  const { notes, noteGroups, updateNotes, updateNoteGroups } = useNotesStore();
+  const { notes, noteGroups, updateNotes, updateNoteGroups } = useNotesStore({
+    enabled: isActive,
+  });
   return (
     <NotesManager
       notes={notes}
@@ -67,6 +73,23 @@ function VaultNotesSection({
     />
   );
 }
+
+const MemoVaultNotesSection = React.memo(
+  VaultNotesSection,
+  (prev, next) => {
+    if (
+      prev.isActive !== next.isActive
+      || prev.openNoteId !== next.openNoteId
+      || prev.NotesManager !== next.NotesManager
+      || prev.onOpenNoteIdHandled !== next.onOpenNoteIdHandled
+      || prev.onOpenHost !== next.onOpenHost
+    ) {
+      return false;
+    }
+    if (next.isActive && prev.hosts !== next.hosts) return false;
+    return true;
+  },
+);
 
 /**
  * Logs section subscribes to connectionLogsStore so every session start/exit
@@ -366,6 +389,13 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
         source.groupName === path || source.groupName.startsWith(path + "/"),
     ),
   );
+  const handleNotesOpenHost = useCallback((host: any, source?: { noteId?: string }) => {
+    if (source?.noteId && onOpenHostFromNote) {
+      onOpenHostFromNote(host, source);
+      return;
+    }
+    handleHostConnect(host);
+  }, [handleHostConnect, onOpenHostFromNote]);
   const visibleTreeGroupPaths = React.useMemo(
     () => collectVisibleVaultGroupPaths(treeViewGroupTree),
     [treeViewGroupTree],
@@ -1241,19 +1271,13 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
               )}
               data-section="vault-notes-retained"
             >
-              <VaultNotesSection
+              <MemoVaultNotesSection
                 NotesManager={NotesManager}
                 hosts={hosts}
                 isActive={currentSection === "notes"}
                 openNoteId={openNoteId ?? null}
                 onOpenNoteIdHandled={onOpenNoteIdHandled}
-                onOpenHost={(host: any, source: any) => {
-                  if (source?.noteId && onOpenHostFromNote) {
-                    onOpenHostFromNote(host, source);
-                    return;
-                  }
-                  handleHostConnect(host);
-                }}
+                onOpenHost={handleNotesOpenHost}
               />
             </div>
             {currentSection === "keys" && (

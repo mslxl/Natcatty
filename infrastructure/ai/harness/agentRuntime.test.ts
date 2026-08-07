@@ -308,3 +308,68 @@ test('AgentRuntime delegates steering only while a compatible turn is active', a
     attachedImages: [],
   }), { status: 'inactive' });
 });
+
+test('AgentRuntime runTurn rejects a concurrent start for the same session', async () => {
+  let releaseFirst: (() => void) | undefined;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  class BusyMockDriver implements TurnDriver {
+    readonly backend = 'catty' as const;
+    readonly runs: TurnInput[] = [];
+
+    async run(input: TurnInput): Promise<void> {
+      this.runs.push(input);
+      await firstGate;
+    }
+
+    abort(): void {}
+  }
+
+  const driver = new BusyMockDriver();
+  const runtime = new AgentRuntime({ drivers: [driver], traceStore: new TraceStore() });
+  const ui = {
+    addMessageToSession: () => {},
+    updateLastMessage: () => {},
+    updateMessageById: () => {},
+    reportStreamError: () => {},
+    setStreamingForScope: () => {},
+  };
+
+  const first = runtime.runTurn({
+    backend: 'catty',
+    chatSessionId: 'chat-busy',
+    sendScopeKey: 'scope',
+    userText: 'one',
+    signal: new AbortController().signal,
+    currentSession: undefined,
+    assistantMsgId: 'a1',
+    context: {} as never,
+    maxIterations: 1,
+    bridge: null,
+    ui,
+  });
+
+  await assert.rejects(
+    () => runtime.runTurn({
+      backend: 'catty',
+      chatSessionId: 'chat-busy',
+      sendScopeKey: 'scope',
+      userText: 'two',
+      signal: new AbortController().signal,
+      currentSession: undefined,
+      assistantMsgId: 'a2',
+      context: {} as never,
+      maxIterations: 1,
+      bridge: null,
+      ui,
+    }),
+    (err: unknown) => err instanceof Error
+      && (err as Error & { code?: string }).code === 'AGENT_TURN_BUSY',
+  );
+
+  releaseFirst?.();
+  await first;
+  assert.equal(driver.runs.length, 1);
+});

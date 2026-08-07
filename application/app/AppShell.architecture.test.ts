@@ -193,6 +193,31 @@ test('Hosts assemble bags field-by-field without spreading prepared domains', ()
   }
 });
 
+test('published Host bags omit notes, accent, and connectionLogs churn fields', () => {
+  const vaultHost = hostSources['VaultHost.tsx'];
+  const terminalHost = hostSources['TerminalHost.tsx'];
+  assert.ok(vaultHost && terminalHost);
+
+  // Notes / connection logs live in dedicated stores — VaultHost must not
+  // publish them into the vault domain bag that AppView consumes.
+  assert.doesNotMatch(vaultHost, /\bnotes\s*,/);
+  assert.doesNotMatch(vaultHost, /\bconnectionLogs\s*,/);
+  assert.doesNotMatch(vaultHost, /notesStore|connectionLogsStore|useNotesStore|useConnectionLogs/);
+
+  // Accent feeds useThemeRuntime for local injection only; the published
+  // terminal domain bag must not list accentMode/customAccent fields.
+  const domainStart = terminalHost.indexOf('const terminalDomain = useMemo');
+  assert.notEqual(domainStart, -1);
+  const domain = terminalHost.slice(domainStart, terminalHost.indexOf('useLayoutEffect(() => {\n    if (terminalDomain)', domainStart));
+  assert.doesNotMatch(domain, /accentMode/);
+  assert.doesNotMatch(domain, /customAccent/);
+  assert.match(domain, /currentTerminalTheme,/);
+  assert.match(
+    terminalHost,
+    /useTerminalAppearanceInjection\(accentedGlobalAppearance/,
+  );
+});
+
 test('AppShell uses default memo (store-driven), not always-rerender comparator', () => {
   assert.match(appShellSource, /memo\s*\(\s*AppShellView\s*\)/);
   assert.doesNotMatch(appShellSource, /memo\s*\(\s*AppShellView\s*,\s*\(\s*\)\s*=>\s*false\s*\)/);

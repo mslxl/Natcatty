@@ -445,6 +445,9 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [pendingOpenNoteId, setPendingOpenNoteId] = useState<string | null>(
     null,
   );
+  const handleOpenNoteIdHandled = useCallback(() => {
+    setPendingOpenNoteId(null);
+  }, []);
   const [pendingOpenSnippetId, setPendingOpenSnippetId] = useState<
     string | null
   >(null);
@@ -1515,7 +1518,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           onUpdateSnippetPackages,
           onUpdateSnippets,
           openNoteId: pendingOpenNoteId,
-          onOpenNoteIdHandled: () => setPendingOpenNoteId(null),
+          onOpenNoteIdHandled: handleOpenNoteIdHandled,
           openSnippetId: pendingOpenSnippetId,
           onOpenSnippetIdHandled: () => setPendingOpenSnippetId(null),
           Pin,

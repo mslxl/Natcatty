@@ -7,6 +7,7 @@ import {
   shouldSuppressHostStartupCommandOnReconnect,
   shouldStartTerminalBackend,
 } from "./restoredSessionGate.ts";
+import { setVaultInitialized } from "../../application/state/vaultInitStore.ts";
 
 test("restored disconnected sessions initialize as connecting", () => {
   assert.equal(
@@ -19,8 +20,25 @@ test("normal sessions initialize as connecting", () => {
   assert.equal(getInitialTerminalStatus(), "connecting");
 });
 
-test("restored disconnected sessions start terminal backend", () => {
+test("restored disconnected sessions start terminal backend only after vault hydration", () => {
+  setVaultInitialized(false);
+  assert.equal(shouldStartTerminalBackend(), false);
+  setVaultInitialized(true);
   assert.equal(shouldStartTerminalBackend(), true);
+});
+
+test("terminal boot waits for vaultInitialized before creating a backend session", () => {
+  const source = readFileSync(new URL("./useTerminalEffects.ts", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /if \(!attachExistingSession && !vaultInitialized\) \{\s*\n\s*return;/,
+    "boot effect must wait for vault hydration before creating xterm/backend",
+  );
+  assert.match(
+    source,
+    /vaultInitialized,/,
+    "vaultInitialized must be in the boot effect dependency list",
+  );
 });
 
 test("host startup command policy distinguishes restored and automatic reconnects", () => {
