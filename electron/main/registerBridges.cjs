@@ -1072,6 +1072,8 @@ function createBridgeRegistrar(context) {
       };
   
       try {
+        // Omit totalBytes so transferBridge STATs the remote size. Explicit 0
+        // means a planned empty snapshot and skips the remote body (#2787).
         const payload = {
           transferId,
           sourcePath: remotePath,
@@ -1080,7 +1082,6 @@ function createBridgeRegistrar(context) {
           targetType: "local",
           sourceSftpId: sftpId,
           sourceEncoding: encoding,
-          totalBytes: 0,
         };
   
         const result = terminalWorkerManager

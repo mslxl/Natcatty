@@ -153,6 +153,8 @@ test("the single temp-download entry routes direct downloads through the shared 
     cancelled: false,
   });
   assert.equal(observed.event.sender.id, 1);
+  // Omit totalBytes so transferBridge discovers remote size. Explicit 0 means
+  // a planned empty snapshot and would skip the remote body (#2787).
   assert.deepEqual(observed.payload, {
     transferId: "editor-download-1",
     sourcePath: "/remote/report.bin",
@@ -161,8 +163,12 @@ test("the single temp-download entry routes direct downloads through the shared 
     targetType: "local",
     sourceSftpId: "sftp-1",
     sourceEncoding: "utf-8",
-    totalBytes: 0,
   });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(observed.payload, "totalBytes"),
+    false,
+    "downloadToTempWithProgress must not send totalBytes (especially not 0)",
+  );
 });
 
 test("the retired no-progress temp-download IPC is not registered", async (t) => {
@@ -227,8 +233,12 @@ test("downloadToTempWithProgress proxies transfer work to the terminal worker in
     targetType: "local",
     sourceSftpId: "worker-sftp-1",
     sourceEncoding: "utf-8",
-    totalBytes: 0,
   });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(child.messages[0].payload, "totalBytes"),
+    false,
+    "worker-mode downloadToTempWithProgress must not send totalBytes",
+  );
   child.emit("message", {
     kind: "response",
     requestId: child.messages[0].requestId,

@@ -4462,6 +4462,65 @@ test("zero-byte snapshot is complete when remote has grown (no body open)", asyn
   assert.equal(downloaded.length, 0);
 });
 
+test("omitted totalBytes discovers remote size and downloads non-empty body", async (t) => {
+  // Explicit totalBytes:0 is an empty snapshot; omitting totalBytes must STAT
+  // and READ the remote (external-editor temp download path, #2787).
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-omit-total-"));
+  const transferId = "download-omit-total-bytes";
+  const targetPath = path.join(tempDir, "report.bin");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  t.after(async () => {
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(stagedPath, { force: true }).catch(() => {});
+  });
+
+  const expected = Buffer.from("external-editor-contents");
+  let statCalls = 0;
+  let bodyOpened = false;
+  const { sftp: sharedSftp } = createPipelinedDownloadSftp(expected, {
+    open(_remotePath, flags, callback) {
+      bodyOpened = true;
+      if (typeof flags === "function") {
+        flags(null, Buffer.from("read-handle"));
+        return;
+      }
+      callback(null, Buffer.from("read-handle"));
+    },
+  });
+  const client = {
+    sftp: sharedSftp,
+    stat() {
+      statCalls += 1;
+      return Promise.resolve({
+        size: expected.length,
+        mtimeMs: 1_000,
+        ctimeMs: 1_000,
+        mtime: 1,
+        ctime: 1,
+      });
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/remote/report.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      // intentionally omit totalBytes
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.ok(statCalls >= 1, "omitted totalBytes must discover remote size via STAT");
+  assert.equal(bodyOpened, true, "omitted totalBytes must open remote body for non-empty file");
+  assert.deepEqual(await fs.promises.readFile(targetPath), expected);
+});
+
 test("SFTP uploads fail when remote size does not match local size", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-size-test-"));
   t.after(async () => {
