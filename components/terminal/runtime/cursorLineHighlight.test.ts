@@ -387,6 +387,30 @@ test('CursorLineHighlighter follows cursor moves and clears when disabled', () =
   highlighter.dispose();
 });
 
+test('CursorLineHighlighter swaps decorations atomically on refresh', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  const firstDecoration = term.decorations[0];
+  assert.ok(firstDecoration);
+  assert.equal(firstDecoration.disposed, false);
+
+  let sawOverlap = false;
+  const originalRegisterMarker = term.registerMarker.bind(term);
+  term.registerMarker = (offset: number) => {
+    // New marker must be created while the previous decoration is still live.
+    if (!firstDecoration.disposed) sawOverlap = true;
+    return originalRegisterMarker(offset);
+  };
+
+  term.moveCursor(2);
+
+  assert.equal(sawOverlap, true, 'new marker should register before old decoration disposal');
+  assert.equal(firstDecoration.disposed, true);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+  highlighter.dispose();
+});
+
 test('CursorLineHighlighter recreates on resize and overlay color changes', () => {
   const term = createFakeTerm(40);
   const highlighter = new CursorLineHighlighter(term as never);

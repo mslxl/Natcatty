@@ -118,10 +118,21 @@ export class CursorLineHighlighter implements IDisposable {
       return;
     }
 
-    this.clear();
+    // Register the next marker/decorations before disposing the previous set so
+    // Enter / cursor moves never leave an empty frame (clear-then-create flash).
+    const previousMarker = this.marker;
+    const previousDecorations = this.decorations;
+    const previousDisposeListeners = this.decorationDisposeListeners;
 
     const marker = this.term.registerMarker(0);
-    if (!marker) return;
+    if (!marker) {
+      this.clearOwned(
+        previousMarker,
+        previousDecorations,
+        previousDisposeListeners,
+      );
+      return;
+    }
 
     const decorations: IDecoration[] = [];
     for (const range of ranges) {
@@ -164,6 +175,12 @@ export class CursorLineHighlighter implements IDisposable {
     this.activeColor = color;
     this.activeRanges = ranges;
     this.activeTailRanges = tailRanges;
+
+    this.clearOwned(
+      previousMarker,
+      previousDecorations,
+      previousDisposeListeners,
+    );
   }
 
   dispose(): void {
@@ -221,17 +238,29 @@ export class CursorLineHighlighter implements IDisposable {
   }
 
   private clear(): void {
-    for (const disposable of this.decorationDisposeListeners) disposable.dispose();
-    this.decorationDisposeListeners = [];
-    for (const decoration of this.decorations) decoration.dispose();
-    this.decorations = [];
-    this.marker?.dispose();
+    this.clearOwned(
+      this.marker,
+      this.decorations,
+      this.decorationDisposeListeners,
+    );
     this.marker = null;
+    this.decorations = [];
+    this.decorationDisposeListeners = [];
     this.activeLine = null;
     this.activeCols = null;
     this.activeColor = null;
     this.activeRanges = [];
     this.activeTailRanges = [];
+  }
+
+  private clearOwned(
+    marker: IMarker | null,
+    decorations: IDecoration[],
+    disposeListeners: IDisposable[],
+  ): void {
+    for (const disposable of disposeListeners) disposable.dispose();
+    for (const decoration of decorations) decoration.dispose();
+    marker?.dispose();
   }
 
   private markPendingRefresh(): void {
