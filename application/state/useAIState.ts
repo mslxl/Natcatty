@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import {
   STORAGE_KEY_AI_PROVIDERS,
@@ -50,6 +50,7 @@ import {
 } from './aiDraftState';
 import { convertFilesToUploads } from './useFileUpload';
 import { removeProviderReferences } from './aiProviderCleanup';
+import { publishAISessionsSnapshot } from './aiSessionsStore';
 import {
   AI_STATE_CHANGED_DRAFTS_BY_SCOPE,
   AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE,
@@ -1004,6 +1005,17 @@ export function useAIState() {
   // ── Computed ──
   const activeProvider = providers.find(p => p.id === activeProviderId) ?? null;
 
+  // Stream/message updates publish here so AIConfig Context consumers do not
+  // re-render on every token. AIChatPanelsHost reads aiSessionsStore instead.
+  useLayoutEffect(() => {
+    publishAISessionsSnapshot({
+      sessions,
+      activeSessionIdMap,
+      draftsByScope,
+      panelViewByScope,
+    });
+  }, [sessions, activeSessionIdMap, draftsByScope, panelViewByScope]);
+
   return useMemo(() => ({
     providers,
     setProviders,
@@ -1039,10 +1051,8 @@ export function useAIState() {
     setWebSearchConfig,
     quickMessages,
     setQuickMessages,
-    sessions,
-    activeSessionIdMap,
-    draftsByScope,
-    panelViewByScope,
+    // sessions / activeSessionIdMap / draftsByScope / panelViewByScope live in
+    // aiSessionsStore so streaming updates do not rebuild this config object.
     setActiveSessionId,
     ensureDraftForScope,
     updateDraft,
@@ -1096,10 +1106,6 @@ export function useAIState() {
     setWebSearchConfig,
     quickMessages,
     setQuickMessages,
-    sessions,
-    activeSessionIdMap,
-    draftsByScope,
-    panelViewByScope,
     setActiveSessionId,
     ensureDraftForScope,
     updateDraft,

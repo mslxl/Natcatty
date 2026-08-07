@@ -3167,6 +3167,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     retryTokenRef.current = null;
     reconnectPreparationTokenRef.current = null;
     restoreCwdIntentRef.current = null;
+    // Cancel must invalidate the boot the same way Disconnect does. Unmount is
+    // no longer the only path that flips boot-active: under StrictMode the pane
+    // can survive this click, so a late startSSH/startMosh attach could revive
+    // the aborted attempt. Bump the epoch here and let closeSession target the
+    // pre-bump epoch.
+    invalidateBootEpochForClose();
+    isBootActiveRef.current = false;
     setIsCancelling(true);
     auth.setNeedsAuth(false);
     auth.setAuthRetryMessage(null);

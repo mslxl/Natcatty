@@ -93,7 +93,6 @@ import {
   SerialConfig,
   SSHKey,
   Snippet,
-  VaultNote,
 } from "../types";
 import { AppLogo } from "./AppLogo";
 import { connectHostsStaggered } from "./connectHostsStaggered";
@@ -167,16 +166,6 @@ export type VaultSection =
   | "knownhosts"
   | "logs";
 
-/** Memo section tracker: areEqual ignores connectionLogs unless on logs. */
-let vaultViewMemoSection: VaultSection = "hosts";
-/** Always stashed from areEqual so skipped updates stay available when opening logs. */
-let vaultViewLatestConnectionLogs: ConnectionLog[] | null = null;
-
-/** Test/helper: sync the section used by vaultViewAreEqual. */
-export function syncVaultViewMemoSection(section: VaultSection): void {
-  vaultViewMemoSection = section;
-}
-
 const haveSameHostOrderResult = (previous: Host[], next: Host[]) => {
   if (previous.length !== next.length) return false;
   return next.every((host, index) => {
@@ -220,11 +209,8 @@ interface VaultViewProps {
   proxyProfiles: ProxyProfile[];
   snippets: Snippet[];
   snippetPackages: string[];
-  notes: VaultNote[];
-  noteGroups: string[];
   customGroups: string[];
   knownHosts: KnownHost[];
-  connectionLogs: ConnectionLog[];
   managedSources: ManagedSource[];
   sessionCount: number;
   hotkeyScheme: HotkeyScheme;
@@ -249,8 +235,6 @@ interface VaultViewProps {
   onUpdateProxyProfiles: (profiles: ProxyProfile[]) => void;
   onUpdateSnippets: (snippets: Snippet[]) => void;
   onUpdateSnippetPackages: (pkgs: string[]) => void;
-  onUpdateNotes: (notes: VaultNote[]) => void;
-  onUpdateNoteGroups: (groups: string[]) => void;
   onUpdateCustomGroups: (
     groups: string[] | ((current: string[]) => string[]),
   ) => void;
@@ -280,9 +264,6 @@ interface VaultViewProps {
   onClearAndRemoveManagedSources?: (sources: ManagedSource[]) => Promise<() => Promise<void>>;
   onUnmanageSource?: (sourceId: string) => void;
   onConvertKnownHost: (knownHost: KnownHost) => void;
-  onToggleConnectionLogSaved: (id: string) => void;
-  onDeleteConnectionLog: (id: string) => void;
-  onClearUnsavedConnectionLogs: () => void;
   onOpenLogView: (log: ConnectionLog) => void;
   onRunSnippet?: (snippet: Snippet, targetHosts: Host[]) => void;
   groupConfigs: GroupConfig[];
@@ -314,11 +295,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   proxyProfiles,
   snippets,
   snippetPackages,
-  notes,
-  noteGroups,
   customGroups,
   knownHosts,
-  connectionLogs,
   managedSources,
   sessionCount,
   hotkeyScheme,
@@ -340,8 +318,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onUpdateProxyProfiles,
   onUpdateSnippets,
   onUpdateSnippetPackages,
-  onUpdateNotes,
-  onUpdateNoteGroups,
   onUpdateCustomGroups,
   onCommitPluginImporterData,
   onUpdateKnownHosts,
@@ -352,9 +328,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   onClearAndRemoveManagedSources,
   onUnmanageSource,
   onConvertKnownHost,
-  onToggleConnectionLogSaved,
-  onDeleteConnectionLog,
-  onClearUnsavedConnectionLogs,
   onOpenLogView,
   onRunSnippet,
   groupConfigs,
@@ -375,8 +348,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const hostsRef = useRef(hosts);
   hostsRef.current = hosts;
   const [currentSection, setCurrentSection] = useState<VaultSection>("hosts");
-  vaultViewMemoSection = currentSection;
-  const resolvedConnectionLogs = vaultViewLatestConnectionLogs ?? connectionLogs;
   const [search, setSearch] = useState("");
   const [selectedGroupPath, setSelectedGroupPath] = useState<string | null>(
     null,
@@ -1427,7 +1398,6 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           Clock,
           cn,
           commitInlineGroupRename,
-          connectionLogs: resolvedConnectionLogs,
           connectSelectedHosts,
           ContextMenu,
           ContextMenuContent,
@@ -1525,29 +1495,22 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           Network,
           newFolderName,
           newHostGroupPath,
-          noteGroups,
           NotebookText,
-          notes,
           NotesManager,
           onCommitPluginImporterData,
-          onClearUnsavedConnectionLogs,
           onConnectSerial,
           onCreateLocalTerminal,
-          onDeleteConnectionLog,
           onDeleteHost,
           onImportOrReuseKey,
           onOpenHostFromNote,
           onOpenLogView,
           onOpenSettings,
           onRunSnippet,
-          onToggleConnectionLogSaved,
           onUpdateCustomGroups,
           onUpdateGroupConfigs,
           onUpdateHosts,
           onUpdateIdentities,
           onUpdateKeys,
-          onUpdateNoteGroups,
-          onUpdateNotes,
           onUpdateProxyProfiles,
           onUpdateSnippetPackages,
           onUpdateSnippets,
@@ -1680,11 +1643,6 @@ export const vaultViewAreEqual = (
   prev: VaultViewProps,
   next: VaultViewProps,
 ): boolean => {
-  vaultViewLatestConnectionLogs = next.connectionLogs;
-  const connectionLogsEqual =
-    vaultViewMemoSection === "logs"
-      ? prev.connectionLogs === next.connectionLogs
-      : true;
   const isEqual =
     prev.hosts === next.hosts &&
     prev.keys === next.keys &&
@@ -1692,12 +1650,10 @@ export const vaultViewAreEqual = (
     prev.proxyProfiles === next.proxyProfiles &&
     prev.snippets === next.snippets &&
     prev.snippetPackages === next.snippetPackages &&
-    prev.notes === next.notes &&
-    prev.noteGroups === next.noteGroups &&
     prev.customGroups === next.customGroups &&
     prev.knownHosts === next.knownHosts &&
-    // shellHistory is not a VaultView prop; SnippetsManager reads shellHistoryStore.
-    connectionLogsEqual &&
+    // shellHistory / notes / connectionLogs are not VaultView props; those
+    // sections subscribe to shellHistoryStore / notesStore / connectionLogsStore.
     prev.sessionCount === next.sessionCount &&
     prev.managedSources === next.managedSources &&
     prev.groupConfigs === next.groupConfigs &&

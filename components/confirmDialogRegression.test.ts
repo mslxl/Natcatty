@@ -22,11 +22,13 @@ function functionBody(source: string, functionName: string): string {
 }
 
 test("host and AI provider deletion use in-app confirmation dialogs", () => {
-  const appSource = readProjectFile("App.tsx");
+  const appSource = readProjectFile("application/app/AppSideEffects.tsx");
+  // App owns the confirm state; AppShell renders the dialog.
+  const appShellSource = readProjectFile("application/app/AppShell.tsx");
   const aiSettingsSource = readProjectFile("components/settings/tabs/SettingsAITab.tsx");
 
-  assert.match(appSource, /import \{ ConfirmDialog \} from '\.\/components\/ui\/confirm-dialog';/);
-  assert.match(appSource, /<ConfirmDialog[\s\S]*confirm\.deleteHost/);
+  assert.match(appShellSource, /import \{ ConfirmDialog \} from '\.\.\/\.\.\/components\/ui\/confirm-dialog';/);
+  assert.match(appShellSource, /<ConfirmDialog[\s\S]*confirm\.deleteHost/);
   assert.doesNotMatch(functionBody(appSource, "handleDeleteHost"), /window\.confirm|globalThis\.confirm|\bconfirm\(/);
 
   assert.match(aiSettingsSource, /import \{ ConfirmDialog \} from "\.\.\/\.\.\/ui\/confirm-dialog";/);

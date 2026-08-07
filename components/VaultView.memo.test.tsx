@@ -1,7 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
-import { syncVaultViewMemoSection, vaultViewAreEqual } from "./VaultView.tsx";
+import { vaultViewAreEqual } from "./VaultView.tsx";
+
+const vaultViewSource = readFileSync(
+  new URL("./VaultView.tsx", import.meta.url),
+  "utf8",
+);
+const vaultViewLayoutSource = readFileSync(
+  new URL("./vault/VaultViewLayout.tsx", import.meta.url),
+  "utf8",
+);
 
 const baseProps = {
   hosts: [],
@@ -10,11 +20,8 @@ const baseProps = {
   proxyProfiles: [],
   snippets: [],
   snippetPackages: [],
-  notes: [],
-  noteGroups: [],
   customGroups: [],
   knownHosts: [],
-  connectionLogs: [],
   sessions: [],
   managedSources: [],
   groupConfigs: {},
@@ -79,34 +86,57 @@ test("VaultView re-renders when host-key verification setting changes", () => {
   );
 });
 
-test("VaultView ignores connectionLogs identity when not on logs section", () => {
-  syncVaultViewMemoSection("hosts");
-  const nextLogs = [{ id: "log-1" }];
-  assert.equal(
-    vaultViewAreEqual(
-      baseProps as never,
-      { ...baseProps, connectionLogs: nextLogs } as never,
-    ),
-    true,
-  );
+test("notes are not VaultView props — the notes section reads notesStore", () => {
+  // Note edits must not churn the App vault domain bag, so VaultView neither
+  // receives notes nor compares them.
+  for (const removed of [
+    "notes:",
+    "noteGroups:",
+    "onUpdateNotes:",
+    "onUpdateNoteGroups:",
+  ]) {
+    assert.equal(
+      vaultViewSource.includes(removed),
+      false,
+      `VaultView must not declare ${removed}`,
+    );
+  }
+  assert.doesNotMatch(vaultViewSource, /prev\.notes === next\.notes/);
+  assert.match(vaultViewLayoutSource, /useNotesStore\(\)/);
+  assert.match(vaultViewLayoutSource, /function VaultNotesSection/);
 });
 
-test("VaultView compares connectionLogs identity when on logs section", () => {
-  syncVaultViewMemoSection("logs");
-  const nextLogs = [{ id: "log-2" }];
+test("connectionLogs are not VaultView props — the logs section reads connectionLogsStore", () => {
+  for (const removed of [
+    "connectionLogs:",
+    "onToggleConnectionLogSaved:",
+    "onDeleteConnectionLog:",
+    "onClearUnsavedConnectionLogs:",
+  ]) {
+    assert.equal(
+      vaultViewSource.includes(removed),
+      false,
+      `VaultView must not declare ${removed}`,
+    );
+  }
+  // The section-gated connectionLogs memo escape hatch is gone with the prop.
+  assert.equal(vaultViewSource.includes("syncVaultViewMemoSection"), false);
+  assert.equal(vaultViewSource.includes("vaultViewLatestConnectionLogs"), false);
+  assert.match(vaultViewLayoutSource, /useConnectionLogsStore\(\)/);
+  assert.match(vaultViewLayoutSource, /function VaultConnectionLogsSection/);
+});
+
+test("notes and connectionLogs churn cannot re-render VaultView", () => {
+  // Even if a caller smuggles them in, areEqual ignores both.
   assert.equal(
     vaultViewAreEqual(
-      baseProps as never,
-      { ...baseProps, connectionLogs: nextLogs } as never,
-    ),
-    false,
-  );
-  assert.equal(
-    vaultViewAreEqual(
-      { ...baseProps, connectionLogs: nextLogs } as never,
-      { ...baseProps, connectionLogs: nextLogs } as never,
+      { ...baseProps, notes: [], connectionLogs: [] } as never,
+      {
+        ...baseProps,
+        notes: [{ id: "n1" }],
+        connectionLogs: [{ id: "log-1" }],
+      } as never,
     ),
     true,
   );
-  syncVaultViewMemoSection("hosts");
 });

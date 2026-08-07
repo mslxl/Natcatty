@@ -45,7 +45,12 @@ const topTabsQuickControlsSource = readFileSync(new URL("./TopTabsQuickControls.
 const syncStatusButtonSource = readFileSync(new URL("./SyncStatusButton.tsx", import.meta.url), "utf8");
 const switchSource = readFileSync(new URL("./ui/switch.tsx", import.meta.url), "utf8");
 const appViewSource = readFileSync(new URL("../application/app/AppView.tsx", import.meta.url), "utf8");
-const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+const appSource = [
+  readFileSync(new URL("../App.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../application/app/AppSideEffects.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../application/app/hosts/TerminalHost.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../application/app/hosts/ChromeHost.tsx", import.meta.url), "utf8"),
+].join("\n");
 const externalMcpToggleSource = readFileSync(new URL("../application/state/useExternalMcpToggleState.ts", import.meta.url), "utf8");
 const zhTwAiSource = readFileSync(new URL("../application/i18n/locales/zh-TW/ai.ts", import.meta.url), "utf8");
 const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
@@ -185,12 +190,12 @@ test("AppView hides External MCP toggle in peer session windows", () => {
 });
 
 test("External MCP top-bar status sync waits for App startup reconcile", () => {
-  assert.match(appSource, /await syncExternalMcpStartupState\(netcattyBridge\.get\(\)\)/);
+  assert.match(appSource, /await syncExternalMcpStartupStateOnce\(netcattyBridge\.get\(\)\)/);
   assert.match(appSource, /markExternalMcpStartupReady\(\)/);
   assert.ok(
-    appSource.indexOf("await syncExternalMcpStartupState(netcattyBridge.get())")
+    appSource.indexOf("await syncExternalMcpStartupStateOnce(netcattyBridge.get())")
       < appSource.indexOf("markExternalMcpStartupReady()"),
-    "startup ready must be marked only after await syncExternalMcpStartupState",
+    "startup ready must be marked only after await syncExternalMcpStartupStateOnce",
   );
   assert.match(externalMcpToggleSource, /shouldWaitForExternalMcpStartupReady/);
   assert.match(externalMcpToggleSource, /waitForExternalMcpStartupReady\(/);

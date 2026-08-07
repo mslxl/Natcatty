@@ -7,7 +7,7 @@
  * - Debounced sync to avoid too frequent API calls
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useCloudSync } from './useCloudSync';
 import { useI18n } from '../i18n/I18nProvider';
 import { getCloudSyncManager } from '../../infrastructure/services/CloudSyncManager';
@@ -49,6 +49,7 @@ import {
   shouldRunRuntimeRemoteCheck,
 } from './autoSyncRemoteSchedule';
 import { resolveAutoSyncHashDecision } from './autoSyncHashDecision';
+import { getNotesSnapshot, subscribeNotes } from './notesStore';
 
 interface AutoSyncConfig {
   enabled?: boolean;
@@ -163,6 +164,9 @@ interface RemoteVersionCheckOptions {
 
 export const useAutoSync = (config: AutoSyncConfig) => {
   const enabled = config.enabled !== false;
+  // Subscribe so note edits still trigger getSyncSnapshot rebuilds even when
+  // App omits notes props (notes live in notesStore, not App render).
+  const notesSnapshot = useSyncExternalStore(subscribeNotes, getNotesSnapshot, getNotesSnapshot);
   const { t } = useI18n();
   const tRef = useRef(t);
   useEffect(() => {
@@ -254,8 +258,10 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       snippets: config.snippets,
       customGroups: config.customGroups,
       snippetPackages: config.snippetPackages,
-      notes: config.notes,
-      noteGroups: config.noteGroups,
+      // Prefer explicit overrides (tests); otherwise read the live notes store so
+      // App does not have to re-render on every note edit to keep sync current.
+      notes: config.notes ?? (notesSnapshot.notes as SyncPayload['notes']),
+      noteGroups: config.noteGroups ?? (notesSnapshot.noteGroups as SyncPayload['noteGroups']),
       portForwardingRules: getEffectivePortForwardingRulesForSync(config.portForwardingRules),
       groupConfigs: config.groupConfigs,
     };
@@ -271,6 +277,8 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.noteGroups,
     config.portForwardingRules,
     config.groupConfigs,
+    notesSnapshot.notes,
+    notesSnapshot.noteGroups,
   ]);
 
   // Build sync payload (includes plugin sidecars when host is available)

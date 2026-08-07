@@ -24,8 +24,12 @@ import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { AppHostEditorLayer } from './AppHostEditorLayer';
 import { AppPluginKeybindingHost } from './AppPluginKeybindingHost';
 import { shouldOpenHostEditOnWorkSurface } from './workTabSurface';
-import { getUiThemeById } from '../../infrastructure/config/uiThemes';
-import { buildAppThemeCssVars } from '../state/settingsStateDefaults';
+import { useConnectionLogsStore } from '../state/connectionLogsStore';
+import {
+  useSettingsChromeActions,
+  useSettingsChromeStore,
+} from '../state/settingsChromeStore';
+import { useAppThemeStyle } from './useAppThemeStyle';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
 import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
@@ -128,6 +132,82 @@ function RenameDraftDialog({
 }
 
 
+/**
+ * Applies app theme CSS vars to the vault surface. Subscribing here (instead of
+ * in AppView) keeps accent-picker drags from rebuilding the whole shell; the
+ * `children` element identity is unchanged so VaultView bails out.
+ */
+function AppVaultThemeSurface({
+  VaultViewContainer,
+  children,
+}: {
+  VaultViewContainer: React.ComponentType<any>;
+  children: React.ReactNode;
+}) {
+  const appThemeStyle = useAppThemeStyle();
+  return (
+    <VaultViewContainer appThemeStyle={appThemeStyle}>
+      {children}
+    </VaultViewContainer>
+  );
+}
+
+/** Plugin keybinding host with locally derived theme tokens and locale. */
+function AppPluginKeybindingThemeHost({
+  sessions,
+  workspaces,
+}: {
+  sessions: any[];
+  workspaces: any[];
+}) {
+  const appThemeStyle = useAppThemeStyle();
+  const { resolvedTheme, uiLanguage } = useSettingsChromeStore();
+  const pluginThemeTokens = useMemo(
+    () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
+    [appThemeStyle],
+  );
+  return (
+    <AppPluginKeybindingHost
+      locale={uiLanguage}
+      theme={resolvedTheme}
+      themeTokens={pluginThemeTokens}
+      sessions={sessions}
+      workspaces={workspaces}
+    />
+  );
+}
+
+/**
+ * Log replay surface reads the latest log body from connectionLogsStore, so
+ * terminal-data appends never touch the App domain bags.
+ */
+function AppLogViewSurface({
+  LogViewWrapper,
+  logView,
+  defaultTerminalTheme,
+  defaultFontSize,
+  onClose,
+}: {
+  LogViewWrapper: React.ComponentType<any>;
+  logView: any;
+  defaultTerminalTheme: any;
+  defaultFontSize: number;
+  onClose: () => void;
+}) {
+  const { connectionLogs, updateConnectionLog } = useConnectionLogsStore();
+  const latestLog =
+    connectionLogs.find((log) => log.id === logView.connectionLogId) ?? logView.log;
+  return (
+    <LogViewWrapper
+      logView={{ ...logView, log: latestLog }}
+      defaultTerminalTheme={defaultTerminalTheme}
+      defaultFontSize={defaultFontSize}
+      onClose={onClose}
+      onUpdateLog={updateConnectionLog}
+    />
+  );
+}
+
 export type AppViewProps = {
   domains: AppViewDomains;
 };
@@ -176,29 +256,49 @@ function AppViewInner({ domains }: AppViewProps) {
   useMainWindowInputFocusRecovery({ onPageHidden: dismissTransientOverlays });
 
   const {
-    accentMode, addShellHistoryEntry, removeShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
-    clearAndRemoveSource, clearAndRemoveSources, clearUnsavedConnectionLogs, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell,
-    connectionLogs, convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts, customAccent,
-    customGroups, currentTerminalTheme, deepLinkHostDraft, deleteConnectionLog, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
+    addShellHistoryEntry, removeShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
+    clearAndRemoveSource, clearAndRemoveSources, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell,
+    convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts,
+    customGroups, currentTerminalTheme, deepLinkHostDraft, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme,
     groupConfigs, handleAddKnownHost, handleConnectSerial, handleConnectToHost, handleCreateLocalTerminal, handleDefaultTerminalThemeChange, handleDeleteHost,
     handleEndSessionDrag, handleFollowAppTerminalThemeChange, handleHostConnectWithProtocolCheck, handleHotkeyAction, handleKeyboardInteractiveCancel, handleKeyboardInteractiveSubmit,
     handleOpenHostFromVaultNote, handleOpenQuickSwitcher, handleOpenSettings, handleOpenVaultHostFromChat, handleOpenVaultNoteFromChat, handleOpenVaultSectionFromChat, handleOpenVaultSnippetFromChat, handleRootContextMenu, handlePassphraseCancel, handlePassphraseSkip, handlePassphraseSubmit, handleProtocolSelect,
     handleRequestCloseEditorTabRef, handleSessionStatusChange, handleSyncNowManual, handleTerminalDataCapture, handleUpdateHostFromTerminal,
     hostById, hosts, terminalHosts, updateTerminalHosts, hotkeyScheme, identities, importOrReuseKey, isBroadcastEnabled, isCreateWorkspaceOpen, isMacClient, isQuickSwitcherOpen,
-    keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, noteGroups, notes, openLogView, openNoteRequest, orderedTabsWithEditors, orphanSessions,
+    keyBindings, keyboardInteractiveQueue, keys, logViews, managedSources, navigateToSection, openLogView, openNoteRequest, orderedTabsWithEditors, orphanSessions,
     passphraseQueue, protocolSelectHost, proxyProfiles, portForwardingRules, quickResults, quickSearch, removeSessionFromWorkspace, reorderWorkTabs, reorderWorkspaceSessions,
-    resolveEmptyVaultConflict, resolvedTheme, resolveSessionAppearance, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
+    resolveEmptyVaultConflict, resolveSessionAppearance, runSnippet, sessionLogsDir, sessionLogsEnabled, sessionLogsFormat, sessionLogsTimestampsEnabled, sessionRenameTarget, sshDebugLogsEnabled,
     sessions, setActiveTabId, setDeepLinkHostDraft, setDraggingSessionId, setEditorWordWrap,
     setNavigateToSection, setTerminalFontFamilyId, setTerminalFontSize, setVaultFocusRequest, updateSessionFontSize, updateSessionRestoreCwd, updateSessionDynamicTitle, updateSessionCodingCliProvider, clearSessionFontSizeOverride,
-    setWorkspaceFocusedSession, settings, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
+    setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
     sftpShowHiddenFiles, sftpUseCompressedUpload, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
     startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
-    toggleBroadcast, toggleConnectionLogSaved, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource, updateConnectionLog,
+    toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource,
     readPersistedHosts, readPersistedManagedSources, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
-    updateNoteGroups, updateNotes, updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaces,
+    updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
   } = ctx;
+
+  // Chrome-visible settings slice comes from settingsChromeStore, not from the
+  // App chrome domain bag — the whole `settings` object changes identity on
+  // every settings render and would rebuild the shell.
+  const {
+    theme: themePreference,
+    resolvedTheme,
+    windowOpacity,
+    showSftpTab,
+    showHostTreeSidebar,
+    showRecentHosts,
+    hostClickBehavior,
+    showOnlyUngroupedHostsInRoot,
+    dynamicTabTitleMode,
+    disableTerminalFontZoom,
+    restoreTerminalCwd,
+    terminalSidePanelAutoOpen,
+    terminalSidePanelAutoOpenTab,
+  } = useSettingsChromeStore();
+  const { setTheme, setWindowOpacity } = useSettingsChromeActions();
 
   const handleTerminalCommandExecuted = useCallback((
     command: string,
@@ -217,21 +317,6 @@ function AppViewInner({ domains }: AppViewProps) {
     setAddToWorkspaceDialog({ mode: 'append', workspaceId });
   }, [setAddToWorkspaceDialog]);
 
-  const appThemeStyle = useMemo(() => {
-    const tokens = getUiThemeById(
-      resolvedTheme,
-      resolvedTheme === 'dark' ? settings.darkUiThemeId : settings.lightUiThemeId,
-    ).tokens;
-    return {
-      ...buildAppThemeCssVars(tokens, accentMode, customAccent),
-      colorScheme: resolvedTheme,
-    } as React.CSSProperties;
-  }, [accentMode, customAccent, resolvedTheme, settings.darkUiThemeId, settings.lightUiThemeId]);
-
-  const pluginThemeTokens = useMemo(
-    () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),
-    [appThemeStyle],
-  );
   const isPeerSessionWindow = typeof window !== 'undefined'
     && window.location.hash.startsWith('#/session-window');
   const externalMcpToggle = useExternalMcpToggleState();
@@ -354,7 +439,7 @@ function AppViewInner({ domains }: AppViewProps) {
     <div className="flex flex-col h-screen text-foreground font-sans netcatty-shell" data-terminal-appearance-root onContextMenu={handleRootContextMenu}>
       <TopTabs
         theme={resolvedTheme}
-        themePreference={settings.theme}
+        themePreference={themePreference}
         hosts={hosts}
         sessions={sessions}
         orphanSessions={orphanSessions}
@@ -374,21 +459,21 @@ function AppViewInner({ domains }: AppViewProps) {
         onCloseLogView={closeLogView}
         onCloseTabsBatch={closeTabsBatch}
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
-        onThemeChange={settings.setTheme}
+        onThemeChange={setTheme}
         onOpenSettings={handleOpenSettings}
         externalMcpEnabled={externalMcpToggle.enabled}
         onToggleExternalMcp={externalMcpToggle.setEnabled}
         showExternalMcpToggle={!isPeerSessionWindow}
-        windowOpacity={settings.windowOpacity}
-        setWindowOpacity={settings.setWindowOpacity}
+        windowOpacity={windowOpacity}
+        setWindowOpacity={setWindowOpacity}
         onSyncNow={handleSyncNowManual}
         onStartSessionDrag={setDraggingSessionId}
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderWorkTabs}
         onRemoveSessionFromWorkspace={removeSessionFromWorkspace}
-        showSftpTab={settings.showSftpTab}
-        showHostTreeSidebar={settings.showHostTreeSidebar}
-        dynamicTabTitleMode={settings.terminalSettings.dynamicTabTitleMode}
+        showSftpTab={showSftpTab}
+        showHostTreeSidebar={showHostTreeSidebar}
+        dynamicTabTitleMode={dynamicTabTitleMode}
         editorTabs={editorTabs}
         pluginViewTabs={pluginViewTabs}
         onClosePluginViewTab={closePluginViewTab}
@@ -398,7 +483,7 @@ function AppViewInner({ domains }: AppViewProps) {
 
       <div className="flex-1 relative min-h-0">
         <AppHostTreeLayer
-          enabled={settings.showHostTreeSidebar}
+          enabled={showHostTreeSidebar}
           hosts={hosts}
           customGroups={customGroups}
           groupConfigs={groupConfigs}
@@ -407,9 +492,7 @@ function AppViewInner({ domains }: AppViewProps) {
           editorTabs={editorTabs}
           logViews={logViews}
           orderedTabs={orderedTabsWithEditors}
-          accentMode={accentMode}
           currentTerminalTheme={currentTerminalTheme}
-          customAccent={customAccent}
           followAppTerminalTheme={followAppTerminalTheme}
           hostById={hostById}
           themeById={themeById}
@@ -444,7 +527,7 @@ function AppViewInner({ domains }: AppViewProps) {
           onUpdateHosts={updateHosts}
         />
 
-        <VaultViewContainer appThemeStyle={appThemeStyle}>
+        <AppVaultThemeSurface VaultViewContainer={VaultViewContainer}>
           <VaultView
             hosts={hosts}
             keys={keys}
@@ -452,11 +535,8 @@ function AppViewInner({ domains }: AppViewProps) {
             proxyProfiles={proxyProfiles}
             snippets={snippets}
             snippetPackages={snippetPackages}
-            notes={notes}
-            noteGroups={noteGroups}
             customGroups={customGroups}
             knownHosts={effectiveKnownHosts}
-            connectionLogs={connectionLogs}
             managedSources={managedSources}
             sessionCount={sessions.filter((s) => !s.hiddenFromTabs).length}
             hotkeyScheme={hotkeyScheme}
@@ -480,8 +560,6 @@ function AppViewInner({ domains }: AppViewProps) {
             onUpdateProxyProfiles={updateProxyProfiles}
             onUpdateSnippets={updateSnippets}
             onUpdateSnippetPackages={updateSnippetPackages}
-            onUpdateNotes={updateNotes}
-            onUpdateNoteGroups={updateNoteGroups}
             onUpdateCustomGroups={updateCustomGroups}
             onCommitPluginImporterData={commitPluginImporterData}
             onUpdateKnownHosts={updateKnownHosts}
@@ -492,14 +570,11 @@ function AppViewInner({ domains }: AppViewProps) {
             onClearAndRemoveManagedSources={clearAndRemoveSources}
             onUnmanageSource={unmanageSource}
             onConvertKnownHost={convertKnownHostToHost}
-            onToggleConnectionLogSaved={toggleConnectionLogSaved}
-            onDeleteConnectionLog={deleteConnectionLog}
-            onClearUnsavedConnectionLogs={clearUnsavedConnectionLogs}
             onRunSnippet={runSnippet}
             onOpenLogView={openLogView}
-            showRecentHosts={settings.showRecentHosts}
-            hostClickBehavior={settings.hostClickBehavior}
-            showOnlyUngroupedHostsInRoot={settings.showOnlyUngroupedHostsInRoot}
+            showRecentHosts={showRecentHosts}
+            hostClickBehavior={hostClickBehavior}
+            showOnlyUngroupedHostsInRoot={showOnlyUngroupedHostsInRoot}
             navigateToSection={navigateToSection}
             onNavigateToSectionHandled={() => setNavigateToSection(null)}
             deepLinkHostDraft={deepLinkHostDraft}
@@ -508,7 +583,7 @@ function AppViewInner({ domains }: AppViewProps) {
             onVaultFocusRequestHandled={() => setVaultFocusRequest(null)}
             terminalSettings={terminalSettings}
           />
-        </VaultViewContainer>
+        </AppVaultThemeSurface>
 
         <SftpViewMount
           hosts={terminalHosts}
@@ -554,14 +629,12 @@ function AppViewInner({ domains }: AppViewProps) {
           clearThemeIntent={ctx.clearThemeIntent}
           settleManualThemeIntent={ctx.settleManualThemeIntent}
           resolveSessionAppearance={ctx.resolveSessionAppearance}
-          accentMode={accentMode}
-          customAccent={customAccent}
           terminalSettings={terminalSettings}
           terminalFontFamilyId={terminalFontFamilyId}
           fontSize={terminalFontSize}
           hotkeyScheme={hotkeyScheme}
-          disableTerminalFontZoom={settings.disableTerminalFontZoom}
-          restoreTerminalCwd={settings.restoreTerminalCwd}
+          disableTerminalFontZoom={disableTerminalFontZoom}
+          restoreTerminalCwd={restoreTerminalCwd}
           keyBindings={keyBindings}
           onHotkeyAction={handleHotkeyAction}
           onUpdateTerminalThemeId={handleDefaultTerminalThemeChange}
@@ -612,8 +685,8 @@ function AppViewInner({ domains }: AppViewProps) {
           sftpShowHiddenFiles={sftpShowHiddenFiles}
           sftpUseCompressedUpload={sftpUseCompressedUpload}
           sftpAutoOpenSidebar={sftpAutoOpenSidebar}
-          terminalSidePanelAutoOpen={settings.terminalSidePanelAutoOpen}
-          terminalSidePanelAutoOpenTab={settings.terminalSidePanelAutoOpenTab}
+          terminalSidePanelAutoOpen={terminalSidePanelAutoOpen}
+          terminalSidePanelAutoOpenTab={terminalSidePanelAutoOpenTab}
           sftpFollowTerminalCwd={sftpFollowTerminalCwd}
           setSftpFollowTerminalCwd={setSftpFollowTerminalCwd}
           editorWordWrap={editorWordWrap}
@@ -623,7 +696,7 @@ function AppViewInner({ domains }: AppViewProps) {
           sessionLogsFormat={sessionLogsFormat}
           sessionLogsTimestampsEnabled={sessionLogsTimestampsEnabled}
           sshDebugLogsEnabled={sshDebugLogsEnabled}
-          showHostTreeSidebar={settings.showHostTreeSidebar}
+          showHostTreeSidebar={showHostTreeSidebar}
           toggleScriptsSidePanelRef={toggleScriptsSidePanelRef}
           toggleSidePanelRef={toggleSidePanelRef}
           onStartSessionRename={startSessionRename}
@@ -631,21 +704,18 @@ function AppViewInner({ domains }: AppViewProps) {
           onRemoveSessionFromWorkspace={removeSessionFromWorkspace}
         />
 
-        {/* Log Views - readonly terminal replays */}
-        {logViews.map(logView => {
-          // Get the latest log data from connectionLogs to reflect updates
-          const latestLog = connectionLogs.find(l => l.id === logView.connectionLogId) || logView.log;
-          return (
-            <LogViewWrapper
-              key={logView.id}
-              logView={{ ...logView, log: latestLog }}
-              defaultTerminalTheme={currentTerminalTheme}
-              defaultFontSize={terminalFontSize}
-              onClose={() => closeLogView(logView.id)}
-              onUpdateLog={updateConnectionLog}
-            />
-          );
-        })}
+        {/* Log Views - readonly terminal replays. The latest log body comes
+            from connectionLogsStore inside AppLogViewSurface. */}
+        {logViews.map((logView: any) => (
+          <AppLogViewSurface
+            key={logView.id}
+            LogViewWrapper={LogViewWrapper}
+            logView={logView}
+            defaultTerminalTheme={currentTerminalTheme}
+            defaultFontSize={terminalFontSize}
+            onClose={() => closeLogView(logView.id)}
+          />
+        ))}
 
         {/* Editor Tabs — kept mounted for Monaco instance persistence; visibility toggled via CSS */}
         {editorTabs.map((tab) => (
@@ -662,10 +732,7 @@ function AppViewInner({ domains }: AppViewProps) {
           </LazyLoadBoundary>
         ))}
 
-        <AppPluginKeybindingHost
-          locale={settings.uiLanguage}
-          theme={resolvedTheme}
-          themeTokens={pluginThemeTokens}
+        <AppPluginKeybindingThemeHost
           sessions={sessions}
           workspaces={workspaces}
         />
@@ -756,7 +823,7 @@ function AppViewInner({ domains }: AppViewProps) {
               results={quickResults}
               sessions={sessions}
               workspaces={workspaces}
-              showSftpTab={settings.showSftpTab}
+              showSftpTab={showSftpTab}
               onQueryChange={setQuickSearch}
               onSelect={handleHostConnectWithProtocolCheck}
               onEditHost={(host) => {

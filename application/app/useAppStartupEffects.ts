@@ -213,6 +213,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
   }, [dedicatedResumeHosts, enabled, identities, isVaultInitialized, keys, knownHosts, terminalSettings]);
 
   // Show toast notification when update is available (only when auto-download is idle)
+  const toastedUpdateVersionRef = useRef<string | null>(null);
   useEffect(() => {
     if (!enabled) return;
     // Skip "update available" toast if auto-download has already started or completed
@@ -221,6 +222,8 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     if (localStorageAdapter.readString('netcatty_auto_update_enabled_v1') === 'false') return;
     if (updateState.hasUpdate && updateState.latestRelease) {
       const version = updateState.latestRelease.version;
+      if (toastedUpdateVersionRef.current === version) return;
+      toastedUpdateVersionRef.current = version;
       toast.info(
         t('update.available.message', { version }),
         {

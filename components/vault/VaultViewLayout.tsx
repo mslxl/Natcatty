@@ -18,6 +18,8 @@ import {
   vaultHeaderIconButtonClass,
   vaultHeaderSecondaryButtonClass,
 } from "./VaultPageHeader";
+import { useConnectionLogsStore } from "../../application/state/connectionLogsStore";
+import { useNotesStore } from "../../application/state/notesStore";
 import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
 import { toast } from "../ui/toast";
 import { AppWordmark } from "../AppWordmark";
@@ -30,6 +32,72 @@ const VaultSectionLoading = () => (
     aria-hidden="true"
   />
 );
+
+/**
+ * Notes section subscribes to notesStore instead of taking notes as VaultView
+ * props, so note edits never invalidate the App vault domain bag.
+ */
+function VaultNotesSection({
+  NotesManager,
+  hosts,
+  isActive,
+  openNoteId,
+  onOpenNoteIdHandled,
+  onOpenHost,
+}: {
+  NotesManager: React.ComponentType<any>;
+  hosts: any[];
+  isActive: boolean;
+  openNoteId: string | null;
+  onOpenNoteIdHandled: () => void;
+  onOpenHost: (host: any, source?: { noteId?: string }) => void;
+}) {
+  const { notes, noteGroups, updateNotes, updateNoteGroups } = useNotesStore();
+  return (
+    <NotesManager
+      notes={notes}
+      noteGroups={noteGroups}
+      hosts={hosts}
+      onUpdateNotes={updateNotes}
+      onUpdateNoteGroups={updateNoteGroups}
+      isActive={isActive}
+      openNoteId={openNoteId}
+      onOpenNoteIdHandled={onOpenNoteIdHandled}
+      onOpenHost={onOpenHost}
+    />
+  );
+}
+
+/**
+ * Logs section subscribes to connectionLogsStore so every session start/exit
+ * append stays out of the App vault/chrome domain bags.
+ */
+function VaultConnectionLogsSection({
+  ConnectionLogsManager,
+  hosts,
+  onOpenLogView,
+}: {
+  ConnectionLogsManager: React.ComponentType<any>;
+  hosts: any[];
+  onOpenLogView: (log: any) => void;
+}) {
+  const {
+    connectionLogs,
+    toggleConnectionLogSaved,
+    deleteConnectionLog,
+    clearUnsavedConnectionLogs,
+  } = useConnectionLogsStore();
+  return (
+    <ConnectionLogsManager
+      logs={connectionLogs}
+      hosts={hosts}
+      onToggleSaved={toggleConnectionLogSaved}
+      onDelete={deleteConnectionLog}
+      onClearUnsaved={clearUnsavedConnectionLogs}
+      onOpenLogView={onOpenLogView}
+    />
+  );
+}
 
 export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
   const {
@@ -52,7 +120,6 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     Clock,
     cn,
     commitInlineGroupRename,
-    connectionLogs,
     connectSelectedHosts,
     ContextMenu,
     ContextMenuContent,
@@ -148,16 +215,13 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     Network,
     newFolderName,
     newHostGroupPath,
-    onClearUnsavedConnectionLogs,
     onConnectSerial,
     onCreateLocalTerminal,
-    onDeleteConnectionLog,
     onDeleteHost,
     onImportOrReuseKey,
     onOpenLogView,
     onOpenSettings,
     onRunSnippet,
-    onToggleConnectionLogSaved,
     onUpdateCustomGroups,
     onUpdateGroupConfigs,
     onUpdateHosts,
@@ -280,15 +344,11 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
   } = ctx;
   const {
     knownHosts,
-    noteGroups,
     NotebookText,
-    notes,
     NotesManager,
     onOpenHostFromNote,
     onOpenNoteIdHandled,
     onOpenSnippetIdHandled,
-    onUpdateNoteGroups,
-    onUpdateNotes,
     openNoteId,
     openSnippetId,
   } = ctx;
@@ -1181,12 +1241,9 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
               )}
               data-section="vault-notes-retained"
             >
-              <NotesManager
-                notes={notes}
-                noteGroups={noteGroups}
+              <VaultNotesSection
+                NotesManager={NotesManager}
                 hosts={hosts}
-                onUpdateNotes={onUpdateNotes}
-                onUpdateNoteGroups={onUpdateNoteGroups}
                 isActive={currentSection === "notes"}
                 openNoteId={openNoteId ?? null}
                 onOpenNoteIdHandled={onOpenNoteIdHandled}
@@ -1311,12 +1368,9 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 resetKey="connection-logs"
               >
                 <Suspense fallback={<VaultSectionLoading />}>
-                  <LazyConnectionLogsManager
-                    logs={connectionLogs}
+                  <VaultConnectionLogsSection
+                    ConnectionLogsManager={LazyConnectionLogsManager}
                     hosts={hosts}
-                    onToggleSaved={onToggleConnectionLogSaved}
-                    onDelete={onDeleteConnectionLog}
-                    onClearUnsaved={onClearUnsavedConnectionLogs}
                     onOpenLogView={onOpenLogView}
                   />
                 </Suspense>

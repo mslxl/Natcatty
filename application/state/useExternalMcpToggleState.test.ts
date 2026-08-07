@@ -15,9 +15,11 @@ import {
   readExternalMcpSilentSessions,
   readExternalMcpStoredEnabled,
   resetExternalMcpStartupReadyForTests,
+  resetExternalMcpStartupSyncOnceForTests,
   shouldStartExternalMcpOnStartup,
   shouldWaitForExternalMcpStartupReady,
   syncExternalMcpStartupState,
+  syncExternalMcpStartupStateOnce,
   waitForExternalMcpStartupReady,
   writeExternalMcpFocusOnHostOpen,
   writeExternalMcpSilentSessions,
@@ -178,17 +180,17 @@ describe('useExternalMcpToggleState startup ready gate', () => {
 
   it('wires App startup reconcile to release the gate after enable settles', async () => {
     const appSource = await import('node:fs').then((fs) =>
-      fs.readFileSync(new URL('../../App.tsx', import.meta.url), 'utf8'),
+      fs.readFileSync(new URL('../app/AppSideEffects.tsx', import.meta.url), 'utf8'),
     );
     const hookSource = await import('node:fs').then((fs) =>
       fs.readFileSync(new URL('./useExternalMcpToggleState.ts', import.meta.url), 'utf8'),
     );
-    assert.match(appSource, /await syncExternalMcpStartupState\(netcattyBridge\.get\(\)\)/);
+    assert.match(appSource, /await syncExternalMcpStartupStateOnce\(netcattyBridge\.get\(\)\)/);
     assert.match(appSource, /markExternalMcpStartupReady\(\)/);
     assert.ok(
-      appSource.indexOf('await syncExternalMcpStartupState(netcattyBridge.get())')
+      appSource.indexOf('await syncExternalMcpStartupStateOnce(netcattyBridge.get())')
         < appSource.indexOf('markExternalMcpStartupReady()'),
-      'startup ready must be marked only after await syncExternalMcpStartupState',
+      'startup ready must be marked only after await syncExternalMcpStartupStateOnce',
     );
     assert.match(hookSource, /export async function syncExternalMcpStartupState/);
     assert.match(hookSource, /await Promise\.resolve\(bridge\?\.externalMcpSetEnabled\?\.\(plan\.runtimeEnabled\)\)/);
@@ -242,6 +244,51 @@ describe('useExternalMcpToggleState startup ready gate', () => {
       assert.equal(plan.storedEnabled, true);
       assert.equal(readExternalMcpStoredEnabled(), true);
     } finally {
+      restore();
+    }
+  });
+});
+
+describe('syncExternalMcpStartupStateOnce single-flight', () => {
+  it('reaches the bridge once when the startup effect is invoked twice', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      resetExternalMcpStartupReadyForTests();
+      resetExternalMcpStartupSyncOnceForTests();
+      const storageKeys = await import('../../infrastructure/config/storageKeys.ts');
+      globalThis.localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, 'true');
+      globalThis.localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+
+      const configCalls: unknown[] = [];
+      const enabledCalls: boolean[] = [];
+      const bridge = {
+        externalMcpSetConfig: async (config: unknown) => {
+          configCalls.push(config);
+          return { ok: true };
+        },
+        externalMcpSetEnabled: async (enabled: boolean) => {
+          enabledCalls.push(enabled);
+          return { ok: true, enabled };
+        },
+      };
+
+      // Mount, cleanup, mount again: both effect runs share one reconcile.
+      const first = syncExternalMcpStartupStateOnce(bridge);
+      const second = syncExternalMcpStartupStateOnce(bridge);
+      assert.equal(first, second);
+
+      const [firstPlan, secondPlan] = await Promise.all([first, second]);
+      assert.equal(firstPlan, secondPlan);
+      assert.equal(firstPlan.runtimeEnabled, true);
+      assert.equal(configCalls.length, 1);
+      assert.deepEqual(enabledCalls, [true]);
+
+      // A later remount awaits the settled promise instead of re-sending IPC.
+      await syncExternalMcpStartupStateOnce(bridge);
+      assert.equal(configCalls.length, 1);
+      assert.deepEqual(enabledCalls, [true]);
+    } finally {
+      resetExternalMcpStartupSyncOnceForTests();
       restore();
     }
   });

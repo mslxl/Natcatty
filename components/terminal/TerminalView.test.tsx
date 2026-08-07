@@ -425,6 +425,95 @@ test("manual disconnect keeps the session pane for reconnect", () => {
   assert.match(startersSource, /bootEpoch,/);
 });
 
+test("cancel connect invalidates the boot epoch like disconnect", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const cancelStart = source.indexOf("const handleCancelConnect = () => {");
+  const cancelEnd = source.indexOf("const handleDisconnect = () => {", cancelStart);
+  assert.notEqual(cancelStart, -1);
+  assert.notEqual(cancelEnd, -1);
+  const body = source.slice(cancelStart, cancelEnd);
+
+  assert.match(body, /invalidateBootEpochForClose\(\)/);
+  assert.match(body, /isBootActiveRef\.current = false/);
+  // Both must land before cleanupSession so the close targets the pre-bump epoch.
+  assert.ok(
+    body.indexOf("invalidateBootEpochForClose()") < body.indexOf("void cleanupSession()"),
+    "cancel must invalidate the boot epoch before cleanupSession",
+  );
+  assert.ok(
+    body.indexOf("isBootActiveRef.current = false") < body.indexOf("void cleanupSession()"),
+    "cancel must clear boot-active before cleanupSession",
+  );
+});
+
+test("terminal boot is cancelable and closes eagerly on cleanup", () => {
+  const effectsSource = readFileSync(new URL("./useTerminalEffects.ts", import.meta.url), "utf8");
+  const startersSource = readFileSync(
+    new URL("./runtime/createTerminalSessionStarters.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(effectsSource, /const bootAbort = new AbortController\(\)/);
+  assert.match(effectsSource, /const bootStartOptions = \{ signal: bootAbort\.signal \}/);
+  for (const starter of [
+    "startPluginConnection",
+    "startSerial",
+    "startLocal",
+    "startTelnet",
+    "startMosh",
+    "startEt",
+    "startSSH",
+  ]) {
+    assert.match(
+      effectsSource,
+      new RegExp(`sessionStarters\\.${starter}\\(term, bootStartOptions\\)`),
+      `${starter} must receive the boot abort signal`,
+    );
+  }
+
+  // Cleanup order: abort, then eager close, then the async capture/teardown.
+  const cleanupStart = effectsSource.indexOf("      disposed = true;");
+  assert.notEqual(cleanupStart, -1);
+  const cleanup = effectsSource.slice(cleanupStart);
+  const abortAt = cleanup.indexOf("bootAbort.abort()");
+  const closeAt = cleanup.indexOf("terminalBackend.closeSession(");
+  const captureAt = cleanup.indexOf("void completeClose()");
+  assert.ok(abortAt !== -1 && closeAt !== -1 && captureAt !== -1);
+  assert.ok(abortAt < closeAt, "cleanup must abort before closing the session");
+  assert.ok(closeAt < captureAt, "eager close must run before the async capture");
+  // Attached popups never own the backend session, and a connected pane keeps
+  // the existing capture-then-teardown path.
+  assert.match(cleanup, /!attachExistingSession && !hasConnectedRef\.current/);
+
+  // An aborted boot must stop counting as the current attempt so the existing
+  // orphan-close / attach-refusal guards cover cancellation too.
+  assert.match(
+    startersSource,
+    /options\?\.signal\?\.aborted !== true && isBootEpochCurrent\(\)/,
+  );
+  for (const starter of [
+    "startSSH",
+    "startTelnet",
+    "startMosh",
+    "startEt",
+    "startPluginConnection",
+    "startLocal",
+    "startSerial",
+  ]) {
+    assert.match(
+      startersSource,
+      new RegExp(
+        `const ${starter} = async \\(term: XTerm, options\\?: TerminalSessionStartOptions\\)`,
+      ),
+      `${starter} must accept an abort signal`,
+    );
+  }
+  // The plugin path holds its own in-flight request controller; the boot abort
+  // has to reach it or the extension request outlives the pane.
+  assert.match(startersSource, /options\?\.signal\?\.addEventListener\("abort", onBootAborted/);
+  assert.match(startersSource, /options\?\.signal\?\.removeEventListener\("abort", onBootAborted\)/);
+});
+
 test("hidden host information reveals actions without permanently covering terminal content", () => {
   const source = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
 

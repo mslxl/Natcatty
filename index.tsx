@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { StrictMode, Suspense, lazy } from 'react';
 import ReactDOM from 'react-dom/client';
 import '@fontsource/mona-sans/400.css';
 import '@fontsource/mona-sans/500.css';
@@ -155,36 +155,46 @@ const renderApp = () => {
   syncTrayWindowClass(route);
   if (route === 'settings') {
     root.render(
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
-          <Suspense fallback={<SettingsWindowFallback />}>
-            <LazySettingsPage />
-          </Suspense>
-        </TooltipProvider>
-      </ToastProvider>
+      <StrictMode>
+        <ToastProvider>
+          <TooltipProvider delayDuration={300}>
+            <Suspense fallback={<SettingsWindowFallback />}>
+              <LazySettingsPage />
+            </Suspense>
+          </TooltipProvider>
+        </ToastProvider>
+      </StrictMode>
     );
   } else if (route === 'tray') {
     root.render(
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
-          <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading tray panel…</div>}>
-            <LazyTrayPanel />
-          </Suspense>
-        </TooltipProvider>
-      </ToastProvider>
+      <StrictMode>
+        <ToastProvider>
+          <TooltipProvider delayDuration={300}>
+            <Suspense fallback={<div style={{ padding: 12, color: '#fff' }}>Loading tray panel…</div>}>
+              <LazyTrayPanel />
+            </Suspense>
+          </TooltipProvider>
+        </ToastProvider>
+      </StrictMode>
     );
   } else if (route === 'terminal-popup') {
     root.render(
-      <ToastProvider>
-        <TooltipProvider delayDuration={300}>
-          <Suspense fallback={<TerminalPopupWindowFallback />}>
-            <LazyTerminalPopupPage />
-          </Suspense>
-        </TooltipProvider>
-      </ToastProvider>
+      <StrictMode>
+        <ToastProvider>
+          <TooltipProvider delayDuration={300}>
+            <Suspense fallback={<TerminalPopupWindowFallback />}>
+              <LazyTerminalPopupPage />
+            </Suspense>
+          </TooltipProvider>
+        </ToastProvider>
+      </StrictMode>
     );
   } else {
-    root.render(<App />);
+    root.render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    );
   }
 };
 

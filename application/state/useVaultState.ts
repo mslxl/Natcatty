@@ -66,6 +66,10 @@ import {
 import { getNextVaultOrder, normalizeVaultOrder } from "../../domain/vaultOrder";
 import { loadSanitizedShellHistory } from "./shellHistoryPersistence";
 import {
+  publishConnectionLogsSnapshot,
+  registerConnectionLogsActions,
+} from "./connectionLogsStore";
+import {
   publishNotesSnapshot,
   registerNotesActions,
 } from "./notesStore";
@@ -967,6 +971,28 @@ export const useVaultState = () => {
       return saved;
     });
   }, [persistConnectionLogState]);
+
+  // Connection logs for Vault logs section — keep App domain bags off session churn.
+  useLayoutEffect(() => {
+    publishConnectionLogsSnapshot({ connectionLogs });
+  }, [connectionLogs]);
+
+  useLayoutEffect(() => {
+    registerConnectionLogsActions({
+      updateConnectionLog,
+      toggleConnectionLogSaved,
+      deleteConnectionLog,
+      clearUnsavedConnectionLogs,
+    });
+    return () => {
+      registerConnectionLogsActions(null);
+    };
+  }, [
+    updateConnectionLog,
+    toggleConnectionLogSaved,
+    deleteConnectionLog,
+    clearUnsavedConnectionLogs,
+  ]);
 
   // Convert a known host to a managed host
   const convertKnownHostToHost = useCallback((knownHost: KnownHost): Host => {

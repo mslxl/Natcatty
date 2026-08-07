@@ -53,10 +53,12 @@ test('vault activation suppresses inherited text color transitions', () => {
 });
 
 test('vault surface carries app theme vars while terminal chrome is active', () => {
+  const appThemeStyleSource = readFileSync(new URL('./useAppThemeStyle.ts', import.meta.url), 'utf8');
   assert.match(appMountsSource, /appThemeStyle\?: React\.CSSProperties/);
   assert.match(appMountsSource, /style=\{\{ \.\.\.appThemeStyle, \.\.\.containerStyle \}\}/);
-  assert.match(appViewSource, /buildAppThemeCssVars\(tokens, accentMode, customAccent\)/);
-  assert.match(appViewSource, /<VaultViewContainer appThemeStyle=\{appThemeStyle\}>/);
+  assert.match(appThemeStyleSource, /buildAppThemeCssVars\(tokens, accentMode, customAccent\)/);
+  assert.match(appThemeStyleSource, /useAppearanceChromeStore/);
+  assert.match(appViewSource, /VaultThemedSurface|useAppThemeStyle|appThemeStyle/);
 });
 
 test('active tab chrome keeps removed theme side effects unmounted', () => {

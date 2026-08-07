@@ -104,6 +104,15 @@ export const getMissingChainHostIds = (
   return requestedIds.filter((hostId) => !resolvedIds.has(hostId));
 };
 
+/**
+ * Cancellation handle for one boot attempt. The mount effect owns the
+ * controller and aborts it in cleanup, so a start that is still awaiting the
+ * bridge stops counting as the current attempt and closes any session it wins.
+ */
+export type TerminalSessionStartOptions = {
+  signal?: AbortSignal;
+};
+
 export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContext) => {
   const globalTerminalSettings = {
     verifyHostKeys: true,
@@ -125,9 +134,12 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     ctx.setChainProgress(null);
   };
 
-  const createAttemptGuards = () => {
+  const createAttemptGuards = (options?: TerminalSessionStartOptions) => {
     const bootEpoch = ctx.bootEpochRef?.current ?? 0;
-    const isCurrentAttempt = createBootAttemptGuard(ctx);
+    const isBootEpochCurrent = createBootAttemptGuard(ctx);
+    // An aborted boot is never the current attempt, so every existing guard
+    // (orphan close, attach refusal, UI suppression) also covers cancellation.
+    const isCurrentAttempt = () => options?.signal?.aborted !== true && isBootEpochCurrent();
     return {
       bootEpoch,
       isCurrentAttempt,
@@ -196,8 +208,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  const startSSH = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startSSH = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     // Correlate host-key prompts with this boot so a superseded start cannot
     // reopen approval UI after disconnect → reconnect.
     setTerminalBootEpoch(ctx.sessionId, bootEpoch);
@@ -807,8 +820,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  const startTelnet = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startTelnet = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     if (!ctx.terminalBackend.telnetAvailable()) {
       ctx.setError("Telnet bridge unavailable. Please run the desktop build.");
       writeTerminalLine(ctx, term, "\r\n[Telnet bridge unavailable. Please run the desktop build.]");
@@ -1001,8 +1015,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  const startMosh = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startMosh = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     if (!ctx.terminalBackend.moshAvailable()) {
       ctx.setError("Mosh bridge unavailable. Please run the desktop build.");
       writeTerminalLine(ctx, term, "\r\n[Mosh bridge unavailable. Please run the desktop build.]");
@@ -1238,8 +1253,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  const startEt = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startEt = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     if (!ctx.terminalBackend.etAvailable()) {
       ctx.setError("EternalTerminal bridge unavailable. Please run the desktop build.");
       writeTerminalLine(ctx, term, "\r\n[EternalTerminal bridge unavailable. Please run the desktop build.]");
@@ -1546,8 +1562,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  const startPluginConnection = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startPluginConnection = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     if (!ctx.terminalBackend.pluginConnectionAvailable()) {
       ctx.setError("Plugin connection bridge unavailable. Please run the desktop build with Plugin Development enabled.");
       writeTerminalLine(ctx, term, "\r\n[Plugin connection bridge unavailable.]");
@@ -1608,7 +1625,11 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         scheduleBootMonitor();
       }, 50);
     };
+    // The mount effect aborts its boot controller before the async teardown
+    // runs, so forward that straight to the in-flight extension request.
+    const onBootAborted = () => cancelPendingStart();
     const releasePendingStartCancellation = () => {
+      options?.signal?.removeEventListener("abort", onBootAborted);
       if (ctx.disposeExitRef.current === cancelPendingStart) {
         ctx.disposeExitRef.current = previousDisposeExit;
       }
@@ -1616,6 +1637,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       clearBootMonitor();
     };
     ctx.disposeExitRef.current = cancelPendingStart;
+    options?.signal?.addEventListener("abort", onBootAborted, { once: true });
     scheduleBootMonitor();
     try {
       const startPromise = ctx.terminalBackend.startPluginConnection({
@@ -1692,8 +1714,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
     }
   };
 
-  const startLocal = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startLocal = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     if (!ctx.terminalBackend.localAvailable()) {
       ctx.setError("Local shell bridge unavailable. Please run the desktop build.");
       writeTerminalLine(
@@ -1814,8 +1837,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
   };
 
   // Start Serial session
-  const startSerial = async (term: XTerm) => {
-    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards();
+  const startSerial = async (term: XTerm, options?: TerminalSessionStartOptions) => {
+    if (options?.signal?.aborted) return;
+    const { isCurrentAttempt, ignoreStaleAttemptUi, bootEpoch } = createAttemptGuards(options);
     if (!ctx.serialConfig) {
       ctx.setError("No serial configuration provided");
       writeTerminalLine(ctx, term, "\r\n[Error: No serial configuration provided]");

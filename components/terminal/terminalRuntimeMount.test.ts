@@ -126,7 +126,7 @@ test('session launch paths use the same effective protocol as Provider snapshots
   );
   assert.match(
     effectsSource,
-    /else if \(effectiveTerminalProtocol === "mosh"\)[\s\S]*?sessionStarters\.startMosh\(term\)[\s\S]*?else if \(effectiveTerminalProtocol === "et"\)/,
+    /else if \(effectiveTerminalProtocol === "mosh"\)[\s\S]*?sessionStarters\.startMosh\(term, bootStartOptions\)[\s\S]*?else if \(effectiveTerminalProtocol === "et"\)/,
   );
   assert.match(
     terminalSource,

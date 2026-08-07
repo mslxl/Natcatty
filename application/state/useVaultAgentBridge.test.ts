@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { haveSameVaultAgentSnapshot, resolveVaultAgentEffectiveHost } from './useVaultAgentBridge';
+import {
+  haveSameVaultAgentSnapshot,
+  resolveVaultAgentEffectiveHost,
+  resolveVaultAgentNotes,
+} from './useVaultAgentBridge';
+import { publishNotesSnapshot } from './notesStore';
 
 type Snapshot = Parameters<typeof haveSameVaultAgentSnapshot>[0];
 
@@ -32,5 +37,15 @@ describe('resolveVaultAgentEffectiveHost', () => {
       resolveVaultAgentEffectiveHost(host, [{ path: 'production', protocol: 'telnet' }], []).protocol,
       'telnet',
     );
+  });
+});
+
+describe('resolveVaultAgentNotes', () => {
+  it('prefers the live notes store when App omitted the notes prop', () => {
+    const stale: Snapshot['notes'] = [];
+    const live = [{ id: 'n1', title: 'Live', content: 'x', updatedAt: 1 }] as Snapshot['notes'];
+    publishNotesSnapshot({ notes: live, noteGroups: [] });
+    assert.equal(resolveVaultAgentNotes(undefined, stale as never), live);
+    assert.equal(resolveVaultAgentNotes(stale as never, stale as never), stale);
   });
 });

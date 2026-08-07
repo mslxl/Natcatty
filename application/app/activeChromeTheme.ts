@@ -18,12 +18,12 @@ export type ResolveActiveChromeThemeInput = {
   customAccent: string;
   editorTabs: readonly EditorTabChrome[];
   followAppTerminalTheme: boolean;
-  hostById: Map<string, Host>;
+  hostById: ReadonlyMap<string, Host>;
   logViews: readonly LogView[];
   resolveSessionAppearance?: (hostScope: TerminalAppearanceHostScope) => ResolvedAppearance;
-  sessionById: Map<string, TerminalSession>;
-  themeById: Map<string, TerminalTheme>;
-  workspaceById: Map<string, Workspace>;
+  sessionById: ReadonlyMap<string, TerminalSession>;
+  themeById: ReadonlyMap<string, TerminalTheme>;
+  workspaceById: ReadonlyMap<string, Workspace>;
 };
 
 export function isActiveChromeThemeResolvable({

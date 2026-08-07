@@ -403,6 +403,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     let disposed = false;
     let initialFitTimer: ReturnType<typeof setTimeout> | undefined;
+    // Every boot owns a controller so cleanup can cancel an in-flight start
+    // instead of waiting for the async capture/teardown below to finish.
+    const bootAbort = new AbortController();
+    const bootStartOptions = { signal: bootAbort.signal };
     const closeGeneration = ++terminalBootCloseGenerationRef.current;
     if (bootEpochRef) {
       bootEpochRef.current += 1;
@@ -713,32 +717,32 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         if (effectiveTerminalProtocol.startsWith("plugin:")) {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing plugin connection..."]);
-          await sessionStarters.startPluginConnection(term);
+          await sessionStarters.startPluginConnection(term, bootStartOptions);
           if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "serial") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing serial connection..."]);
-          await sessionStarters.startSerial(term);
+          await sessionStarters.startSerial(term, bootStartOptions);
           if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "local") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing local shell..."]);
-          await sessionStarters.startLocal(term);
+          await sessionStarters.startLocal(term, bootStartOptions);
           if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "telnet") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Telnet connection..."]);
-          await sessionStarters.startTelnet(term);
+          await sessionStarters.startTelnet(term, bootStartOptions);
           if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "mosh") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Mosh connection..."]);
-          await sessionStarters.startMosh(term);
+          await sessionStarters.startMosh(term, bootStartOptions);
           if (!bootStillActive()) return;
         } else if (effectiveTerminalProtocol === "et") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing EternalTerminal connection..."]);
-          await sessionStarters.startEt(term);
+          await sessionStarters.startEt(term, bootStartOptions);
           if (!bootStillActive()) return;
         } else {
           const resolvedAuth = resolveHostAuth({ host, keys, identities });
@@ -759,7 +763,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
           setBackendConnectingStatus();
           setProgressLogs(["Initializing secure channel..."]);
-          await sessionStarters.startSSH(term);
+          await sessionStarters.startSSH(term, bootStartOptions);
           if (!bootStillActive()) return;
         }
       } catch (err) {
@@ -775,10 +779,33 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     return () => {
       disposed = true;
       if (initialFitTimer !== undefined) clearTimeout(initialFitTimer);
+      // Abort first: a start still awaiting the bridge must stop counting as
+      // the current attempt before anything below yields to a microtask.
+      bootAbort.abort();
       isBootActiveRef.current = false;
       if (hibernatedRef?.current) {
         forceCloseHibernatedSession?.();
         return;
+      }
+
+      // A boot that never reached "connected" has nothing worth capturing, and
+      // the teardown below awaits terminal drain plus serialization before it
+      // closes anything. Tell the main process now so it can abort the pending
+      // boot (passphrase prompt, TCP dial) for this epoch instead of letting it
+      // finish against a pane that is already gone. Attached popups never own
+      // the backend session, so they keep the display-route handoff path.
+      if (!attachExistingSession && !hasConnectedRef.current) {
+        try {
+          const closeResult = terminalBackend.closeSession(
+            sessionRef.current ?? sessionId,
+            { bootEpoch: bootEpochRef ? bootEpochRef.current : undefined },
+          );
+          void Promise.resolve(closeResult).catch((err: unknown) => {
+            logger.warn("Failed to cancel pending terminal boot on unmount", err);
+          });
+        } catch (err) {
+          logger.warn("Failed to cancel pending terminal boot on unmount", err);
+        }
       }
 
       const persistCloseCapture = (data: string, source: string, dataLength: number) => {

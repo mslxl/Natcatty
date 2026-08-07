@@ -64,6 +64,7 @@ export function resetExternalMcpStartupReadyForTests(): void {
   externalMcpStartupReadyWaitPromise = null;
   externalMcpStartupReadyWaitResolve = null;
   externalMcpEnableGeneration = 0;
+  externalMcpStartupSyncPromise = null;
 }
 
 export function getExternalMcpEnableGenerationForTests(): number {
@@ -308,6 +309,26 @@ export async function syncExternalMcpStartupState(
     // surface can recover without wiping always-on intent.
   }
   return plan;
+}
+
+let externalMcpStartupSyncPromise: Promise<ExternalMcpStartupSyncPlan> | null = null;
+
+/**
+ * Startup reconcile runs exactly once per renderer load. A remounted App must
+ * await the same settled promise instead of pushing a second enable/disable to
+ * the main process, which would fight the user's live toggle.
+ */
+export function syncExternalMcpStartupStateOnce(
+  bridge: ExternalMcpBridge | undefined = netcattyBridge.get(),
+): Promise<ExternalMcpStartupSyncPlan> {
+  if (!externalMcpStartupSyncPromise) {
+    externalMcpStartupSyncPromise = syncExternalMcpStartupState(bridge);
+  }
+  return externalMcpStartupSyncPromise;
+}
+
+export function resetExternalMcpStartupSyncOnceForTests(): void {
+  externalMcpStartupSyncPromise = null;
 }
 
 export function useExternalMcpToggleState() {

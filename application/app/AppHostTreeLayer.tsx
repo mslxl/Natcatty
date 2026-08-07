@@ -1,6 +1,7 @@
 import React, { memo, useMemo } from 'react';
 
 import { useActiveTabId } from '../state/activeTabStore';
+import { useAppearanceChromeStore } from '../state/appearanceChromeStore';
 import type { EditorTabChrome } from '../state/editorTabStore';
 import type { LogView } from '../state/logViewState';
 import { useManualTerminalChromeSurfaceInjection } from '../state/useManualTerminalChromeSurfaceInjection';
@@ -26,9 +27,7 @@ interface AppHostTreeLayerProps {
   editorTabs: readonly EditorTabChrome[];
   logViews: readonly LogView[];
   orderedTabs: readonly string[];
-  accentMode: 'theme' | 'custom';
   currentTerminalTheme: TerminalTheme;
-  customAccent: string;
   followAppTerminalTheme: boolean;
   hostById: ReadonlyMap<string, Host>;
   themeById: ReadonlyMap<string, TerminalTheme>;
@@ -60,9 +59,9 @@ function appHostTreeLayerAreEqual(
     && prev.editorTabs === next.editorTabs
     && prev.logViews === next.logViews
     && prev.orderedTabs === next.orderedTabs
-    && prev.accentMode === next.accentMode
+    // accentMode / customAccent intentionally omitted — read from
+    // appearanceChromeStore so accent drag does not rebuild the App shell.
     && prev.currentTerminalTheme === next.currentTerminalTheme
-    && prev.customAccent === next.customAccent
     && prev.followAppTerminalTheme === next.followAppTerminalTheme
     && prev.hostById === next.hostById
     && prev.themeById === next.themeById
@@ -83,9 +82,7 @@ const AppHostTreeLayerInner: React.FC<AppHostTreeLayerProps> = ({
   editorTabs,
   logViews,
   orderedTabs,
-  accentMode,
   currentTerminalTheme,
-  customAccent,
   followAppTerminalTheme,
   hostById,
   themeById,
@@ -96,6 +93,7 @@ const AppHostTreeLayerInner: React.FC<AppHostTreeLayerProps> = ({
   onCreateLocalTerminal,
 }) => {
   const activeTabId = useActiveTabId();
+  const { accentMode, customAccent } = useAppearanceChromeStore();
   const sessionIds = useMemo(() => new Set(sessions.map((session) => session.id)), [sessions]);
   const workspaceIds = useMemo(() => new Set(workspaces.map((workspace) => workspace.id)), [workspaces]);
   const logViewIds = useMemo(() => new Set(logViews.map((logView) => logView.id)), [logViews]);
