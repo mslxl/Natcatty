@@ -1,5 +1,11 @@
 import { useCallback, useMemo } from 'react';
-import type { DockerContainerAction, DockerImageManageAction, TmuxManageAction } from '../../domain/systemManager/types';
+import type {
+  DockerContainerAction,
+  DockerImageManageAction,
+  SystemdUnitAction,
+  SystemdUnitInfo,
+  TmuxManageAction,
+} from '../../domain/systemManager/types';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 export function useSystemManagerBackend() {
@@ -120,6 +126,35 @@ export function useSystemManagerBackend() {
     return bridge.listAccelerators(sessionId);
   }, []);
 
+  const listListeningPorts = useCallback(async (sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.listListeningPorts) {
+      return { success: false as const, error: 'listListeningPorts unavailable' };
+    }
+    return bridge.listListeningPorts(sessionId);
+  }, []);
+
+  const listSystemServices = useCallback(async (sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.listSystemServices) {
+      return { success: false as const, error: 'listSystemServices unavailable' };
+    }
+    return bridge.listSystemServices(sessionId);
+  }, []);
+
+  const systemServiceAction = useCallback(async (options: {
+    sessionId: string;
+    unitName: string;
+    action: SystemdUnitAction;
+    scope?: SystemdUnitInfo['scope'];
+  }) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.systemServiceAction) {
+      return { success: false as const, error: 'systemServiceAction unavailable' };
+    }
+    return bridge.systemServiceAction(options);
+  }, []);
+
   const dockerInspect = useCallback(async (options: { sessionId: string; containerId: string }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.dockerInspect) {
@@ -181,6 +216,9 @@ export function useSystemManagerBackend() {
     listDockerImages,
     getDockerStats,
     listAccelerators,
+    listListeningPorts,
+    listSystemServices,
+    systemServiceAction,
     dockerInspect,
     dockerImageInspect,
     dockerAction,
@@ -200,6 +238,9 @@ export function useSystemManagerBackend() {
     listDockerImages,
     getDockerStats,
     listAccelerators,
+    listListeningPorts,
+    listSystemServices,
+    systemServiceAction,
     dockerInspect,
     dockerImageInspect,
     dockerAction,

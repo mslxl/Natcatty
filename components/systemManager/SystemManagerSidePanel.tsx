@@ -1,4 +1,4 @@
-import { Activity, Box, CircuitBoard, Gauge, LayoutList, Loader2, TerminalSquare } from 'lucide-react';
+import { Activity, Box, CircuitBoard, Cog, Gauge, LayoutList, Loader2, Network, TerminalSquare } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import React, { memo, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
@@ -7,12 +7,18 @@ import type { TerminalSettings } from '../../domain/models';
 import type { Host } from '../../domain/models/connection';
 import type { SystemManagerSubTab } from '../../domain/systemManager/types';
 import { resolveCapabilityPanelState } from '../../domain/systemManagerPanelState';
-import { buildSystemManagerTabs, shouldCollectServerStats } from '../../domain/systemManager/systemTarget';
+import {
+  allowSystemManagerMutations,
+  buildSystemManagerTabs,
+  shouldCollectServerStats,
+} from '../../domain/systemManager/systemTarget';
 import type { Snippet, TerminalSession } from '../../types';
 import { cn } from '../../lib/utils';
 import { DockerManagerTab } from './DockerManagerTab';
 import { GpuManagerTab } from './GpuManagerTab';
+import { PortsManagerTab } from './PortsManagerTab';
 import { ProcessManagerTab } from './ProcessManagerTab';
+import { ServicesManagerTab } from './ServicesManagerTab';
 import { SystemOverviewTab } from './SystemOverviewTab';
 import { TmuxManagerTab } from './TmuxManagerTab';
 import { WorkspaceSidebarHostHeader } from '../terminalLayer/WorkspaceSidebarHostHeader';
@@ -68,6 +74,10 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const isStatsSupportedOs = useMemo(
     () => shouldCollectServerStats(sessionHost, capabilities, session),
     [capabilities, session, sessionHost],
+  );
+  const allowMutations = useMemo(
+    () => allowSystemManagerMutations(sessionHost),
+    [sessionHost],
   );
 
   const [activeTab, setActiveTab] = useState<SystemManagerSubTab>('overview');
@@ -164,6 +174,8 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const tabDefs: { id: SystemManagerSubTab; icon: LucideIcon; label: string }[] = [
     { id: 'overview', icon: Gauge, label: t('systemManager.tabs.overview') },
     { id: 'processes', icon: LayoutList, label: t('systemManager.tabs.processes') },
+    { id: 'ports', icon: Network, label: t('systemManager.tabs.ports') },
+    { id: 'services', icon: Cog, label: t('systemManager.tabs.services') },
     { id: 'tmux', icon: TerminalSquare, label: t('systemManager.tabs.tmux') },
     { id: 'docker', icon: Box, label: t('systemManager.tabs.docker') },
     { id: 'gpu', icon: CircuitBoard, label: t('systemManager.tabs.gpu') },
@@ -172,6 +184,12 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const tmuxReady = capabilities?.hasTmux === true;
   const dockerReady = capabilities?.hasDocker === true;
   const gpuReady = capabilities?.hasNvidiaSmi === true || capabilities?.hasNpuSmi === true;
+  const portsReady = (
+    capabilities?.hasSs === true
+    || capabilities?.hasNetstat === true
+    || capabilities?.hasLsof === true
+  );
+  const servicesReady = capabilities?.hasSystemctl === true;
   const tmuxPanelState = resolveCapabilityPanelState({
     isActive: resolvedTab === 'tmux',
     ready: tmuxReady,
@@ -185,6 +203,16 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   const gpuPanelState = resolveCapabilityPanelState({
     isActive: resolvedTab === 'gpu',
     ready: gpuReady,
+    capabilitiesKnown: capabilities !== undefined,
+  });
+  const portsPanelState = resolveCapabilityPanelState({
+    isActive: resolvedTab === 'ports',
+    ready: portsReady,
+    capabilitiesKnown: capabilities !== undefined,
+  });
+  const servicesPanelState = resolveCapabilityPanelState({
+    isActive: resolvedTab === 'services',
+    ready: servicesReady,
     capabilitiesKnown: capabilities !== undefined,
   });
 
@@ -224,14 +252,54 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
             />
           )}
         </div>
-        <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'processes' && 'hidden')}>
-          <ProcessManagerTab
-            sessionId={sessionId}
-            isVisible={isVisible && resolvedTab === 'processes'}
-            backend={backend}
-            refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
-          />
-        </div>
+        {availableTabs.includes('processes') ? (
+          <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'processes' && 'hidden')}>
+            <ProcessManagerTab
+              sessionId={sessionId}
+              isVisible={isVisible && resolvedTab === 'processes'}
+              backend={backend}
+              refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
+            />
+          </div>
+        ) : null}
+        {portsPanelState === 'unavailable' ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelEmpty icon={Network} message={t('systemManager.ports.unavailable')} />
+          </div>
+        ) : portsPanelState === 'checking' ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
+          </div>
+        ) : portsPanelState === 'ready' ? (
+          <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'ports' && 'hidden')}>
+            <PortsManagerTab
+              sessionId={sessionId}
+              isVisible={isVisible && resolvedTab === 'ports'}
+              backend={backend}
+              refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
+              allowMutations={allowMutations}
+            />
+          </div>
+        ) : null}
+        {servicesPanelState === 'unavailable' ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelEmpty icon={Cog} message={t('systemManager.services.unavailable')} />
+          </div>
+        ) : servicesPanelState === 'checking' ? (
+          <div className="flex-1 min-h-0">
+            <SystemPanelChecking message={t('systemManager.common.checkingAvailability')} />
+          </div>
+        ) : servicesPanelState === 'ready' ? (
+          <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'services' && 'hidden')}>
+            <ServicesManagerTab
+              sessionId={sessionId}
+              isVisible={isVisible && resolvedTab === 'services'}
+              backend={backend}
+              refreshIntervalSec={terminalSettings.systemManagerProcessRefreshInterval}
+              allowMutations={allowMutations}
+            />
+          </div>
+        ) : null}
         {tmuxPanelState === 'unavailable' ? (
           <div className="flex-1 min-h-0">
             <SystemPanelEmpty icon={TerminalSquare} message={t('systemManager.tmux.unavailable')} />

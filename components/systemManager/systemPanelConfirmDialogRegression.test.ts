@@ -15,6 +15,8 @@ const SYSTEM_MANAGER_PANELS = [
   "components/systemManager/TmuxSessionCard.tsx",
   "components/systemManager/DockerContainersPanel.tsx",
   "components/systemManager/DockerImagesPanel.tsx",
+  "components/systemManager/PortsManagerTab.tsx",
+  "components/systemManager/ServicesManagerTab.tsx",
 ] as const;
 
 test("system manager destructive actions use in-app confirm dialogs", () => {
@@ -52,4 +54,37 @@ test("process and docker confirm dialogs reset when sessionId changes", () => {
   assert.match(imagesSource, /setConfirmTarget\(null\)/);
   assert.match(imagesSource, /setActionBusy\(false\)/);
   assert.match(imagesSource, /}, \[sessionId\]\);/);
+});
+
+test("ports and services confirm dialogs reset when sessionId changes", () => {
+  const portsSource = readProjectFile("components/systemManager/PortsManagerTab.tsx");
+  const servicesSource = readProjectFile("components/systemManager/ServicesManagerTab.tsx");
+
+  assert.match(portsSource, /setPendingKillPid\(null\)/);
+  assert.match(portsSource, /setKillBusy\(false\)/);
+  assert.match(portsSource, /setActionError\(null\)/);
+  assert.match(portsSource, /}, \[sessionId\]\);/);
+
+  assert.match(servicesSource, /setPending\(null\)/);
+  assert.match(servicesSource, /setActionBusy\(false\)/);
+  assert.match(servicesSource, /setActionError\(null\)/);
+  assert.match(servicesSource, /}, \[sessionId\]\);/);
+});
+
+test("ports and services surface pending channel results instead of treating them as success", () => {
+  const portsSource = readProjectFile("components/systemManager/PortsManagerTab.tsx");
+  const servicesSource = readProjectFile("components/systemManager/ServicesManagerTab.tsx");
+
+  assert.match(portsSource, /result\.pending/);
+  assert.match(portsSource, /systemManager\.errors\.sshChannelUnavailable/);
+  assert.match(servicesSource, /result\.pending/);
+  assert.match(servicesSource, /systemManager\.errors\.sshChannelUnavailable/);
+});
+
+test("ports and services ignore late action results after session switches", () => {
+  const portsSource = readProjectFile("components/systemManager/PortsManagerTab.tsx");
+  const servicesSource = readProjectFile("components/systemManager/ServicesManagerTab.tsx");
+
+  assert.match(portsSource, /sessionIdRef\.current !== requestedSessionId/);
+  assert.match(servicesSource, /sessionIdRef\.current !== requestedSessionId/);
 });

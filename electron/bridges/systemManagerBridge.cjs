@@ -4,6 +4,8 @@ const { createExecOnSessionApi } = require("./systemManager/execOnSession.cjs");
 const { createTmuxOpsApi } = require("./systemManager/tmuxOps.cjs");
 const { createDockerOpsApi } = require("./systemManager/dockerOps.cjs");
 const { createGpuOpsApi } = require("./systemManager/gpuOps.cjs");
+const { createPortOpsApi } = require("./systemManager/portOps.cjs");
+const { createServiceOpsApi } = require("./systemManager/serviceOps.cjs");
 
 const CAPABILITY_SCRIPT_POSIX = [
   "exec sh -c ",
@@ -12,7 +14,11 @@ const CAPABILITY_SCRIPT_POSIX = [
   'command -v tmux >/dev/null 2>&1 && printf "%s\\n" __NC_TMUX__=1; ',
   'command -v docker >/dev/null 2>&1 && printf "%s\\n" __NC_DOCKER__=1; ',
   'command -v nvidia-smi >/dev/null 2>&1 && printf "%s\\n" __NC_NVIDIA_SMI__=1; ',
-  'command -v npu-smi >/dev/null 2>&1 && printf "%s\\n" __NC_NPU_SMI__=1',
+  'command -v npu-smi >/dev/null 2>&1 && printf "%s\\n" __NC_NPU_SMI__=1; ',
+  'command -v ss >/dev/null 2>&1 && printf "%s\\n" __NC_SS__=1; ',
+  'command -v netstat >/dev/null 2>&1 && printf "%s\\n" __NC_NETSTAT__=1; ',
+  'command -v lsof >/dev/null 2>&1 && printf "%s\\n" __NC_LSOF__=1; ',
+  'command -v systemctl >/dev/null 2>&1 && printf "%s\\n" __NC_SYSTEMCTL__=1',
   "'",
 ].join("");
 
@@ -38,11 +44,29 @@ function parseCapabilities(stdout, isLocal, localPlatform) {
     else if (uname.includes("darwin")) targetOs = "darwin";
     else if (uname.includes("windows") || uname.includes("mingw")) targetOs = "win32";
   }
-  const hasTmux = text.includes("__NC_TMUX__=1");
-  const hasDocker = text.includes("__NC_DOCKER__=1");
-  const hasNvidiaSmi = text.includes("__NC_NVIDIA_SMI__=1");
-  const hasNpuSmi = text.includes("__NC_NPU_SMI__=1");
-  return { targetOs, hasTmux, hasDocker, hasNvidiaSmi, hasNpuSmi, probedAt: Date.now() };
+  // Line-anchored markers only — avoid matching probe-script source echoed by
+  // noisy shells / vendor CLIs that reprint the command text.
+  const hasFlag = (name) => new RegExp(`(?:^|\\r?\\n)${name}=1(?:\\r?\\n|$)`).test(text);
+  const hasTmux = hasFlag("__NC_TMUX__");
+  const hasDocker = hasFlag("__NC_DOCKER__");
+  const hasNvidiaSmi = hasFlag("__NC_NVIDIA_SMI__");
+  const hasNpuSmi = hasFlag("__NC_NPU_SMI__");
+  const hasSs = hasFlag("__NC_SS__");
+  const hasNetstat = hasFlag("__NC_NETSTAT__");
+  const hasLsof = hasFlag("__NC_LSOF__");
+  const hasSystemctl = hasFlag("__NC_SYSTEMCTL__");
+  return {
+    targetOs,
+    hasTmux,
+    hasDocker,
+    hasNvidiaSmi,
+    hasNpuSmi,
+    hasSs,
+    hasNetstat,
+    hasLsof,
+    hasSystemctl,
+    probedAt: Date.now(),
+  };
 }
 
 function parseProcessLines(stdout) {
@@ -167,6 +191,13 @@ function createSystemManagerBridge(deps) {
     isLocalSession,
     process,
   });
+  const portOps = createPortOpsApi({
+    execOnSession,
+    execOnLocalMachine,
+    isLocalSession,
+    process,
+  });
+  const serviceOps = createServiceOpsApi({ execOnSession, getSession });
 
   async function probeCapabilities(event, payload) {
     const sessionId = payload?.sessionId;
@@ -177,7 +208,18 @@ function createSystemManagerBridge(deps) {
       let script = CAPABILITY_SCRIPT_POSIX;
       if (platform === "win32") {
         const result = await execOnLocalMachine(
-          "$os=[System.Environment]::OSVersion.Platform; Write-Output \"__NC_OS__=Windows\"; if (Get-Command tmux -ErrorAction SilentlyContinue) { Write-Output '__NC_TMUX__=1' }; docker info 2>$null; if ($LASTEXITCODE -eq 0) { Write-Output '__NC_DOCKER__=1' }; if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { Write-Output '__NC_NVIDIA_SMI__=1' }; if (Get-Command npu-smi -ErrorAction SilentlyContinue) { Write-Output '__NC_NPU_SMI__=1' }",
+          [
+            'Write-Output "__NC_OS__=Windows"; ',
+            "if (Get-Command tmux -ErrorAction SilentlyContinue) { Write-Output '__NC_TMUX__=1' }; ",
+            "docker info 2>$null; if ($LASTEXITCODE -eq 0) { Write-Output '__NC_DOCKER__=1' }; ",
+            "if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { Write-Output '__NC_NVIDIA_SMI__=1' }; ",
+            "if (Get-Command npu-smi -ErrorAction SilentlyContinue) { Write-Output '__NC_NPU_SMI__=1' }; ",
+            // Local Windows uses Get-NetTCPConnection; treat as netstat-capable for tab visibility.
+            "Write-Output '__NC_NETSTAT__=1'; ",
+            "if (Get-Command ss -ErrorAction SilentlyContinue) { Write-Output '__NC_SS__=1' }; ",
+            "if (Get-Command lsof -ErrorAction SilentlyContinue) { Write-Output '__NC_LSOF__=1' }; ",
+            "if (Get-Command systemctl -ErrorAction SilentlyContinue) { Write-Output '__NC_SYSTEMCTL__=1' }",
+          ].join(""),
           8000,
         );
         if (!result.success) return { success: false, error: result.error || "Probe failed" };
@@ -189,7 +231,17 @@ function createSystemManagerBridge(deps) {
       );
       if (!result.success) {
         const fallback = await execOnLocalMachine(
-          "uname -s; command -v tmux; command -v docker >/dev/null 2>&1 && echo docker_ok; command -v nvidia-smi >/dev/null 2>&1 && echo nvidia_ok; command -v npu-smi >/dev/null 2>&1 && echo npu_ok",
+          [
+            "uname -s; ",
+            "command -v tmux; ",
+            "command -v docker >/dev/null 2>&1 && echo docker_ok; ",
+            "command -v nvidia-smi >/dev/null 2>&1 && echo nvidia_ok; ",
+            "command -v npu-smi >/dev/null 2>&1 && echo npu_ok; ",
+            "command -v ss >/dev/null 2>&1 && echo ss_ok; ",
+            "command -v netstat >/dev/null 2>&1 && echo netstat_ok; ",
+            "command -v lsof >/dev/null 2>&1 && echo lsof_ok; ",
+            "command -v systemctl >/dev/null 2>&1 && echo systemctl_ok",
+          ].join(""),
           8000,
         );
         if (!fallback.success) return { success: false, error: fallback.error || "Probe failed" };
@@ -202,6 +254,10 @@ function createSystemManagerBridge(deps) {
             hasDocker: text.includes("docker_ok"),
             hasNvidiaSmi: text.includes("nvidia_ok"),
             hasNpuSmi: text.includes("npu_ok"),
+            hasSs: text.includes("ss_ok"),
+            hasNetstat: text.includes("netstat_ok"),
+            hasLsof: text.includes("lsof_ok"),
+            hasSystemctl: text.includes("systemctl_ok"),
             probedAt: Date.now(),
           },
         };
@@ -261,10 +317,48 @@ function createSystemManagerBridge(deps) {
   async function signalProcess(event, payload) {
     const { sessionId, pid, signal = "TERM", nice } = payload || {};
     if (!sessionId || !pid) return { success: false, error: "Missing sessionId or pid" };
+    const numericPid = Number(pid);
+    if (!Number.isFinite(numericPid) || numericPid <= 0) {
+      return { success: false, error: "Invalid pid" };
+    }
+
+    // Local Windows has no POSIX kill; map only TERM/KILL onto Stop-Process.
+    if (isLocalSession(sessionId) && process.platform === "win32") {
+      if (nice !== undefined && nice !== null) {
+        return { success: false, error: "renice is not supported on Windows" };
+      }
+      const sig = String(signal || "TERM").toUpperCase();
+      if (!(sig === "TERM" || sig === "15" || sig === "KILL" || sig === "9")) {
+        return { success: false, error: `signal ${sig} is not supported on Windows` };
+      }
+      const force = sig === "KILL" || sig === "9";
+      const ps = force
+        ? `Stop-Process -Id ${Math.trunc(numericPid)} -Force -ErrorAction Stop`
+        : `Stop-Process -Id ${Math.trunc(numericPid)} -ErrorAction Stop`;
+      const result = await execOnLocalMachine(ps, 5000);
+      if (!result.success) return { success: false, error: result.error || "Stop-Process failed" };
+      if (typeof result.code === "number" && result.code !== 0) {
+        return {
+          success: false,
+          error: (result.stderr || result.error || `Stop-Process exited with code ${result.code}`).trim(),
+          code: result.code,
+        };
+      }
+      return { success: true, code: result.code };
+    }
+
     const built = buildProcessSignalCommand(pid, signal, nice);
     if (built.error) return { success: false, error: built.error };
     const result = await execOnSession(event, sessionId, `exec sh -c ${JSON.stringify(built.command)}`, 5000);
+    if (result.pending) return { success: false, pending: true, error: result.error };
     if (!result.success) return { success: false, error: result.error };
+    if (typeof result.code === "number" && result.code !== 0) {
+      return {
+        success: false,
+        error: (result.stderr || result.error || `kill exited with code ${result.code}`).trim(),
+        code: result.code,
+      };
+    }
     return { success: true, code: result.code };
   }
 
@@ -375,6 +469,22 @@ function createSystemManagerBridge(deps) {
     return gpuOps.listAccelerators(event, sessionId);
   }
 
+  async function listListeningPorts(event, payload) {
+    const sessionId = payload?.sessionId;
+    if (!sessionId) return { success: false, error: "Missing sessionId" };
+    return portOps.listListeningPorts(event, sessionId);
+  }
+
+  async function listSystemServices(event, payload) {
+    const sessionId = payload?.sessionId;
+    if (!sessionId) return { success: false, error: "Missing sessionId" };
+    return serviceOps.listServices(event, sessionId);
+  }
+
+  async function systemServiceAction(event, payload) {
+    return serviceOps.serviceAction(event, payload);
+  }
+
   function registerWorkerHandle(ipcMain, terminalWorkerManager, channel) {
     ipcMain.handle(channel, (event, payload) => terminalWorkerManager.request(channel, payload, {
       webContentsId: event?.sender?.id,
@@ -403,6 +513,9 @@ function createSystemManagerBridge(deps) {
         "netcatty:system:dockerAction",
         "netcatty:system:dockerImageAction",
         "netcatty:system:listAccelerators",
+        "netcatty:system:listListeningPorts",
+        "netcatty:system:listSystemServices",
+        "netcatty:system:systemServiceAction",
       ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel));
       return;
     }
@@ -424,9 +537,12 @@ function createSystemManagerBridge(deps) {
     ipcMain.handle("netcatty:system:dockerAction", dockerAction);
     ipcMain.handle("netcatty:system:dockerImageAction", dockerImageAction);
     ipcMain.handle("netcatty:system:listAccelerators", listAccelerators);
+    ipcMain.handle("netcatty:system:listListeningPorts", listListeningPorts);
+    ipcMain.handle("netcatty:system:listSystemServices", listSystemServices);
+    ipcMain.handle("netcatty:system:systemServiceAction", systemServiceAction);
   }
 
-  return { registerHandlers, probeCapabilities, listProcesses, setupOsc7Tracking };
+  return { registerHandlers, probeCapabilities, listProcesses, signalProcess, setupOsc7Tracking };
 }
 
 module.exports = { createSystemManagerBridge };

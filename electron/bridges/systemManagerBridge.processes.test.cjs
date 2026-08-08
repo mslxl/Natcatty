@@ -316,9 +316,13 @@ test("probeCapabilities reports Docker when docker is installed even if plain do
       assert.match(command, /command -v docker/);
       assert.match(command, /command -v nvidia-smi/);
       assert.match(command, /command -v npu-smi/);
+      assert.match(command, /command -v ss/);
+      assert.match(command, /command -v systemctl/);
       assert.doesNotMatch(command, /docker info/);
       assert.doesNotMatch(command, /docker\.sock/);
-      callback(null, createFakeExecStream("__NC_OS__=Linux\n__NC_DOCKER__=1\n__NC_NVIDIA_SMI__=1\n"));
+      callback(null, createFakeExecStream(
+        "__NC_OS__=Linux\n__NC_DOCKER__=1\n__NC_NVIDIA_SMI__=1\n__NC_SS__=1\n__NC_SYSTEMCTL__=1\n",
+      ));
     },
   };
   const sessions = new Map([["s1", { conn, type: "ssh" }]]);
@@ -333,6 +337,8 @@ test("probeCapabilities reports Docker when docker is installed even if plain do
   assert.equal(result.capabilities.hasDocker, true);
   assert.equal(result.capabilities.hasNvidiaSmi, true);
   assert.equal(result.capabilities.hasNpuSmi, false);
+  assert.equal(result.capabilities.hasSs, true);
+  assert.equal(result.capabilities.hasSystemctl, true);
 });
 
 test("setupOsc7Tracking runs the setup command through the active session executor", async () => {
@@ -379,4 +385,61 @@ test("setupOsc7Tracking reports non-zero setup exits as failures", async () => {
   assert.equal(result.success, false);
   assert.equal(result.code, 2);
   assert.match(result.error, /unsupported shell/);
+});
+
+test("signalProcess reports non-zero kill exits as failures", async () => {
+  const conn = {
+    exec(_command, callback) {
+      callback(null, createFakeExecStream("", { code: 1, stderr: "kill: (99999): No such process\n" }));
+    },
+  };
+  const sessions = new Map([["s1", { conn, type: "ssh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.signalProcess(null, {
+    sessionId: "s1",
+    pid: 99999,
+    signal: "TERM",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.code, 1);
+  assert.match(result.error, /No such process/);
+});
+
+test("signalProcess propagates pending when the SSH channel is unavailable", async () => {
+  const sessions = new Map([["mosh1", { type: "mosh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.signalProcess(null, {
+    sessionId: "mosh1",
+    pid: 42,
+    signal: "TERM",
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.pending, true);
+});
+
+test("signalProcess rejects Windows-only STOP/CONT on local win32 sessions", async () => {
+  const sessions = new Map([["local", { type: "local" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process: { ...process, platform: "win32" },
+  });
+
+  const result = await bridge.signalProcess(null, {
+    sessionId: "local",
+    pid: 42,
+    signal: "STOP",
+  });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /not supported on Windows/i);
 });

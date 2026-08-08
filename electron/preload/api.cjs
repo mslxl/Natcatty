@@ -423,6 +423,15 @@ function createPreloadApi(ctx) {
   listAccelerators: async (sessionId) => {
     return ipcRenderer.invoke("netcatty:system:listAccelerators", { sessionId });
   },
+  listListeningPorts: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listListeningPorts", { sessionId });
+  },
+  listSystemServices: async (sessionId) => {
+    return ipcRenderer.invoke("netcatty:system:listSystemServices", { sessionId });
+  },
+  systemServiceAction: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:systemServiceAction", options);
+  },
   dockerInspect: async (options) => {
     return ipcRenderer.invoke("netcatty:system:dockerInspect", options);
   },

@@ -6,8 +6,52 @@ export interface SessionCapabilities {
   hasDocker: boolean;
   hasNvidiaSmi: boolean;
   hasNpuSmi: boolean;
+  /** `ss` binary present (preferred listening-port collector). */
+  hasSs?: boolean;
+  /** `netstat` binary present (ports fallback). */
+  hasNetstat?: boolean;
+  /** `lsof` binary present (macOS / process-aware ports fallback). */
+  hasLsof?: boolean;
+  /** `systemctl` binary present. */
+  hasSystemctl?: boolean;
   probedAt: number;
 }
+
+export type ListeningPortProtocol = 'tcp' | 'udp' | 'tcp6' | 'udp6' | 'unknown';
+
+export interface ListeningPortInfo {
+  protocol: ListeningPortProtocol;
+  address: string;
+  port: number;
+  pid: number | null;
+  processName: string;
+  /** Stable row id for list merging: protocol|address|port|pid */
+  id: string;
+}
+
+export type SystemdUnitActiveState =
+  | 'active'
+  | 'inactive'
+  | 'failed'
+  | 'activating'
+  | 'deactivating'
+  | 'reloading'
+  | 'unknown';
+
+export type SystemdUnitLoadState = 'loaded' | 'not-found' | 'bad-setting' | 'error' | 'masked' | 'unknown';
+export type SystemdUnitSubState = string;
+
+export interface SystemdUnitInfo {
+  name: string;
+  loadState: SystemdUnitLoadState;
+  activeState: SystemdUnitActiveState;
+  subState: SystemdUnitSubState;
+  description: string;
+  /** system or --user instance */
+  scope: 'system' | 'user';
+}
+
+export type SystemdUnitAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable' | 'reload';
 
 export type AcceleratorVendor = 'nvidia' | 'ascend';
 
@@ -154,7 +198,14 @@ export type DockerImageManageAction =
   | { action: 'prune'; all?: boolean }
   | { action: 'tag'; imageId: string; repository: string; tag?: string };
 
-export type SystemManagerSubTab = 'overview' | 'processes' | 'tmux' | 'docker' | 'gpu';
+export type SystemManagerSubTab =
+  | 'overview'
+  | 'processes'
+  | 'ports'
+  | 'services'
+  | 'tmux'
+  | 'docker'
+  | 'gpu';
 
 export interface TerminalPopupIcon {
   kind: 'image';
