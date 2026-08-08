@@ -306,7 +306,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
       title={t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}
       data-vault-host-copy-hostname-button={host.id}
       className={cn(
-        "opacity-0 group-hover:opacity-100 transition-opacity shrink-0",
+        "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0",
         compact ? "h-6 w-6" : "h-8 w-8",
       )}
       onClick={(e: React.MouseEvent) => {
