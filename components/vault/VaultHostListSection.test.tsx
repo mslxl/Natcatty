@@ -146,6 +146,7 @@ const renderHostList = ({
       groupConfigs: [],
       groupedDisplayHosts,
       handleCopyCredentials: noop,
+      handleCopyHostname: noop,
       handleDuplicateHost: noop,
       handleEditGroupConfig: noop,
       handleEditHost: noop,
@@ -214,27 +215,34 @@ const renderHostList = ({
 const editButtonIndexForHost = (markup: string, hostId: string) =>
   markup.indexOf(`data-vault-host-edit-button="${hostId}"`);
 
+const copyHostnameButtonIndexForHost = (markup: string, hostId: string) =>
+  markup.indexOf(`data-vault-host-copy-hostname-button="${hostId}"`);
+
 const editButtonIndexForGroup = (markup: string, groupPath: string) =>
   markup.indexOf(`data-vault-group-edit-button="${groupPath}"`);
 
 const assertListHostPlacement = (markup: string, host: Host) => {
   const listLabelIndex = markup.indexOf(host.label);
   const listEditIndex = editButtonIndexForHost(markup, host.id);
+  const listCopyIndex = copyHostnameButtonIndexForHost(markup, host.id);
   const listNotesIndex = markup.indexOf('aria-label="Host notes"', listLabelIndex);
 
   assert.ok(listLabelIndex >= 0);
   assert.ok(listEditIndex > listLabelIndex);
-  assert.ok(listNotesIndex > listEditIndex);
+  assert.ok(listCopyIndex > listEditIndex);
+  assert.ok(listNotesIndex > listCopyIndex);
 };
 
 const assertGridHostPlacement = (markup: string, host: Host) => {
   const gridLabelIndex = markup.indexOf(host.label);
   const gridNotesIndex = markup.indexOf('aria-label="Host notes"', gridLabelIndex);
   const gridEditIndex = editButtonIndexForHost(markup, host.id);
+  const gridCopyIndex = copyHostnameButtonIndexForHost(markup, host.id);
 
   assert.ok(gridLabelIndex >= 0);
   assert.ok(gridNotesIndex > gridLabelIndex);
   assert.ok(gridEditIndex > gridNotesIndex);
+  assert.ok(gridCopyIndex > gridEditIndex);
 };
 
 const assertListGroupPlacement = (markup: string, groupNode: GroupNode) => {

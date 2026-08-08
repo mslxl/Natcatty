@@ -61,6 +61,7 @@ import {
 } from "../domain/groupConfig";
 import {
   getEffectiveHostDistro,
+  getHostAddressForClipboard,
   resolveTelnetPassword,
   resolveTelnetPort,
   resolveTelnetUsername,
@@ -727,6 +728,28 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       );
     }
   }, [hosts, keys, t]);
+
+  // Copy hostname/IP for cross-host paste without opening the editor
+  const handleCopyHostname = useCallback(
+    (host: Host) => {
+      const hostname = getHostAddressForClipboard(host);
+      if (!hostname) {
+        toast.error(t("terminal.statusbar.copyHostname.error"));
+        return;
+      }
+      void navigator.clipboard.writeText(hostname).then(
+        () => {
+          toast.success(
+            t("terminal.statusbar.copyHostname.toast", { hostname }),
+          );
+        },
+        () => {
+          toast.error(t("terminal.statusbar.copyHostname.error"));
+        },
+      );
+    },
+    [t],
+  );
 
   // Copy host credentials to clipboard
   const handleCopyCredentials = useCallback(
@@ -1443,6 +1466,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           groupedDisplayHosts,
           handleConnectClick,
           handleCopyCredentials,
+          handleCopyHostname,
           handleDeleteTag,
           handleDuplicateHost,
           handleEditGroupConfig,

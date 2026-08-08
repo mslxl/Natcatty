@@ -280,6 +280,11 @@ export const formatHostPort = (hostname: string, port?: number | null): string =
   return `${display}:${port}`;
 };
 
+/** Hostname/IP text for one-click clipboard copy from the vault host list. */
+export const getHostAddressForClipboard = (
+  host: Pick<Host, 'hostname'>,
+): string => String(host.hostname ?? '').trim();
+
 export const resolveTelnetUsername = (
   host: Pick<Host, 'telnetUsername' | 'username'>,
 ): string | undefined =>

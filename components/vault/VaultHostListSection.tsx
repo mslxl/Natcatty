@@ -53,7 +53,7 @@ const isRelatedTargetInside = (
 const EMPTY_GROUP_PATH_SET = new Set<string>();
 
 export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext }) {
-  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
+  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleCopyHostname, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
   const hostClickBehavior: HostClickBehavior = hostClickBehaviorProp === 'select' ? 'select' : 'connect';
   const multiSelectedGroupPaths: Set<string> = selectedGroupPaths ?? EMPTY_GROUP_PATH_SET;
   const [draggingHostId, setDraggingHostId] = React.useState<string | null>(null);
@@ -295,6 +295,26 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
       }}
     >
       <Edit2 size={compact ? 13 : 14} />
+    </Button>
+  );
+
+  const renderHostCopyHostnameButton = (host: any, compact = false) => (
+    <Button
+      variant="ghost"
+      size="icon"
+      aria-label={t("terminal.statusbar.copyHostname.label")}
+      title={t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}
+      data-vault-host-copy-hostname-button={host.id}
+      className={cn(
+        "opacity-0 group-hover:opacity-100 transition-opacity shrink-0",
+        compact ? "h-6 w-6" : "h-8 w-8",
+      )}
+      onClick={(e: React.MouseEvent) => {
+        e.stopPropagation();
+        handleCopyHostname(host);
+      }}
+    >
+      <Copy size={compact ? 13 : 14} />
     </Button>
   );
 
@@ -561,6 +581,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           {safeHost.label}
                                         </span>
                                         {viewMode !== "grid" && renderHostEditButton(host, true)}
+                                        {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
@@ -568,6 +589,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
+                                    {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
@@ -675,6 +697,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           {safeHost.label}
                                         </span>
                                         {viewMode !== "grid" && renderHostEditButton(host, true)}
+                                        {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
@@ -682,6 +705,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
+                                    {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
@@ -1041,6 +1065,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                                 {safeHost.label}
                                               </span>
                                               {viewMode !== "grid" && renderHostEditButton(host, true)}
+                                              {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                               {safeHost.managedSourceId && (
                                                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
                                                   managed
@@ -1053,6 +1078,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                             </div>
                                           </div>
                                           {viewMode === "grid" && renderHostEditButton(host)}
+                                          {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                         </div>
                                       </div>
                                     </ContextMenuTrigger>
@@ -1185,6 +1211,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           {safeHost.label}
                                         </span>
                                         {viewMode !== "grid" && renderHostEditButton(host, true)}
+                                        {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                         {safeHost.managedSourceId && (
                                           <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
                                             managed
@@ -1197,6 +1224,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
+                                    {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
