@@ -313,6 +313,9 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
         e.stopPropagation();
         handleCopyHostname(host);
       }}
+      onKeyDown={(e: React.KeyboardEvent) => {
+        e.stopPropagation();
+      }}
     >
       <Copy size={compact ? 13 : 14} />
     </Button>
