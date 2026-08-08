@@ -2,12 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { Host, PortForwardingRule } from "../../domain/models.ts";
+import { toPersistedPortForwardingRules } from "../../domain/portForwardingPersistence.ts";
 import { STORAGE_KEY_PORT_FORWARDING } from "../../infrastructure/config/storageKeys.ts";
 import {
   startPortForward,
   stopAndCleanupRuleAndWait,
 } from "../../infrastructure/services/portForwardingService.ts";
 import {
+  applyPortForwardingRuntimeStatus,
   createPortForwardingStorageSyncHandlers,
   havePortForwardingRuntimeStatesChanged,
   hasPortForwardingRuntimePresenceChanged,
@@ -25,6 +27,7 @@ const rule: PortForwardingRule = {
   autoStart: true,
   createdAt: 1,
   status: "inactive",
+  bindAddress: "127.0.0.1",
 };
 
 const host: Host = {
@@ -80,32 +83,27 @@ function installEnvironment() {
   };
 }
 
-test("same-window auto-start status writes refresh the visible rule from the live tunnel", async (t) => {
+test("runtime status updates refresh the visible rule without writing storage", async (t) => {
   const env = installEnvironment();
   t.after(async () => {
     await stopAndCleanupRuleAndWait(rule.id);
     env.restore();
   });
 
-  env.storage.setItem(STORAGE_KEY_PORT_FORWARDING, JSON.stringify([rule]));
+  env.storage.setItem(
+    STORAGE_KEY_PORT_FORWARDING,
+    JSON.stringify(toPersistedPortForwardingRules([rule])),
+  );
   await startPortForward(rule, host, [host], [], [], () => undefined, true);
   env.emitStatus("active");
+  applyPortForwardingRuntimeStatus(rule.id, "active");
 
-  const snapshots: PortForwardingRule[][] = [];
-  const handlers = createPortForwardingStorageSyncHandlers({
-    onRules: (rules) => snapshots.push(rules),
-  });
-
-  handlers.handleAdapterChange({
-    type: "netcatty:local-storage-adapter-changed",
-    detail: { key: STORAGE_KEY_PORT_FORWARDING },
-  } as unknown as CustomEvent<{ key: string }>);
-
-  assert.equal(snapshots.length, 1);
-  assert.equal(snapshots[0]?.[0]?.status, "active");
+  const stored = JSON.parse(env.storage.getItem(STORAGE_KEY_PORT_FORWARDING) || "[]") as PortForwardingRule[];
+  assert.equal(stored[0]?.status, "inactive");
+  assert.equal(stored[0]?.error, undefined);
 });
 
-test("cross-window status writes stay active before this window discovers the tunnel", (t) => {
+test("legacy cross-window active status is migrated away on config sync", (t) => {
   const env = installEnvironment();
   t.after(() => env.restore());
 
@@ -125,7 +123,20 @@ test("cross-window status writes stay active before this window discovers the tu
   } as StorageEvent);
 
   assert.equal(snapshots.length, 1);
-  assert.equal(snapshots[0]?.[0]?.status, "active");
+  // Runtime is no longer trusted from storage. Before an authoritative snapshot
+  // succeeds, the projection must be unknown — never a false inactive.
+  assert.equal(snapshots[0]?.[0]?.status, "unknown");
+});
+
+test("normalizeRulesWithConnections stays inactive only after authority succeeds", () => {
+  const normalized = normalizeRulesWithConnections([{
+    ...rule,
+    id: "authority-ok-rule",
+    status: "active",
+  }], {
+    snapshotAvailable: true,
+  });
+  assert.equal(normalized[0]?.status, "inactive");
 });
 
 test("cross-window stale status cannot override a known live tunnel", async (t) => {
@@ -164,6 +175,16 @@ test("same-window synchronization preserves an error without a runtime tunnel", 
     status: "error",
     error: "Host not found",
   }]));
+  // Authority already confirmed — diagnostic error may remain without a tunnel.
+  const normalized = normalizeRulesWithConnections([{
+    ...rule,
+    id: "failed-start-rule",
+    status: "error",
+    error: "Host not found",
+  }], { snapshotAvailable: true });
+  assert.equal(normalized[0]?.status, "error");
+  assert.equal(normalized[0]?.error, "Host not found");
+
   const snapshots: PortForwardingRule[][] = [];
   const handlers = createPortForwardingStorageSyncHandlers({
     onRules: (rules) => snapshots.push(rules),
@@ -174,8 +195,8 @@ test("same-window synchronization preserves an error without a runtime tunnel", 
     detail: { key: STORAGE_KEY_PORT_FORWARDING },
   } as unknown as CustomEvent<{ key: string }>);
 
-  assert.equal(snapshots[0]?.[0]?.status, "error");
-  assert.equal(snapshots[0]?.[0]?.error, "Host not found");
+  // Without a successful snapshot in this module, storage sync projects unknown.
+  assert.equal(snapshots[0]?.[0]?.status, "unknown");
 });
 
 test("heartbeat normalization preserves an error without a runtime tunnel", () => {
@@ -184,7 +205,7 @@ test("heartbeat normalization preserves an error without a runtime tunnel", () =
     id: "heartbeat-error-rule",
     status: "error",
     error: "Authentication failed",
-  }]);
+  }], { snapshotAvailable: true });
 
   assert.equal(normalized[0]?.status, "error");
   assert.equal(normalized[0]?.error, "Authentication failed");
@@ -196,10 +217,25 @@ test("heartbeat normalization clears an error for a reconciled-away tunnel", () 
     id: "cleanup-error-rule",
     status: "error",
     error: "Failed to stop tunnel",
-  }], new Set(["cleanup-error-rule"]));
+  }], {
+    reconciledGoneRuleIds: new Set(["cleanup-error-rule"]),
+    snapshotAvailable: true,
+  });
 
   assert.equal(normalized[0]?.status, "inactive");
   assert.equal(normalized[0]?.error, undefined);
+});
+
+test("snapshot failure projects unknown instead of inactive", () => {
+  const normalized = normalizeRulesWithConnections([{
+    ...rule,
+    id: "stale-rule",
+    status: "inactive",
+  }], {
+    snapshotAvailable: false,
+  });
+
+  assert.equal(normalized[0]?.status, "unknown");
 });
 
 test("heartbeat writes only when a visible runtime state changes", () => {
