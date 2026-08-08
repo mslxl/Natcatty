@@ -711,3 +711,19 @@ test("getHostAddressForClipboard returns the trimmed hostname for vault one-clic
   assert.equal(getHostAddressForClipboard(makeHost({ hostname: "db.internal" })), "db.internal");
   assert.equal(getHostAddressForClipboard({ hostname: "" }), "");
 });
+
+test("getHostAddressForClipboard omits synthesized plugin hostnames", () => {
+  assert.equal(
+    getHostAddressForClipboard(
+      makeHost({
+        protocol: "plugin:com.example.transport.connection",
+        hostname: "My Plugin Label",
+        pluginConnection: {
+          providerId: "com.example.transport.connection",
+          configuration: { endpoint: "opaque-target" },
+        },
+      }),
+    ),
+    "",
+  );
+});

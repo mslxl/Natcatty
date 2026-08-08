@@ -4,6 +4,7 @@ import { migrateHostConnectScriptIds } from './hostConnectScripts.ts';
 import { migrateDeprecatedFontOverride } from '../infrastructure/config/fonts';
 import { sanitizeOptionalSshTimeoutSeconds } from './sshConnectionTimeouts.ts';
 import {
+  isPluginHostProtocol,
   sanitizePluginConnection,
   stripBuiltInConnectionFieldsForPluginHost,
 } from './pluginConnection.ts';
@@ -282,8 +283,12 @@ export const formatHostPort = (hostname: string, port?: number | null): string =
 
 /** Hostname/IP text for one-click clipboard copy from the vault host list. */
 export const getHostAddressForClipboard = (
-  host: Pick<Host, 'hostname'>,
-): string => String(host.hostname ?? '').trim();
+  host: Pick<Host, 'hostname' | 'protocol'>,
+): string => {
+  // Plugin endpoints live in pluginConnection.configuration; hostname may be a label/provider id.
+  if (isPluginHostProtocol(host.protocol)) return '';
+  return String(host.hostname ?? '').trim();
+};
 
 export const resolveTelnetUsername = (
   host: Pick<Host, 'telnetUsername' | 'username'>,

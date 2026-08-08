@@ -25,6 +25,7 @@ import {
   type HostClickBehavior,
 } from "../../domain/hostClickBehavior";
 import type { GroupNode, Host } from "../../domain/models";
+import { isPluginHostProtocol } from "../../domain/pluginConnection";
 
 type VaultHostListSectionContext = Record<string, any>;
 
@@ -298,28 +299,31 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
     </Button>
   );
 
-  const renderHostCopyHostnameButton = (host: any, compact = false) => (
-    <Button
-      variant="ghost"
-      size="icon"
-      aria-label={t("terminal.statusbar.copyHostname.label")}
-      title={t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}
-      data-vault-host-copy-hostname-button={host.id}
-      className={cn(
-        "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0",
-        compact ? "h-6 w-6" : "h-8 w-8",
-      )}
-      onClick={(e: React.MouseEvent) => {
-        e.stopPropagation();
-        handleCopyHostname(host);
-      }}
-      onKeyDown={(e: React.KeyboardEvent) => {
-        e.stopPropagation();
-      }}
-    >
-      <Copy size={compact ? 13 : 14} />
-    </Button>
-  );
+  const renderHostCopyHostnameButton = (host: any, compact = false) => {
+    if (isPluginHostProtocol(host.protocol)) return null;
+    return (
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label={t("terminal.statusbar.copyHostname.label")}
+        title={t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}
+        data-vault-host-copy-hostname-button={host.id}
+        className={cn(
+          "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0",
+          compact ? "h-6 w-6" : "h-8 w-8",
+        )}
+        onClick={(e: React.MouseEvent) => {
+          e.stopPropagation();
+          handleCopyHostname(host);
+        }}
+        onKeyDown={(e: React.KeyboardEvent) => {
+          e.stopPropagation();
+        }}
+      >
+        <Copy size={compact ? 13 : 14} />
+      </Button>
+    );
+  };
 
   const renderGroupEditButton = (groupPath: string, compact = false) => (
     <Button
