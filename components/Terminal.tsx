@@ -145,6 +145,9 @@ import {
 } from "./terminal/runtime/createXTermRuntime";
 import { clearKittyKeyboardBroadcastSession } from "./terminal/runtime/kittyKeyboardBroadcast";
 import { registerTerminalSensitiveInputReader } from "./terminal/runtime/terminalSensitiveInputRegistry";
+import { registerTerminalCommandInjectionReadyReader } from "./terminal/runtime/terminalCommandInjectionReadyRegistry";
+import { isIdleShellReadyForCommandInjection } from "../domain/terminalCommandInjectionReady";
+import { detectPrompt } from "./terminal/autocomplete/promptDetector";
 import { applyUserCursorPreference } from "./terminal/runtime/cursorPreference";
 import { terminalAltKeyOptions } from "./terminal/runtime/altKeyOptions";
 import {
@@ -535,6 +538,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const onTerminalDataCaptureRef = useRef(onTerminalDataCapture);
   const onSessionExitRef = useRef(onSessionExit);
   const commandBufferRef = useRef<string>("");
+  useEffect(() => registerTerminalCommandInjectionReadyReader(sessionId, () => {
+    const term = termRef.current;
+    if (!term) return false;
+    const prompt = detectPrompt(term);
+    return isIdleShellReadyForCommandInjection({
+      sensitiveInputActive: passwordPromptActiveRef.current,
+      hasLiveTerminal: true,
+      alternateScreenActive: isTerminalAlternateScreenActive(term),
+      isAtPrompt: prompt.isAtPrompt,
+      userInputLength: prompt.userInput.length,
+      pendingTypedInputLength: commandBufferRef.current.length,
+    });
+  }), [sessionId]);
   const promptLineBreakStateRef = useRef<PromptLineBreakState>(createPromptLineBreakState());
   const [hasMouseTracking, setHasMouseTracking] = useState(false);
   const mouseTrackingRef = useRef(false);
