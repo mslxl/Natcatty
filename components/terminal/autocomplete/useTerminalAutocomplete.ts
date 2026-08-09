@@ -32,7 +32,7 @@ import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
   resolveAutocompleteAnchorInViewport,
-  resolveAutocompleteCursorColumn,
+  resolveAutocompleteCursorCell,
   resolveAutocompleteCwdWithSource,
 } from "./terminalAutocompleteLayout";
 import { handleTerminalAutocompleteInput } from "./terminalAutocompleteInput";
@@ -71,6 +71,9 @@ export const DEFAULT_AUTOCOMPLETE_SETTINGS: AutocompleteSettings = {
   shiftEnterNewlineEnabled: true,
   historyScope: "host",
 };
+
+/** Max time to poll for shell echo after a pre-echo debounce cycle (#2813). */
+const ECHO_VALIDATION_MAX_WAIT_MS = 3000;
 
 /**
  * Whether completion work is worth doing — i.e. whether anything would
@@ -124,6 +127,11 @@ export interface AutocompleteState {
 type HostCompletionProviderOptions = Parameters<typeof getCompletions>[1] & {
   /** Host-owned prompt identity used to gate third-party Provider access. */
   promptText: string;
+  /**
+   * False when input was synthesized from the pre-echo keystroke buffer.
+   * External Providers must stay disabled until the live line validates input.
+   */
+  allowExternalProviders?: boolean;
   /** Aborted whenever the prompt/session security state invalidates this query. */
   signal?: AbortSignal;
 };
@@ -213,6 +221,14 @@ export function useTerminalAutocomplete(
 
   const ghostAddonRef = useRef<GhostTextAddon | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Pre-echo debounce cycles must poll until the live line validates the
+   * keystroke buffer (or we give up). PTY echo updates xterm only and does
+   * not schedule another fetchSuggestions — without this, whole-word IME /
+   * high-latency SSH commits never show completions until the next key.
+   */
+  const echoValidationTypedRef = useRef<string | null>(null);
+  const echoValidationStartedAtRef = useRef<number | null>(null);
   const lastKeystrokeRef = useRef<number>(0);
   const lastPromptRef = useRef<PromptDetectionResult | null>(null);
   const disposedRef = useRef(false);
@@ -346,6 +362,8 @@ export function useTerminalAutocomplete(
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
+    echoValidationTypedRef.current = null;
+    echoValidationStartedAtRef.current = null;
     ghostAddonRef.current?.hide();
     completionAbortRef.current?.abort();
     completionAbortRef.current = null;
@@ -364,14 +382,18 @@ export function useTerminalAutocomplete(
     setState((prev) => {
       if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
       const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
-      const cursorColumn = prompt.isAtPrompt
-        ? resolveAutocompleteCursorColumn(term, prompt)
-        : term.buffer.active.cursorX;
+      const cursorCell = prompt.isAtPrompt
+        ? resolveAutocompleteCursorCell(term, prompt)
+        : {
+            column: term.buffer.active.cursorX,
+            row: term.buffer.active.cursorY,
+          };
       const anchor = resolveAutocompleteAnchorInViewport(
         term,
         containerRef.current,
         prev.suggestions.length,
-        cursorColumn,
+        cursorCell.column,
+        cursorCell.row,
       );
 
       // Force a re-render even when the relative cursor cell hasn't changed.
@@ -669,11 +691,48 @@ export function useTerminalAutocomplete(
       return;
     }
 
+    const { prompt, allowExternalProviders = true } = getAlignedPrompt(
+      term,
+      typedInputBufferRef.current,
+      typedBufferReliableRef.current,
+    );
+    lastPromptRef.current = prompt;
+
+    // Pre-echo keystroke buffer can look identical to an echo-disabled
+    // password prompt (`read -s -p '$ '`). Do not render or accept
+    // built-in history/snippet suggestions until the shell echoes input.
+    // Incoming PTY echo does not re-schedule fetches, so keep polling this
+    // debounce cycle until the live line validates — or until max wait
+    // (silent prompts never echo). clearState cancels timers and echo-wait
+    // refs; re-arm the wait afterward when still within the window.
+    if (allowExternalProviders === false) {
+      const typed = typedInputBufferRef.current;
+      const startedAt =
+        echoValidationTypedRef.current === typed &&
+        echoValidationStartedAtRef.current != null
+          ? echoValidationStartedAtRef.current
+          : Date.now();
+      clearState();
+      const withinWait =
+        typed.length > 0 &&
+        !disposedRef.current &&
+        Date.now() - startedAt < ECHO_VALIDATION_MAX_WAIT_MS;
+      if (withinWait) {
+        echoValidationTypedRef.current = typed;
+        echoValidationStartedAtRef.current = startedAt;
+        debounceTimerRef.current = setTimeout(() => {
+          debounceTimerRef.current = null;
+          void fetchSuggestionsRef.current();
+        }, settingsRef.current.debounceMs);
+      }
+      return;
+    }
+
+    echoValidationTypedRef.current = null;
+    echoValidationStartedAtRef.current = null;
+
     // Capture version at start — if it changes during async work, discard results
     const version = ++fetchVersionRef.current;
-
-    const { prompt } = getAlignedPrompt(term, typedInputBufferRef.current, typedBufferReliableRef.current);
-    lastPromptRef.current = prompt;
 
     if (!prompt.isAtPrompt || prompt.userInput.length < settingsRef.current.minChars) {
       clearState();
@@ -716,6 +775,7 @@ export function useTerminalAutocomplete(
         cwdSource: cwdResolution.source,
         snippets: snippetsRef.current,
         promptText: prompt.promptText,
+        allowExternalProviders,
         signal: completionController.signal,
       });
     } finally {
@@ -766,12 +826,13 @@ export function useTerminalAutocomplete(
       // Live-preview baseline: the typed input these suggestions completed.
       previewBaselineRef.current = input;
       previewActiveRef.current = false;
-      const cursorColumn = resolveAutocompleteCursorColumn(term, currentPrompt);
+      const cursorCell = resolveAutocompleteCursorCell(term, currentPrompt);
       const anchor = resolveAutocompleteAnchorInViewport(
         term,
         containerRef.current,
         completions.length,
-        cursorColumn,
+        cursorCell.column,
+        cursorCell.row,
       );
       startTransition(() => {
         setState((prev) => {
