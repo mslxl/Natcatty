@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  moveSidePanelTabMap,
   remapMountedSidePanelTabIds,
   remapSidePanelTabMap,
 } from './workspaceSidePanelTabRemap.ts';
@@ -100,6 +101,46 @@ test('demote overwrites a stale preferred member entry kept from merge', () => {
     [
       ['ws-1', 'notes'],
       ['term-a', 'notes'],
+    ],
+  );
+});
+
+test('moveSidePanelTabMap promote relocates the source mount onto the workspace tab', () => {
+  const source = new Map([
+    ['term-a', 'host-a'],
+    ['term-b', 'host-b'],
+  ]);
+
+  assert.deepEqual(
+    [...moveSidePanelTabMap(source, {
+      kind: 'promote',
+      fromTabIds: ['term-a', 'term-b'],
+      toTabId: 'ws-1',
+      preferredFromTabId: 'term-a',
+    })],
+    [
+      ['term-b', 'host-b'],
+      ['ws-1', 'host-a'],
+    ],
+  );
+});
+
+test('moveSidePanelTabMap demote relocates the workspace mount onto the survivor', () => {
+  const source = new Map([
+    ['ws-1', 'host-a'],
+    ['term-b', 'host-b'],
+  ]);
+
+  assert.deepEqual(
+    [...moveSidePanelTabMap(source, {
+      kind: 'demote',
+      fromTabId: 'ws-1',
+      toTabIds: ['term-a', 'term-b'],
+      preferredToTabId: 'term-a',
+    })],
+    [
+      ['term-b', 'host-b'],
+      ['term-a', 'host-a'],
     ],
   );
 });

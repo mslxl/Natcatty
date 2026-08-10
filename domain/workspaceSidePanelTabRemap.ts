@@ -79,6 +79,61 @@ export function remapSidePanelTabMap<T>(
   return next;
 }
 
+/**
+ * Move ownership-sensitive tab maps (e.g. SFTP host/path) across a tab-id
+ * change. Unlike {@link remapSidePanelTabMap}, this deletes the source key so
+ * portals / transfer owners are not duplicated under both ids.
+ */
+export function moveSidePanelTabMap<T>(
+  source: ReadonlyMap<string, T>,
+  remap: SidePanelTabRemap,
+): Map<string, T> {
+  if (remap.kind === 'promote') {
+    if (!remap.toTabId) {
+      return source instanceof Map ? source : new Map(source);
+    }
+    if (source.has(remap.toTabId)) {
+      // Destination already owns a mount — drop member clones so only one
+      // transfer owner remains visible for the workspace tab.
+      let changed = false;
+      const next = new Map(source);
+      for (const fromId of remap.fromTabIds) {
+        if (!fromId || fromId === remap.toTabId || !next.has(fromId)) continue;
+        next.delete(fromId);
+        changed = true;
+      }
+      return changed ? next : (source instanceof Map ? source : new Map(source));
+    }
+    const fromId = pickPreferredSourceId(
+      remap.fromTabIds,
+      remap.preferredFromTabId,
+      (tabId) => source.has(tabId),
+    );
+    if (!fromId) {
+      return source instanceof Map ? source : new Map(source);
+    }
+    const next = new Map(source);
+    next.set(remap.toTabId, source.get(fromId) as T);
+    next.delete(fromId);
+    return next;
+  }
+
+  if (!remap.fromTabId || !source.has(remap.fromTabId)) {
+    return source instanceof Map ? source : new Map(source);
+  }
+  const preferredTo = remap.preferredToTabId
+    && remap.toTabIds.includes(remap.preferredToTabId)
+    ? remap.preferredToTabId
+    : remap.toTabIds.find(Boolean);
+  if (!preferredTo) {
+    return source instanceof Map ? source : new Map(source);
+  }
+  const next = new Map(source);
+  next.set(preferredTo, source.get(remap.fromTabId) as T);
+  next.delete(remap.fromTabId);
+  return next;
+}
+
 export function remapMountedSidePanelTabIds(
   mountedTabIds: readonly string[],
   remap: SidePanelTabRemap,

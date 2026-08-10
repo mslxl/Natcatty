@@ -14,6 +14,7 @@ import {
 import { collectSidePanelPanes, sidePanelLayoutHasTool } from '../../domain/sidePanelLayout';
 import { collectSessionIds } from '../../domain/workspace';
 import {
+  moveSidePanelTabMap,
   remapMountedSidePanelTabIds,
   remapSidePanelTabMap,
   type SidePanelTabRemap,
@@ -181,26 +182,26 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       }
       return next;
     });
-    // SFTP portal mounts from sftpHostForTab keys — keep host/path/upload maps
-    // aligned with the remapped open-tool tab ids.
+    // SFTP portals/transfers are keyed by tab id — move ownership instead of
+    // cloning so the workspace panel keeps the live browser + transfer owner.
     setSftpHostForTab((prev: Map<string, any>) => {
       let next = prev;
       for (const remap of remaps) {
-        next = remapSidePanelTabMap(next, remap);
+        next = moveSidePanelTabMap(next, remap);
       }
       return next;
     });
     setSftpInitialLocationForTab((prev: Map<string, any>) => {
       let next = prev;
       for (const remap of remaps) {
-        next = remapSidePanelTabMap(next, remap);
+        next = moveSidePanelTabMap(next, remap);
       }
       return next;
     });
     setSftpPendingUploadsForTab((prev: Map<string, any>) => {
       let next = prev;
       for (const remap of remaps) {
-        next = remapSidePanelTabMap(next, remap);
+        next = moveSidePanelTabMap(next, remap);
       }
       return next;
     });
