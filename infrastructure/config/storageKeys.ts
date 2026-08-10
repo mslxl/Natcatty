@@ -134,6 +134,8 @@ export const STORAGE_KEY_TERMINAL_HOST_TREE_TOOLBAR_LAYOUT =
   'netcatty_terminal_host_tree_toolbar_layout_v1';
 /** Side-panel tab strip: show / collapse / hide + order (supersedes order-only key when present). */
 export const STORAGE_KEY_TERMINAL_SIDE_PANEL_TAB_LAYOUT = 'netcatty_terminal_side_panel_tab_layout_v1';
+/** System Manager sub-tabs (Overview / Processes / …): show / collapse / hide + order. */
+export const STORAGE_KEY_SYSTEM_MANAGER_TAB_LAYOUT = 'netcatty_system_manager_tab_layout_v1';
 export const STORAGE_KEY_SFTP_TRANSFER_PANEL_HEIGHT = 'netcatty_sftp_transfer_panel_height_v1';
 export const STORAGE_KEY_SFTP_TRANSFER_CHILD_NAME_WIDTH = 'netcatty_sftp_transfer_child_name_width_v1';
 

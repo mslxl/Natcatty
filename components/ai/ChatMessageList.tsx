@@ -113,9 +113,10 @@ export function shouldProvideVaultArtifactNavigation({
 
 export function shouldRenderAssistantAsPlainText(options: {
   hideMarkdown: boolean;
-  isStreaming?: boolean;
 }): boolean {
-  return options.hideMarkdown || !!options.isStreaming;
+  // Streaming stays on Streamdown with isAnimating so incomplete markdown
+  // updates live. Only diagnostic hideMarkdown forces plain text.
+  return options.hideMarkdown;
 }
 
 const ASSISTANT_PLAIN_TEXT_CLASS = 'whitespace-pre-wrap break-words text-[13px] leading-[1.45]';
@@ -701,10 +702,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                 {message.content && (
                   isUser
                     ? <div className={ASSISTANT_PLAIN_TEXT_CLASS}>{message.content}</div>
-                    : shouldRenderAssistantAsPlainText({
-                        hideMarkdown,
-                        isStreaming: !!isThisStreaming,
-                      })
+                    : shouldRenderAssistantAsPlainText({ hideMarkdown })
                       ? (
                           <div
                             className={ASSISTANT_PLAIN_TEXT_CLASS}
@@ -716,7 +714,7 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                       : (
                           <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Markdown')}>
                             <div data-ai-content="markdown">
-                              <LazyMessageResponse isAnimating={false}>
+                              <LazyMessageResponse isAnimating={!!isThisStreaming}>
                                 {message.content}
                               </LazyMessageResponse>
                             </div>

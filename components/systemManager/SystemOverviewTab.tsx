@@ -267,8 +267,11 @@ export const SystemOverviewTab = memo(function SystemOverviewTab({
     network: history.map((sample) => sample.network),
   }), [history]);
 
+  // Prefer cached stats over empty/loading so tab switches never flash the
+  // empty placeholder when we already have a successful sample.
   const showBlockingError = Boolean(error && !hasStats && !loading);
   const showInitialLoading = Boolean(loading && !hasStats);
+  const showEmpty = Boolean(!hasStats && !loading && !error);
 
   return (
     <SystemPanelShell section="system-manager-overview">
@@ -285,9 +288,9 @@ export const SystemOverviewTab = memo(function SystemOverviewTab({
         <SystemPanelError message={error} onRetry={() => void refresh()} retryLabel={t('history.action.retry')} loading={loading} />
       ) : showInitialLoading ? (
         <SystemPanelLoading message={t('systemManager.overview.loading')} />
-      ) : !hasStats ? (
+      ) : showEmpty ? (
         <SystemPanelEmpty icon={Activity} message={t('systemManager.overview.empty')} />
-      ) : (
+      ) : hasStats ? (
         <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
           <div className="grid grid-cols-2 gap-2">
             <MetricCard
@@ -428,7 +431,7 @@ export const SystemOverviewTab = memo(function SystemOverviewTab({
             )}
           </section>
         </div>
-      )}
+      ) : null}
     </SystemPanelShell>
   );
 });

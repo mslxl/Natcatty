@@ -612,6 +612,9 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     validAIScopeTargetIds: s.validAIScopeTargetIds,
     workspaceBroadcastHandlersRef: s.workspaceBroadcastHandlersRef,
     workspaceById,
+    // AI scope maintenance (merge/dissolve handoff) needs the full list; do not
+    // rely on workspaceById alone — SidePanelStateRoot reads ctx.workspaces.
+    workspaces: s.workspaces,
     workspaceFocusHandlersRef: s.workspaceFocusHandlersRef,
     workspaceInnerRef,
     workspaceOuterRef,
@@ -655,6 +658,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     s.sftpFollowTerminalCwd,
     themeState,
     workspaceById,
+    s.workspaces,
     workspaceInnerRef,
     workspaceOuterRef,
     workspaceOverlayRef,

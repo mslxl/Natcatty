@@ -2,6 +2,8 @@ import { settingsAnchorDomId } from "../../domain/settingsSearchCatalog";
 
 const HIGHLIGHT_CLASS = "settings-search-highlight";
 const HIGHLIGHT_MS = 1600;
+/** Keep focused anchors slightly below the top of the settings content pane. */
+const SCROLL_TOP_PADDING_PX = 24;
 
 export type SettingsFocusTarget = {
   tab: string;
@@ -39,10 +41,63 @@ function focusAnchorElement(el: HTMLElement): void {
     target.tabIndex = -1;
   }
   try {
+    // preventScroll: we own scrolling so the settings titlebar / traffic-light
+    // chrome never rides along with a viewport-level scrollIntoView.
     target.focus({ preventScroll: true });
   } catch {
     // ignore focus failures in non-interactive hosts
   }
+}
+
+function isVerticallyScrollable(el: HTMLElement): boolean {
+  const { overflowY } = window.getComputedStyle(el);
+  if (overflowY !== "auto" && overflowY !== "scroll" && overflowY !== "overlay") {
+    return false;
+  }
+  return el.scrollHeight > el.clientHeight + 1;
+}
+
+/**
+ * Prefer the dedicated settings content scroller; never fall back to
+ * document/body scrolling (that lifts the whole window under macOS traffic lights).
+ */
+export function findSettingsScrollContainer(el: HTMLElement): HTMLElement | null {
+  // Trust the marked pane even when content is shorter than the viewport —
+  // search jumps must still scroll this host, not the window.
+  const marked = el.closest<HTMLElement>("[data-settings-scroll-pane]");
+  if (marked) return marked;
+
+  let node: HTMLElement | null = el.parentElement;
+  while (node && node !== document.documentElement && node !== document.body) {
+    if (isVerticallyScrollable(node)) return node;
+    node = node.parentElement;
+  }
+  return null;
+}
+
+/**
+ * Scroll only within the settings content pane so the window chrome stays put.
+ */
+export function scrollSettingsAnchorIntoView(
+  el: HTMLElement,
+  behavior: ScrollBehavior = "smooth",
+): void {
+  const scroller = findSettingsScrollContainer(el);
+  if (!scroller) {
+    // Nearest-only, never "center" — avoids yanking the whole settings window.
+    el.scrollIntoView({ behavior, block: "nearest", inline: "nearest" });
+    return;
+  }
+
+  const scrollerRect = scroller.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const elTopInScroller = elRect.top - scrollerRect.top + scroller.scrollTop;
+  const targetTop = Math.max(0, elTopInScroller - SCROLL_TOP_PADDING_PX);
+  const maxScroll = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+  scroller.scrollTo({
+    top: Math.min(targetTop, maxScroll),
+    behavior,
+  });
 }
 
 /**
@@ -91,7 +146,7 @@ export function focusSettingsAnchor(
         return;
       }
 
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      scrollSettingsAnchorIntoView(el, "smooth");
       el.classList.remove(HIGHLIGHT_CLASS);
       void el.offsetWidth;
       el.classList.add(HIGHLIGHT_CLASS);

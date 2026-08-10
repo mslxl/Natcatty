@@ -1,6 +1,6 @@
 
 
-import React, { useCallback, useEffect, useDeferredValue, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useWindowControls } from '../application/state/useWindowControls';
@@ -30,9 +30,9 @@ import { subscribeUserSkillsStatusChanged } from './ai/userSkillsStatusEvents';
 import {
   applyDraftEntrySelection,
   applyHistorySessionSelection,
-  panelViewsEqual,
   resolveDisplayedPanelView,
   resolveDisplayedSession,
+  shouldForceDraftViewSync,
 } from './ai/aiPanelViewState';
 import {
   endSendForKey,
@@ -356,12 +356,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     );
   }, [scopeType, terminalSessions]);
 
-  const deferredSessions = useDeferredValue(sessions);
+  // Use live sessions for history + view resolution. Deferring the list used to
+  // lag one paint behind createSession, so normalizePanelView treated the new
+  // chat as missing and the draft-sync effect forced showDraftView — which
+  // parked the just-sent session into history under StrictMode.
   const historySessions = useMemo(
     () => profileAIPanelCalculation(
       'AIChatSidePanel.historySessions',
       () => getScopedHistorySessions(
-        deferredSessions,
+        sessions,
         scopeType,
         scopeTargetId,
         scopeHostIds,
@@ -369,7 +372,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         workspaceMemberTerminalIds,
       ),
     ),
-    [deferredSessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds],
+    [sessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds],
   );
 
   const explicitPanelView = panelViewByScope[scopeKey];
@@ -447,9 +450,17 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   useEffect(() => {
     if (!isVisible) return;
-    if (!explicitPanelView || panelViewsEqual(normalizedPanelView, explicitPanelView)) return;
+    // Predicate must match normalizePanelView's list (scoped history), not the
+    // global store — out-of-scope sessions must still demote to draft.
+    if (!shouldForceDraftViewSync(
+      explicitPanelView,
+      normalizedPanelView,
+      (sessionId) => historySessions.some((session) => session.id === sessionId),
+    )) {
+      return;
+    }
     showDraftView(scopeKey);
-  }, [isVisible, normalizedPanelView, explicitPanelView, scopeKey, showDraftView]);
+  }, [isVisible, normalizedPanelView, explicitPanelView, scopeKey, historySessions, showDraftView]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -468,9 +479,24 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   useEffect(() => {
     if (!isVisible) return;
     if (normalizedPanelView.mode !== 'draft') return;
+    // Keep ownership while an explicit session is still displayable in this
+    // scope (normalize has not demoted it). Out-of-scope / missing ids clear.
+    if (
+      explicitPanelView?.mode === 'session'
+      && historySessions.some((session) => session.id === explicitPanelView.sessionId)
+    ) {
+      return;
+    }
     if (persistedSessionId == null) return;
     setActiveSessionId(null);
-  }, [isVisible, normalizedPanelView.mode, persistedSessionId, setActiveSessionId]);
+  }, [
+    isVisible,
+    normalizedPanelView.mode,
+    explicitPanelView,
+    historySessions,
+    persistedSessionId,
+    setActiveSessionId,
+  ]);
 
   const ensureScopeDraft = useCallback((agentId: string) => {
     ensureDraftForScope(scopeKey, agentId);

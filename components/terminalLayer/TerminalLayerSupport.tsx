@@ -277,9 +277,11 @@ interface AIChatPanelsHostProps {
   onOpenVaultSnippetFromChat?: (snippetId: string) => void;
 }
 
+const EMPTY_WORKSPACES: Workspace[] = [];
+
 interface AIStateMaintenanceHostProps {
   validAIScopeTargetIds: Set<string>;
-  workspaces: Workspace[];
+  workspaces?: Workspace[] | null;
 }
 
 const AIStateProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -296,13 +298,16 @@ AIStateProvider.displayName = 'AIStateProvider';
 
 const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
   validAIScopeTargetIds,
-  workspaces,
+  workspaces: workspacesProp,
 }) => {
   const aiConfig = useContext(AIConfigContext);
 
   if (!aiConfig) {
     throw new Error('AIStateMaintenanceHost must be rendered inside AIStateProvider');
   }
+
+  // Guard missing prop so a wiring gap cannot crash the terminal shell.
+  const workspaces = workspacesProp ?? EMPTY_WORKSPACES;
 
   const {
     cleanupOrphanedSessions,
@@ -396,7 +401,7 @@ AIStateMaintenanceHost.displayName = 'AIStateMaintenanceHost';
 
 interface AISidePanelStateRootProps {
   validAIScopeTargetIds: Set<string>;
-  workspaces: Workspace[];
+  workspaces?: Workspace[] | null;
   children: React.ReactNode;
 }
 

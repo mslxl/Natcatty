@@ -210,7 +210,8 @@ export const SettingRow: React.FC<SettingRowProps> = ({
     id={anchorId ? settingsAnchorDomId(anchorId) : undefined}
     data-settings-anchor={anchorId}
     className={cn(
-      "flex justify-between py-3 gap-4 rounded-md",
+      // Keep square corners: rounded rows bend divide-y separators at both ends.
+      "flex justify-between py-3 gap-4",
       align === "start" ? "items-start" : "items-center",
     )}
   >
@@ -233,7 +234,8 @@ export const SettingsAnchor: React.FC<{
   <div
     id={settingsAnchorDomId(anchorId)}
     data-settings-anchor={anchorId}
-    className={cn("rounded-md", className)}
+    // No default rounded-md: inside divide-y cards, child border-radius bends separators.
+    className={className}
   >
     {children}
   </div>
@@ -244,7 +246,11 @@ export const SettingsTabContent: React.FC<{
   children: React.ReactNode;
 }> = ({ value, children }) => (
   <TabsContent value={value} className="flex-1 m-0 h-full overflow-hidden">
-    <div className="h-full overflow-y-auto overflow-x-hidden">
+    {/* data-settings-scroll-pane: search jump scrolls only this pane, not the window */}
+    <div
+      data-settings-scroll-pane
+      className="h-full overflow-y-auto overflow-x-hidden"
+    >
       <div className="p-6 space-y-6">{children}</div>
     </div>
   </TabsContent>

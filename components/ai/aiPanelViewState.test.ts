@@ -12,6 +12,7 @@ import {
   panelViewsEqual,
   resolveDisplayedPanelView,
   resolveDisplayedSession,
+  shouldForceDraftViewSync,
 } from "./aiPanelViewState.ts";
 
 function createSession(id: string): AISession {
@@ -73,6 +74,54 @@ test("missing session target normalizes back to draft view", () => {
   const sessions = [createSession("session-2"), createSession("session-1")];
 
   assert.deepEqual(normalizePanelView(panelView, sessions), { mode: "draft" });
+});
+
+test("shouldForceDraftViewSync keeps explicit session while it is still in scoped history", () => {
+  const explicit: AIPanelView = { mode: "session", sessionId: "just-created" };
+  const normalized: AIPanelView = { mode: "draft" };
+  // Predicate mirrors scoped historySessions (not the global store).
+  const scopedHistory = new Set(["just-created"]);
+
+  assert.equal(
+    shouldForceDraftViewSync(explicit, normalized, (id) => scopedHistory.has(id)),
+    false,
+  );
+});
+
+test("shouldForceDraftViewSync forces draft when explicit session is gone", () => {
+  const explicit: AIPanelView = { mode: "session", sessionId: "deleted" };
+  const normalized: AIPanelView = { mode: "draft" };
+
+  assert.equal(
+    shouldForceDraftViewSync(explicit, normalized, () => false),
+    true,
+  );
+});
+
+test("shouldForceDraftViewSync demotes when session is only in global store, not scoped history", () => {
+  const explicit: AIPanelView = { mode: "session", sessionId: "other-scope" };
+  const normalized: AIPanelView = { mode: "draft" };
+  // Global store still has it; scoped history (what normalize uses) does not.
+  const globalStore = new Set(["other-scope"]);
+  const scopedHistory = new Set<string>();
+
+  assert.equal(
+    shouldForceDraftViewSync(explicit, normalized, (id) => scopedHistory.has(id)),
+    true,
+  );
+  assert.equal(
+    shouldForceDraftViewSync(explicit, normalized, (id) => globalStore.has(id)),
+    false,
+  );
+});
+
+test("shouldForceDraftViewSync is a no-op when views already match", () => {
+  const view: AIPanelView = { mode: "session", sessionId: "session-1" };
+
+  assert.equal(
+    shouldForceDraftViewSync(view, view, () => true),
+    false,
+  );
 });
 
 test("missing explicit panel view resumes the most recent matching history when no draft exists", () => {

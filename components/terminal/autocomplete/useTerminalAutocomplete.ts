@@ -1090,7 +1090,7 @@ export function useTerminalAutocomplete(
     }
     settledCompletions = completions;
     applyCompletions(completions, currentPrompt);
-  }, [termRef, clearState, containerRef]);
+  }, [termRef, clearState, containerRef, sensitiveInputActiveRef]);
 
   // Keep ref in sync so handleSubDirSelect can call it
   fetchSuggestionsRef.current = fetchSuggestions;
