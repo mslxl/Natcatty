@@ -611,7 +611,8 @@ function createZmodemSentry(opts) {
         throw new Error("ZMODEM drag-drop upload already pending");
       }
 
-      const uploadCommand = payload.uploadCommand || "rz\r";
+      // -y: overwrite same-named remote files (lrzsz protect mode otherwise skips).
+      const uploadCommand = payload.uploadCommand || "rz -y\r";
       dragDropUpload = {
         filePaths,
         remoteNames: payload.remoteNames,

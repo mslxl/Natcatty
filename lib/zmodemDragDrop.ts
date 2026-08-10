@@ -5,6 +5,13 @@ import type { Host } from "../types";
 const ZMODEM_RZ_MISSING_MARKER_PREFIX = "\x1b]1337;NetcattyRzMissing=";
 const ZMODEM_RZ_MISSING_MARKER_SUFFIX = "\x07";
 
+/**
+ * Default PTY command for drag-drop ZMODEM upload.
+ * lrzsz `rz` defaults to protect mode and will not replace an existing
+ * same-named file; `-y` / `--overwrite` is required (issue #2863).
+ */
+export const ZMODEM_DEFAULT_RZ_UPLOAD_COMMAND = "rz -y\r";
+
 export type ZmodemDragDropFile = {
   path?: string;
   name: string;
@@ -46,7 +53,7 @@ export function createZmodemRzMissingToken(): string {
 
 export function buildZmodemDragDropUploadCommand(rzMissingToken: string): string {
   const markerFormat = `\\033]1337;NetcattyRzMissing=${rzMissingToken}\\007`;
-  const script = `if command -v rz >/dev/null 2>&1; then exec rz; else printf ${quotePosixShellArg(markerFormat)}; fi`;
+  const script = `if command -v rz >/dev/null 2>&1; then exec rz -y; else printf ${quotePosixShellArg(markerFormat)}; fi`;
   return `sh -lc ${quotePosixShellArg(script)}\r`;
 }
 

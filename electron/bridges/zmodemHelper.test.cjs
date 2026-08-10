@@ -130,7 +130,7 @@ test("queued drag-drop upload interrupts the remote command when cancelled befor
 
   assert.equal(fs.existsSync(tempPath), false);
   assert.equal(interrupted, true);
-  assert.equal(writes[0].toString("utf8"), "rz\r");
+  assert.equal(writes[0].toString("utf8"), "rz -y\r");
   assert.deepEqual([...writes[1]], [0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18]);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
@@ -160,7 +160,7 @@ test("queued drag-drop upload cleans temp files when rz never starts", async () 
 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(fs.existsSync(tempPath), false);
-  assert.equal(writes[0].toString("utf8"), "rz\r");
+  assert.equal(writes[0].toString("utf8"), "rz -y\r");
   assert.deepEqual([...writes[1]], [0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18]);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });

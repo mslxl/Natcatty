@@ -2,7 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { DropEntry } from "./sftpFileUtils";
-import { buildZmodemDragDropFiles } from "./zmodemDragDrop";
+import {
+  buildZmodemDragDropFiles,
+  buildZmodemDragDropUploadCommand,
+  ZMODEM_DEFAULT_RZ_UPLOAD_COMMAND,
+} from "./zmodemDragDrop";
+
+test("ZMODEM drag-drop rz command overwrites existing remote files", () => {
+  // lrzsz rz defaults to protect mode and refuses same-named files unless -y.
+  assert.match(ZMODEM_DEFAULT_RZ_UPLOAD_COMMAND, /\brz\s+-y\b/);
+  assert.match(ZMODEM_DEFAULT_RZ_UPLOAD_COMMAND, /\r$/);
+
+  const command = buildZmodemDragDropUploadCommand("rz-token");
+  assert.match(command, /\bexec rz -y\b/);
+  assert.match(command, /NetcattyRzMissing=rz-token/);
+  assert.match(command, /\r$/);
+});
 
 test("ZMODEM drops use reconstructed paths without buffering the file", async () => {
   let buffered = false;
