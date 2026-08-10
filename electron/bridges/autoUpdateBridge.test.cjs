@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const Module = require("node:module");
 
@@ -213,6 +215,44 @@ function makeWindowManagerWithMainWindows(count, options = {}) {
   };
 }
 
+async function withLinuxPackageEnvironment({ packageType, appImage }, fn) {
+  const packageDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-auto-update-test-"));
+  const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+  const previousAppImage = process.env.APPIMAGE;
+
+  try {
+    if (packageType) {
+      fs.writeFileSync(path.join(packageDir, "package-type"), `${packageType}\n`, "utf8");
+    }
+    Object.defineProperty(process, "platform", { value: "linux", configurable: true });
+    Object.defineProperty(process, "resourcesPath", { value: packageDir, configurable: true });
+    if (appImage) {
+      process.env.APPIMAGE = path.join(packageDir, "Netcatty.AppImage");
+    } else {
+      delete process.env.APPIMAGE;
+    }
+    return await fn();
+  } finally {
+    if (platformDescriptor) {
+      Object.defineProperty(process, "platform", platformDescriptor);
+    } else {
+      delete process.platform;
+    }
+    if (resourcesPathDescriptor) {
+      Object.defineProperty(process, "resourcesPath", resourcesPathDescriptor);
+    } else {
+      delete process.resourcesPath;
+    }
+    if (previousAppImage === undefined) {
+      delete process.env.APPIMAGE;
+    } else {
+      process.env.APPIMAGE = previousAppImage;
+    }
+    fs.rmSync(packageDir, { recursive: true, force: true });
+  }
+}
+
 /**
  * Minimal ipcMain stand-in that captures the handlers the bridge registers so a
  * test can invoke a single channel directly.
@@ -234,6 +274,64 @@ function makeIpcMain() {
     },
   };
 }
+
+test("recognizes a packaged Linux deb as auto-update capable", async () => {
+  await withLinuxPackageEnvironment({ packageType: "deb" }, async () => {
+    await withMocks({}, async ({ bridge }) => {
+      assert.equal(bridge.isAutoUpdateSupported(), true);
+    });
+  });
+});
+
+test("allows the update check to reach electron-updater for a packaged Linux deb", async () => {
+  let checkCalls = 0;
+  const autoUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    logger: undefined,
+    on() {},
+    checkForUpdates() {
+      checkCalls += 1;
+      return Promise.resolve({
+        updateInfo: {
+          version: "1.1.18",
+          releaseNotes: "",
+          releaseDate: null,
+        },
+      });
+    },
+  };
+
+  await withLinuxPackageEnvironment({ packageType: "deb" }, async () => {
+    await withMocks({ autoUpdater }, async ({ bridge, fakeAutoUpdater }) => {
+      fakeAutoUpdater.autoDownload = false;
+      const ipcMain = makeIpcMain();
+      bridge.registerHandlers(ipcMain);
+
+      const result = await ipcMain.invoke("netcatty:update:check");
+      assert.equal(checkCalls, 1);
+      assert.equal(result.supported, true);
+      assert.equal(result.available, true);
+      assert.equal(result.version, "1.1.18");
+    });
+  });
+});
+
+test("keeps the manual-update fallback for an unmarked Linux package", async () => {
+  await withLinuxPackageEnvironment({}, async () => {
+    await withMocks({}, async ({ bridge }) => {
+      assert.equal(bridge.isAutoUpdateSupported(), false);
+    });
+  });
+});
+
+test("keeps AppImage auto-update support on Linux", async () => {
+  await withLinuxPackageEnvironment({ appImage: true }, async () => {
+    await withMocks({}, async ({ bridge }) => {
+      assert.equal(bridge.isAutoUpdateSupported(), true);
+    });
+  });
+});
 
 test("install handler marks quitting-for-update before quitAndInstall", async () => {
   const order = [];

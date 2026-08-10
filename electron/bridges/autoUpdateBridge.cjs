@@ -5,9 +5,10 @@
  * install-on-quit. Designed around a "prompt" model: the renderer asks to
  * check, then explicitly triggers download and install.
  *
- * Platforms where auto-update is NOT supported (Linux deb/rpm/snap) get a
- * graceful { available: false, error } response so the renderer can fall back
- * to a manual "open GitHub releases" link.
+ * Linux packages use electron-updater's package-manager path when the
+ * electron-builder package-type marker is present. Unmarked Linux builds
+ * (including snap and development runs) get a graceful fallback so the
+ * renderer can offer a manual "open GitHub releases" link.
  */
 
 let _deps = null;
@@ -46,20 +47,36 @@ function writeAutoUpdatePreference(enabled) {
   }
 }
 
+const SUPPORTED_LINUX_PACKAGE_TYPES = new Set(["deb", "rpm", "pacman"]);
+
+/**
+ * Identify the Linux package format written by electron-builder into the
+ * packaged resources directory. AppImage does not have this marker; its
+ * runtime exposes the APPIMAGE environment variable instead.
+ */
+function getLinuxPackageType() {
+  if (process.env.APPIMAGE) return "AppImage";
+  if (typeof process.resourcesPath !== "string") return null;
+
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const packageType = fs.readFileSync(path.join(process.resourcesPath, "package-type"), "utf8").trim();
+    return SUPPORTED_LINUX_PACKAGE_TYPES.has(packageType) ? packageType : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Returns true when the current packaging format supports electron-updater
- * (macOS zip/dmg, Windows NSIS, Linux AppImage).
+ * (macOS zip/dmg, Windows NSIS, Linux AppImage/deb/rpm/pacman).
  */
 function isAutoUpdateSupported() {
   if (process.platform === "darwin" || process.platform === "win32") {
     return true;
   }
-  // Linux: only AppImage supports in-place update.
-  // The APPIMAGE env variable is set by the AppImage runtime.
-  if (process.platform === "linux" && process.env.APPIMAGE) {
-    return true;
-  }
-  return false;
+  return process.platform === "linux" && getLinuxPackageType() !== null;
 }
 
 /** Lazily resolved autoUpdater — avoids importing electron-updater in
@@ -169,7 +186,8 @@ function setupGlobalListeners() {
 
 /**
  * Trigger an automatic update check after a delay.
- * No-op on platforms that don't support auto-update (Linux deb/rpm/snap).
+ * No-op on platforms that don't support auto-update (for example Linux snap
+ * or an unmarked development build).
  * Called from main process after the main window is created.
  *
  * @param {number} delayMs - Milliseconds to wait before checking (default: 5000)
