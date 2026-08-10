@@ -18,10 +18,16 @@ test('seedWorkspaceAIActiveSessionFromMembers writes focused terminal chat onto 
     preferredTerminalId: 'term-a',
   });
 
-  assert.deepEqual(next, {
+  assert.ok(next);
+  assert.deepEqual(next.activeSessionIdMap, {
     'terminal:term-a': 'chat-a',
     'terminal:term-b': 'chat-b',
     'workspace:ws-1': 'chat-a',
+  });
+  assert.equal(next.panelViewChanged, true);
+  assert.deepEqual(next.panelViewByScope['workspace:ws-1'], {
+    mode: 'session',
+    sessionId: 'chat-a',
   });
 });
 

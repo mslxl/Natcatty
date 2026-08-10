@@ -18,16 +18,26 @@ export type AIPanelViewHandoffLike = {
   sessionId?: string;
 };
 
+export type SeedWorkspaceAIActiveSessionResult = {
+  activeSessionIdMap: Record<string, string | null>;
+  panelViewByScope: Record<string, AIPanelViewHandoffLike>;
+  panelViewChanged: boolean;
+};
+
 /**
  * Seed a brand-new workspace scope from member terminal maps (focused first)
  * so the first paint does not wait on a visible-panel write-back.
+ *
+ * Also materializes an explicit session panel view so follow-up typing does not
+ * fall through to draft-only resolution and create a new chat on send.
  */
 export function seedWorkspaceAIActiveSessionFromMembers(input: {
   activeSessionIdMap: AIActiveSessionIdMap;
+  panelViewByScope?: Readonly<Record<string, AIPanelViewHandoffLike | undefined>>;
   workspaceId: string;
   memberTerminalIds: readonly string[];
   preferredTerminalId?: string | null;
-}): Record<string, string | null> | null {
+}): SeedWorkspaceAIActiveSessionResult | null {
   const workspaceKey = buildAIScopeKey('workspace', input.workspaceId);
   const existing = input.activeSessionIdMap[workspaceKey];
   if (typeof existing === 'string' && existing.length > 0) {
@@ -43,9 +53,27 @@ export function seedWorkspaceAIActiveSessionFromMembers(input: {
   });
   if (!inherited) return null;
 
+  const previousPanelViewByScope = (
+    input.panelViewByScope as Record<string, AIPanelViewHandoffLike> | undefined
+  ) ?? {};
+  const existingPanelView = previousPanelViewByScope[workspaceKey];
+  const needsPanelView = !(
+    existingPanelView?.mode === 'session'
+    && existingPanelView.sessionId === inherited
+  );
+
   return {
-    ...(input.activeSessionIdMap as Record<string, string | null>),
-    [workspaceKey]: inherited,
+    activeSessionIdMap: {
+      ...(input.activeSessionIdMap as Record<string, string | null>),
+      [workspaceKey]: inherited,
+    },
+    panelViewByScope: needsPanelView
+      ? {
+          ...previousPanelViewByScope,
+          [workspaceKey]: { mode: 'session', sessionId: inherited },
+        }
+      : previousPanelViewByScope,
+    panelViewChanged: needsPanelView,
   };
 }
 
