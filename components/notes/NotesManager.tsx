@@ -113,7 +113,7 @@ const isNoteEditorMode = (value: string | null): value is NoteEditorMode =>
 
 const InlineMarkdownEditorFallback = () => (
   <div
-    className="netcatty-lazy-fade-in min-h-[420px]"
+    className="min-h-[420px] bg-background"
     data-notes-editor-loading="true"
     aria-hidden="true"
   />
@@ -1712,10 +1712,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     }
                   }}
                 >
-                  <LazyLoadBoundary name="Notes editor" resetKey={selectedNoteView.id}>
+                  <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
                     <Suspense fallback={<InlineMarkdownEditorFallback />}>
                       <InlineMarkdownEditor
-                        key={selectedNoteView.id}
+                        noteId={selectedNoteView.id}
                         value={selectedNoteView.content}
                         placeholder={t("notes.editor.placeholder")}
                         editorMode={noteEditorMode}
@@ -1803,10 +1803,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   }
                 }}
               >
-                <LazyLoadBoundary name="Notes editor" resetKey={overlayNoteView.id}>
+                <LazyLoadBoundary name="Notes editor" resetKey="notes-overlay-editor">
                   <Suspense fallback={<InlineMarkdownEditorFallback />}>
                     <InlineMarkdownEditor
-                      key={overlayNoteView.id}
+                      noteId={overlayNoteView.id}
                       value={overlayNoteView.content}
                       placeholder={t("notes.editor.placeholder")}
                       editorMode={noteEditorMode}

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  insertClipboardTextAtActiveLexicalSelection,
   mergeNoteMarkdownDocumentPaste,
   NOTE_MARKDOWN_PASTE_INSERT_MAX_CHARS,
   resolveNoteMarkdownPasteSettleAttempts,
@@ -20,8 +21,6 @@ test("markdown paste intercepts structured clipboard text in edit mode even with
     }),
     true,
   );
-  // After a prior insertMarkdown clears the caret, continuous paste must still
-  // be recoverable via document setMarkdown rather than a swallowed preventDefault.
   assert.equal(
     shouldInterceptNoteMarkdownPaste({
       editorMode: "edit",
@@ -61,7 +60,7 @@ test("document paste merge preserves first-line indentation and appends after cu
   );
 });
 
-test("paste strategy uses document merge when caret is missing or paste is long", () => {
+test("paste strategy preserves caret: long paste with selection still inserts at selection", () => {
   assert.equal(
     resolveNoteMarkdownPasteStrategy({
       canInsertMarkdownAtSelection: false,
@@ -78,20 +77,27 @@ test("paste strategy uses document merge when caret is missing or paste is long"
   );
   const longMarkdown = `# Title\n\n${"paragraph text ".repeat(400)}`;
   assert.ok(longMarkdown.length >= NOTE_MARKDOWN_PASTE_INSERT_MAX_CHARS);
+  // Long paste must NOT force document-merge when a caret exists (would append at EOF).
   assert.equal(
     resolveNoteMarkdownPasteStrategy({
       canInsertMarkdownAtSelection: true,
       clipboardText: longMarkdown,
     }),
-    "document-merge",
+    "insert-at-selection",
   );
 });
 
 test("paste settle attempts scale with clipboard size", () => {
   assert.equal(resolveNoteMarkdownPasteSettleAttempts(100), 6);
   assert.equal(resolveNoteMarkdownPasteSettleAttempts(3_000), 6);
-  assert.equal(resolveNoteMarkdownPasteSettleAttempts(12_000), 8);
-  assert.equal(resolveNoteMarkdownPasteSettleAttempts(100_000), 24);
+  assert.equal(resolveNoteMarkdownPasteSettleAttempts(12_000), 10);
+  assert.ok(resolveNoteMarkdownPasteSettleAttempts(100_000) <= 40);
+  assert.ok(resolveNoteMarkdownPasteSettleAttempts(100_000) >= 6);
+});
+
+test("selection paste recovery helper rejects empty text or missing target", () => {
+  assert.equal(insertClipboardTextAtActiveLexicalSelection(null, "# Heading"), false);
+  assert.equal(insertClipboardTextAtActiveLexicalSelection(null, ""), false);
 });
 
 test("InlineMarkdownEditor only preventDefaults markdown paste after a successful intercept guard", () => {
@@ -112,17 +118,26 @@ test("InlineMarkdownEditor only preventDefaults markdown paste after a successfu
     source,
     /if \(\s*!shouldInterceptResolvedNotePaste\([\s\S]*?\)\s*\{\s*return;\s*\}/,
   );
-  // Long / no-caret path goes document-merge; short selection keeps insertMarkdown.
   assert.match(source, /strategy === "document-merge"/);
   assert.match(source, /editor\.insertMarkdown\(markdown\)/);
   assert.match(source, /pasteRecoveryGenerationRef/);
   assert.match(source, /tryCommitSettledPaste/);
   assert.match(source, /editor\.getMarkdown\(\)/);
-  // Selection-path no-op recovery must fall back to document merge (long paste).
-  assert.match(source, /if \(attempt >= maxAttempts\) \{\s*applyDocumentPaste\(\);/);
-  // Document merge must read live editor markdown, not only the possibly-stale ref.
+  // With caret: settle failure must not blindly append (emptyDoc gate).
+  assert.match(source, /if \(emptyDoc\) applyDocumentPaste\(\)/);
   assert.match(
     source,
     /const currentMarkdown = editor\.getMarkdown\(\);[\s\S]*mergeNoteMarkdownDocumentPaste\(currentMarkdown, markdown\)/,
+  );
+  // Do not re-queue insertMarkdown at the settle midpoint (double-insert risk).
+  assert.doesNotMatch(
+    source,
+    /attempt === Math\.floor\(maxAttempts \/ 2\)/,
+  );
+  // Non-empty settle failure must recover at the selection, not discard after preventDefault.
+  assert.match(source, /recoverInterceptedPasteAtSelection/);
+  assert.match(
+    source,
+    /if \(attempt >= maxAttempts\)[\s\S]*emptyDoc[\s\S]*applyDocumentPaste[\s\S]*recoverInterceptedPasteAtSelection/,
   );
 });

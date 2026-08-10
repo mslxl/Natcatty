@@ -72,6 +72,63 @@ test("mode toggle flushes ref-only content drafts before remounting the editor",
   );
 });
 
+test("note switches reuse MDX instance instead of key=noteId remount", () => {
+  assert.match(managerSource, /noteId=\{selectedNoteView\.id\}/);
+  assert.doesNotMatch(
+    managerSource,
+    /<InlineMarkdownEditor[\s\S]{0,200}key=\{selectedNoteView\.id\}/,
+    "key=noteId forces full Lexical teardown on every note switch",
+  );
+  const editorSource = readFileSync(
+    new URL("./InlineMarkdownEditor.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(editorSource, /noteId !== noteIdRef\.current/);
+  assert.match(editorSource, /setMarkdown\(scheduled\.markdown\)/);
+  assert.match(
+    editorSource,
+    /contentSwapFramesRef\.current\.outer = window\.requestAnimationFrame/,
+    "outer rAF yields a paint so the tree selection updates before Lexical import",
+  );
+  assert.match(
+    editorSource,
+    /contentSwapFramesRef\.current\.inner = window\.requestAnimationFrame/,
+    "inner rAF completes the double-yield before setMarkdown",
+  );
+  assert.match(editorSource, /data-notes-content-swapping="true"/);
+  assert.match(editorSource, /setIsContentSwapping\(true\)/);
+  assert.match(editorSource, /CLEAR_HISTORY_COMMAND/);
+  assert.match(editorSource, /clearLexicalHistory/);
+  assert.match(editorSource, /attributeFilter:\s*\[\s*"width",\s*"height"/);
+  assert.match(editorSource, /onPointerDownCapture=\{blockWhileContentSwapping\}/);
+  assert.match(editorSource, /startTransition\(\(\) => setIsContentSwapping\(false\)\)/);
+  assert.match(
+    editorSource,
+    /latestMarkdownRef\.current !== scheduled\.markdown/,
+    "deferred setMarkdown must not clobber edits typed after the switch",
+  );
+  assert.match(
+    editorSource,
+    /if \(contentSwapPendingRef\.current\) return;/,
+    "stale onChange during the swap yield must not write the previous note into the new draft",
+  );
+  assert.match(
+    editorSource,
+    /contentSwapScheduledRef/,
+    "deferred import must refresh when the same note's value changes during the yield",
+  );
+  assert.match(
+    editorSource,
+    /syncedPropValueRef\.current = markdown;/,
+    "draft-clobber guard compares display-normalized values after note switch",
+  );
+  assert.match(
+    editorSource,
+    /runDecorations\(true\)/,
+    "edit-mode note swaps must re-annotate host links after setMarkdown",
+  );
+});
+
 test("host-link annotation does not re-run on every markdown value keystroke", () => {
   const editorSource = readFileSync(
     new URL("./InlineMarkdownEditor.tsx", import.meta.url),
@@ -82,7 +139,21 @@ test("host-link annotation does not re-run on every markdown value keystroke", (
     /annotateHostLinks,\s*value\s*\]/,
     "value in annotateHostLinks effect deps walks the DOM on every keystroke",
   );
-  assert.match(editorSource, /\[annotateHostLinks, editorMode\]/);
+  assert.doesNotMatch(
+    editorSource,
+    /annotateCodeBlockCopyButtons,\s*editorMode,\s*value\s*\]/,
+    "value in code-copy effect deps re-walks every code block on each draft identity change",
+  );
+  assert.match(
+    editorSource,
+    /\[annotateCodeBlockCopyButtons, annotateHostLinks, editorMode\]/,
+    "DOM decoration is independent of markdown value identity",
+  );
+  assert.match(
+    editorSource,
+    /readOnly=\{editorMode === "preview"\}/,
+    "preview reuses MDXEditor in read-only mode",
+  );
   assert.match(
     editorSource,
     /syncedPropValueRef/,
@@ -92,4 +163,27 @@ test("host-link annotation does not re-run on every markdown value keystroke", (
     editorSource,
     /latestMarkdownRef\.current !== syncedPropValueRef\.current/,
   );
+});
+
+test("link hover and small-image CSS avoid render thrash", () => {
+  const editorSource = readFileSync(
+    new URL("./InlineMarkdownEditor.tsx", import.meta.url),
+    "utf8",
+  );
+  const cssSource = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+
+  const imageLayoutSource = readFileSync(
+    new URL("./noteImageLayout.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(editorSource, /linkActionStatesEqual/);
+  assert.match(editorSource, /setLinkActionIfChanged/);
+  assert.match(editorSource, /annotateNoteImageSizes/);
+  assert.match(imageLayoutSource, /data-note-img-size/);
+  // No combinatorial :has(img[width="N"]) matrix for small icons.
+  assert.doesNotMatch(
+    cssSource,
+    /:has\(img\[width="16"\]\).*?:has\(img\[width="20"\]/s,
+  );
+  assert.match(cssSource, /img\[data-note-img-size="sm"\]/);
 });

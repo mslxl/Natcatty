@@ -4,8 +4,11 @@ import { readFileSync } from "node:fs";
 
 import {
   getHostPickerTriggerRange,
+  isNoteSmallImageWidth,
   isSupportedNoteExternalHref,
   isPointerInsideLinkActionHoverZone,
+  linkActionStatesEqual,
+  NOTE_SMALL_IMAGE_MAX_WIDTH,
   resolveHostPickerPopupPosition,
   shouldInsertClipboardTextAsMarkdown,
   shouldHandleHostPickerNavigationKey,
@@ -51,6 +54,24 @@ test("link action hover zone keeps the open button reachable but not sticky", ()
   assert.equal(isPointerInsideLinkActionHoverZone(action, 95, 45), true);
   assert.equal(isPointerInsideLinkActionHoverZone(action, 160, 55), false);
   assert.equal(isPointerInsideLinkActionHoverZone(null, 105, 55), false);
+});
+
+test("link action state equality skips identical hover chips", () => {
+  const a = { href: "https://example.com", label: "example", left: 100, top: 50 };
+  assert.equal(linkActionStatesEqual(a, { ...a }), true);
+  assert.equal(linkActionStatesEqual(a, { ...a, left: 101 }), false);
+  assert.equal(linkActionStatesEqual(a, null), false);
+  assert.equal(linkActionStatesEqual(null, null), true);
+});
+
+test("small note image width threshold matches README badge sizes", () => {
+  assert.equal(isNoteSmallImageWidth(32), true);
+  assert.equal(isNoteSmallImageWidth("96"), true);
+  assert.equal(isNoteSmallImageWidth(NOTE_SMALL_IMAGE_MAX_WIDTH), true);
+  assert.equal(isNoteSmallImageWidth(128), false);
+  assert.equal(isNoteSmallImageWidth(2000), false);
+  assert.equal(isNoteSmallImageWidth(""), false);
+  assert.equal(isNoteSmallImageWidth(null), false);
 });
 
 test("host picker trigger range only covers the typed trigger and query", () => {
@@ -132,7 +153,11 @@ test("note editor exposes preview and edit modes with a markdown toolbar in edit
 
   assert.match(source, /type NoteEditorMode = "edit" \| "preview"/);
   assert.match(source, /toolbarPlugin\(\{\s*toolbarContents:/s);
+  // Preview and edit both use MDXEditor (readOnly in preview).
   assert.match(source, /readOnly=\{editorMode === "preview"\}/);
+  assert.match(source, /key=\{editorMode\}/);
+  assert.match(source, /netcatty-mdx-editor--preview/);
+  assert.doesNotMatch(source, /NoteMarkdownPreview|react-markdown|github-markdown/);
   assert.match(source, /<BlockTypeSelect \/>/);
   assert.match(source, /<BoldItalicUnderlineToggles /);
   assert.match(source, /<ListsToggle /);
@@ -194,10 +219,15 @@ test("preview mode opens links directly without showing the edit hover action", 
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
 
   assert.match(source, /const handleClickCapture = useCallback/);
-  assert.match(source, /if \(editorMode !== "preview"\) \{[\s\S]*scheduleHostPickerUpdate\(\);[\s\S]*return;/);
+  assert.match(
+    source,
+    /if \(editorMode === "preview"\) \{[\s\S]*toggleTaskListItemAtIndex[\s\S]*const handled = openLink\(href, label\);/,
+    "preview click path handles task toggles then openable links",
+  );
   assert.match(source, /const handled = openLink\(href, label\);[\s\S]*if \(!handled\) return;[\s\S]*event\.preventDefault\(\);/);
-  assert.match(source, /onClickCapture=\{handleClickCapture\}/);
-  assert.match(source, /if \(editorMode !== "edit"\) \{[\s\S]*setLinkAction\(null\);[\s\S]*return;/);
+  assert.match(source, /scheduleHostPickerUpdate\(\);\s*\n\s*\}, \[commitMarkdown, editorMode, openLink, scheduleHostPickerUpdate\]/);
+  assert.match(source, /onClickCapture=\{\(event\) => \{[\s\S]*blockWhileContentSwapping[\s\S]*handleClickCapture/);
+  assert.match(source, /if \(editorMode !== "edit"\) \{[\s\S]*setLinkActionIfChanged\(null\);[\s\S]*return;/);
   assert.match(source, /\{editorMode === "edit" && linkAction && \(/);
 });
 
@@ -328,15 +358,14 @@ test("annotateNoteCodeBlockCopyButtons adds a copy action to code blocks", () =>
   assert.match(source, /onCopy\(text\)/);
 });
 
-test("note code blocks expose a hover copy action only in preview mode", () => {
+test("note preview uses MDX readOnly with code-copy chrome", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
   assert.match(source, /removeNoteCodeBlockCopyButtons/);
-  assert.match(source, /if \(editorMode !== "preview"\) \{[\s\S]*removeNoteCodeBlockCopyButtons/);
+  assert.match(source, /readOnly=\{editorMode === "preview"\}/);
+  assert.match(source, /annotateCodeBlockCopyButtons/);
   assert.match(source, /annotateNoteCodeBlockCopyButtons/);
-  assert.match(source, /notes\.codeBlock\.copied/);
-  assert.match(source, /copyFailedLabel/);
   assert.match(source, /MutationObserver/);
   assert.match(source, /setAttribute\("aria-label", copiedLabel\)/);
   assert.match(styles, /\.netcatty-note-code-copy/);
