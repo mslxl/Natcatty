@@ -13,6 +13,7 @@ export const ruSystemManagerMessages: Messages = {
   'systemManager.tabs.tmux': 'tmux',
   'systemManager.tabs.docker': 'Docker',
   'systemManager.tabs.gpu': 'GPU',
+  'systemManager.tabs.ariaLabel': 'Разделы системного менеджера',
   'systemManager.popup.loading': 'Открытие терминала…',
   'systemManager.popup.startupFailed': 'Команда запуска не была выполнена успешно. Проверьте, что цель доступна, и повторите попытку.',
 

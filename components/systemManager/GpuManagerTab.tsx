@@ -9,6 +9,7 @@ import type {
 } from '../../domain/systemManager/types';
 import { cn } from '../../lib/utils';
 import { ResourceBar } from './ResourceBar';
+import { GpuVendorBadge } from './GpuVendorBadge';
 import {
   SystemPanelEmpty,
   SystemPanelError,
@@ -50,15 +51,6 @@ function memoryPercent(device: AcceleratorDeviceInfo): number | null {
   if (!Number.isFinite(device.memoryUsedMb) || !Number.isFinite(device.memoryTotalMb)) return null;
   if (!device.memoryTotalMb || device.memoryTotalMb <= 0) return null;
   return Math.max(0, Math.min(100, (Number(device.memoryUsedMb) / Number(device.memoryTotalMb)) * 100));
-}
-
-function vendorLabel(
-  vendor: AcceleratorDeviceInfo['vendor'],
-  t: ReturnType<typeof useI18n>['t'],
-): string {
-  return vendor === 'nvidia'
-    ? t('systemManager.gpu.vendor.nvidia')
-    : t('systemManager.gpu.vendor.ascend');
 }
 
 function deviceKey(device: AcceleratorDeviceInfo): string {
@@ -127,9 +119,7 @@ const DeviceCard = memo(function DeviceCard({
             <span className="text-xs font-medium truncate">
               [{device.index}] {device.name}
             </span>
-            <SystemPanelStatusBadge tone="muted">
-              {vendorLabel(device.vendor, t)}
-            </SystemPanelStatusBadge>
+            <GpuVendorBadge vendor={device.vendor} />
             {device.health ? (
               <SystemPanelStatusBadge tone={/ok|healthy|good/i.test(device.health) ? 'success' : 'warning'}>
                 {device.health}
@@ -160,27 +150,37 @@ const DeviceCard = memo(function DeviceCard({
         </div>
       </div>
 
-      <div className="grid grid-cols-[minmax(0,1fr)_72px] gap-2 items-end">
-        <div className="min-w-0 space-y-1.5">
+      <div className="min-w-0 space-y-1.5">
+        <ResourceBar
+          label={t('systemManager.gpu.util')}
+          value={util}
+          size="md"
+        />
+        <div className="flex items-center gap-2 min-w-0">
           <ResourceBar
-            label={t('systemManager.gpu.util')}
-            value={util}
+            label={device.vendor === 'ascend' ? t('systemManager.gpu.hbm') : t('systemManager.gpu.memory')}
+            value={memPct}
+            className="flex-1"
             size="md"
           />
-          <div className="flex items-center gap-2 min-w-0">
-            <ResourceBar
-              label={device.vendor === 'ascend' ? t('systemManager.gpu.hbm') : t('systemManager.gpu.memory')}
-              value={memPct}
-              className="flex-1"
-              size="md"
-            />
-            <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
-              {formatMb(device.memoryUsedMb)} / {formatMb(device.memoryTotalMb)}
-            </span>
-          </div>
+          <span className="text-[10px] tabular-nums text-muted-foreground shrink-0">
+            {formatMb(device.memoryUsedMb)} / {formatMb(device.memoryTotalMb)}
+          </span>
         </div>
-        <div className={cn('min-w-0', tone)} title={t('systemManager.gpu.util')}>
+      </div>
+
+      {/* History sparklines sit under the bars so they do not compete for row width. */}
+      <div className={cn('grid grid-cols-2 gap-x-3 gap-y-1', tone)}>
+        <div className="min-w-0">
+          <div className="mb-0.5 text-[10px] text-muted-foreground">
+            {t('systemManager.gpu.util')}
+          </div>
           <GpuSparkline values={utilHistory.length ? utilHistory : [util ?? 0]} />
+        </div>
+        <div className="min-w-0">
+          <div className="mb-0.5 text-[10px] text-muted-foreground">
+            {device.vendor === 'ascend' ? t('systemManager.gpu.hbm') : t('systemManager.gpu.memory')}
+          </div>
           <GpuSparkline
             values={memHistory.length ? memHistory : [memPct ?? 0]}
             className="opacity-80"

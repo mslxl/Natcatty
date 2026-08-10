@@ -12,6 +12,7 @@ import {
   panelViewsEqual,
   resolveDisplayedPanelView,
   resolveDisplayedSession,
+  shouldForceDraftViewSync,
 } from "./aiPanelViewState.ts";
 
 function createSession(id: string): AISession {
@@ -73,6 +74,36 @@ test("missing session target normalizes back to draft view", () => {
   const sessions = [createSession("session-2"), createSession("session-1")];
 
   assert.deepEqual(normalizePanelView(panelView, sessions), { mode: "draft" });
+});
+
+test("shouldForceDraftViewSync keeps explicit session while it still exists in store", () => {
+  const explicit: AIPanelView = { mode: "session", sessionId: "just-created" };
+  const normalized: AIPanelView = { mode: "draft" };
+  const existing = new Set(["just-created"]);
+
+  assert.equal(
+    shouldForceDraftViewSync(explicit, normalized, (id) => existing.has(id)),
+    false,
+  );
+});
+
+test("shouldForceDraftViewSync forces draft only when explicit session is gone", () => {
+  const explicit: AIPanelView = { mode: "session", sessionId: "deleted" };
+  const normalized: AIPanelView = { mode: "draft" };
+
+  assert.equal(
+    shouldForceDraftViewSync(explicit, normalized, () => false),
+    true,
+  );
+});
+
+test("shouldForceDraftViewSync is a no-op when views already match", () => {
+  const view: AIPanelView = { mode: "session", sessionId: "session-1" };
+
+  assert.equal(
+    shouldForceDraftViewSync(view, view, () => true),
+    false,
+  );
 });
 
 test("missing explicit panel view resumes the most recent matching history when no draft exists", () => {

@@ -13,6 +13,7 @@ export const enSystemManagerMessages: Messages = {
   'systemManager.tabs.tmux': 'tmux',
   'systemManager.tabs.docker': 'Docker',
   'systemManager.tabs.gpu': 'GPU',
+  'systemManager.tabs.ariaLabel': 'System manager sections',
   'systemManager.popup.loading': 'Opening terminal…',
   'systemManager.popup.startupFailed': 'The startup command did not complete successfully. Check that the target is still available and try again.',
 

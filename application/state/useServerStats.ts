@@ -183,16 +183,6 @@ function clearServerStatsTimers(session: SharedServerStatsSession): void {
   session.pollIntervalMs = null;
 }
 
-function resetServerStatsSession(session: SharedServerStatsSession): void {
-  clearServerStatsTimers(session);
-  session.connectedAt = 0;
-  session.hasFetched = false;
-  session.fetchGeneration += 1;
-  session.consecutiveFailures = 0;
-  session.givenUp = false;
-  updateServerStatsState(session, createInitialState());
-}
-
 function getActiveServerStatsClients(session: SharedServerStatsSession): ServerStatsClient[] {
   return Array.from(session.clients.values()).filter((client) => (
     client.enabled && client.isSupportedOs && client.isConnected
@@ -312,7 +302,13 @@ function reconcileSharedServerStatsSession(session: SharedServerStatsSession): v
   const activeClients = getActiveServerStatsClients(session);
 
   if (activeClients.length === 0) {
-    resetServerStatsSession(session);
+    // Pause polling only. Keep the last successful stats so remounting Overview
+    // (or re-enabling a terminal stats strip) can paint immediately instead of
+    // flashing "No system overview data yet."
+    clearServerStatsTimers(session);
+    if (session.state.isLoading) {
+      updateServerStatsState(session, { isLoading: false });
+    }
     return;
   }
 

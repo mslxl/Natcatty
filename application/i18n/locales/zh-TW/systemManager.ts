@@ -13,6 +13,7 @@ export const zhTwSystemManagerMessages: Messages = {
   'systemManager.tabs.tmux': 'tmux',
   'systemManager.tabs.docker': 'Docker',
   'systemManager.tabs.gpu': 'GPU',
+  'systemManager.tabs.ariaLabel': '系統管理分區',
   'systemManager.popup.loading': '正在開啟終端…',
   'systemManager.popup.startupFailed': '啟動指令未順利完成。請確認目標仍可使用後再試一次。',
 
