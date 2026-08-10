@@ -283,6 +283,7 @@ interface HostTreeViewProps {
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
+  onCopyHostname?: (host: Host) => void;
   onNewGroup: (parentPath?: string) => void;
   onRenameGroup: (groupPath: string) => void;
   onEditGroup: (groupPath: string) => void;
@@ -322,6 +323,7 @@ interface TreeNodeProps {
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
+  onCopyHostname?: (host: Host) => void;
   onNewGroup: (parentPath?: string) => void;
   onRenameGroup: (groupPath: string) => void;
   onEditGroup: (groupPath: string) => void;
@@ -367,6 +369,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
+  onCopyHostname,
   onNewGroup,
   onRenameGroup,
   onEditGroup,
@@ -577,6 +580,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               onDuplicateHost={onDuplicateHost}
               onDeleteHost={onDeleteHost}
               onCopyCredentials={onCopyCredentials}
+              onCopyHostname={onCopyHostname}
               onNewGroup={onNewGroup}
               onRenameGroup={onRenameGroup}
               onEditGroup={onEditGroup}
@@ -619,6 +623,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               onDuplicateHost={onDuplicateHost}
               onDeleteHost={onDeleteHost}
               onCopyCredentials={onCopyCredentials}
+              onCopyHostname={onCopyHostname}
               moveHostToGroup={moveHostToGroup}
 
 	              isMultiSelectMode={isMultiSelectMode}
@@ -651,6 +656,7 @@ interface HostTreeItemProps {
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
+  onCopyHostname?: (host: Host) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
 
   isMultiSelectMode?: boolean;
@@ -696,6 +702,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
+  onCopyHostname,
   moveHostToGroup: _moveHostToGroup,
 
   isMultiSelectMode,
@@ -849,7 +856,9 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
       <HostTreeHostContextMenuContent
         host={host}
         onConnect={onConnect}
+        onEditHost={onEditHost}
         onDuplicateHost={onDuplicateHost}
+        onCopyHostname={onCopyHostname}
         onCopyCredentials={onCopyCredentials}
         onDeleteHost={onDeleteHost}
       />
@@ -870,6 +879,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
   onDuplicateHost,
   onDeleteHost,
   onCopyCredentials,
+  onCopyHostname,
   onNewGroup,
   onRenameGroup,
   onEditGroup,
@@ -1178,6 +1188,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
                 onDuplicateHost={onDuplicateHost}
                 onDeleteHost={onDeleteHost}
                 onCopyCredentials={onCopyCredentials}
+                onCopyHostname={onCopyHostname}
                 onNewGroup={onNewGroup}
                 onRenameGroup={onRenameGroup}
                 onEditGroup={onEditGroup}
@@ -1218,6 +1229,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
                 onDuplicateHost={onDuplicateHost}
                 onDeleteHost={onDeleteHost}
                 onCopyCredentials={onCopyCredentials}
+                onCopyHostname={onCopyHostname}
                 moveHostToGroup={moveHostToGroup}
                 isMultiSelectMode={isMultiSelectMode}
                 selectedHostIds={selectedHostIds}
@@ -1266,6 +1278,7 @@ function hostTreeViewAreEqual(prev: HostTreeViewProps, next: HostTreeViewProps):
     && prev.onDuplicateHost === next.onDuplicateHost
     && prev.onDeleteHost === next.onDeleteHost
     && prev.onCopyCredentials === next.onCopyCredentials
+    && prev.onCopyHostname === next.onCopyHostname
     && prev.onNewGroup === next.onNewGroup
     && prev.onRenameGroup === next.onRenameGroup
     && prev.onEditGroup === next.onEditGroup

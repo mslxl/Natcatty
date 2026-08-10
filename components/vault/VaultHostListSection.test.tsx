@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -146,6 +147,7 @@ const renderHostList = ({
       groupConfigs: [],
       groupedDisplayHosts,
       handleCopyCredentials: noop,
+      handleCopyHostname: noop,
       handleDuplicateHost: noop,
       handleEditGroupConfig: noop,
       handleEditHost: noop,
@@ -482,4 +484,13 @@ test("VaultHostListSection preserves grouped totals while virtualizing rendered 
   assert.ok(renderedHosts > 0);
   assert.ok(renderedHosts < 100);
   assert.match(markup, /\(300\)/);
+});
+
+test("VaultHostListSection exposes hostname copy in host context menus, not as a hover button", () => {
+  const source = readFileSync(new URL("./VaultHostListSection.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /data-vault-host-copy-hostname-button/);
+  assert.doesNotMatch(source, /renderHostCopyHostnameButton/);
+  assert.match(source, /terminal\.statusbar\.copyHostname\.label/);
+  assert.match(source, /handleCopyHostname\(host\)/);
+  assert.match(source, /!isPluginHostProtocol\(host\.protocol\)/);
 });

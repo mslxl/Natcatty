@@ -5,6 +5,7 @@ import type { Host } from "./models.ts";
 import {
   classifyDistroId,
   detectVendorFromSshVersion,
+  getHostAddressForClipboard,
   hostsEqualForIdentityReuse,
   migrateHostsFromLegacyLineTimestamps,
   normalizeDistroId,
@@ -703,4 +704,26 @@ test("hostsEqualForIdentityReuse is true for shallow-identical field values", ()
   const b = { ...a };
   assert.equal(hostsEqualForIdentityReuse(a, b), true);
   assert.equal(hostsEqualForIdentityReuse(a, makeHost({ showLineTimestamps: false })), false);
+});
+
+test("getHostAddressForClipboard returns the trimmed hostname for vault one-click copy", () => {
+  assert.equal(getHostAddressForClipboard(makeHost({ hostname: " 10.0.0.12 " })), "10.0.0.12");
+  assert.equal(getHostAddressForClipboard(makeHost({ hostname: "db.internal" })), "db.internal");
+  assert.equal(getHostAddressForClipboard({ hostname: "" }), "");
+});
+
+test("getHostAddressForClipboard omits synthesized plugin hostnames", () => {
+  assert.equal(
+    getHostAddressForClipboard(
+      makeHost({
+        protocol: "plugin:com.example.transport.connection",
+        hostname: "My Plugin Label",
+        pluginConnection: {
+          providerId: "com.example.transport.connection",
+          configuration: { endpoint: "opaque-target" },
+        },
+      }),
+    ),
+    "",
+  );
 });
