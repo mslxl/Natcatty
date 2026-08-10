@@ -1007,12 +1007,14 @@ export function useAIState() {
       latestAISessionsSnapshot
       ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
       ?? [];
+    const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? {};
     const result = handoffDissolvedWorkspaceAIScope({
       activeSessionIdMap: currentMap,
       sessions: currentSessions,
       workspaceId: input.workspaceId,
       terminalIds: input.terminalIds,
       preferredTerminalId: input.preferredTerminalId,
+      panelViewByScope: currentPanelViewByScope,
     });
     if (!result.changed) return;
 
@@ -1028,6 +1030,12 @@ export function useAIState() {
       setLatestAISessionsSnapshot(result.sessions);
       persistSessions(result.sessions);
       setSessionsRaw(result.sessions);
+    }
+
+    if (result.panelViewByScope !== currentPanelViewByScope) {
+      setLatestAIPanelViewByScopeSnapshot(result.panelViewByScope);
+      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
+      setPanelViewByScopeRaw(result.panelViewByScope);
     }
   }, [persistSessions]);
 

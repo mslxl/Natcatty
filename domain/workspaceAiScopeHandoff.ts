@@ -13,6 +13,11 @@ export type AISessionScopeHandoffLike = {
   updatedAt?: number;
 };
 
+export type AIPanelViewHandoffLike = {
+  mode: 'draft' | 'session';
+  sessionId?: string;
+};
+
 /**
  * Seed a brand-new workspace scope from member terminal maps (focused first)
  * so the first paint does not wait on a visible-panel write-back.
@@ -47,8 +52,9 @@ export function seedWorkspaceAIActiveSessionFromMembers(input: {
 /**
  * When a workspace tab dissolves, copy its active chat onto the preferred
  * surviving terminal before the workspace scope key is pruned. Also remint
- * workspace-scoped chat records onto that terminal so history matching and
- * cleanup keep them visible.
+ * workspace-scoped chats and any handed-off chat whose original terminal pane
+ * is gone, plus a session panel view so terminal scopes do not fall back to a
+ * blank draft.
  */
 export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoffLike>(input: {
   activeSessionIdMap: AIActiveSessionIdMap;
@@ -56,9 +62,11 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   workspaceId: string;
   terminalIds: readonly string[];
   preferredTerminalId?: string | null;
+  panelViewByScope?: Readonly<Record<string, AIPanelViewHandoffLike | undefined>>;
 }): {
   activeSessionIdMap: Record<string, string | null>;
   sessions: T[];
+  panelViewByScope: Record<string, AIPanelViewHandoffLike>;
   changed: boolean;
 } {
   const preferredTerminalId = (
@@ -71,6 +79,10 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   const workspaceKey = buildAIScopeKey('workspace', input.workspaceId);
   const workspaceActive = input.activeSessionIdMap[workspaceKey];
   const hasWorkspaceActive = typeof workspaceActive === 'string' && workspaceActive.length > 0;
+  const survivorTerminalIds = new Set(input.terminalIds.filter(Boolean));
+  const previousPanelViewByScope = (
+    input.panelViewByScope as Record<string, AIPanelViewHandoffLike> | undefined
+  ) ?? {};
 
   let nextMap: Record<string, string | null> = {
     ...(input.activeSessionIdMap as Record<string, string | null>),
@@ -87,10 +99,24 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
 
   let sessionsChanged = false;
   const nextSessions = input.sessions.map((session) => {
-    if (session.scope.type !== 'workspace' || session.scope.targetId !== input.workspaceId) {
+    if (!preferredTerminalId) return session;
+
+    const isWorkspaceScoped = (
+      session.scope.type === 'workspace'
+      && session.scope.targetId === input.workspaceId
+    );
+    const isOrphanedActiveChat = (
+      hasWorkspaceActive
+      && session.id === workspaceActive
+      && session.scope.type === 'terminal'
+      && Boolean(session.scope.targetId)
+      && !survivorTerminalIds.has(session.scope.targetId as string)
+    );
+    if (!isWorkspaceScoped && !isOrphanedActiveChat) return session;
+    if (session.scope.type === 'terminal' && session.scope.targetId === preferredTerminalId) {
       return session;
     }
-    if (!preferredTerminalId) return session;
+
     sessionsChanged = true;
     return {
       ...session,
@@ -103,10 +129,35 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
     };
   });
 
-  if (!mapChanged && !sessionsChanged) {
+  let panelViewsChanged = false;
+  const nextPanelViewByScope: Record<string, AIPanelViewHandoffLike> = {
+    ...previousPanelViewByScope,
+  };
+  if (preferredTerminalId && hasWorkspaceActive) {
+    const terminalKey = buildAIScopeKey('terminal', preferredTerminalId);
+    const workspacePanelView = previousPanelViewByScope[workspaceKey];
+    const terminalPanelView = previousPanelViewByScope[terminalKey];
+    const nextView: AIPanelViewHandoffLike = (
+      workspacePanelView?.mode === 'session'
+      && workspacePanelView.sessionId === workspaceActive
+    )
+      ? workspacePanelView
+      : { mode: 'session', sessionId: workspaceActive };
+
+    if (
+      terminalPanelView?.mode !== nextView.mode
+      || (nextView.mode === 'session' && terminalPanelView.sessionId !== nextView.sessionId)
+    ) {
+      nextPanelViewByScope[terminalKey] = nextView;
+      panelViewsChanged = true;
+    }
+  }
+
+  if (!mapChanged && !sessionsChanged && !panelViewsChanged) {
     return {
       activeSessionIdMap: input.activeSessionIdMap as Record<string, string | null>,
       sessions: input.sessions as T[],
+      panelViewByScope: previousPanelViewByScope,
       changed: false,
     };
   }
@@ -114,6 +165,7 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   return {
     activeSessionIdMap: nextMap,
     sessions: sessionsChanged ? nextSessions : input.sessions as T[],
+    panelViewByScope: nextPanelViewByScope,
     changed: true,
   };
 }

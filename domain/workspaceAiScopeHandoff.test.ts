@@ -67,6 +67,36 @@ test('handoffDissolvedWorkspaceAIScope copies active chat and remints workspace 
   assert.equal(result.sessions[0]?.scope.type, 'terminal');
   assert.equal(result.sessions[0]?.scope.targetId, 'term-a');
   assert.equal(result.sessions[1]?.scope.targetId, 'term-b');
+  assert.deepEqual(result.panelViewByScope['terminal:term-a'], {
+    mode: 'session',
+    sessionId: 'chat-ws',
+  });
+});
+
+test('handoffDissolvedWorkspaceAIScope retargets inherited chat when its pane is gone', () => {
+  const result = handoffDissolvedWorkspaceAIScope({
+    activeSessionIdMap: {
+      'workspace:ws-1': 'chat-a',
+    },
+    sessions: [
+      {
+        id: 'chat-a',
+        scope: { type: 'terminal', targetId: 'term-a', hostIds: ['host-a'] },
+        updatedAt: 1,
+      },
+    ],
+    workspaceId: 'ws-1',
+    terminalIds: ['term-b'],
+    preferredTerminalId: 'term-b',
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.activeSessionIdMap['terminal:term-b'], 'chat-a');
+  assert.equal(result.sessions[0]?.scope.targetId, 'term-b');
+  assert.deepEqual(result.panelViewByScope['terminal:term-b'], {
+    mode: 'session',
+    sessionId: 'chat-a',
+  });
 });
 
 test('handoffDissolvedWorkspaceAIScope is a no-op without a preferred terminal', () => {
