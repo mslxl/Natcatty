@@ -460,13 +460,14 @@ test("SFTP filter clears the IME composing guard and resyncs the draft when the 
   );
 });
 
-test("toolbar keeps path chrome on its own row below the action controls", () => {
+test("toolbar keeps path chrome on its own row above the action controls", () => {
   assert.match(toolbarSource, /data-section="terminal-sftp-actions"/);
   assert.match(toolbarSource, /data-section="terminal-sftp-path-row"/);
   assert.match(
     toolbarSource,
-    /data-section="terminal-sftp-actions"[\s\S]*data-section="terminal-sftp-path-row"/,
+    /data-section="terminal-sftp-path-row"[\s\S]*data-section="terminal-sftp-actions"/,
   );
+  assert.doesNotMatch(toolbarSource, /ml-auto/);
   assert.doesNotMatch(
     toolbarSource,
     /data-section="terminal-sftp-toolbar"[\s\S]*className="h-7 px-2 flex items-center gap-1 border-b/,

@@ -119,16 +119,14 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
 
     const showDriveDropdown = isWindowsDrive && isLocal && !!onListDrives;
 
-    // Outer `dir=rtl` clips overflow from the path start so the current directory
-    // stays visible; the inner track restores LTR reading/click order.
+    // Keep the track LTR and left-aligned. Deep paths already prefer trailing
+    // segments via resolveSftpBreadcrumbVisibleParts, so avoid RTL clip (it
+    // right-aligns short paths like /root).
     return (
         <Tooltip>
             <TooltipTrigger asChild>
-                <div dir="rtl" className="w-full min-w-0 overflow-hidden cursor-default">
-                    <div
-                        dir="ltr"
-                        className="inline-flex max-w-none items-center gap-1 text-xs text-muted-foreground"
-                    >
+                <div className="w-full min-w-0 overflow-hidden cursor-default">
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <button

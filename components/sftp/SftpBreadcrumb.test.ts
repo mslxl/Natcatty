@@ -53,8 +53,8 @@ test("windows drive paths keep the drive letter while preferring the tail", () =
   );
 });
 
-test("breadcrumb overflow container prefers the path tail via rtl clip", () => {
-  assert.match(breadcrumbSource, /dir="rtl"/);
-  assert.match(breadcrumbSource, /dir="ltr"/);
+test("breadcrumb stays left-aligned without rtl clip", () => {
+  assert.doesNotMatch(breadcrumbSource, /dir="rtl"/);
   assert.match(breadcrumbSource, /overflow-hidden/);
+  assert.match(breadcrumbSource, /resolveSftpBreadcrumbVisibleParts/);
 });

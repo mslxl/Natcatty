@@ -1051,7 +1051,14 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
         data-section="terminal-sftp-toolbar"
       >
         <div
-          className="h-7 px-2 flex items-center gap-1"
+          className="h-7 px-2 flex items-center min-w-0"
+          data-section="terminal-sftp-path-row"
+        >
+          {pathEditor}
+        </div>
+
+        <div
+          className="h-7 px-2 flex items-center gap-1 border-t border-border/40"
           data-section="terminal-sftp-actions"
         >
           <ToolbarCustomizeContextMenu
@@ -1061,7 +1068,7 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             onMove={moveSftpItem}
             onReset={toolbarLayout.reset}
             t={t}
-            className="flex items-center gap-0.5 shrink-0 ml-auto"
+            className="flex items-center gap-0.5 shrink-0"
           >
             {inlineIds.map(renderInline)}
             <ToolbarOverflowMenu
@@ -1074,13 +1081,6 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
               <div className="flex flex-col min-w-[140px]">{overflowNodes}</div>
             </ToolbarOverflowMenu>
           </ToolbarCustomizeContextMenu>
-        </div>
-
-        <div
-          className="h-7 px-2 flex items-center border-t border-border/40 bg-secondary/10"
-          data-section="terminal-sftp-path-row"
-        >
-          {pathEditor}
         </div>
       </div>
 
