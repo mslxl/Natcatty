@@ -75,6 +75,7 @@ import {
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import {
   handoffDissolvedWorkspaceAIScope,
+  retargetWorkspaceActiveChatAfterMemberLoss,
   seedWorkspaceAIActiveSessionFromMembers,
 } from '../../domain/workspaceAiScopeHandoff';
 export function useAIState() {
@@ -1039,6 +1040,34 @@ export function useAIState() {
     }
   }, [persistSessions]);
 
+  const retargetWorkspaceActiveChatForMemberLoss = useCallback((input: {
+    workspaceId: string;
+    currentMemberTerminalIds: readonly string[];
+    preferredTerminalId?: string | null;
+  }) => {
+    const currentMap =
+      latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {};
+    const currentSessions =
+      latestAISessionsSnapshot
+      ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
+      ?? [];
+    const result = retargetWorkspaceActiveChatAfterMemberLoss({
+      activeSessionIdMap: currentMap,
+      sessions: currentSessions,
+      workspaceId: input.workspaceId,
+      currentMemberTerminalIds: input.currentMemberTerminalIds,
+      preferredTerminalId: input.preferredTerminalId,
+    });
+    if (!result.changed) return;
+
+    sessionsRef.current = result.sessions;
+    setLatestAISessionsSnapshot(result.sessions);
+    persistSessions(result.sessions);
+    setSessionsRaw(result.sessions);
+  }, [persistSessions]);
+
   // ── Provider CRUD helpers ──
   const addProvider = useCallback((provider: ProviderConfig) => {
     setProviders(prev => [...prev, provider]);
@@ -1144,6 +1173,7 @@ export function useAIState() {
     cleanupOrphanedSessions,
     seedWorkspaceActiveSessionFromMembers,
     handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
   }), [
     providers,
     setProviders,
@@ -1199,5 +1229,6 @@ export function useAIState() {
     cleanupOrphanedSessions,
     seedWorkspaceActiveSessionFromMembers,
     handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
   ]);
 }

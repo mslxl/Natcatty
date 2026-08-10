@@ -169,3 +169,68 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
     changed: true,
   };
 }
+
+/**
+ * When a still-live workspace loses a member pane whose terminal-scoped chat is
+ * the workspace active selection, remint that chat onto a remaining pane so
+ * member-history matching keeps it visible.
+ */
+export function retargetWorkspaceActiveChatAfterMemberLoss<T extends AISessionScopeHandoffLike>(input: {
+  activeSessionIdMap: AIActiveSessionIdMap;
+  sessions: readonly T[];
+  workspaceId: string;
+  currentMemberTerminalIds: readonly string[];
+  preferredTerminalId?: string | null;
+}): {
+  sessions: T[];
+  changed: boolean;
+} {
+  const workspaceKey = buildAIScopeKey('workspace', input.workspaceId);
+  const workspaceActive = input.activeSessionIdMap[workspaceKey];
+  if (typeof workspaceActive !== 'string' || workspaceActive.length === 0) {
+    return { sessions: input.sessions as T[], changed: false };
+  }
+
+  const survivorTerminalIds = new Set(input.currentMemberTerminalIds.filter(Boolean));
+  if (survivorTerminalIds.size === 0) {
+    return { sessions: input.sessions as T[], changed: false };
+  }
+
+  const preferredTerminalId = (
+    input.preferredTerminalId
+    && survivorTerminalIds.has(input.preferredTerminalId)
+      ? input.preferredTerminalId
+      : input.currentMemberTerminalIds.find((id) => survivorTerminalIds.has(id))
+  ) ?? null;
+  if (!preferredTerminalId) {
+    return { sessions: input.sessions as T[], changed: false };
+  }
+
+  const activeSession = input.sessions.find((session) => session.id === workspaceActive);
+  if (!activeSession) {
+    return { sessions: input.sessions as T[], changed: false };
+  }
+  if (activeSession.scope.type !== 'terminal' || !activeSession.scope.targetId) {
+    return { sessions: input.sessions as T[], changed: false };
+  }
+  if (survivorTerminalIds.has(activeSession.scope.targetId)) {
+    return { sessions: input.sessions as T[], changed: false };
+  }
+
+  return {
+    sessions: input.sessions.map((session) => (
+      session.id !== workspaceActive
+        ? session
+        : {
+            ...session,
+            scope: {
+              ...session.scope,
+              type: 'terminal',
+              targetId: preferredTerminalId,
+            },
+            updatedAt: Date.now(),
+          }
+    )),
+    changed: true,
+  };
+}

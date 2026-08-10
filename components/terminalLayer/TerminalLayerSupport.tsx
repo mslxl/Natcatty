@@ -308,6 +308,7 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
     cleanupOrphanedSessions,
     seedWorkspaceActiveSessionFromMembers,
     handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
   } = aiConfig;
   const previousWorkspacesRef = useRef(workspaces);
   const previousSessionWorkspaceRef = useRef(
@@ -348,6 +349,20 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
       }
     }
 
+    for (const workspace of workspaces) {
+      if (!previousIds.has(workspace.id)) continue;
+      const previousWorkspace = previousWorkspaces.find((entry) => entry.id === workspace.id);
+      if (!previousWorkspace) continue;
+      const previousMemberIds = collectSessionIds(previousWorkspace.root);
+      const currentMemberIds = collectSessionIds(workspace.root);
+      if (previousMemberIds.every((sessionId) => currentMemberIds.includes(sessionId))) continue;
+      retargetWorkspaceActiveChatForMemberLoss({
+        workspaceId: workspace.id,
+        currentMemberTerminalIds: currentMemberIds,
+        preferredTerminalId: workspace.focusedSessionId,
+      });
+    }
+
     for (const workspace of previousWorkspaces) {
       if (nextIds.has(workspace.id)) continue;
       const memberTerminalIds = collectSessionIds(workspace.root);
@@ -366,6 +381,7 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
   }, [
     cleanupOrphanedSessions,
     handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
     seedWorkspaceActiveSessionFromMembers,
     validAIScopeTargetIds,
     workspaces,

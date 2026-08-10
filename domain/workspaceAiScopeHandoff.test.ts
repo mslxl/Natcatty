@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   handoffDissolvedWorkspaceAIScope,
+  retargetWorkspaceActiveChatAfterMemberLoss,
   seedWorkspaceAIActiveSessionFromMembers,
 } from './workspaceAiScopeHandoff.ts';
 
@@ -112,6 +113,49 @@ test('handoffDissolvedWorkspaceAIScope is a no-op without a preferred terminal',
     sessions,
     workspaceId: 'ws-1',
     terminalIds: [],
+  });
+
+  assert.equal(result.changed, false);
+  assert.equal(result.sessions, sessions);
+});
+
+test('retargetWorkspaceActiveChatAfterMemberLoss remints chat from a closed pane', () => {
+  const result = retargetWorkspaceActiveChatAfterMemberLoss({
+    activeSessionIdMap: {
+      'workspace:ws-1': 'chat-a',
+    },
+    sessions: [
+      {
+        id: 'chat-a',
+        scope: { type: 'terminal', targetId: 'term-a', hostIds: ['host-a'] },
+        updatedAt: 1,
+      },
+    ],
+    workspaceId: 'ws-1',
+    currentMemberTerminalIds: ['term-b', 'term-c'],
+    preferredTerminalId: 'term-b',
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.sessions[0]?.scope.targetId, 'term-b');
+});
+
+test('retargetWorkspaceActiveChatAfterMemberLoss is a no-op when active chat pane survives', () => {
+  const sessions = [
+    {
+      id: 'chat-a',
+      scope: { type: 'terminal', targetId: 'term-a', hostIds: ['host-a'] },
+      updatedAt: 1,
+    },
+  ];
+  const result = retargetWorkspaceActiveChatAfterMemberLoss({
+    activeSessionIdMap: {
+      'workspace:ws-1': 'chat-a',
+    },
+    sessions,
+    workspaceId: 'ws-1',
+    currentMemberTerminalIds: ['term-a', 'term-b'],
+    preferredTerminalId: 'term-b',
   });
 
   assert.equal(result.changed, false);
