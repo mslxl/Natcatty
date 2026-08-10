@@ -89,6 +89,14 @@ let _listenersRegistered = false;
 /** Track whether a download is in progress to distinguish download errors from check errors */
 let _isDownloading = false;
 
+/**
+ * Track whether quitAndInstall is in flight. Linux deb/rpm/pacman install can
+ * emit an updater "error" (elevation cancelled, package-manager failure) and
+ * return without quitting — that must not be mistaken for a silent check-phase
+ * error, and quitting-for-update flags must roll back immediately.
+ */
+let _isInstalling = false;
+
 /** Track whether a checkForUpdates call is in flight (set before call, cleared on result event) */
 let _isChecking = false;
 
@@ -166,6 +174,22 @@ function setupGlobalListeners() {
 
   updater.on("error", (err) => {
     _isChecking = false;
+    // Install-phase failures (Linux package-manager / elevation cancel, missing
+    // installer path, etc.) fire while status is already 'ready' and
+    // _isDownloading is false. Roll back quit flags and surface the error so
+    // the UI is not stuck at "ready" with close-to-tray bypassed.
+    if (_isInstalling) {
+      _isInstalling = false;
+      cancelQuittingForUpdateWatchdog();
+      setQuittingForUpdate(false);
+      const errorMsg = err?.message || "Unknown update install error";
+      _lastStatus = { ..._lastStatus, status: 'error', error: errorMsg, isChecking: false };
+      console.error("[AutoUpdate] Install-phase error:", errorMsg);
+      broadcastToAllWindows("netcatty:update:error", {
+        error: errorMsg,
+      });
+      return;
+    }
     // Only broadcast download-phase errors; check-phase errors (e.g. network failures
     // during checkForUpdates) are not download failures and must not set autoDownloadStatus.
     if (!_isDownloading) {
@@ -335,14 +359,20 @@ function queryDirtyEditorsSafe(webContents, ipcMain) {
 let _quittingForUpdateWatchdog = null;
 const QUITTING_FOR_UPDATE_WATCHDOG_MS = 60000;
 
-function scheduleQuittingForUpdateWatchdog() {
+function cancelQuittingForUpdateWatchdog() {
   if (_quittingForUpdateWatchdog) {
     clearTimeout(_quittingForUpdateWatchdog);
+    _quittingForUpdateWatchdog = null;
   }
+}
+
+function scheduleQuittingForUpdateWatchdog() {
+  cancelQuittingForUpdateWatchdog();
   _quittingForUpdateWatchdog = setTimeout(() => {
     _quittingForUpdateWatchdog = null;
     // Still alive after the grace period — the install did not quit the app.
     console.warn("[AutoUpdate] App still running after quitAndInstall; clearing quitting-for-update state");
+    _isInstalling = false;
     setQuittingForUpdate(false);
   }, QUITTING_FOR_UPDATE_WATCHDOG_MS);
   // Don't let the watchdog keep the event loop (and thus the process) alive —
@@ -532,6 +562,7 @@ function registerHandlers(ipcMain) {
     // PID to die before swapping the bundle — ends up in launchd "pending
     // spawn" limbo and never installs. setQuittingForUpdate(true) sets
     // isQuitting so close-to-tray is bypassed and the window actually closes.
+    _isInstalling = true;
     setQuittingForUpdate(true);
 
     // On macOS, the system tray keeps the app process alive even after all
@@ -552,8 +583,15 @@ function registerHandlers(ipcMain) {
       // the quitting-for-update flags so later closes/quits behave normally
       // instead of permanently bypassing close-to-tray + the dirty-editor
       // guard (#1215 review).
+      _isInstalling = false;
       console.error("[AutoUpdate] quitAndInstall failed:", err?.message || err);
       setQuittingForUpdate(false);
+      return;
+    }
+
+    // Linux package install can fail via the updater "error" event inside
+    // quitAndInstall (no throw) — the listener already rolled back flags.
+    if (!_isInstalling) {
       return;
     }
 

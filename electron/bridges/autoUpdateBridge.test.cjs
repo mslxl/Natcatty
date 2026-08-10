@@ -429,6 +429,78 @@ test("install handler rolls back quitting-for-update when quitAndInstall throws"
   });
 });
 
+test("install-phase updater error rolls back quit flags and notifies renderer", async () => {
+  // Simulates Linux deb/rpm/pacman: quitAndInstall runs the package manager,
+  // elevation is cancelled / install fails, electron-updater emits "error" and
+  // returns without quitting (no throw). Status is already 'ready' so
+  // _isDownloading is false — without an install-phase path the error was
+  // swallowed as a check-phase error and quitting-for-update stayed set.
+  const listeners = {};
+  const autoUpdater = {
+    autoDownload: true,
+    autoInstallOnAppQuit: false,
+    logger: undefined,
+    on(event, fn) {
+      listeners[event] = fn;
+    },
+    quitAndInstall() {
+      listeners.error?.(new Error("pkexec cancelled"));
+    },
+  };
+  const fakeWindowManager = {
+    calls: [],
+    setQuittingForUpdate(value) {
+      this.calls.push(value);
+    },
+    isQuittingForUpdate() {
+      return this.calls[this.calls.length - 1] === true;
+    },
+  };
+  const win = makeBroadcastWindow();
+  const originalSend = win.webContents.send;
+  const sent = [];
+  win.webContents.send = (channel, payload) => {
+    sent.push({ channel, payload });
+    originalSend.call(win.webContents, channel, payload);
+  };
+
+  const originalSetTimeout = global.setTimeout;
+  let watchdogScheduled = false;
+  global.setTimeout = (fn, ms) => {
+    // Only treat the long install watchdog as scheduled; ignore unrelated timers.
+    if (ms === 60000) watchdogScheduled = true;
+    return { unref() {} };
+  };
+
+  try {
+    await withMocks(
+      { autoUpdater, windowManager: fakeWindowManager, browserWindows: [win] },
+      async ({ bridge }) => {
+        // Drive update-downloaded so status mirrors a ready-to-install package.
+        listeners["update-downloaded"]?.();
+
+        const ipcMain = makeIpcMain();
+        bridge.registerHandlers(ipcMain);
+        await ipcMain.invoke("netcatty:update:install");
+
+        assert.deepEqual(fakeWindowManager.calls, [true, false]);
+        assert.equal(fakeWindowManager.isQuittingForUpdate(), false);
+        assert.equal(watchdogScheduled, false);
+
+        const errorEvents = sent.filter((e) => e.channel === "netcatty:update:error");
+        assert.equal(errorEvents.length, 1);
+        assert.equal(errorEvents[0].payload.error, "pkexec cancelled");
+
+        const status = await ipcMain.invoke("netcatty:update:getStatus");
+        assert.equal(status.status, "error");
+        assert.equal(status.error, "pkexec cancelled");
+      },
+    );
+  } finally {
+    global.setTimeout = originalSetTimeout;
+  }
+});
+
 test("install handler watchdog clears quitting-for-update if the app never quits", async () => {
   const autoUpdater = {
     autoDownload: true,
