@@ -104,7 +104,9 @@ test("pasted markdown is detected only when it has renderable structure", () => 
   assert.equal(shouldInsertClipboardTextAsMarkdown("```sh\nuptime\n```"), true);
   assert.equal(shouldInsertClipboardTextAsMarkdown("plain text from clipboard"), false);
   assert.equal(shouldInsertClipboardTextAsMarkdown("https://example.com/path_(x)"), false);
-  assert.equal(shouldInsertClipboardTextAsMarkdown("![logo](https://example.com/logo.png)"), false);
+  // Image markdown / raw HTML img must intercept so notes can render remote images.
+  assert.equal(shouldInsertClipboardTextAsMarkdown("![logo](https://example.com/logo.png)"), true);
+  assert.equal(shouldInsertClipboardTextAsMarkdown('<img alt="logo" src="https://example.com/logo.png" />'), true);
 });
 
 test("note editor registers a code block editor for pasted fenced code", () => {
@@ -116,6 +118,12 @@ test("note editor registers a code block editor for pasted fenced code", () => {
   );
   assert.match(source, /codeMirrorExtensions:\s*NOTE_CODE_MIRROR_EXTENSIONS/);
   assert.match(source, /syntaxHighlighting\(noteCodeHighlightStyle\)/);
+});
+
+test("note editor enables image plugin for remote markdown images", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+  assert.match(source, /imagePlugin\(\)/);
+  assert.match(source, /InsertImage/);
 });
 
 test("note editor exposes preview and edit modes with a markdown toolbar in edit mode", () => {

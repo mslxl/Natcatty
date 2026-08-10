@@ -4,12 +4,14 @@ import {
   CodeToggle,
   CreateLink,
   InsertCodeBlock,
+  InsertImage,
   InsertTable,
   InsertThematicBreak,
   ListsToggle,
   codeBlockPlugin,
   codeMirrorPlugin,
   headingsPlugin,
+  imagePlugin,
   linkDialogPlugin,
   linkPlugin,
   listsPlugin,
@@ -166,6 +168,7 @@ const NoteMarkdownToolbar = React.memo(function NoteMarkdownToolbar() {
       <ListsToggle options={["bullet", "number", "check"]} />
       <Separator />
       <CreateLink />
+      <InsertImage />
       <InsertCodeBlock />
       <InsertTable />
       <InsertThematicBreak />
@@ -563,6 +566,8 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
     linkPlugin(),
     linkDialogPlugin(),
     tablePlugin(),
+    // Remote ![alt](https://…) from paste / markdown source; no local upload pipeline yet.
+    imagePlugin(),
     codeBlockPlugin({ defaultCodeBlockLanguage: "" }),
     codeMirrorPlugin({
       codeBlockLanguages: NOTE_CODE_BLOCK_LANGUAGES,

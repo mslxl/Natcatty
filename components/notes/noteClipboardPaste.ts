@@ -1,8 +1,10 @@
 /**
  * Clipboard resolution for vault markdown notes.
  *
- * Uses Turndown (mature HTML→Markdown) for browser/GitHub/Word HTML pastes.
- * Prefer text/html when present — plain often keeps raw HTML that MDX cannot insert.
+ * Uses Turndown (mature HTML→Markdown) for real HTML clipboard payloads.
+ * For mixed markdown + HTML islands (GitHub-style plain text with <img>),
+ * only convert HTML islands — never turndown the whole string (that escapes
+ * # / ** and collapses structure).
  */
 
 import TurndownService from "turndown";
@@ -29,6 +31,9 @@ const PASTED_MARKDOWN_PATTERNS = [
   /(^|[^!])\[[^\]\n]+\]\([^) \n]+(?:\s+"[^"\n]*")?\)/,
   /(^|[\s([{])(?:\*\*|__)\S[\s\S]*?\S(?:\*\*|__)(?=$|[\s\])}.,;:!?])/,
   /(^|[\s([{])`[^`\n]+`(?=$|[\s\])}.,;:!?])/,
+  // Common image markdown / raw HTML image from docs pastes.
+  /!\[[^\]]*\]\([^)\s]+\)/,
+  /<img\b/i,
 ];
 
 /** True when plain clipboard text already looks like structured markdown source. */
@@ -51,10 +56,28 @@ export const looksLikeClipboardHtml = (html: string): boolean => {
   return withoutMeta.length > 0;
 };
 
-/** Plain markdown that still embeds raw HTML (GitHub-style) — risky for MDX insert. */
+/** Plain markdown that still embeds raw HTML (GitHub-style). */
 export const plainMarkdownContainsHtml = (text: string): boolean => (
   /<\/?[a-zA-Z][^>]*>/.test(text)
 );
+
+/**
+ * True when the payload is primarily an HTML document (browser / Word / GitHub
+ * rich clipboard), not markdown-with-a-few-tags.
+ */
+export const isPrimarilyHtmlDocument = (html: string): boolean => {
+  const trimmed = html.trim();
+  if (!trimmed) return false;
+  if (/<!--StartFragment-->/i.test(trimmed)) return true;
+  if (/<\s*html[\s>]/i.test(trimmed)) return true;
+  if (/<\s*body[\s>]/i.test(trimmed)) return true;
+  // High tag density vs remaining text → treat as HTML document.
+  const withoutTags = trimmed.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+  const tagChars = (trimmed.match(/<[^>]+>/g) ?? []).join("").length;
+  if (tagChars === 0) return false;
+  if (withoutTags.length === 0) return true;
+  return tagChars >= withoutTags.length * 0.35;
+};
 
 let turndownSingleton: TurndownService | null = null;
 
@@ -68,11 +91,10 @@ const getTurndown = (): TurndownService => {
     emDelimiter: "*",
     strongDelimiter: "**",
     linkStyle: "inlined",
-    // Keep preformatted whitespace reasonable for ops paste.
     preformattedCode: true,
   });
   service.use(gfm);
-  // Drop empty anchors / name-only bookmarks (common in GitHub headings).
+  // Drop empty name-only anchors (GitHub heading bookmarks).
   service.addRule("stripEmptyAnchors", {
     filter: (node) => (
       node.nodeName === "A"
@@ -81,7 +103,7 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
-  // Skip huge data: images from Office / browser screenshots inline.
+  // Keep remote images; skip only huge base64 data URLs from Office paste.
   service.addRule("skipDataImages", {
     filter: (node) => (
       node.nodeName === "IMG"
@@ -102,26 +124,107 @@ const trimBlankLines = (value: string): string => (
     .replace(/\n+$/, "")
 );
 
-/**
- * Convert clipboard HTML with Turndown (+ GFM tables/strikethrough/task lists).
- */
-export const convertClipboardHtmlToMarkdown = (html: string): string => {
-  if (!looksLikeClipboardHtml(html)) return "";
+const turndownFragment = (html: string): string => {
   try {
-    const md = getTurndown().turndown(html);
-    return trimBlankLines(md);
+    return getTurndown().turndown(html);
   } catch {
     return "";
   }
 };
 
 /**
+ * Convert a full HTML clipboard document with Turndown (+ GFM).
+ */
+export const convertClipboardHtmlToMarkdown = (html: string): string => {
+  if (!looksLikeClipboardHtml(html)) return "";
+  return trimBlankLines(turndownFragment(html));
+};
+
+/**
+ * Convert only HTML islands inside markdown source.
+ * Preserves # headings, lists, blockquotes, fences — never escapes them.
+ */
+export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
+  if (!plainMarkdownContainsHtml(markdown)) {
+    return markdown.replace(/\r\n?/g, "\n");
+  }
+
+  // Protect fenced code so we never rewrite HTML examples inside fences.
+  const fences: string[] = [];
+  let body = markdown.replace(/\r\n?/g, "\n").replace(
+    /(?:^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\1[ \t]*(?=\n|$)/g,
+    (match) => {
+      const token = `\u0000FENCE${fences.length}\u0000`;
+      fences.push(match);
+      return token;
+    },
+  );
+
+  // Comments
+  body = body.replace(/<!--[\s\S]*?-->/g, "");
+
+  // Self-closing / void tags (img, br, hr, …) and empty paired tags.
+  body = body.replace(
+    /<([a-zA-Z][\w:-]*)(\s[^>]*)?\s*\/>/g,
+    (full) => {
+      const md = turndownFragment(full);
+      // Keep surrounding blank lines for block-ish replacements (images).
+      if (/^!\[/.test(md.trim())) return `\n\n${md.trim()}\n\n`;
+      return md;
+    },
+  );
+
+  // Paired tags — non-greedy; good enough for GitHub <a name>, <span>, tables.
+  // Repeat until stable for nested simple cases.
+  for (let pass = 0; pass < 8; pass += 1) {
+    const next = body.replace(
+      /<([a-zA-Z][\w:-]*)(\s[^>]*)?>([\s\S]*?)<\/\1\s*>/g,
+      (full, tag: string) => {
+        const lower = String(tag).toLowerCase();
+        // Keep raw script/style out of notes.
+        if (lower === "script" || lower === "style") return "";
+        const md = turndownFragment(full);
+        if (!md.trim()) return "";
+        // Block-level tags get surrounding newlines.
+        if (
+          /^(p|div|section|article|table|ul|ol|blockquote|h[1-6]|pre|figure)$/i
+            .test(lower)
+        ) {
+          return `\n\n${md.trim()}\n\n`;
+        }
+        return md;
+      },
+    );
+    if (next === body) break;
+    body = next;
+  }
+
+  // Stray unclosed void-like tags (img without />).
+  body = body.replace(
+    /<(img|br|hr)\b([^>]*)>/gi,
+    (full) => {
+      const md = turndownFragment(full.endsWith("/>") ? full : full.replace(/>$/, " />"));
+      if (/^!\[/.test(md.trim())) return `\n\n${md.trim()}\n\n`;
+      return md;
+    },
+  );
+
+  // Restore fences
+  body = body.replace(/\u0000FENCE(\d+)\u0000/g, (_, idx: string) => (
+    fences[Number(idx)] ?? ""
+  ));
+
+  return trimBlankLines(body);
+};
+
+/**
  * Resolve what text should enter the note editor from a clipboard event.
  *
  * Priority:
- * 1. text/html → Turndown (browser / GitHub / Word rich paste)
- * 2. structured plain markdown (true .md source without HTML islands)
- * 3. plain text (leave to Lexical if unstructured)
+ * 1. Real HTML document clipboard → full Turndown
+ * 2. Mixed markdown + HTML islands → island conversion (preserve markdown)
+ * 3. Clean structured markdown → as-is
+ * 4. Plain text → leave to Lexical if unstructured
  */
 export const resolveNoteClipboardPaste = (input: {
   plainText: string;
@@ -130,28 +233,41 @@ export const resolveNoteClipboardPaste = (input: {
   const plain = (input.plainText ?? "").replace(/\r\n?/g, "\n");
   const html = input.htmlText ?? "";
 
-  // Prefer HTML conversion when the OS provides a real HTML payload.
-  // GitHub/browser plain often keeps raw <img>/<a name> that MDX insertMarkdown no-ops on.
-  if (looksLikeClipboardHtml(html)) {
+  // Browser / Word / GitHub rich HTML payload.
+  if (looksLikeClipboardHtml(html) && isPrimarilyHtmlDocument(html)) {
     const converted = convertClipboardHtmlToMarkdown(html);
     if (converted.trim()) {
       return { text: converted, kind: "html-converted" };
     }
   }
 
-  if (shouldInsertClipboardTextAsMarkdown(plain)) {
-    // Plain markdown with embedded HTML tags: try wrapping as HTML for Turndown.
-    if (plainMarkdownContainsHtml(plain) && looksLikeClipboardHtml(plain)) {
-      const converted = convertClipboardHtmlToMarkdown(plain);
-      if (converted.trim()) {
-        return { text: converted, kind: "html-converted" };
-      }
+  // HTML payload that is really a fragment mixed with text — still turndown full
+  // fragment when plain is empty or unstructured.
+  if (looksLikeClipboardHtml(html) && !shouldInsertClipboardTextAsMarkdown(plain)) {
+    const converted = convertClipboardHtmlToMarkdown(html);
+    if (converted.trim()) {
+      return { text: converted, kind: "html-converted" };
     }
-    return { text: plain, kind: "markdown" };
   }
 
-  // Plain is unstructured but may still be a bare HTML fragment (some apps).
-  if (plainMarkdownContainsHtml(plain) && looksLikeClipboardHtml(plain)) {
+  // Structured plain (possibly with HTML islands like <img> / <a name>).
+  if (shouldInsertClipboardTextAsMarkdown(plain) || plainMarkdownContainsHtml(plain)) {
+    if (plainMarkdownContainsHtml(plain)) {
+      const converted = convertHtmlIslandsInMarkdown(plain);
+      if (converted.trim()) {
+        return {
+          text: converted,
+          kind: plainMarkdownContainsHtml(converted) ? "markdown" : "html-converted",
+        };
+      }
+    }
+    if (shouldInsertClipboardTextAsMarkdown(plain)) {
+      return { text: plain, kind: "markdown" };
+    }
+  }
+
+  // Last resort: treat plain as HTML fragment.
+  if (looksLikeClipboardHtml(plain)) {
     const converted = convertClipboardHtmlToMarkdown(plain);
     if (converted.trim()) {
       return { text: converted, kind: "html-converted" };
@@ -167,7 +283,6 @@ export const resolveNoteClipboardPaste = (input: {
 
 /**
  * Whether paste capture should take over (preventDefault + insert as markdown).
- * HTML-converted / structured markdown always intercept so Lexical never swallows paste.
  */
 export const shouldInterceptResolvedNotePaste = (input: {
   editorMode: "edit" | "preview";

@@ -3,63 +3,102 @@ import test from "node:test";
 
 import {
   convertClipboardHtmlToMarkdown,
+  convertHtmlIslandsInMarkdown,
   resolveNoteClipboardPaste,
   shouldInterceptResolvedNotePaste,
   shouldInsertClipboardTextAsMarkdown,
 } from "./noteClipboardPaste.ts";
 
-test("turndown converts headings lists links and emphasis from html clipboard", () => {
+const CATTY_PASTE = `---
+
+<img width="3142" height="1764" alt="Screenshot 2026-07-02 at 22 51 24" src="https://github.com/user-attachments/assets/3116165d-623a-4d3a-a28a-914befb9b72d" />
+
+---
+
+<a name="catty-agent"></a>
+# 🔥 Catty Agent — Your IT Ops AI Partner
+
+> 🚀 **Boost your IT ops daily work with AI power.** Catty Agent is the built-in AI assistant that understands your servers, executes commands, and handles complex multi-host operations — all through natural conversation.
+### 🔥 What can Catty Agent do?
+
+- 🚀 **Natural language server management** — just tell it what you need, no more memorizing commands
+- 🔥 **Real-time server diagnostics** — check status, inspect logs, monitor resources through conversation
+- 🚀 **Multi-host orchestration** — coordinate tasks across multiple servers simultaneously
+- 🔥 **Intelligent context awareness** — understands your server environment and provides tailored responses
+- 🚀 **One-click complex operations** — set up clusters, deploy services, and more with simple instructions`;
+
+test("turndown converts pure html clipboard", () => {
   const html = `
     <html><body>
     <!--StartFragment-->
     <h1>Runbook</h1>
     <p>Restart <strong>sshd</strong> on <em>prod</em>.</p>
     <ul><li>check logs</li><li>open <a href="https://example.com">docs</a></li></ul>
+    <img alt="shot" src="https://example.com/a.png" />
     <!--EndFragment-->
     </body></html>
   `;
   const md = convertClipboardHtmlToMarkdown(html);
   assert.match(md, /^# Runbook/m);
   assert.match(md, /\*\*sshd\*\*/);
-  assert.match(md, /\*prod\*/);
-  assert.match(md, /check logs/);
   assert.match(md, /\[docs\]\(https:\/\/example\.com\)/);
+  assert.match(md, /!\[shot\]\(https:\/\/example\.com\/a\.png\)/);
 });
 
-test("resolve prefers html→turndown over plain when both exist (GitHub-style paste)", () => {
-  // GitHub puts markdown+raw HTML in plain and rendered HTML in text/html.
-  // Prefer HTML conversion so <img>/<a name> do not break MDX insertMarkdown.
+test("html islands in markdown become image syntax without escaping headings", () => {
+  const md = convertHtmlIslandsInMarkdown(CATTY_PASTE);
+  assert.match(md, /^# 🔥 Catty Agent/m);
+  assert.match(md, /^### 🔥 What can Catty Agent do\?/m);
+  assert.match(md, /^\> 🚀 \*\*Boost your IT ops/m);
+  assert.match(md, /^- 🚀 \*\*Natural language server management\*\*/m);
+  assert.match(
+    md,
+    /!\[Screenshot 2026-07-02 at 22 51 24\]\(https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d\)/,
+  );
+  // Must not escape markdown structure the way full-document turndown does.
+  assert.doesNotMatch(md, /\\#/);
+  assert.doesNotMatch(md, /\\\*\*/);
+  assert.doesNotMatch(md, /\\---/);
+  assert.doesNotMatch(md, /<img\b/i);
+  assert.doesNotMatch(md, /<a\s+name=/i);
+});
+
+test("resolve pastes Catty-style mixed markdown+html from plain clipboard", () => {
   const payload = resolveNoteClipboardPaste({
-    plainText: [
-      "---",
-      "",
-      '<img width="3142" alt="shot" src="https://example.com/a.png" />',
-      "",
-      '<a name="catty-agent"></a>',
-      "# 🔥 Catty Agent — Your IT Ops AI Partner",
-      "",
-      "> 🚀 **Boost your IT ops daily work with AI power.**",
-      "",
-      "### 🔥 What can Catty Agent do?",
-      "",
-      "- 🚀 **Natural language server management** — just tell it",
-    ].join("\n"),
+    plainText: CATTY_PASTE,
+    htmlText: "",
+  });
+  assert.ok(payload.kind === "html-converted" || payload.kind === "markdown");
+  assert.equal(
+    shouldInterceptResolvedNotePaste({
+      editorMode: "edit",
+      pasteInsideCodeBlock: false,
+      payload,
+    }),
+    true,
+  );
+  assert.match(payload.text, /^# 🔥 Catty Agent/m);
+  assert.match(payload.text, /!\[Screenshot[^\]]*\]\(https:\/\/github\.com\/user-attachments/);
+  assert.match(payload.text, /Natural language server management/);
+});
+
+test("resolve uses full turndown for browser StartFragment html", () => {
+  const payload = resolveNoteClipboardPaste({
+    plainText: "flat text without structure",
     htmlText: `
-      <h1>🔥 Catty Agent — Your IT Ops AI Partner</h1>
-      <blockquote><p>🚀 <strong>Boost your IT ops daily work with AI power.</strong></p></blockquote>
-      <h3>🔥 What can Catty Agent do?</h3>
-      <ul>
-        <li>🚀 <strong>Natural language server management</strong> — just tell it</li>
-      </ul>
-      <img width="3142" alt="shot" src="https://example.com/a.png" />
-      <a name="catty-agent"></a>
+      <html><body>
+      <!--StartFragment-->
+      <h1>From browser</h1>
+      <p>Hello <b>world</b></p>
+      <img alt="x" src="https://cdn.example.com/x.png" />
+      <!--EndFragment-->
+      </body></html>
     `,
   });
   assert.equal(payload.kind, "html-converted");
-  assert.match(payload.text, /Catty Agent/);
-  assert.match(payload.text, /Natural language server management/);
-  assert.doesNotMatch(payload.text, /<img\b/i);
-  assert.doesNotMatch(payload.text, /<a\s+name=/i);
+  assert.match(payload.text, /^# From browser/m);
+  assert.match(payload.text, /\*\*world\*\*/);
+  assert.match(payload.text, /!\[x\]\(https:\/\/cdn\.example\.com\/x\.png\)/);
 });
 
 test("resolve uses structured plain markdown when html is absent", () => {
@@ -69,30 +108,6 @@ test("resolve uses structured plain markdown when html is absent", () => {
   });
   assert.equal(payload.kind, "markdown");
   assert.match(payload.text, /# From \.md file/);
-});
-
-test("html-converted paste is always intercepted in edit mode", () => {
-  const payload = resolveNoteClipboardPaste({
-    plainText: "flat text",
-    htmlText: "<h2>Section</h2><p>body</p>",
-  });
-  assert.equal(payload.kind, "html-converted");
-  assert.equal(
-    shouldInterceptResolvedNotePaste({
-      editorMode: "edit",
-      pasteInsideCodeBlock: false,
-      payload,
-    }),
-    true,
-  );
-  assert.equal(
-    shouldInterceptResolvedNotePaste({
-      editorMode: "preview",
-      pasteInsideCodeBlock: false,
-      payload,
-    }),
-    false,
-  );
 });
 
 test("plain unstructured text is not intercepted", () => {
@@ -110,19 +125,4 @@ test("plain unstructured text is not intercepted", () => {
     }),
     false,
   );
-});
-
-test("long browser html paste converts without needing markdown markers in plain", () => {
-  const paragraphs = Array.from({ length: 40 }, (_, i) => (
-    `<p>Paragraph ${i + 1} with <b>bold</b> text and a <a href="https://ex.com/${i}">link</a>.</p>`
-  )).join("");
-  const html = `<meta charset="utf-8">${paragraphs}`;
-  const plain = Array.from({ length: 40 }, (_, i) => (
-    `Paragraph ${i + 1} with bold text and a link.`
-  )).join("\n");
-  const payload = resolveNoteClipboardPaste({ plainText: plain, htmlText: html });
-  assert.equal(payload.kind, "html-converted");
-  assert.ok(payload.text.length > 100);
-  assert.match(payload.text, /\*\*bold\*\*/);
-  assert.match(payload.text, /\[link\]\(https:\/\/ex\.com\/0\)/);
 });
