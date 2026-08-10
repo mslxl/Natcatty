@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  collapseLinkedImagesToTextLinks,
   convertClipboardHtmlToMarkdown,
   convertHtmlIslandsInMarkdown,
+  normalizeLinkedBadgeImages,
   normalizePastedNoteMarkdown,
   resolveNoteClipboardPaste,
   serializeSafeHtmlImage,
@@ -32,7 +32,7 @@ const CATTY_PASTE = `---
 test("centered README hero blocks wrap in div align=center", () => {
   const html = `
     <p align="center">
-      <img src="public/icon.png" alt="Netcatty" width="128" height="128">
+      <img src="https://example.com/icon.png" alt="Netcatty" width="128" height="128">
     </p>
     <h1 align="center">Netcatty</h1>
     <p align="center">
@@ -47,7 +47,6 @@ test("centered README hero blocks wrap in div align=center", () => {
   assert.match(md, /height="128"/);
   assert.match(md, /# Netcatty/);
   assert.match(md, /netcatty\.app/);
-  // Center wrapper should appear before the logo / title content.
   const centerIdx = md.indexOf('<div align="center">');
   const logoIdx = md.search(/icon\.png|# Netcatty/);
   assert.ok(centerIdx >= 0 && logoIdx >= 0 && centerIdx < logoIdx);
@@ -56,7 +55,7 @@ test("centered README hero blocks wrap in div align=center", () => {
 test("island conversion keeps center on p align=center with image", () => {
   const plain = `
 <p align="center">
-  <img src="public/icon.png" alt="Netcatty" width="128" height="128">
+  <img src="https://example.com/icon.png" alt="Netcatty" width="128" height="128">
 </p>
 
 <h1 align="center">Netcatty</h1>
@@ -65,6 +64,14 @@ test("island conversion keeps center on p align=center with image", () => {
   assert.match(md, /<div align="center">/);
   assert.match(md, /width="128"/);
   assert.match(md, /Netcatty/);
+});
+
+test("relative public/ image paths are kept (not silently dropped)", () => {
+  const md = convertHtmlIslandsInMarkdown(
+    '<p align="center"><img src="public/icon.png" alt="Netcatty" width="128" height="128"></p>',
+  );
+  assert.match(md, /src="public\/icon\.png"/);
+  assert.match(md, /width="128"/);
 });
 
 test("turndown converts pure html clipboard", () => {
@@ -134,22 +141,15 @@ test("serializeSafeHtmlImage preserves dimensions when present", () => {
   );
 });
 
-test("serializeSafeHtmlImage rejects unresolved relative image sources", () => {
+test("serializeSafeHtmlImage keeps relative paths; rejects data/javascript", () => {
+  // Relative README paths are kept (may 404 in-app, but must not vanish on paste).
   assert.equal(
     serializeSafeHtmlImage({ src: "./docs/screenshot.png", alt: "shot" }),
-    "",
+    "![shot](./docs/screenshot.png)",
   );
   assert.equal(
-    serializeSafeHtmlImage({ src: "../assets/logo.png", alt: "logo" }),
-    "",
-  );
-  assert.equal(
-    serializeSafeHtmlImage({ src: "/assets/logo.png", alt: "logo" }),
-    "",
-  );
-  assert.equal(
-    serializeSafeHtmlImage({ src: "docs/screenshot.png", alt: "shot" }),
-    "",
+    serializeSafeHtmlImage({ src: "public/icon.png", alt: "logo" }),
+    "![logo](public/icon.png)",
   );
   assert.equal(
     serializeSafeHtmlImage({
@@ -158,9 +158,17 @@ test("serializeSafeHtmlImage rejects unresolved relative image sources", () => {
     }),
     "![cdn](//cdn.example.com/a.png)",
   );
+  assert.equal(
+    serializeSafeHtmlImage({ src: "data:image/png;base64,aaa", alt: "x" }),
+    "",
+  );
+  assert.equal(
+    serializeSafeHtmlImage({ src: "javascript:alert(1)", alt: "x" }),
+    "",
+  );
 });
 
-test("linked badge images collapse to clean text links", () => {
+test("linked badge images stay as images (tight single-line / a>img), not text-only", () => {
   const source = [
     "[![GitHub Release](https://img.shields.io/github/v/release/binaricat/Netcatty)](https://github.com/binaricat/Netcatty/releases/latest)",
     "",
@@ -171,14 +179,30 @@ test("linked badge images collapse to clean text links", () => {
     "[",
     '<img alt="Support on Ko-fi" width="150" src="https://cdn.ko-fi.com/cdn/kofi3.png?v=2" />',
     "](https://ko-fi.com/binaricat)",
+    "",
+    '<a href="https://example.com/dl"><img alt="Download" src="https://img.shields.io/badge/Download-latest-success" /></a>',
   ].join("\n");
 
-  const md = collapseLinkedImagesToTextLinks(source);
-  assert.match(md, /\[GitHub Release\]\(https:\/\/github\.com\/binaricat\/Netcatty\/releases\/latest\)/);
-  assert.match(md, /\[Platform\]\(#\)/);
-  assert.match(md, /\[Support on Ko-fi\]\(https:\/\/ko-fi\.com\/binaricat\)/);
-  assert.doesNotMatch(md, /!\[GitHub Release\]/);
+  const md = normalizeLinkedBadgeImages(source);
+  // Markdown linked image kept (with image src), not reduced to text-only [GitHub Release](url).
+  assert.match(
+    md,
+    /\[!\[GitHub Release\]\(https:\/\/img\.shields\.io\/github\/v\/release\/binaricat\/Netcatty\)\]\(https:\/\/github\.com\/binaricat\/Netcatty\/releases\/latest\)/,
+  );
+  assert.match(md, /\[!\[Platform\]\(https:\/\/img\.shields\.io\/badge\/Platform-macOS-blue\)\]\(#\)/);
+  // HTML img with width inside link → <a><img width></a>
+  assert.match(md, /<a href="https:\/\/ko-fi\.com\/binaricat"><img\b[^>]*src="https:\/\/cdn\.ko-fi\.com\/cdn\/kofi3\.png\?v=2"/);
+  // Dimension-less shield inside <a> → linked markdown image
+  assert.match(
+    md,
+    /\[!\[Download\]\(https:\/\/img\.shields\.io\/badge\/Download-latest-success\)\]\(https:\/\/example\.com\/dl\)/,
+  );
   assert.doesNotMatch(md, /^\s*\]\(/m);
+  // Not text-only badge (must keep image syntax).
+  assert.doesNotMatch(
+    md,
+    /(?<!!)\[GitHub Release\]\(https:\/\/github\.com\/binaricat\/Netcatty\/releases\/latest\)/,
+  );
 });
 
 test("normalize removes orphan link closers but keeps image dimensions", () => {

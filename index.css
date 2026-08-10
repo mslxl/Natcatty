@@ -1760,6 +1760,30 @@ html[data-theme-transition] *::after {
   margin-right: auto !important;
 }
 
+/* Badge / shield images inside links: keep inline so rows stay horizontal. */
+.netcatty-mdx-content a img,
+.netcatty-mdx-editor a img,
+.netcatty-mdx-content a [class*="_imageWrapper_"],
+.netcatty-mdx-editor a [class*="_imageWrapper_"],
+.netcatty-mdx-content a [data-editor-block-type="image"],
+.netcatty-mdx-editor a [data-editor-block-type="image"] {
+  display: inline-block !important;
+  margin: 0.25rem 0.35rem !important;
+  vertical-align: middle;
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+.netcatty-mdx-content a:has(img),
+.netcatty-mdx-editor a:has(img),
+.netcatty-mdx-content a:has([data-editor-block-type="image"]),
+.netcatty-mdx-editor a:has([data-editor-block-type="image"]) {
+  display: inline-block !important;
+  text-decoration: none !important;
+  vertical-align: middle;
+  margin: 0.15rem 0.25rem;
+}
+
 .netcatty-mdx-content a {
   color: hsl(var(--primary));
   text-decoration: underline;

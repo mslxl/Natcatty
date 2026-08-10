@@ -194,14 +194,20 @@ export const wrapCenteredMarkdown = (inner: string): string => {
 const isSafeImageSrc = (src: string): boolean => {
   const trimmed = src.trim();
   if (!trimmed) return false;
+  // Never keep huge clipboard bitmaps / scripted URLs.
   if (trimmed.startsWith("data:")) return false;
+  if (/^javascript:/i.test(trimmed)) return false;
   if (/^https?:\/\//i.test(trimmed)) return true;
-  // Protocol-relative CDN URLs; notes have no http(s) page origin, but //host
-  // still resolves to a remote host in Chromium once a scheme is applied by the browser.
-  if (trimmed.startsWith("//") && /^\/\/[^/]/.test(trimmed)) return true;
-  // Path-relative / root-relative / bare relative: notes have no source-document
-  // base URL. In packaged builds the renderer is app://…, so these would hit the
-  // local dist protocol handler and render as broken images.
+  // Protocol-relative CDN (//img.shields.io/…).
+  if (trimmed.startsWith("//") && /^\/\/[^/\s]/.test(trimmed)) return true;
+  // Relative paths from README paste (public/icon.png). They may 404 in the
+  // note renderer, but dropping them silently loses logos; keep the tag so
+  // users still see a broken-image affordance / can fix the URL.
+  if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) {
+    return true;
+  }
+  // Bare relative: public/foo.svg — reject only obvious scheme-like tokens.
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return true;
   return false;
 };
 
@@ -299,36 +305,67 @@ const extractMarkdownImageAlt = (imageChunk: string): string => {
 };
 
 /**
- * Collapse README-style linked badges into plain text links.
+ * Keep linked badge *images* (not text-only), but force a single line so MDX
+ * does not tear `[![alt](img)](href)` into image + orphan `](href)`.
  *
- * GitHub: [![Release](badge.svg)](https://…)
- * Broken after island conversion with newlines:
- *   [\n\n![Release](badge.svg)\n\n](https://…)
- * MDX then shows the image + raw `](url)` debris — avoid that entirely.
+ * Prefers HTML `<a href="…"><img … /></a>` when the image still has dimensions
+ * (shields / ko-fi) — MDX GenericHTML + img visitor render reliably.
  */
-export const collapseLinkedImagesToTextLinks = (markdown: string): string => {
+export const normalizeLinkedBadgeImages = (markdown: string): string => {
   let body = markdown.replace(/\r\n?/g, "\n");
 
-  // [![alt](img)](href) including internal whitespace/newlines
+  // [![alt](img)](href) with optional internal whitespace/newlines → one line
   body = body.replace(
-    /\[\s*!\[[^\]]*\]\([^)]+\)\s*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
-    (full, href: string) => {
+    /\[\s*!\[[^\]]*\]\(([^)]+)\)\s*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    (full, imgSrc: string, href: string) => {
       const alt = extractMarkdownImageAlt(full);
-      return `[${alt}](${href})`;
+      const src = (imgSrc || "").trim().split(/\s+/)[0] ?? "";
+      if (!src || !isSafeImageSrc(src)) {
+        return `[${alt}](${href})`;
+      }
+      // Shields / badge URLs: keep as linked markdown image (no pixel size).
+      return `[![${alt}](${src})](${href})`;
     },
   );
 
-  // [<img …>](href) including whitespace/newlines
+  // [<img …>](href) → <a href><img></a> (keeps width/height + click target)
   body = body.replace(
-    /\[\s*<img\b[^>]*>\s*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gi,
-    (full, href: string) => {
-      const alt = extractMarkdownImageAlt(full);
-      return `[${alt}](${href})`;
+    /\[\s*(<img\b[^>]*>)\s*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gi,
+    (_full, imgTag: string, href: string) => {
+      const safeImg = convertHtmlImgTagToMarkdownOrHtml(String(imgTag).trim());
+      if (!safeImg) return "";
+      if (safeImg.startsWith("<img")) {
+        return `<a href="${escapeHtmlAttr(href)}">${safeImg}</a>`;
+      }
+      const m = /!\[([^\]]*)\]\(([^)\s]+)\)/.exec(safeImg);
+      if (m) return `[![${m[1]}](${m[2]})](${href})`;
+      return `[${extractMarkdownImageAlt(safeImg)}](${href})`;
+    },
+  );
+
+  // HTML <a href="…"> … <img> … </a> (README badge row) → compact linked image
+  body = body.replace(
+    /<a\b([^>]*)>\s*(<img\b[^>]*>)\s*<\/a>/gi,
+    (full, aAttrs: string, imgTag: string) => {
+      const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(aAttrs);
+      const href = (hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3] ?? "").trim();
+      if (!href || /^javascript:/i.test(href)) return convertHtmlImgTagToMarkdownOrHtml(imgTag) || "";
+      const safeImg = convertHtmlImgTagToMarkdownOrHtml(imgTag.trim());
+      if (!safeImg) return "";
+      if (safeImg.startsWith("<img")) {
+        return `<a href="${escapeHtmlAttr(href)}">${safeImg}</a>`;
+      }
+      const m = /!\[([^\]]*)\]\(([^)\s]+)\)/.exec(safeImg);
+      if (m) return `[![${m[1]}](${m[2]})](${href})`;
+      return `[${extractMarkdownImageAlt(full)}](${href})`;
     },
   );
 
   return body;
 };
+
+/** @deprecated Use normalizeLinkedBadgeImages — kept as alias for older tests. */
+export const collapseLinkedImagesToTextLinks = normalizeLinkedBadgeImages;
 
 /**
  * Drop orphan `](url)` lines left by broken badge conversion, but leave
@@ -365,18 +402,21 @@ const stripOrphanLinkClosersOutsideCode = (markdown: string): string => {
 };
 
 /**
- * Final cleanup for note paste: badges → text links, re-sanitize img tags
- * (keeps width/height), tidy blank lines. Called after Turndown / islands.
+ * Final cleanup for note paste: tighten linked badges (keep images),
+ * re-sanitize img tags (keeps width/height), tidy blank lines.
  */
 export const normalizePastedNoteMarkdown = (markdown: string): string => {
-  let body = collapseLinkedImagesToTextLinks(markdown);
+  let body = normalizeLinkedBadgeImages(markdown);
 
-  // Re-serialize remaining HTML images (sanitize attrs; keep dimensions).
-  body = body.replace(/<img\b[^>]*>/gi, (tag) => {
-    const converted = convertHtmlImgTagToMarkdownOrHtml(tag.trim());
-    return converted || "";
+  // Re-serialize standalone HTML images (keep width/height). Leave whole <a>…</a>
+  // anchors alone so linked badges stay <a><img></a>.
+  body = body.replace(/<a\b[^>]*>[\s\S]*?<\/a>|<img\b[^>]*>/gi, (chunk) => {
+    if (/^<a\b/i.test(chunk)) return chunk;
+    return convertHtmlImgTagToMarkdownOrHtml(chunk.trim()) || "";
   });
 
+  // Second pass after img sanitization may recreate spaced wrappers.
+  body = normalizeLinkedBadgeImages(body);
   body = stripOrphanLinkClosersOutsideCode(body);
 
   return trimBlankLines(body);
@@ -395,8 +435,10 @@ export const convertClipboardHtmlToMarkdown = (html: string): string => {
  * Preserves # headings, lists, blockquotes, fences — never escapes them.
  */
 export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
-  // Collapse badges first while link wrappers are still intact.
-  let body = collapseLinkedImagesToTextLinks(markdown.replace(/\r\n?/g, "\n"));
+  // Do NOT normalize linked badges before turndown — converting <a><img> to
+  // markdown first leaves [![…]](…) as text inside <p align=center>, and
+  // turndown then escapes it to \[!\[…\]\](…).
+  let body = markdown.replace(/\r\n?/g, "\n");
 
   if (!plainMarkdownContainsHtml(body)) {
     return normalizePastedNoteMarkdown(body);
