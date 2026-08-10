@@ -62,8 +62,8 @@ export const SFTP_TOOLBAR_LAYOUT_DEFAULTS: ToolbarItemLayoutDefaults = {
 };
 
 /**
- * When the toolbar is narrow, keep these user-shown actions inline so the path
- * still has room. Other user-shown actions temporarily join the ⋮ list.
+ * When the action row is narrow, keep these user-shown actions inline.
+ * Other user-shown actions temporarily join the ⋮ list.
  * User "hide" / permanent "collapse" are always respected (never re-shown).
  */
 export const SFTP_TOOLBAR_NARROW_INLINE_IDS = new Set<SftpToolbarItemId>([
@@ -76,7 +76,7 @@ export const SFTP_TOOLBAR_NARROW_INLINE_IDS = new Set<SftpToolbarItemId>([
   "filter",
 ]);
 
-/** Prioritize path space; same threshold as the pre-customize toolbar. */
+/** Spill non-pinned actions into ⋮ when the action row is this narrow. */
 export const SFTP_TOOLBAR_NARROW_WIDTH = 400;
 
 /** Apply user placement, then optional narrow-width temporary spill of show → overflow. */
@@ -970,87 +970,97 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
 
   const overflowNodes = overflowIds.map(renderCollapsed).filter(Boolean);
 
+  const pathEditor = isEditingPath ? (
+    <div className="relative w-full min-w-0" data-section="terminal-sftp-path">
+      <Input
+        ref={pathInputRef}
+        value={editingPathValue}
+        onChange={(e) => {
+          setEditingPathValue(e.target.value);
+          setShowPathSuggestions(true);
+          setPathSuggestionIndex(-1);
+        }}
+        onBlur={handlePathBlur}
+        onKeyDown={handlePathKeyDown}
+        onFocus={() => setShowPathSuggestions(true)}
+        className="h-5 w-full text-[10px] bg-background"
+        autoFocus
+      />
+      {showPathSuggestions && pathSuggestions.length > 0 && (
+        <div
+          ref={pathDropdownRef}
+          className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-48 overflow-auto"
+        >
+          {pathSuggestions.map((suggestion, idx) => (
+            <button
+              key={suggestion.path}
+              type="button"
+              className={cn(
+                "w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-secondary/60 transition-colors",
+                idx === pathSuggestionIndex && "bg-secondary/80",
+              )}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                handlePathSubmit(suggestion.path);
+              }}
+            >
+              {suggestion.type === "folder" ? (
+                <Folder size={12} className="text-primary shrink-0" />
+              ) : (
+                <Home size={12} className="text-muted-foreground shrink-0" />
+              )}
+              <span className="truncate font-mono">{suggestion.path}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className="w-full min-w-0 cursor-text hover:bg-secondary/50 rounded px-1 transition-colors"
+          data-section="terminal-sftp-path"
+          onDoubleClick={handlePathDoubleClick}
+        >
+          <SftpBreadcrumb
+            path={displayPath}
+            onNavigate={onNavigateTo}
+            onHome={() =>
+              pane.connection?.homeDir && onNavigateTo(pane.connection.homeDir)
+            }
+            isLocal={!isRemote}
+            onListDrives={onListDrives}
+            acceptForwardSlashUnc={
+              isWindowsPath(displayPath)
+              || isWindowsPath(pane.connection?.homeDir ?? "")
+            }
+          />
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>{t("sftp.path.doubleClickToEdit")}</TooltipContent>
+    </Tooltip>
+  );
+
   return (
     <TooltipProvider delayDuration={500} skipDelayDuration={100} disableHoverableContent>
       {/* Path chrome stays outside customize so path right-click keeps native/browser menus. */}
       <div
         ref={outerRef}
-        className="h-7 px-2 flex items-center gap-1 border-b border-border/40 bg-secondary/20"
+        className="flex flex-col border-b border-border/40 bg-secondary/20"
         data-section="terminal-sftp-toolbar"
       >
-          {/* Editable Breadcrumb with autocomplete */}
-          {isEditingPath ? (
-            <div className="relative flex-1 min-w-0" data-section="terminal-sftp-path">
-              <Input
-                ref={pathInputRef}
-                value={editingPathValue}
-                onChange={(e) => {
-                  setEditingPathValue(e.target.value);
-                  setShowPathSuggestions(true);
-                  setPathSuggestionIndex(-1);
-                }}
-                onBlur={handlePathBlur}
-                onKeyDown={handlePathKeyDown}
-                onFocus={() => setShowPathSuggestions(true)}
-                className="h-5 w-full text-[10px] bg-background"
-                autoFocus
-              />
-              {showPathSuggestions && pathSuggestions.length > 0 && (
-                <div
-                  ref={pathDropdownRef}
-                  className="absolute top-full left-0 right-0 mt-1 bg-popover border border-border rounded-md shadow-lg z-50 max-h-48 overflow-auto"
-                >
-                  {pathSuggestions.map((suggestion, idx) => (
-                    <button
-                      key={suggestion.path}
-                      type="button"
-                      className={cn(
-                        "w-full px-3 py-2 text-left text-xs flex items-center gap-2 hover:bg-secondary/60 transition-colors",
-                        idx === pathSuggestionIndex && "bg-secondary/80",
-                      )}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        handlePathSubmit(suggestion.path);
-                      }}
-                    >
-                      {suggestion.type === "folder" ? (
-                        <Folder size={12} className="text-primary shrink-0" />
-                      ) : (
-                        <Home size={12} className="text-muted-foreground shrink-0" />
-                      )}
-                      <span className="truncate font-mono">{suggestion.path}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div
-                  className="flex-1 min-w-0 cursor-text hover:bg-secondary/50 rounded px-1 transition-colors"
-                  data-section="terminal-sftp-path"
-                  onDoubleClick={handlePathDoubleClick}
-                >
-                  <SftpBreadcrumb
-                    path={displayPath}
-                    onNavigate={onNavigateTo}
-                    onHome={() =>
-                      pane.connection?.homeDir && onNavigateTo(pane.connection.homeDir)
-                    }
-                    isLocal={!isRemote}
-                    onListDrives={onListDrives}
-                    acceptForwardSlashUnc={
-                      isWindowsPath(displayPath)
-                      || isWindowsPath(pane.connection?.homeDir ?? "")
-                    }
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>{t("sftp.path.doubleClickToEdit")}</TooltipContent>
-            </Tooltip>
-          )}
+        <div
+          className="h-7 px-2 flex items-center min-w-0"
+          data-section="terminal-sftp-path-row"
+        >
+          {pathEditor}
+        </div>
 
+        <div
+          className="h-7 px-2 flex items-center gap-1 border-t border-border/40"
+          data-section="terminal-sftp-actions"
+        >
           <ToolbarCustomizeContextMenu
             items={customizeItems}
             placementOf={(id) => toolbarLayout.layout.placement[id] ?? "show"}
@@ -1058,19 +1068,22 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             onMove={moveSftpItem}
             onReset={toolbarLayout.reset}
             t={t}
-            className="ml-auto flex items-center gap-0.5 shrink-0"
+            className="flex items-center gap-0.5 w-full min-w-0"
           >
             {inlineIds.map(renderInline)}
-            <ToolbarOverflowMenu
-              hasItems={overflowNodes.length > 0}
-              label={t("common.more")}
-              orientation="horizontal"
-              buttonClassName="h-6 w-6"
-              contentClassName="min-w-[140px]"
-            >
-              <div className="flex flex-col min-w-[140px]">{overflowNodes}</div>
-            </ToolbarOverflowMenu>
+            <div className="ml-auto shrink-0" data-section="terminal-sftp-overflow">
+              <ToolbarOverflowMenu
+                hasItems={overflowNodes.length > 0}
+                label={t("common.more")}
+                orientation="horizontal"
+                buttonClassName="h-6 w-6"
+                contentClassName="min-w-[140px]"
+              >
+                <div className="flex flex-col min-w-[140px]">{overflowNodes}</div>
+              </ToolbarOverflowMenu>
+            </div>
           </ToolbarCustomizeContextMenu>
+        </div>
       </div>
 
       {showFilterBar && (
