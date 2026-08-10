@@ -1621,19 +1621,45 @@ export function aiChatSidePanelPropsAreEqual(
   // resume whose stored scope.targetId is an older terminal.
   // Fuzzy history still receives the full list; drawer open forces re-render
   // via isVisible / other prop paths when the user actually needs it.
-  const selectedSessionId = resolveInheritedAIActiveSessionId({
-    scopeType: prev.scopeType,
-    scopeTargetId: prev.scopeTargetId,
-    activeSessionIdMap: prev.activeSessionIdMap,
-    memberTerminalIds: (prev.terminalSessions ?? []).map((session) => session.sessionId),
-    preferredTerminalId: prev.focusedSessionId,
-  }) ?? resolveInheritedAIActiveSessionId({
-    scopeType: next.scopeType,
-    scopeTargetId: next.scopeTargetId,
-    activeSessionIdMap: next.activeSessionIdMap,
-    memberTerminalIds: (next.terminalSessions ?? []).map((session) => session.sessionId),
-    preferredTerminalId: next.focusedSessionId,
-  });
+  // Keep visibleSessionIds in sync with the live panel so inheritance that
+  // skips non-history chats does not leave memo pinned to a different id.
+  const resolveSelectedSessionId = (
+    props: AIChatSidePanelProps,
+  ): string | null => {
+    const scopeKey = `${props.scopeType}:${props.scopeTargetId ?? ''}`;
+    const memberTerminalIds = (props.terminalSessions ?? [])
+      .map((session) => session.sessionId)
+      .filter((sessionId): sessionId is string => Boolean(sessionId));
+    const workspaceMemberTerminalIds = props.scopeType === 'workspace'
+      ? new Set(memberTerminalIds)
+      : undefined;
+    const activeTerminalSessionIds = new Set<string>();
+    for (const [sessionScopeKey, sessionId] of Object.entries(props.activeSessionIdMap) as Array<[string, string | null]>) {
+      if (!sessionScopeKey.startsWith('terminal:') || !sessionId) continue;
+      if (sessionScopeKey === scopeKey) continue;
+      activeTerminalSessionIds.add(sessionId);
+    }
+    const visibleSessionIds = new Set(
+      getScopedHistorySessions(
+        props.sessions,
+        props.scopeType,
+        props.scopeTargetId,
+        props.scopeHostIds,
+        activeTerminalSessionIds,
+        workspaceMemberTerminalIds,
+      ).map((session) => session.id),
+    );
+    return resolveInheritedAIActiveSessionId({
+      scopeType: props.scopeType,
+      scopeTargetId: props.scopeTargetId,
+      activeSessionIdMap: props.activeSessionIdMap,
+      memberTerminalIds,
+      preferredTerminalId: props.focusedSessionId,
+      visibleSessionIds,
+    });
+  };
+  const selectedSessionId = resolveSelectedSessionId(prev)
+    ?? resolveSelectedSessionId(next);
   if (!exactScopeAISessionsEqual(
     prev.sessions,
     next.sessions,

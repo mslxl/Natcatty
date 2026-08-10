@@ -123,6 +123,7 @@ export function useTerminalSidePanelLayoutState() {
     setSidePanelOpenTabs,
     sidePanelOpenTabsRef,
     sidePanelLayouts,
+    setSidePanelLayouts,
     sidePanelLayoutsRef,
     focusPane,
     splitPane,
