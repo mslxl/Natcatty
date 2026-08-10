@@ -24,14 +24,26 @@ const SEARCH_OPTIONS = {
 } as const;
 
 export const resetTerminalSearch = (
-  searchAddon: Pick<SearchAddon, "findNext"> | null,
+  searchAddon: Pick<SearchAddon, "findNext" | "clearDecorations"> | null,
   searchTermRef: { current: string },
+  term?: Pick<XTerm, "refresh" | "rows"> | null,
 ): void => {
   searchTermRef.current = "";
   // The addon's empty-search path clears both its decorations and the terminal
   // selection used for the active match. clearDecorations() alone leaves that
   // selection visible.
   searchAddon?.findNext("", SEARCH_OPTIONS);
+  // findNext("") assigns cachedSearchTerm back to "". Clear decorations again
+  // so the addon drops that cache to undefined and cannot revive match
+  // highlights via its delayed onResize/onWriteParsed update path.
+  searchAddon?.clearDecorations();
+  // Disposing search decorations does not always repaint cells (observed on
+  // Windows after clearing or closing search). Keyword highlighting already
+  // forces a refresh after dispose; do the same here so yellow match
+  // backgrounds cannot linger.
+  if (term && term.rows > 0) {
+    term.refresh(0, term.rows - 1);
+  }
 };
 
 export const useTerminalSearch = ({
@@ -66,24 +78,20 @@ export const useTerminalSearch = ({
     setSearchFocusToken((n) => n + 1);
   }, [setIsSearchOpen]);
 
-  const clearSearchDecorations = useCallback(() => {
-    searchAddonRef.current?.clearDecorations();
-  }, [searchAddonRef]);
-
   const handleToggleSearch = useCallback(() => {
     const next = !isSearchOpen;
     setIsSearchOpen(next);
     if (!next) {
       setSearchMatchCount(null);
-      clearSearchDecorations();
+      resetTerminalSearch(searchAddonRef.current, searchTermRef, termRef.current);
     }
-  }, [clearSearchDecorations, isSearchOpen, setIsSearchOpen]);
+  }, [isSearchOpen, searchAddonRef, setIsSearchOpen, termRef]);
 
   const handleSearch = useCallback(
     (term: string): boolean => {
       const searchAddon = searchAddonRef.current;
       if (!searchAddon || !term) {
-        resetTerminalSearch(searchAddon, searchTermRef);
+        resetTerminalSearch(searchAddon, searchTermRef, termRef.current);
         setSearchMatchCount(null);
         return false;
       }
@@ -101,7 +109,7 @@ export const useTerminalSearch = ({
 
       return found;
     },
-    [searchAddonRef],
+    [searchAddonRef, termRef],
   );
 
   const handleFindNext = useCallback((): boolean => {
@@ -121,9 +129,9 @@ export const useTerminalSearch = ({
   const handleCloseSearch = useCallback(() => {
     setIsSearchOpen(false);
     setSearchMatchCount(null);
-    clearSearchDecorations();
+    resetTerminalSearch(searchAddonRef.current, searchTermRef, termRef.current);
     termRef.current?.focus();
-  }, [clearSearchDecorations, setIsSearchOpen, termRef]);
+  }, [searchAddonRef, setIsSearchOpen, termRef]);
 
   return {
     isSearchOpen,
