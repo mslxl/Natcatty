@@ -952,6 +952,12 @@ html[data-theme-transition] *::after {
 
 .netcatty-mdx-editor {
   container-type: inline-size;
+  /* MDX linkDialog uses position:fixed anchors with coords adjusted whenever
+   * getFixedContainingBlock sees container-type. Browsers do not treat
+   * container-type alone as a fixed CB, so unadjusted viewport coords + those
+   * offsets park the preview toolbar over the notes tree. A zero transform
+   * makes the fixed CB real so the adjustment matches. */
+  transform: translateZ(0);
   min-width: 0;
   --basePageBg: hsl(var(--background));
   --baseBase: hsl(var(--background));

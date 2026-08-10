@@ -189,6 +189,12 @@ test("note markdown toolbar remains usable in narrow panes", () => {
     styles,
     /\.netcatty-mdx-editor\s*\{[^}]*container-type:\s*inline-size;/s,
   );
+  // Keep fixed-containing-block in sync with MDX linkDialog coordinate math
+  // (container-type alone is not a fixed CB in browsers).
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor\s*\{[^}]*transform:\s*translateZ\(0\);/s,
+  );
   assert.match(
     styles,
     /\.netcatty-note-markdown-toolbar\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto\s*!important;[^}]*overflow:\s*visible\s*!important;/s,
