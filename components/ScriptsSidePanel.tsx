@@ -3,13 +3,12 @@
  *
  * Shows snippets organized by package hierarchy as a single tree view.
  * Packages expand / collapse via a chevron; clicking a snippet executes it
- * in the focused terminal session. Typing in the search box flattens to a
- * list of matching snippets regardless of package nesting.
+ * in the focused terminal session. Search is icon-toggled (expands below the
+ * toolbar); typing flattens matches regardless of package nesting.
  */
 
 import {
   CheckSquare,
-  ChevronDown,
   ChevronRight,
   Edit2,
   Expand,
@@ -21,6 +20,7 @@ import {
   Plus,
   Search,
   Trash2,
+  X,
   Zap,
 } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -40,7 +40,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from './ui/context-menu';
-import { Dropdown, DropdownContent, DropdownTrigger } from './ui/dropdown';
 import { FixedSizeVirtualList } from './ui/FixedSizeVirtualList';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -288,6 +287,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
 }) => {
   const { t } = useI18n();
   const [search, setSearch] = useState('');
+  const [searchExpanded, setSearchExpanded] = useState(false);
   const [subView, setSubView] = useState<'library' | 'running'>('library');
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set());
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
@@ -296,9 +296,17 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   const [isPackageDialogOpen, setIsPackageDialogOpen] = useState(false);
   const [newPackageName, setNewPackageName] = useState('');
   const [packageError, setPackageError] = useState('');
-  const [addMenuOpen, setAddMenuOpen] = useState(false);
   const packageDialogRef = useRef<HTMLDivElement>(null);
   const packageNameInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!searchExpanded) return;
+    const frame = requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [searchExpanded]);
 
   useEffect(() => {
     const handler = (event: Event) => {
@@ -871,152 +879,159 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
         </div>
       ) : (
       <>
-      {/* Search + tree actions + Add */}
-      <div className="shrink-0 px-2 py-1.5 border-b border-border/50 flex items-center gap-1">
-        <div className="relative flex-1 min-w-0">
-          <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('snippets.searchPlaceholder')}
-            className="h-7 pl-7 text-xs bg-muted/30 border-none"
-          />
-        </div>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={toolbarIconButtonClass}
-              disabled={!canExpandCollapse}
-              aria-label={t('vault.tree.expandAll')}
-              onClick={expandAllGroups}
-            >
-              <Expand size={14} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t('vault.tree.expandAll')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={toolbarIconButtonClass}
-              disabled={!canExpandCollapse}
-              aria-label={t('vault.tree.collapseAll')}
-              onClick={collapseAllGroups}
-            >
-              <Minimize2 size={14} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t('vault.tree.collapseAll')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                toolbarIconButtonClass,
-                isMultiSelectMode && 'bg-muted/70 text-foreground',
-              )}
-              aria-label={t('snippets.action.selectSnippets')}
-              aria-pressed={isMultiSelectMode}
-              onClick={() => {
-                if (isMultiSelectMode) {
-                  clearSnippetSelection();
-                } else {
-                  setIsMultiSelectMode(true);
-                }
-              }}
-            >
-              <CheckSquare size={14} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t('snippets.action.selectSnippets')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                toolbarIconButtonClass,
-                selectedSnippetIds.size > 0 && 'text-destructive hover:text-destructive',
-              )}
-              disabled={selectedSnippetIds.size === 0}
-              aria-label={t('snippets.selection.deleteSelected', { count: selectedSnippetIds.size })}
-              onClick={deleteSelectedSnippets}
-            >
-              <Trash2 size={14} />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            {t('snippets.selection.deleteSelected', { count: selectedSnippetIds.size })}
-          </TooltipContent>
-        </Tooltip>
-        {/* Split add control: primary = new snippet; menu = package / automation script */}
-        <div className="shrink-0 flex items-center">
+      {/* Icon toolbar + expandable search */}
+      <div className="shrink-0 border-b border-border/50">
+        <div className="px-2 py-1.5 flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  toolbarIconButtonClass,
+                  (searchExpanded || hasSearch) && 'bg-muted/70 text-foreground',
+                )}
+                aria-label={t('snippets.searchPlaceholder')}
+                aria-pressed={searchExpanded}
+                onClick={() => setSearchExpanded((open) => !open)}
+              >
+                <Search size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('snippets.searchPlaceholder')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={toolbarIconButtonClass}
+                disabled={!canExpandCollapse}
+                aria-label={t('vault.tree.expandAll')}
+                onClick={expandAllGroups}
+              >
+                <Expand size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('vault.tree.expandAll')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={toolbarIconButtonClass}
+                disabled={!canExpandCollapse}
+                aria-label={t('vault.tree.collapseAll')}
+                onClick={collapseAllGroups}
+              >
+                <Minimize2 size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('vault.tree.collapseAll')}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(
+                  toolbarIconButtonClass,
+                  isMultiSelectMode && 'bg-muted/70 text-foreground',
+                )}
+                aria-label={t('snippets.action.selectSnippets')}
+                aria-pressed={isMultiSelectMode}
+                onClick={() => {
+                  if (isMultiSelectMode) {
+                    clearSnippetSelection();
+                  } else {
+                    setIsMultiSelectMode(true);
+                  }
+                }}
+              >
+                <CheckSquare size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('snippets.action.selectSnippets')}</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <button
                 type="button"
                 onClick={handleAddSnippet}
                 aria-label={t('snippets.action.newSnippet')}
-                className="h-7 w-7 flex items-center justify-center rounded-l-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                className={cn(toolbarIconButtonClass, 'ml-auto')}
               >
                 <Plus size={14} />
               </button>
             </TooltipTrigger>
-            <TooltipContent>{t('snippets.action.newSnippet')}</TooltipContent>
+            <TooltipContent side="bottom">{t('snippets.action.newSnippet')}</TooltipContent>
           </Tooltip>
-          <Dropdown open={addMenuOpen} onOpenChange={setAddMenuOpen}>
-            <DropdownTrigger asChild>
-              <button
-                type="button"
-                aria-label={t('common.more')}
-                aria-haspopup="menu"
-                aria-expanded={addMenuOpen}
-                className="h-7 w-5 flex items-center justify-center rounded-r-md border-l border-border/40 text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              >
-                <ChevronDown size={12} />
-              </button>
-            </DropdownTrigger>
-            <DropdownContent className="w-48 p-1" align="end">
-              <button
-                type="button"
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
-                onClick={() => {
-                  setAddMenuOpen(false);
-                  handleAddSnippet();
-                }}
-              >
-                <Zap size={12} className="text-muted-foreground" />
-                {t('snippets.action.newSnippet')}
-              </button>
-              {onPackagesChange ? (
+          {onPackagesChange ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
-                  onClick={() => {
-                    setAddMenuOpen(false);
-                    openPackageDialog();
-                  }}
+                  onClick={openPackageDialog}
+                  aria-label={t('snippets.action.newPackage')}
+                  className={toolbarIconButtonClass}
                 >
-                  <FolderPlus size={12} className="text-muted-foreground" />
-                  {t('snippets.action.newPackage')}
+                  <FolderPlus size={14} />
                 </button>
-              ) : null}
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{t('snippets.action.newPackage')}</TooltipContent>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger asChild>
               <button
                 type="button"
-                className="w-full flex items-center gap-2 px-2 py-1.5 text-xs rounded-md hover:bg-muted transition-colors"
-                onClick={() => {
-                  setAddMenuOpen(false);
-                  handleAddScript();
-                }}
+                onClick={handleAddScript}
+                aria-label={t('snippets.action.newScript')}
+                className={toolbarIconButtonClass}
               >
-                <Play size={12} className="text-primary" />
-                {t('snippets.action.newScript')}
+                <Play size={14} />
               </button>
-            </DropdownContent>
-          </Dropdown>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">{t('snippets.action.newScript')}</TooltipContent>
+          </Tooltip>
+        </div>
+
+        <div
+          className={cn(
+            'overflow-hidden transition-[max-height,opacity] duration-200 ease-out',
+            searchExpanded ? 'max-h-9 opacity-100' : 'max-h-0 opacity-0',
+          )}
+        >
+          <div className="h-9 flex items-center gap-0.5 px-2 border-t border-border/50">
+            <div className="relative flex-1 min-w-0">
+              <Search
+                size={12}
+                className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+              />
+              <Input
+                ref={searchInputRef}
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('snippets.searchPlaceholder')}
+                className="h-7 pl-7 text-xs bg-muted/30 border-none"
+              />
+            </div>
+            {hasSearch ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className={toolbarIconButtonClass}
+                    aria-label={t('common.clear')}
+                    onClick={() => {
+                      setSearch('');
+                      searchInputRef.current?.focus();
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t('common.clear')}</TooltipContent>
+              </Tooltip>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -1119,6 +1134,43 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
           />
         )}
       </div>
+      {selectedSnippetIds.size > 0 ? (
+        <div className="shrink-0 px-2 py-1.5 border-t border-border/50 flex items-center gap-2">
+          <span className="flex-1 min-w-0 text-[11px] text-muted-foreground truncate">
+            {t('snippets.selection.selected', { count: selectedSnippetIds.size })}
+          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={cn(toolbarIconButtonClass, 'text-destructive hover:text-destructive')}
+                aria-label={t('snippets.selection.deleteSelected', {
+                  count: selectedSnippetIds.size,
+                })}
+                onClick={deleteSelectedSnippets}
+              >
+                <Trash2 size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              {t('snippets.selection.deleteSelected', { count: selectedSnippetIds.size })}
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                className={toolbarIconButtonClass}
+                aria-label={t('snippets.selection.deselectAll')}
+                onClick={clearSnippetSelection}
+              >
+                <X size={14} />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">{t('snippets.selection.deselectAll')}</TooltipContent>
+          </Tooltip>
+        </div>
+      ) : null}
       <div className="shrink-0 px-2 py-2 border-t border-border/50 flex items-center gap-2">
         <button
           type="button"
