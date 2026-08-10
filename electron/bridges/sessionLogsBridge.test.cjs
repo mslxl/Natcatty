@@ -827,3 +827,95 @@ test("manual session log confirmed normalized overwrite replaces existing file",
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("manual session log two-phase start re-samples alternate-screen after dialog", async () => {
+  const directory = path.join(TEMP_ROOT, `manual-two-phase-alt-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const filePath = path.join(directory, "manual.txt");
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let dialogCalls = 0;
+  const dialogMock = {
+    showSaveDialog: async () => {
+      dialogCalls += 1;
+      return { canceled: false, filePath };
+    },
+  };
+  const {
+    chooseManualSessionLogPath,
+    startManualSessionLog,
+    stopManualSessionLog,
+  } = loadBridgeWithDialog(dialogMock);
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+
+    const chooseResult = await chooseManualSessionLogPath(null, {
+      sessionId,
+      sessionName: "host",
+      preferredDirectory: directory,
+      format: "txt",
+    });
+    assert.equal(chooseResult.success, true);
+    assert.equal(chooseResult.canceled, false);
+    assert.equal(chooseResult.filePath, filePath);
+    assert.equal(typeof chooseResult.selectionToken, "string");
+    assert.equal(dialogCalls, 1);
+
+    // Simulated post-dialog state: TUI is active when the stream actually starts.
+    const startResult = await startManualSessionLog(null, {
+      sessionId,
+      sessionName: "host",
+      selectionToken: chooseResult.selectionToken,
+      format: "txt",
+      alternateScreenActive: true,
+      initialLine: "",
+    });
+    assert.equal(startResult.success, true);
+    assert.equal(startResult.started, true);
+    // Starting with a selection token must not reopen the save dialog.
+    assert.equal(dialogCalls, 1);
+
+    sessionLogStreamManager.appendData(sessionId, "~\nstatus line\n\x1b[?1049l$ done\n");
+    const stopResult = await stopManualSessionLog(null, { sessionId });
+    assert.equal(stopResult.stopped, true);
+    assert.equal(fs.readFileSync(filePath, "utf8"), "$ done");
+  } finally {
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("manual session log rejects renderer-supplied filePath without selection token", async () => {
+  const directory = path.join(TEMP_ROOT, `manual-path-reject-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const filePath = path.join(directory, "evil.txt");
+  const sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  let dialogCalls = 0;
+  const dialogMock = {
+    showSaveDialog: async () => {
+      dialogCalls += 1;
+      return { canceled: false, filePath };
+    },
+  };
+  const { startManualSessionLog } = loadBridgeWithDialog(dialogMock);
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    const startResult = await startManualSessionLog(null, {
+      sessionId,
+      sessionName: "host",
+      filePath,
+      format: "txt",
+      initialLine: "",
+    });
+    assert.equal(startResult.success, false);
+    assert.equal(startResult.started, false);
+    assert.match(startResult.error || "", /save dialog/i);
+    assert.equal(dialogCalls, 0);
+    assert.equal(sessionLogStreamManager.hasStream(sessionId), false);
+    assert.equal(fs.existsSync(filePath), false);
+  } finally {
+    await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

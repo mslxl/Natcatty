@@ -3,6 +3,7 @@
  * Provides functionality to export terminal logs to files and manage auto-save settings
  */
 
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { dialog } = require("electron");
@@ -14,6 +15,8 @@ const {
 const FILE_NAME_UNSAFE_CHARS = new Set(["<", ">", ":", "\"", "/", "\\", "|", "?", "*"]);
 const WINDOWS_RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
 const manualSessionLogTokens = new Map();
+/** @type {Map<string, { sessionId: string, filePath: string, format: string, senderId: number | null }>} */
+const pendingManualSessionLogChoices = new Map();
 const SESSION_LOG_FORMATS = new Set(["txt", "raw", "html"]);
 
 function isControlCharacter(char) {
@@ -473,15 +476,19 @@ async function clearSessionLogsDir(event, payload = {}, terminalWorkerManager = 
   }
 }
 
-async function startManualSessionLog(event, payload = {}) {
-  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
-  const { sessionId, sessionName, preferredDirectory, initialLine } = payload;
+/**
+ * Resolve a manual session-log destination via the save dialog (and optional
+ * overwrite confirm). Separated from stream start so the renderer can re-sample
+ * alternate-screen / initial-line state after the dialog closes.
+ *
+ * The selected path is stored only in the main process. Callers receive an
+ * opaque selectionToken for startManualSessionLog — renderer-supplied paths are
+ * never trusted for open/truncate.
+ */
+async function chooseManualSessionLogPath(event, payload = {}) {
+  const { sessionId, sessionName, preferredDirectory } = payload;
   if (!sessionId) {
-    return { success: false, started: false, error: "Missing sessionId" };
-  }
-
-  if (sessionLogStreamManager.hasStream(sessionId)) {
-    return { success: false, started: false, error: "Session log is already active" };
+    return { success: false, canceled: false, error: "Missing sessionId" };
   }
 
   const targetDirectory = typeof preferredDirectory === "string" && preferredDirectory.trim()
@@ -503,12 +510,108 @@ async function startManualSessionLog(event, payload = {}) {
     });
 
     if (result.canceled || !result.filePath) {
-      return { success: true, started: false, canceled: true };
+      return { success: true, canceled: true };
     }
 
     const filePath = normalizeManualSessionLogFilePath(result.filePath, extension);
     if (filePath !== result.filePath && !(await confirmManualSessionLogOverwrite(filePath))) {
-      return { success: true, started: false, canceled: true };
+      return { success: true, canceled: true };
+    }
+
+    // Drop any prior unused selection for this session so only the latest dialog
+    // result can be redeemed.
+    for (const [token, pending] of pendingManualSessionLogChoices) {
+      if (pending.sessionId === sessionId) pendingManualSessionLogChoices.delete(token);
+    }
+
+    const selectionToken = crypto.randomBytes(16).toString("hex");
+    pendingManualSessionLogChoices.set(selectionToken, {
+      sessionId,
+      filePath,
+      format,
+      senderId: event?.sender?.id ?? null,
+    });
+
+    return {
+      success: true,
+      canceled: false,
+      selectionToken,
+      // Informational for UI/tests; start must redeem selectionToken, not this path.
+      filePath,
+      format,
+    };
+  } catch (err) {
+    return { success: false, canceled: false, error: err?.message || String(err) };
+  }
+}
+
+function redeemManualSessionLogSelection(event, sessionId, selectionToken) {
+  if (typeof selectionToken !== "string" || !selectionToken) return null;
+  const pending = pendingManualSessionLogChoices.get(selectionToken);
+  if (!pending || pending.sessionId !== sessionId) return null;
+  const senderId = event?.sender?.id;
+  if (pending.senderId != null && senderId != null && pending.senderId !== senderId) {
+    return null;
+  }
+  pendingManualSessionLogChoices.delete(selectionToken);
+  return pending;
+}
+
+async function startManualSessionLog(event, payload = {}) {
+  const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
+  const { sessionId, sessionName, preferredDirectory, initialLine } = payload;
+  if (!sessionId) {
+    return { success: false, started: false, error: "Missing sessionId" };
+  }
+
+  if (sessionLogStreamManager.hasStream(sessionId)) {
+    return { success: false, started: false, error: "Session log is already active" };
+  }
+
+  const displaySessionName = sessionName || sessionId;
+  let filePath = "";
+  let format = SESSION_LOG_FORMATS.has(payload.format) ? payload.format : "raw";
+
+  try {
+    if (typeof payload.selectionToken === "string" && payload.selectionToken) {
+      const pending = redeemManualSessionLogSelection(event, sessionId, payload.selectionToken);
+      if (!pending) {
+        return {
+          success: false,
+          started: false,
+          error: "Invalid or expired session log selection",
+        };
+      }
+      filePath = pending.filePath;
+      format = pending.format;
+    } else if (typeof payload.filePath === "string" && payload.filePath.trim()) {
+      // Do not trust renderer-supplied paths: they bypass the save dialog and
+      // overwrite confirmation and could truncate arbitrary writable files.
+      return {
+        success: false,
+        started: false,
+        error: "Session log path must be chosen via the save dialog",
+      };
+    } else {
+      // One-shot callers / tests: show the dialog and start immediately.
+      const chosen = await chooseManualSessionLogPath(event, {
+        sessionId,
+        sessionName,
+        preferredDirectory,
+        format,
+      });
+      if (!chosen.success) {
+        return { success: false, started: false, error: chosen.error || "Failed to choose session log path" };
+      }
+      if (chosen.canceled || !chosen.selectionToken) {
+        return { success: true, started: false, canceled: true };
+      }
+      const pending = redeemManualSessionLogSelection(event, sessionId, chosen.selectionToken);
+      if (!pending) {
+        return { success: false, started: false, error: "Invalid or expired session log selection" };
+      }
+      filePath = pending.filePath;
+      format = pending.format;
     }
 
     const startResult = sessionLogStreamManager.startStreamToFile(sessionId, {
@@ -520,6 +623,9 @@ async function startManualSessionLog(event, payload = {}) {
       initialLine: typeof initialLine === "string" ? initialLine : "",
       separateInitialLineBeforeLeadingCarriageReturn: true,
       stopRequiresToken: true,
+      // Caller should sample this after the save dialog resolves so enter/leave
+      // while the dialog is open does not seed a stale alternate-screen mode.
+      alternateScreenActive: payload.alternateScreenActive === true,
     });
 
     if (!startResult.ok) {
@@ -620,6 +726,7 @@ function registerHandlers(ipcMain, options = {}) {
   );
   // Main can also answer this (manual / script streams) for symmetry / tests.
   ipcMain.handle("netcatty:sessionLogs:getActivePaths", async () => getLocalActiveLogPaths());
+  ipcMain.handle("netcatty:sessionLog:manualChoosePath", chooseManualSessionLogPath);
   ipcMain.handle("netcatty:sessionLog:manualStart", startManualSessionLog);
   ipcMain.handle("netcatty:sessionLog:manualStop", stopManualSessionLog);
   ipcMain.handle("netcatty:sessionLog:manualStatus", getManualSessionLogStatus);
@@ -650,6 +757,7 @@ module.exports = {
   collectActiveLogPaths,
   getLocalActiveLogPaths,
   isSessionLogArtifactName,
+  chooseManualSessionLogPath,
   startManualSessionLog,
   stopManualSessionLog,
   getManualSessionLogStatus,

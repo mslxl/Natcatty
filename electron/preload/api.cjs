@@ -1432,6 +1432,8 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:sessionLogs:openDir", { directory }),
   clearSessionLogsDir: (directory) =>
     ipcRenderer.invoke("netcatty:sessionLogs:clear", { directory }),
+  chooseManualSessionLogPath: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLog:manualChoosePath", payload),
   startManualSessionLog: (payload) =>
     ipcRenderer.invoke("netcatty:sessionLog:manualStart", payload),
   stopManualSessionLog: (payload) =>

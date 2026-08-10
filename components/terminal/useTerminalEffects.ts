@@ -657,6 +657,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
                 logger.warn("Failed to write attach snapshot to popup terminal", writeErr);
               }
             }
+            // Snapshot was applied with term.write(), not the connection-log
+            // sanitizer. Re-seed from the restored buffer so live TUI redraws
+            // after attach (vim already open) stay omitted until leave.
+            terminalLogSanitizerRef.current = createReplaySafeTerminalLogSanitizer({
+              alternateScreenActive: isTerminalAlternateScreenActive(term),
+            });
 
             const rebind = await terminalBackend.rebindSessionOutput?.(
               sessionId,

@@ -214,7 +214,9 @@ function createStreamEntry(sessionId, opts) {
     format,
     isRaw,
     isHtml,
-    renderer: isRaw ? null : createTerminalTextRenderer(),
+    renderer: isRaw ? null : createTerminalTextRenderer({
+      alternateScreenActive: opts.alternateScreenActive === true,
+    }),
     renderedTimestampPrefixer: !isRaw && opts.timestampsEnabled
       ? createRenderedLineTimestampPrefixer({ timestampProvider: opts.timestampProvider })
       : null,
@@ -266,6 +268,7 @@ function startStreamToFile(sessionId, opts = {}) {
       timestampsEnabled: opts.timestampsEnabled,
       timestampProvider: opts.timestampProvider,
       stopRequiresToken: opts.stopRequiresToken,
+      alternateScreenActive: opts.alternateScreenActive === true,
     });
     if (typeof initialLine === "string" && initialLine.length > 0) {
       appendData(sessionId, initialLine);
