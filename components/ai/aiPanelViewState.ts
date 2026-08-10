@@ -44,20 +44,26 @@ export function resolveDisplayedPanelView(
     return normalizePanelView(panelView, sessions);
   }
 
-  if (hasDraft) {
-    return DEFAULT_PANEL_VIEW;
-  }
-
   // New terminal sessions should always start from a blank draft. History is
   // still available in the drawer, but never auto-resumed into a fresh SSH tab.
+  // Explicit panelView above is the only way a terminal scope shows a session
+  // (e.g. after dissolve handoff writes mode:session).
   if (scopeType === "terminal") {
     return DEFAULT_PANEL_VIEW;
   }
 
-  // Honour the persisted active-session selection (survives cold mount)
-  // before falling back to the newest history entry.
+  // Workspace: keep the inherited/persisted active chat when the user starts
+  // typing a follow-up. Merge seed often writes activeSessionIdMap only, with
+  // no explicit panelView — if unsent draft outranked that selection, send
+  // would createSession() while the main area still looked like the old chat.
+  // Explicit "New Chat" clears the active map and writes mode:draft, so it
+  // still wins via the panelView branch above.
   if (persistedSessionId && sessions.some((s) => s.id === persistedSessionId)) {
     return { mode: "session", sessionId: persistedSessionId };
+  }
+
+  if (hasDraft) {
+    return DEFAULT_PANEL_VIEW;
   }
 
   if (sessions[0]) {

@@ -982,17 +982,24 @@ export function useAIState() {
       latestAIActiveSessionMapSnapshot
       ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
       ?? {};
-    const nextMap = seedWorkspaceAIActiveSessionFromMembers({
+    const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? {};
+    const seeded = seedWorkspaceAIActiveSessionFromMembers({
       activeSessionIdMap: currentMap,
+      panelViewByScope: currentPanelViewByScope,
       workspaceId: input.workspaceId,
       memberTerminalIds: input.memberTerminalIds,
       preferredTerminalId: input.preferredTerminalId,
     });
-    if (!nextMap) return;
-    setLatestAIActiveSessionMapSnapshot(nextMap);
-    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextMap);
+    if (!seeded) return;
+    setLatestAIActiveSessionMapSnapshot(seeded.activeSessionIdMap);
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, seeded.activeSessionIdMap);
     emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
-    setActiveSessionIdMapRaw(nextMap);
+    setActiveSessionIdMapRaw(seeded.activeSessionIdMap);
+    if (seeded.panelViewChanged) {
+      setLatestAIPanelViewByScopeSnapshot(seeded.panelViewByScope);
+      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
+      setPanelViewByScopeRaw(seeded.panelViewByScope);
+    }
   }, []);
 
   const handoffDissolvedWorkspaceScope = useCallback((input: {

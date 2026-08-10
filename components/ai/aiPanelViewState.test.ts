@@ -169,18 +169,44 @@ test("terminal scope without explicit view always starts from draft even when hi
   );
 });
 
-test("missing explicit panel view prefers the draft when unsent input exists", () => {
+test("missing explicit panel view prefers the draft when unsent input exists without an active chat", () => {
   const sessions = [createSession("session-2"), createSession("session-1")];
 
   assert.deepEqual(
-    resolveDisplayedPanelView(undefined, true, sessions),
+    resolveDisplayedPanelView(undefined, true, sessions, null, "workspace"),
+    { mode: "draft" },
+  );
+});
+
+test("workspace unsent draft keeps the persisted active chat after merge seed", () => {
+  // Merge often seeds activeSessionIdMap without writing panelView. Typing a
+  // follow-up must not demote to draft or send will createSession().
+  const sessions = [createSession("session-2"), createSession("session-1")];
+
+  assert.deepEqual(
+    resolveDisplayedPanelView(undefined, true, sessions, "session-1", "workspace"),
+    { mode: "session", sessionId: "session-1" },
+  );
+});
+
+test("explicit new-chat draft still wins over a stale persisted id", () => {
+  const sessions = [createSession("session-2"), createSession("session-1")];
+
+  assert.deepEqual(
+    resolveDisplayedPanelView(
+      { mode: "draft" },
+      true,
+      sessions,
+      "session-1",
+      "workspace",
+    ),
     { mode: "draft" },
   );
 });
 
 test("draft state is used when there is no implicit history to resume", () => {
   assert.deepEqual(
-    resolveDisplayedPanelView(undefined, true, []),
+    resolveDisplayedPanelView(undefined, true, [], null, "workspace"),
     { mode: "draft" },
   );
 });
