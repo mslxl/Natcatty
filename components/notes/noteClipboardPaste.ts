@@ -103,7 +103,7 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
-  // Keep remote images; skip only huge base64 data URLs from Office paste.
+  // Skip only huge base64 data URLs from Office paste.
   service.addRule("skipDataImages", {
     filter: (node) => (
       node.nodeName === "IMG"
@@ -111,8 +111,87 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
+  // Preserve width/height as HTML <img> so MDXEditor's HtmlImageVisitor keeps
+  // dimensions (plain ![alt](src) drops size — GitHub READMEs use width attrs).
+  service.addRule("imagesPreserveDimensions", {
+    filter: "img",
+    replacement: (_content, node) => {
+      const el = node as HTMLImageElement;
+      const src = (el.getAttribute("src") ?? "").trim();
+      if (!src || src.startsWith("data:")) return "";
+      const html = serializeSafeHtmlImage({
+        src,
+        alt: el.getAttribute("alt") ?? "",
+        title: el.getAttribute("title") ?? undefined,
+        width: el.getAttribute("width") ?? undefined,
+        height: el.getAttribute("height") ?? undefined,
+      });
+      return html ? `\n\n${html}\n\n` : "";
+    },
+  });
   turndownSingleton = service;
   return service;
+};
+
+const isSafeImageSrc = (src: string): boolean => {
+  const trimmed = src.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("data:")) return false;
+  // Allow https, http, protocol-relative, and relative paths from READMEs.
+  if (/^https?:\/\//i.test(trimmed)) return true;
+  if (trimmed.startsWith("//")) return true;
+  if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) return true;
+  // Bare relative like public/icon.png
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return true;
+  return false;
+};
+
+const escapeHtmlAttr = (value: string): string => (
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+);
+
+/**
+ * Build a sanitized HTML img tag. When width/height are present, keep HTML so
+ * MDXEditor can import dimensions; otherwise emit standard markdown image.
+ */
+export const serializeSafeHtmlImage = (input: {
+  src: string;
+  alt?: string;
+  title?: string;
+  width?: string | number | null;
+  height?: string | number | null;
+}): string => {
+  const src = (input.src ?? "").trim();
+  if (!isSafeImageSrc(src)) return "";
+  const alt = input.alt ?? "";
+  const title = input.title?.trim() || "";
+  const width = input.width != null && String(input.width).trim() !== ""
+    ? String(input.width).trim()
+    : "";
+  const height = input.height != null && String(input.height).trim() !== ""
+    ? String(input.height).trim()
+    : "";
+  // Only keep numeric (or percent) dimensions — ignore junk attributes.
+  const safeWidth = /^(?:\d+(?:\.\d+)?%?)$/.test(width) ? width : "";
+  const safeHeight = /^(?:\d+(?:\.\d+)?%?)$/.test(height) ? height : "";
+
+  if (!safeWidth && !safeHeight) {
+    const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
+    return `![${alt.replace(/[[\]]/g, "")}](${src}${titlePart})`;
+  }
+
+  const parts = [
+    `src="${escapeHtmlAttr(src)}"`,
+    `alt="${escapeHtmlAttr(alt)}"`,
+  ];
+  if (title) parts.push(`title="${escapeHtmlAttr(title)}"`);
+  if (safeWidth) parts.push(`width="${escapeHtmlAttr(safeWidth)}"`);
+  if (safeHeight) parts.push(`height="${escapeHtmlAttr(safeHeight)}"`);
+  return `<img ${parts.join(" ")} />`;
 };
 
 const trimBlankLines = (value: string): string => (
@@ -130,6 +209,25 @@ const turndownFragment = (html: string): string => {
   } catch {
     return "";
   }
+};
+
+/** Parse a single <img …> tag into safe markdown or dimension-preserving HTML. */
+export const convertHtmlImgTagToMarkdownOrHtml = (imgTag: string): string => {
+  const match = imgTag.match(/^<img\b([^>]*)\/?\s*>$/i);
+  if (!match) return turndownFragment(imgTag).trim();
+  const attrBlob = match[1] ?? "";
+  const getAttr = (name: string): string => {
+    const re = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, "i");
+    const m = re.exec(attrBlob);
+    return (m?.[1] ?? m?.[2] ?? m?.[3] ?? "").trim();
+  };
+  return serializeSafeHtmlImage({
+    src: getAttr("src"),
+    alt: getAttr("alt"),
+    title: getAttr("title") || undefined,
+    width: getAttr("width") || undefined,
+    height: getAttr("height") || undefined,
+  });
 };
 
 /**
@@ -165,13 +263,18 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
   // Comments
   body = body.replace(/<!--[\s\S]*?-->/g, "");
 
-  // Self-closing / void tags (img, br, hr, …) and empty paired tags.
+  // Self-closing / void tags (img, br, hr, …).
   body = body.replace(
     /<([a-zA-Z][\w:-]*)(\s[^>]*)?\s*\/>/g,
-    (full) => {
+    (full, tag: string) => {
+      if (String(tag).toLowerCase() === "img") {
+        const md = convertHtmlImgTagToMarkdownOrHtml(full);
+        return md ? `\n\n${md}\n\n` : "";
+      }
       const md = turndownFragment(full);
-      // Keep surrounding blank lines for block-ish replacements (images).
-      if (/^!\[/.test(md.trim())) return `\n\n${md.trim()}\n\n`;
+      if (/^!\[/.test(md.trim()) || /^<img\b/i.test(md.trim())) {
+        return `\n\n${md.trim()}\n\n`;
+      }
       return md;
     },
   );
@@ -204,9 +307,15 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
   // Stray unclosed void-like tags (img without />).
   body = body.replace(
     /<(img|br|hr)\b([^>]*)>/gi,
-    (full) => {
+    (full, tag: string) => {
+      if (String(tag).toLowerCase() === "img") {
+        const md = convertHtmlImgTagToMarkdownOrHtml(full);
+        return md ? `\n\n${md}\n\n` : "";
+      }
       const md = turndownFragment(full.endsWith("/>") ? full : full.replace(/>$/, " />"));
-      if (/^!\[/.test(md.trim())) return `\n\n${md.trim()}\n\n`;
+      if (/^!\[/.test(md.trim()) || /^<img\b/i.test(md.trim())) {
+        return `\n\n${md.trim()}\n\n`;
+      }
       return md;
     },
   );

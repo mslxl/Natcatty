@@ -122,7 +122,7 @@ test("note editor registers a code block editor for pasted fenced code", () => {
 
 test("note editor enables image plugin for remote markdown images", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
-  assert.match(source, /imagePlugin\(\)/);
+  assert.match(source, /imagePlugin\(\{\s*allowSetImageDimensions:\s*true/);
   assert.match(source, /InsertImage/);
 });
 

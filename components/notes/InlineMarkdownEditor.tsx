@@ -566,8 +566,11 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
     linkPlugin(),
     linkDialogPlugin(),
     tablePlugin(),
-    // Remote ![alt](https://…) from paste / markdown source; no local upload pipeline yet.
-    imagePlugin(),
+    // Remote images from paste / markdown. allowSetImageDimensions keeps width/height
+    // from HTML <img width height> (GitHub README style) editable in the UI.
+    imagePlugin({
+      allowSetImageDimensions: true,
+    }),
     codeBlockPlugin({ defaultCodeBlockLanguage: "" }),
     codeMirrorPlugin({
       codeBlockLanguages: NOTE_CODE_BLOCK_LANGUAGES,

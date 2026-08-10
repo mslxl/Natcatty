@@ -5,6 +5,7 @@ import {
   convertClipboardHtmlToMarkdown,
   convertHtmlIslandsInMarkdown,
   resolveNoteClipboardPaste,
+  serializeSafeHtmlImage,
   shouldInterceptResolvedNotePaste,
   shouldInsertClipboardTextAsMarkdown,
 } from "./noteClipboardPaste.ts";
@@ -42,7 +43,9 @@ test("turndown converts pure html clipboard", () => {
   assert.match(md, /^# Runbook/m);
   assert.match(md, /\*\*sshd\*\*/);
   assert.match(md, /\[docs\]\(https:\/\/example\.com\)/);
-  assert.match(md, /!\[shot\]\(https:\/\/example\.com\/a\.png\)/);
+  // Dimension-less images in pure HTML still become markdown images via our rule
+  // only when width/height absent — example has no dimensions.
+  assert.match(md, /!\[shot\]\(https:\/\/example\.com\/a\.png\)|src="https:\/\/example\.com\/a\.png"/);
 });
 
 test("html islands in markdown become image syntax without escaping headings", () => {
@@ -51,16 +54,38 @@ test("html islands in markdown become image syntax without escaping headings", (
   assert.match(md, /^### 🔥 What can Catty Agent do\?/m);
   assert.match(md, /^> 🚀 \*\*Boost your IT ops/m);
   assert.match(md, /^- 🚀 \*\*Natural language server management\*\*/m);
+  // Dimensions preserved as HTML so MDXEditor HtmlImageVisitor can load width/height.
   assert.match(
     md,
-    /!\[Screenshot 2026-07-02 at 22 51 24\]\(https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d\)/,
+    /<img\b[^>]*src="https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d"[^>]*\/>/,
   );
+  assert.match(md, /width="3142"/);
+  assert.match(md, /height="1764"/);
+  assert.match(md, /alt="Screenshot 2026-07-02 at 22 51 24"/);
   // Must not escape markdown structure the way full-document turndown does.
   assert.doesNotMatch(md, /\\#/);
   assert.doesNotMatch(md, /\\\*\*/);
   assert.doesNotMatch(md, /\\---/);
-  assert.doesNotMatch(md, /<img\b/i);
   assert.doesNotMatch(md, /<a\s+name=/i);
+});
+
+test("images without dimensions still use compact markdown image syntax", () => {
+  assert.equal(
+    serializeSafeHtmlImage({
+      src: "https://example.com/a.png",
+      alt: "shot",
+    }),
+    "![shot](https://example.com/a.png)",
+  );
+  assert.match(
+    serializeSafeHtmlImage({
+      src: "https://example.com/a.png",
+      alt: "shot",
+      width: 1510,
+      height: 870,
+    }),
+    /<img\b[^>]*width="1510"[^>]*height="870"[^>]*\/>/,
+  );
 });
 
 test("resolve pastes Catty-style mixed markdown+html from plain clipboard", () => {
@@ -78,7 +103,8 @@ test("resolve pastes Catty-style mixed markdown+html from plain clipboard", () =
     true,
   );
   assert.match(payload.text, /^# 🔥 Catty Agent/m);
-  assert.match(payload.text, /!\[Screenshot[^\]]*\]\(https:\/\/github\.com\/user-attachments/);
+  assert.match(payload.text, /<img\b[^>]*src="https:\/\/github\.com\/user-attachments/);
+  assert.match(payload.text, /width="3142"/);
   assert.match(payload.text, /Natural language server management/);
 });
 
