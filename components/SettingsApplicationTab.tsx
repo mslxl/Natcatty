@@ -51,7 +51,7 @@ export const buildIssueUrl = (appInfo: AppInfo) => {
   const installSource =
     appInfo.version === "0.0.0"
       ? "Built from source (npm run dev / pack)"
-      : "GitHub Release (.dmg / .exe / .AppImage / .deb)";
+      : "GitHub Release (.dmg / .exe / .AppImage / .deb / .rpm / .pacman)";
   params.set("install_source", installSource);
 
   const ua = typeof navigator !== "undefined" ? navigator.userAgent : "unknown";

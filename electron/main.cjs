@@ -1142,7 +1142,8 @@ if (!gotLock) {
       void flushPendingOpenTerminalPaths();
 
       // Trigger auto-update check 5 s after window creation.
-      // startAutoCheck() is a no-op on unsupported platforms (Linux deb/rpm/snap).
+      // startAutoCheck() is a no-op on unsupported platforms (for example Linux
+      // Snap or an unmarked development build).
       getAutoUpdateBridge().startAutoCheck(5000);
 
       // Settings prewarm is opt-in: a hidden BrowserWindow holds a full renderer.
@@ -1340,7 +1341,13 @@ if (!gotLock) {
         // autoUpdateBridge's watchdog; otherwise close-to-tray and other
         // !isQuitting-gated behavior stay bypassed while the app keeps running
         // (#1215 review).
-        if (wm.isQuittingForUpdate?.()) wm.setQuittingForUpdate(false);
+        if (wm.isQuittingForUpdate?.()) {
+          // The install bridge owns its in-flight state. Clear it here as well
+          // as the window-manager flag so a cancelled update can be retried
+          // immediately instead of waiting for its watchdog.
+          getAutoUpdateBridge().cancelPendingInstall?.();
+          if (wm.isQuittingForUpdate?.()) wm.setQuittingForUpdate(false);
+        }
       })
       .catch((err) => {
         // queryDirtyEditors is written to never reject, but guard anyway: a
