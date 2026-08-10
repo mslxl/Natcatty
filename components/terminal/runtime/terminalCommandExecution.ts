@@ -52,9 +52,182 @@ const isBareThemedTerminator = (promptText: string): boolean => {
   return /[❯❮→➜➤⟩»›]/.test(trimmed) || (code >= 0xE000 && code <= 0xF8FF);
 };
 
+type TerminalCellStyle = {
+  dim: number;
+  fgMode: number;
+  fg: number;
+};
+
+const readTerminalCellStyle = (
+  cell: {
+    isDim?: () => number;
+    getFgColorMode?: () => number;
+    getFgColor?: () => number;
+  } | null | undefined,
+): TerminalCellStyle | null => {
+  if (
+    !cell
+    || typeof cell.isDim !== "function"
+    || typeof cell.getFgColorMode !== "function"
+    || typeof cell.getFgColor !== "function"
+  ) {
+    return null;
+  }
+  return {
+    dim: cell.isDim(),
+    fgMode: cell.getFgColorMode(),
+    fg: cell.getFgColor(),
+  };
+};
+
+const terminalCellStylesEqual = (
+  left: TerminalCellStyle,
+  right: TerminalCellStyle,
+): boolean => (
+  left.dim === right.dim
+  && left.fgMode === right.fgMode
+  && left.fg === right.fg
+);
+
+const terminalCellStyleKey = (style: TerminalCellStyle): string => (
+  `${style.dim}:${style.fgMode}:${style.fg}`
+);
+
+type StyledCellSpan = {
+  offset: number;
+  style: TerminalCellStyle;
+};
+
+/**
+ * Walk logical line cells from startOffset to endOffset (buffer coordinates
+ * that include the prompt prefix). Skips cells with unreadable styles.
+ */
+const collectStyledCellsInRange = (
+  term: XTerm,
+  promptRow: number,
+  startOffset: number,
+  endOffset: number,
+): StyledCellSpan[] | null => {
+  if (endOffset <= startOffset) return [];
+  const buffer = term.buffer.active;
+  const cells: StyledCellSpan[] = [];
+  let offset = 0;
+  for (let row = promptRow; ; row += 1) {
+    const rowLine = buffer.getLine(row);
+    if (!rowLine || typeof rowLine.getCell !== "function") return null;
+    const text = rowLine.translateToString(false);
+    for (let x = 0; x < text.length; x += 1) {
+      if (offset >= endOffset) return cells;
+      if (offset >= startOffset) {
+        const style = readTerminalCellStyle(rowLine.getCell(x));
+        if (!style) return null;
+        cells.push({ offset, style });
+      }
+      offset += 1;
+    }
+    const next = buffer.getLine(row + 1);
+    if (!next?.isWrapped) break;
+  }
+  return cells;
+};
+
+/**
+ * zsh-autosuggest ghosts are a uniform dim/foreign run past the cursor.
+ * Per-token syntax highlighting also changes fg past the cursor for accepted
+ * suffixes — only strip tails that look like suggestion paint, not ordinary
+ * highlight boundaries (`systemctl start`|`firewalld`).
+ */
+const truncateDivergentStyleTail = (
+  term: XTerm,
+  promptRow: number,
+  promptText: string,
+  input: string,
+): string => {
+  try {
+    const buffer = term.buffer.active;
+    const cursorY = buffer.cursorY + buffer.baseY;
+    const cursorX = buffer.cursorX;
+
+    let combinedOffset = 0;
+    for (let row = promptRow; row < cursorY; row += 1) {
+      const rowLine = buffer.getLine(row);
+      if (!rowLine) return input;
+      combinedOffset += rowLine.translateToString(false).length;
+    }
+    combinedOffset += cursorX;
+
+    const inputCursor = combinedOffset - promptText.length;
+    if (inputCursor <= 0 || inputCursor >= input.length) return input;
+
+    const refLine = buffer.getLine(
+      inputCursor > 0 && cursorX === 0 && cursorY > promptRow
+        ? cursorY - 1
+        : cursorY,
+    );
+    if (!refLine || typeof refLine.getCell !== "function") return input;
+
+    const refX = cursorX > 0
+      ? cursorX - 1
+      : Math.max(0, refLine.translateToString(false).length - 1);
+    const refStyle = readTerminalCellStyle(refLine.getCell(refX));
+    if (!refStyle) return input;
+
+    const promptEnd = promptText.length;
+    const lineEnd = promptEnd + input.length;
+    const acceptedCells = collectStyledCellsInRange(
+      term,
+      promptRow,
+      promptEnd,
+      combinedOffset,
+    );
+    const postCells = collectStyledCellsInRange(
+      term,
+      promptRow,
+      combinedOffset,
+      lineEnd,
+    );
+    if (!acceptedCells || !postCells || postCells.length === 0) return input;
+
+    const acceptedStyleKeys = new Set(
+      acceptedCells.map((cell) => terminalCellStyleKey(cell.style)),
+    );
+
+    let cutOffset: number | null = null;
+    for (let i = 0; i < postCells.length; i += 1) {
+      const cell = postCells[i];
+      if (terminalCellStylesEqual(refStyle, cell.style)) continue;
+
+      const tail = postCells.slice(i);
+      const ghostStyle = tail[0]?.style;
+      if (!ghostStyle) return input;
+      // Mixed styles after the first break are syntax-highlighted tokens.
+      if (tail.some((entry) => !terminalCellStylesEqual(ghostStyle, entry.style))) {
+        return input;
+      }
+
+      const ghostKey = terminalCellStyleKey(ghostStyle);
+      const dimGhost = ghostStyle.dim !== 0 && refStyle.dim === 0;
+      // fg-only ghosts (common zsh-autosuggest `fg=8`) on mono-styled input.
+      const foreignMonoGhost = !acceptedStyleKeys.has(ghostKey)
+        && acceptedStyleKeys.size <= 1;
+      if (!dimGhost && !foreignMonoGhost) return input;
+
+      cutOffset = cell.offset;
+      break;
+    }
+    if (cutOffset == null) return input;
+
+    const cut = cutOffset - promptText.length;
+    return input.slice(0, Math.max(0, cut)).replace(/\s+$/g, "");
+  } catch {
+    return input;
+  }
+};
+
 /**
  * Read the full logical input after the prompt, including wrapped continuation
  * rows and text past the cursor (Enter submits the whole line, not the prefix).
+ * Style-divergent tails past the cursor (zsh autosuggest ghosts) are dropped.
  */
 const readFullLineAfterPrompt = (
   term: XTerm,
@@ -86,7 +259,8 @@ const readFullLineAfterPrompt = (
     }
 
     if (!combined.startsWith(promptText)) return null;
-    return combined.slice(promptText.length).replace(/\s+$/g, "");
+    const rawInput = combined.slice(promptText.length).replace(/\s+$/g, "");
+    return truncateDivergentStyleTail(term, promptRow, promptText, rawInput);
   } catch {
     return null;
   }
@@ -548,11 +722,40 @@ export const resolveSubmittedShellCommand = (
   };
 
   const aligned = alignedResult.alignedTyped?.trim() ?? "";
+  // Enter submits the whole zle line. detectPrompt truncates at the cursor, so
+  // after ↑ recall + mid-line edit the keystroke buffer may only hold the
+  // replacement token ("start") while the painted line is still
+  // "systemctl start firewalld". Prefer that full paint only when:
+  // - the buffer is already a whole token there (not a prefix of "status"), and
+  // - cell styles are available so zsh autosuggest ghosts were stripped from
+  //   liveFromFull (cross-token " upgrade" must not be recorded).
+  const paintedLineContinuesPastCursor =
+    Boolean(liveFromFull)
+    && Boolean(liveFromCursor)
+    && liveFromFull !== liveFromCursor
+    && liveFromFull.startsWith(liveFromCursor);
+  const bufferIsWholeTokenInPaintedLine = Boolean(
+    buffered
+    && liveFromFull
+    && liveFromFull.split(/\s+/).includes(buffered),
+  );
+  const cursorLine = term.buffer.active.getLine(
+    term.buffer.active.cursorY + term.buffer.active.baseY,
+  );
+  const canTrustPostCursorPaint = typeof cursorLine?.getCell === "function";
+  const preferFullPaintedLine =
+    paintedLineContinuesPastCursor
+    && canTrustPostCursorPaint
+    && bufferIsWholeTokenInPaintedLine
+    && buffered !== liveFromCursor
+    && buffered !== liveFromFull
+    && aligned !== liveFromCursor;
+
   // Aligned buffer can match a stale mid-line prefix after history recall
   // (typed "s", recalled "su -", cursor after "s"), or only a suffix when
   // history prepended text (typed "whoami", recalled "sudo whoami").
   if (aligned) {
-    if (preferFullOverBuffer(aligned, liveFromFull)) {
+    if (preferFullOverBuffer(aligned, liveFromFull) || preferFullPaintedLine) {
       return liveFromFull;
     }
     if (
@@ -592,7 +795,7 @@ export const resolveSubmittedShellCommand = (
     }
     return emptyLive;
   }
-  if (preferFullOverBuffer(buffered, liveFromFull)) {
+  if (preferFullOverBuffer(buffered, liveFromFull) || preferFullPaintedLine) {
     return liveFromFull;
   }
   if (!live || live === buffered) return buffered || live;
@@ -634,13 +837,15 @@ export const resolveSubmittedShellCommand = (
     return live;
   }
 
-  // Live ends with the typed buffer: either path chrome + typed command
-  // ("Project su -" + "su -") or history that grew leftward ("sudo whoami"
-  // after typing "whoami"). Prefer live for sudo/su wrappers; else buffer.
+  // Live ends with the typed buffer: history grew leftward ("sudo whoami" after
+  // typing "whoami", or "git" + typed "st"), or path chrome + typed command.
+  // Prefer live when the buffer is a trailing whole token (space-delimited) or
+  // a privilege wrapper; otherwise keep the keystroke buffer.
   if (live.endsWith(buffered) || live.endsWith(` ${buffered}`)) {
+    if (live === buffered) return live;
     if (
-      live !== buffered
-      && /^(?:sudo|su|doas|command|builtin)\s/i.test(live)
+      /^(?:sudo|su|doas|command|builtin)\s/i.test(live)
+      || live.endsWith(` ${buffered}`)
     ) {
       return live;
     }

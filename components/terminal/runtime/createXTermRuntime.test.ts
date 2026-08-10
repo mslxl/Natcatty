@@ -11,7 +11,17 @@ import {
 } from "./terminalCommandExecution";
 import { createPromptLineBreakState } from "./promptLineBreak";
 
-function createFakeTerm(lineText = "$ echo ok", cursorX = lineText.length) {
+function createFakeTerm(
+  lineText = "$ echo ok",
+  cursorX = lineText.length,
+  options?: {
+    ghostFrom?: number;
+    /** Per-cell fg overrides for accepted text (syntax highlighting). */
+    fgAt?: (x: number) => number;
+  },
+) {
+  const ghostFrom = options?.ghostFrom;
+  const fgAt = options?.fgAt;
   return {
     buffer: {
       active: {
@@ -24,6 +34,19 @@ function createFakeTerm(lineText = "$ echo ok", cursorX = lineText.length) {
             isWrapped: false,
             translateToString() {
               return lineText;
+            },
+            getCell(x: number) {
+              const isGhost = ghostFrom != null && x >= ghostFrom;
+              return {
+                getWidth: () => 1,
+                getChars: () => lineText[x] ?? "",
+                isDim: () => (isGhost ? 1 : 0),
+                getFgColorMode: () => 0,
+                getFgColor: () => {
+                  if (isGhost) return 8;
+                  return fgAt?.(x) ?? 15;
+                },
+              };
             },
           };
         },
@@ -389,6 +412,113 @@ test("resolveSubmittedShellCommand prefers live line when history replaces a typ
     resolveSubmittedShellCommand("su -", createFakeTerm("user@host:~$ su") as never),
     "su -",
   );
+});
+
+test("resolveSubmittedShellCommand records full line after mid-line history edit (#2850)", () => {
+  // ↑ recalled "systemctl stop firewalld", cursor moved onto "stop", replaced
+  // with "start", Enter while still mid-line. Keystroke buffer only saw the
+  // replacement token; Enter still submits the whole zle line.
+  const line = "user@host:~$ systemctl start firewalld";
+  const cursorAfterStart = "user@host:~$ systemctl start".length;
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "start",
+      createFakeTerm(line, cursorAfterStart) as never,
+    ),
+    "systemctl start firewalld",
+  );
+  // Empty buffer + mid-line cursor after recall/edit (no typed suffix).
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm(line, cursorAfterStart) as never,
+    ),
+    "systemctl start firewalld",
+  );
+  // Per-token syntax highlighting must not strip the accepted suffix after
+  // the cursor (command / arg / path colors differ across the line).
+  {
+    const prompt = "user@host:~$ ";
+    const cmd = "systemctl start firewalld";
+    const painted = `${prompt}${cmd}`;
+    const cursor = `${prompt}systemctl start`.length;
+    const systemctlEnd = `${prompt}systemctl`.length;
+    const startEnd = `${prompt}systemctl start`.length;
+    assert.equal(
+      resolveSubmittedShellCommand(
+        "start",
+        createFakeTerm(painted, cursor, {
+          fgAt: (x) => {
+            if (x < prompt.length) return 15;
+            if (x < systemctlEnd) return 2; // command
+            if (x < startEnd) return 3; // arg
+            return 4; // differently colored accepted suffix
+          },
+        }) as never,
+      ),
+      "systemctl start firewalld",
+    );
+  }
+  // zsh autosuggest paint past the cursor must stay on the typed prefix.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "git",
+      createFakeTerm("user@host:~$ git status", "user@host:~$ git".length) as never,
+    ),
+    "git",
+  );
+  // ↑ recalled "git", then typed " st" with zsh ghost "atus". Enter submits
+  // "git st", not the unaccepted suggestion "git status".
+  assert.equal(
+    resolveSubmittedShellCommand(
+      " st",
+      createFakeTerm(
+        "user@host:~$ git status",
+        "user@host:~$ git st".length,
+        { ghostFrom: "user@host:~$ git st".length },
+      ) as never,
+    ),
+    "git st",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "st",
+      createFakeTerm(
+        "user@host:~$ git status",
+        "user@host:~$ git st".length,
+        { ghostFrom: "user@host:~$ git st".length },
+      ) as never,
+    ),
+    "git st",
+  );
+  // Cross-token autosuggest after history: ↑ "sudo", typed " apt", ghost
+  // " upgrade". Enter submits "sudo apt", not "sudo apt upgrade".
+  assert.equal(
+    resolveSubmittedShellCommand(
+      " apt",
+      createFakeTerm(
+        "user@host:~$ sudo apt upgrade",
+        "user@host:~$ sudo apt".length,
+        { ghostFrom: "user@host:~$ sudo apt".length },
+      ) as never,
+    ),
+    "sudo apt",
+  );
+  // End-to-end: history callback must receive the full painted command.
+  {
+    const commandBufferRef = { current: "start" };
+    const recorded: string[] = [];
+    const recordedCommand = recordTerminalCommandExecution("start", {
+      host: { id: "host-1", label: "Host" },
+      sessionId: "session-1",
+      commandBufferRef,
+      onCommandExecuted(cmd) {
+        recorded.push(cmd);
+      },
+    }, createFakeTerm(line, cursorAfterStart) as never);
+    assert.equal(recordedCommand, "systemctl start firewalld");
+    assert.deepEqual(recorded, ["systemctl start firewalld"]);
+  }
 });
 
 test("recordTerminalCommandExecution arms su after empty-buffer history recall (#2191)", () => {
