@@ -150,11 +150,13 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
   }
 
   // Protect fenced code so we never rewrite HTML examples inside fences.
+  // Use a printable sentinel (not NUL) so eslint no-control-regex stays clean.
+  const fenceToken = (index: number) => `@@NETCATTY_MD_FENCE_${index}@@`;
   const fences: string[] = [];
   let body = markdown.replace(/\r\n?/g, "\n").replace(
     /(?:^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\1[ \t]*(?=\n|$)/g,
     (match) => {
-      const token = `\u0000FENCE${fences.length}\u0000`;
+      const token = fenceToken(fences.length);
       fences.push(match);
       return token;
     },
@@ -210,7 +212,7 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
   );
 
   // Restore fences
-  body = body.replace(/\u0000FENCE(\d+)\u0000/g, (_, idx: string) => (
+  body = body.replace(/@@NETCATTY_MD_FENCE_(\d+)@@/g, (_, idx: string) => (
     fences[Number(idx)] ?? ""
   ));
 

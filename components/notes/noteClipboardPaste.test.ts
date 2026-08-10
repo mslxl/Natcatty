@@ -49,7 +49,7 @@ test("html islands in markdown become image syntax without escaping headings", (
   const md = convertHtmlIslandsInMarkdown(CATTY_PASTE);
   assert.match(md, /^# 🔥 Catty Agent/m);
   assert.match(md, /^### 🔥 What can Catty Agent do\?/m);
-  assert.match(md, /^\> 🚀 \*\*Boost your IT ops/m);
+  assert.match(md, /^> 🚀 \*\*Boost your IT ops/m);
   assert.match(md, /^- 🚀 \*\*Natural language server management\*\*/m);
   assert.match(
     md,
