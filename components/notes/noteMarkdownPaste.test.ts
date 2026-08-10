@@ -4,6 +4,9 @@ import test from "node:test";
 
 import {
   mergeNoteMarkdownDocumentPaste,
+  NOTE_MARKDOWN_PASTE_INSERT_MAX_CHARS,
+  resolveNoteMarkdownPasteSettleAttempts,
+  resolveNoteMarkdownPasteStrategy,
   shouldInterceptNoteMarkdownPaste,
 } from "./InlineMarkdownEditor.tsx";
 
@@ -58,6 +61,39 @@ test("document paste merge preserves first-line indentation and appends after cu
   );
 });
 
+test("paste strategy uses document merge when caret is missing or paste is long", () => {
+  assert.equal(
+    resolveNoteMarkdownPasteStrategy({
+      canInsertMarkdownAtSelection: false,
+      clipboardText: "# short",
+    }),
+    "document-merge",
+  );
+  assert.equal(
+    resolveNoteMarkdownPasteStrategy({
+      canInsertMarkdownAtSelection: true,
+      clipboardText: "# short body",
+    }),
+    "insert-at-selection",
+  );
+  const longMarkdown = `# Title\n\n${"paragraph text ".repeat(400)}`;
+  assert.ok(longMarkdown.length >= NOTE_MARKDOWN_PASTE_INSERT_MAX_CHARS);
+  assert.equal(
+    resolveNoteMarkdownPasteStrategy({
+      canInsertMarkdownAtSelection: true,
+      clipboardText: longMarkdown,
+    }),
+    "document-merge",
+  );
+});
+
+test("paste settle attempts scale with clipboard size", () => {
+  assert.equal(resolveNoteMarkdownPasteSettleAttempts(100), 6);
+  assert.equal(resolveNoteMarkdownPasteSettleAttempts(3_000), 6);
+  assert.equal(resolveNoteMarkdownPasteSettleAttempts(12_000), 8);
+  assert.equal(resolveNoteMarkdownPasteSettleAttempts(100_000), 24);
+});
+
 test("InlineMarkdownEditor only preventDefaults markdown paste after a successful intercept guard", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
 
@@ -65,7 +101,7 @@ test("InlineMarkdownEditor only preventDefaults markdown paste after a successfu
   assert.match(source, /hasActiveLexicalTextSelection/);
   assert.match(source, /mergeNoteMarkdownDocumentPaste/);
   assert.match(source, /setMarkdown\(/);
-  assert.match(source, /canInsertAtSelection/);
+  assert.match(source, /resolveNoteMarkdownPasteStrategy/);
   assert.match(
     source,
     /shouldInterceptNoteMarkdownPaste\([\s\S]*?\)[\s\S]*?event\.preventDefault\(\)/,
@@ -74,17 +110,14 @@ test("InlineMarkdownEditor only preventDefaults markdown paste after a successfu
     source,
     /if \(\s*!shouldInterceptNoteMarkdownPaste\([\s\S]*?\)\s*\{\s*return;\s*\}/,
   );
-  // Live selection must keep insertMarkdown; document merge is the no-selection path only.
-  assert.match(source, /if\s*\(\s*!canInsertAtSelection\s*\)\s*\{\s*applyDocumentPaste\(\);/);
+  // Long / no-caret path goes document-merge; short selection keeps insertMarkdown.
+  assert.match(source, /strategy === "document-merge"/);
   assert.match(source, /editor\.insertMarkdown\(markdown\)/);
   assert.match(source, /pasteRecoveryGenerationRef/);
   assert.match(source, /tryCommitSettledPaste/);
   assert.match(source, /editor\.getMarkdown\(\)/);
-  // Selection-path recovery must not re-enter applyDocumentPaste (duplicate / stale-note risk).
-  assert.doesNotMatch(
-    source,
-    /insertMarkdown\(markdown\);[\s\S]*applyDocumentPaste\(\)/,
-  );
+  // Selection-path no-op recovery must fall back to document merge (long paste).
+  assert.match(source, /if \(attempt >= maxAttempts\) \{\s*applyDocumentPaste\(\);/);
   // Document merge must read live editor markdown, not only the possibly-stale ref.
   assert.match(
     source,

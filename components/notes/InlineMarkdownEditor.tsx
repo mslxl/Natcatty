@@ -278,6 +278,41 @@ export const shouldInterceptNoteMarkdownPaste = (input: {
   return shouldInsertClipboardTextAsMarkdown(input.clipboardText);
 };
 
+/**
+ * Lexical `insertMarkdown` often no-ops or stalls on large structured markdown
+ * after our capture-phase preventDefault. Above this size, prefer a document-
+ * level setMarkdown merge so long paste is never silently swallowed.
+ */
+export const NOTE_MARKDOWN_PASTE_INSERT_MAX_CHARS = 4_000;
+
+/** Poll window for deferred insertMarkdown settlement before document recovery. */
+export const NOTE_MARKDOWN_PASTE_SETTLE_POLL_MS = 50;
+export const NOTE_MARKDOWN_PASTE_SETTLE_MIN_ATTEMPTS = 6;
+export const NOTE_MARKDOWN_PASTE_SETTLE_MAX_ATTEMPTS = 24;
+
+export type NoteMarkdownPasteStrategy = "document-merge" | "insert-at-selection";
+
+export const resolveNoteMarkdownPasteStrategy = (input: {
+  canInsertMarkdownAtSelection: boolean;
+  clipboardText: string;
+}): NoteMarkdownPasteStrategy => {
+  if (!input.canInsertMarkdownAtSelection) return "document-merge";
+  // Long structured paste: skip Lexical insert (frequently no-ops / freezes UI).
+  if (input.clipboardText.length >= NOTE_MARKDOWN_PASTE_INSERT_MAX_CHARS) {
+    return "document-merge";
+  }
+  return "insert-at-selection";
+};
+
+/** Scale settle polls with paste size so slow inserts are not treated as no-ops. */
+export const resolveNoteMarkdownPasteSettleAttempts = (clipboardLength: number): number => {
+  const scaled = Math.ceil(clipboardLength / 1_500);
+  return Math.min(
+    NOTE_MARKDOWN_PASTE_SETTLE_MAX_ATTEMPTS,
+    Math.max(NOTE_MARKDOWN_PASTE_SETTLE_MIN_ATTEMPTS, scaled),
+  );
+};
+
 export const resolveHostPickerPopupPosition = ({
   anchorRect,
   containerRect,
@@ -972,31 +1007,60 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
       commitMarkdown(next);
     };
 
-    // Document merge only when Lexical has no caret. With a live selection,
-    // keep insertMarkdown so caret/replace semantics stay intact (incl. long pastes).
-    // Do not fall back to document append after insertMarkdown: that races slow
-    // inserts (duplicate paste) and can write into a switched note after unmount.
-    if (!canInsertAtSelection) {
+    const strategy = resolveNoteMarkdownPasteStrategy({
+      canInsertMarkdownAtSelection: canInsertAtSelection,
+      clipboardText: markdown,
+    });
+
+    // No caret, or long structured paste: document merge (setMarkdown + commit).
+    // insertMarkdown frequently no-ops / stalls on large markdown after preventDefault.
+    if (strategy === "document-merge") {
       applyDocumentPaste();
     } else {
       const before = latestMarkdownRef.current;
       const recoveryGeneration = ++pasteRecoveryGenerationRef.current;
-      editor.focus();
-      editor.insertMarkdown(markdown);
-      // insertMarkdown's Lexical update is deferred; if onChange is muted/missed
-      // but the document did change, poll briefly and commit the settled markdown.
+      const maxAttempts = resolveNoteMarkdownPasteSettleAttempts(markdown.length);
+      try {
+        editor.focus();
+        editor.insertMarkdown(markdown);
+      } catch {
+        // Lexical/MDX can throw on pathological markdown; never swallow the paste.
+        applyDocumentPaste();
+        setHostPicker((current) => ({ ...current, open: false, query: "", selectedIndex: 0 }));
+        setLinkAction(null);
+        return;
+      }
+      // insertMarkdown's Lexical update is deferred. If onChange is muted/missed but
+      // the document changed, commit; if it still no-ops after the settle window,
+      // recover via document merge (gated on generation + unchanged body so a late
+      // insert cannot double-apply).
       const tryCommitSettledPaste = (attempt: number) => {
         if (pasteRecoveryGenerationRef.current !== recoveryGeneration) return;
         if (latestMarkdownRef.current !== before) return;
-        const current = editor.getMarkdown();
+        let current = before;
+        try {
+          current = editor.getMarkdown();
+        } catch {
+          applyDocumentPaste();
+          return;
+        }
         if (current !== before) {
           commitMarkdown(current);
           return;
         }
-        if (attempt >= 4) return;
-        window.setTimeout(() => tryCommitSettledPaste(attempt + 1), 50);
+        if (attempt >= maxAttempts) {
+          applyDocumentPaste();
+          return;
+        }
+        window.setTimeout(
+          () => tryCommitSettledPaste(attempt + 1),
+          NOTE_MARKDOWN_PASTE_SETTLE_POLL_MS,
+        );
       };
-      window.setTimeout(() => tryCommitSettledPaste(0), 50);
+      window.setTimeout(
+        () => tryCommitSettledPaste(0),
+        NOTE_MARKDOWN_PASTE_SETTLE_POLL_MS,
+      );
     }
 
     setHostPicker((current) => ({ ...current, open: false, query: "", selectedIndex: 0 }));
