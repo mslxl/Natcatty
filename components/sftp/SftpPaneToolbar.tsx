@@ -1068,18 +1068,20 @@ export const SftpPaneToolbar: React.FC<SftpPaneToolbarProps> = React.memo(({
             onMove={moveSftpItem}
             onReset={toolbarLayout.reset}
             t={t}
-            className="flex items-center gap-0.5 shrink-0"
+            className="flex items-center gap-0.5 w-full min-w-0"
           >
             {inlineIds.map(renderInline)}
-            <ToolbarOverflowMenu
-              hasItems={overflowNodes.length > 0}
-              label={t("common.more")}
-              orientation="horizontal"
-              buttonClassName="h-6 w-6"
-              contentClassName="min-w-[140px]"
-            >
-              <div className="flex flex-col min-w-[140px]">{overflowNodes}</div>
-            </ToolbarOverflowMenu>
+            <div className="ml-auto shrink-0" data-section="terminal-sftp-overflow">
+              <ToolbarOverflowMenu
+                hasItems={overflowNodes.length > 0}
+                label={t("common.more")}
+                orientation="horizontal"
+                buttonClassName="h-6 w-6"
+                contentClassName="min-w-[140px]"
+              >
+                <div className="flex flex-col min-w-[140px]">{overflowNodes}</div>
+              </ToolbarOverflowMenu>
+            </div>
           </ToolbarCustomizeContextMenu>
         </div>
       </div>

@@ -467,7 +467,10 @@ test("toolbar keeps path chrome on its own row above the action controls", () =>
     toolbarSource,
     /data-section="terminal-sftp-path-row"[\s\S]*data-section="terminal-sftp-actions"/,
   );
-  assert.doesNotMatch(toolbarSource, /ml-auto/);
+  assert.match(
+    toolbarSource,
+    /className="ml-auto shrink-0" data-section="terminal-sftp-overflow"/,
+  );
   assert.doesNotMatch(
     toolbarSource,
     /data-section="terminal-sftp-toolbar"[\s\S]*className="h-7 px-2 flex items-center gap-1 border-b/,
