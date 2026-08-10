@@ -5,6 +5,7 @@ import {
   computeAutocompleteAcceptWrite,
   isSameAutocompleteQuery,
   resolveAutocompleteQueryInput,
+  shouldBlockAutocompleteForSensitivePrompt,
 } from "./autocomplete/terminalAutocompletePrompt.ts";
 import type { PromptDetectionResult } from "./autocomplete/promptDetector.ts";
 
@@ -16,6 +17,46 @@ function atPrompt(userInput: string, promptText = "$ "): PromptDetectionResult {
     cursorOffset: userInput.length,
   };
 }
+
+test("shouldBlockAutocompleteForSensitivePrompt ignores empty-echo alone", () => {
+  // Pre-echo on a normal `$ ` / themed PS1 must still allow local popup matches
+  // (#2830). allowExternalProviders:false from getAlignedPrompt is not enough
+  // by itself to suppress history/fig/snippet suggestions.
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: false,
+      promptText: "$ ",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: false,
+      promptText: "➜ ",
+    }),
+    false,
+  );
+});
+
+test("shouldBlockAutocompleteForSensitivePrompt blocks marked sensitive input", () => {
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: true,
+      promptText: "$ ",
+    }),
+    true,
+  );
+});
+
+test("shouldBlockAutocompleteForSensitivePrompt blocks auth-challenge prompts", () => {
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: false,
+      promptText: "Password:",
+    }),
+    true,
+  );
+});
 
 test("isSameAutocompleteQuery keeps late paths alive during live preview", () => {
   // Highlighting a candidate rewrites typedInputBuffer to the preview text.

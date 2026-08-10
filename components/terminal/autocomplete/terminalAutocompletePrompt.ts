@@ -1,3 +1,4 @@
+import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
 import {
   isNonPromptLine,
   reconcilePromptWithExternalCommand,
@@ -100,6 +101,27 @@ export function isSameAutocompleteQuery(options: {
   if (options.currentInput === null) return false;
   if (options.currentInput === options.queryInput) return true;
   return options.previewActive && options.previewBaseline === options.queryInput;
+}
+
+/**
+ * Whether fetchSuggestions must refuse to query/render.
+ *
+ * `getAlignedPrompt` sets `allowExternalProviders: false` for empty-echo
+ * short/themed prompts so password-shaped `read -s -p '$ '` lines do not
+ * authorize history recording or third-party providers. That flag alone is
+ * NOT enough to suppress local history/fig/snippet popups: high-latency SSH
+ * looks identical until the first echoed glyph, and #2830/#2831 need local
+ * matches to paint from the keystroke buffer in that window.
+ *
+ * Only block when the host has already marked the line sensitive, or the
+ * visible prompt text itself looks like an auth challenge.
+ */
+export function shouldBlockAutocompleteForSensitivePrompt(options: {
+  sensitiveInputActive: boolean;
+  promptText: string;
+}): boolean {
+  if (options.sensitiveInputActive) return true;
+  return isSensitiveTerminalChallenge(options.promptText);
 }
 
 /**

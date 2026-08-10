@@ -70,8 +70,9 @@ test("uses reliable typed buffer when prompt echo has not started (IME / high-la
   assert.equal(result.prompt.userInput, "部署");
   assert.equal(result.prompt.cursorOffset, 2);
   // Pre-echo input is surfaced for alignment, but empty echo alone must not
-  // authorize history recording or any completions (password-shaped
-  // `read -s -p '$ '` prompts look identical until echo arrives).
+  // authorize history recording or third-party completion providers until echo
+  // validates the line. Local history/fig/snippet popups may still query from
+  // the keystroke buffer (#2830).
   assert.equal(result.alignedTyped, null);
   assert.equal(result.allowExternalProviders, false);
 });
@@ -109,7 +110,7 @@ test("does not treat empty-echo shell-shaped prompts as validated typed input", 
 
   assert.equal(result.prompt.isAtPrompt, true);
   // Keystroke buffer is still visible on the prompt view, but empty echo
-  // must not authorize history recording or suggestion acceptance.
+  // must not authorize history recording or external providers.
   assert.equal(result.prompt.userInput, secret);
   assert.equal(result.alignedTyped, null);
   assert.equal(result.allowExternalProviders, false);
