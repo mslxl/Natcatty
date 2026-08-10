@@ -270,6 +270,40 @@ export const collapseLinkedImagesToTextLinks = (markdown: string): string => {
 };
 
 /**
+ * Drop orphan `](url)` lines left by broken badge conversion, but leave
+ * fenced / indented code alone (docs and parser fixtures often show that form).
+ */
+const stripOrphanLinkClosersOutsideCode = (markdown: string): string => {
+  const placeholders: string[] = [];
+  const stash = (chunk: string): string => {
+    const token = `@@NETCATTY_MD_CODE_${placeholders.length}@@`;
+    placeholders.push(chunk);
+    return token;
+  };
+
+  let body = markdown;
+
+  // Fenced code (``` / ~~~). Lookbehind keeps the prior newline so orphan
+  // closer lines above a fence stay alone for the strip below.
+  body = body.replace(
+    /(?<=^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\1[ \t]*(?=\n|$)/g,
+    (match) => stash(match),
+  );
+
+  // Indented code blocks (4 spaces or a tab).
+  body = body.replace(
+    /(?<=^|\n)(?:(?: {4}|\t).*(?:\n(?: {4}|\t).*)*)/g,
+    (match) => stash(match),
+  );
+
+  body = body.replace(/^\s*\]\([^)\n]+\)\s*$/gm, "");
+
+  return body.replace(/@@NETCATTY_MD_CODE_(\d+)@@/g, (_, idx: string) => (
+    placeholders[Number(idx)] ?? ""
+  ));
+};
+
+/**
  * Final cleanup for note paste: badges → text links, re-sanitize img tags
  * (keeps width/height), tidy blank lines. Called after Turndown / islands.
  */
@@ -282,8 +316,7 @@ export const normalizePastedNoteMarkdown = (markdown: string): string => {
     return converted || "";
   });
 
-  // Drop orphan link closers that sometimes survive broken badge conversion.
-  body = body.replace(/^\s*\]\([^)\n]+\)\s*$/gm, "");
+  body = stripOrphanLinkClosersOutsideCode(body);
 
   return trimBlankLines(body);
 };

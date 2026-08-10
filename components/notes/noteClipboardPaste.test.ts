@@ -157,6 +157,23 @@ test("normalize removes orphan link closers but keeps image dimensions", () => {
   assert.match(md, /height="1000"/);
 });
 
+test("normalize keeps link-closer lines inside fenced and indented code", () => {
+  const source = [
+    "Before",
+    "](https://example.com/orphan)",
+    "```md",
+    "](https://example.com)",
+    "```",
+    "",
+    "    ](https://example.com/indented)",
+    "After",
+  ].join("\n");
+  const md = normalizePastedNoteMarkdown(source);
+  assert.doesNotMatch(md, /^\]\(https:\/\/example\.com\/orphan\)$/m);
+  assert.match(md, /```md\n\]\(https:\/\/example\.com\)\n```/);
+  assert.match(md, /^ {4}\]\(https:\/\/example\.com\/indented\)$/m);
+});
+
 test("resolve pastes Catty-style mixed markdown+html with image sizes", () => {
   const payload = resolveNoteClipboardPaste({
     plainText: CATTY_PASTE,

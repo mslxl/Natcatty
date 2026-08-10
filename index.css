@@ -1672,16 +1672,32 @@ html[data-theme-transition] *::after {
 
 /* If MDX nests a lone image in a paragraph, keep that paragraph in the row too. */
 .netcatty-mdx-content p:has(> img[width="16"]:only-child),
+.netcatty-mdx-content p:has(> img[width="20"]:only-child),
 .netcatty-mdx-content p:has(> img[width="24"]:only-child),
+.netcatty-mdx-content p:has(> img[width="28"]:only-child),
 .netcatty-mdx-content p:has(> img[width="32"]:only-child),
+.netcatty-mdx-content p:has(> img[width="36"]:only-child),
+.netcatty-mdx-content p:has(> img[width="40"]:only-child),
+.netcatty-mdx-content p:has(> img[width="44"]:only-child),
 .netcatty-mdx-content p:has(> img[width="48"]:only-child),
+.netcatty-mdx-content p:has(> img[width="56"]:only-child),
 .netcatty-mdx-content p:has(> img[width="64"]:only-child),
+.netcatty-mdx-content p:has(> img[width="72"]:only-child),
+.netcatty-mdx-content p:has(> img[width="80"]:only-child),
 .netcatty-mdx-content p:has(> img[width="96"]:only-child),
 .netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="16"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="20"]),
 .netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="24"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="28"]),
 .netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="32"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="36"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="40"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="44"]),
 .netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="48"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="56"]),
 .netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="64"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="72"]),
+.netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="80"]),
 .netcatty-mdx-editor p:has([data-editor-block-type="image"]:only-child):has(img[width="96"]) {
   display: inline !important;
   margin: 0 !important;
