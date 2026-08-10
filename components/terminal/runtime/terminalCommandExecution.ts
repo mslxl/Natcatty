@@ -551,15 +551,22 @@ export const resolveSubmittedShellCommand = (
   // Enter submits the whole zle line. detectPrompt truncates at the cursor, so
   // after ↑ recall + mid-line edit the keystroke buffer may only hold the
   // replacement token ("start") while the painted line is still
-  // "systemctl start firewalld". Prefer that full paint unless the buffer
-  // already matches the cursor prefix (zsh autosuggest ghost text) (#2850).
+  // "systemctl start firewalld". Prefer that full paint only when the buffer is
+  // already a whole token in the painted line — not a prefix of an unaccepted
+  // zsh autosuggest ghost ("st" inside "git status" after ↑ + typed " st").
   const paintedLineContinuesPastCursor =
     Boolean(liveFromFull)
     && Boolean(liveFromCursor)
     && liveFromFull !== liveFromCursor
     && liveFromFull.startsWith(liveFromCursor);
+  const bufferIsWholeTokenInPaintedLine = Boolean(
+    buffered
+    && liveFromFull
+    && liveFromFull.split(/\s+/).includes(buffered),
+  );
   const preferFullPaintedLine =
     paintedLineContinuesPastCursor
+    && bufferIsWholeTokenInPaintedLine
     && buffered !== liveFromCursor
     && buffered !== liveFromFull
     && aligned !== liveFromCursor;
@@ -610,6 +617,20 @@ export const resolveSubmittedShellCommand = (
   }
   if (preferFullOverBuffer(buffered, liveFromFull) || preferFullPaintedLine) {
     return liveFromFull;
+  }
+  // History prefix + typed suffix with an unaccepted autosuggest tail past the
+  // cursor: keep the cursor-visible command ("git st"), not the keystroke
+  // fragment ("st") and not the ghost completion ("git status").
+  if (
+    paintedLineContinuesPastCursor
+    && liveFromCursor
+    && liveFromCursor !== buffered
+    && (
+      liveFromCursor.endsWith(buffered)
+      || liveFromCursor.endsWith(` ${buffered}`)
+    )
+  ) {
+    return liveFromCursor;
   }
   if (!live || live === buffered) return buffered || live;
 

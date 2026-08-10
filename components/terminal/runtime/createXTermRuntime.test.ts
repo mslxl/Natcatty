@@ -420,6 +420,28 @@ test("resolveSubmittedShellCommand records full line after mid-line history edit
     ),
     "git",
   );
+  // ↑ recalled "git", then typed " st" with zsh ghost "atus". Enter submits
+  // "git st", not the unaccepted suggestion "git status".
+  assert.equal(
+    resolveSubmittedShellCommand(
+      " st",
+      createFakeTerm(
+        "user@host:~$ git status",
+        "user@host:~$ git st".length,
+      ) as never,
+    ),
+    "git st",
+  );
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "st",
+      createFakeTerm(
+        "user@host:~$ git status",
+        "user@host:~$ git st".length,
+      ) as never,
+    ),
+    "git st",
+  );
   // End-to-end: history callback must receive the full painted command.
   {
     const commandBufferRef = { current: "start" };
