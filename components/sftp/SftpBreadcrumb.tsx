@@ -30,15 +30,31 @@ export type SftpBreadcrumbVisiblePart = {
     originalIndex: number;
 };
 
-/** Prefer the path tail when truncating; keep a Windows drive letter when present. */
+/** True for Windows UNC share roots like \\host\share (including WSL UNC). */
+export function isSftpBreadcrumbUncRootSegment(segment: Pick<BreadcrumbSegment, 'path'> | undefined): boolean {
+    return !!segment && /^\\\\[^\\]+\\[^\\]+/.test(segment.path);
+}
+
+/** Keep drive letters and UNC share roots when truncating deep breadcrumbs. */
+export function shouldKeepSftpBreadcrumbLeadingRoot({
+    segments,
+    isWindowsDrive,
+}: {
+    segments: BreadcrumbSegment[];
+    isWindowsDrive: boolean;
+}): boolean {
+    return isWindowsDrive || isSftpBreadcrumbUncRootSegment(segments[0]);
+}
+
+/** Prefer the path tail when truncating; optionally keep a Windows drive/UNC root. */
 export function resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts,
-    keepLeadingDrive,
+    keepLeadingRoot,
 }: {
     segments: BreadcrumbSegment[];
     maxVisibleParts: number;
-    keepLeadingDrive: boolean;
+    keepLeadingRoot: boolean;
 }): {
     visibleParts: SftpBreadcrumbVisiblePart[];
     hiddenParts: SftpBreadcrumbVisiblePart[];
@@ -52,19 +68,19 @@ export function resolveSftpBreadcrumbVisibleParts({
         };
     }
 
-    const lastPartsCount = keepLeadingDrive
+    const lastPartsCount = keepLeadingRoot
         ? Math.max(1, maxVisibleParts - 1)
         : maxVisibleParts;
     const lastParts = segments.slice(-lastPartsCount).map((segment, idx) => ({
         segment,
         originalIndex: segments.length - lastPartsCount + idx,
     }));
-    const hiddenStart = keepLeadingDrive ? 1 : 0;
+    const hiddenStart = keepLeadingRoot ? 1 : 0;
     const hiddenParts = segments.slice(hiddenStart, -lastPartsCount).map((segment, idx) => ({
         segment,
         originalIndex: hiddenStart + idx,
     }));
-    const visibleParts = keepLeadingDrive
+    const visibleParts = keepLeadingRoot
         ? [{ segment: segments[0], originalIndex: 0 }, ...lastParts]
         : lastParts;
 
@@ -107,14 +123,19 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         [path, pathOptions],
     );
 
+    const keepLeadingRoot = useMemo(
+        () => shouldKeepSftpBreadcrumbLeadingRoot({ segments, isWindowsDrive }),
+        [segments, isWindowsDrive],
+    );
+
     const { visibleParts, hiddenParts, needsTruncation } = useMemo(
         () =>
             resolveSftpBreadcrumbVisibleParts({
                 segments,
                 maxVisibleParts,
-                keepLeadingDrive: isWindowsDrive,
+                keepLeadingRoot,
             }),
-        [segments, maxVisibleParts, isWindowsDrive],
+        [segments, maxVisibleParts, keepLeadingRoot],
     );
 
     const showDriveDropdown = isWindowsDrive && isLocal && !!onListDrives;
@@ -139,7 +160,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                             <TooltipContent>{t("sftp.goHome")}</TooltipContent>
                         </Tooltip>
                         <ChevronRight size={12} className="opacity-40 shrink-0" />
-                        {needsTruncation && !isWindowsDrive && (
+                        {needsTruncation && !keepLeadingRoot && (
                             <>
                                 <Tooltip>
                                     <TooltipTrigger asChild>
@@ -158,7 +179,7 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                             const partPath = segment.path;
                             const isLast = originalIndex === segments.length - 1;
                             const showEllipsisBefore =
-                                needsTruncation && isWindowsDrive && displayIdx === 1;
+                                needsTruncation && keepLeadingRoot && displayIdx === 1;
 
                             return (
                                 <React.Fragment key={partPath}>

@@ -5,7 +5,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getSftpBreadcrumbSegments } from "../../application/state/sftp/utils.ts";
-import { resolveSftpBreadcrumbVisibleParts } from "./SftpBreadcrumb.tsx";
+import {
+  resolveSftpBreadcrumbVisibleParts,
+  shouldKeepSftpBreadcrumbLeadingRoot,
+} from "./SftpBreadcrumb.tsx";
 
 const breadcrumbSource = fs.readFileSync(
   path.join(path.dirname(fileURLToPath(import.meta.url)), "SftpBreadcrumb.tsx"),
@@ -13,13 +16,19 @@ const breadcrumbSource = fs.readFileSync(
 );
 
 test("deep unix paths keep the trailing segments and hide the prefix", () => {
-  const { segments } = getSftpBreadcrumbSegments(
+  const { segments, isWindowsDrive } = getSftpBreadcrumbSegments(
     "/var/www/apps/netcatty/releases/current/public",
   );
+  const keepLeadingRoot = shouldKeepSftpBreadcrumbLeadingRoot({
+    segments,
+    isWindowsDrive,
+  });
+  assert.equal(keepLeadingRoot, false);
+
   const resolved = resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts: 4,
-    keepLeadingDrive: false,
+    keepLeadingRoot,
   });
 
   assert.equal(resolved.needsTruncation, true);
@@ -38,11 +47,16 @@ test("windows drive paths keep the drive letter while preferring the tail", () =
     "C:\\Users\\alice\\projects\\netcatty\\src\\components",
   );
   assert.equal(isWindowsDrive, true);
+  const keepLeadingRoot = shouldKeepSftpBreadcrumbLeadingRoot({
+    segments,
+    isWindowsDrive,
+  });
+  assert.equal(keepLeadingRoot, true);
 
   const resolved = resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts: 4,
-    keepLeadingDrive: true,
+    keepLeadingRoot,
   });
 
   assert.equal(resolved.needsTruncation, true);
@@ -53,8 +67,36 @@ test("windows drive paths keep the drive letter while preferring the tail", () =
   );
 });
 
+test("windows UNC paths keep the share root while preferring the tail", () => {
+  const { segments, isWindowsDrive } = getSftpBreadcrumbSegments(
+    "\\\\wsl.localhost\\Ubuntu-22.04\\home\\alice\\projects\\netcatty\\src",
+  );
+  assert.equal(isWindowsDrive, false);
+  const keepLeadingRoot = shouldKeepSftpBreadcrumbLeadingRoot({
+    segments,
+    isWindowsDrive,
+  });
+  assert.equal(keepLeadingRoot, true);
+
+  const resolved = resolveSftpBreadcrumbVisibleParts({
+    segments,
+    maxVisibleParts: 4,
+    keepLeadingRoot,
+  });
+
+  assert.equal(resolved.needsTruncation, true);
+  assert.equal(
+    resolved.visibleParts[0]?.segment.label,
+    "\\\\wsl.localhost\\Ubuntu-22.04",
+  );
+  assert.deepEqual(
+    resolved.visibleParts.slice(1).map((part) => part.segment.label),
+    ["projects", "netcatty", "src"],
+  );
+});
+
 test("breadcrumb stays left-aligned without rtl clip", () => {
   assert.doesNotMatch(breadcrumbSource, /dir="rtl"/);
   assert.match(breadcrumbSource, /overflow-hidden/);
-  assert.match(breadcrumbSource, /resolveSftpBreadcrumbVisibleParts/);
+  assert.match(breadcrumbSource, /shouldKeepSftpBreadcrumbLeadingRoot/);
 });
