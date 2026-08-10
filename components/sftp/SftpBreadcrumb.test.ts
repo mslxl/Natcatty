@@ -9,6 +9,8 @@ import {
   normalizeSftpBreadcrumbMaxVisibleParts,
   resolveSftpBreadcrumbVisibleParts,
   scrollSftpBreadcrumbViewportToTail,
+  shouldShowSftpBreadcrumbEllipsis,
+  splitSftpBreadcrumbPinnedParts,
 } from "./SftpBreadcrumb.tsx";
 
 const breadcrumbSource = fs.readFileSync(
@@ -33,6 +35,13 @@ test("deep unix paths keep the first segment and trailing segments", () => {
   assert.deepEqual(
     resolved.hiddenParts.map((part) => part.segment.label),
     ["www", "apps", "netcatty"],
+  );
+
+  const split = splitSftpBreadcrumbPinnedParts(resolved.visibleParts);
+  assert.equal(split.leadingPart?.segment.label, "var");
+  assert.deepEqual(
+    split.trailingParts.map((part) => part.segment.label),
+    ["releases", "current", "public"],
   );
 });
 
@@ -73,7 +82,7 @@ test("windows UNC paths keep the share root while preferring the tail", () => {
   );
 });
 
-test("budget of one keeps only the leading root without overflowing the contract", () => {
+test("budget of one keeps the leading root and still exposes hidden segments via ellipsis", () => {
   assert.equal(normalizeSftpBreadcrumbMaxVisibleParts(0), 1);
   assert.equal(normalizeSftpBreadcrumbMaxVisibleParts(1.9), 1);
 
@@ -91,12 +100,23 @@ test("budget of one keeps only the leading root without overflowing the contract
     ["C:"],
   );
   assert.ok(resolved.hiddenParts.length >= 3);
+  assert.equal(
+    shouldShowSftpBreadcrumbEllipsis({
+      needsTruncation: resolved.needsTruncation,
+      hiddenPartsCount: resolved.hiddenParts.length,
+    }),
+    true,
+  );
+  assert.deepEqual(splitSftpBreadcrumbPinnedParts(resolved.visibleParts).trailingParts, []);
 });
 
-test("breadcrumb viewport scroll prefers the path tail without rtl layout", () => {
+test("breadcrumb pins leading chrome and only scrolls trailing chips", () => {
   assert.doesNotMatch(breadcrumbSource, /dir="rtl"/);
+  assert.match(breadcrumbSource, /splitSftpBreadcrumbPinnedParts/);
+  assert.match(breadcrumbSource, /shouldShowSftpBreadcrumbEllipsis/);
   assert.match(breadcrumbSource, /scrollSftpBreadcrumbViewportToTail/);
-  assert.match(breadcrumbSource, /ResizeObserver/);
+  assert.match(breadcrumbSource, /shrink-0/);
+  assert.match(breadcrumbSource, /flex-1 overflow-hidden/);
 
   const calls: Array<{ left: number }> = [];
   const viewport = {

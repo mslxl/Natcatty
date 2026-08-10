@@ -88,6 +88,31 @@ export function resolveSftpBreadcrumbVisibleParts({
     };
 }
 
+/** Split pinned leading chrome from the scrollable trailing chips. */
+export function splitSftpBreadcrumbPinnedParts(visibleParts: SftpBreadcrumbVisiblePart[]): {
+    leadingPart: SftpBreadcrumbVisiblePart | null;
+    trailingParts: SftpBreadcrumbVisiblePart[];
+} {
+    if (visibleParts.length === 0) {
+        return { leadingPart: null, trailingParts: [] };
+    }
+    return {
+        leadingPart: visibleParts[0],
+        trailingParts: visibleParts.slice(1),
+    };
+}
+
+/** True when truncated middle segments need an ellipsis affordance. */
+export function shouldShowSftpBreadcrumbEllipsis({
+    needsTruncation,
+    hiddenPartsCount,
+}: {
+    needsTruncation: boolean;
+    hiddenPartsCount: number;
+}): boolean {
+    return needsTruncation && hiddenPartsCount > 0;
+}
+
 /** Scroll a breadcrumb viewport so overflow keeps the trailing path visible. */
 export function scrollSftpBreadcrumbViewportToTail(viewport: HTMLElement | null): void {
     if (!viewport) return;
@@ -137,6 +162,16 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         [segments, maxVisibleParts],
     );
 
+    const { leadingPart, trailingParts } = useMemo(
+        () => splitSftpBreadcrumbPinnedParts(visibleParts),
+        [visibleParts],
+    );
+
+    const showEllipsis = shouldShowSftpBreadcrumbEllipsis({
+        needsTruncation,
+        hiddenPartsCount: hiddenParts.length,
+    });
+
     const syncTailScroll = useCallback(() => {
         scrollSftpBreadcrumbViewportToTail(viewportRef.current);
     }, []);
@@ -150,23 +185,71 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         const track = trackRef.current;
         if (track) ro.observe(track);
         return () => ro.disconnect();
-    }, [syncTailScroll, path, visibleParts, needsTruncation]);
+    }, [syncTailScroll, path, trailingParts, showEllipsis]);
 
     const showDriveDropdown = isWindowsDrive && isLocal && !!onListDrives;
 
-    // LTR + left-aligned when the path fits. When it overflows, scroll to the
-    // trailing edge so the current directory stays visible without RTL layout.
+    const renderSegmentButton = (
+        part: SftpBreadcrumbVisiblePart,
+        { showTrailingChevron }: { showTrailingChevron: boolean },
+    ) => {
+        const { segment, originalIndex } = part;
+        const isLast = originalIndex === segments.length - 1;
+        const node = originalIndex === 0 && showDriveDropdown ? (
+            <Dropdown open={driveDropdownOpen} onOpenChange={handleDriveDropdownOpen}>
+                <DropdownTrigger asChild>
+                    <button className="hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 shrink-0 flex items-center gap-0.5">
+                        {segment.label}
+                        <ChevronDown size={10} className="opacity-60" />
+                    </button>
+                </DropdownTrigger>
+                <DropdownContent align="start" className="w-16 p-1">
+                    {drives.map(drive => (
+                        <button
+                            key={drive}
+                            onClick={() => { onNavigate(drive + '\\'); setDriveDropdownOpen(false); }}
+                            className={cn(
+                                "w-full text-left px-2 py-1 text-xs rounded hover:bg-secondary/60",
+                                drive === segment.label && "bg-secondary font-medium"
+                            )}
+                        >
+                            {drive}
+                        </button>
+                    ))}
+                </DropdownContent>
+            </Dropdown>
+        ) : (
+            <Tooltip>
+                <TooltipTrigger asChild>
+                    <button
+                        onClick={() => onNavigate(segment.path)}
+                        className={cn(
+                            "hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 truncate max-w-[160px] shrink-0",
+                            isLast && "text-foreground font-medium"
+                        )}
+                    >
+                        {segment.label}
+                    </button>
+                </TooltipTrigger>
+                <TooltipContent>{segment.label}</TooltipContent>
+            </Tooltip>
+        );
+
+        return (
+            <React.Fragment key={segment.path}>
+                {node}
+                {showTrailingChevron && <ChevronRight size={12} className="opacity-40 shrink-0" />}
+            </React.Fragment>
+        );
+    };
+
+    // Pin Home + leading root + ellipsis outside the scrollport so narrow panes
+    // can still navigate prefixes while the trailing chips scroll toward the end.
     return (
         <Tooltip>
             <TooltipTrigger asChild>
-                <div
-                    ref={viewportRef}
-                    className="w-full min-w-0 overflow-hidden cursor-default"
-                >
-                    <div
-                        ref={trackRef}
-                        className="flex w-max max-w-none items-center gap-1 text-xs text-muted-foreground"
-                    >
+                <div className="flex w-full min-w-0 items-center gap-1 text-xs text-muted-foreground cursor-default">
+                    <div className="flex items-center gap-1 shrink-0">
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <button
@@ -179,73 +262,45 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                             <TooltipContent>{t("sftp.goHome")}</TooltipContent>
                         </Tooltip>
                         <ChevronRight size={12} className="opacity-40 shrink-0" />
-                        {visibleParts.map(({ segment, originalIndex }, displayIdx) => {
-                            const partPath = segment.path;
-                            const isLast = originalIndex === segments.length - 1;
-                            const showEllipsisBefore =
-                                needsTruncation && displayIdx === 1;
-
-                            return (
-                                <React.Fragment key={partPath}>
-                                    {showEllipsisBefore && (
-                                        <>
-                                            <Tooltip>
-                                                <TooltipTrigger asChild>
-                                                    <span className="px-1 py-0.5 shrink-0 flex items-center text-muted-foreground cursor-default">
-                                                        <MoreHorizontal size={14} />
-                                                    </span>
-                                                </TooltipTrigger>
-                                                <TooltipContent>
-                                                    {`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.segment.label).join(' > ')}`}
-                                                </TooltipContent>
-                                            </Tooltip>
-                                            <ChevronRight size={12} className="opacity-40 shrink-0" />
-                                        </>
-                                    )}
-                                    {originalIndex === 0 && showDriveDropdown ? (
-                                        <Dropdown open={driveDropdownOpen} onOpenChange={handleDriveDropdownOpen}>
-                                            <DropdownTrigger asChild>
-                                                <button className="hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 shrink-0 flex items-center gap-0.5">
-                                                    {segment.label}
-                                                    <ChevronDown size={10} className="opacity-60" />
-                                                </button>
-                                            </DropdownTrigger>
-                                            <DropdownContent align="start" className="w-16 p-1">
-                                                {drives.map(drive => (
-                                                    <button
-                                                        key={drive}
-                                                        onClick={() => { onNavigate(drive + '\\'); setDriveDropdownOpen(false); }}
-                                                        className={cn(
-                                                            "w-full text-left px-2 py-1 text-xs rounded hover:bg-secondary/60",
-                                                            drive === segment.label && "bg-secondary font-medium"
-                                                        )}
-                                                    >
-                                                        {drive}
-                                                    </button>
-                                                ))}
-                                            </DropdownContent>
-                                        </Dropdown>
-                                    ) : (
-                                        <Tooltip>
-                                            <TooltipTrigger asChild>
-                                                <button
-                                                    onClick={() => onNavigate(partPath)}
-                                                    className={cn(
-                                                        "hover:text-foreground px-1 py-0.5 rounded hover:bg-secondary/60 truncate max-w-[160px] shrink-0",
-                                                        isLast && "text-foreground font-medium"
-                                                    )}
-                                                >
-                                                    {segment.label}
-                                                </button>
-                                            </TooltipTrigger>
-                                            <TooltipContent>{segment.label}</TooltipContent>
-                                        </Tooltip>
-                                    )}
-                                    {!isLast && <ChevronRight size={12} className="opacity-40 shrink-0" />}
-                                </React.Fragment>
-                            );
+                        {leadingPart && renderSegmentButton(leadingPart, {
+                            showTrailingChevron: showEllipsis || trailingParts.length > 0,
                         })}
+                        {showEllipsis && (
+                            <>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <span className="px-1 py-0.5 shrink-0 flex items-center text-muted-foreground cursor-default">
+                                            <MoreHorizontal size={14} />
+                                        </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        {`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.segment.label).join(' > ')}`}
+                                    </TooltipContent>
+                                </Tooltip>
+                                {trailingParts.length > 0 && (
+                                    <ChevronRight size={12} className="opacity-40 shrink-0" />
+                                )}
+                            </>
+                        )}
                     </div>
+
+                    {trailingParts.length > 0 && (
+                        <div
+                            ref={viewportRef}
+                            className="min-w-0 flex-1 overflow-hidden"
+                        >
+                            <div
+                                ref={trackRef}
+                                className="flex w-max max-w-none items-center gap-1"
+                            >
+                                {trailingParts.map((part, idx) =>
+                                    renderSegmentButton(part, {
+                                        showTrailingChevron: idx < trailingParts.length - 1,
+                                    }),
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </TooltipTrigger>
             <TooltipContent>{path}</TooltipContent>
