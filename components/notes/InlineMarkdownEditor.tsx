@@ -243,9 +243,29 @@ export const hasActiveLexicalTextSelection = (target: EventTarget | null): boole
 };
 
 /**
- * Decide whether markdown paste should call preventDefault + insertMarkdown.
- * When selection is missing, return false so the browser can paste plain text
- * instead of swallowing the clipboard with a no-op insert.
+ * Merge a recovered markdown paste into the current document body.
+ * Used when Lexical has no caret (or insertMarkdown no-ops after preventDefault).
+ * Strips leading blank lines only — keep first-line indentation for nested lists.
+ */
+export const mergeNoteMarkdownDocumentPaste = (
+  currentMarkdown: string,
+  clipboardText: string,
+): string => {
+  const current = currentMarkdown.replace(/\s+$/u, "");
+  const pasted = clipboardText
+    .replace(/\r\n?/g, "\n")
+    .replace(/^\n+/u, "")
+    .replace(/\s+$/u, "");
+  if (!pasted) return currentMarkdown;
+  if (!current) return pasted;
+  return `${current}\n\n${pasted}`;
+};
+
+/**
+ * Decide whether markdown paste should call preventDefault.
+ * Selection is optional: when the caret is gone (common after a prior
+ * insertMarkdown), recover via document setMarkdown merge instead of letting
+ * preventDefault + a no-op Lexical insert swallow the clipboard.
  */
 export const shouldInterceptNoteMarkdownPaste = (input: {
   editorMode: NoteEditorMode;
@@ -255,8 +275,7 @@ export const shouldInterceptNoteMarkdownPaste = (input: {
 }): boolean => {
   if (input.editorMode !== "edit") return false;
   if (input.pasteInsideCodeBlock) return false;
-  if (!shouldInsertClipboardTextAsMarkdown(input.clipboardText)) return false;
-  return input.canInsertMarkdownAtSelection;
+  return shouldInsertClipboardTextAsMarkdown(input.clipboardText);
 };
 
 export const resolveHostPickerPopupPosition = ({
@@ -487,6 +506,9 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
   const editorRef = useRef<MDXEditorMethods>(null);
   const latestMarkdownRef = useRef(value);
   const syncedPropValueRef = useRef(value);
+  // Bumped on unmount / external value sync so deferred paste recovery cannot
+  // commit into a switched or unmounted note.
+  const pasteRecoveryGenerationRef = useRef(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const lastLinkActivationRef = useRef<{ href: string; at: number } | null>(null);
@@ -539,10 +561,15 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
     if (latestMarkdownRef.current !== syncedPropValueRef.current) {
       return;
     }
+    pasteRecoveryGenerationRef.current += 1;
     syncedPropValueRef.current = value;
     latestMarkdownRef.current = value;
     editorRef.current?.setMarkdown(value);
   }, [value]);
+
+  useEffect(() => () => {
+    pasteRecoveryGenerationRef.current += 1;
+  }, []);
 
   useEffect(() => {
     if (!hostPicker.open) return;
@@ -916,13 +943,14 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
   const handlePasteCapture = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
     const markdown = event.clipboardData.getData("text/plain");
     const editor = editorRef.current;
+    const canInsertAtSelection = Boolean(editor)
+      && hasActiveLexicalTextSelection(event.target);
     if (
       !shouldInterceptNoteMarkdownPaste({
         editorMode,
         pasteInsideCodeBlock: isNotePasteInsideCodeBlock(event.target),
         clipboardText: markdown,
-        canInsertMarkdownAtSelection: Boolean(editor)
-          && hasActiveLexicalTextSelection(event.target),
+        canInsertMarkdownAtSelection: canInsertAtSelection,
       })
     ) {
       return;
@@ -932,10 +960,48 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
     event.preventDefault();
     event.stopPropagation();
     event.nativeEvent.stopImmediatePropagation?.();
+
+    const applyDocumentPaste = () => {
+      // Prefer live editor markdown: a prior insertMarkdown may have updated Lexical
+      // while onChange was muted, leaving latestMarkdownRef stale.
+      const currentMarkdown = editor.getMarkdown();
+      const next = mergeNoteMarkdownDocumentPaste(currentMarkdown, markdown);
+      // setMarkdown mutes MDXEditor onChange; commit the draft ourselves so
+      // autosave still sees the pasted body.
+      editor.setMarkdown(next);
+      commitMarkdown(next);
+    };
+
+    // Document merge only when Lexical has no caret. With a live selection,
+    // keep insertMarkdown so caret/replace semantics stay intact (incl. long pastes).
+    // Do not fall back to document append after insertMarkdown: that races slow
+    // inserts (duplicate paste) and can write into a switched note after unmount.
+    if (!canInsertAtSelection) {
+      applyDocumentPaste();
+    } else {
+      const before = latestMarkdownRef.current;
+      const recoveryGeneration = ++pasteRecoveryGenerationRef.current;
+      editor.focus();
+      editor.insertMarkdown(markdown);
+      // insertMarkdown's Lexical update is deferred; if onChange is muted/missed
+      // but the document did change, poll briefly and commit the settled markdown.
+      const tryCommitSettledPaste = (attempt: number) => {
+        if (pasteRecoveryGenerationRef.current !== recoveryGeneration) return;
+        if (latestMarkdownRef.current !== before) return;
+        const current = editor.getMarkdown();
+        if (current !== before) {
+          commitMarkdown(current);
+          return;
+        }
+        if (attempt >= 4) return;
+        window.setTimeout(() => tryCommitSettledPaste(attempt + 1), 50);
+      };
+      window.setTimeout(() => tryCommitSettledPaste(0), 50);
+    }
+
     setHostPicker((current) => ({ ...current, open: false, query: "", selectedIndex: 0 }));
     setLinkAction(null);
-    editor.insertMarkdown(markdown);
-  }, [editorMode]);
+  }, [commitMarkdown, editorMode]);
 
   return (
     <div
