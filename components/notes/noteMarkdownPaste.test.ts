@@ -97,18 +97,20 @@ test("paste settle attempts scale with clipboard size", () => {
 test("InlineMarkdownEditor only preventDefaults markdown paste after a successful intercept guard", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /shouldInterceptNoteMarkdownPaste/);
+  assert.match(source, /resolveNoteClipboardPaste/);
+  assert.match(source, /shouldInterceptResolvedNotePaste/);
   assert.match(source, /hasActiveLexicalTextSelection/);
   assert.match(source, /mergeNoteMarkdownDocumentPaste/);
   assert.match(source, /setMarkdown\(/);
   assert.match(source, /resolveNoteMarkdownPasteStrategy/);
+  assert.match(source, /text\/html/);
   assert.match(
     source,
-    /shouldInterceptNoteMarkdownPaste\([\s\S]*?\)[\s\S]*?event\.preventDefault\(\)/,
+    /shouldInterceptResolvedNotePaste\([\s\S]*?\)[\s\S]*?event\.preventDefault\(\)/,
   );
   assert.match(
     source,
-    /if \(\s*!shouldInterceptNoteMarkdownPaste\([\s\S]*?\)\s*\{\s*return;\s*\}/,
+    /if \(\s*!shouldInterceptResolvedNotePaste\([\s\S]*?\)\s*\{\s*return;\s*\}/,
   );
   // Long / no-caret path goes document-merge; short selection keeps insertMarkdown.
   assert.match(source, /strategy === "document-merge"/);

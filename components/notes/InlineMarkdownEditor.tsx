@@ -43,6 +43,18 @@ import { toast } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { FixedSizeVirtualList, type FixedSizeVirtualListHandle } from "../ui/FixedSizeVirtualList";
 import type { Host } from "../../types";
+import {
+  resolveNoteClipboardPaste,
+  shouldInsertClipboardTextAsMarkdown,
+  shouldInterceptResolvedNotePaste,
+} from "./noteClipboardPaste";
+
+export {
+  shouldInsertClipboardTextAsMarkdown,
+  resolveNoteClipboardPaste,
+  shouldInterceptResolvedNotePaste,
+  convertClipboardHtmlToMarkdown,
+} from "./noteClipboardPaste";
 
 export interface InlineMarkdownEditorProps {
   value: string;
@@ -196,24 +208,6 @@ const getEstimatedHostPickerHeight = (availableHostCount: number): number => {
   return HOST_PICKER_HEADER_HEIGHT + Math.min(HOST_PICKER_LIST_MAX_HEIGHT, listHeight);
 };
 
-const PASTED_MARKDOWN_PATTERNS = [
-  /^ {0,3}#{1,6}\s+\S/m,
-  /^ {0,3}(?:[-+*]|\d+[.)])\s+\S/m,
-  /^ {0,3}>\s+\S/m,
-  /^ {0,3}(?:```|~~~)/m,
-  /^ {0,3}[-*_](?:\s*[-*_]){2,}\s*$/m,
-  /^ {0,3}\|?.+\|.+\n {0,3}\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/m,
-  /(^|[^!])\[[^\]\n]+\]\([^) \n]+(?:\s+"[^"\n]*")?\)/,
-  /(^|[\s([{])(?:\*\*|__)\S[\s\S]*?\S(?:\*\*|__)(?=$|[\s\])}.,;:!?])/,
-  /(^|[\s([{])`[^`\n]+`(?=$|[\s\])}.,;:!?])/,
-];
-
-export const shouldInsertClipboardTextAsMarkdown = (text: string): boolean => {
-  const markdown = text.replace(/\r\n?/g, "\n").trim();
-  if (!markdown) return false;
-  return PASTED_MARKDOWN_PATTERNS.some((pattern) => pattern.test(markdown));
-};
-
 export const isNotePasteInsideCodeBlock = (target: EventTarget | null): boolean => {
   if (typeof Element === "undefined") return false;
   const element = target instanceof Element
@@ -266,6 +260,8 @@ export const mergeNoteMarkdownDocumentPaste = (
  * Selection is optional: when the caret is gone (common after a prior
  * insertMarkdown), recover via document setMarkdown merge instead of letting
  * preventDefault + a no-op Lexical insert swallow the clipboard.
+ *
+ * Prefer {@link shouldInterceptResolvedNotePaste} when HTML clipboard is available.
  */
 export const shouldInterceptNoteMarkdownPaste = (input: {
   editorMode: NoteEditorMode;
@@ -976,16 +972,21 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
   }, []);
 
   const handlePasteCapture = useCallback((event: React.ClipboardEvent<HTMLDivElement>) => {
-    const markdown = event.clipboardData.getData("text/plain");
+    // Browser / Word copies put structure in text/html; text/plain is often
+    // flattened. Resolve HTML → markdown so rich paste is not a silent no-op.
+    const payload = resolveNoteClipboardPaste({
+      plainText: event.clipboardData.getData("text/plain"),
+      htmlText: event.clipboardData.getData("text/html"),
+    });
+    const markdown = payload.text;
     const editor = editorRef.current;
     const canInsertAtSelection = Boolean(editor)
       && hasActiveLexicalTextSelection(event.target);
     if (
-      !shouldInterceptNoteMarkdownPaste({
+      !shouldInterceptResolvedNotePaste({
         editorMode,
         pasteInsideCodeBlock: isNotePasteInsideCodeBlock(event.target),
-        clipboardText: markdown,
-        canInsertMarkdownAtSelection: canInsertAtSelection,
+        payload,
       })
     ) {
       return;
