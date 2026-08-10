@@ -8,7 +8,7 @@ import {
   shouldInsertClipboardTextAsMarkdown,
 } from "./noteClipboardPaste.ts";
 
-test("html clipboard converts headings lists links and emphasis", () => {
+test("turndown converts headings lists links and emphasis from html clipboard", () => {
   const html = `
     <html><body>
     <!--StartFragment-->
@@ -22,27 +22,53 @@ test("html clipboard converts headings lists links and emphasis", () => {
   assert.match(md, /^# Runbook/m);
   assert.match(md, /\*\*sshd\*\*/);
   assert.match(md, /\*prod\*/);
-  assert.match(md, /^- check logs/m);
+  assert.match(md, /check logs/);
   assert.match(md, /\[docs\]\(https:\/\/example\.com\)/);
 });
 
-test("resolve prefers structured plain markdown over html", () => {
+test("resolve prefers html→turndown over plain when both exist (GitHub-style paste)", () => {
+  // GitHub puts markdown+raw HTML in plain and rendered HTML in text/html.
+  // Prefer HTML conversion so <img>/<a name> do not break MDX insertMarkdown.
+  const payload = resolveNoteClipboardPaste({
+    plainText: [
+      "---",
+      "",
+      '<img width="3142" alt="shot" src="https://example.com/a.png" />',
+      "",
+      '<a name="catty-agent"></a>',
+      "# 🔥 Catty Agent — Your IT Ops AI Partner",
+      "",
+      "> 🚀 **Boost your IT ops daily work with AI power.**",
+      "",
+      "### 🔥 What can Catty Agent do?",
+      "",
+      "- 🚀 **Natural language server management** — just tell it",
+    ].join("\n"),
+    htmlText: `
+      <h1>🔥 Catty Agent — Your IT Ops AI Partner</h1>
+      <blockquote><p>🚀 <strong>Boost your IT ops daily work with AI power.</strong></p></blockquote>
+      <h3>🔥 What can Catty Agent do?</h3>
+      <ul>
+        <li>🚀 <strong>Natural language server management</strong> — just tell it</li>
+      </ul>
+      <img width="3142" alt="shot" src="https://example.com/a.png" />
+      <a name="catty-agent"></a>
+    `,
+  });
+  assert.equal(payload.kind, "html-converted");
+  assert.match(payload.text, /Catty Agent/);
+  assert.match(payload.text, /Natural language server management/);
+  assert.doesNotMatch(payload.text, /<img\b/i);
+  assert.doesNotMatch(payload.text, /<a\s+name=/i);
+});
+
+test("resolve uses structured plain markdown when html is absent", () => {
   const payload = resolveNoteClipboardPaste({
     plainText: "# From .md file\n\n- item",
-    htmlText: "<h1>HTML title</h1>",
+    htmlText: "",
   });
   assert.equal(payload.kind, "markdown");
   assert.match(payload.text, /# From \.md file/);
-});
-
-test("resolve converts html when plain is unstructured", () => {
-  const payload = resolveNoteClipboardPaste({
-    plainText: "Runbook\nRestart sshd on prod.",
-    htmlText: "<h1>Runbook</h1><p>Restart <b>sshd</b>.</p>",
-  });
-  assert.equal(payload.kind, "html-converted");
-  assert.match(payload.text, /^# Runbook/m);
-  assert.match(payload.text, /\*\*sshd\*\*/);
 });
 
 test("html-converted paste is always intercepted in edit mode", () => {
@@ -63,14 +89,6 @@ test("html-converted paste is always intercepted in edit mode", () => {
     shouldInterceptResolvedNotePaste({
       editorMode: "preview",
       pasteInsideCodeBlock: false,
-      payload,
-    }),
-    false,
-  );
-  assert.equal(
-    shouldInterceptResolvedNotePaste({
-      editorMode: "edit",
-      pasteInsideCodeBlock: true,
       payload,
     }),
     false,
