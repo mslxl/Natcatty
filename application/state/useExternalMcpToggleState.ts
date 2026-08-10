@@ -5,8 +5,10 @@ import {
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
   STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS,
+  STORAGE_KEY_AI_PERMISSION_MODE,
   STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
 } from '../../infrastructure/config/storageKeys';
+import type { AIPermissionMode } from '../../infrastructure/ai/types';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
@@ -105,6 +107,7 @@ type ExternalMcpConfig = {
 };
 
 type ExternalMcpBridge = {
+  aiMcpSetPermissionMode?: (mode: AIPermissionMode) => Promise<unknown> | unknown;
   externalMcpSetConfig?: (config: ExternalMcpConfig) => Promise<unknown> | unknown;
   externalMcpSetEnabled?: (enabled: boolean) => Promise<unknown> | unknown;
   externalMcpGetStatus?: () => Promise<{
@@ -124,6 +127,11 @@ export type ExternalMcpStartupSyncPlan = {
 
 export function normalizeExternalMcpMode(value: string | null): ExternalMcpMode {
   return value === 'persistent' ? 'persistent' : 'temporary';
+}
+
+function readAIPermissionMode(): AIPermissionMode {
+  const stored = localStorageAdapter.readString(STORAGE_KEY_AI_PERMISSION_MODE);
+  return stored === 'observer' || stored === 'auto' ? stored : 'confirm';
 }
 
 export function normalizeExternalMcpIdleTimeoutMinutes(value: number | null): number {
@@ -280,6 +288,13 @@ export async function syncExternalMcpStartupState(
   // toggle during boot wins over a stale enable/disable decision.
   const startupGeneration = externalMcpEnableGeneration;
   const initialPlan = readExternalMcpStartupSyncPlan();
+  try {
+    // External MCP discovery is written while enabling, so restore the saved
+    // permission first instead of exposing the main-process default (confirm).
+    await Promise.resolve(bridge?.aiMcpSetPermissionMode?.(readAIPermissionMode()));
+  } catch {
+    // Permission sync is best-effort; the main process keeps its safe default.
+  }
   try {
     await Promise.resolve(bridge?.externalMcpSetConfig?.(initialPlan.config));
   } catch {

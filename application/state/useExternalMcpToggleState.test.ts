@@ -199,6 +199,36 @@ describe('useExternalMcpToggleState startup ready gate', () => {
     assert.match(hookSource, /if \(isPeerSessionWindow \|\| !enabled\) return;/);
   });
 
+  it('restores saved permission before enabling persistent External MCP', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      const storageKeys = await import('../../infrastructure/config/storageKeys.ts');
+      globalThis.localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, 'true');
+      globalThis.localStorage.setItem(storageKeys.STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+      globalThis.localStorage.setItem(storageKeys.STORAGE_KEY_AI_PERMISSION_MODE, 'auto');
+
+      const calls: string[] = [];
+      await syncExternalMcpStartupState({
+        aiMcpSetPermissionMode: async (mode) => {
+          calls.push(`permission:${mode}`);
+          return { ok: true };
+        },
+        externalMcpSetConfig: async () => {
+          calls.push('config');
+          return { ok: true };
+        },
+        externalMcpSetEnabled: async (enabled) => {
+          calls.push(`enabled:${enabled}`);
+          return { ok: true, enabled };
+        },
+      });
+
+      assert.deepEqual(calls, ['permission:auto', 'config', 'enabled:true']);
+    } finally {
+      restore();
+    }
+  });
+
   it('re-reads storage after config await so concurrent top-bar toggles win', async () => {
     const restore = installMemoryLocalStorage();
     try {
