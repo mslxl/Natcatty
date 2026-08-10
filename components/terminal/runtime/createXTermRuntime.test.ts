@@ -14,9 +14,14 @@ import { createPromptLineBreakState } from "./promptLineBreak";
 function createFakeTerm(
   lineText = "$ echo ok",
   cursorX = lineText.length,
-  options?: { ghostFrom?: number },
+  options?: {
+    ghostFrom?: number;
+    /** Per-cell fg overrides for accepted text (syntax highlighting). */
+    fgAt?: (x: number) => number;
+  },
 ) {
   const ghostFrom = options?.ghostFrom;
+  const fgAt = options?.fgAt;
   return {
     buffer: {
       active: {
@@ -37,7 +42,10 @@ function createFakeTerm(
                 getChars: () => lineText[x] ?? "",
                 isDim: () => (isGhost ? 1 : 0),
                 getFgColorMode: () => 0,
-                getFgColor: () => (isGhost ? 8 : 15),
+                getFgColor: () => {
+                  if (isGhost) return 8;
+                  return fgAt?.(x) ?? 15;
+                },
               };
             },
           };
@@ -427,6 +435,30 @@ test("resolveSubmittedShellCommand records full line after mid-line history edit
     ),
     "systemctl start firewalld",
   );
+  // Per-token syntax highlighting must not strip the accepted suffix after
+  // the cursor (command / arg / path colors differ across the line).
+  {
+    const prompt = "user@host:~$ ";
+    const cmd = "systemctl start firewalld";
+    const painted = `${prompt}${cmd}`;
+    const cursor = `${prompt}systemctl start`.length;
+    const systemctlEnd = `${prompt}systemctl`.length;
+    const startEnd = `${prompt}systemctl start`.length;
+    assert.equal(
+      resolveSubmittedShellCommand(
+        "start",
+        createFakeTerm(painted, cursor, {
+          fgAt: (x) => {
+            if (x < prompt.length) return 15;
+            if (x < systemctlEnd) return 2; // command
+            if (x < startEnd) return 3; // arg
+            return 4; // differently colored accepted suffix
+          },
+        }) as never,
+      ),
+      "systemctl start firewalld",
+    );
+  }
   // zsh autosuggest paint past the cursor must stay on the typed prefix.
   assert.equal(
     resolveSubmittedShellCommand(

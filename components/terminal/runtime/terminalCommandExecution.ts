@@ -89,10 +89,53 @@ const terminalCellStylesEqual = (
   && left.fg === right.fg
 );
 
+const terminalCellStyleKey = (style: TerminalCellStyle): string => (
+  `${style.dim}:${style.fgMode}:${style.fg}`
+);
+
+type StyledCellSpan = {
+  offset: number;
+  style: TerminalCellStyle;
+};
+
 /**
- * zsh-autosuggest (and similar) ghosts are painted past the cursor in a
- * different fg/dim style. Truncate from the first divergent cell so Enter
- * recording never absorbs an unaccepted suggestion tail.
+ * Walk logical line cells from startOffset to endOffset (buffer coordinates
+ * that include the prompt prefix). Skips cells with unreadable styles.
+ */
+const collectStyledCellsInRange = (
+  term: XTerm,
+  promptRow: number,
+  startOffset: number,
+  endOffset: number,
+): StyledCellSpan[] | null => {
+  if (endOffset <= startOffset) return [];
+  const buffer = term.buffer.active;
+  const cells: StyledCellSpan[] = [];
+  let offset = 0;
+  for (let row = promptRow; ; row += 1) {
+    const rowLine = buffer.getLine(row);
+    if (!rowLine || typeof rowLine.getCell !== "function") return null;
+    const text = rowLine.translateToString(false);
+    for (let x = 0; x < text.length; x += 1) {
+      if (offset >= endOffset) return cells;
+      if (offset >= startOffset) {
+        const style = readTerminalCellStyle(rowLine.getCell(x));
+        if (!style) return null;
+        cells.push({ offset, style });
+      }
+      offset += 1;
+    }
+    const next = buffer.getLine(row + 1);
+    if (!next?.isWrapped) break;
+  }
+  return cells;
+};
+
+/**
+ * zsh-autosuggest ghosts are a uniform dim/foreign run past the cursor.
+ * Per-token syntax highlighting also changes fg past the cursor for accepted
+ * suffixes — only strip tails that look like suggestion paint, not ordinary
+ * highlight boundaries (`systemctl start`|`firewalld`).
  */
 const truncateDivergentStyleTail = (
   term: XTerm,
@@ -129,24 +172,53 @@ const truncateDivergentStyleTail = (
     const refStyle = readTerminalCellStyle(refLine.getCell(refX));
     if (!refStyle) return input;
 
-    let offset = combinedOffset;
-    for (let row = cursorY; ; row += 1) {
-      const rowLine = buffer.getLine(row);
-      if (!rowLine || typeof rowLine.getCell !== "function") return input;
-      const text = rowLine.translateToString(false);
-      const startX = row === cursorY ? cursorX : 0;
-      for (let x = startX; x < text.length; x += 1) {
-        const style = readTerminalCellStyle(rowLine.getCell(x));
-        if (style && !terminalCellStylesEqual(refStyle, style)) {
-          const cut = offset - promptText.length;
-          return input.slice(0, Math.max(0, cut)).replace(/\s+$/g, "");
-        }
-        offset += 1;
+    const promptEnd = promptText.length;
+    const lineEnd = promptEnd + input.length;
+    const acceptedCells = collectStyledCellsInRange(
+      term,
+      promptRow,
+      promptEnd,
+      combinedOffset,
+    );
+    const postCells = collectStyledCellsInRange(
+      term,
+      promptRow,
+      combinedOffset,
+      lineEnd,
+    );
+    if (!acceptedCells || !postCells || postCells.length === 0) return input;
+
+    const acceptedStyleKeys = new Set(
+      acceptedCells.map((cell) => terminalCellStyleKey(cell.style)),
+    );
+
+    let cutOffset: number | null = null;
+    for (let i = 0; i < postCells.length; i += 1) {
+      const cell = postCells[i];
+      if (terminalCellStylesEqual(refStyle, cell.style)) continue;
+
+      const tail = postCells.slice(i);
+      const ghostStyle = tail[0]?.style;
+      if (!ghostStyle) return input;
+      // Mixed styles after the first break are syntax-highlighted tokens.
+      if (tail.some((entry) => !terminalCellStylesEqual(ghostStyle, entry.style))) {
+        return input;
       }
-      const next = buffer.getLine(row + 1);
-      if (!next?.isWrapped) break;
+
+      const ghostKey = terminalCellStyleKey(ghostStyle);
+      const dimGhost = ghostStyle.dim !== 0 && refStyle.dim === 0;
+      // fg-only ghosts (common zsh-autosuggest `fg=8`) on mono-styled input.
+      const foreignMonoGhost = !acceptedStyleKeys.has(ghostKey)
+        && acceptedStyleKeys.size <= 1;
+      if (!dimGhost && !foreignMonoGhost) return input;
+
+      cutOffset = cell.offset;
+      break;
     }
-    return input;
+    if (cutOffset == null) return input;
+
+    const cut = cutOffset - promptText.length;
+    return input.slice(0, Math.max(0, cut)).replace(/\s+$/g, "");
   } catch {
     return input;
   }
