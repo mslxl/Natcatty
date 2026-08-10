@@ -165,7 +165,7 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   return {
     activeSessionIdMap: nextMap,
     sessions: sessionsChanged ? nextSessions : input.sessions as T[],
-    panelViewByScope: nextPanelViewByScope,
+    panelViewByScope: panelViewsChanged ? nextPanelViewByScope : previousPanelViewByScope,
     changed: true,
   };
 }
