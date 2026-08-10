@@ -41,8 +41,10 @@ import {
   computeAutocompleteAcceptWrite,
   isSameAutocompleteQuery,
   resolveAutocompleteQueryInput,
+  shouldBlockAutocompleteForSensitivePrompt,
 } from "./terminalAutocompletePrompt";
 import { isTerminalAlternateScreenActive } from "../terminalHibernateRuntime";
+
 
 export interface AutocompleteSettings {
   enabled: boolean;
@@ -158,6 +160,11 @@ interface UseTerminalAutocompleteOptions {
   snippets?: Snippet[];
   /** Accept a snippet — clears typed input then runs it (host-canonical send) */
   onAcceptSnippet?: (snippet: Snippet) => void;
+  /**
+   * Host-owned password/auth prompt latch. When true, suppress autocomplete
+   * even if the PS1 still looks like a normal shell (e.g. `read -s -p '$ '`).
+   */
+  sensitiveInputActiveRef?: RefObject<boolean>;
   /** Host-owned completion Provider adapter; defaults to Netcatty's built-in Provider. */
   provideCompletions?: (
     input: string,
@@ -187,7 +194,21 @@ export {
 export function useTerminalAutocomplete(
   options: UseTerminalAutocompleteOptions,
 ): TerminalAutocompleteHandle {
-  const { termRef, containerRef, sessionId, hostId, hostOs, settings: userSettings, onAcceptText, protocol, getCwd, snippets, onAcceptSnippet, provideCompletions } = options;
+  const {
+    termRef,
+    containerRef,
+    sessionId,
+    hostId,
+    hostOs,
+    settings: userSettings,
+    onAcceptText,
+    protocol,
+    getCwd,
+    snippets,
+    onAcceptSnippet,
+    sensitiveInputActiveRef,
+    provideCompletions,
+  } = options;
   const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
     ...userSettings,
@@ -741,6 +762,18 @@ export function useTerminalAutocomplete(
     );
     lastPromptRef.current = prompt;
 
+    // Explicit password / auth-challenge prompts (and host-latched sensitive
+    // input) stay fail-closed even when echo has already validated the line.
+    if (
+      shouldBlockAutocompleteForSensitivePrompt({
+        sensitiveInputActive: sensitiveInputActiveRef?.current === true,
+        promptText: prompt.promptText,
+      })
+    ) {
+      clearState();
+      return;
+    }
+
     // Pre-echo keystroke buffer can look identical to an echo-disabled
     // password prompt (`read -s -p '$ '`). Do not render or accept
     // built-in history/snippet suggestions until the shell echoes input.
@@ -748,6 +781,7 @@ export function useTerminalAutocomplete(
     // debounce cycle until the live line validates — or until max wait
     // (silent prompts never echo). clearState cancels timers and echo-wait
     // refs; re-arm the wait afterward when still within the window.
+    // Partial echo still reaches resolveAutocompleteQueryInput below (#2830).
     if (allowExternalProviders === false) {
       const typed = typedInputBufferRef.current;
       const startedAt =
@@ -1046,7 +1080,9 @@ export function useTerminalAutocomplete(
     // screen while completions were pending (e.g. launching codex/vim). Drop any
     // result that would paint popup/ghost over a TUI. Same unconditional policy. #2530
     const currentPrompt = isCurrentQueryStillActive();
-    if (!currentPrompt) return;
+    if (!currentPrompt) {
+      return;
+    }
 
     if (pendingLatePathSuggestions) {
       completions = mergeLatePathSuggestions(completions, pendingLatePathSuggestions);
@@ -1291,6 +1327,11 @@ export function useTerminalAutocomplete(
   }, []);
 
   useEffect(() => {
+    // Fast Refresh preserves refs across effect teardown/re-run. dispose() sets
+    // disposedRef=true on cleanup; without resetting here, every HMR of this
+    // module (or TerminalAutocomplete) permanently kills fetchSuggestions while
+    // handleInput keeps scheduling — matches "fetch-scheduled but no popup".
+    disposedRef.current = false;
     return () => { dispose(); };
   }, [dispose]);
 

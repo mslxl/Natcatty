@@ -1,3 +1,4 @@
+import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
 import {
   isNonPromptLine,
   reconcilePromptWithExternalCommand,
@@ -100,6 +101,23 @@ export function isSameAutocompleteQuery(options: {
   if (options.currentInput === null) return false;
   if (options.currentInput === options.queryInput) return true;
   return options.previewActive && options.previewBaseline === options.queryInput;
+}
+
+/**
+ * Whether fetchSuggestions must refuse to query/render for an already-known
+ * sensitive line (host latch or auth-challenge prompt text).
+ *
+ * This is *not* a substitute for the empty-echo / `allowExternalProviders:
+ * false` wait in useTerminalAutocomplete: `read -s -p '$ '` still looks like
+ * a normal shell PS1 until echo validates, so that path stays fail-closed
+ * separately (#2814).
+ */
+export function shouldBlockAutocompleteForSensitivePrompt(options: {
+  sensitiveInputActive: boolean;
+  promptText: string;
+}): boolean {
+  if (options.sensitiveInputActive) return true;
+  return isSensitiveTerminalChallenge(options.promptText);
 }
 
 /**

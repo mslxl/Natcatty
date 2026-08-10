@@ -997,6 +997,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             protocol={effectiveTerminalProtocol ?? resolveEffectiveTerminalProtocol(host)}
             workspaceId={workspaceId}
             status={status}
+            isVisible={isVisible}
             getCwd={() => terminalCwdTracker.getRendererCwd() ?? knownCwdRef.current}
             onAcceptText={(text) => autocompleteAcceptTextRef.current?.(text)}
             snippets={snippets}
