@@ -501,6 +501,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     scopeTargetId={context.scopeTargetId}
                     scopeHostIds={context.scopeHostIds}
                     scopeLabel={context.scopeLabel}
+                    focusedSessionId={context.focusedSessionId}
                     terminalSessions={context.terminalSessions}
                     resolveExecutorContext={resolveExecutorContext}
                     isVisible={isVisible}

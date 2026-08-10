@@ -100,5 +100,7 @@ export type AIPanelContext = {
   scopeTargetId?: string;
   scopeHostIds: string[];
   scopeLabel: string;
+  /** Focused pane in a workspace; used to inherit AI chat after terminal merge. */
+  focusedSessionId?: string;
   terminalSessions: AITerminalSessionInfo[];
 };
