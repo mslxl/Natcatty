@@ -1,13 +1,17 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
+  collapseLinkedImagesToTextLinks,
   convertClipboardHtmlToMarkdown,
   convertHtmlIslandsInMarkdown,
+  normalizePastedNoteMarkdown,
   resolveNoteClipboardPaste,
   serializeSafeHtmlImage,
   shouldInterceptResolvedNotePaste,
   shouldInsertClipboardTextAsMarkdown,
+  NOTE_IMAGE_INTRINSIC_WIDTH_CAP,
 } from "./noteClipboardPaste.ts";
 
 const CATTY_PASTE = `---
@@ -24,9 +28,7 @@ const CATTY_PASTE = `---
 
 - 🚀 **Natural language server management** — just tell it what you need, no more memorizing commands
 - 🔥 **Real-time server diagnostics** — check status, inspect logs, monitor resources through conversation
-- 🚀 **Multi-host orchestration** — coordinate tasks across multiple servers simultaneously
-- 🔥 **Intelligent context awareness** — understands your server environment and provides tailored responses
-- 🚀 **One-click complex operations** — set up clusters, deploy services, and more with simple instructions`;
+`;
 
 test("turndown converts pure html clipboard", () => {
   const html = `
@@ -43,52 +45,78 @@ test("turndown converts pure html clipboard", () => {
   assert.match(md, /^# Runbook/m);
   assert.match(md, /\*\*sshd\*\*/);
   assert.match(md, /\[docs\]\(https:\/\/example\.com\)/);
-  // Dimension-less images in pure HTML still become markdown images via our rule
-  // only when width/height absent — example has no dimensions.
-  assert.match(md, /!\[shot\]\(https:\/\/example\.com\/a\.png\)|src="https:\/\/example\.com\/a\.png"/);
+  assert.match(md, /!\[shot\]\(https:\/\/example\.com\/a\.png\)/);
 });
 
-test("html islands in markdown become image syntax without escaping headings", () => {
+test("large screenshot images become markdown without baked pixel width", () => {
   const md = convertHtmlIslandsInMarkdown(CATTY_PASTE);
   assert.match(md, /^# 🔥 Catty Agent/m);
-  assert.match(md, /^### 🔥 What can Catty Agent do\?/m);
-  assert.match(md, /^> 🚀 \*\*Boost your IT ops/m);
-  assert.match(md, /^- 🚀 \*\*Natural language server management\*\*/m);
-  // Dimensions preserved as HTML so MDXEditor HtmlImageVisitor can load width/height.
   assert.match(
     md,
-    /<img\b[^>]*src="https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d"[^>]*\/>/,
+    /!\[Screenshot 2026-07-02 at 22 51 24\]\(https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d\)/,
   );
-  assert.match(md, /width="3142"/);
-  assert.match(md, /height="1764"/);
-  assert.match(md, /alt="Screenshot 2026-07-02 at 22 51 24"/);
-  // Must not escape markdown structure the way full-document turndown does.
+  assert.doesNotMatch(md, /width="3142"/);
+  assert.doesNotMatch(md, /height="1764"/);
   assert.doesNotMatch(md, /\\#/);
-  assert.doesNotMatch(md, /\\\*\*/);
-  assert.doesNotMatch(md, /\\---/);
   assert.doesNotMatch(md, /<a\s+name=/i);
 });
 
-test("images without dimensions still use compact markdown image syntax", () => {
-  assert.equal(
-    serializeSafeHtmlImage({
-      src: "https://example.com/a.png",
-      alt: "shot",
-    }),
-    "![shot](https://example.com/a.png)",
-  );
+test("modest badge-sized images may keep a small html width", () => {
+  assert.ok(NOTE_IMAGE_INTRINSIC_WIDTH_CAP > 150);
   assert.match(
     serializeSafeHtmlImage({
-      src: "https://example.com/a.png",
-      alt: "shot",
-      width: 1510,
-      height: 870,
+      src: "https://cdn.ko-fi.com/cdn/kofi3.png?v=2",
+      alt: "Support on Ko-fi",
+      width: 150,
     }),
-    /<img\b[^>]*width="1510"[^>]*height="870"[^>]*\/>/,
+    /<img\b[^>]*width="150"/,
+  );
+  assert.equal(
+    serializeSafeHtmlImage({
+      src: "https://example.com/big.png",
+      alt: "shot",
+      width: 3142,
+      height: 1764,
+    }),
+    "![shot](https://example.com/big.png)",
   );
 });
 
-test("resolve pastes Catty-style mixed markdown+html from plain clipboard", () => {
+test("linked badge images collapse to clean text links", () => {
+  const source = [
+    "[![GitHub Release](https://img.shields.io/github/v/release/binaricat/Netcatty)](https://github.com/binaricat/Netcatty/releases/latest)",
+    "",
+    "[ ",
+    "![Platform](https://img.shields.io/badge/Platform-macOS-blue)",
+    " ](#)",
+    "",
+    "[",
+    '<img alt="Support on Ko-fi" width="150" src="https://cdn.ko-fi.com/cdn/kofi3.png?v=2" />',
+    "](https://ko-fi.com/binaricat)",
+  ].join("\n");
+
+  const md = collapseLinkedImagesToTextLinks(source);
+  assert.match(md, /\[GitHub Release\]\(https:\/\/github\.com\/binaricat\/Netcatty\/releases\/latest\)/);
+  assert.match(md, /\[Platform\]\(#\)/);
+  assert.match(md, /\[Support on Ko-fi\]\(https:\/\/ko-fi\.com\/binaricat\)/);
+  assert.doesNotMatch(md, /!\[GitHub Release\]/);
+  assert.doesNotMatch(md, /^\s*\]\(/m);
+});
+
+test("normalize removes orphan link closers and oversized html img attrs", () => {
+  const messy = [
+    "Intro",
+    "](https://example.com/orphan)",
+    '<img width="2000" height="1000" alt="wide" src="https://example.com/w.png" />',
+    "Done",
+  ].join("\n");
+  const md = normalizePastedNoteMarkdown(messy);
+  assert.doesNotMatch(md, /\]\(https:\/\/example\.com\/orphan\)/);
+  assert.match(md, /!\[wide\]\(https:\/\/example\.com\/w\.png\)/);
+  assert.doesNotMatch(md, /width="2000"/);
+});
+
+test("resolve pastes Catty-style mixed markdown+html cleanly", () => {
   const payload = resolveNoteClipboardPaste({
     plainText: CATTY_PASTE,
     htmlText: "",
@@ -103,9 +131,23 @@ test("resolve pastes Catty-style mixed markdown+html from plain clipboard", () =
     true,
   );
   assert.match(payload.text, /^# 🔥 Catty Agent/m);
-  assert.match(payload.text, /<img\b[^>]*src="https:\/\/github\.com\/user-attachments/);
-  assert.match(payload.text, /width="3142"/);
-  assert.match(payload.text, /Natural language server management/);
+  assert.match(payload.text, /!\[Screenshot[^\]]*\]\(https:\/\/github\.com\/user-attachments/);
+  assert.doesNotMatch(payload.text, /width="3142"/);
+});
+
+test("repo README paste collapses shields badges without debris", () => {
+  const readmeHead = readFileSync(new URL("../../README.md", import.meta.url), "utf8").slice(0, 2200);
+  const payload = resolveNoteClipboardPaste({ plainText: readmeHead, htmlText: "" });
+  assert.ok(payload.text.length > 50);
+  // No dangling markdown link closers from badge conversion.
+  assert.doesNotMatch(payload.text, /^\s*\]\([^)\n]+\)\s*$/m);
+  // Badges become text links or clean images, not split wrappers.
+  if (payload.text.includes("shields.io")) {
+    assert.doesNotMatch(
+      payload.text,
+      /\[\s*\n+\s*!\[[^\]]+\]\(https:\/\/img\.shields\.io/,
+    );
+  }
 });
 
 test("resolve uses full turndown for browser StartFragment html", () => {
@@ -116,7 +158,7 @@ test("resolve uses full turndown for browser StartFragment html", () => {
       <!--StartFragment-->
       <h1>From browser</h1>
       <p>Hello <b>world</b></p>
-      <img alt="x" src="https://cdn.example.com/x.png" />
+      <img alt="x" src="https://cdn.example.com/x.png" width="2000" height="1000" />
       <!--EndFragment-->
       </body></html>
     `,
@@ -125,6 +167,7 @@ test("resolve uses full turndown for browser StartFragment html", () => {
   assert.match(payload.text, /^# From browser/m);
   assert.match(payload.text, /\*\*world\*\*/);
   assert.match(payload.text, /!\[x\]\(https:\/\/cdn\.example\.com\/x\.png\)/);
+  assert.doesNotMatch(payload.text, /width="2000"/);
 });
 
 test("resolve uses structured plain markdown when html is absent", () => {

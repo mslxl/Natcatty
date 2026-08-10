@@ -1,10 +1,12 @@
 /**
  * Clipboard resolution for vault markdown notes.
  *
- * Uses Turndown (mature HTML→Markdown) for real HTML clipboard payloads.
- * For mixed markdown + HTML islands (GitHub-style plain text with <img>),
- * only convert HTML islands — never turndown the whole string (that escapes
- * # / ** and collapses structure).
+ * Product policy (lossy but clean — not GitHub README clone):
+ * - HTML → Markdown via Turndown (+ island conversion for mixed sources)
+ * - Linked badge images become plain text links (no broken ](url) debris)
+ * - Image dimensions are not forced as display pixels (side panel is narrow;
+ *   CSS max-width:100% scales screenshots without cropping)
+ * - Center/align HTML from READMEs is intentionally dropped
  */
 
 import TurndownService from "turndown";
@@ -21,6 +23,13 @@ export type NoteClipboardPastePayload = {
   kind: NoteClipboardPasteKind;
 };
 
+/**
+ * Pixel widths at or above this are treated as "screenshot intrinsic size"
+ * (GitHub README often uses 1500–3000). Never bake them into HTML width attrs
+ * for the note editor — they cause overflow/crop in the side panel.
+ */
+export const NOTE_IMAGE_INTRINSIC_WIDTH_CAP = 640;
+
 const PASTED_MARKDOWN_PATTERNS = [
   /^ {0,3}#{1,6}\s+\S/m,
   /^ {0,3}(?:[-+*]|\d+[.)])\s+\S/m,
@@ -31,7 +40,6 @@ const PASTED_MARKDOWN_PATTERNS = [
   /(^|[^!])\[[^\]\n]+\]\([^) \n]+(?:\s+"[^"\n]*")?\)/,
   /(^|[\s([{])(?:\*\*|__)\S[\s\S]*?\S(?:\*\*|__)(?=$|[\s\])}.,;:!?])/,
   /(^|[\s([{])`[^`\n]+`(?=$|[\s\])}.,;:!?])/,
-  // Common image markdown / raw HTML image from docs pastes.
   /!\[[^\]]*\]\([^)\s]+\)/,
   /<img\b/i,
 ];
@@ -71,7 +79,6 @@ export const isPrimarilyHtmlDocument = (html: string): boolean => {
   if (/<!--StartFragment-->/i.test(trimmed)) return true;
   if (/<\s*html[\s>]/i.test(trimmed)) return true;
   if (/<\s*body[\s>]/i.test(trimmed)) return true;
-  // High tag density vs remaining text → treat as HTML document.
   const withoutTags = trimmed.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
   const tagChars = (trimmed.match(/<[^>]+>/g) ?? []).join("").length;
   if (tagChars === 0) return false;
@@ -94,7 +101,6 @@ const getTurndown = (): TurndownService => {
     preformattedCode: true,
   });
   service.use(gfm);
-  // Drop empty name-only anchors (GitHub heading bookmarks).
   service.addRule("stripEmptyAnchors", {
     filter: (node) => (
       node.nodeName === "A"
@@ -103,7 +109,6 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
-  // Skip only huge base64 data URLs from Office paste.
   service.addRule("skipDataImages", {
     filter: (node) => (
       node.nodeName === "IMG"
@@ -111,9 +116,8 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
-  // Preserve width/height as HTML <img> so MDXEditor's HtmlImageVisitor keeps
-  // dimensions (plain ![alt](src) drops size — GitHub READMEs use width attrs).
-  service.addRule("imagesPreserveDimensions", {
+  // Prefer markdown images; only keep modest HTML dimensions for small assets.
+  service.addRule("imagesForNotes", {
     filter: "img",
     replacement: (_content, node) => {
       const el = node as HTMLImageElement;
@@ -137,11 +141,9 @@ const isSafeImageSrc = (src: string): boolean => {
   const trimmed = src.trim();
   if (!trimmed) return false;
   if (trimmed.startsWith("data:")) return false;
-  // Allow https, http, protocol-relative, and relative paths from READMEs.
   if (/^https?:\/\//i.test(trimmed)) return true;
   if (trimmed.startsWith("//")) return true;
   if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) return true;
-  // Bare relative like public/icon.png
   if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return true;
   return false;
 };
@@ -154,9 +156,16 @@ const escapeHtmlAttr = (value: string): string => (
     .replace(/>/g, "&gt;")
 );
 
+const parsePositivePx = (raw: string): number | null => {
+  if (!/^\d+(?:\.\d+)?$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
 /**
- * Build a sanitized HTML img tag. When width/height are present, keep HTML so
- * MDXEditor can import dimensions; otherwise emit standard markdown image.
+ * Build image markdown for notes.
+ * - Large / screenshot widths → plain ![alt](src) (CSS scales; no crop)
+ * - Small assets with modest width → optional HTML width for badges/icons
  */
 export const serializeSafeHtmlImage = (input: {
   src: string;
@@ -167,30 +176,31 @@ export const serializeSafeHtmlImage = (input: {
 }): string => {
   const src = (input.src ?? "").trim();
   if (!isSafeImageSrc(src)) return "";
-  const alt = input.alt ?? "";
+  const alt = (input.alt ?? "").replace(/[[\]]/g, "");
   const title = input.title?.trim() || "";
-  const width = input.width != null && String(input.width).trim() !== ""
-    ? String(input.width).trim()
-    : "";
-  const height = input.height != null && String(input.height).trim() !== ""
-    ? String(input.height).trim()
-    : "";
-  // Only keep numeric (or percent) dimensions — ignore junk attributes.
-  const safeWidth = /^(?:\d+(?:\.\d+)?%?)$/.test(width) ? width : "";
-  const safeHeight = /^(?:\d+(?:\.\d+)?%?)$/.test(height) ? height : "";
+  const widthRaw = input.width != null ? String(input.width).trim() : "";
+  const heightRaw = input.height != null ? String(input.height).trim() : "";
+  const widthPx = parsePositivePx(widthRaw);
+  const heightPx = parsePositivePx(heightRaw);
 
-  if (!safeWidth && !safeHeight) {
-    const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
-    return `![${alt.replace(/[[\]]/g, "")}](${src}${titlePart})`;
+  const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
+  const mdImage = `![${alt}](${src}${titlePart})`;
+
+  // Oversized or missing usable width → markdown only (side-panel safe).
+  if (widthPx == null || widthPx >= NOTE_IMAGE_INTRINSIC_WIDTH_CAP) {
+    return mdImage;
   }
 
+  // Modest width: keep HTML so small badges/icons can stay roughly sized.
   const parts = [
     `src="${escapeHtmlAttr(src)}"`,
     `alt="${escapeHtmlAttr(alt)}"`,
   ];
   if (title) parts.push(`title="${escapeHtmlAttr(title)}"`);
-  if (safeWidth) parts.push(`width="${escapeHtmlAttr(safeWidth)}"`);
-  if (safeHeight) parts.push(`height="${escapeHtmlAttr(safeHeight)}"`);
+  parts.push(`width="${escapeHtmlAttr(String(Math.round(widthPx)))}"`);
+  if (heightPx != null && heightPx < NOTE_IMAGE_INTRINSIC_WIDTH_CAP) {
+    parts.push(`height="${escapeHtmlAttr(String(Math.round(heightPx)))}"`);
+  }
   return `<img ${parts.join(" ")} />`;
 };
 
@@ -211,7 +221,7 @@ const turndownFragment = (html: string): string => {
   }
 };
 
-/** Parse a single <img …> tag into safe markdown or dimension-preserving HTML. */
+/** Parse a single <img …> tag into safe markdown or modest HTML. */
 export const convertHtmlImgTagToMarkdownOrHtml = (imgTag: string): string => {
   const match = imgTag.match(/^<img\b([^>]*)\/?\s*>$/i);
   if (!match) return turndownFragment(imgTag).trim();
@@ -230,12 +240,71 @@ export const convertHtmlImgTagToMarkdownOrHtml = (imgTag: string): string => {
   });
 };
 
+const extractMarkdownImageAlt = (imageChunk: string): string => {
+  const md = /!\[([^\]]*)\]/.exec(imageChunk);
+  if (md) return (md[1] || "link").trim() || "link";
+  const htmlAlt = /alt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(imageChunk);
+  if (htmlAlt) return (htmlAlt[1] ?? htmlAlt[2] ?? "link").trim() || "link";
+  return "link";
+};
+
+/**
+ * Collapse README-style linked badges into plain text links.
+ *
+ * GitHub: [![Release](badge.svg)](https://…)
+ * Broken after island conversion with newlines:
+ *   [\n\n![Release](badge.svg)\n\n](https://…)
+ * MDX then shows the image + raw `](url)` debris — avoid that entirely.
+ */
+export const collapseLinkedImagesToTextLinks = (markdown: string): string => {
+  let body = markdown.replace(/\r\n?/g, "\n");
+
+  // [![alt](img)](href) including internal whitespace/newlines
+  body = body.replace(
+    /\[\s*!\[[^\]]*\]\([^)]+\)\s*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    (full, href: string) => {
+      const alt = extractMarkdownImageAlt(full);
+      return `[${alt}](${href})`;
+    },
+  );
+
+  // [<img …>](href) including whitespace/newlines
+  body = body.replace(
+    /\[\s*<img\b[^>]*>\s*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/gi,
+    (full, href: string) => {
+      const alt = extractMarkdownImageAlt(full);
+      return `[${alt}](${href})`;
+    },
+  );
+
+  return body;
+};
+
+/**
+ * Final cleanup for note paste: badges → text links, drop huge img dimensions,
+ * tidy blank lines. Called after Turndown / island conversion.
+ */
+export const normalizePastedNoteMarkdown = (markdown: string): string => {
+  let body = collapseLinkedImagesToTextLinks(markdown);
+
+  // Re-serialize any remaining HTML images through the size policy.
+  body = body.replace(/<img\b[^>]*>/gi, (tag) => {
+    const converted = convertHtmlImgTagToMarkdownOrHtml(tag.trim());
+    return converted || "";
+  });
+
+  // Drop orphan link closers that sometimes survive broken badge conversion.
+  body = body.replace(/^\s*\]\([^)\n]+\)\s*$/gm, "");
+
+  return trimBlankLines(body);
+};
+
 /**
  * Convert a full HTML clipboard document with Turndown (+ GFM).
  */
 export const convertClipboardHtmlToMarkdown = (html: string): string => {
   if (!looksLikeClipboardHtml(html)) return "";
-  return trimBlankLines(turndownFragment(html));
+  return normalizePastedNoteMarkdown(turndownFragment(html));
 };
 
 /**
@@ -243,15 +312,16 @@ export const convertClipboardHtmlToMarkdown = (html: string): string => {
  * Preserves # headings, lists, blockquotes, fences — never escapes them.
  */
 export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
-  if (!plainMarkdownContainsHtml(markdown)) {
-    return markdown.replace(/\r\n?/g, "\n");
+  // Collapse badges first while link wrappers are still intact.
+  let body = collapseLinkedImagesToTextLinks(markdown.replace(/\r\n?/g, "\n"));
+
+  if (!plainMarkdownContainsHtml(body)) {
+    return normalizePastedNoteMarkdown(body);
   }
 
-  // Protect fenced code so we never rewrite HTML examples inside fences.
-  // Use a printable sentinel (not NUL) so eslint no-control-regex stays clean.
   const fenceToken = (index: number) => `@@NETCATTY_MD_FENCE_${index}@@`;
   const fences: string[] = [];
-  let body = markdown.replace(/\r\n?/g, "\n").replace(
+  body = body.replace(
     /(?:^|\n)(```|~~~)[^\n]*\n[\s\S]*?\n\1[ \t]*(?=\n|$)/g,
     (match) => {
       const token = fenceToken(fences.length);
@@ -260,10 +330,10 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
     },
   );
 
-  // Comments
   body = body.replace(/<!--[\s\S]*?-->/g, "");
 
-  // Self-closing / void tags (img, br, hr, …).
+  // Self-closing / void tags — emit image markdown without extra blank lines
+  // when still inside a link (should be rare after collapse).
   body = body.replace(
     /<([a-zA-Z][\w:-]*)(\s[^>]*)?\s*\/>/g,
     (full, tag: string) => {
@@ -279,21 +349,24 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
     },
   );
 
-  // Paired tags — non-greedy; good enough for GitHub <a name>, <span>, tables.
-  // Repeat until stable for nested simple cases.
   for (let pass = 0; pass < 8; pass += 1) {
     const next = body.replace(
       /<([a-zA-Z][\w:-]*)(\s[^>]*)?>([\s\S]*?)<\/\1\s*>/g,
       (full, tag: string) => {
         const lower = String(tag).toLowerCase();
-        // Keep raw script/style out of notes.
         if (lower === "script" || lower === "style") return "";
+        // Center wrappers from READMEs: keep children only (lossy layout).
+        if (lower === "p" || lower === "div") {
+          const align = /\balign\s*=\s*(?:"|')?center/i.test(full);
+          const md = turndownFragment(full);
+          if (!md.trim()) return "";
+          // Don't re-wrap with extra spacing that blows up badge rows more than needed.
+          return align ? `\n\n${md.trim()}\n\n` : `\n\n${md.trim()}\n\n`;
+        }
         const md = turndownFragment(full);
         if (!md.trim()) return "";
-        // Block-level tags get surrounding newlines.
         if (
-          /^(p|div|section|article|table|ul|ol|blockquote|h[1-6]|pre|figure)$/i
-            .test(lower)
+          /^(section|article|table|ul|ol|blockquote|h[1-6]|pre|figure)$/i.test(lower)
         ) {
           return `\n\n${md.trim()}\n\n`;
         }
@@ -304,7 +377,6 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
     body = next;
   }
 
-  // Stray unclosed void-like tags (img without />).
   body = body.replace(
     /<(img|br|hr)\b([^>]*)>/gi,
     (full, tag: string) => {
@@ -320,22 +392,15 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
     },
   );
 
-  // Restore fences
   body = body.replace(/@@NETCATTY_MD_FENCE_(\d+)@@/g, (_, idx: string) => (
     fences[Number(idx)] ?? ""
   ));
 
-  return trimBlankLines(body);
+  return normalizePastedNoteMarkdown(body);
 };
 
 /**
  * Resolve what text should enter the note editor from a clipboard event.
- *
- * Priority:
- * 1. Real HTML document clipboard → full Turndown
- * 2. Mixed markdown + HTML islands → island conversion (preserve markdown)
- * 3. Clean structured markdown → as-is
- * 4. Plain text → leave to Lexical if unstructured
  */
 export const resolveNoteClipboardPaste = (input: {
   plainText: string;
@@ -344,7 +409,6 @@ export const resolveNoteClipboardPaste = (input: {
   const plain = (input.plainText ?? "").replace(/\r\n?/g, "\n");
   const html = input.htmlText ?? "";
 
-  // Browser / Word / GitHub rich HTML payload.
   if (looksLikeClipboardHtml(html) && isPrimarilyHtmlDocument(html)) {
     const converted = convertClipboardHtmlToMarkdown(html);
     if (converted.trim()) {
@@ -352,8 +416,6 @@ export const resolveNoteClipboardPaste = (input: {
     }
   }
 
-  // HTML payload that is really a fragment mixed with text — still turndown full
-  // fragment when plain is empty or unstructured.
   if (looksLikeClipboardHtml(html) && !shouldInsertClipboardTextAsMarkdown(plain)) {
     const converted = convertClipboardHtmlToMarkdown(html);
     if (converted.trim()) {
@@ -361,7 +423,6 @@ export const resolveNoteClipboardPaste = (input: {
     }
   }
 
-  // Structured plain (possibly with HTML islands like <img> / <a name>).
   if (shouldInsertClipboardTextAsMarkdown(plain) || plainMarkdownContainsHtml(plain)) {
     if (plainMarkdownContainsHtml(plain)) {
       const converted = convertHtmlIslandsInMarkdown(plain);
@@ -373,11 +434,11 @@ export const resolveNoteClipboardPaste = (input: {
       }
     }
     if (shouldInsertClipboardTextAsMarkdown(plain)) {
-      return { text: plain, kind: "markdown" };
+      // Still normalize badges / oversized HTML that may already be in the source.
+      return { text: normalizePastedNoteMarkdown(plain), kind: "markdown" };
     }
   }
 
-  // Last resort: treat plain as HTML fragment.
   if (looksLikeClipboardHtml(plain)) {
     const converted = convertClipboardHtmlToMarkdown(plain);
     if (converted.trim()) {
@@ -392,9 +453,6 @@ export const resolveNoteClipboardPaste = (input: {
   return { text: "", kind: "empty" };
 };
 
-/**
- * Whether paste capture should take over (preventDefault + insert as markdown).
- */
 export const shouldInterceptResolvedNotePaste = (input: {
   editorMode: "edit" | "preview";
   pasteInsideCodeBlock: boolean;

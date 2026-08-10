@@ -1559,26 +1559,32 @@ html[data-theme-transition] *::after {
 }
 
 /*
- * GitHub-like image layout in notes:
- * - cap to content width (README screenshots are often 1500–3000px)
- * - keep aspect ratio even when width/height attrs are present
- * - center block screenshots; keep small badges from blowing up
+ * Note images (lossy-but-clean paste policy):
+ * - never overflow the side-panel content width
+ * - ignore baked-in screenshot pixel widths (object-fit + max-width)
+ * - no crop: height auto, overflow visible on wrappers
  */
 .netcatty-mdx-content img,
 .netcatty-mdx-editor [class*="_imageWrapper_"] img,
 .netcatty-mdx-editor img {
-  max-width: 100%;
-  height: auto;
+  max-width: 100% !important;
+  width: auto !important;
+  height: auto !important;
+  object-fit: contain;
   display: block;
   margin-left: auto;
   margin-right: auto;
   border-radius: 0.375rem;
 }
 
-/* MDX image decorator wrapper should not overflow the note pane */
 .netcatty-mdx-editor [class*="_imageWrapper_"],
-.netcatty-mdx-editor [class*="_imageContainer_"] {
-  max-width: 100%;
+.netcatty-mdx-editor [class*="_imageContainer_"],
+.netcatty-mdx-editor [class*="_imageControlWrapper_"] {
+  max-width: 100% !important;
+  width: 100% !important;
+  height: auto !important;
+  overflow: visible !important;
+  box-sizing: border-box;
 }
 
 .netcatty-mdx-content a {
