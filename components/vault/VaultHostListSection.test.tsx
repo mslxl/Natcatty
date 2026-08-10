@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -215,34 +216,27 @@ const renderHostList = ({
 const editButtonIndexForHost = (markup: string, hostId: string) =>
   markup.indexOf(`data-vault-host-edit-button="${hostId}"`);
 
-const copyHostnameButtonIndexForHost = (markup: string, hostId: string) =>
-  markup.indexOf(`data-vault-host-copy-hostname-button="${hostId}"`);
-
 const editButtonIndexForGroup = (markup: string, groupPath: string) =>
   markup.indexOf(`data-vault-group-edit-button="${groupPath}"`);
 
 const assertListHostPlacement = (markup: string, host: Host) => {
   const listLabelIndex = markup.indexOf(host.label);
   const listEditIndex = editButtonIndexForHost(markup, host.id);
-  const listCopyIndex = copyHostnameButtonIndexForHost(markup, host.id);
   const listNotesIndex = markup.indexOf('aria-label="Host notes"', listLabelIndex);
 
   assert.ok(listLabelIndex >= 0);
   assert.ok(listEditIndex > listLabelIndex);
-  assert.ok(listCopyIndex > listEditIndex);
-  assert.ok(listNotesIndex > listCopyIndex);
+  assert.ok(listNotesIndex > listEditIndex);
 };
 
 const assertGridHostPlacement = (markup: string, host: Host) => {
   const gridLabelIndex = markup.indexOf(host.label);
   const gridNotesIndex = markup.indexOf('aria-label="Host notes"', gridLabelIndex);
   const gridEditIndex = editButtonIndexForHost(markup, host.id);
-  const gridCopyIndex = copyHostnameButtonIndexForHost(markup, host.id);
 
   assert.ok(gridLabelIndex >= 0);
   assert.ok(gridNotesIndex > gridLabelIndex);
   assert.ok(gridEditIndex > gridNotesIndex);
-  assert.ok(gridCopyIndex > gridEditIndex);
 };
 
 const assertListGroupPlacement = (markup: string, groupNode: GroupNode) => {
@@ -492,33 +486,11 @@ test("VaultHostListSection preserves grouped totals while virtualizing rendered 
   assert.match(markup, /\(300\)/);
 });
 
-test("VaultHostListSection hides hostname copy for plugin-managed hosts", () => {
-  const pluginHost: Host = {
-    ...makeHost("plugin-host", "Plugin Tunnel"),
-    protocol: "plugin:com.example.transport.connection",
-    hostname: "Plugin Tunnel",
-    pluginConnection: {
-      providerId: "com.example.transport.connection",
-      configuration: { endpoint: "opaque-target" },
-    },
-  };
-  const sshHost = makeHost("ssh-host", "SSH Router");
-
-  const listMarkup = renderHostList({
-    viewMode: "list",
-    displayedGroups: [],
-    displayedHosts: [pluginHost, sshHost],
-    visibleDisplayedHosts: [pluginHost, sshHost],
-  });
-  assert.equal(copyHostnameButtonIndexForHost(listMarkup, pluginHost.id), -1);
-  assert.ok(copyHostnameButtonIndexForHost(listMarkup, sshHost.id) >= 0);
-
-  const gridMarkup = renderHostList({
-    viewMode: "grid",
-    displayedGroups: [],
-    displayedHosts: [pluginHost, sshHost],
-    visibleDisplayedHosts: [pluginHost, sshHost],
-  });
-  assert.equal(copyHostnameButtonIndexForHost(gridMarkup, pluginHost.id), -1);
-  assert.ok(copyHostnameButtonIndexForHost(gridMarkup, sshHost.id) >= 0);
+test("VaultHostListSection exposes hostname copy in host context menus, not as a hover button", () => {
+  const source = readFileSync(new URL("./VaultHostListSection.tsx", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /data-vault-host-copy-hostname-button/);
+  assert.doesNotMatch(source, /renderHostCopyHostnameButton/);
+  assert.match(source, /terminal\.statusbar\.copyHostname\.label/);
+  assert.match(source, /handleCopyHostname\(host\)/);
+  assert.match(source, /!isPluginHostProtocol\(host\.protocol\)/);
 });

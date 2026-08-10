@@ -3,6 +3,7 @@ import React from 'react';
 
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { sanitizeHost } from '../../domain/host';
+import { isPluginHostProtocol } from '../../domain/pluginConnection';
 import type { Host } from '../../types';
 import { ContextMenuContent, ContextMenuItem, ContextMenuShortcut } from '../ui/context-menu';
 import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } from '../../application/state/usePluginContributions';
@@ -13,6 +14,7 @@ export interface HostTreeHostContextMenuHandlers {
   onEditHost?: (host: Host) => void;
   onRenameHost?: (host: Host) => void;
   onDuplicateHost: (host: Host) => void;
+  onCopyHostname?: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
 }
@@ -25,6 +27,7 @@ export const HostTreeHostContextMenuContent: React.FC<
   onEditHost,
   onRenameHost,
   onDuplicateHost,
+  onCopyHostname,
   onCopyCredentials,
   onDeleteHost,
 }) => {
@@ -40,6 +43,7 @@ export const HostTreeHostContextMenuContent: React.FC<
   const pluginMenus = collectOwnedPluginMenus(pluginContributions.snapshot.plugins)
     .filter((menu) => menu.location === 'host/context' && menu.visible)
     .sort(comparePluginMenus);
+  const canCopyHostname = Boolean(onCopyHostname) && !isPluginHostProtocol(safeHost.protocol);
 
   return (
     <ContextMenuContent>
@@ -59,6 +63,11 @@ export const HostTreeHostContextMenuContent: React.FC<
       <ContextMenuItem onClick={() => onDuplicateHost(host)}>
         <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
       </ContextMenuItem>
+      {canCopyHostname ? (
+        <ContextMenuItem onClick={() => onCopyHostname?.(host)}>
+          <Copy className="mr-2 h-4 w-4" /> {t('terminal.statusbar.copyHostname.label')}
+        </ContextMenuItem>
+      ) : null}
       <ContextMenuItem onClick={() => onCopyCredentials(host)}>
         <Server className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
       </ContextMenuItem>

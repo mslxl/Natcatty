@@ -464,6 +464,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
               onRenameHost={menuActions.onRenameHost}
               onDuplicateHost={menuActions.onDuplicateHost}
               onCopyCredentials={menuActions.onCopyCredentials}
+              onCopyHostname={menuActions.onCopyHostname}
               onDeleteHost={menuActions.onDeleteHost}
             />
           ) : (

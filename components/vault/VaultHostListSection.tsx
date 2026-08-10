@@ -299,32 +299,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
     </Button>
   );
 
-  const renderHostCopyHostnameButton = (host: any, compact = false) => {
-    if (isPluginHostProtocol(host.protocol)) return null;
-    return (
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={t("terminal.statusbar.copyHostname.label")}
-        title={t("terminal.statusbar.copyHostname.tooltip", { hostname: host.hostname })}
-        data-vault-host-copy-hostname-button={host.id}
-        className={cn(
-          "opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity shrink-0",
-          compact ? "h-6 w-6" : "h-8 w-8",
-        )}
-        onClick={(e: React.MouseEvent) => {
-          e.stopPropagation();
-          handleCopyHostname(host);
-        }}
-        onKeyDown={(e: React.KeyboardEvent) => {
-          e.stopPropagation();
-        }}
-      >
-        <Copy size={compact ? 13 : 14} />
-      </Button>
-    );
-  };
-
   const renderGroupEditButton = (groupPath: string, compact = false) => (
     <Button
       variant="ghost"
@@ -588,7 +562,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           {safeHost.label}
                                         </span>
                                         {viewMode !== "grid" && renderHostEditButton(host, true)}
-                                        {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
@@ -596,7 +569,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
-                                    {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
@@ -610,6 +582,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 <ContextMenuItem onClick={() => handleDuplicateHost(host)}>
                                   <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                                 </ContextMenuItem>
+                                {!isPluginHostProtocol(host.protocol) ? (
+                                  <ContextMenuItem onClick={() => handleCopyHostname(host)}>
+                                    <Copy className="mr-2 h-4 w-4" /> {t('terminal.statusbar.copyHostname.label')}
+                                  </ContextMenuItem>
+                                ) : null}
                                 <ContextMenuItem onClick={() => handleCopyCredentials(host)}>
                                   <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
                                 </ContextMenuItem>
@@ -704,7 +681,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           {safeHost.label}
                                         </span>
                                         {viewMode !== "grid" && renderHostEditButton(host, true)}
-                                        {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
@@ -712,7 +688,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
-                                    {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
@@ -726,6 +701,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 <ContextMenuItem onClick={() => handleDuplicateHost(host)}>
                                   <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                                 </ContextMenuItem>
+                                {!isPluginHostProtocol(host.protocol) ? (
+                                  <ContextMenuItem onClick={() => handleCopyHostname(host)}>
+                                    <Copy className="mr-2 h-4 w-4" /> {t('terminal.statusbar.copyHostname.label')}
+                                  </ContextMenuItem>
+                                ) : null}
                                 <ContextMenuItem onClick={() => handleCopyCredentials(host)}>
                                   <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
                                 </ContextMenuItem>
@@ -954,6 +934,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                       onDuplicateHost={handleDuplicateHost}
                       onDeleteHost={handleTreeDeleteHost}
                       onCopyCredentials={handleCopyCredentials}
+                      onCopyHostname={handleCopyHostname}
 
                       onNewGroup={startInlineNewGroup}
                       onRenameGroup={startInlineRenameGroup}
@@ -1072,7 +1053,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                                 {safeHost.label}
                                               </span>
                                               {viewMode !== "grid" && renderHostEditButton(host, true)}
-                                              {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                               {safeHost.managedSourceId && (
                                                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
                                                   managed
@@ -1085,7 +1065,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                             </div>
                                           </div>
                                           {viewMode === "grid" && renderHostEditButton(host)}
-                                          {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                         </div>
                                       </div>
                                     </ContextMenuTrigger>
@@ -1105,6 +1084,11 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       >
                                         <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                                       </ContextMenuItem>
+                                      {!isPluginHostProtocol(host.protocol) ? (
+                                      <ContextMenuItem onClick={() => handleCopyHostname(host)}>
+                                        <Copy className="mr-2 h-4 w-4" /> {t('terminal.statusbar.copyHostname.label')}
+                                      </ContextMenuItem>
+                                    ) : null}
                                       <ContextMenuItem
                                         onClick={() => handleCopyCredentials(host)}
                                       >
@@ -1218,7 +1202,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           {safeHost.label}
                                         </span>
                                         {viewMode !== "grid" && renderHostEditButton(host, true)}
-                                        {viewMode !== "grid" && renderHostCopyHostnameButton(host, true)}
                                         {safeHost.managedSourceId && (
                                           <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 shrink-0">
                                             managed
@@ -1231,7 +1214,6 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
-                                    {viewMode === "grid" && renderHostCopyHostnameButton(host)}
                                   </div>
                                 </div>
                               </ContextMenuTrigger>
@@ -1251,11 +1233,16 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 >
                                   <Copy className="mr-2 h-4 w-4" /> {t('action.duplicate')}
                                 </ContextMenuItem>
-                                <ContextMenuItem
-                                  onClick={() => handleCopyCredentials(host)}
-                                >
-                                  <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
-                                </ContextMenuItem>
+                                {!isPluginHostProtocol(host.protocol) ? (
+                                      <ContextMenuItem onClick={() => handleCopyHostname(host)}>
+                                        <Copy className="mr-2 h-4 w-4" /> {t('terminal.statusbar.copyHostname.label')}
+                                      </ContextMenuItem>
+                                    ) : null}
+                                      <ContextMenuItem
+                                        onClick={() => handleCopyCredentials(host)}
+                                      >
+                                        <ClipboardCopy className="mr-2 h-4 w-4" /> {t('vault.hosts.copyCredentials')}
+                                      </ContextMenuItem>
                                 <ContextMenuItem onClick={() => toggleHostPinned(host.id)}>
                                   <Pin className="mr-2 h-4 w-4" /> {host.pinned ? t('vault.hosts.unpin') : t('vault.hosts.pinToTop')}
                                 </ContextMenuItem>

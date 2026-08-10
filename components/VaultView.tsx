@@ -1342,6 +1342,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
   useRegisterVaultHostTreeActions({
     handleCopyCredentials,
+    handleCopyHostname,
     handleDuplicateHost,
     startInlineRenameHost,
     onDeleteHost,
