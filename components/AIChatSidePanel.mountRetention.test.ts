@@ -252,3 +252,51 @@ test('AI side panel skips re-render when only a sibling scope session object cha
     false,
   );
 });
+
+test('workspace AI panel memo follows visible inherited session, not hidden terminal maps', () => {
+  const visibleMemberChat = session({
+    id: 'chat-visible',
+    scope: { type: 'terminal', targetId: 'terminal-b', hostIds: ['host-b'] },
+  });
+  const hiddenFocusedChat = session({
+    id: 'chat-hidden',
+    scope: { type: 'terminal', targetId: 'terminal-other', hostIds: ['host-other'] },
+  });
+  const prev = baseProps({
+    isVisible: true,
+    scopeType: 'workspace',
+    scopeTargetId: 'ws-1',
+    focusedSessionId: 'terminal-a',
+    terminalSessions: [
+      {
+        sessionId: 'terminal-a',
+        hostId: 'host-a',
+        hostname: 'a.example',
+        label: 'A',
+        connected: true,
+      },
+      {
+        sessionId: 'terminal-b',
+        hostId: 'host-b',
+        hostname: 'b.example',
+        label: 'B',
+        connected: true,
+      },
+    ],
+    activeSessionIdMap: {
+      'terminal:terminal-a': 'chat-hidden',
+      'terminal:terminal-b': 'chat-visible',
+    },
+    sessions: [visibleMemberChat, hiddenFocusedChat],
+  });
+  const streamedVisible = session({
+    id: 'chat-visible',
+    scope: { type: 'terminal', targetId: 'terminal-b', hostIds: ['host-b'] },
+    messages: [{ id: 'm1', role: 'assistant', content: 'stream', timestamp: 2 }],
+  });
+
+  assert.equal(
+    aiChatSidePanelPropsAreEqual(prev, { ...prev, sessions: [streamedVisible, hiddenFocusedChat] }),
+    false,
+  );
+});

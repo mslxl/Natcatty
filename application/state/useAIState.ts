@@ -73,6 +73,11 @@ import {
   type PanelViewByScope,
 } from './aiStateSnapshots';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
+import {
+  handoffDissolvedWorkspaceAIScope,
+  retargetWorkspaceActiveChatAfterMemberLoss,
+  seedWorkspaceAIActiveSessionFromMembers,
+} from '../../domain/workspaceAiScopeHandoff';
 export function useAIState() {
   // ── Provider Config ──
   const [providers, setProvidersRaw] = useState<ProviderConfig[]>(() =>
@@ -968,6 +973,112 @@ export function useAIState() {
     setPanelViewByScopeRaw(latestAIPanelViewByScopeSnapshot ?? {});
   }, []);
 
+  const seedWorkspaceActiveSessionFromMembers = useCallback((input: {
+    workspaceId: string;
+    memberTerminalIds: readonly string[];
+    preferredTerminalId?: string | null;
+  }) => {
+    const currentMap =
+      latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {};
+    const nextMap = seedWorkspaceAIActiveSessionFromMembers({
+      activeSessionIdMap: currentMap,
+      workspaceId: input.workspaceId,
+      memberTerminalIds: input.memberTerminalIds,
+      preferredTerminalId: input.preferredTerminalId,
+    });
+    if (!nextMap) return;
+    setLatestAIActiveSessionMapSnapshot(nextMap);
+    localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextMap);
+    emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+    setActiveSessionIdMapRaw(nextMap);
+  }, []);
+
+  const handoffDissolvedWorkspaceScope = useCallback((input: {
+    workspaceId: string;
+    terminalIds: readonly string[];
+    preferredTerminalId?: string | null;
+  }) => {
+    const currentMap =
+      latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {};
+    const currentSessions =
+      latestAISessionsSnapshot
+      ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
+      ?? [];
+    const currentPanelViewByScope = latestAIPanelViewByScopeSnapshot ?? {};
+    const result = handoffDissolvedWorkspaceAIScope({
+      activeSessionIdMap: currentMap,
+      sessions: currentSessions,
+      workspaceId: input.workspaceId,
+      terminalIds: input.terminalIds,
+      preferredTerminalId: input.preferredTerminalId,
+      panelViewByScope: currentPanelViewByScope,
+    });
+    if (!result.changed) return;
+
+    if (result.activeSessionIdMap !== currentMap) {
+      setLatestAIActiveSessionMapSnapshot(result.activeSessionIdMap);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, result.activeSessionIdMap);
+      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+      setActiveSessionIdMapRaw(result.activeSessionIdMap);
+    }
+
+    if (result.sessions !== currentSessions) {
+      sessionsRef.current = result.sessions;
+      setLatestAISessionsSnapshot(result.sessions);
+      persistSessions(result.sessions);
+      setSessionsRaw(result.sessions);
+    }
+
+    if (result.panelViewByScope !== currentPanelViewByScope) {
+      setLatestAIPanelViewByScopeSnapshot(result.panelViewByScope);
+      emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
+      setPanelViewByScopeRaw(result.panelViewByScope);
+    }
+  }, [persistSessions]);
+
+  const retargetWorkspaceActiveChatForMemberLoss = useCallback((input: {
+    workspaceId: string;
+    previousMemberTerminalIds: readonly string[];
+    currentMemberTerminalIds: readonly string[];
+    preferredTerminalId?: string | null;
+  }) => {
+    const currentMap =
+      latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {};
+    const currentSessions =
+      latestAISessionsSnapshot
+      ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
+      ?? [];
+    const result = retargetWorkspaceActiveChatAfterMemberLoss({
+      activeSessionIdMap: currentMap,
+      sessions: currentSessions,
+      workspaceId: input.workspaceId,
+      previousMemberTerminalIds: input.previousMemberTerminalIds,
+      currentMemberTerminalIds: input.currentMemberTerminalIds,
+      preferredTerminalId: input.preferredTerminalId,
+    });
+    if (!result.changed) return;
+
+    if (result.activeSessionIdMap !== currentMap) {
+      setLatestAIActiveSessionMapSnapshot(result.activeSessionIdMap);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, result.activeSessionIdMap);
+      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+      setActiveSessionIdMapRaw(result.activeSessionIdMap);
+    }
+
+    if (result.sessions !== currentSessions) {
+      sessionsRef.current = result.sessions;
+      setLatestAISessionsSnapshot(result.sessions);
+      persistSessions(result.sessions);
+      setSessionsRaw(result.sessions);
+    }
+  }, [persistSessions]);
+
   // ── Provider CRUD helpers ──
   const addProvider = useCallback((provider: ProviderConfig) => {
     setProviders(prev => [...prev, provider]);
@@ -1071,6 +1182,9 @@ export function useAIState() {
     updateMessageById,
     persistContextCompaction,
     cleanupOrphanedSessions,
+    seedWorkspaceActiveSessionFromMembers,
+    handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
   }), [
     providers,
     setProviders,
@@ -1124,5 +1238,8 @@ export function useAIState() {
     updateMessageById,
     persistContextCompaction,
     cleanupOrphanedSessions,
+    seedWorkspaceActiveSessionFromMembers,
+    handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
   ]);
 }

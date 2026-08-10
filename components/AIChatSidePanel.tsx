@@ -51,6 +51,7 @@ import {
   type DefaultTargetSessionHint,
 } from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
+import { resolveInheritedAIActiveSessionId } from '../domain/aiWorkspaceScopeInherit';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
@@ -286,6 +287,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   scopeTargetId,
   scopeHostIds,
   scopeLabel,
+  focusedSessionId,
   terminalSessions = [],
   resolveExecutorContext,
   isVisible = true,
@@ -345,6 +347,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     return sessionIds;
   }, [activeSessionIdMap, scopeKey]);
 
+  const workspaceMemberTerminalIds = useMemo(() => {
+    if (scopeType !== 'workspace') return undefined;
+    return new Set(
+      terminalSessions
+        .map((session) => session.sessionId)
+        .filter((sessionId): sessionId is string => Boolean(sessionId)),
+    );
+  }, [scopeType, terminalSessions]);
+
   const deferredSessions = useDeferredValue(sessions);
   const historySessions = useMemo(
     () => profileAIPanelCalculation(
@@ -355,14 +366,26 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         scopeTargetId,
         scopeHostIds,
         activeTerminalSessionIds,
+        workspaceMemberTerminalIds,
       ),
     ),
-    [deferredSessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds],
+    [deferredSessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds],
   );
 
   const explicitPanelView = panelViewByScope[scopeKey];
   const currentDraft = draftsByScope[scopeKey] ?? null;
-  const persistedSessionId = activeSessionIdMap[scopeKey] ?? null;
+  const visibleHistorySessionIds = useMemo(
+    () => new Set(historySessions.map((session) => session.id)),
+    [historySessions],
+  );
+  const persistedSessionId = resolveInheritedAIActiveSessionId({
+    scopeType,
+    scopeTargetId,
+    activeSessionIdMap,
+    memberTerminalIds: terminalSessions.map((session) => session.sessionId).filter(Boolean),
+    preferredTerminalId: focusedSessionId,
+    visibleSessionIds: visibleHistorySessionIds,
+  });
   const normalizedPanelView = useMemo<AIPanelView>(
     () => resolveDisplayedPanelView(explicitPanelView, currentDraft != null, historySessions, persistedSessionId, scopeType),
     [explicitPanelView, currentDraft, historySessions, persistedSessionId, scopeType],
@@ -1579,6 +1602,7 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.scopeType !== next.scopeType) return false;
   if (prev.scopeTargetId !== next.scopeTargetId) return false;
   if (prev.scopeLabel !== next.scopeLabel) return false;
+  if ((prev.focusedSessionId ?? '') !== (next.focusedSessionId ?? '')) return false;
   if ((prev.isVisible ?? true) !== (next.isVisible ?? true)) return false;
   if (prev.scopeHostIds !== next.scopeHostIds) return false;
   if (prev.terminalSessions !== next.terminalSessions) return false;
@@ -1597,10 +1621,45 @@ export function aiChatSidePanelPropsAreEqual(
   // resume whose stored scope.targetId is an older terminal.
   // Fuzzy history still receives the full list; drawer open forces re-render
   // via isVisible / other prop paths when the user actually needs it.
-  const scopeKey = `${prev.scopeType}:${prev.scopeTargetId ?? ''}`;
-  const selectedSessionId = prev.activeSessionIdMap[scopeKey]
-    ?? next.activeSessionIdMap[scopeKey]
-    ?? null;
+  // Keep visibleSessionIds in sync with the live panel so inheritance that
+  // skips non-history chats does not leave memo pinned to a different id.
+  const resolveSelectedSessionId = (
+    props: AIChatSidePanelProps,
+  ): string | null => {
+    const scopeKey = `${props.scopeType}:${props.scopeTargetId ?? ''}`;
+    const memberTerminalIds = (props.terminalSessions ?? [])
+      .map((session) => session.sessionId)
+      .filter((sessionId): sessionId is string => Boolean(sessionId));
+    const workspaceMemberTerminalIds = props.scopeType === 'workspace'
+      ? new Set(memberTerminalIds)
+      : undefined;
+    const activeTerminalSessionIds = new Set<string>();
+    for (const [sessionScopeKey, sessionId] of Object.entries(props.activeSessionIdMap) as Array<[string, string | null]>) {
+      if (!sessionScopeKey.startsWith('terminal:') || !sessionId) continue;
+      if (sessionScopeKey === scopeKey) continue;
+      activeTerminalSessionIds.add(sessionId);
+    }
+    const visibleSessionIds = new Set(
+      getScopedHistorySessions(
+        props.sessions,
+        props.scopeType,
+        props.scopeTargetId,
+        props.scopeHostIds,
+        activeTerminalSessionIds,
+        workspaceMemberTerminalIds,
+      ).map((session) => session.id),
+    );
+    return resolveInheritedAIActiveSessionId({
+      scopeType: props.scopeType,
+      scopeTargetId: props.scopeTargetId,
+      activeSessionIdMap: props.activeSessionIdMap,
+      memberTerminalIds,
+      preferredTerminalId: props.focusedSessionId,
+      visibleSessionIds,
+    });
+  };
+  const selectedSessionId = resolveSelectedSessionId(prev)
+    ?? resolveSelectedSessionId(next);
   if (!exactScopeAISessionsEqual(
     prev.sessions,
     next.sessions,

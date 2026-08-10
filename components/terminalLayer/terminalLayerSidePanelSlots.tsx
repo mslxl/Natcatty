@@ -520,6 +520,7 @@ function SidePanelAiSlotInner({
     onOpenVaultSnippetFromChat,
     validAIScopeTargetIds,
   } = ctx;
+  const workspaces = ctx.workspaces as Workspace[];
 
   // Gate notes subscription while AI is hidden so note edits do not re-render
   // retained AI mounts (panel still mounts for fast reopen).
@@ -529,15 +530,27 @@ function SidePanelAiSlotInner({
     isVisible ? getNotesSnapshot : getEmptyNotesSnapshot,
   );
 
-  if (mountedAiTabIds.length === 0) return null;
   const activeLayout = activeTabId
     ? (ctx.sidePanelLayouts as Map<string, SidePanelLayout>).get(activeTabId)
     : null;
-  if (
+  const hideVisibleShell = (
     AI_PANEL_FORCE_HIDE_SHELL
     && isVisible
     && (!activeLayout || collectSidePanelPanes(activeLayout.root).length <= 1)
-  ) return null;
+  );
+
+  // Keep the AI state root mounted even with zero panel hosts so workspace
+  // merge/detach can seed and hand off scoped chats before orphan cleanup.
+  if (mountedAiTabIds.length === 0 || hideVisibleShell) {
+    return (
+      <AISidePanelStateRoot
+        validAIScopeTargetIds={validAIScopeTargetIds}
+        workspaces={workspaces}
+      >
+        {null}
+      </AISidePanelStateRoot>
+    );
+  }
 
   // Only the visible AI panel needs vault catalogs for artifact navigation.
   // Hidden retained panels keep session state without re-binding huge hosts/notes.
@@ -547,7 +560,10 @@ function SidePanelAiSlotInner({
     : EMPTY_VAULT_NOTES;
 
   return (
-    <AISidePanelStateRoot validAIScopeTargetIds={validAIScopeTargetIds}>
+    <AISidePanelStateRoot
+      validAIScopeTargetIds={validAIScopeTargetIds}
+      workspaces={workspaces}
+    >
       <AIChatPanelsHost
         mountedTabIds={mountedAiTabIds}
         activeTabId={activeTabId}

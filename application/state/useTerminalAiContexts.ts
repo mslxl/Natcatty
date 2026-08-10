@@ -59,6 +59,7 @@ export function useTerminalAiContexts({
             .map((sessionId) => sessionById.get(sessionId)?.hostId)
             .filter((hostId): hostId is string => !!hostId),
           scopeLabel: workspace.title,
+          focusedSessionId: workspace.focusedSessionId,
           terminalSessions: sessionIds.map((sessionId) =>
             buildAITerminalSessionInfo(
               sessionById.get(sessionId),

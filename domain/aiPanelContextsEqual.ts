@@ -41,6 +41,7 @@ export type AIPanelContextLike = {
   scopeTargetId?: string;
   scopeHostIds: string[];
   scopeLabel: string;
+  focusedSessionId?: string;
   terminalSessions: AIPanelTerminalSessionLike[];
 };
 
@@ -114,6 +115,7 @@ function aiPanelContextEqual(a: AIPanelContextLike, b: AIPanelContextLike): bool
   if (a.scopeType !== b.scopeType) return false;
   if (a.scopeTargetId !== b.scopeTargetId) return false;
   if (a.scopeLabel !== b.scopeLabel) return false;
+  if ((a.focusedSessionId ?? '') !== (b.focusedSessionId ?? '')) return false;
   if (!scopeHostIdsEqual(a.scopeHostIds, b.scopeHostIds)) return false;
   if (a.terminalSessions.length !== b.terminalSessions.length) return false;
   for (let i = 0; i < a.terminalSessions.length; i += 1) {

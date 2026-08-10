@@ -10,12 +10,16 @@ function buildHistoryCacheKey(
   scopeTargetId: string | undefined,
   scopeHostIds: string[] | undefined,
   activeTerminalSessionIds: Set<string>,
+  workspaceMemberTerminalIds: Set<string> | undefined,
 ): HistoryCacheKey {
   const hostKey = scopeHostIds ? [...scopeHostIds].sort().join(',') : '';
   const terminalKey = scopeType === 'terminal'
     ? [...activeTerminalSessionIds].sort().join(',')
     : '';
-  return `${scopeType}:${scopeTargetId ?? ''}:${hostKey}:${terminalKey}`;
+  const memberKey = scopeType === 'workspace' && workspaceMemberTerminalIds
+    ? [...workspaceMemberTerminalIds].sort().join(',')
+    : '';
+  return `${scopeType}:${scopeTargetId ?? ''}:${hostKey}:${terminalKey}:${memberKey}`;
 }
 
 export function getScopedHistorySessions(
@@ -24,6 +28,7 @@ export function getScopedHistorySessions(
   scopeTargetId: string | undefined,
   scopeHostIds: string[] | undefined,
   activeTerminalSessionIds: Set<string>,
+  workspaceMemberTerminalIds?: Set<string>,
 ): AISession[] {
   let scopeCache = historyCache.get(sessions);
   if (!scopeCache) {
@@ -36,6 +41,7 @@ export function getScopedHistorySessions(
     scopeTargetId,
     scopeHostIds,
     activeTerminalSessionIds,
+    workspaceMemberTerminalIds,
   );
   const cached = scopeCache.get(cacheKey);
   if (cached) {
@@ -53,6 +59,7 @@ export function getScopedHistorySessions(
         scopeTargetId,
         scopeHostIds,
         activeTerminalSessionIds,
+        workspaceMemberTerminalIds,
       ),
     }))
     .filter(({ matchRank }) => matchRank > 0)

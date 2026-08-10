@@ -279,6 +279,7 @@ interface AIChatPanelsHostProps {
 
 interface AIStateMaintenanceHostProps {
   validAIScopeTargetIds: Set<string>;
+  workspaces: Workspace[];
 }
 
 const AIStateProviderInner: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -295,6 +296,7 @@ AIStateProvider.displayName = 'AIStateProvider';
 
 const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
   validAIScopeTargetIds,
+  workspaces,
 }) => {
   const aiConfig = useContext(AIConfigContext);
 
@@ -302,11 +304,89 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
     throw new Error('AIStateMaintenanceHost must be rendered inside AIStateProvider');
   }
 
-  const { cleanupOrphanedSessions } = aiConfig;
+  const {
+    cleanupOrphanedSessions,
+    seedWorkspaceActiveSessionFromMembers,
+    handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
+  } = aiConfig;
+  const previousWorkspacesRef = useRef(workspaces);
+  const previousSessionWorkspaceRef = useRef(
+    new Map(workspaces.flatMap((workspace) => (
+      collectSessionIds(workspace.root).map((sessionId) => [sessionId, workspace.id] as const)
+    ))),
+  );
 
   useEffect(() => {
+    const previousWorkspaces = previousWorkspacesRef.current;
+    const previousIds = new Set(previousWorkspaces.map((workspace) => workspace.id));
+    const nextIds = new Set(workspaces.map((workspace) => workspace.id));
+    const previousSessionWorkspace = previousSessionWorkspaceRef.current;
+
+    for (const workspace of workspaces) {
+      if (previousIds.has(workspace.id)) continue;
+      const memberTerminalIds = collectSessionIds(workspace.root);
+      seedWorkspaceActiveSessionFromMembers({
+        workspaceId: workspace.id,
+        memberTerminalIds,
+        preferredTerminalId: workspace.focusedSessionId,
+      });
+    }
+
+    for (const workspace of workspaces) {
+      for (const sessionId of collectSessionIds(workspace.root)) {
+        const previousWorkspaceId = previousSessionWorkspace.get(sessionId);
+        if (previousWorkspaceId === workspace.id) continue;
+        // Member newly joined this workspace — seed only fills an empty map.
+        // Prefer the workspace focused pane so we don't pin the joiner's chat
+        // ahead of the pane the user is already looking at.
+        seedWorkspaceActiveSessionFromMembers({
+          workspaceId: workspace.id,
+          memberTerminalIds: collectSessionIds(workspace.root),
+          preferredTerminalId: workspace.focusedSessionId,
+        });
+        break;
+      }
+    }
+
+    for (const workspace of workspaces) {
+      if (!previousIds.has(workspace.id)) continue;
+      const previousWorkspace = previousWorkspaces.find((entry) => entry.id === workspace.id);
+      if (!previousWorkspace) continue;
+      const previousMemberIds = collectSessionIds(previousWorkspace.root);
+      const currentMemberIds = collectSessionIds(workspace.root);
+      if (previousMemberIds.every((sessionId) => currentMemberIds.includes(sessionId))) continue;
+      retargetWorkspaceActiveChatForMemberLoss({
+        workspaceId: workspace.id,
+        previousMemberTerminalIds: previousMemberIds,
+        currentMemberTerminalIds: currentMemberIds,
+        preferredTerminalId: workspace.focusedSessionId,
+      });
+    }
+
+    for (const workspace of previousWorkspaces) {
+      if (nextIds.has(workspace.id)) continue;
+      const memberTerminalIds = collectSessionIds(workspace.root);
+      handoffDissolvedWorkspaceScope({
+        workspaceId: workspace.id,
+        terminalIds: memberTerminalIds.filter((sessionId) => validAIScopeTargetIds.has(sessionId)),
+        preferredTerminalId: workspace.focusedSessionId,
+      });
+    }
+
+    previousWorkspacesRef.current = workspaces;
+    previousSessionWorkspaceRef.current = new Map(workspaces.flatMap((workspace) => (
+      collectSessionIds(workspace.root).map((sessionId) => [sessionId, workspace.id] as const)
+    )));
     cleanupOrphanedSessions(validAIScopeTargetIds);
-  }, [cleanupOrphanedSessions, validAIScopeTargetIds]);
+  }, [
+    cleanupOrphanedSessions,
+    handoffDissolvedWorkspaceScope,
+    retargetWorkspaceActiveChatForMemberLoss,
+    seedWorkspaceActiveSessionFromMembers,
+    validAIScopeTargetIds,
+    workspaces,
+  ]);
 
   return null;
 };
@@ -316,15 +396,20 @@ AIStateMaintenanceHost.displayName = 'AIStateMaintenanceHost';
 
 interface AISidePanelStateRootProps {
   validAIScopeTargetIds: Set<string>;
+  workspaces: Workspace[];
   children: React.ReactNode;
 }
 
 const AISidePanelStateRootInner: React.FC<AISidePanelStateRootProps> = ({
   validAIScopeTargetIds,
+  workspaces,
   children,
 }) => (
   <AIStateProvider>
-    <AIStateMaintenanceHost validAIScopeTargetIds={validAIScopeTargetIds} />
+    <AIStateMaintenanceHost
+      validAIScopeTargetIds={validAIScopeTargetIds}
+      workspaces={workspaces}
+    />
     {children}
   </AIStateProvider>
 );
@@ -501,6 +586,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     scopeTargetId={context.scopeTargetId}
                     scopeHostIds={context.scopeHostIds}
                     scopeLabel={context.scopeLabel}
+                    focusedSessionId={context.focusedSessionId}
                     terminalSessions={context.terminalSessions}
                     resolveExecutorContext={resolveExecutorContext}
                     isVisible={isVisible}

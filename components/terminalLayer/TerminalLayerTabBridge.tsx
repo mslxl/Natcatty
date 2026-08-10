@@ -370,6 +370,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     setSystemMountedTabIds: s.setSystemMountedTabIds,
     setThemeMountedTabIds: s.setThemeMountedTabIds,
     setSidePanelOpenTabs: s.setSidePanelOpenTabs,
+    setSidePanelLayouts: s.setSidePanelLayouts,
     setTimeout,
     setWorkspaceArea,
     sidePanelPosition: s.sidePanelPosition,

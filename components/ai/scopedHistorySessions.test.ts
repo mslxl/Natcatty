@@ -47,6 +47,31 @@ test("workspace history remains visible after the original workspace target is g
   );
 });
 
+test("workspace history includes member-terminal chats and ranks them above stale workspaces", () => {
+  const memberTerminalSession = createSession(
+    "terminal-a-chat",
+    { type: "terminal", targetId: "terminal-a" },
+    1,
+  );
+  const staleWorkspaceSession = createSession(
+    "workspace-stale",
+    { type: "workspace", targetId: "workspace-before-restart" },
+    99,
+  );
+
+  assert.deepEqual(
+    getScopedHistorySessions(
+      [staleWorkspaceSession, memberTerminalSession],
+      "workspace",
+      "workspace-merged",
+      ["host-a"],
+      new Set(),
+      new Set(["terminal-a", "terminal-b"]),
+    ).map((session) => session.id),
+    ["terminal-a-chat", "workspace-stale"],
+  );
+});
+
 test("terminal history without host ids remains visible after the original terminal target is gone", () => {
   const staleLocalSession = createSession(
     "terminal-local-stale",

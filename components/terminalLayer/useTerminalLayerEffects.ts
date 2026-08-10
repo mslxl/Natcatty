@@ -12,6 +12,13 @@ import {
   resolveSftpTransferNavigationTarget,
 } from '../../domain/sftpTransferNavigation';
 import { collectSidePanelPanes, sidePanelLayoutHasTool } from '../../domain/sidePanelLayout';
+import { collectSessionIds } from '../../domain/workspace';
+import {
+  moveSidePanelTabMap,
+  remapMountedSidePanelTabIds,
+  remapSidePanelTabMap,
+  type SidePanelTabRemap,
+} from '../../domain/workspaceSidePanelTabRemap';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
 import { toast } from '../ui/toast';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection';
@@ -93,10 +100,161 @@ export function pruneTerminalTabMemoryState(
 
 export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const { openPath } = useSftpBackend();
-  const { activeSidePanelTab, activeSidePanelLayout, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
+  const { activeSidePanelTab, activeSidePanelLayout, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setSidePanelLayouts, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
 
   const activeWorkspaceId = activeWorkspace?.id;
   const activeWorkspaceViewMode = activeWorkspace?.viewMode;
+  const previousWorkspacesRef = useRef(workspaces);
+  const previousSessionWorkspaceRef = useRef(
+    new Map(sessions.map((session: { id: string; workspaceId?: string }) => [session.id, session.workspaceId])),
+  );
+
+  useEffect(() => {
+    const previousWorkspaces = previousWorkspacesRef.current;
+    const previousIds = new Set(previousWorkspaces.map((workspace: { id: string }) => workspace.id));
+    const nextIds = new Set(workspaces.map((workspace: { id: string }) => workspace.id));
+    const previousSessionWorkspace = previousSessionWorkspaceRef.current;
+    const remaps: SidePanelTabRemap[] = [];
+
+    for (const workspace of workspaces) {
+      if (previousIds.has(workspace.id)) continue;
+      remaps.push({
+        kind: 'promote',
+        fromTabIds: collectSessionIds(workspace.root),
+        toTabId: workspace.id,
+        preferredFromTabId: workspace.focusedSessionId,
+      });
+    }
+
+    for (const session of sessions) {
+      const previousWorkspaceId = previousSessionWorkspace.get(session.id);
+      if (!session.workspaceId || session.workspaceId === previousWorkspaceId) continue;
+      // Orphan (or other workspace) joined an existing workspace tab.
+      if (previousIds.has(session.workspaceId)) {
+        const workspace = workspaces.find((entry: { id: string }) => entry.id === session.workspaceId);
+        const focusedSessionId = workspace?.focusedSessionId;
+        remaps.push({
+          kind: 'promote',
+          fromTabIds: focusedSessionId
+            ? [focusedSessionId, session.id]
+            : [session.id],
+          toTabId: session.workspaceId,
+          preferredFromTabId: focusedSessionId ?? session.id,
+        });
+      }
+    }
+
+    for (const workspace of previousWorkspaces) {
+      if (nextIds.has(workspace.id)) continue;
+      const memberTerminalIds = collectSessionIds(workspace.root)
+        .filter((sessionId: string) => validAIScopeTargetIds.has(sessionId));
+      remaps.push({
+        kind: 'demote',
+        fromTabId: workspace.id,
+        toTabIds: memberTerminalIds,
+        preferredToTabId: (
+          memberTerminalIds.includes(workspace.focusedSessionId)
+            ? workspace.focusedSessionId
+            : memberTerminalIds[0]
+        ),
+      });
+    }
+
+    previousWorkspacesRef.current = workspaces;
+    previousSessionWorkspaceRef.current = new Map(
+      sessions.map((session: { id: string; workspaceId?: string }) => [session.id, session.workspaceId]),
+    );
+    if (remaps.length === 0) return;
+
+    setSidePanelOpenTabs((prev: Map<string, any>) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapSidePanelTabMap(next, remap);
+      }
+      return next;
+    });
+    // Copy split trees with the open-tool map so reconcile does not replace a
+    // multi-pane layout with a fresh single-tool root on the destination tab.
+    setSidePanelLayouts((prev: Map<string, any>) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapSidePanelTabMap(next, remap);
+      }
+      return next;
+    });
+    // SFTP portals/transfers are keyed by tab id — move ownership instead of
+    // cloning so the workspace panel keeps the live browser + transfer owner.
+    setSftpHostForTab((prev: Map<string, any>) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = moveSidePanelTabMap(next, remap);
+      }
+      return next;
+    });
+    setSftpInitialLocationForTab((prev: Map<string, any>) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = moveSidePanelTabMap(next, remap);
+      }
+      return next;
+    });
+    setSftpPendingUploadsForTab((prev: Map<string, any>) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = moveSidePanelTabMap(next, remap);
+      }
+      return next;
+    });
+    setAiMountedTabIds((prev: string[]) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapMountedSidePanelTabIds(next, remap);
+      }
+      return next;
+    });
+    setNotesMountedTabIds((prev: string[]) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapMountedSidePanelTabIds(next, remap);
+      }
+      return next;
+    });
+    setScriptsMountedTabIds((prev: string[]) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapMountedSidePanelTabIds(next, remap);
+      }
+      return next;
+    });
+    setSystemMountedTabIds((prev: string[]) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapMountedSidePanelTabIds(next, remap);
+      }
+      return next;
+    });
+    setThemeMountedTabIds((prev: string[]) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = remapMountedSidePanelTabIds(next, remap);
+      }
+      return next;
+    });
+  }, [
+    sessions,
+    setAiMountedTabIds,
+    setNotesMountedTabIds,
+    setScriptsMountedTabIds,
+    setSftpHostForTab,
+    setSftpInitialLocationForTab,
+    setSftpPendingUploadsForTab,
+    setSidePanelLayouts,
+    setSidePanelOpenTabs,
+    setSystemMountedTabIds,
+    setThemeMountedTabIds,
+    validAIScopeTargetIds,
+    workspaces,
+  ]);
 
   const isSidePanelOpenForCurrentTab = activeTabId ? sidePanelOpenTabs.has(activeTabId) : false;
   const sidePanelShellWidth = getTerminalSidePanelShellWidth({
