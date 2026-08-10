@@ -1,6 +1,6 @@
 "use strict";
 
-const { CAPABILITY_STATUS } = require("../constants.cjs");
+const { AGENT_KINDS, CAPABILITY_STATUS } = require("../constants.cjs");
 
 /** @type {import("../types.cjs").CapabilityDefinition[]} */
 const VAULT_CAPABILITIES = [
@@ -49,6 +49,9 @@ const VAULT_CAPABILITIES = [
     status: CAPABILITY_STATUS.IMPLEMENTED,
     description:
       "Open a vault host by creating a new terminal tab and starting the connection. Returns the new sessionId so you can run terminal/SFTP tools against it. Use vault_hosts_list first when you only know the label or hostname.",
+    // Sidebar Catty is scoped to already-open terminals/workspaces and must not
+    // expand that scope mid-turn. Keep host_open for MCP / CLI / global agent.
+    agentKinds: [AGENT_KINDS.GLOBAL],
     policy: {
       write: true,
       sensitiveRead: false,

@@ -39,7 +39,8 @@ test("listCattyToolSpecs includes vault host tools and SFTP transfer", () => {
   const capabilityIds = listCattyToolSpecs().map((spec) => spec.capabilityId);
   assert.ok(capabilityIds.includes("vault.host.get"));
   assert.ok(capabilityIds.includes("vault.host.list"));
-  assert.ok(capabilityIds.includes("vault.host.open"));
+  // Sidebar Catty must not open hosts; that expands scope mid-turn.
+  assert.ok(!capabilityIds.includes("vault.host.open"));
   assert.ok(capabilityIds.includes("vault.hosts.create"));
   assert.ok(capabilityIds.includes("vault.host.update"));
   assert.ok(capabilityIds.includes("vault.host.delete"));
@@ -48,6 +49,18 @@ test("listCattyToolSpecs includes vault host tools and SFTP transfer", () => {
   assert.ok(capabilityIds.includes("vault.note.list"));
   assert.ok(capabilityIds.includes("sftp.download"));
   assert.ok(capabilityIds.includes("sftp.upload"));
+});
+
+test("host_open stays on MCP and global agent, not sidebar Catty", () => {
+  const { AGENT_KINDS, listAgentToolSpecs } = require("./toolSurfaces.cjs");
+  const sidebarIds = listAgentToolSpecs(AGENT_KINDS.SIDEBAR).map((spec) => spec.capabilityId);
+  const globalIds = listAgentToolSpecs(AGENT_KINDS.GLOBAL).map((spec) => spec.capabilityId);
+  const mcpHostOpen = listMcpTools().find((tool) => tool.mcpTool === "host_open");
+
+  assert.ok(!sidebarIds.includes("vault.host.open"));
+  assert.ok(globalIds.includes("vault.host.open"));
+  assert.ok(mcpHostOpen);
+  assert.equal(mcpHostOpen.capabilityId, "vault.host.open");
 });
 
 test("listMcpTools includes vault host update and delete for external MCP clients", () => {
@@ -170,12 +183,17 @@ test("catty and mcp terminal tools share capability ids", () => {
   assert.equal(mcp?.capabilityId, "terminal.execute");
 });
 
-test("implemented catalog tools with inputs are catty-eligible unless denylisted", () => {
+test("implemented catalog tools with inputs are catty-eligible unless denylisted or agentKinds-restricted", () => {
   const implemented = ALL_CAPABILITIES.filter((cap) => cap.status === CAPABILITY_STATUS.IMPLEMENTED);
   for (const capability of implemented) {
     const hasInputs = Object.prototype.hasOwnProperty.call(TOOL_INPUT_FIELDS, capability.id);
     if (!hasInputs) continue;
     if (CATTY_CAPABILITY_DENYLIST.has(capability.id)) {
+      assert.equal(isCattyEligible(capability), false);
+      continue;
+    }
+    if (Array.isArray(capability.agentKinds) && capability.agentKinds.length > 0
+      && !capability.agentKinds.includes("sidebar")) {
       assert.equal(isCattyEligible(capability), false);
       continue;
     }
