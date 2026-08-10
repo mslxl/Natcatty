@@ -358,6 +358,7 @@ const AIStateMaintenanceHostInner: React.FC<AIStateMaintenanceHostProps> = ({
       if (previousMemberIds.every((sessionId) => currentMemberIds.includes(sessionId))) continue;
       retargetWorkspaceActiveChatForMemberLoss({
         workspaceId: workspace.id,
+        previousMemberTerminalIds: previousMemberIds,
         currentMemberTerminalIds: currentMemberIds,
         preferredTerminalId: workspace.focusedSessionId,
       });

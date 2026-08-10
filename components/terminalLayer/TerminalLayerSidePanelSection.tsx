@@ -521,7 +521,27 @@ function hasMountedSidePanelContent(ctx: SidePanelContext): boolean {
 }
 
 function TerminalLayerSidePanelSectionInner({ ctx }: { ctx: SidePanelContext }) {
-  if (!hasMountedSidePanelContent(ctx)) return null;
+  if (!hasMountedSidePanelContent(ctx)) {
+    // Keep AI scope maintenance alive even with zero mounted tool panels so
+    // merge/dissolve handoff still runs when the user closed AI before the
+    // workspace topology change.
+    const AISidePanelStateRoot = ctx.AISidePanelStateRoot as
+      | React.ComponentType<{
+        validAIScopeTargetIds: Set<string>;
+        workspaces: import('../../types').Workspace[];
+        children: React.ReactNode;
+      }>
+      | undefined;
+    if (!AISidePanelStateRoot) return null;
+    return (
+      <AISidePanelStateRoot
+        validAIScopeTargetIds={ctx.validAIScopeTargetIds as Set<string>}
+        workspaces={ctx.workspaces as import('../../types').Workspace[]}
+      >
+        {null}
+      </AISidePanelStateRoot>
+    );
+  }
   return <TerminalLayerSidePanelInner ctx={ctx} />;
 }
 

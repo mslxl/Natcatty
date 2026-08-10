@@ -123,6 +123,7 @@ test('retargetWorkspaceActiveChatAfterMemberLoss remints chat from a closed pane
   const result = retargetWorkspaceActiveChatAfterMemberLoss({
     activeSessionIdMap: {
       'workspace:ws-1': 'chat-a',
+      'terminal:term-a': 'chat-a',
     },
     sessions: [
       {
@@ -132,12 +133,14 @@ test('retargetWorkspaceActiveChatAfterMemberLoss remints chat from a closed pane
       },
     ],
     workspaceId: 'ws-1',
+    previousMemberTerminalIds: ['term-a', 'term-b', 'term-c'],
     currentMemberTerminalIds: ['term-b', 'term-c'],
     preferredTerminalId: 'term-b',
   });
 
   assert.equal(result.changed, true);
   assert.equal(result.sessions[0]?.scope.targetId, 'term-b');
+  assert.equal(result.activeSessionIdMap['terminal:term-a'], null);
 });
 
 test('retargetWorkspaceActiveChatAfterMemberLoss is a no-op when active chat pane survives', () => {
@@ -154,6 +157,7 @@ test('retargetWorkspaceActiveChatAfterMemberLoss is a no-op when active chat pan
     },
     sessions,
     workspaceId: 'ws-1',
+    previousMemberTerminalIds: ['term-a', 'term-b'],
     currentMemberTerminalIds: ['term-a', 'term-b'],
     preferredTerminalId: 'term-b',
   });

@@ -173,27 +173,55 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
 /**
  * When a still-live workspace loses a member pane whose terminal-scoped chat is
  * the workspace active selection, remint that chat onto a remaining pane so
- * member-history matching keeps it visible.
+ * member-history matching keeps it visible. Also clear the departed terminal's
+ * active-map entry when it still points at the same chat so detach does not
+ * leave two live scopes driving one agent thread.
  */
 export function retargetWorkspaceActiveChatAfterMemberLoss<T extends AISessionScopeHandoffLike>(input: {
   activeSessionIdMap: AIActiveSessionIdMap;
   sessions: readonly T[];
   workspaceId: string;
+  previousMemberTerminalIds: readonly string[];
   currentMemberTerminalIds: readonly string[];
   preferredTerminalId?: string | null;
 }): {
+  activeSessionIdMap: Record<string, string | null>;
   sessions: T[];
   changed: boolean;
 } {
+  const previousMap = input.activeSessionIdMap as Record<string, string | null>;
   const workspaceKey = buildAIScopeKey('workspace', input.workspaceId);
-  const workspaceActive = input.activeSessionIdMap[workspaceKey];
-  if (typeof workspaceActive !== 'string' || workspaceActive.length === 0) {
-    return { sessions: input.sessions as T[], changed: false };
+  const workspaceActive = previousMap[workspaceKey];
+  const survivorTerminalIds = new Set(input.currentMemberTerminalIds.filter(Boolean));
+  const departedTerminalIds = input.previousMemberTerminalIds.filter(
+    (sessionId) => sessionId && !survivorTerminalIds.has(sessionId),
+  );
+
+  let nextMap: Record<string, string | null> = { ...previousMap };
+  let mapChanged = false;
+  if (typeof workspaceActive === 'string' && workspaceActive.length > 0) {
+    for (const departedTerminalId of departedTerminalIds) {
+      const departedKey = buildAIScopeKey('terminal', departedTerminalId);
+      if (nextMap[departedKey] !== workspaceActive) continue;
+      nextMap = { ...nextMap, [departedKey]: null };
+      mapChanged = true;
+    }
   }
 
-  const survivorTerminalIds = new Set(input.currentMemberTerminalIds.filter(Boolean));
+  if (typeof workspaceActive !== 'string' || workspaceActive.length === 0) {
+    return {
+      activeSessionIdMap: mapChanged ? nextMap : previousMap,
+      sessions: input.sessions as T[],
+      changed: mapChanged,
+    };
+  }
+
   if (survivorTerminalIds.size === 0) {
-    return { sessions: input.sessions as T[], changed: false };
+    return {
+      activeSessionIdMap: mapChanged ? nextMap : previousMap,
+      sessions: input.sessions as T[],
+      changed: mapChanged,
+    };
   }
 
   const preferredTerminalId = (
@@ -203,21 +231,38 @@ export function retargetWorkspaceActiveChatAfterMemberLoss<T extends AISessionSc
       : input.currentMemberTerminalIds.find((id) => survivorTerminalIds.has(id))
   ) ?? null;
   if (!preferredTerminalId) {
-    return { sessions: input.sessions as T[], changed: false };
+    return {
+      activeSessionIdMap: mapChanged ? nextMap : previousMap,
+      sessions: input.sessions as T[],
+      changed: mapChanged,
+    };
   }
 
   const activeSession = input.sessions.find((session) => session.id === workspaceActive);
   if (!activeSession) {
-    return { sessions: input.sessions as T[], changed: false };
+    return {
+      activeSessionIdMap: mapChanged ? nextMap : previousMap,
+      sessions: input.sessions as T[],
+      changed: mapChanged,
+    };
   }
   if (activeSession.scope.type !== 'terminal' || !activeSession.scope.targetId) {
-    return { sessions: input.sessions as T[], changed: false };
+    return {
+      activeSessionIdMap: mapChanged ? nextMap : previousMap,
+      sessions: input.sessions as T[],
+      changed: mapChanged,
+    };
   }
   if (survivorTerminalIds.has(activeSession.scope.targetId)) {
-    return { sessions: input.sessions as T[], changed: false };
+    return {
+      activeSessionIdMap: mapChanged ? nextMap : previousMap,
+      sessions: input.sessions as T[],
+      changed: mapChanged,
+    };
   }
 
   return {
+    activeSessionIdMap: mapChanged ? nextMap : previousMap,
     sessions: input.sessions.map((session) => (
       session.id !== workspaceActive
         ? session

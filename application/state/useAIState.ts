@@ -1042,6 +1042,7 @@ export function useAIState() {
 
   const retargetWorkspaceActiveChatForMemberLoss = useCallback((input: {
     workspaceId: string;
+    previousMemberTerminalIds: readonly string[];
     currentMemberTerminalIds: readonly string[];
     preferredTerminalId?: string | null;
   }) => {
@@ -1057,15 +1058,25 @@ export function useAIState() {
       activeSessionIdMap: currentMap,
       sessions: currentSessions,
       workspaceId: input.workspaceId,
+      previousMemberTerminalIds: input.previousMemberTerminalIds,
       currentMemberTerminalIds: input.currentMemberTerminalIds,
       preferredTerminalId: input.preferredTerminalId,
     });
     if (!result.changed) return;
 
-    sessionsRef.current = result.sessions;
-    setLatestAISessionsSnapshot(result.sessions);
-    persistSessions(result.sessions);
-    setSessionsRaw(result.sessions);
+    if (result.activeSessionIdMap !== currentMap) {
+      setLatestAIActiveSessionMapSnapshot(result.activeSessionIdMap);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, result.activeSessionIdMap);
+      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+      setActiveSessionIdMapRaw(result.activeSessionIdMap);
+    }
+
+    if (result.sessions !== currentSessions) {
+      sessionsRef.current = result.sessions;
+      setLatestAISessionsSnapshot(result.sessions);
+      persistSessions(result.sessions);
+      setSessionsRaw(result.sessions);
+    }
   }, [persistSessions]);
 
   // ── Provider CRUD helpers ──
