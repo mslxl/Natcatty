@@ -44,4 +44,8 @@ test("server stats keep last snapshot when all consumers pause", () => {
   // Pausing must not wipe lastUpdated stats (Overview tab-switch empty flash).
   assert.match(idleBody, /clearServerStatsTimers\(session\)/);
   assert.doesNotMatch(idleBody, /resetServerStatsSession\(session\)/);
+  assert.doesNotMatch(idleBody, /createInitialState/);
+  // But give-up must clear so resume can auto-retry after hard failure.
+  assert.match(idleBody, /session\.givenUp = false/);
+  assert.match(idleBody, /session\.consecutiveFailures = 0/);
 });

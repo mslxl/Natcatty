@@ -48,8 +48,10 @@ export function measureSystemManagerTabBarLabeledFit(
   }
 
   const budget = container.clientWidth;
+  // Hidden / zero-width host: do not pretend labels fit (that would drop
+  // icon-only while the side panel is display:none or still laying out).
   if (budget <= 0) {
-    return { overflows: false, fitsWithSlack: true };
+    return { overflows: false, fitsWithSlack: false };
   }
 
   const labelEls = Array.from(

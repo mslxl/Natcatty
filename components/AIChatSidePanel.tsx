@@ -450,15 +450,17 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   useEffect(() => {
     if (!isVisible) return;
+    // Predicate must match normalizePanelView's list (scoped history), not the
+    // global store — out-of-scope sessions must still demote to draft.
     if (!shouldForceDraftViewSync(
       explicitPanelView,
       normalizedPanelView,
-      (sessionId) => sessions.some((session) => session.id === sessionId),
+      (sessionId) => historySessions.some((session) => session.id === sessionId),
     )) {
       return;
     }
     showDraftView(scopeKey);
-  }, [isVisible, normalizedPanelView, explicitPanelView, scopeKey, sessions, showDraftView]);
+  }, [isVisible, normalizedPanelView, explicitPanelView, scopeKey, historySessions, showDraftView]);
 
   useEffect(() => {
     if (!activeSession) return;
@@ -477,13 +479,24 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   useEffect(() => {
     if (!isVisible) return;
     if (normalizedPanelView.mode !== 'draft') return;
-    // Only clear ownership when the panel is intentionally on draft. An
-    // explicit session view that has not resolved into history yet must keep
-    // its active map entry so the chat does not jump into the history list.
-    if (explicitPanelView?.mode === 'session') return;
+    // Keep ownership while an explicit session is still displayable in this
+    // scope (normalize has not demoted it). Out-of-scope / missing ids clear.
+    if (
+      explicitPanelView?.mode === 'session'
+      && historySessions.some((session) => session.id === explicitPanelView.sessionId)
+    ) {
+      return;
+    }
     if (persistedSessionId == null) return;
     setActiveSessionId(null);
-  }, [isVisible, normalizedPanelView.mode, explicitPanelView, persistedSessionId, setActiveSessionId]);
+  }, [
+    isVisible,
+    normalizedPanelView.mode,
+    explicitPanelView,
+    historySessions,
+    persistedSessionId,
+    setActiveSessionId,
+  ]);
 
   const ensureScopeDraft = useCallback((agentId: string) => {
     ensureDraftForScope(scopeKey, agentId);

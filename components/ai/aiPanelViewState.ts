@@ -84,9 +84,14 @@ export function normalizePanelView(
  * Whether the panel should force `showDraftView` when the normalized view
  * differs from the explicit store view.
  *
- * Explicit session views must stay put while the session still exists in the
- * store — otherwise a one-frame history lag after draft send demotes the new
- * chat into history and reopens a blank draft (especially under StrictMode).
+ * Explicit session views must stay put while the session is still present in
+ * the same scoped history list that `normalizePanelView` uses — otherwise a
+ * one-frame history lag after draft send demotes the new chat into history
+ * and reopens a blank draft (especially under StrictMode).
+ *
+ * `sessionExists` must NOT consult the global store alone: a session that
+ * exists but is out of this scope's history must demote so the panel does not
+ * stick on a blank draft with a ghost active-map entry.
  */
 export function shouldForceDraftViewSync(
   explicitPanelView: AIPanelView | undefined,

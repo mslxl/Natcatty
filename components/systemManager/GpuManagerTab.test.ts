@@ -44,6 +44,9 @@ test("gpu device card uses vendor vector badges", () => {
   const badgeSource = readFileSync(new URL("./GpuVendorBadge.tsx", import.meta.url), "utf8");
   assert.match(source, /GpuVendorBadge/);
   assert.match(source, /vendor=\{device\.vendor\}/);
+  // Process rows share the same display helper (no deleted vendorLabel).
+  assert.match(source, /vendorDisplayLabel\(process\.vendor/);
+  assert.doesNotMatch(source, /vendorLabel\(/);
   assert.match(badgeSource, /NVIDIA_PATH/);
   assert.match(badgeSource, /HUAWEI_PATH/);
   assert.match(badgeSource, /vendor === 'nvidia'/);

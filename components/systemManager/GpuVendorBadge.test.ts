@@ -10,4 +10,7 @@ test('gpu vendor badge embeds monochrome vector marks for nvidia and ascend', ()
   assert.match(source, /HUAWEI_PATH/);
   assert.match(source, /GpuVendorBadge/);
   assert.match(source, /vendorDisplayLabel/);
+  // Mark is decorative; text label is the accessible name (no double announce).
+  assert.match(source, /aria-hidden="true"/);
+  assert.doesNotMatch(source, /role="img"/);
 });

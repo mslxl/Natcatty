@@ -304,8 +304,11 @@ function reconcileSharedServerStatsSession(session: SharedServerStatsSession): v
   if (activeClients.length === 0) {
     // Pause polling only. Keep the last successful stats so remounting Overview
     // (or re-enabling a terminal stats strip) can paint immediately instead of
-    // flashing "No system overview data yet."
+    // flashing "No system overview data yet." Still clear give-up / failure so a
+    // later resume can auto-retry (old reset wiped stats + flags together).
     clearServerStatsTimers(session);
+    session.givenUp = false;
+    session.consecutiveFailures = 0;
     if (session.state.isLoading) {
       updateServerStatsState(session, { isLoading: false });
     }

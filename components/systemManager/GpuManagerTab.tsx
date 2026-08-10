@@ -9,7 +9,7 @@ import type {
 } from '../../domain/systemManager/types';
 import { cn } from '../../lib/utils';
 import { ResourceBar } from './ResourceBar';
-import { GpuVendorBadge } from './GpuVendorBadge';
+import { GpuVendorBadge, vendorDisplayLabel } from './GpuVendorBadge';
 import {
   SystemPanelEmpty,
   SystemPanelError,
@@ -206,7 +206,7 @@ const ProcessRow = memo(function ProcessRow({
   return (
     <SystemPanelRow
       title={process.processName || '—'}
-      subtitle={`${vendorLabel(process.vendor, t)} #${process.gpuIndex}`}
+      subtitle={`${vendorDisplayLabel(process.vendor, t)} #${process.gpuIndex}`}
       trailing={(
         <div className="flex items-center gap-2 text-[10px] text-muted-foreground tabular-nums">
           <span>PID {process.pid}</span>

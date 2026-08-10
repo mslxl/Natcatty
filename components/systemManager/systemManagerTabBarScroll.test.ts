@@ -202,3 +202,17 @@ test('resolveSystemManagerTabBarIconOnly enters and leaves with hysteresis', () 
     false,
   );
 });
+
+test('measureSystemManagerTabBarLabeledFit does not pretend zero-width bar fits labels', () => {
+  const container = {
+    clientWidth: 0,
+    classList: { contains: () => true, remove() {}, add() {} },
+    querySelectorAll: () => [] as unknown as NodeListOf<HTMLElement>,
+  } as unknown as HTMLElement;
+
+  const fit = measureSystemManagerTabBarLabeledFit(container);
+  assert.equal(fit.overflows, false);
+  assert.equal(fit.fitsWithSlack, false);
+  // Keep icon-only while the host is hidden / not laid out.
+  assert.equal(resolveSystemManagerTabBarIconOnly(fit, true), true);
+});

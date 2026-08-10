@@ -658,6 +658,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     s.sftpFollowTerminalCwd,
     themeState,
     workspaceById,
+    s.workspaces,
     workspaceInnerRef,
     workspaceOuterRef,
     workspaceOverlayRef,
