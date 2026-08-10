@@ -6,8 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import { getSftpBreadcrumbSegments } from "../../application/state/sftp/utils.ts";
 import {
+  normalizeSftpBreadcrumbMaxVisibleParts,
   resolveSftpBreadcrumbVisibleParts,
-  shouldKeepSftpBreadcrumbLeadingRoot,
+  scrollSftpBreadcrumbViewportToTail,
 } from "./SftpBreadcrumb.tsx";
 
 const breadcrumbSource = fs.readFileSync(
@@ -15,48 +16,33 @@ const breadcrumbSource = fs.readFileSync(
   "utf8",
 );
 
-test("deep unix paths keep the trailing segments and hide the prefix", () => {
-  const { segments, isWindowsDrive } = getSftpBreadcrumbSegments(
+test("deep unix paths keep the first segment and trailing segments", () => {
+  const { segments } = getSftpBreadcrumbSegments(
     "/var/www/apps/netcatty/releases/current/public",
   );
-  const keepLeadingRoot = shouldKeepSftpBreadcrumbLeadingRoot({
-    segments,
-    isWindowsDrive,
-  });
-  assert.equal(keepLeadingRoot, false);
-
   const resolved = resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts: 4,
-    keepLeadingRoot,
   });
 
   assert.equal(resolved.needsTruncation, true);
   assert.deepEqual(
     resolved.visibleParts.map((part) => part.segment.label),
-    ["netcatty", "releases", "current", "public"],
+    ["var", "releases", "current", "public"],
   );
   assert.deepEqual(
     resolved.hiddenParts.map((part) => part.segment.label),
-    ["var", "www", "apps"],
+    ["www", "apps", "netcatty"],
   );
 });
 
 test("windows drive paths keep the drive letter while preferring the tail", () => {
-  const { segments, isWindowsDrive } = getSftpBreadcrumbSegments(
+  const { segments } = getSftpBreadcrumbSegments(
     "C:\\Users\\alice\\projects\\netcatty\\src\\components",
   );
-  assert.equal(isWindowsDrive, true);
-  const keepLeadingRoot = shouldKeepSftpBreadcrumbLeadingRoot({
-    segments,
-    isWindowsDrive,
-  });
-  assert.equal(keepLeadingRoot, true);
-
   const resolved = resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts: 4,
-    keepLeadingRoot,
   });
 
   assert.equal(resolved.needsTruncation, true);
@@ -68,20 +54,12 @@ test("windows drive paths keep the drive letter while preferring the tail", () =
 });
 
 test("windows UNC paths keep the share root while preferring the tail", () => {
-  const { segments, isWindowsDrive } = getSftpBreadcrumbSegments(
+  const { segments } = getSftpBreadcrumbSegments(
     "\\\\wsl.localhost\\Ubuntu-22.04\\home\\alice\\projects\\netcatty\\src",
   );
-  assert.equal(isWindowsDrive, false);
-  const keepLeadingRoot = shouldKeepSftpBreadcrumbLeadingRoot({
-    segments,
-    isWindowsDrive,
-  });
-  assert.equal(keepLeadingRoot, true);
-
   const resolved = resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts: 4,
-    keepLeadingRoot,
   });
 
   assert.equal(resolved.needsTruncation, true);
@@ -95,8 +73,56 @@ test("windows UNC paths keep the share root while preferring the tail", () => {
   );
 });
 
-test("breadcrumb stays left-aligned without rtl clip", () => {
+test("budget of one keeps only the leading root without overflowing the contract", () => {
+  assert.equal(normalizeSftpBreadcrumbMaxVisibleParts(0), 1);
+  assert.equal(normalizeSftpBreadcrumbMaxVisibleParts(1.9), 1);
+
+  const { segments } = getSftpBreadcrumbSegments(
+    "C:\\Users\\alice\\projects\\netcatty\\src",
+  );
+  const resolved = resolveSftpBreadcrumbVisibleParts({
+    segments,
+    maxVisibleParts: 1,
+  });
+
+  assert.equal(resolved.needsTruncation, true);
+  assert.deepEqual(
+    resolved.visibleParts.map((part) => part.segment.label),
+    ["C:"],
+  );
+  assert.ok(resolved.hiddenParts.length >= 3);
+});
+
+test("breadcrumb viewport scroll prefers the path tail without rtl layout", () => {
   assert.doesNotMatch(breadcrumbSource, /dir="rtl"/);
-  assert.match(breadcrumbSource, /overflow-hidden/);
-  assert.match(breadcrumbSource, /shouldKeepSftpBreadcrumbLeadingRoot/);
+  assert.match(breadcrumbSource, /scrollSftpBreadcrumbViewportToTail/);
+  assert.match(breadcrumbSource, /ResizeObserver/);
+
+  const calls: Array<{ left: number }> = [];
+  const viewport = {
+    scrollWidth: 400,
+    clientWidth: 120,
+    set scrollLeft(value: number) {
+      calls.push({ left: value });
+    },
+    get scrollLeft() {
+      return calls.at(-1)?.left ?? 0;
+    },
+  } as HTMLElement;
+
+  scrollSftpBreadcrumbViewportToTail(viewport);
+  assert.deepEqual(calls, [{ left: 280 }]);
+
+  const shortCalls: number[] = [];
+  scrollSftpBreadcrumbViewportToTail({
+    scrollWidth: 100,
+    clientWidth: 120,
+    set scrollLeft(value: number) {
+      shortCalls.push(value);
+    },
+    get scrollLeft() {
+      return shortCalls.at(-1) ?? 0;
+    },
+  } as HTMLElement);
+  assert.deepEqual(shortCalls, [0]);
 });

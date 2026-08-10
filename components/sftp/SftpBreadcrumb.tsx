@@ -3,7 +3,7 @@
  */
 
 import { ChevronDown, ChevronRight, Home, MoreHorizontal } from 'lucide-react';
-import React, { memo, useCallback, useMemo, useState } from 'react';
+import React, { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { getSftpBreadcrumbSegments } from '../../application/state/sftp/utils';
 import type { SftpWindowsPathOptions } from '../../application/state/sftp/utils';
@@ -30,37 +30,29 @@ export type SftpBreadcrumbVisiblePart = {
     originalIndex: number;
 };
 
-/** True for Windows UNC share roots like \\host\share (including WSL UNC). */
-export function isSftpBreadcrumbUncRootSegment(segment: Pick<BreadcrumbSegment, 'path'> | undefined): boolean {
-    return !!segment && /^\\\\[^\\]+\\[^\\]+/.test(segment.path);
+/** Clamp the visible-segment budget to a positive integer. */
+export function normalizeSftpBreadcrumbMaxVisibleParts(maxVisibleParts: number): number {
+    if (!Number.isFinite(maxVisibleParts)) return 1;
+    return Math.max(1, Math.floor(maxVisibleParts));
 }
 
-/** Keep drive letters and UNC share roots when truncating deep breadcrumbs. */
-export function shouldKeepSftpBreadcrumbLeadingRoot({
-    segments,
-    isWindowsDrive,
-}: {
-    segments: BreadcrumbSegment[];
-    isWindowsDrive: boolean;
-}): boolean {
-    return isWindowsDrive || isSftpBreadcrumbUncRootSegment(segments[0]);
-}
-
-/** Prefer the path tail when truncating; optionally keep a Windows drive/UNC root. */
+/**
+ * Prefer the path tail when truncating, but always keep the first segment so the
+ * root / drive / UNC share stays clickable. Budget of 1 shows only the first segment.
+ */
 export function resolveSftpBreadcrumbVisibleParts({
     segments,
     maxVisibleParts,
-    keepLeadingRoot,
 }: {
     segments: BreadcrumbSegment[];
     maxVisibleParts: number;
-    keepLeadingRoot: boolean;
 }): {
     visibleParts: SftpBreadcrumbVisiblePart[];
     hiddenParts: SftpBreadcrumbVisiblePart[];
     needsTruncation: boolean;
 } {
-    if (segments.length <= maxVisibleParts) {
+    const budget = normalizeSftpBreadcrumbMaxVisibleParts(maxVisibleParts);
+    if (segments.length <= budget) {
         return {
             visibleParts: segments.map((segment, idx) => ({ segment, originalIndex: idx })),
             hiddenParts: [],
@@ -68,27 +60,38 @@ export function resolveSftpBreadcrumbVisibleParts({
         };
     }
 
-    const lastPartsCount = keepLeadingRoot
-        ? Math.max(1, maxVisibleParts - 1)
-        : maxVisibleParts;
+    if (budget === 1) {
+        return {
+            visibleParts: [{ segment: segments[0], originalIndex: 0 }],
+            hiddenParts: segments.slice(1).map((segment, idx) => ({
+                segment,
+                originalIndex: idx + 1,
+            })),
+            needsTruncation: true,
+        };
+    }
+
+    const lastPartsCount = budget - 1;
     const lastParts = segments.slice(-lastPartsCount).map((segment, idx) => ({
         segment,
         originalIndex: segments.length - lastPartsCount + idx,
     }));
-    const hiddenStart = keepLeadingRoot ? 1 : 0;
-    const hiddenParts = segments.slice(hiddenStart, -lastPartsCount).map((segment, idx) => ({
+    const hiddenParts = segments.slice(1, -lastPartsCount).map((segment, idx) => ({
         segment,
-        originalIndex: hiddenStart + idx,
+        originalIndex: idx + 1,
     }));
-    const visibleParts = keepLeadingRoot
-        ? [{ segment: segments[0], originalIndex: 0 }, ...lastParts]
-        : lastParts;
 
     return {
-        visibleParts,
+        visibleParts: [{ segment: segments[0], originalIndex: 0 }, ...lastParts],
         hiddenParts,
         needsTruncation: true,
     };
+}
+
+/** Scroll a breadcrumb viewport so overflow keeps the trailing path visible. */
+export function scrollSftpBreadcrumbViewportToTail(viewport: HTMLElement | null): void {
+    if (!viewport) return;
+    viewport.scrollLeft = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
 }
 
 const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
@@ -104,6 +107,8 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
 
     const [drives, setDrives] = useState<string[]>([]);
     const [driveDropdownOpen, setDriveDropdownOpen] = useState(false);
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const trackRef = useRef<HTMLDivElement>(null);
 
     const handleDriveDropdownOpen = useCallback(async (open: boolean) => {
         setDriveDropdownOpen(open);
@@ -123,31 +128,45 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
         [path, pathOptions],
     );
 
-    const keepLeadingRoot = useMemo(
-        () => shouldKeepSftpBreadcrumbLeadingRoot({ segments, isWindowsDrive }),
-        [segments, isWindowsDrive],
-    );
-
     const { visibleParts, hiddenParts, needsTruncation } = useMemo(
         () =>
             resolveSftpBreadcrumbVisibleParts({
                 segments,
                 maxVisibleParts,
-                keepLeadingRoot,
             }),
-        [segments, maxVisibleParts, keepLeadingRoot],
+        [segments, maxVisibleParts],
     );
+
+    const syncTailScroll = useCallback(() => {
+        scrollSftpBreadcrumbViewportToTail(viewportRef.current);
+    }, []);
+
+    useLayoutEffect(() => {
+        syncTailScroll();
+        const viewport = viewportRef.current;
+        if (!viewport || typeof ResizeObserver === 'undefined') return;
+        const ro = new ResizeObserver(() => syncTailScroll());
+        ro.observe(viewport);
+        const track = trackRef.current;
+        if (track) ro.observe(track);
+        return () => ro.disconnect();
+    }, [syncTailScroll, path, visibleParts, needsTruncation]);
 
     const showDriveDropdown = isWindowsDrive && isLocal && !!onListDrives;
 
-    // Keep the track LTR and left-aligned. Deep paths already prefer trailing
-    // segments via resolveSftpBreadcrumbVisibleParts, so avoid RTL clip (it
-    // right-aligns short paths like /root).
+    // LTR + left-aligned when the path fits. When it overflows, scroll to the
+    // trailing edge so the current directory stays visible without RTL layout.
     return (
         <Tooltip>
             <TooltipTrigger asChild>
-                <div className="w-full min-w-0 overflow-hidden cursor-default">
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <div
+                    ref={viewportRef}
+                    className="w-full min-w-0 overflow-hidden cursor-default"
+                >
+                    <div
+                        ref={trackRef}
+                        className="flex w-max max-w-none items-center gap-1 text-xs text-muted-foreground"
+                    >
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <button
@@ -160,26 +179,11 @@ const SftpBreadcrumbInner: React.FC<SftpBreadcrumbProps> = ({
                             <TooltipContent>{t("sftp.goHome")}</TooltipContent>
                         </Tooltip>
                         <ChevronRight size={12} className="opacity-40 shrink-0" />
-                        {needsTruncation && !keepLeadingRoot && (
-                            <>
-                                <Tooltip>
-                                    <TooltipTrigger asChild>
-                                        <span className="px-1 py-0.5 shrink-0 flex items-center text-muted-foreground cursor-default">
-                                            <MoreHorizontal size={14} />
-                                        </span>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                        {`${t("sftp.showHiddenPaths")}: ${hiddenParts.map(h => h.segment.label).join(' > ')}`}
-                                    </TooltipContent>
-                                </Tooltip>
-                                <ChevronRight size={12} className="opacity-40 shrink-0" />
-                            </>
-                        )}
                         {visibleParts.map(({ segment, originalIndex }, displayIdx) => {
                             const partPath = segment.path;
                             const isLast = originalIndex === segments.length - 1;
                             const showEllipsisBefore =
-                                needsTruncation && keepLeadingRoot && displayIdx === 1;
+                                needsTruncation && displayIdx === 1;
 
                             return (
                                 <React.Fragment key={partPath}>
