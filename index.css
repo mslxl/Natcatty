@@ -1077,6 +1077,172 @@ html[data-theme-transition] *::after {
   pointer-events: auto;
 }
 
+/*
+ * Image edit / insert dialog (MDX ImageDialog via Radix).
+ * Match Netcatty popover / form tokens instead of stock MDX chrome.
+ */
+.netcatty-mdx-editor [class*="_dialogOverlay_"] {
+  background: hsl(var(--background) / 0.55) !important;
+  backdrop-filter: blur(2px);
+  opacity: 1 !important;
+  z-index: 200100 !important;
+}
+
+.netcatty-mdx-editor [class*="_dialogContent_"],
+.netcatty-mdx-editor [class*="_largeDialogContent_"] {
+  min-width: min(22rem, calc(100vw - 2rem));
+  max-width: min(26rem, calc(100vw - 2rem));
+  padding: 1rem 1.1rem 0.9rem !important;
+  gap: 0.65rem !important;
+  align-items: stretch !important;
+  flex-direction: column !important;
+  border: 1px solid hsl(var(--border) / 0.7) !important;
+  border-radius: 0.75rem !important;
+  background: hsl(var(--popover)) !important;
+  color: hsl(var(--popover-foreground)) !important;
+  box-shadow:
+    0 0 0 1px hsl(var(--border) / 0.35),
+    0 12px 40px hsl(0 0% 0% / 0.28) !important;
+  filter: none !important;
+  z-index: 200110 !important;
+  font-size: 13px !important;
+}
+
+.netcatty-mdx-editor [class*="_dialogContent_"] > h2,
+.netcatty-mdx-editor [class*="_largeDialogContent_"] > h2 {
+  margin: 0 0 0.15rem !important;
+  padding: 0 !important;
+  font-size: 0.9375rem !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+  color: hsl(var(--foreground)) !important;
+  line-height: 1.3 !important;
+}
+
+.netcatty-mdx-editor form[class*="_multiFieldForm_"] {
+  padding: 0.15rem 0 0 !important;
+  gap: 0.75rem !important;
+}
+
+.netcatty-mdx-editor form[class*="_multiFieldForm_"] [class*="_formField_"] {
+  gap: 0.35rem !important;
+}
+
+.netcatty-mdx-editor form[class*="_multiFieldForm_"] [class*="_formField_"] > label {
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  letter-spacing: 0.01em;
+  color: hsl(var(--muted-foreground)) !important;
+  line-height: 1.3 !important;
+}
+
+.netcatty-mdx-editor [class*="_textInput_"],
+.netcatty-mdx-editor [class*="_downshiftInput_"],
+.netcatty-mdx-editor [class*="_dialogInput_"] {
+  width: 100% !important;
+  min-height: 2.1rem !important;
+  box-sizing: border-box !important;
+  padding: 0.4rem 0.65rem !important;
+  border-radius: 0.5rem !important;
+  border: 1px solid hsl(var(--border) / 0.75) !important;
+  background: hsl(var(--background)) !important;
+  color: hsl(var(--foreground)) !important;
+  font-size: 12.5px !important;
+  line-height: 1.35 !important;
+  box-shadow: none !important;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.netcatty-mdx-editor [class*="_textInput_"]:focus,
+.netcatty-mdx-editor [class*="_downshiftInput_"]:focus,
+.netcatty-mdx-editor [class*="_dialogInput_"]:focus,
+.netcatty-mdx-editor [class*="_downshiftInputWrapper_"]:focus-within {
+  outline: none !important;
+  border-color: hsl(var(--primary) / 0.65) !important;
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18) !important;
+}
+
+.netcatty-mdx-editor [class*="_downshiftInputWrapper_"] {
+  width: 100% !important;
+  border-radius: 0.5rem !important;
+  border: 1px solid hsl(var(--border) / 0.75) !important;
+  background: hsl(var(--background)) !important;
+  overflow: hidden;
+}
+
+.netcatty-mdx-editor [class*="_downshiftInputWrapper_"] [class*="_downshiftInput_"] {
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.netcatty-mdx-editor [class*="_downshiftInputWrapper_"]:focus-within {
+  border-color: hsl(var(--primary) / 0.65) !important;
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.18) !important;
+}
+
+.netcatty-mdx-editor [class*="_imageDimensionsContainer_"] {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.65rem !important;
+}
+
+.netcatty-mdx-editor [class*="_imageDimensionsContainer_"] [class*="_formField_"] {
+  min-width: 0;
+}
+
+/* Action row at the bottom of the form */
+.netcatty-mdx-editor form[class*="_multiFieldForm_"] > div:last-child {
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  margin-top: 0.35rem !important;
+  padding-top: 0.75rem !important;
+  border-top: 1px solid hsl(var(--border) / 0.55);
+}
+
+.netcatty-mdx-editor [class*="_primaryButton_"],
+.netcatty-mdx-editor [class*="_secondaryButton_"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-height: 2rem !important;
+  padding: 0.35rem 0.85rem !important;
+  border-radius: 0.5rem !important;
+  font-size: 12px !important;
+  font-weight: 550 !important;
+  line-height: 1.2 !important;
+  cursor: pointer !important;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+
+.netcatty-mdx-editor [class*="_primaryButton_"] {
+  border: 1px solid hsl(var(--primary) / 0.35) !important;
+  background: hsl(var(--primary)) !important;
+  color: hsl(var(--primary-foreground)) !important;
+}
+
+.netcatty-mdx-editor [class*="_primaryButton_"]:hover {
+  background: hsl(var(--primary) / 0.9) !important;
+}
+
+.netcatty-mdx-editor [class*="_secondaryButton_"] {
+  border: 1px solid hsl(var(--border) / 0.8) !important;
+  background: hsl(var(--secondary) / 0.55) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.netcatty-mdx-editor [class*="_secondaryButton_"]:hover {
+  background: hsl(var(--secondary)) !important;
+}
+
+/* Hide empty "Upload an image" file field chrome when handler is null (hidden input only). */
+.netcatty-mdx-editor form[class*="_multiFieldForm_"] input[type="file"] {
+  font-size: 12px;
+  color: hsl(var(--muted-foreground));
+}
+
 .netcatty-mdx-content {
   min-height: calc(100vh - 15rem);
   padding: 0;
