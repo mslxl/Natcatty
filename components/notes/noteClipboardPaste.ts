@@ -135,9 +135,12 @@ const isSafeImageSrc = (src: string): boolean => {
   if (!trimmed) return false;
   if (trimmed.startsWith("data:")) return false;
   if (/^https?:\/\//i.test(trimmed)) return true;
-  if (trimmed.startsWith("//")) return true;
-  if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) return true;
-  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) return true;
+  // Protocol-relative CDN URLs; notes have no http(s) page origin, but //host
+  // still resolves to a remote host in Chromium once a scheme is applied by the browser.
+  if (trimmed.startsWith("//") && /^\/\/[^/]/.test(trimmed)) return true;
+  // Path-relative / root-relative / bare relative: notes have no source-document
+  // base URL. In packaged builds the renderer is app://…, so these would hit the
+  // local dist protocol handler and render as broken images.
   return false;
 };
 
@@ -154,8 +157,9 @@ const escapeHtmlAttr = (value: string): string => (
  * - With width/height → sanitized HTML <img> (MDX keeps dimensions; CSS scales)
  * - Without → standard ![alt](src)
  *
- * Display safety: side-panel CSS uses max-width:100% + height:auto so large
- * intrinsic sizes (e.g. 3142×1764 screenshots) shrink instead of cropping.
+ * Display safety: side-panel CSS uses max-width:100% + height:auto (when width
+ * is present or height is absent) so large intrinsic sizes shrink without
+ * cropping, while height-only icons keep their HTML height.
  */
 export const serializeSafeHtmlImage = (input: {
   src: string;

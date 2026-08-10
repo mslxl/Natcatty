@@ -1560,19 +1560,29 @@ html[data-theme-transition] *::after {
 
 /*
  * Note images: source keeps width/height (HTML attrs for MDX / aspect ratio).
- * Display: max-width caps screenshots to the pane; height:auto keeps ratio.
+ * Display: max-width caps screenshots to the pane; height:auto keeps ratio
+ * when width is known or unconstrained. Do NOT force height:auto on height-only
+ * images (e.g. <img height="24">) — that would ignore the presentational size.
  * Do NOT force width:auto — that would ignore a 128px logo preference.
  */
 .netcatty-mdx-content img,
 .netcatty-mdx-editor [class*="_imageWrapper_"] img,
 .netcatty-mdx-editor img {
   max-width: 100% !important;
-  height: auto !important;
   object-fit: contain;
   display: block;
   margin-left: auto;
   margin-right: auto;
   border-radius: 0.375rem;
+}
+
+.netcatty-mdx-content img:not([height]),
+.netcatty-mdx-content img[width],
+.netcatty-mdx-editor [class*="_imageWrapper_"] img:not([height]),
+.netcatty-mdx-editor [class*="_imageWrapper_"] img[width],
+.netcatty-mdx-editor img:not([height]),
+.netcatty-mdx-editor img[width] {
+  height: auto !important;
 }
 
 /* Cap MDX image chrome when ImageNode bakes large pixel widths into styles. */

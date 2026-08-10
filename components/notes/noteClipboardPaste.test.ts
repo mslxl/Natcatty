@@ -86,6 +86,40 @@ test("serializeSafeHtmlImage preserves dimensions when present", () => {
     }),
     /width="150"/,
   );
+  assert.match(
+    serializeSafeHtmlImage({
+      src: "https://example.com/icon.png",
+      alt: "icon",
+      height: 24,
+    }),
+    /<img\b[^>]*height="24"[^>]*\/>/,
+  );
+});
+
+test("serializeSafeHtmlImage rejects unresolved relative image sources", () => {
+  assert.equal(
+    serializeSafeHtmlImage({ src: "./docs/screenshot.png", alt: "shot" }),
+    "",
+  );
+  assert.equal(
+    serializeSafeHtmlImage({ src: "../assets/logo.png", alt: "logo" }),
+    "",
+  );
+  assert.equal(
+    serializeSafeHtmlImage({ src: "/assets/logo.png", alt: "logo" }),
+    "",
+  );
+  assert.equal(
+    serializeSafeHtmlImage({ src: "docs/screenshot.png", alt: "shot" }),
+    "",
+  );
+  assert.equal(
+    serializeSafeHtmlImage({
+      src: "//cdn.example.com/a.png",
+      alt: "cdn",
+    }),
+    "![cdn](//cdn.example.com/a.png)",
+  );
 });
 
 test("linked badge images collapse to clean text links", () => {
