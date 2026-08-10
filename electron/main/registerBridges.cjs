@@ -536,7 +536,7 @@ function createBridgeRegistrar(context) {
         session.zmodemSentry.queueDragDropUpload({
           filePaths,
           remoteNames,
-          uploadCommand: uploadCommand || "rz\r",
+          uploadCommand: uploadCommand || "rz -y\r",
           tempPaths,
         });
         return { success: true };
