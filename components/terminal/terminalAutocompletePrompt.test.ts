@@ -19,9 +19,8 @@ function atPrompt(userInput: string, promptText = "$ "): PromptDetectionResult {
 }
 
 test("shouldBlockAutocompleteForSensitivePrompt ignores empty-echo alone", () => {
-  // Pre-echo on a normal `$ ` / themed PS1 must still allow local popup matches
-  // (#2830). allowExternalProviders:false from getAlignedPrompt is not enough
-  // by itself to suppress history/fig/snippet suggestions.
+  // Empty-echo shell PS1s are handled by allowExternalProviders:false wait,
+  // not by this helper — it only covers explicit sensitive prompts / latches.
   assert.equal(
     shouldBlockAutocompleteForSensitivePrompt({
       sensitiveInputActive: false,

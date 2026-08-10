@@ -79,6 +79,9 @@ export const DEFAULT_AUTOCOMPLETE_SETTINGS: AutocompleteSettings = {
   historyScope: "host",
 };
 
+/** Max time to poll for shell echo after a pre-echo debounce cycle (#2813). */
+const ECHO_VALIDATION_MAX_WAIT_MS = 3000;
+
 /**
  * Whether completion work is worth doing — i.e. whether anything would
  * actually be rendered. With both the popup and ghost text disabled, querying
@@ -248,6 +251,14 @@ export function useTerminalAutocomplete(
 
   const ghostAddonRef = useRef<GhostTextAddon | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Pre-echo debounce cycles must poll until the live line validates the
+   * keystroke buffer (or we give up). PTY echo updates xterm only and does
+   * not schedule another fetchSuggestions — without this, whole-word IME /
+   * high-latency SSH commits never show completions until the next key.
+   */
+  const echoValidationTypedRef = useRef<string | null>(null);
+  const echoValidationStartedAtRef = useRef<number | null>(null);
   const lastKeystrokeRef = useRef<number>(0);
   const lastPromptRef = useRef<PromptDetectionResult | null>(null);
   const disposedRef = useRef(false);
@@ -381,6 +392,8 @@ export function useTerminalAutocomplete(
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
+    echoValidationTypedRef.current = null;
+    echoValidationStartedAtRef.current = null;
     ghostAddonRef.current?.hide();
     completionAbortRef.current?.abort();
     completionAbortRef.current = null;
@@ -749,11 +762,8 @@ export function useTerminalAutocomplete(
     );
     lastPromptRef.current = prompt;
 
-    // Empty-echo short/themed prompts set allowExternalProviders:false so
-    // plugins and Enter history stay gated (#2814). Local history/fig/snippet
-    // matches must still run from the keystroke buffer (#2830/#2831). Only
-    // suppress when the host has latched a sensitive prompt or the PS1 text
-    // itself looks like an auth challenge.
+    // Explicit password / auth-challenge prompts (and host-latched sensitive
+    // input) stay fail-closed even when echo has already validated the line.
     if (
       shouldBlockAutocompleteForSensitivePrompt({
         sensitiveInputActive: sensitiveInputActiveRef?.current === true,
@@ -764,11 +774,46 @@ export function useTerminalAutocomplete(
       return;
     }
 
+    // Pre-echo keystroke buffer can look identical to an echo-disabled
+    // password prompt (`read -s -p '$ '`). Do not render or accept
+    // built-in history/snippet suggestions until the shell echoes input.
+    // Incoming PTY echo does not re-schedule fetches, so keep polling this
+    // debounce cycle until the live line validates — or until max wait
+    // (silent prompts never echo). clearState cancels timers and echo-wait
+    // refs; re-arm the wait afterward when still within the window.
+    // Partial echo still reaches resolveAutocompleteQueryInput below (#2830).
+    if (allowExternalProviders === false) {
+      const typed = typedInputBufferRef.current;
+      const startedAt =
+        echoValidationTypedRef.current === typed &&
+        echoValidationStartedAtRef.current != null
+          ? echoValidationStartedAtRef.current
+          : Date.now();
+      clearState();
+      const withinWait =
+        typed.length > 0 &&
+        !disposedRef.current &&
+        Date.now() - startedAt < ECHO_VALIDATION_MAX_WAIT_MS;
+      if (withinWait) {
+        echoValidationTypedRef.current = typed;
+        echoValidationStartedAtRef.current = startedAt;
+        debounceTimerRef.current = setTimeout(() => {
+          debounceTimerRef.current = null;
+          void fetchSuggestionsRef.current();
+        }, settingsRef.current.debounceMs);
+      }
+      return;
+    }
+
+    echoValidationTypedRef.current = null;
+    echoValidationStartedAtRef.current = null;
+
     // Capture version at start — if it changes during async work, discard results
     const version = ++fetchVersionRef.current;
 
     // Prefer the reliable keystroke buffer when remote echo lags (#2830).
     // getAlignedPrompt intentionally stays stricter for Enter recording.
+    // `prompt` was already resolved above for the echo-validation gate.
     const input = resolveAutocompleteQueryInput(
       prompt,
       typedInputBufferRef.current,

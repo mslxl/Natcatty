@@ -104,17 +104,13 @@ export function isSameAutocompleteQuery(options: {
 }
 
 /**
- * Whether fetchSuggestions must refuse to query/render.
+ * Whether fetchSuggestions must refuse to query/render for an already-known
+ * sensitive line (host latch or auth-challenge prompt text).
  *
- * `getAlignedPrompt` sets `allowExternalProviders: false` for empty-echo
- * short/themed prompts so password-shaped `read -s -p '$ '` lines do not
- * authorize history recording or third-party providers. That flag alone is
- * NOT enough to suppress local history/fig/snippet popups: high-latency SSH
- * looks identical until the first echoed glyph, and #2830/#2831 need local
- * matches to paint from the keystroke buffer in that window.
- *
- * Only block when the host has already marked the line sensitive, or the
- * visible prompt text itself looks like an auth challenge.
+ * This is *not* a substitute for the empty-echo / `allowExternalProviders:
+ * false` wait in useTerminalAutocomplete: `read -s -p '$ '` still looks like
+ * a normal shell PS1 until echo validates, so that path stays fail-closed
+ * separately (#2814).
  */
 export function shouldBlockAutocompleteForSensitivePrompt(options: {
   sensitiveInputActive: boolean;
