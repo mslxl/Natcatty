@@ -53,10 +53,14 @@ test("scripts side panel offers run-on-all-tabs for every snippet, not only auto
   assert.match(source, /openPackageDialog/);
 });
 
-test("scripts side panel add control is a split button with secondary create actions", () => {
-  assert.match(source, /ChevronDown/);
-  assert.match(source, /snippets\.action\.newScript/);
+test("scripts side panel exposes create actions as inline toolbar icons", () => {
   assert.match(source, /snippets\.action\.newSnippet/);
+  assert.match(source, /snippets\.action\.newPackage/);
+  assert.match(source, /snippets\.action\.newScript/);
+  assert.match(source, /openPackageDialog/);
+  assert.match(source, /handleAddScript/);
+  assert.doesNotMatch(source, /ChevronDown/);
+  assert.doesNotMatch(source, /DropdownTrigger/);
 });
 
 test("collectScriptsSidePanelPackagePaths includes implied ancestors", () => {
@@ -69,13 +73,29 @@ test("collectScriptsSidePanelPackagePaths includes implied ancestors", () => {
   );
 });
 
-test("scripts side panel toolbar exposes expand, collapse, and delete-selected actions", () => {
+test("scripts side panel search is icon-toggled and expands below the toolbar", () => {
+  assert.match(source, /searchExpanded/);
+  assert.match(source, /setSearchExpanded/);
+  assert.match(source, /max-h-0 opacity-0/);
+  assert.match(source, /snippets\.searchPlaceholder/);
+});
+
+test("scripts side panel shows delete in a selection bar only when snippets are selected", () => {
+  assert.match(source, /selectedSnippetIds\.size > 0/);
+  assert.match(source, /snippets\.selection\.selected[\s\S]*?deleteSelectedSnippets/);
+  assert.match(source, /snippets\.selection\.deleteSelected/);
+  // Trash must not sit between multi-select and add on the permanent icon row.
+  assert.doesNotMatch(
+    source,
+    /snippets\.action\.selectSnippets[\s\S]*?Trash2[\s\S]*?snippets\.action\.newSnippet/,
+  );
+});
+
+test("scripts side panel toolbar exposes expand and collapse actions", () => {
   assert.match(source, /vault\.tree\.expandAll/);
   assert.match(source, /vault\.tree\.collapseAll/);
-  assert.match(source, /snippets\.selection\.deleteSelected/);
   assert.match(source, /expandAllGroups/);
   assert.match(source, /collapseAllGroups/);
-  assert.match(source, /deleteSelectedSnippets/);
   assert.match(source, /isMultiSelectMode/);
 });
 
