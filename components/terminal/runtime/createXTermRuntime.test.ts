@@ -11,7 +11,12 @@ import {
 } from "./terminalCommandExecution";
 import { createPromptLineBreakState } from "./promptLineBreak";
 
-function createFakeTerm(lineText = "$ echo ok", cursorX = lineText.length) {
+function createFakeTerm(
+  lineText = "$ echo ok",
+  cursorX = lineText.length,
+  options?: { ghostFrom?: number },
+) {
+  const ghostFrom = options?.ghostFrom;
   return {
     buffer: {
       active: {
@@ -24,6 +29,16 @@ function createFakeTerm(lineText = "$ echo ok", cursorX = lineText.length) {
             isWrapped: false,
             translateToString() {
               return lineText;
+            },
+            getCell(x: number) {
+              const isGhost = ghostFrom != null && x >= ghostFrom;
+              return {
+                getWidth: () => 1,
+                getChars: () => lineText[x] ?? "",
+                isDim: () => (isGhost ? 1 : 0),
+                getFgColorMode: () => 0,
+                getFgColor: () => (isGhost ? 8 : 15),
+              };
             },
           };
         },
@@ -428,6 +443,7 @@ test("resolveSubmittedShellCommand records full line after mid-line history edit
       createFakeTerm(
         "user@host:~$ git status",
         "user@host:~$ git st".length,
+        { ghostFrom: "user@host:~$ git st".length },
       ) as never,
     ),
     "git st",
@@ -438,9 +454,23 @@ test("resolveSubmittedShellCommand records full line after mid-line history edit
       createFakeTerm(
         "user@host:~$ git status",
         "user@host:~$ git st".length,
+        { ghostFrom: "user@host:~$ git st".length },
       ) as never,
     ),
     "git st",
+  );
+  // Cross-token autosuggest after history: ↑ "sudo", typed " apt", ghost
+  // " upgrade". Enter submits "sudo apt", not "sudo apt upgrade".
+  assert.equal(
+    resolveSubmittedShellCommand(
+      " apt",
+      createFakeTerm(
+        "user@host:~$ sudo apt upgrade",
+        "user@host:~$ sudo apt".length,
+        { ghostFrom: "user@host:~$ sudo apt".length },
+      ) as never,
+    ),
+    "sudo apt",
   );
   // End-to-end: history callback must receive the full painted command.
   {
