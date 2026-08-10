@@ -391,6 +391,52 @@ test("resolveSubmittedShellCommand prefers live line when history replaces a typ
   );
 });
 
+test("resolveSubmittedShellCommand records full line after mid-line history edit (#2850)", () => {
+  // ↑ recalled "systemctl stop firewalld", cursor moved onto "stop", replaced
+  // with "start", Enter while still mid-line. Keystroke buffer only saw the
+  // replacement token; Enter still submits the whole zle line.
+  const line = "user@host:~$ systemctl start firewalld";
+  const cursorAfterStart = "user@host:~$ systemctl start".length;
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "start",
+      createFakeTerm(line, cursorAfterStart) as never,
+    ),
+    "systemctl start firewalld",
+  );
+  // Empty buffer + mid-line cursor after recall/edit (no typed suffix).
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "",
+      createFakeTerm(line, cursorAfterStart) as never,
+    ),
+    "systemctl start firewalld",
+  );
+  // zsh autosuggest paint past the cursor must stay on the typed prefix.
+  assert.equal(
+    resolveSubmittedShellCommand(
+      "git",
+      createFakeTerm("user@host:~$ git status", "user@host:~$ git".length) as never,
+    ),
+    "git",
+  );
+  // End-to-end: history callback must receive the full painted command.
+  {
+    const commandBufferRef = { current: "start" };
+    const recorded: string[] = [];
+    const recordedCommand = recordTerminalCommandExecution("start", {
+      host: { id: "host-1", label: "Host" },
+      sessionId: "session-1",
+      commandBufferRef,
+      onCommandExecuted(cmd) {
+        recorded.push(cmd);
+      },
+    }, createFakeTerm(line, cursorAfterStart) as never);
+    assert.equal(recordedCommand, "systemctl start firewalld");
+    assert.deepEqual(recorded, ["systemctl start firewalld"]);
+  }
+});
+
 test("recordTerminalCommandExecution arms su after empty-buffer history recall (#2191)", () => {
   const commandBufferRef = { current: "" };
   const recorded: string[] = [];

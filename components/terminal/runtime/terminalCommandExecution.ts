@@ -548,11 +548,27 @@ export const resolveSubmittedShellCommand = (
   };
 
   const aligned = alignedResult.alignedTyped?.trim() ?? "";
+  // Enter submits the whole zle line. detectPrompt truncates at the cursor, so
+  // after ↑ recall + mid-line edit the keystroke buffer may only hold the
+  // replacement token ("start") while the painted line is still
+  // "systemctl start firewalld". Prefer that full paint unless the buffer
+  // already matches the cursor prefix (zsh autosuggest ghost text) (#2850).
+  const paintedLineContinuesPastCursor =
+    Boolean(liveFromFull)
+    && Boolean(liveFromCursor)
+    && liveFromFull !== liveFromCursor
+    && liveFromFull.startsWith(liveFromCursor);
+  const preferFullPaintedLine =
+    paintedLineContinuesPastCursor
+    && buffered !== liveFromCursor
+    && buffered !== liveFromFull
+    && aligned !== liveFromCursor;
+
   // Aligned buffer can match a stale mid-line prefix after history recall
   // (typed "s", recalled "su -", cursor after "s"), or only a suffix when
   // history prepended text (typed "whoami", recalled "sudo whoami").
   if (aligned) {
-    if (preferFullOverBuffer(aligned, liveFromFull)) {
+    if (preferFullOverBuffer(aligned, liveFromFull) || preferFullPaintedLine) {
       return liveFromFull;
     }
     if (
@@ -592,7 +608,7 @@ export const resolveSubmittedShellCommand = (
     }
     return emptyLive;
   }
-  if (preferFullOverBuffer(buffered, liveFromFull)) {
+  if (preferFullOverBuffer(buffered, liveFromFull) || preferFullPaintedLine) {
     return liveFromFull;
   }
   if (!live || live === buffered) return buffered || live;
