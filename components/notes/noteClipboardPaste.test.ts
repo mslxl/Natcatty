@@ -29,6 +29,44 @@ const CATTY_PASTE = `---
 - 🔥 **Real-time server diagnostics** — check status, inspect logs, monitor resources through conversation
 `;
 
+test("centered README hero blocks wrap in div align=center", () => {
+  const html = `
+    <p align="center">
+      <img src="public/icon.png" alt="Netcatty" width="128" height="128">
+    </p>
+    <h1 align="center">Netcatty</h1>
+    <p align="center">
+      <strong>🔥 AI-Powered SSH Client</strong><br/>
+      <a href="https://netcatty.app">netcatty.app</a>
+    </p>
+  `;
+  const md = convertClipboardHtmlToMarkdown(html);
+  assert.match(md, /<div align="center">/);
+  assert.match(md, /<\/div>/);
+  assert.match(md, /width="128"/);
+  assert.match(md, /height="128"/);
+  assert.match(md, /# Netcatty/);
+  assert.match(md, /netcatty\.app/);
+  // Center wrapper should appear before the logo / title content.
+  const centerIdx = md.indexOf('<div align="center">');
+  const logoIdx = md.search(/icon\.png|# Netcatty/);
+  assert.ok(centerIdx >= 0 && logoIdx >= 0 && centerIdx < logoIdx);
+});
+
+test("island conversion keeps center on p align=center with image", () => {
+  const plain = `
+<p align="center">
+  <img src="public/icon.png" alt="Netcatty" width="128" height="128">
+</p>
+
+<h1 align="center">Netcatty</h1>
+`;
+  const md = convertHtmlIslandsInMarkdown(plain);
+  assert.match(md, /<div align="center">/);
+  assert.match(md, /width="128"/);
+  assert.match(md, /Netcatty/);
+});
+
 test("turndown converts pure html clipboard", () => {
   const html = `
     <html><body>

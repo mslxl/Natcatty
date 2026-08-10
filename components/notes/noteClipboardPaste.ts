@@ -6,7 +6,8 @@
  * - Linked badge images become plain text links (no broken ](url) debris)
  * - Image width/height attrs are preserved in source; CSS max-width:100%
  *   scales large screenshots in the side panel without cropping
- * - Center/align HTML from READMEs is intentionally dropped
+ * - Centered blocks (align=center / text-align:center) wrap as
+ *   <div align="center"> so MDX GenericHTML + CSS keep hero title/logo centered
  */
 
 import TurndownService from "turndown";
@@ -109,6 +110,20 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
+  // README hero blocks: <p align="center"> / <h1 align="center"> → keep center.
+  service.addRule("keepCenteredBlocks", {
+    filter: (node) => isCenteredBlockElement(node as HTMLElement),
+    replacement: (content, node) => {
+      let inner = content.trim();
+      const tag = (node as HTMLElement).nodeName.toLowerCase();
+      const heading = /^h([1-6])$/.exec(tag);
+      // Restore ATX heading markers (turndown children are plain text for h*).
+      if (heading && inner && !/^#{1,6}\s/m.test(inner)) {
+        inner = `${"#".repeat(Number(heading[1]))} ${inner}`;
+      }
+      return wrapCenteredMarkdown(inner);
+    },
+  });
   // Keep width/height when present (HTML <img>); CSS scales them in the panel.
   service.addRule("imagesForNotes", {
     filter: "img",
@@ -128,6 +143,52 @@ const getTurndown = (): TurndownService => {
   });
   turndownSingleton = service;
   return service;
+};
+
+const CENTERED_BLOCK_TAGS = new Set([
+  "P",
+  "DIV",
+  "H1",
+  "H2",
+  "H3",
+  "H4",
+  "H5",
+  "H6",
+  "SECTION",
+  "HEADER",
+]);
+
+/** True when a DOM/HTML block is explicitly center-aligned (GitHub README style). */
+export const isCenteredBlockElement = (node: HTMLElement | Element | null | undefined): boolean => {
+  if (!node || !("nodeName" in node)) return false;
+  if (!CENTERED_BLOCK_TAGS.has(node.nodeName)) return false;
+  const el = node as HTMLElement;
+  const align = (el.getAttribute?.("align") ?? "").trim().toLowerCase();
+  if (align === "center") return true;
+  const style = el.getAttribute?.("style") ?? "";
+  if (/text-align\s*:\s*center/i.test(style)) return true;
+  return false;
+};
+
+/** Detect center alignment on a raw HTML open-tag blob. */
+export const htmlOpenTagIsCentered = (openTagOrFull: string): boolean => {
+  if (/\balign\s*=\s*(?:"|')?center(?:"|')?/i.test(openTagOrFull)) return true;
+  if (/text-align\s*:\s*center/i.test(openTagOrFull)) return true;
+  return false;
+};
+
+/**
+ * Wrap turndown content so MDX GenericHTML keeps align=center.
+ * Blank lines inside let nested markdown / img HTML still parse.
+ */
+export const wrapCenteredMarkdown = (inner: string): string => {
+  const body = inner.replace(/\r\n?/g, "\n").trim();
+  if (!body) return "";
+  // Avoid double-wrapping.
+  if (/^<div\s+align="center">/i.test(body) && /<\/div>\s*$/i.test(body)) {
+    return `\n\n${body}\n\n`;
+  }
+  return `\n\n<div align="center">\n\n${body}\n\n</div>\n\n`;
 };
 
 const isSafeImageSrc = (src: string): boolean => {
@@ -377,18 +438,22 @@ export const convertHtmlIslandsInMarkdown = (markdown: string): string => {
       (full, tag: string) => {
         const lower = String(tag).toLowerCase();
         if (lower === "script" || lower === "style") return "";
-        // Center wrappers from READMEs: keep children only (lossy layout).
-        if (lower === "p" || lower === "div") {
-          const align = /\balign\s*=\s*(?:"|')?center/i.test(full);
+        // Already-emitted center wrappers — never re-turndown (escapes ** / #).
+        if (lower === "div" && htmlOpenTagIsCentered(full)) {
+          return full;
+        }
+        // Centered p/h* (README hero): turndown keepCenteredBlocks → div align=center.
+        if (
+          (lower === "p" || /^h[1-6]$/.test(lower))
+          && htmlOpenTagIsCentered(full)
+        ) {
           const md = turndownFragment(full);
-          if (!md.trim()) return "";
-          // Don't re-wrap with extra spacing that blows up badge rows more than needed.
-          return align ? `\n\n${md.trim()}\n\n` : `\n\n${md.trim()}\n\n`;
+          return md.trim() ? `\n\n${md.trim()}\n\n` : "";
         }
         const md = turndownFragment(full);
         if (!md.trim()) return "";
         if (
-          /^(section|article|table|ul|ol|blockquote|h[1-6]|pre|figure)$/i.test(lower)
+          /^(p|div|section|article|table|ul|ol|blockquote|h[1-6]|pre|figure)$/i.test(lower)
         ) {
           return `\n\n${md.trim()}\n\n`;
         }
