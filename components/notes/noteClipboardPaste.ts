@@ -4,8 +4,8 @@
  * Product policy (lossy but clean — not GitHub README clone):
  * - HTML → Markdown via Turndown (+ island conversion for mixed sources)
  * - Linked badge images become plain text links (no broken ](url) debris)
- * - Image dimensions are not forced as display pixels (side panel is narrow;
- *   CSS max-width:100% scales screenshots without cropping)
+ * - Image width/height attrs are preserved in source; CSS max-width:100%
+ *   scales large screenshots in the side panel without cropping
  * - Center/align HTML from READMEs is intentionally dropped
  */
 
@@ -22,13 +22,6 @@ export type NoteClipboardPastePayload = {
   text: string;
   kind: NoteClipboardPasteKind;
 };
-
-/**
- * Pixel widths at or above this are treated as "screenshot intrinsic size"
- * (GitHub README often uses 1500–3000). Never bake them into HTML width attrs
- * for the note editor — they cause overflow/crop in the side panel.
- */
-export const NOTE_IMAGE_INTRINSIC_WIDTH_CAP = 640;
 
 const PASTED_MARKDOWN_PATTERNS = [
   /^ {0,3}#{1,6}\s+\S/m,
@@ -116,7 +109,7 @@ const getTurndown = (): TurndownService => {
     ),
     replacement: () => "",
   });
-  // Prefer markdown images; only keep modest HTML dimensions for small assets.
+  // Keep width/height when present (HTML <img>); CSS scales them in the panel.
   service.addRule("imagesForNotes", {
     filter: "img",
     replacement: (_content, node) => {
@@ -156,16 +149,13 @@ const escapeHtmlAttr = (value: string): string => (
     .replace(/>/g, "&gt;")
 );
 
-const parsePositivePx = (raw: string): number | null => {
-  if (!/^\d+(?:\.\d+)?$/.test(raw)) return null;
-  const n = Number(raw);
-  return Number.isFinite(n) && n > 0 ? n : null;
-};
-
 /**
  * Build image markdown for notes.
- * - Large / screenshot widths → plain ![alt](src) (CSS scales; no crop)
- * - Small assets with modest width → optional HTML width for badges/icons
+ * - With width/height → sanitized HTML <img> (MDX keeps dimensions; CSS scales)
+ * - Without → standard ![alt](src)
+ *
+ * Display safety: side-panel CSS uses max-width:100% + height:auto so large
+ * intrinsic sizes (e.g. 3142×1764 screenshots) shrink instead of cropping.
  */
 export const serializeSafeHtmlImage = (input: {
   src: string;
@@ -180,27 +170,22 @@ export const serializeSafeHtmlImage = (input: {
   const title = input.title?.trim() || "";
   const widthRaw = input.width != null ? String(input.width).trim() : "";
   const heightRaw = input.height != null ? String(input.height).trim() : "";
-  const widthPx = parsePositivePx(widthRaw);
-  const heightPx = parsePositivePx(heightRaw);
+  // Accept plain px numbers or percent strings.
+  const safeWidth = /^(?:\d+(?:\.\d+)?%?)$/.test(widthRaw) ? widthRaw : "";
+  const safeHeight = /^(?:\d+(?:\.\d+)?%?)$/.test(heightRaw) ? heightRaw : "";
 
-  const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
-  const mdImage = `![${alt}](${src}${titlePart})`;
-
-  // Oversized or missing usable width → markdown only (side-panel safe).
-  if (widthPx == null || widthPx >= NOTE_IMAGE_INTRINSIC_WIDTH_CAP) {
-    return mdImage;
+  if (!safeWidth && !safeHeight) {
+    const titlePart = title ? ` "${title.replace(/"/g, '\\"')}"` : "";
+    return `![${alt}](${src}${titlePart})`;
   }
 
-  // Modest width: keep HTML so small badges/icons can stay roughly sized.
   const parts = [
     `src="${escapeHtmlAttr(src)}"`,
     `alt="${escapeHtmlAttr(alt)}"`,
   ];
   if (title) parts.push(`title="${escapeHtmlAttr(title)}"`);
-  parts.push(`width="${escapeHtmlAttr(String(Math.round(widthPx)))}"`);
-  if (heightPx != null && heightPx < NOTE_IMAGE_INTRINSIC_WIDTH_CAP) {
-    parts.push(`height="${escapeHtmlAttr(String(Math.round(heightPx)))}"`);
-  }
+  if (safeWidth) parts.push(`width="${escapeHtmlAttr(safeWidth)}"`);
+  if (safeHeight) parts.push(`height="${escapeHtmlAttr(safeHeight)}"`);
   return `<img ${parts.join(" ")} />`;
 };
 
@@ -281,13 +266,13 @@ export const collapseLinkedImagesToTextLinks = (markdown: string): string => {
 };
 
 /**
- * Final cleanup for note paste: badges → text links, drop huge img dimensions,
- * tidy blank lines. Called after Turndown / island conversion.
+ * Final cleanup for note paste: badges → text links, re-sanitize img tags
+ * (keeps width/height), tidy blank lines. Called after Turndown / islands.
  */
 export const normalizePastedNoteMarkdown = (markdown: string): string => {
   let body = collapseLinkedImagesToTextLinks(markdown);
 
-  // Re-serialize any remaining HTML images through the size policy.
+  // Re-serialize remaining HTML images (sanitize attrs; keep dimensions).
   body = body.replace(/<img\b[^>]*>/gi, (tag) => {
     const converted = convertHtmlImgTagToMarkdownOrHtml(tag.trim());
     return converted || "";

@@ -1559,16 +1559,14 @@ html[data-theme-transition] *::after {
 }
 
 /*
- * Note images (lossy-but-clean paste policy):
- * - never overflow the side-panel content width
- * - ignore baked-in screenshot pixel widths (object-fit + max-width)
- * - no crop: height auto, overflow visible on wrappers
+ * Note images: source keeps width/height (HTML attrs for MDX / aspect ratio).
+ * Display: max-width caps screenshots to the pane; height:auto keeps ratio.
+ * Do NOT force width:auto — that would ignore a 128px logo preference.
  */
 .netcatty-mdx-content img,
 .netcatty-mdx-editor [class*="_imageWrapper_"] img,
 .netcatty-mdx-editor img {
   max-width: 100% !important;
-  width: auto !important;
   height: auto !important;
   object-fit: contain;
   display: block;
@@ -1577,11 +1575,11 @@ html[data-theme-transition] *::after {
   border-radius: 0.375rem;
 }
 
+/* Cap MDX image chrome when ImageNode bakes large pixel widths into styles. */
 .netcatty-mdx-editor [class*="_imageWrapper_"],
 .netcatty-mdx-editor [class*="_imageContainer_"],
 .netcatty-mdx-editor [class*="_imageControlWrapper_"] {
   max-width: 100% !important;
-  width: 100% !important;
   height: auto !important;
   overflow: visible !important;
   box-sizing: border-box;

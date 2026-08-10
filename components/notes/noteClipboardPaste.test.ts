@@ -11,7 +11,6 @@ import {
   serializeSafeHtmlImage,
   shouldInterceptResolvedNotePaste,
   shouldInsertClipboardTextAsMarkdown,
-  NOTE_IMAGE_INTRINSIC_WIDTH_CAP,
 } from "./noteClipboardPaste.ts";
 
 const CATTY_PASTE = `---
@@ -48,37 +47,44 @@ test("turndown converts pure html clipboard", () => {
   assert.match(md, /!\[shot\]\(https:\/\/example\.com\/a\.png\)/);
 });
 
-test("large screenshot images become markdown without baked pixel width", () => {
+test("screenshot images keep width and height attributes", () => {
   const md = convertHtmlIslandsInMarkdown(CATTY_PASTE);
   assert.match(md, /^# 🔥 Catty Agent/m);
   assert.match(
     md,
-    /!\[Screenshot 2026-07-02 at 22 51 24\]\(https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d\)/,
+    /<img\b[^>]*src="https:\/\/github\.com\/user-attachments\/assets\/3116165d-623a-4d3a-a28a-914befb9b72d"/,
   );
-  assert.doesNotMatch(md, /width="3142"/);
-  assert.doesNotMatch(md, /height="1764"/);
+  assert.match(md, /width="3142"/);
+  assert.match(md, /height="1764"/);
+  assert.match(md, /alt="Screenshot 2026-07-02 at 22 51 24"/);
   assert.doesNotMatch(md, /\\#/);
   assert.doesNotMatch(md, /<a\s+name=/i);
 });
 
-test("modest badge-sized images may keep a small html width", () => {
-  assert.ok(NOTE_IMAGE_INTRINSIC_WIDTH_CAP > 150);
+test("serializeSafeHtmlImage preserves dimensions when present", () => {
+  assert.equal(
+    serializeSafeHtmlImage({
+      src: "https://example.com/a.png",
+      alt: "shot",
+    }),
+    "![shot](https://example.com/a.png)",
+  );
+  assert.match(
+    serializeSafeHtmlImage({
+      src: "https://example.com/a.png",
+      alt: "shot",
+      width: 3142,
+      height: 1764,
+    }),
+    /<img\b[^>]*width="3142"[^>]*height="1764"[^>]*\/>/,
+  );
   assert.match(
     serializeSafeHtmlImage({
       src: "https://cdn.ko-fi.com/cdn/kofi3.png?v=2",
       alt: "Support on Ko-fi",
       width: 150,
     }),
-    /<img\b[^>]*width="150"/,
-  );
-  assert.equal(
-    serializeSafeHtmlImage({
-      src: "https://example.com/big.png",
-      alt: "shot",
-      width: 3142,
-      height: 1764,
-    }),
-    "![shot](https://example.com/big.png)",
+    /width="150"/,
   );
 });
 
@@ -103,7 +109,7 @@ test("linked badge images collapse to clean text links", () => {
   assert.doesNotMatch(md, /^\s*\]\(/m);
 });
 
-test("normalize removes orphan link closers and oversized html img attrs", () => {
+test("normalize removes orphan link closers but keeps image dimensions", () => {
   const messy = [
     "Intro",
     "](https://example.com/orphan)",
@@ -112,11 +118,12 @@ test("normalize removes orphan link closers and oversized html img attrs", () =>
   ].join("\n");
   const md = normalizePastedNoteMarkdown(messy);
   assert.doesNotMatch(md, /\]\(https:\/\/example\.com\/orphan\)/);
-  assert.match(md, /!\[wide\]\(https:\/\/example\.com\/w\.png\)/);
-  assert.doesNotMatch(md, /width="2000"/);
+  assert.match(md, /src="https:\/\/example\.com\/w\.png"/);
+  assert.match(md, /width="2000"/);
+  assert.match(md, /height="1000"/);
 });
 
-test("resolve pastes Catty-style mixed markdown+html cleanly", () => {
+test("resolve pastes Catty-style mixed markdown+html with image sizes", () => {
   const payload = resolveNoteClipboardPaste({
     plainText: CATTY_PASTE,
     htmlText: "",
@@ -131,23 +138,18 @@ test("resolve pastes Catty-style mixed markdown+html cleanly", () => {
     true,
   );
   assert.match(payload.text, /^# 🔥 Catty Agent/m);
-  assert.match(payload.text, /!\[Screenshot[^\]]*\]\(https:\/\/github\.com\/user-attachments/);
-  assert.doesNotMatch(payload.text, /width="3142"/);
+  assert.match(payload.text, /width="3142"/);
+  assert.match(payload.text, /height="1764"/);
 });
 
 test("repo README paste collapses shields badges without debris", () => {
   const readmeHead = readFileSync(new URL("../../README.md", import.meta.url), "utf8").slice(0, 2200);
   const payload = resolveNoteClipboardPaste({ plainText: readmeHead, htmlText: "" });
   assert.ok(payload.text.length > 50);
-  // No dangling markdown link closers from badge conversion.
   assert.doesNotMatch(payload.text, /^\s*\]\([^)\n]+\)\s*$/m);
-  // Badges become text links or clean images, not split wrappers.
-  if (payload.text.includes("shields.io")) {
-    assert.doesNotMatch(
-      payload.text,
-      /\[\s*\n+\s*!\[[^\]]+\]\(https:\/\/img\.shields\.io/,
-    );
-  }
+  // Large screenshot keeps dimensions in source.
+  assert.match(payload.text, /width="3142"/);
+  assert.match(payload.text, /height="1764"/);
 });
 
 test("resolve uses full turndown for browser StartFragment html", () => {
@@ -166,8 +168,9 @@ test("resolve uses full turndown for browser StartFragment html", () => {
   assert.equal(payload.kind, "html-converted");
   assert.match(payload.text, /^# From browser/m);
   assert.match(payload.text, /\*\*world\*\*/);
-  assert.match(payload.text, /!\[x\]\(https:\/\/cdn\.example\.com\/x\.png\)/);
-  assert.doesNotMatch(payload.text, /width="2000"/);
+  assert.match(payload.text, /src="https:\/\/cdn\.example\.com\/x\.png"/);
+  assert.match(payload.text, /width="2000"/);
+  assert.match(payload.text, /height="1000"/);
 });
 
 test("resolve uses structured plain markdown when html is absent", () => {
