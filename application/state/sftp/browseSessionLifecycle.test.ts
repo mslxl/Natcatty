@@ -39,6 +39,32 @@ test("keeps a hidden SFTP owner interactive while its promoted editor tab is ope
   assert.equal(shouldParkBrowseSessions({ interactive, browseParked: false }), false);
 });
 
+test("keeps browse warm while the terminal side panel stays open on another tool", () => {
+  // SFTP→History/System replaces the focused pane tool, so surfaceVisible is
+  // false, but the owner stays mounted for instant switch-back. Parking here
+  // forces reconnect + directory reload (and intermittent blank lists).
+  const interactive = isBrowseSessionInteractive({
+    surfaceVisible: false,
+    ownerPanelOpen: true,
+    hasOwnedEditorTab: false,
+  });
+
+  assert.equal(interactive, true);
+  assert.equal(shouldParkBrowseSessions({ interactive, browseParked: false }), false);
+});
+
+test("parks browse when the side panel is closed and nothing else retains it", () => {
+  const interactive = isBrowseSessionInteractive({
+    surfaceVisible: false,
+    ownerPanelOpen: false,
+    hasOwnedEditorTab: false,
+    hasActiveExternalEdit: false,
+  });
+
+  assert.equal(interactive, false);
+  assert.equal(shouldParkBrowseSessions({ interactive, browseParked: false }), true);
+});
+
 test("parks browse only when the interactive surface hides and not already parked", () => {
   assert.equal(shouldParkBrowseSessions({ interactive: false, browseParked: false }), true);
   assert.equal(shouldParkBrowseSessions({ interactive: false, browseParked: true }), false);

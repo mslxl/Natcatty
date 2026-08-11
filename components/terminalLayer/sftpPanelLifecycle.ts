@@ -65,6 +65,28 @@ export function shouldKeepSftpMountedAfterClose(params: {
     || (params.activeExternalEditCount ?? 0) > 0;
 }
 
+/**
+ * A different side-panel tool keeps SFTP warm only when the SFTP owner was
+ * never closed. A retained-after-close mount is kept for transfers/editor
+ * cleanup, but its browse session must still be allowed to park.
+ */
+export function shouldKeepSftpBrowseSessionInteractive(params: {
+  sidePanelOpen: boolean;
+  retainedAfterClose: boolean;
+  sftpPaneClosed: boolean;
+}): boolean {
+  return params.sidePanelOpen
+    && !params.retainedAfterClose
+    && !params.sftpPaneClosed;
+}
+
+export function shouldMarkSftpPaneClosed(params: {
+  closingPaneTool: string | null | undefined;
+  closesWholePanel: boolean;
+}): boolean {
+  return !params.closesWholePanel && params.closingPaneTool === 'sftp';
+}
+
 export function shouldCloseSftpSidePanel(params: {
   shouldKeepOpen: boolean;
   isOpen: boolean;

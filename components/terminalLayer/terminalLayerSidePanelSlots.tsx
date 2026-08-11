@@ -35,8 +35,11 @@ import {
   type SidePanelLayout,
 } from '../../domain/sidePanelLayout';
 import { sidePanelHiddenNotesPanelClassName, sidePanelHiddenPanelClassName } from './terminalLayerSidePanelHiddenWrapper';
+import { shouldKeepSftpBrowseSessionInteractive } from './sftpPanelLifecycle';
 
-type SidePanelStableContext = Record<string, any>;
+type SidePanelStableContext = Record<string, any> & {
+  sftpPaneClosedTabIdsRef: React.MutableRefObject<Set<string>>;
+};
 const navigatorPlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
 const EMPTY_VAULT_NOTES: never[] = [];
 const EMPTY_VAULT_HOSTS: never[] = [];
@@ -61,10 +64,13 @@ function SidePanelSftpSlotInner({
   tabId,
   ctx,
   isVisible,
+  ownerPanelOpen,
 }: {
   tabId: string;
   ctx: SidePanelStableContext;
   isVisible: boolean;
+  /** Side panel still open for this tab (may be showing another tool). */
+  ownerPanelOpen: boolean;
 }) {
   const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
 
@@ -195,6 +201,7 @@ function SidePanelSftpSlotInner({
         onActiveExternalEditsChange={handleActiveExternalEditsChange}
         showWorkspaceHostHeader={isVisible && !!live.activeWorkspace}
         isVisible={isVisible}
+        ownerPanelOpen={ownerPanelOpen}
         renderOverlays={isVisible}
         pendingUpload={sftpPendingUploadsForTab.get(tabId) ?? null}
         onPendingUploadHandled={handlePendingUploadHandledForTab}
@@ -648,6 +655,16 @@ export function SidePanelMountedContent({
     activeTabStore.getActiveTabId,
   );
   const layouts = ctx.sidePanelLayouts as Map<string, SidePanelLayout>;
+  const openTabs = ctx.sidePanelOpenTabs as Map<string, SidePanelTab>;
+  const retainedAfterCloseTabIdsRef = ctx.sftpRetainedAfterCloseTabIdsRef as
+    | React.MutableRefObject<ReadonlySet<string>>
+    | undefined;
+  const sftpPaneClosedTabIdsRef = ctx.sftpPaneClosedTabIdsRef;
+  const isSftpOwnerPanelOpen = (tabId: string) => shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: openTabs.has(tabId),
+    retainedAfterClose: retainedAfterCloseTabIdsRef?.current.has(tabId) ?? false,
+    sftpPaneClosed: sftpPaneClosedTabIdsRef.current.has(tabId),
+  });
   const isToolVisible = (tabId: string, tool: SidePanelTab) => (
     activeTabId === tabId && sidePanelLayoutHasTool(layouts.get(tabId), tool)
   );
@@ -666,7 +683,12 @@ export function SidePanelMountedContent({
           portalKey={`sftp-${tabId}`}
           target={portalTarget(tabId, 'sftp')}
         >
-          <SidePanelSftpSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'sftp')} />
+          <SidePanelSftpSlot
+            tabId={tabId}
+            ctx={ctx}
+            isVisible={isToolVisible(tabId, 'sftp')}
+            ownerPanelOpen={isSftpOwnerPanelOpen(tabId)}
+          />
         </PersistentSidePanelPortal>
       ))}
       {systemMountedTabIds.map((tabId: string) => {

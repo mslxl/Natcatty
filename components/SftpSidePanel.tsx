@@ -128,6 +128,11 @@ interface SftpSidePanelProps {
   onActiveExternalEditsChange?: (count: number) => void;
   showWorkspaceHostHeader?: boolean;
   isVisible?: boolean;
+  /**
+   * Side panel chrome still open for this terminal tab (another tool may be
+   * focused). Keeps browse SFTP sessions warm across History/System switches.
+   */
+  ownerPanelOpen?: boolean;
   renderOverlays?: boolean;
   pendingUpload?: {
     requestId: string;
@@ -177,6 +182,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   onActiveExternalEditsChange,
   showWorkspaceHostHeader = false,
   isVisible = true,
+  ownerPanelOpen = false,
   renderOverlays = true,
   pendingUpload = null,
   onPendingUploadHandled,
@@ -258,8 +264,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     // becomes hidden, so its browse channel must stay alive until the editor closes.
     // External editor temps (Notepad++ etc.) likewise need the session: parking
     // calls closeSftp which deletes those local files.
+    // Keep browse warm while the side panel stays open on another tool
+    // (History / System / …) so switch-back does not reconnect + reload.
     interactive: isBrowseSessionInteractive({
       surfaceVisible: isVisible,
+      ownerPanelOpen,
       hasOwnedEditorTab,
       hasActiveExternalEdit: activeExternalEditCountRef.current > 0,
     }),
@@ -275,6 +284,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     fileWatchHandlers,
     hasOwnedEditorTab,
     isVisible,
+    ownerPanelOpen,
     transferOwnerId,
     sftpUseCompressedUpload,
     sftpShowHiddenFiles,
@@ -1861,6 +1871,7 @@ const sidePanelAreEqual = (prev: SftpSidePanelProps, next: SftpSidePanelProps): 
   prev.focusedSessionId === next.focusedSessionId &&
   prev.showWorkspaceHostHeader === next.showWorkspaceHostHeader &&
   prev.isVisible === next.isVisible &&
+  prev.ownerPanelOpen === next.ownerPanelOpen &&
   prev.renderOverlays === next.renderOverlays &&
   prev.pendingUpload?.requestId === next.pendingUpload?.requestId &&
   prev.onPendingUploadHandled === next.onPendingUploadHandled &&

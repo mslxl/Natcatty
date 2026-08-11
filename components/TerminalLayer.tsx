@@ -93,6 +93,7 @@ import {
   shouldCloseSftpSidePanel,
   shouldClearSftpPanelAfterTransferChange,
   shouldKeepSftpMountedAfterClose,
+  shouldMarkSftpPaneClosed,
   shouldScheduleSftpRetainedPanelCleanup,
   terminalSftpTransferOwnerId,
 } from './terminalLayer/sftpPanelLifecycle';
@@ -411,6 +412,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     lastSidePanelTabRef.current.set(tabId, targetPanel);
 
     if (targetPanel === 'sftp') {
+      sftpPaneClosedTabIdsRef.current.delete(tabId);
       const host = hostsRef.current.find(h => h.id === session.hostId);
       const hostWithOverrides: Host = host
         ? {
@@ -578,6 +580,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sftpActiveTransfersByTabRef = useRef<Map<string, number>>(new Map());
   const sftpActiveExternalEditsByTabRef = useRef<Map<string, number>>(new Map());
   const sftpRetainedAfterCloseTabIdsRef = useRef<Set<string>>(new Set());
+  const sftpPaneClosedTabIdsRef = useRef<Set<string>>(new Set());
   const sftpOpeningTabIdsRef = useRef<Set<string>>(new Set());
   const sftpRetainedCleanupTimersRef = useRef<Map<string, number>>(new Map());
   const sftpLastPathForSourceRef = useRef<Map<string, SftpRememberedLocation>>(new Map());
@@ -613,6 +616,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sftpActiveTransfersByTabRef.current.delete(tabId);
     sftpActiveExternalEditsByTabRef.current.delete(tabId);
     sftpRetainedAfterCloseTabIdsRef.current.delete(tabId);
+    sftpPaneClosedTabIdsRef.current.delete(tabId);
     sftpOpeningTabIdsRef.current.delete(tabId);
     setSftpHostForTab(prev => {
       if (!prev.has(tabId)) return prev;
@@ -830,6 +834,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       sftpRetainedCleanupTimersRef.current.delete(tabId);
     }
     sftpRetainedAfterCloseTabIdsRef.current.delete(tabId);
+    sftpPaneClosedTabIdsRef.current.delete(tabId);
 
     setSidePanelOpenTabs(prev => {
       const next = new Map(prev);
@@ -1329,6 +1334,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         sftpRetainedCleanupTimersRef.current.delete(tabId);
       }
       sftpRetainedAfterCloseTabIdsRef.current.delete(tabId);
+      sftpPaneClosedTabIdsRef.current.delete(tabId);
     }
 
     // If switching to SFTP and no host is stored yet, resolve it
@@ -1410,10 +1416,22 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleCloseSidePanelPane = useCallback((paneId: string) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
-    if (closeSidePanelPaneForTab(tabId, paneId)) {
+    const layout = sidePanelLayoutsRef.current.get(tabId);
+    const closingPane = layout
+      ? collectSidePanelPanes(layout.root).find((pane) => pane.id === paneId)
+      : undefined;
+    const closesWholePanel = closeSidePanelPaneForTab(tabId, paneId);
+    if (closesWholePanel) {
       handleCloseSidePanel();
+      return;
     }
-  }, [closeSidePanelPaneForTab, handleCloseSidePanel]);
+    if (shouldMarkSftpPaneClosed({
+      closingPaneTool: closingPane?.tool,
+      closesWholePanel: closesWholePanel,
+    })) {
+      sftpPaneClosedTabIdsRef.current.add(tabId);
+    }
+  }, [closeSidePanelPaneForTab, handleCloseSidePanel, sidePanelLayoutsRef]);
 
   const handleResizeSidePanelSplit = useCallback((splitId: string, sizes: number[]) => {
     const tabId = activeTabIdRef.current;
@@ -2155,6 +2173,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sftpHostForTab,
     sftpInitialLocationForTab,
     sftpPendingUploadsForTab,
+    sftpPaneClosedTabIdsRef,
+    sftpRetainedAfterCloseTabIdsRef,
     sftpShowHiddenFiles,
     SftpSidePanel,
     sftpUseCompressedUpload,

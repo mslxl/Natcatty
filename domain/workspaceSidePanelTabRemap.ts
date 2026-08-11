@@ -134,6 +134,44 @@ export function moveSidePanelTabMap<T>(
   return next;
 }
 
+/**
+ * Move a tab-owned marker across the same workspace/session remaps as the
+ * ownership maps. Markers are not cloned: after a promote or demote, the old
+ * tab id must not keep an obsolete lifecycle decision alive.
+ */
+export function moveSidePanelTabSet(
+  source: ReadonlySet<string>,
+  remap: SidePanelTabRemap,
+  options?: { ownerTabIds?: ReadonlySet<string> },
+): Set<string> {
+  const next = new Set(source);
+  const ownerTabIds = options?.ownerTabIds ?? source;
+
+  if (remap.kind === 'promote') {
+    if (ownerTabIds.has(remap.toTabId)) {
+      for (const tabId of remap.fromTabIds) next.delete(tabId);
+      return next;
+    }
+    const fromId = pickPreferredSourceId(
+      remap.fromTabIds,
+      remap.preferredFromTabId,
+      (tabId) => ownerTabIds.has(tabId),
+    );
+    if (fromId && source.has(fromId)) next.add(remap.toTabId);
+    if (fromId) next.delete(fromId);
+    return next;
+  }
+
+  if (!ownerTabIds.has(remap.fromTabId)) return next;
+  const preferredTo = remap.preferredToTabId
+    && remap.toTabIds.includes(remap.preferredToTabId)
+    ? remap.preferredToTabId
+    : remap.toTabIds.find(Boolean);
+  if (source.has(remap.fromTabId) && preferredTo) next.add(preferredTo);
+  next.delete(remap.fromTabId);
+  return next;
+}
+
 export function remapMountedSidePanelTabIds(
   mountedTabIds: readonly string[],
   remap: SidePanelTabRemap,

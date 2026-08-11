@@ -643,10 +643,11 @@ export const useSftpState = (
     [resolveTransferConflict, resolveUploadConflict, uploadConflicts],
   );
 
-  // FileZilla-style: when the browser UI is hidden, soft-close browse SFTP
-  // channels. Defer park while this owner still has unfinished transfers so
-  // pre-lease prep (conflict/stat) cannot race a hard-close of the browse id.
-  // In-flight streams also soft-close via leases; pool handles bulk I/O.
+  // FileZilla-style: when the side panel is closed (not merely showing another
+  // tool), soft-close browse SFTP channels. Defer park while this owner still
+  // has unfinished transfers so pre-lease prep (conflict/stat) cannot race a
+  // hard-close of the browse id. In-flight streams also soft-close via leases;
+  // pool handles bulk I/O.
   const interactive = options?.interactive !== false;
   useEffect(() => {
     const gen = ++browseLifecycleGenRef.current;
