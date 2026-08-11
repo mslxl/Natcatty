@@ -916,6 +916,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           managedSources={managedSources}
           onSaveHost={onSaveHost}
           onCreateGroup={_onCreateGroup}
+          width="w-[360px]"
           layout="inline"
           {...portForwardingPanelResizeProps}
         />

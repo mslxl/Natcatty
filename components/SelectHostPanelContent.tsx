@@ -416,7 +416,10 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
           role="option"
           aria-selected={multiSelect ? groupState === 'all' : false}
           data-active={isActive ? 'true' : undefined}
-          className="flex h-full min-h-0 items-center gap-2.5 rounded-lg px-2.5 transition-colors hover:bg-muted/70"
+          className={cn(
+            'flex h-full min-h-0 items-center gap-2.5 overflow-hidden rounded-lg px-2.5 transition-colors',
+            isActive ? 'bg-primary/10 ring-1 ring-primary/40' : 'hover:bg-muted/70',
+          )}
           onClick={() => {
             if (navIndex >= 0) setActiveNavIndex(navIndex);
             setCurrentPath(row.path);
