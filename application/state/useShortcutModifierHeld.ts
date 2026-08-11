@@ -84,15 +84,10 @@ export function useShortcutModifierHeld(
     setIsHeld(false);
     if (!requirements) return;
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isShortcutModifierHeld(event, requirements)) {
-        setIsHeld(true);
-      }
-    };
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (shouldReleaseShortcutModifier(event, requirements)) {
-        setIsHeld(false);
-      }
+    // Sync on every modifier transition so extras clear the preview and
+    // releasing an extra modifier can re-arm when the exact combo remains.
+    const syncHeldState = (event: KeyboardEvent) => {
+      setIsHeld(isShortcutModifierHeld(event, requirements));
     };
     const clearHeldState = () => setIsHeld(false);
     const handleVisibilityChange = () => {
@@ -101,14 +96,14 @@ export function useShortcutModifierHeld(
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown, true);
-    window.addEventListener('keyup', handleKeyUp, true);
+    window.addEventListener('keydown', syncHeldState, true);
+    window.addEventListener('keyup', syncHeldState, true);
     window.addEventListener('blur', clearHeldState);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown, true);
-      window.removeEventListener('keyup', handleKeyUp, true);
+      window.removeEventListener('keydown', syncHeldState, true);
+      window.removeEventListener('keyup', syncHeldState, true);
       window.removeEventListener('blur', clearHeldState);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };

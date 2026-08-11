@@ -41,3 +41,19 @@ test('shortcut modifier state clears when the required combination stops matchin
   assert.equal(shouldReleaseShortcutModifier(event({ metaKey: true }), requirements), false);
   assert.equal(shouldReleaseShortcutModifier(event(), requirements), true);
 });
+
+test('shortcut modifier held state tracks exact combo when extras are pressed or released', () => {
+  const requirements = getShortcutModifierRequirements('⌘ + [1...9]', 'mac');
+  // Already matching, then an extra modifier: preview must clear.
+  assert.equal(isShortcutModifierHeld(event({ metaKey: true }), requirements), true);
+  assert.equal(
+    isShortcutModifierHeld(event({ metaKey: true, shiftKey: true }), requirements),
+    false,
+  );
+  // Extra pressed first, then released while required modifiers remain: preview re-arms.
+  assert.equal(
+    isShortcutModifierHeld(event({ metaKey: true, altKey: true }), requirements),
+    false,
+  );
+  assert.equal(isShortcutModifierHeld(event({ metaKey: true }), requirements), true);
+});
