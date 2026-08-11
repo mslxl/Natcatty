@@ -153,10 +153,9 @@ export class KeywordHighlighter implements IDisposable {
         if (data.includes("\r") || data.includes("\n")) {
           this.enterInputPending = true;
           this.enterQueuedWriteCancellationPending = true;
-          if (this.enterInputIdleTimer) {
-            clearTimeout(this.enterInputIdleTimer);
-            this.enterInputIdleTimer = null;
-          }
+          // Time-bound Enter protection even when no echo/write arrives (echo
+          // off, stalled PTY). onWriteParsed re-arms this on each write.
+          this.scheduleEnterInputIdleClear();
           // Drop any pending user-scroll refresh so Enter echo cannot finish a
           // scroll pass that rescans/repaints still-visible keyword decorations
           // before onWriteParsed owns the write path (Ubuntu RTT).

@@ -2149,6 +2149,63 @@ test("idle Enter scroll before writeParsed does not rescan visible keywords", ()
   }
 });
 
+test("Enter without write clears pending so later user scroll can highlight", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      enterInputPending: boolean;
+      lastWriteAt: number;
+      lastRenderRange: { start: number; end: number } | null;
+    };
+    internals.lastWriteAt = performance.now() - 10_000;
+    internals.lastRenderRange = null;
+
+    // Enter with no echo/writeParsed (echo off / stalled PTY).
+    handlers.data?.("\r");
+    assert.equal(internals.enterInputPending, true);
+
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.equal(
+      internals.enterInputPending,
+      false,
+      "Enter protection must time out when no write arrives",
+    );
+
+    // User browsing scrollback after the timed-out Enter guard.
+    resetTranslateCount();
+    term.buffer.active.viewportY = 10;
+    handlers.scroll?.();
+    raf.flush();
+
+    assert.ok(
+      getTranslateCount() > 0,
+      "user scroll after timed-out Enter must scan newly revealed scrollback",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("long-line pressure avoids scanning across a whole soft-wrapped logical line", () => {
   const raf = installAnimationFrameQueue();
   try {
