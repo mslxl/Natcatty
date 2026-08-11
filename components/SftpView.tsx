@@ -126,8 +126,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     ...fileWatchHandlers,
     transferOwnerId: "main-sftp-view",
     // Main SFTP page stays interactive while mounted so top-tab switches
-    // (e.g. Terminal ↔ SFTP) must not soft-close every tab's session;
-    // the terminal side panel still parks when its panel is hidden.
+    // (e.g. Terminal ↔ SFTP) must not soft-close every tab's session.
+    // The terminal side panel parks only after the panel is closed (not when
+    // switching History/System while the chrome stays open).
     // Bulk transfers use dedicated pool sessions regardless.
     interactive: true,
     useCompressedUpload: sftpUseCompressedUpload,

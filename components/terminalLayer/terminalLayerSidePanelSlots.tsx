@@ -61,10 +61,13 @@ function SidePanelSftpSlotInner({
   tabId,
   ctx,
   isVisible,
+  ownerPanelOpen,
 }: {
   tabId: string;
   ctx: SidePanelStableContext;
   isVisible: boolean;
+  /** Side panel still open for this tab (may be showing another tool). */
+  ownerPanelOpen: boolean;
 }) {
   const live = useSidePanelLiveSnapshotForTab(tabId, isVisible);
 
@@ -195,6 +198,7 @@ function SidePanelSftpSlotInner({
         onActiveExternalEditsChange={handleActiveExternalEditsChange}
         showWorkspaceHostHeader={isVisible && !!live.activeWorkspace}
         isVisible={isVisible}
+        ownerPanelOpen={ownerPanelOpen}
         renderOverlays={isVisible}
         pendingUpload={sftpPendingUploadsForTab.get(tabId) ?? null}
         onPendingUploadHandled={handlePendingUploadHandledForTab}
@@ -648,6 +652,7 @@ export function SidePanelMountedContent({
     activeTabStore.getActiveTabId,
   );
   const layouts = ctx.sidePanelLayouts as Map<string, SidePanelLayout>;
+  const openTabs = ctx.sidePanelOpenTabs as Map<string, SidePanelTab>;
   const isToolVisible = (tabId: string, tool: SidePanelTab) => (
     activeTabId === tabId && sidePanelLayoutHasTool(layouts.get(tabId), tool)
   );
@@ -666,7 +671,12 @@ export function SidePanelMountedContent({
           portalKey={`sftp-${tabId}`}
           target={portalTarget(tabId, 'sftp')}
         >
-          <SidePanelSftpSlot tabId={tabId} ctx={ctx} isVisible={isToolVisible(tabId, 'sftp')} />
+          <SidePanelSftpSlot
+            tabId={tabId}
+            ctx={ctx}
+            isVisible={isToolVisible(tabId, 'sftp')}
+            ownerPanelOpen={openTabs.has(tabId)}
+          />
         </PersistentSidePanelPortal>
       ))}
       {systemMountedTabIds.map((tabId: string) => {

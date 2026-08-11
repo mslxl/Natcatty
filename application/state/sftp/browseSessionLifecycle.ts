@@ -1,18 +1,27 @@
 /**
  * Browse vs transfer session lifecycle helpers.
  *
- * FileZilla model: the interactive browser can soft-close its SFTP channels
- * while bulk transfers keep dedicated pool connections (and any leased browse
- * sessions held by in-flight streams).
+ * FileZilla model: a *closed* terminal SFTP side panel can soft-close its browse
+ * SFTP channels while bulk transfers keep dedicated pool connections (and any
+ * leased browse sessions held by in-flight streams). Switching to another side
+ * panel tool (History / System / …) must keep browse warm — the owner stays
+ * mounted for instant switch-back, and parking would force reconnect + reload.
  */
 
 export function isBrowseSessionInteractive(params: {
   surfaceVisible: boolean;
+  /**
+   * Terminal side panel still open for this owner (another tool may be focused).
+   * Keeps browse sessions alive across tool switches without treating that as a
+   * full panel dismiss.
+   */
+  ownerPanelOpen?: boolean;
   hasOwnedEditorTab: boolean;
   /** External editor temp files (Notepad++ etc.) still need the browse session. */
   hasActiveExternalEdit?: boolean;
 }): boolean {
   return params.surfaceVisible
+    || !!params.ownerPanelOpen
     || params.hasOwnedEditorTab
     || !!params.hasActiveExternalEdit;
 }
