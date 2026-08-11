@@ -1692,6 +1692,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (!shouldInterceptMouseTrackingContextMenu({
         event: e,
         mouseTracking: mouseTrackingRef.current,
+        terminalMouseTrackingMode: termRef.current?.modes.mouseTrackingMode,
         status: statusRef.current,
         rightClickBehavior: terminalSettingsRef.current?.rightClickBehavior,
         forceMenuInAlternateScreen: terminalSettingsRef.current?.showContextMenuOverFullscreenApps,
@@ -1724,6 +1725,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (rightClickPressClaim.noteMouseDown({
         event: e,
         mouseTracking: mouseTrackingRef.current,
+        terminalMouseTrackingMode: termRef.current?.modes.mouseTrackingMode,
         status: statusRef.current,
         rightClickBehavior: terminalSettingsRef.current?.rightClickBehavior,
         forceMenuInAlternateScreen: terminalSettingsRef.current?.showContextMenuOverFullscreenApps,

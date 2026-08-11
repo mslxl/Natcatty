@@ -492,6 +492,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
       keyBindings={keyBindings}
       rightClickBehavior={terminalSettings?.rightClickBehavior}
       isAlternateScreen={hasMouseTracking}
+      getMouseTrackingMode={() => termRef.current?.modes.mouseTrackingMode}
       showContextMenuOverFullscreenApps={terminalSettings?.showContextMenuOverFullscreenApps}
       onCopy={terminalContextActions.onCopy}
       onPaste={terminalContextActions.onPaste}

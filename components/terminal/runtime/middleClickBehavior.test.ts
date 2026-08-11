@@ -70,6 +70,27 @@ test("mouse-tracking context menu capture lets Shift-modified mouse events pass 
   );
 });
 
+test("mouse-tracking context menu capture prefers the terminal's current mode over stale cached state", () => {
+  assert.equal(
+    shouldInterceptMouseTrackingContextMenu({
+      event: { shiftKey: false } as MouseEvent,
+      mouseTracking: false,
+      terminalMouseTrackingMode: "vt200",
+      status: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldInterceptMouseTrackingContextMenu({
+      event: { shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      terminalMouseTrackingMode: "none",
+      status: "connected",
+    }),
+    false,
+  );
+});
+
 test("mouse-tracking context menu capture yields to the fullscreen-apps menu setting for context-menu clicks", () => {
   // Setting on + context-menu behavior: do NOT intercept, so Radix opens the menu.
   assert.equal(
@@ -249,6 +270,31 @@ test("right-click mousedown is stopped when the fullscreen-apps menu setting for
       mouseTracking: true,
       status: "connected",
       rightClickBehavior: "paste",
+      forceMenuInAlternateScreen: true,
+    }),
+    false,
+  );
+});
+
+test("right-click mousedown also uses the terminal's current mode", () => {
+  assert.equal(
+    shouldStopShiftRightClickMouseTrackingMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: false,
+      terminalMouseTrackingMode: "vt200",
+      status: "connected",
+      rightClickBehavior: "context-menu",
+      forceMenuInAlternateScreen: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldStopShiftRightClickMouseTrackingMouseDown({
+      event: { button: 2, shiftKey: false } as MouseEvent,
+      mouseTracking: true,
+      terminalMouseTrackingMode: "none",
+      status: "connected",
+      rightClickBehavior: "context-menu",
       forceMenuInAlternateScreen: true,
     }),
     false,

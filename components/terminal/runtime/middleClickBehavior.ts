@@ -16,6 +16,8 @@ type ShiftSelectionReplayMouseEvent = MouseEvent & {
 export interface MouseTrackingContextMenuCaptureState {
   event: MouseEvent;
   mouseTracking: boolean;
+  /** Current xterm mouse tracking mode, when available at event time. */
+  terminalMouseTrackingMode?: string;
   status?: string | null;
   /** The user's configured right-click action. */
   rightClickBehavior?: RightClickBehavior;
@@ -33,6 +35,8 @@ export interface ShiftMouseSelectionReplayState {
 export interface ShiftRightClickMouseDownCaptureState {
   event: MouseEvent;
   mouseTracking: boolean;
+  /** Current xterm mouse tracking mode, when available at event time. */
+  terminalMouseTrackingMode?: string;
   status?: string | null;
   /** The user's configured right-click action. */
   rightClickBehavior?: RightClickBehavior;
@@ -90,14 +94,23 @@ const forcesMenuOverMouseTracking = ({
   forceMenuInAlternateScreen?: boolean;
 }): boolean => Boolean(forceMenuInAlternateScreen && rightClickBehavior === "context-menu");
 
+export const isMouseTrackingActive = ({
+  mouseTracking,
+  terminalMouseTrackingMode,
+}: Pick<MouseTrackingContextMenuCaptureState, "mouseTracking" | "terminalMouseTrackingMode">): boolean =>
+  terminalMouseTrackingMode === undefined
+    ? mouseTracking
+    : terminalMouseTrackingMode !== "none";
+
 export const shouldInterceptMouseTrackingContextMenu = ({
   event,
   mouseTracking,
+  terminalMouseTrackingMode,
   status,
   rightClickBehavior,
   forceMenuInAlternateScreen,
 }: MouseTrackingContextMenuCaptureState): boolean =>
-  mouseTracking
+  isMouseTrackingActive({ mouseTracking, terminalMouseTrackingMode })
   && status === "connected"
   && !event.shiftKey
   && !isMiddleClickContextMenuEvent(event)
@@ -122,11 +135,12 @@ export const shouldReplayShiftMouseSelectionAsMacOption = ({
 export const shouldStopShiftRightClickMouseTrackingMouseDown = ({
   event,
   mouseTracking,
+  terminalMouseTrackingMode,
   status,
   rightClickBehavior,
   forceMenuInAlternateScreen,
 }: ShiftRightClickMouseDownCaptureState): boolean =>
-  mouseTracking
+  isMouseTrackingActive({ mouseTracking, terminalMouseTrackingMode })
   && status === "connected"
   && event.button === 2
   && (event.shiftKey || forcesMenuOverMouseTracking({ rightClickBehavior, forceMenuInAlternateScreen }));
