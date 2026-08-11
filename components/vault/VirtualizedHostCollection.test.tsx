@@ -7,6 +7,7 @@ import {
   getNextRaggedRowPosition,
   getNextVirtualHostIndex,
   resolveVirtualFocusRequest,
+  shouldApplyVirtualHostDomFocus,
   VirtualizedGroupedHostCollection,
   VirtualizedHostCollection,
 } from "./VirtualizedHostCollection.tsx";
@@ -24,6 +25,34 @@ test("virtual focus retries when an active item enters a collection", () => {
     lastRequestedKey: null,
     itemIndexByKey: new Map([["host-1", 3]]),
   }), { status: "request", key: "host-1", index: 3 });
+});
+
+test("virtual host DOM focus does not steal from outside controls", () => {
+  const inside = { tagName: "BUTTON" } as unknown as Element;
+  const searchInput = { tagName: "INPUT" } as unknown as Element;
+  const body = { tagName: "BODY" } as unknown as Element;
+  const collectionRoot = {
+    contains(node: Node) {
+      return node === inside;
+    },
+  };
+
+  assert.equal(shouldApplyVirtualHostDomFocus({
+    collectionRoot,
+    activeElement: inside,
+  }), true);
+  assert.equal(shouldApplyVirtualHostDomFocus({
+    collectionRoot,
+    activeElement: searchInput,
+  }), false);
+  assert.equal(shouldApplyVirtualHostDomFocus({
+    collectionRoot,
+    activeElement: body,
+  }), true);
+  assert.equal(shouldApplyVirtualHostDomFocus({
+    collectionRoot: null,
+    activeElement: inside,
+  }), false);
 });
 
 test("host grids use the same fixed card-width column calculation", () => {
