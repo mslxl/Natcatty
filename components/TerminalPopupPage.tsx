@@ -262,9 +262,14 @@ function TerminalPopupPageInner() {
   } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
   const settings = useSettingsState();
+  const terminalKeyBindings = useMemo(
+    () => settings.keyBindings.filter((binding) => binding.category === 'terminal'),
+    [settings.keyBindings],
+  );
   useTerminalKeyboardFocus(
     settings.hotkeyScheme !== 'disabled' && !settings.disableTerminalFontZoom,
     settings.hotkeyScheme,
+    settings.keyBindings,
   );
   const {
     isInitialized: vaultInitialized,
@@ -458,7 +463,7 @@ function TerminalPopupPageInner() {
               snippets={snippets}
               snippetPackages={snippetPackages}
               hotkeyScheme={settings.hotkeyScheme}
-              keyBindings={settings.keyBindings}
+              keyBindings={terminalKeyBindings}
               chainHosts={chainHosts}
               compactToolbar
               onDeleteSnippets={deleteSelectedSnippets}

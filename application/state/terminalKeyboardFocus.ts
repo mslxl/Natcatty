@@ -1,5 +1,46 @@
+import type { KeyBinding } from "../../domain/models";
+import { parseKeyCombo } from "../../domain/models";
+
 const TERMINAL_KEYBOARD_TARGET_SELECTOR =
   ".xterm, .xterm-helper-textarea, .xterm-screen, .xterm-viewport";
+
+export type TerminalKeyboardShortcut = {
+  key: string;
+  meta: boolean;
+  control: boolean;
+  alt: boolean;
+  shift: boolean;
+};
+
+const TERMINAL_FONT_SIZE_ACTIONS = new Set([
+  "increaseTerminalFontSize",
+  "decreaseTerminalFontSize",
+  "resetTerminalFontSize",
+]);
+
+const normalizeShortcutKey = (key: string): string =>
+  /^[A-Za-z]$/.test(key) ? key.toLowerCase() : key;
+
+export function resolveTerminalFontShortcuts(
+  keyBindings: readonly KeyBinding[],
+  hotkeyScheme: "disabled" | "mac" | "pc",
+): TerminalKeyboardShortcut[] {
+  if (hotkeyScheme === "disabled") return [];
+  return keyBindings.flatMap((binding) => {
+    if (!TERMINAL_FONT_SIZE_ACTIONS.has(binding.action)) return [];
+    const parsed = parseKeyCombo(binding[hotkeyScheme]);
+    if (!parsed || parsed.key === "Disabled") return [];
+    const modifiers = new Set(parsed.modifiers);
+    const isMac = hotkeyScheme === "mac";
+    return [{
+      key: normalizeShortcutKey(parsed.key),
+      meta: isMac ? modifiers.has("⌘") : modifiers.has("Win"),
+      control: isMac ? modifiers.has("⌃") : modifiers.has("Ctrl"),
+      alt: isMac ? modifiers.has("⌥") : modifiers.has("Alt"),
+      shift: modifiers.has("Shift"),
+    }];
+  });
+}
 
 type FocusDocument = Pick<Document, "activeElement" | "addEventListener" | "removeEventListener">;
 type FocusWindow = Pick<Window, "addEventListener" | "removeEventListener">;
