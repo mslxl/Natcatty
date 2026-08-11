@@ -211,18 +211,21 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   const { t } = useI18n();
   const { maximize, isFullscreen, onFullscreenChanged } = useWindowControls();
   const {
+    hotkeyScheme,
     showTabNumberBadges,
     shellOnlyTabNumberShortcuts,
   } = useSettingsChromeStore();
   const tabShortcutNumbers = useMemo(() => {
-    if (!showTabNumberBadges) return null;
+    // AppSideEffects skips the global digit listener when the scheme is
+    // disabled — hide badges so they do not advertise dead shortcuts.
+    if (!showTabNumberBadges || hotkeyScheme === 'disabled') return null;
     return buildTabShortcutNumberById({
       showSftpTab,
       shellOnlyTabNumberShortcuts,
       orderedTabs,
       editorTabIds: editorTabs.map((tab) => toEditorTabId(tab.id)),
     });
-  }, [showTabNumberBadges, showSftpTab, shellOnlyTabNumberShortcuts, orderedTabs, editorTabs]);
+  }, [hotkeyScheme, showTabNumberBadges, showSftpTab, shellOnlyTabNumberShortcuts, orderedTabs, editorTabs]);
   const isHostTreeOpen = useTerminalHostTreeOpen();
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
