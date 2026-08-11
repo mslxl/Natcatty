@@ -3,7 +3,6 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from
 import { I18nProvider, useI18n } from '../application/i18n/I18nProvider';
 import { useSettingsState } from '../application/state/useSettingsState';
 import { useTerminalPopupWindow } from '../application/state/useTerminalPopupWindow';
-import { useTerminalKeyboardFocus } from '../application/state/useTerminalKeyboardFocus';
 import { useVaultState } from '../application/state/useVaultState';
 import { useWindowControls } from '../application/state/useWindowControls';
 import {
@@ -262,9 +261,6 @@ function TerminalPopupPageInner() {
   } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
   const settings = useSettingsState();
-  useTerminalKeyboardFocus(
-    settings.hotkeyScheme !== 'disabled' && !settings.disableTerminalFontZoom,
-  );
   const {
     isInitialized: vaultInitialized,
     hosts,
