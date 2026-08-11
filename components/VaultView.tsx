@@ -70,6 +70,10 @@ import {
 } from "../domain/host";
 import { exportHostsToCsvWithStats } from "../domain/vaultImport";
 import {
+  remapSnippetTargetGroupPaths,
+  removeSnippetTargetGroupPaths,
+} from "../domain/hostGroupPathMutations";
+import {
   reorderVaultItems,
   reorderVaultStrings,
   type VaultOrderPosition,
@@ -1003,6 +1007,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
 
     onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
     onUpdateHosts(updatedHosts);
+    const updatedSnippets = remapSnippetTargetGroupPaths(snippets, renameTargetPath, nextPath);
+    if (updatedSnippets !== snippets) onUpdateSnippets(updatedSnippets);
     if (
       selectedGroupPath &&
       (selectedGroupPath === renameTargetPath ||
@@ -1072,6 +1078,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         }
         onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
         onUpdateHosts(updatedHosts);
+        const nextSnippets = remapSnippetTargetGroupPaths(snippets, oldPath, newPath);
+        if (nextSnippets !== snippets) onUpdateSnippets(nextSnippets);
         // Update child config paths too
         const finalConfigs = updatedConfigs.map((c) => {
           if (c.path.startsWith(oldPath + "/"))
@@ -1103,12 +1111,16 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       onUpdateCustomGroups,
       onUpdateHosts,
       onUpdateManagedSources,
+      onUpdateSnippets,
+      snippets,
       t,
     ],
   );
 
   const handleDeletedGroupPaths = useCallback(
     (selectedRoots: string[]) => {
+      const nextSnippets = removeSnippetTargetGroupPaths(snippets, selectedRoots);
+      if (nextSnippets !== snippets) onUpdateSnippets(nextSnippets);
       if (
         selectedGroupPath &&
         selectedRoots.some(
@@ -1120,7 +1132,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         setSelectedGroupPath(null);
       }
     },
-    [selectedGroupPath],
+    [onUpdateSnippets, selectedGroupPath, snippets],
   );
   const deleteGroupPaths = useVaultGroupDeletion({
     customGroups,
@@ -1174,6 +1186,8 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     }
     onUpdateCustomGroups(Array.from(new Set(updatedGroups)));
     onUpdateHosts(updatedHosts);
+    const nextSnippets = remapSnippetTargetGroupPaths(snippets, sourcePath, newPath);
+    if (nextSnippets !== snippets) onUpdateSnippets(nextSnippets);
     // Update group configs for moved paths
     const updatedGroupConfigs = groupConfigs.map((c) => {
       if (c.path === sourcePath) return { ...c, path: newPath };
@@ -1319,9 +1333,11 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   } = useHostTreeInlineGroupActions({
     customGroups,
     hosts,
+    snippets,
     managedSources,
     onUpdateCustomGroups,
     onUpdateHosts,
+    onUpdateSnippets,
     onUpdateManagedSources,
     selectedGroupPath,
     setSelectedGroupPath,

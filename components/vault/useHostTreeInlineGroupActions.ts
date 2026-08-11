@@ -8,16 +8,19 @@ import {
   applyGroupPathRename,
   ensureAncestorPathsExpanded,
   groupDisplayName,
+  remapSnippetTargetGroupPaths,
 } from '../../domain/hostGroupPathMutations';
-import type { Host, ManagedSource } from '../../types';
+import type { Host, ManagedSource, Snippet } from '../../types';
 import { toast } from '../ui/toast';
 
 type UseHostTreeInlineGroupActionsParams = {
   customGroups: string[];
   hosts: Host[];
+  snippets: Snippet[];
   managedSources: ManagedSource[];
   onUpdateCustomGroups: (groups: string[]) => void;
   onUpdateHosts: (hosts: Host[]) => void;
+  onUpdateSnippets: (snippets: Snippet[]) => void;
   onUpdateManagedSources: (sources: ManagedSource[]) => void;
   selectedGroupPath: string | null;
   setSelectedGroupPath: (path: string | null) => void;
@@ -29,9 +32,11 @@ type UseHostTreeInlineGroupActionsParams = {
 export function useHostTreeInlineGroupActions({
   customGroups,
   hosts,
+  snippets,
   managedSources,
   onUpdateCustomGroups,
   onUpdateHosts,
+  onUpdateSnippets,
   onUpdateManagedSources,
   selectedGroupPath,
   setSelectedGroupPath,
@@ -114,6 +119,8 @@ export function useHostTreeInlineGroupActions({
     }
     onUpdateCustomGroups(result.updatedGroups);
     onUpdateHosts(result.updatedHosts);
+    const nextSnippets = remapSnippetTargetGroupPaths(snippets, edit.groupPath, result.nextPath);
+    if (nextSnippets !== snippets) onUpdateSnippets(nextSnippets);
 
     if (
       selectedGroupPath
@@ -134,9 +141,11 @@ export function useHostTreeInlineGroupActions({
     managedSources,
     onUpdateCustomGroups,
     onUpdateHosts,
+    onUpdateSnippets,
     onUpdateManagedSources,
     selectedGroupPath,
     setSelectedGroupPath,
+    snippets,
     t,
   ]);
 

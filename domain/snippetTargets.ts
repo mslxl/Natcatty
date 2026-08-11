@@ -1,29 +1,62 @@
 import type { Host, Snippet } from './models';
+import { hostMatchesGroupPath } from './selectHostSelection.ts';
 import { isScriptSnippet } from './snippetScript.ts';
 
 /** Whether the snippet has a runnable scope (explicit targets or all-hosts flag). */
-export function snippetHasRunTargets(snippet: Pick<Snippet, 'targets' | 'targetsAllHosts'>): boolean {
+export function snippetHasRunTargets(
+  snippet: Pick<Snippet, 'targets' | 'targetGroups' | 'targetsAllHosts'>,
+): boolean {
   if (snippet.targetsAllHosts) return true;
-  return Boolean(snippet.targets && snippet.targets.length > 0);
+  return Boolean(
+    (snippet.targets && snippet.targets.length > 0)
+    || (snippet.targetGroups && snippet.targetGroups.length > 0),
+  );
+}
+
+export type SnippetTargetHost = Pick<Host, 'id' | 'group'>;
+
+export function snippetTargetsHostExplicitly(
+  snippet: Pick<Snippet, 'targets'>,
+  hostId: string,
+): boolean {
+  return Boolean(snippet.targets?.includes(hostId));
+}
+
+export function snippetTargetsHostGroup(
+  snippet: Pick<Snippet, 'targetGroups'>,
+  host: Pick<Host, 'group'>,
+): boolean {
+  return Boolean(snippet.targetGroups?.some((groupPath) => hostMatchesGroupPath(host, groupPath)));
+}
+
+function normalizeTargetHost(hostOrId?: SnippetTargetHost | string): SnippetTargetHost | undefined {
+  if (typeof hostOrId === 'string') return { id: hostOrId };
+  return hostOrId;
 }
 
 /** Connectable hosts for manual run / save-and-run. */
 export function getRunnableHostsForSnippet(
-  snippet: Pick<Snippet, 'targets' | 'targetsAllHosts'>,
+  snippet: Pick<Snippet, 'targets' | 'targetGroups' | 'targetsAllHosts'>,
   hosts: Host[],
 ): Host[] {
   const connectable = hosts.filter((host) => host.protocol !== 'serial');
   if (snippet.targetsAllHosts) return connectable;
   const idSet = new Set(snippet.targets ?? []);
-  return connectable.filter((host) => idSet.has(host.id));
+  return connectable.filter(
+    (host) => idSet.has(host.id) || snippetTargetsHostGroup(snippet, host),
+  );
 }
 
 /** Whether a snippet/script applies to the given host based on targets or all-hosts flag. */
-export function snippetAppliesToHost(snippet: Snippet, hostId?: string): boolean {
-  if (hostId === undefined) return false;
+export function snippetAppliesToHost(
+  snippet: Pick<Snippet, 'targets' | 'targetGroups' | 'targetsAllHosts'>,
+  hostOrId?: SnippetTargetHost | string,
+): boolean {
+  const host = normalizeTargetHost(hostOrId);
+  if (!host) return false;
   if (snippet.targetsAllHosts) return true;
-  if (!snippet.targets || snippet.targets.length === 0) return false;
-  return snippet.targets.includes(hostId);
+  return snippetTargetsHostExplicitly(snippet, host.id)
+    || snippetTargetsHostGroup(snippet, host);
 }
 
 /**
@@ -31,14 +64,18 @@ export function snippetAppliesToHost(snippet: Snippet, hostId?: string): boolean
  * are configured, they apply to whichever host the session is connected to.
  */
 export function snippetAppliesToOutputTrigger(
-  snippet: Pick<Snippet, 'trigger' | 'targets' | 'targetsAllHosts'>,
-  hostId?: string,
+  snippet: Pick<Snippet, 'trigger' | 'targets' | 'targetGroups' | 'targetsAllHosts'>,
+  hostOrId?: SnippetTargetHost | string,
 ): boolean {
   if (snippet.trigger !== 'onOutput') return false;
-  if (hostId === undefined) return false;
+  const host = normalizeTargetHost(hostOrId);
+  if (!host) return false;
   if (snippet.targetsAllHosts) return true;
-  if (snippet.targets && snippet.targets.length > 0) {
-    return snippet.targets.includes(hostId);
+  if (
+    (snippet.targets && snippet.targets.length > 0)
+    || (snippet.targetGroups && snippet.targetGroups.length > 0)
+  ) {
+    return snippetAppliesToHost(snippet, host);
   }
   return true;
 }

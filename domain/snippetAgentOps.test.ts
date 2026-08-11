@@ -47,12 +47,14 @@ test('serializeSnippetForAgentGet includes script metadata', () => {
     kind: 'script',
     trigger: 'onConnect',
     targets: ['host-a'],
+    targetGroups: ['Production'],
     language: 'javascript',
   };
   const serialized = serializeSnippetForAgentGet(snippet);
   assert.equal(serialized.kind, 'script');
   assert.equal(serialized.trigger, 'onConnect');
   assert.deepEqual(serialized.targets, ['host-a']);
+  assert.deepEqual(serialized.targetGroups, ['Production']);
 });
 
 test('buildSnippetFromAgentDraft validates onOutput triggerPattern', () => {
@@ -170,6 +172,22 @@ test('applySnippetAgentPatch clears targetsAllHosts when explicit targets are se
   if (!patched.ok) return;
   assert.equal(patched.snippet.targetsAllHosts, undefined);
   assert.deepEqual(patched.snippet.targets, ['host-a']);
+});
+
+test('applySnippetAgentPatch supports dynamic groups alongside explicit hosts', () => {
+  const existing: Snippet = {
+    id: 'run',
+    label: 'Run',
+    command: 'nct.log(1)',
+    kind: 'script',
+    trigger: 'onConnect',
+    targets: ['host-a'],
+  };
+  const patched = applySnippetAgentPatch(existing, { targetGroups: ['Production'] });
+  assert.equal(patched.ok, true);
+  if (!patched.ok) return;
+  assert.deepEqual(patched.snippet.targets, ['host-a']);
+  assert.deepEqual(patched.snippet.targetGroups, ['Production']);
 });
 
 test('applySnippetAgentPatch updates multi-line run mode', () => {

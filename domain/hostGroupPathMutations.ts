@@ -1,4 +1,63 @@
-import type { Host, ManagedSource } from '../types';
+import type { Host, ManagedSource, Snippet } from '../types';
+
+export function normalizeGroupTargetPath(value: string): string {
+  return value
+    .replace(/\\/g, '/')
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('/');
+}
+
+function replaceGroupPathPrefix(path: string, sourcePath: string, nextPath: string): string {
+  if (path === sourcePath) return nextPath;
+  if (path.startsWith(`${sourcePath}/`)) return nextPath + path.slice(sourcePath.length);
+  return path;
+}
+
+export function remapSnippetTargetGroupPaths(
+  snippets: Snippet[],
+  sourceValue: string,
+  nextValue: string,
+): Snippet[] {
+  const sourcePath = normalizeGroupTargetPath(sourceValue);
+  const nextPath = normalizeGroupTargetPath(nextValue);
+  if (!sourcePath || !nextPath || sourcePath === nextPath) return snippets;
+
+  let changed = false;
+  const nextSnippets = snippets.map((snippet) => {
+    if (!snippet.targetGroups?.length) return snippet;
+    const targetGroups = Array.from(new Set(
+      snippet.targetGroups.map((path) => replaceGroupPathPrefix(path, sourcePath, nextPath)),
+    ));
+    if (targetGroups.every((path, index) => path === snippet.targetGroups?.[index])) return snippet;
+    changed = true;
+    return { ...snippet, targetGroups };
+  });
+  return changed ? nextSnippets : snippets;
+}
+
+export function removeSnippetTargetGroupPaths(
+  snippets: Snippet[],
+  removedValues: Iterable<string>,
+): Snippet[] {
+  const removedPaths = [...removedValues]
+    .map(normalizeGroupTargetPath)
+    .filter(Boolean);
+  if (removedPaths.length === 0) return snippets;
+  const isRemoved = (path: string) => removedPaths.some(
+    (removed) => path === removed || path.startsWith(`${removed}/`),
+  );
+
+  let changed = false;
+  const nextSnippets = snippets.map((snippet) => {
+    if (!snippet.targetGroups?.some(isRemoved)) return snippet;
+    const targetGroups = snippet.targetGroups.filter((path) => !isRemoved(path));
+    changed = true;
+    return { ...snippet, targetGroups: targetGroups.length > 0 ? targetGroups : undefined };
+  });
+  return changed ? nextSnippets : snippets;
+}
 
 export function groupDisplayName(groupPath: string): string {
   return groupPath.split('/').filter(Boolean).pop() ?? groupPath;

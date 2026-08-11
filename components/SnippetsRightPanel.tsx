@@ -3,6 +3,7 @@ import { parseSnippetVariables } from '../domain/snippetVariables';
 import { Check, Clock, Keyboard, Loader2, Package, RotateCcw, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import SelectHostPanel from './SelectHostPanel';
+import { SelectGroupDialog } from './SelectGroupDialog';
 import { AsidePanel, AsidePanelContent, AsidePanelFooter } from './ui/aside-panel';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -29,6 +30,8 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   customGroups,
   targetSelection,
   setTargetSelection,
+  targetGroupSelection,
+  setTargetGroupSelection,
   handleTargetSelect,
   handleTargetSelectionChange,
   handleTargetPickerBack,
@@ -71,6 +74,7 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
     [editingSnippet?.command],
   );
   const [scriptEditorModalOpen, setScriptEditorModalOpen] = useState(false);
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const isEditingScript = isScriptSnippet(editingSnippet as import('../types').Snippet);
   const snippetsPanelResizeProps = {
     resizable: true as const,
@@ -81,8 +85,9 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   const runnableEditingSnippet = useMemo(() => ({
     ...(editingSnippet as Snippet),
     targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
+    targetGroups: editingSnippet.targetsAllHosts ? [] : targetGroupSelection,
     targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
-  }), [editingSnippet, targetSelection]);
+  }), [editingSnippet, targetGroupSelection, targetSelection]);
 
   const runTargets = useMemo(
     () => getRunnableHostsForSnippet(runnableEditingSnippet, hosts),
@@ -99,10 +104,12 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   const handleTargetsAllHostsChange = (checked: boolean) => {
     if (checked) {
       setTargetSelection([]);
+      setTargetGroupSelection([]);
       setEditingSnippet({
         ...editingSnippet,
         targetsAllHosts: true,
         targets: [],
+        targetGroups: [],
       });
       return;
     }
@@ -137,6 +144,7 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
 
     if (rightPanelMode === 'edit-snippet') {
       return (
+        <>
         <AsidePanel
           open={true}
           onClose={handleClosePanel}
@@ -266,7 +274,9 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
             <SnippetTargetsSection
               t={t}
               targetHosts={targetHosts}
+              targetGroups={isEditingScript ? targetGroupSelection : []}
               onEditTargets={openTargetPicker}
+              onEditGroups={isEditingScript ? () => setGroupPickerOpen(true) : undefined}
               hint={isEditingScript
                 ? (editingSnippet.trigger === 'onConnect'
                   ? t('scripts.targets.connectOrderHint')
@@ -386,11 +396,29 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
               selectedHostIds={targetSelection}
               onSelectHost={handleTargetSelect}
               onSelectionChange={handleTargetSelectionChange}
+              selectedGroupPaths={targetGroupSelection}
+              onGroupSelectionChange={setTargetGroupSelection}
               targetsAllHosts={Boolean(editingSnippet.targetsAllHosts)}
               onTargetsAllHostsChange={handleTargetsAllHostsChange}
             />
           ) : null}
         </AsidePanel>
+        <SelectGroupDialog
+          open={groupPickerOpen}
+          onOpenChange={setGroupPickerOpen}
+          hosts={hosts}
+          customGroups={customGroups}
+          selectedGroupPaths={targetGroupSelection}
+          onSelectionChange={(nextGroups) => {
+            setTargetGroupSelection(nextGroups);
+            setEditingSnippet({
+              ...editingSnippet,
+              targetGroups: nextGroups,
+              targetsAllHosts: undefined,
+            });
+          }}
+        />
+        </>
       );
     }
 

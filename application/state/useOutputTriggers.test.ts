@@ -93,6 +93,26 @@ test('hasApplicableOutputTriggerSnippet requires a runnable output trigger for t
   assert.equal(hasApplicableOutputTriggerSnippet(snippets, 'host-a'), true);
 });
 
+test('hasApplicableOutputTriggerSnippet follows the host current group', () => {
+  const snippets: Snippet[] = [{
+    id: 'group-trigger',
+    label: 'Group trigger',
+    command: '',
+    kind: 'script',
+    trigger: 'onOutput',
+    triggerPattern: 'READY',
+    targetGroups: ['Production'],
+  }];
+  assert.equal(
+    hasApplicableOutputTriggerSnippet(snippets, { id: 'host-a', group: 'Production/Web' }),
+    true,
+  );
+  assert.equal(
+    hasApplicableOutputTriggerSnippet(snippets, { id: 'host-a', group: 'Staging' }),
+    false,
+  );
+});
+
 test('output trigger scan buffer consumes scanned content and only keeps overlap', () => {
   const buffer = createOutputTriggerScanBuffer(4);
 

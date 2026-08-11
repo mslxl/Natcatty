@@ -5,6 +5,7 @@ import type { Host, Snippet } from '@/domain/models';
 import { DEFAULT_SCRIPT_TEMPLATE } from '@/domain/snippetScript.ts';
 import { scheduleWindowInputFocus } from '@/application/state/windowInputFocus';
 import { SelectHostDialog } from '@/components/SelectHostDialog';
+import { SelectGroupDialog } from '@/components/SelectGroupDialog';
 import { ScriptCodeEditor } from './ScriptCodeEditor';
 import { ScriptMetaFields } from './ScriptMetaFields';
 import { SnippetTargetsSection } from '@/components/snippets/SnippetTargetsSection';
@@ -26,6 +27,8 @@ export interface ScriptEditorModalProps {
   selectedHostIds: string[];
   onSelectHost: (host: Host) => void;
   onSelectionChange?: (selectedHostIds: string[]) => void;
+  selectedGroupPaths?: string[];
+  onGroupSelectionChange?: (selectedGroupPaths: string[]) => void;
   targetsAllHosts?: boolean;
   onTargetsAllHostsChange?: (checked: boolean) => void;
 }
@@ -53,11 +56,14 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
   selectedHostIds,
   onSelectHost,
   onSelectionChange,
+  selectedGroupPaths = [],
+  onGroupSelectionChange,
   targetsAllHosts = false,
   onTargetsAllHostsChange,
 }) => {
   const { t } = useI18n();
   const [targetPickerOpen, setTargetPickerOpen] = useState(false);
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false);
 
   const handleOpenChange = useCallback((isOpen: boolean) => {
     if (!isOpen) {
@@ -81,9 +87,10 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
     onChange({
       ...snippet,
       targets: selectedHostIds,
+      targetGroups: selectedGroupPaths,
       targetsAllHosts: undefined,
     });
-  }, [onChange, selectedHostIds, snippet]);
+  }, [onChange, selectedGroupPaths, selectedHostIds, snippet]);
 
   const language = 'javascript';
   const editorValue = snippet.command || DEFAULT_SCRIPT_TEMPLATE;
@@ -146,9 +153,13 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
                 variant="embedded"
                 t={t}
                 targetHosts={targetHosts}
+                targetGroups={selectedGroupPaths}
                 onEditTargets={() => {
                   if (!targetsAllHosts) setTargetPickerOpen(true);
                 }}
+                onEditGroups={onGroupSelectionChange ? () => {
+                  if (!targetsAllHosts) setGroupPickerOpen(true);
+                } : undefined}
                 hint={t('scripts.targets.hint')}
                 targetsAllHosts={targetsAllHosts}
                 onTargetsAllHostsChange={onTargetsAllHostsChange}
@@ -191,6 +202,21 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
         onSelect={onSelectHost}
         onSelectionChange={onSelectionChange}
         onConfirm={handleTargetsConfirm}
+      />
+      <SelectGroupDialog
+        open={groupPickerOpen}
+        onOpenChange={setGroupPickerOpen}
+        hosts={hosts}
+        customGroups={customGroups}
+        selectedGroupPaths={selectedGroupPaths}
+        onSelectionChange={(nextGroups) => {
+          onGroupSelectionChange?.(nextGroups);
+          onChange({
+            ...snippet,
+            targetGroups: nextGroups,
+            targetsAllHosts: undefined,
+          });
+        }}
       />
     </>
   );

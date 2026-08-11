@@ -413,7 +413,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const scriptSessionName = sessionDisplayName || host.label;
   const outputTriggers = useOutputTriggers({
     sessionId,
-    hostId: host.id,
+    host,
     snippets,
     onRunScript: (snippet, sid) => runAutomationScript({
       snippet,
@@ -424,7 +424,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         hostname: host.hostname,
         username: host.username,
       },
-    }).catch((err) => {
+    }).then(() => undefined).catch((err) => {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
       throw err;

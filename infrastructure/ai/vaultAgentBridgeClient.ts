@@ -58,6 +58,10 @@ import {
   validatePortForwardingHost,
 } from '../../domain/portForwardingAgentOps';
 import { deleteGroup, upsertGroup } from '../../domain/vaultGroupAgentOps';
+import {
+  remapSnippetTargetGroupPaths,
+  removeSnippetTargetGroupPaths,
+} from '../../domain/hostGroupPathMutations';
 
 const SENSITIVE_HOST_KEYS = new Set([
   'password',
@@ -317,6 +321,7 @@ function snippetDraftFromParams(params: Record<string, unknown>) {
     kind: params.kind,
     tags: params.tags,
     targets: params.targets,
+    targetGroups: params.targetGroups,
     targetsAllHosts: params.targetsAllHosts,
     package: params.package,
     shortkey: params.shortkey,
@@ -1013,6 +1018,14 @@ export async function handleVaultAgentOp(
       deps.updateGroupConfigs(result.state.configs);
       deps.updateHosts(result.state.hosts);
       deps.updateManagedSources(result.state.managedSources);
+      if (op === 'group.update' && result.config?.path) {
+        const nextSnippets = remapSnippetTargetGroupPaths(
+          deps.snippets,
+          String(params.path),
+          result.config.path,
+        );
+        if (nextSnippets !== deps.snippets) deps.updateSnippets(nextSnippets);
+      }
       return { ok: true, group: sanitizeGroupConfigForAgent(result.config ?? { path: String(params.path) }) };
     }
     case 'group.delete': {
@@ -1028,6 +1041,8 @@ export async function handleVaultAgentOp(
       deps.updateCustomGroups(result.state.groups);
       deps.updateGroupConfigs(result.state.configs);
       deps.updateHosts(result.state.hosts);
+      const nextSnippets = removeSnippetTargetGroupPaths(deps.snippets, [String(params.path)]);
+      if (nextSnippets !== deps.snippets) deps.updateSnippets(nextSnippets);
       return { ok: true, path: String(params.path), deletedHosts: deleteHosts ?? false };
     }
     case 'snippets.list': {
@@ -1187,6 +1202,7 @@ export async function handleVaultAgentOp(
       if (!existing) return { ok: false, error: `Script "${scriptId}" was not found.` };
       const patched = applyScriptTargetsPatch(existing, {
         targets: params.targets,
+        targetGroups: params.targetGroups,
         targetsAllHosts: params.targetsAllHosts,
       });
       if (!patched.ok) return { ok: false, error: patched.error };

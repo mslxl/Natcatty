@@ -401,7 +401,7 @@ async function run() {
     process.stdout.write(opts.json
       ? `${JSON.stringify(payload, null, 2)}\n`
       : `${payload.capabilities.map((entry) => entry.command.join(" ")).join("\n")}\n`);
-    process.exit(0);
+    return;
   }
 
   let client = null;

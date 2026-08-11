@@ -23,6 +23,8 @@ const hosts: Host[] = [
     username: 'root',
     os: 'linux',
     protocol: 'ssh',
+    group: 'Production/Web',
+    tags: [],
   },
   {
     id: 'host-b',
@@ -31,6 +33,7 @@ const hosts: Host[] = [
     username: 'root',
     os: 'linux',
     protocol: 'serial',
+    tags: [],
   },
 ];
 
@@ -57,6 +60,27 @@ test('snippetHasRunTargets requires explicit scope', () => {
   assert.equal(snippetHasRunTargets(baseSnippet), false);
   assert.equal(snippetHasRunTargets({ ...baseSnippet, targets: ['host-a'] }), true);
   assert.equal(snippetHasRunTargets({ ...baseSnippet, targetsAllHosts: true }), true);
+  assert.equal(snippetHasRunTargets({ ...baseSnippet, targetGroups: ['Production'] }), true);
+});
+
+test('group targets resolve current nested membership without storing host ids', () => {
+  const grouped = { ...baseSnippet, targetGroups: ['Production'] };
+  assert.equal(snippetAppliesToHost(grouped, hosts[0]), true);
+  assert.equal(snippetAppliesToHost(grouped, { id: 'host-c', group: 'Staging' }), false);
+  assert.deepEqual(getRunnableHostsForSnippet(grouped, hosts), [hosts[0]]);
+
+  const moved = [{ ...hosts[0], group: 'Staging' }, hosts[1]];
+  assert.deepEqual(getRunnableHostsForSnippet(grouped, moved), []);
+});
+
+test('explicit host and group targets form a deduplicated union', () => {
+  const extra = { ...hosts[0], id: 'host-c', group: 'Staging' };
+  const snippet = {
+    ...baseSnippet,
+    targets: ['host-a', 'host-c'],
+    targetGroups: ['Production'],
+  };
+  assert.deepEqual(getRunnableHostsForSnippet(snippet, [...hosts, extra]), [hosts[0], extra]);
 });
 
 test('snippetAppliesToOutputTrigger applies to current session when targets are unset', () => {
@@ -76,6 +100,16 @@ test('snippetAppliesToOutputTrigger respects explicit host targets', () => {
   };
   assert.equal(snippetAppliesToOutputTrigger(output, 'host-a'), true);
   assert.equal(snippetAppliesToOutputTrigger(output, 'host-b'), false);
+});
+
+test('snippetAppliesToOutputTrigger respects dynamic group targets', () => {
+  const output = {
+    ...baseSnippet,
+    trigger: 'onOutput' as const,
+    targetGroups: ['Production'],
+  };
+  assert.equal(snippetAppliesToOutputTrigger(output, hosts[0]), true);
+  assert.equal(snippetAppliesToOutputTrigger(output, { id: 'host-c', group: 'Staging' }), false);
 });
 
 test('getRunnableHostsForSnippet excludes serial hosts and respects scope', () => {
