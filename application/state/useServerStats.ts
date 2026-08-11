@@ -3,6 +3,7 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 export interface DiskInfo {
   capacityKey?: string;       // Filesystem or shared-pool identity for deduplication
+  filesystemType?: string;    // Filesystem type reported by df (for network/FUSE filtering)
   mountPoint: string;
   used: number;               // Used in GB
   total: number;              // Total in GB

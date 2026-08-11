@@ -1,5 +1,6 @@
 export interface MountedDiskUsage {
   capacityKey?: string;
+  filesystemType?: string;
   mountPoint: string;
   used: number;
   total: number;
@@ -17,6 +18,7 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
   if (!key) return false;
   const lower = key.toLowerCase();
   if (lower === "fuse" || lower.startsWith("fuse.")) return true;
+  if (lower === "/dev/fuse" || lower.endsWith("/fuse")) return true;
   if (lower === "rclone" || lower.startsWith("rclone:")) return true;
   if (lower.includes("clouddrive")) return true;
   if (
@@ -33,6 +35,21 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
   return false;
 }
 
+export function isNetworkOrFuseFilesystemType(filesystemType: string | undefined): boolean {
+  const type = filesystemType?.trim().toLowerCase();
+  if (!type) return false;
+  if (type.startsWith("fuse") || type.includes("clouddrive")) return true;
+  return [
+    "rclone",
+    "sshfs",
+    "s3fs",
+    "gcsfuse",
+    "mergerfs",
+    "unionfs",
+    "unionfs-fuse",
+  ].includes(type);
+}
+
 export function aggregateMountedDiskUsage(
   disks: readonly MountedDiskUsage[],
 ): AggregatedDiskUsage | null {
@@ -41,7 +58,11 @@ export function aggregateMountedDiskUsage(
   for (const disk of disks) {
     if (!Number.isFinite(disk.used) || !Number.isFinite(disk.total)) continue;
     if (disk.used < 0 || disk.total <= 0) continue;
-    if (isNetworkOrFuseCapacityKey(disk.capacityKey)) continue;
+    const filesystemType = disk.filesystemType?.trim();
+    const hasFilesystemType = filesystemType && filesystemType !== "-";
+    if (hasFilesystemType
+      ? isNetworkOrFuseFilesystemType(filesystemType)
+      : isNetworkOrFuseCapacityKey(disk.capacityKey)) continue;
     const identity = disk.capacityKey?.trim() || `mount:${disk.mountPoint}`;
     const existing = capacityGroups.get(identity);
     capacityGroups.set(identity, {

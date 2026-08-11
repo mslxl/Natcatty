@@ -297,10 +297,12 @@ declare global {
         diskUsed: number | null;      // Disk used in GB
         diskTotal: number | null;     // Total disk in GB
         disks: Array<{                // All mounted disks
+          capacityKey?: string;       // Filesystem or shared-pool identity
           mountPoint: string;
           used: number;               // Used in GB
           total: number;              // Total in GB
           percent: number;            // Usage percentage
+          filesystemType?: string;    // Filesystem type reported by df
         }>;
         netRxSpeed: number;           // Total network receive speed (bytes/sec)
         netTxSpeed: number;           // Total network transmit speed (bytes/sec)

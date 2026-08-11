@@ -22,8 +22,38 @@ test("aggregateMountedDiskUsage skips rclone/CloudDrive/ufs network FUSE capacit
       { capacityKey: "rclone:gdrive:media", mountPoint: "/mnt/gdrive", used: 1000, total: 2000 },
       { capacityKey: "CloudDrive", mountPoint: "/CloudNAS/CloudDrive", used: 2000, total: 4000 },
       { capacityKey: "ufs", mountPoint: "/mnt/ufs", used: 500, total: 1000 },
+      { capacityKey: "gdrive:media", filesystemType: "fuse.rclone", mountPoint: "/mnt/remote", used: 800, total: 1600 },
     ]),
     { used: 30, total: 150, percent: 20 },
+  );
+});
+
+test("aggregateMountedDiskUsage trusts a reported local filesystem type over its source name", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "ufs", filesystemType: "ext4", mountPoint: "/data", used: 5, total: 10 },
+      { capacityKey: "remote:gdrive", filesystemType: "fuse.rclone", mountPoint: "/mnt/gdrive", used: 50, total: 100 },
+    ]),
+    { used: 5, total: 10, percent: 50 },
+  );
+});
+
+test("aggregateMountedDiskUsage keeps a local UFS filesystem when its type is reported", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "ufs", filesystemType: "ufs", mountPoint: "/data", used: 5, total: 10 },
+      { capacityKey: "remote:gdrive", filesystemType: "fuse.rclone", mountPoint: "/mnt/gdrive", used: 50, total: 100 },
+    ]),
+    { used: 5, total: 10, percent: 50 },
+  );
+});
+
+test("aggregateMountedDiskUsage uses source heuristics when filesystem type is unavailable", () => {
+  assert.equal(
+    aggregateMountedDiskUsage([
+      { capacityKey: "rclone:gdrive", filesystemType: "-", mountPoint: "/mnt/gdrive", used: 50, total: 100 },
+    ]),
+    null,
   );
 });
 
