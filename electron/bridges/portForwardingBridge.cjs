@@ -284,24 +284,29 @@ function destroyTunnelPipeEndpoint(endpoint) {
   try { endpoint.end?.(); } catch { /* ignore */ }
 }
 
-function destroyTunnelPipeEntry(tunnelState, entry) {
-  if (!entry || entry.closed) return;
+function destroyTunnelPipeEntry(tunnelState, entry, { abortOpen = true, remove = true } = {}) {
+  if (!entry) return;
   entry.closed = true;
   const openAbortController = entry.openAbortController;
-  entry.openAbortController = null;
-  if (openAbortController && !openAbortController.signal.aborted) {
+  const shouldDestroyEndpoints = !entry.endpointsDestroyed;
+  entry.endpointsDestroyed = true;
+  if (abortOpen && openAbortController && !openAbortController.signal.aborted) {
     try { openAbortController.abort(new Error("Port forward client closed during SSH channel open")); } catch { /* ignore */ }
   }
-  try { tunnelState?.activePipes?.delete(entry); } catch { /* ignore */ }
-  destroyTunnelPipeEndpoint(entry.socket);
-  destroyTunnelPipeEndpoint(entry.stream);
+  if (remove) {
+    entry.openAbortController = null;
+    try { tunnelState?.activePipes?.delete(entry); } catch { /* ignore */ }
+  }
+  if (shouldDestroyEndpoints) {
+    destroyTunnelPipeEndpoint(entry.socket);
+    destroyTunnelPipeEndpoint(entry.stream);
+  }
 }
 
 function attachTunnelPipeStream(tunnelState, entry, stream) {
   if (!entry || entry.closed || isTunnelCancelled(tunnelState)) {
-    destroyTunnelPipeEndpoint(entry?.socket);
+    if (entry) destroyTunnelPipeEntry(tunnelState, entry, { abortOpen: false });
     destroyTunnelPipeEndpoint(stream);
-    if (entry) destroyTunnelPipeEntry(tunnelState, entry);
     return false;
   }
   entry.openAbortController = null;
@@ -319,10 +324,24 @@ function trackTunnelPipe(tunnelState, socket, stream = null) {
     socket,
     stream: null,
     closed: false,
+    openStarted: false,
+    endpointsDestroyed: false,
     openAbortController: stream ? null : new AbortController(),
   };
   tunnelState.activePipes.add(entry);
-  const drop = () => destroyTunnelPipeEntry(tunnelState, entry);
+  // A client disconnect only abandons this channel open. The bounded open
+  // helper invalidates the physical SSH connection when its signal aborts;
+  // doing that here would tear down a shared local-forward listener. Tunnel-
+  // wide cleanup still aborts pending opens through destroyTunnelPipes(). Keep
+  // a pending entry tracked until its late channel callback is closed, so a
+  // later tunnel stop can still cancel the underlying request.
+  const drop = () => {
+    const pendingOpen = Boolean(entry.openStarted && entry.openAbortController);
+    destroyTunnelPipeEntry(tunnelState, entry, {
+      abortOpen: false,
+      remove: !pendingOpen,
+    });
+  };
   try { socket?.once?.("close", drop); } catch { /* ignore */ }
   try { socket?.once?.("error", drop); } catch { /* ignore */ }
   if (stream) attachTunnelPipeStream(tunnelState, entry, stream);
@@ -579,6 +598,7 @@ function bindPortForwardChannels({
     if (type === "local") {
       const server = net.createServer((socket) => {
         const pipeEntry = trackTunnelPipe(tunnelState, socket);
+        pipeEntry.openStarted = true;
         openBoundedForwardOutCallback(
           conn,
           bindAddress,
@@ -588,7 +608,7 @@ function bindPortForwardChannels({
           (err, stream) => {
             if (err) {
               console.error(`[PortForward] Forward error:`, err.message);
-              destroyTunnelPipeEntry(tunnelState, pipeEntry);
+              destroyTunnelPipeEntry(tunnelState, pipeEntry, { abortOpen: false });
               return;
             }
             if (!attachTunnelPipeStream(tunnelState, pipeEntry, stream)) return;
@@ -772,6 +792,7 @@ function bindPortForwardChannels({
         const pipeEntry = trackTunnelPipe(tunnelState, socket);
         socket.once("data", (data) => {
           if (data[0] !== 0x05) {
+            destroyTunnelPipeEntry(tunnelState, pipeEntry, { abortOpen: false });
             socket.end();
             return;
           }
@@ -780,6 +801,7 @@ function bindPortForwardChannels({
             if (request[0] !== 0x05 || request[1] !== 0x01) {
               socket.write(Buffer.from([0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
               socket.end();
+              destroyTunnelPipeEntry(tunnelState, pipeEntry, { abortOpen: false });
               return;
             }
 
@@ -797,13 +819,16 @@ function bindPortForwardChannels({
             } else if (addressType === 0x04) {
               socket.write(Buffer.from([0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
               socket.end();
+              destroyTunnelPipeEntry(tunnelState, pipeEntry, { abortOpen: false });
               return;
             } else {
               socket.write(Buffer.from([0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
               socket.end();
+              destroyTunnelPipeEntry(tunnelState, pipeEntry, { abortOpen: false });
               return;
             }
 
+            pipeEntry.openStarted = true;
             openBoundedForwardOutCallback(
               conn,
               bindAddress,
@@ -814,6 +839,7 @@ function bindPortForwardChannels({
                 if (err) {
                   socket.write(Buffer.from([0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0]));
                   socket.end();
+                  destroyTunnelPipeEntry(tunnelState, pipeEntry, { abortOpen: false });
                   return;
                 }
                 if (!attachTunnelPipeStream(tunnelState, pipeEntry, stream)) return;
