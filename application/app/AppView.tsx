@@ -473,6 +473,7 @@ function AppViewInner({ domains }: AppViewProps) {
         onRemoveSessionFromWorkspace={removeSessionFromWorkspace}
         showSftpTab={showSftpTab}
         showHostTreeSidebar={showHostTreeSidebar}
+        switchTabKeyBinding={keyBindings.find((binding) => binding.action === 'switchToTab') ?? null}
         dynamicTabTitleMode={dynamicTabTitleMode}
         editorTabs={editorTabs}
         pluginViewTabs={pluginViewTabs}

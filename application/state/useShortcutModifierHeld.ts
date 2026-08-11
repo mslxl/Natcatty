@@ -1,51 +1,93 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import type { HotkeyScheme } from '../../domain/models/keyBindings';
+import { parseKeyCombo, type HotkeyScheme } from '../../domain/models/keyBindings';
 
-export type ShortcutModifierEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey'>;
+export type ShortcutModifierEvent = Pick<KeyboardEvent, 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>;
 
-function getModifierKey(scheme: Exclude<HotkeyScheme, 'disabled'>): 'Meta' | 'Control' {
-  return scheme === 'mac' ? 'Meta' : 'Control';
+export type ShortcutModifierRequirements = Readonly<ShortcutModifierEvent>;
+
+const MODIFIER_TOKENS = {
+  mac: {
+    '⌘': 'metaKey',
+    '⌃': 'ctrlKey',
+    '⌥': 'altKey',
+    Shift: 'shiftKey',
+  },
+  pc: {
+    Ctrl: 'ctrlKey',
+    Alt: 'altKey',
+    Shift: 'shiftKey',
+    Win: 'metaKey',
+  },
+} as const;
+
+/**
+ * Resolve the modifier combination for the effective [1...9] binding.
+ * A non-range or disabled binding cannot reveal tab numbers because the
+ * dispatcher does not use it for the number-switch action.
+ */
+export function getShortcutModifierRequirements(
+  keyBinding: string | null,
+  scheme: HotkeyScheme,
+): ShortcutModifierRequirements | null {
+  if (scheme === 'disabled' || !keyBinding || !keyBinding.includes('[1...9]')) return null;
+  const parsed = parseKeyCombo(keyBinding);
+  if (!parsed || parsed.modifiers.length === 0) return null;
+
+  const requirements: Record<keyof ShortcutModifierEvent, boolean> = {
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    shiftKey: false,
+  };
+  const tokenMap = MODIFIER_TOKENS[scheme];
+  for (const modifier of parsed.modifiers) {
+    const flag = tokenMap[modifier as keyof typeof tokenMap];
+    if (!flag) return null;
+    requirements[flag] = true;
+  }
+
+  return requirements;
 }
 
-function hasModifierFlag(event: ShortcutModifierEvent, scheme: Exclude<HotkeyScheme, 'disabled'>): boolean {
-  return scheme === 'mac' ? event.metaKey : event.ctrlKey;
-}
-
-/** Whether a keyboard event indicates that the active shortcut modifier is held. */
+/** Whether a keyboard event has exactly the modifiers required by the binding. */
 export function isShortcutModifierHeld(
   event: ShortcutModifierEvent,
-  scheme: HotkeyScheme,
+  requirements: ShortcutModifierRequirements | null,
 ): boolean {
-  if (scheme === 'disabled') return false;
-  return event.key === getModifierKey(scheme) || hasModifierFlag(event, scheme);
+  if (!requirements) return false;
+  return event.metaKey === requirements.metaKey
+    && event.ctrlKey === requirements.ctrlKey
+    && event.altKey === requirements.altKey
+    && event.shiftKey === requirements.shiftKey;
 }
 
-/** Whether a keyup event means the active shortcut modifier is no longer held. */
+/** Whether a keyup event means the required modifier combination is no longer held. */
 export function shouldReleaseShortcutModifier(
   event: ShortcutModifierEvent,
-  scheme: HotkeyScheme,
+  requirements: ShortcutModifierRequirements | null,
 ): boolean {
-  if (scheme === 'disabled') return true;
-  return event.key === getModifierKey(scheme) || !hasModifierFlag(event, scheme);
+  return !isShortcutModifierHeld(event, requirements);
 }
 
-export function useShortcutModifierHeld(scheme: HotkeyScheme): boolean {
+export function useShortcutModifierHeld(
+  keyBinding: string | null,
+  scheme: HotkeyScheme,
+): boolean {
   const [isHeld, setIsHeld] = useState(false);
+  const requirements = useMemo(
+    () => getShortcutModifierRequirements(keyBinding, scheme),
+    [keyBinding, scheme],
+  );
 
   useEffect(() => {
     setIsHeld(false);
-    if (scheme === 'disabled') return;
+    if (!requirements) return;
 
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (isShortcutModifierHeld(event, scheme)) {
-        setIsHeld(true);
-      }
-    };
-    const handleKeyUp = (event: KeyboardEvent) => {
-      if (shouldReleaseShortcutModifier(event, scheme)) {
-        setIsHeld(false);
-      }
+    // Sync on every modifier transition so extras clear the preview and
+    // releasing an extra modifier can re-arm when the exact combo remains.
+    const syncHeldState = (event: KeyboardEvent) => {
+      setIsHeld(isShortcutModifierHeld(event, requirements));
     };
     const clearHeldState = () => setIsHeld(false);
     const handleVisibilityChange = () => {
@@ -54,18 +96,18 @@ export function useShortcutModifierHeld(scheme: HotkeyScheme): boolean {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown, true);
-    window.addEventListener('keyup', handleKeyUp, true);
+    window.addEventListener('keydown', syncHeldState, true);
+    window.addEventListener('keyup', syncHeldState, true);
     window.addEventListener('blur', clearHeldState);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown, true);
-      window.removeEventListener('keyup', handleKeyUp, true);
+      window.removeEventListener('keydown', syncHeldState, true);
+      window.removeEventListener('keyup', syncHeldState, true);
       window.removeEventListener('blur', clearHeldState);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [scheme]);
+  }, [requirements]);
 
   return isHeld;
 }
