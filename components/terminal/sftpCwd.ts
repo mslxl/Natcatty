@@ -5,6 +5,8 @@ type SessionPwdResult = {
 
 type SessionPwdOptions = {
   allowHomeFallback?: boolean;
+  /** When false, do not fall back to the same-uid login shell cwd after su/sudo. Default true. */
+  allowLoginShellFallback?: boolean;
 };
 
 type ResolvePreferredTerminalCwdOptions = {
@@ -57,6 +59,9 @@ export const resolvePreferredTerminalCwd = async ({
   try {
     const result = await getSessionPwd(
       sessionId,
+      // Disable ~ guessing so we do not open SFTP on a fabricated home path.
+      // Login-shell fallback after su/sudo stays enabled by default in the
+      // backend so terminal drag-drop can still resolve a writable cwd (#2886).
       preferFreshBackend ? { allowHomeFallback: false } : undefined,
     );
     const backendCwd = result.success ? normalizeCwd(result.cwd) : null;

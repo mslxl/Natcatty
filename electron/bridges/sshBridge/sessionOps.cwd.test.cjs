@@ -224,3 +224,37 @@ test("an SFTP reference does not make one terminal cwd ambiguous", async () => {
   assert.deepEqual(result, { success: true, cwd: "/home/alice/project" });
   assert.equal(session.shellPid, "5151");
 });
+
+test("cwd probe keeps login-shell fallback when home fallback is disabled (#2886)", async () => {
+  // After `sudo su`, the active shell cwd is often unreadable to the login-uid
+  // exec channel. preferFreshBackend disables home guessing, but must still
+  // fall back to the same-uid login shell cwd so terminal drag-drop SFTP
+  // uploads land in a writable directory instead of failing closed.
+  let command = "";
+  const session = {
+    shellPid: "4242",
+    connRef: { count: 1 },
+    stream: {},
+    conn: {
+      exec(nextCommand, callback) {
+        command = nextCommand;
+        callback(null, makePwdStream("/home/alice", "4242"));
+      },
+    },
+  };
+  const api = makeApi(session);
+
+  const result = await api.getSessionPwd(null, {
+    sessionId: "session-1",
+    allowHomeFallback: false,
+  });
+
+  assert.deepEqual(result, { success: true, cwd: "/home/alice" });
+  assert.match(command, /ALLOW_HOME_FALLBACK=0/);
+  assert.match(command, /ALLOW_LOGIN_FALLBACK=1/);
+  assert.match(
+    command,
+    /if \[ -z "\$cwd" \] && \[ "\$pid" != "\$login" \] && \[ "\$ALLOW_LOGIN_FALLBACK" = "1" \]; then/,
+  );
+  assert.match(command, /\[ "\$ALLOW_HOME_FALLBACK" = "1" \] \|\| exit 1/);
+});

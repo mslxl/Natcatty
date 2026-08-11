@@ -369,6 +369,7 @@ function createPreloadApi(ctx) {
     return ipcRenderer.invoke("netcatty:ssh:pwd", {
       sessionId,
       allowHomeFallback: options?.allowHomeFallback,
+      allowLoginShellFallback: options?.allowLoginShellFallback,
       timeoutMs: options?.timeoutMs,
     });
   },
