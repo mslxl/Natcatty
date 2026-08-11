@@ -272,6 +272,55 @@ test('next, previous, and number shortcuts include native plugin view tabs', () 
   assert.deepEqual(selected, [pluginTabId, 'session-1', pluginTabId]);
 });
 
+test('switchToTab uses physical Digit code when Shift remaps e.key', () => {
+  let activeTabId = 'session-1';
+  const noop = () => {};
+  const context = {
+    IS_DEV: false,
+    MOVE_FOCUS_DEBOUNCE_MS: 0,
+    activeTabStore: { getActiveTabId: () => activeTabId },
+    addConnectionLogRef: { current: noop },
+    closeSession: noop,
+    closeTabInFlightRef: { current: false },
+    closeWorkspace: noop,
+    collectSessionIds: () => [],
+    confirmIfBusyLocalTerminal: async () => true,
+    createLocalTerminalWithCurrentShell: noop,
+    editorTabs: [],
+    fromEditorTabId: () => null,
+    handleOpenSettingsRef: { current: noop },
+    handleRequestCloseEditorTabRef: { current: noop },
+    isEditorTabId: () => false,
+    isQuickSwitcherOpen: false,
+    lastMoveFocusTimeRef: { current: 0 },
+    moveFocusInWorkspace: noop,
+    orderedTabs: ['session-1', 'session-2', 'session-3'],
+    resolveCloseIntent: () => ({ kind: 'noop' }),
+    resolveSnippetsShortcutIntent: () => ({ kind: 'noop' }),
+    sessions: [],
+    setActiveTabId: (id: string) => { activeTabId = id; },
+    setAddToWorkspaceDialog: noop,
+    setIsQuickSwitcherOpen: noop,
+    setNavigateToSection: noop,
+    settings: { showSftpTab: false, shellOnlyTabNumberShortcuts: false },
+    splitSessionWithCurrentShell: noop,
+    systemInfoRef: { current: { username: 'user', hostname: 'host' } },
+    toEditorTabId: (id: string) => `editor:${id}`,
+    toggleBroadcast: noop,
+    toggleScriptsSidePanelRef: { current: noop },
+    toggleSidePanelRef: { current: noop },
+    toggleWorkspaceViewMode: noop,
+    workspaces: [],
+  };
+
+  executeHotkeyActionImpl(
+    () => context,
+    'switchToTab',
+    { key: '@', code: 'Digit3', ctrlKey: true, shiftKey: true } as KeyboardEvent,
+  );
+  assert.equal(activeTabId, 'session-2');
+});
+
 test('next tab includes pinned tabs when shell-only shortcut mode is disabled', () => {
   let activeTabId = '';
   const noop = () => {};

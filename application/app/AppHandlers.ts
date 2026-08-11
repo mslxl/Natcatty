@@ -7,6 +7,7 @@ import { getEffectiveHostDistro, classifyDistroId, shouldProbeSessionCwd } from 
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
+import { tabShortcutDigitFromEvent } from '../../domain/models/keyBindings';
 import { buildNumberShortcutTabTargets } from './tabShortcutTargets';
 import { captureInheritedCwd } from '../state/inheritedCwd';
 
@@ -680,12 +681,10 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
     });
     switch (action) {
       case 'switchToTab': {
-        // Get the number key pressed (1-9)
-        const num = parseInt(e.key, 10);
-        if (num >= 1 && num <= 9) {
-          if (num <= shortcutTabs.length) {
-            setActiveTabId(shortcutTabs[num - 1]);
-          }
+        // Prefer physical Digit code so Shift+[1...9] works when e.key is "!" etc.
+        const num = tabShortcutDigitFromEvent(e);
+        if (num !== null && num <= shortcutTabs.length) {
+          setActiveTabId(shortcutTabs[num - 1]);
         }
         break;
       }
