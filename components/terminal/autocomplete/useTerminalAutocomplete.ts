@@ -43,6 +43,7 @@ import {
   resolveAutocompleteQueryInput,
   shouldBlockAutocompleteForSensitivePrompt,
 } from "./terminalAutocompletePrompt";
+import { sliceStringByCellColumns } from "./terminalStringCellWidth";
 import { isTerminalAlternateScreenActive } from "../terminalHibernateRuntime";
 
 
@@ -827,8 +828,15 @@ export function useTerminalAutocomplete(
     // Suppress autocomplete when cursor is not at end of input —
     // inserting text mid-line would corrupt the command (e.g., "git st|tus" → "git statustus")
     const buffer = term.buffer.active;
-    const lineAfterCursor = buffer.getLine(buffer.cursorY + buffer.baseY)
-      ?.translateToString(false).substring(buffer.cursorX).trimEnd();
+    const cursorLine = buffer.getLine(buffer.cursorY + buffer.baseY);
+    const lineAfterCursor = cursorLine
+      ? sliceStringByCellColumns(
+        cursorLine.translateToString(false),
+        Math.max(0, buffer.cursorX),
+        undefined,
+        term,
+      ).trimEnd()
+      : "";
     if (lineAfterCursor && lineAfterCursor.length > 0) {
       clearState();
       return;

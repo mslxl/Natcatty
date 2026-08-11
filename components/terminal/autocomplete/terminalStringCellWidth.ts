@@ -102,3 +102,62 @@ export function stringCellWidth(
   }
   return fallbackStringCellWidth(s);
 }
+
+/**
+ * Slice a terminal line string by cell columns (xterm `cursorX` units).
+ *
+ * `translateToString()` returns characters, but `buffer.cursorX` is a cell
+ * column. Mixing them with `String#substring(cursorX)` pulls padding spaces
+ * into user input whenever the prompt contains wide glyphs (CJK paths in
+ * Windows CMD / PowerShell), which breaks autocomplete matching (#2813).
+ */
+export function sliceStringByCellColumns(
+  text: string,
+  startCell: number,
+  endCell?: number,
+  term?: XTerm | TermWithUnicodeService | null,
+): string {
+  if (!text) return "";
+  const start = Math.max(0, startCell);
+  const end = endCell === undefined ? Number.POSITIVE_INFINITY : Math.max(start, endCell);
+  if (end === 0) return "";
+
+  let cell = 0;
+  let startIndex = 0;
+  let endIndex = text.length;
+  let sawStart = false;
+
+  const advance = (segment: string, index: number, segmentLength: number): boolean => {
+    const width = stringCellWidth(segment, term);
+    const nextCell = cell + width;
+    if (!sawStart && nextCell > start) {
+      startIndex = index;
+      sawStart = true;
+    }
+    if (nextCell >= end) {
+      endIndex = nextCell === end ? index + segmentLength : index;
+      if (!sawStart) {
+        startIndex = index;
+        sawStart = true;
+      }
+      return true;
+    }
+    cell = nextCell;
+    return false;
+  };
+
+  if (graphemeSegmenter) {
+    for (const { segment, index } of graphemeSegmenter.segment(text)) {
+      if (advance(segment, index, segment.length)) break;
+    }
+  } else {
+    let index = 0;
+    for (const ch of text) {
+      if (advance(ch, index, ch.length)) break;
+      index += ch.length;
+    }
+  }
+
+  if (!sawStart) return "";
+  return text.slice(startIndex, endIndex);
+}

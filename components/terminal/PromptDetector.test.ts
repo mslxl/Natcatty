@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getAlignedPrompt } from "./autocomplete/promptDetector.ts";
+import { detectPrompt, getAlignedPrompt } from "./autocomplete/promptDetector.ts";
+import { resolveAutocompleteQueryInput } from "./autocomplete/terminalAutocompletePrompt.ts";
+import { getSnippetSuggestions } from "./autocomplete/snippetCompleter.ts";
+import { stringCellWidth } from "./autocomplete/terminalStringCellWidth.ts";
 import { getCommandToRecordOnEnter } from "./autocomplete/useTerminalAutocomplete.ts";
 
 function createFakeTerm(lineText: string, cursorX: number) {
@@ -23,6 +26,13 @@ function createFakeTerm(lineText: string, cursorX: number) {
       },
     },
   };
+}
+
+/** Simulates xterm padding empty cells as trailing spaces after wide glyphs. */
+function createPaddedFakeTerm(content: string, cursorX: number, cols = 80) {
+  const pad = Math.max(0, cols - stringCellWidth(content));
+  const lineText = content + " ".repeat(pad);
+  return createFakeTerm(lineText, cursorX);
 }
 
 function createWrappedFakeTerm(rows: string[], cursorY: number, cursorX: number, cols: number) {
@@ -743,5 +753,67 @@ test("does not record partial standard prompt input while reliable typed input i
   assert.equal(
     getCommandToRecordOnEnter(result.prompt, result.alignedTyped, typedInput, true),
     null,
+  );
+});
+
+test("CMD path prompts keep pre-echo Chinese input usable for snippet matching (#2813)", () => {
+  const prompts = [
+    String.raw`C:\Users\foo>`,
+    String.raw`C:\Users\用户>`,
+    String.raw`PS C:\Users\foo> `,
+    String.raw`PS C:\Users\用户> `,
+  ];
+  const typedInput = "部署";
+  const snippet = { id: "zh", label: "部署服务", command: "echo deploy" };
+
+  for (const prompt of prompts) {
+    const term = createPaddedFakeTerm(prompt, stringCellWidth(prompt));
+    const raw = detectPrompt(term as never);
+    assert.equal(raw.isAtPrompt, true, prompt);
+    assert.equal(raw.userInput.trim(), "", prompt);
+
+    const aligned = getAlignedPrompt(term as never, typedInput, true);
+    assert.equal(aligned.prompt.isAtPrompt, true, prompt);
+    assert.equal(aligned.prompt.userInput, typedInput, prompt);
+    assert.equal(aligned.alignedTyped, null, prompt);
+    assert.equal(aligned.allowExternalProviders, false, prompt);
+
+    const query = resolveAutocompleteQueryInput(
+      aligned.prompt,
+      typedInput,
+      true,
+    );
+    assert.equal(query, typedInput, prompt);
+    assert.equal(
+      getSnippetSuggestions(query ?? "", [snippet as never], {})[0]?.snippet?.id,
+      "zh",
+      prompt,
+    );
+  }
+});
+
+test("CMD path prompts with CJK directories do not absorb padding into echoed Chinese input", () => {
+  const prompt = String.raw`C:\Users\用户>`;
+  const typedInput = "部署";
+  const content = `${prompt}${typedInput}`;
+  const term = createPaddedFakeTerm(content, stringCellWidth(content));
+
+  const raw = detectPrompt(term as never);
+  assert.equal(raw.isAtPrompt, true);
+  assert.equal(raw.promptText, prompt);
+  assert.equal(raw.userInput, typedInput);
+  assert.equal(raw.cursorOffset, typedInput.length);
+
+  // Unreliable typed buffer must still match snippets from the live line
+  // (fresh local CMD sessions often clear keystroke reliability on startup).
+  const query = resolveAutocompleteQueryInput(raw, "", false);
+  assert.equal(query, typedInput);
+  assert.equal(
+    getSnippetSuggestions(query ?? "", [{
+      id: "zh",
+      label: "部署服务",
+      command: "echo deploy",
+    } as never], {})[0]?.snippet?.id,
+    "zh",
   );
 });
