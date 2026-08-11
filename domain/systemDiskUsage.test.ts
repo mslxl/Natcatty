@@ -28,6 +28,51 @@ test("aggregateMountedDiskUsage skips rclone/CloudDrive/ufs network FUSE capacit
   );
 });
 
+test("aggregateMountedDiskUsage skips NFS/CIFS/SMB and typed mergerfs network mounts", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "/dev/sda1", filesystemType: "ext4", mountPoint: "/", used: 20, total: 100 },
+      { capacityKey: "nas.local:/volume1/media", filesystemType: "nfs4", mountPoint: "/mnt/nas", used: 8000, total: 20000 },
+      { capacityKey: "//nas.local/share", filesystemType: "cifs", mountPoint: "/mnt/smb", used: 4000, total: 10000 },
+      { capacityKey: "mergerfs", filesystemType: "fuse.mergerfs", mountPoint: "/mnt/pool", used: 9000, total: 30000 },
+      { capacityKey: "union", filesystemType: "mergerfs", mountPoint: "/mnt/union", used: 1000, total: 5000 },
+    ]),
+    { used: 20, total: 100, percent: 20 },
+  );
+});
+
+test("aggregateMountedDiskUsage skips NFS-style sources when filesystem type is unavailable", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "/dev/sda1", filesystemType: "-", mountPoint: "/", used: 20, total: 100 },
+      { capacityKey: "192.168.1.10:/export", filesystemType: "-", mountPoint: "/mnt/nfs", used: 5000, total: 10000 },
+      { capacityKey: "//filer/backup", filesystemType: "-", mountPoint: "/mnt/cifs", used: 2000, total: 8000 },
+    ]),
+    { used: 20, total: 100, percent: 20 },
+  );
+});
+
+test("aggregateMountedDiskUsage keeps fuse-overlayfs and local loop roots", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "overlay", filesystemType: "fuse.fuse-overlayfs", mountPoint: "/", used: 4, total: 16 },
+    ]),
+    { used: 4, total: 16, percent: 25 },
+  );
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "overlayfs:/overlay", mountPoint: "/", used: 0.25, total: 1 },
+    ]),
+    { used: 0.25, total: 1, percent: 25 },
+  );
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "/dev/loop0", filesystemType: "ext4", mountPoint: "/", used: 3, total: 12 },
+    ]),
+    { used: 3, total: 12, percent: 25 },
+  );
+});
+
 test("aggregateMountedDiskUsage trusts a reported local filesystem type over its source name", () => {
   assert.deepEqual(
     aggregateMountedDiskUsage([

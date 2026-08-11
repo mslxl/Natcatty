@@ -864,17 +864,19 @@ function createSessionOpsApi(ctx) {
             filesystem_type = mount_filesystem_types[mount_point];
           }
           if (mount_point == "") next;
-          if (source ~ /^\/dev\/loop/) next;
+          if (source ~ /^\/dev\/loop/ && mount_point != "/") next;
           if (mount_point != "/" && mount_point ~ /^\/(etc|proc|sys|dev|snap)(\/|$)/) next;
           if (mount_point != "/" && source ~ /^(overlay|overlayfs)(\/|$|:)/) next;
           fstype = tolower(filesystem_type);
           source_lower = tolower(source);
           is_network_or_fuse = 0;
-          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs)$/) is_network_or_fuse = 1;
+          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs)$/) is_network_or_fuse = 1;
           if (fstype ~ /clouddrive/) is_network_or_fuse = 1;
-          if (fstype ~ /^(rclone|sshfs|s3fs|gcsfuse)$/) is_network_or_fuse = 1;
+          if (fstype ~ /^(rclone|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|nfs|nfs4|cifs|smb|smb3|smbfs|afs|ceph|cephfs|glusterfs)$/) is_network_or_fuse = 1;
           if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /clouddrive/) is_network_or_fuse = 1;
           if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /^(fuse|fuse\..*|rclone|rclone:.*|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|ufs)$/) is_network_or_fuse = 1;
+          if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /^\/\//) is_network_or_fuse = 1;
+          if ((filesystem_type == "" || filesystem_type == "-") && source_lower !~ /^(apfs|overlay|overlayfs):/ && source_lower ~ /^[a-z0-9._-]+:\//) is_network_or_fuse = 1;
           if (is_network_or_fuse) next;
           pseudo_type = (fstype != "" && fstype != "-") ? fstype : source_lower;
           if (mount_point != "/" && pseudo_type ~ /^(tmpfs|shm|devtmpfs|udev|none|proc|sysfs|cgroup|cgroup2|devpts|mqueue|hugetlbfs|debugfs|tracefs|securityfs|pstore|bpf|fusectl|configfs|ramfs|rpc_pipefs|binfmt_misc|efivarfs)$/) next;
@@ -913,8 +915,10 @@ function createSessionOpsApi(ctx) {
         // parser also accepts the legacy POSIX -kP layout as a fallback.
         // PVE/LXC guests often expose ZFS datasets and host bind mounts without a
         // /dev/* source, so keep non-pseudo filesystems (not only block devices).
-        // Skip FUSE/cloud network mounts (rclone, CloudDrive, ufs, …): their
-        // quotas inflate System Overview totals and are not local block capacity.
+        // Skip FUSE/cloud/NFS/CIFS network mounts (rclone, CloudDrive, mergerfs,
+        // nfs, cifs, …): their quotas inflate System Overview totals and are not
+        // local block capacity. Keep a loop-backed rootfs (some CT images) while
+        // still dropping snap loop mounts under /snap.
         // When Capacity is "-" (some CT/cgroup views), derive percent from used/total.
         // If the full table yields nothing, fall back to df on "/" alone.
         // Do not blanket-skip /run: udisks may mount real volumes under /run/media;

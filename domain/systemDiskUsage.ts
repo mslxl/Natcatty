@@ -21,6 +21,17 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
   if (lower === "/dev/fuse" || lower.endsWith("/fuse")) return true;
   if (lower === "rclone" || lower.startsWith("rclone:")) return true;
   if (lower.includes("clouddrive")) return true;
+  // CIFS/SMB (`//server/share`) and NFS (`host:/export`). Keep synthetic local
+  // keys such as APFS pools and overlay/overlayfs roots out of this heuristic.
+  if (lower.startsWith("//")) return true;
+  if (
+    !lower.startsWith("apfs:")
+    && !lower.startsWith("overlay:")
+    && !lower.startsWith("overlayfs:")
+    && /^[a-z0-9._-]+:\//.test(lower)
+  ) {
+    return true;
+  }
   if (
     lower === "sshfs"
     || lower === "s3fs"
@@ -39,12 +50,25 @@ export function isNetworkOrFuseFilesystemType(filesystemType: string | undefined
   const type = filesystemType?.trim().toLowerCase();
   if (!type) return false;
   if (type.includes("clouddrive")) return true;
-  if (/^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs)$/.test(type)) return true;
+  if (/^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs)$/.test(type)) return true;
   return [
     "rclone",
     "sshfs",
     "s3fs",
     "gcsfuse",
+    "mergerfs",
+    "unionfs",
+    "unionfs-fuse",
+    "nfs",
+    "nfs4",
+    "cifs",
+    "smb",
+    "smb3",
+    "smbfs",
+    "afs",
+    "ceph",
+    "cephfs",
+    "glusterfs",
   ].includes(type);
 }
 
