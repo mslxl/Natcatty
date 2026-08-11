@@ -20,7 +20,6 @@ function normalizeTerminalKeyboardShortcuts(shortcuts) {
       key: shortcut.key.length === 1 && /[A-Za-z]/.test(shortcut.key)
         ? shortcut.key.toLowerCase()
         : shortcut.key,
-      ...(typeof shortcut.code === "string" ? { code: shortcut.code } : {}),
       meta: shortcut.meta === true,
       control: shortcut.control === true,
       alt: shortcut.alt === true,
@@ -65,9 +64,7 @@ function isTerminalFontShortcutInput(input, shortcuts) {
   if (input?.type !== "keyDown") return false;
   const inputKey = String(input.key || "").toLowerCase();
   return Array.isArray(shortcuts) && shortcuts.some((shortcut) => (
-    (shortcut.code && input.code
-      ? String(input.code).toLowerCase() === String(shortcut.code).toLowerCase()
-      : inputKey === String(shortcut.key || "").toLowerCase())
+    inputKey === String(shortcut.key || "").toLowerCase()
     && Boolean(input.meta) === shortcut.meta
     && Boolean(input.control) === shortcut.control
     && Boolean(input.alt) === shortcut.alt

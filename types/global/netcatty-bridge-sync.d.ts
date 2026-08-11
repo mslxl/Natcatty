@@ -19,7 +19,6 @@ declare global {
       hotkeyScheme?: "disabled" | "mac" | "pc",
       terminalFontShortcuts?: ReadonlyArray<{
         key: string;
-        code?: string;
         meta: boolean;
         control: boolean;
         alt: boolean;

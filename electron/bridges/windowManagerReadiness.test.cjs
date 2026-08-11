@@ -1397,22 +1397,14 @@ test("terminal font shortcut routing follows the selected shortcut descriptor", 
     shift: false,
     key: "-",
   });
-  const pcShortcut = { key: "-", code: "Minus", meta: false, control: true, alt: false, shift: false };
-  const macShortcut = { key: "-", code: "Minus", meta: true, control: false, alt: false, shift: false };
+  const pcShortcut = { key: "-", meta: false, control: true, alt: false, shift: false };
+  const macShortcut = { key: "-", meta: true, control: false, alt: false, shift: false };
 
   assert.equal(isTerminalFontShortcutInput(input("control"), [pcShortcut]), true);
   assert.equal(isTerminalFontShortcutInput(input("meta"), [macShortcut]), true);
   assert.equal(isTerminalFontShortcutInput(input("control"), [macShortcut]), false);
   assert.equal(isTerminalFontShortcutInput(input("meta"), [pcShortcut]), false);
   assert.equal(isTerminalFontShortcutInput(input("control"), []), false);
-  assert.equal(isTerminalFontShortcutInput({ ...input("control"), key: "ф", code: "KeyA" }, [{
-    key: "a",
-    code: "KeyA",
-    meta: false,
-    control: true,
-    alt: false,
-    shift: false,
-  }]), true);
 });
 
 test("main window clears renderer readiness when the main frame starts navigating", async () => {

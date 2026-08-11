@@ -105,7 +105,7 @@ function loadPreloadWithFakeElectron() {
 test("setTerminalKeyboardFocus sends renderer focus state to the window manager", () => {
   const preload = loadPreloadWithFakeElectron();
   try {
-    const shortcut = { key: "-", code: "Minus", meta: false, control: true, alt: false, shift: false };
+    const shortcut = { key: "-", meta: false, control: true, alt: false, shift: false };
     preload.api.setTerminalKeyboardFocus(true, "pc", [shortcut]);
     preload.api.setTerminalKeyboardFocus(false);
 
@@ -117,7 +117,6 @@ test("setTerminalKeyboardFocus sends renderer focus state to the window manager"
           hotkeyScheme: "pc",
           terminalFontShortcuts: [{
             key: "-",
-            code: "Minus",
             meta: false,
             control: true,
             alt: false,
