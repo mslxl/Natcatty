@@ -21,7 +21,6 @@ const {
 } = require("./windowManager.cjs");
 const {
   createMainWindowApi,
-  isTerminalFontShortcutInput,
   setTerminalKeyboardFocusForWindow,
 } = require("./windowManager/mainWindow.cjs");
 
@@ -1217,13 +1216,7 @@ test("main window leaves terminal font shortcuts for the renderer while terminal
     },
   );
 
-  setTerminalKeyboardFocusForWindow(createdWindow, true, "pc", ["=", "-", "0"].map((key) => ({
-    key,
-    meta: false,
-    control: true,
-    alt: false,
-    shift: false,
-  })));
+  setTerminalKeyboardFocusForWindow(createdWindow, true, "pc");
   ignoreMenuShortcutValues.length = 0;
 
   for (const key of ["=", "-", "0"]) {
@@ -1367,13 +1360,7 @@ test("main window keeps native page zoom when terminal scheme uses the other mod
   );
 
   // Mac scheme on Windows: terminal wants Meta+=, native page zoom stays Ctrl+=.
-  setTerminalKeyboardFocusForWindow(createdWindow, true, "mac", [{
-    key: "=",
-    meta: true,
-    control: false,
-    alt: false,
-    shift: false,
-  }]);
+  setTerminalKeyboardFocusForWindow(createdWindow, true, "mac");
 
   let prevented = false;
   beforeInputHandler({ preventDefault: () => { prevented = true; } }, {
@@ -1385,25 +1372,6 @@ test("main window keeps native page zoom when terminal scheme uses the other mod
 
   assert.equal(prevented, true);
   assert.deepEqual(zoomFactorCalls, [1.1]);
-});
-
-test("terminal font shortcut routing follows the selected shortcut descriptor", () => {
-  const input = (modifier) => ({
-    type: "keyDown",
-    control: modifier === "control",
-    meta: modifier === "meta",
-    alt: false,
-    shift: false,
-    key: "-",
-  });
-  const pcShortcut = { key: "-", meta: false, control: true, alt: false, shift: false };
-  const macShortcut = { key: "-", meta: true, control: false, alt: false, shift: false };
-
-  assert.equal(isTerminalFontShortcutInput(input("control"), [pcShortcut]), true);
-  assert.equal(isTerminalFontShortcutInput(input("meta"), [macShortcut]), true);
-  assert.equal(isTerminalFontShortcutInput(input("control"), [macShortcut]), false);
-  assert.equal(isTerminalFontShortcutInput(input("meta"), [pcShortcut]), false);
-  assert.equal(isTerminalFontShortcutInput(input("control"), []), false);
 });
 
 test("main window clears renderer readiness when the main frame starts navigating", async () => {

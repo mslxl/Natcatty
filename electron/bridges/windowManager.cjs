@@ -1093,12 +1093,7 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
 
   ipcMain.on("netcatty:window:set-terminal-keyboard-focus", (event, payload) => {
     const win = getWindowForIpcEvent(event);
-    setTerminalKeyboardFocusForWindow(
-      win,
-      payload?.focused === true,
-      payload?.hotkeyScheme,
-      payload?.terminalFontShortcuts,
-    );
+    setTerminalKeyboardFocusForWindow(win, payload?.focused === true, payload?.hotkeyScheme);
   });
 
   ipcMain.handle("netcatty:window:setTitle", (event, title) => {

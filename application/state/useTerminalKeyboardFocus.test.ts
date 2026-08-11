@@ -60,10 +60,6 @@ test("terminal keyboard focus tracking publishes deduplicated focus transitions 
   listeners.get("window:blur")?.();
   assert.deepEqual(changes, [false, true, false]);
 
-  (documentRef as unknown as { activeElement: Element }).activeElement = terminal as unknown as Element;
-  listeners.get("window:focus")?.();
-  assert.deepEqual(changes, [false, true, false, true]);
-
   cleanup();
-  assert.deepEqual(removed.sort(), ["focusin", "focusout", "pointerdown", "window:blur", "window:focus"]);
+  assert.deepEqual(removed.sort(), ["focusin", "focusout", "pointerdown", "window:blur"]);
 });

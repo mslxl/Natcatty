@@ -5,7 +5,6 @@ const test = require("node:test");
 
 const { createAppContentWindowClosedHandler } = require("../../appWindowLifecycle.cjs");
 const { createTerminalPopupWindowApi } = require("./terminalPopupWindow.cjs");
-const { setTerminalKeyboardFocusForWindow } = require("./mainWindow.cjs");
 const { markAttachPopupClosePrepared } = require("../terminalAttachRestore.cjs");
 
 test("terminal popups participate in the last app-content-window lifecycle", async () => {
@@ -91,83 +90,6 @@ test("terminal popups participate in the last app-content-window lifecycle", asy
   popupWindow.handlers.get("closed")?.();
   assert.deepEqual([...appContentWindows], []);
   assert.equal(quitCalls, 1);
-});
-
-test("terminal popup only suppresses menu shortcuts for focused terminal font chords", async () => {
-  let popupWindow;
-  let beforeInputHandler;
-  const ignoreMenuShortcutValues = [];
-
-  class BrowserWindowStub {
-    constructor() {
-      popupWindow = this;
-      this.handlers = new Map();
-      this.webContents = {
-        id: 46,
-        on(channel, handler) {
-          if (channel === "before-input-event") beforeInputHandler = handler;
-        },
-        send() {},
-        setWindowOpenHandler() {},
-        setIgnoreMenuShortcuts(value) { ignoreMenuShortcutValues.push(value); },
-      };
-    }
-
-    on(channel, handler) { this.handlers.set(channel, handler); }
-    isDestroyed() { return false; }
-    isVisible() { return true; }
-    loadURL() { return Promise.resolve(); }
-    setBackgroundColor() {}
-  }
-
-  const api = createTerminalPopupWindowApi({
-    mainWindow: null,
-    currentTheme: "light",
-    V8_CACHE_OPTIONS: "bypassHeatCheck",
-    resolveFrontendBackgroundColor() { return "#fff"; },
-    resolveSettingsWindowBounds() { return {}; },
-    createExternalOnlyWindowOpenHandler() { return {}; },
-    applyWindowOpacityToWindow() {},
-    getDevRendererBaseUrl(url) { return url; },
-    showAndFocusWindow() {},
-    registerAppContentWindow() {},
-    unregisterAppContentWindow() {},
-    notifyAppContentWindowClosed() {},
-  });
-
-  await api.openTerminalPopupWindow(
-    { BrowserWindow: BrowserWindowStub, nativeTheme: {}, shell: {} },
-    { preload: "/tmp/preload.cjs", isDev: false, appIcon: null, isMac: false, electronDir: __dirname },
-    { popupId: "shortcut-popup" },
-  );
-
-  setTerminalKeyboardFocusForWindow(popupWindow, true, "mac", [{
-    key: "-",
-    meta: true,
-    control: false,
-    alt: false,
-    shift: false,
-  }]);
-  ignoreMenuShortcutValues.length = 0;
-
-  beforeInputHandler({}, {
-    type: "keyDown",
-    meta: true,
-    control: false,
-    alt: false,
-    shift: false,
-    key: "-",
-  });
-  beforeInputHandler({}, {
-    type: "keyDown",
-    meta: true,
-    control: false,
-    alt: false,
-    shift: false,
-    key: "w",
-  });
-
-  assert.deepEqual(ignoreMenuShortcutValues, [true, false]);
 });
 
 test("a terminal popup that fails to load releases app-content lifecycle state", async () => {
@@ -430,13 +352,7 @@ test("terminal popup routes Cmd+W through command-close while terminal font chor
   );
 
   assert.equal(typeof beforeInputHandler, "function");
-  setTerminalKeyboardFocusForWindow(popupWindow, true, "mac", [{
-    key: "=",
-    meta: true,
-    control: false,
-    alt: false,
-    shift: false,
-  }]);
+  setTerminalKeyboardFocusForWindow(popupWindow, true, "mac");
 
   let prevented = false;
   beforeInputHandler({ preventDefault: () => { prevented = true; } }, {

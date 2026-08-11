@@ -5,29 +5,12 @@ const {
 
 const TERMINAL_KEYBOARD_FOCUS = Symbol("netcattyTerminalKeyboardFocus");
 const TERMINAL_KEYBOARD_SCHEME = Symbol("netcattyTerminalKeyboardScheme");
-const TERMINAL_KEYBOARD_SHORTCUTS = Symbol("netcattyTerminalKeyboardShortcuts");
 
 function normalizeTerminalHotkeyScheme(scheme) {
   return scheme === "mac" || scheme === "pc" ? scheme : null;
 }
 
-function normalizeTerminalKeyboardShortcuts(shortcuts) {
-  if (!Array.isArray(shortcuts)) return [];
-  return shortcuts
-    .filter((shortcut) => shortcut && typeof shortcut.key === "string")
-    .slice(0, 3)
-    .map((shortcut) => ({
-      key: shortcut.key.length === 1 && /[A-Za-z]/.test(shortcut.key)
-        ? shortcut.key.toLowerCase()
-        : shortcut.key,
-      meta: shortcut.meta === true,
-      control: shortcut.control === true,
-      alt: shortcut.alt === true,
-      shift: shortcut.shift === true,
-    }));
-}
-
-function setTerminalKeyboardFocusForWindow(win, focused, hotkeyScheme, terminalFontShortcuts) {
+function setTerminalKeyboardFocusForWindow(win, focused, hotkeyScheme) {
   if (!win || win.isDestroyed?.() || !win.webContents) return false;
   const isFocused = focused === true;
   try {
@@ -38,9 +21,6 @@ function setTerminalKeyboardFocusForWindow(win, focused, hotkeyScheme, terminalF
     win[TERMINAL_KEYBOARD_SCHEME] = isFocused
       ? normalizeTerminalHotkeyScheme(hotkeyScheme)
       : null;
-    win[TERMINAL_KEYBOARD_SHORTCUTS] = isFocused
-      ? normalizeTerminalKeyboardShortcuts(terminalFontShortcuts)
-      : [];
     return true;
   } catch {
     return false;
@@ -51,21 +31,12 @@ function hasTerminalKeyboardFocus(win) {
   return win?.[TERMINAL_KEYBOARD_FOCUS] === true;
 }
 
-function getTerminalKeyboardShortcuts(win) {
-  if (!hasTerminalKeyboardFocus(win)) return [];
-  return win[TERMINAL_KEYBOARD_SHORTCUTS] || [];
-}
-
-function isTerminalFontShortcutInput(input, shortcuts) {
-  if (input?.type !== "keyDown") return false;
-  const inputKey = String(input.key || "").toLowerCase();
-  return Array.isArray(shortcuts) && shortcuts.some((shortcut) => (
-    inputKey === String(shortcut.key || "").toLowerCase()
-    && Boolean(input.meta) === shortcut.meta
-    && Boolean(input.control) === shortcut.control
-    && Boolean(input.alt) === shortcut.alt
-    && Boolean(input.shift) === shortcut.shift
-  ));
+function shouldDeferNativeZoomForTerminal(win, isMac) {
+  if (!hasTerminalKeyboardFocus(win)) return false;
+  const scheme = win[TERMINAL_KEYBOARD_SCHEME];
+  if (scheme !== "mac" && scheme !== "pc") return false;
+  // Only suppress OS page-zoom when the terminal scheme uses that same modifier.
+  return isMac ? scheme === "mac" : scheme === "pc";
 }
 
 function isPrimaryZoomInEqualInput(input, isMac) {
@@ -98,6 +69,12 @@ function isPrimaryResetZoomInput(input, isMac) {
   return String(input.key || "") === "0";
 }
 
+function isNativeTerminalFontShortcut(input, isMac) {
+  return isPrimaryZoomInEqualInput(input, isMac)
+    || isPrimaryZoomOutMinusInput(input, isMac)
+    || isPrimaryResetZoomInput(input, isMac);
+}
+
 function attachTerminalKeyboardShortcutInputHandler(win, options = {}) {
   const {
     isMac = false,
@@ -115,10 +92,7 @@ function attachTerminalKeyboardShortcutInputHandler(win, options = {}) {
       return;
     }
 
-    if (hasTerminalKeyboardFocus(win) && isTerminalFontShortcutInput(
-      input,
-      getTerminalKeyboardShortcuts(win),
-    )) {
+    if (shouldDeferNativeZoomForTerminal(win, isMac) && isNativeTerminalFontShortcut(input, isMac)) {
       win.webContents.setIgnoreMenuShortcuts?.(true);
       return;
     }
@@ -607,8 +581,6 @@ function createMainWindowApi(ctx) {
 
 module.exports = {
   createMainWindowApi,
-  getTerminalKeyboardShortcuts,
-  isTerminalFontShortcutInput,
   setTerminalKeyboardFocusForWindow,
   attachTerminalKeyboardShortcutInputHandler,
 };

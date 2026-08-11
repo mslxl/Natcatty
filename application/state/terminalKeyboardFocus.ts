@@ -18,8 +18,6 @@ export function installTerminalKeyboardFocusTracking(
 ): () => void {
   let pendingPointerTarget: EventTarget | null | undefined;
   let pendingPointerClearTimer: ReturnType<typeof setTimeout> | undefined;
-  let isTracking = true;
-  let windowFocused = true;
 
   const clearPendingPointerTarget = () => {
     if (pendingPointerClearTimer !== undefined) {
@@ -30,8 +28,7 @@ export function installTerminalKeyboardFocusTracking(
   };
 
   const publishForTarget = (target: EventTarget | null) => {
-    if (!isTracking) return;
-    onFocusChange(windowFocused && isTerminalKeyboardTarget(target));
+    onFocusChange(isTerminalKeyboardTarget(target));
   };
 
   const handlePointerDown = (event: Event) => {
@@ -51,13 +48,8 @@ export function installTerminalKeyboardFocusTracking(
 
   const handleFocusOut = () => {
     queueMicrotask(() => {
-      if (!isTracking) return;
       const pointerTarget = pendingPointerTarget;
       clearPendingPointerTarget();
-      if (!windowFocused) {
-        onFocusChange(false);
-        return;
-      }
       if (pointerTarget !== undefined) {
         publishForTarget(pointerTarget);
         return;
@@ -67,14 +59,8 @@ export function installTerminalKeyboardFocusTracking(
   };
 
   const handleWindowBlur = () => {
-    windowFocused = false;
     clearPendingPointerTarget();
     onFocusChange(false);
-  };
-
-  const handleWindowFocus = () => {
-    windowFocused = true;
-    publishForTarget(documentRef.activeElement);
   };
 
   publishForTarget(documentRef.activeElement);
@@ -82,15 +68,12 @@ export function installTerminalKeyboardFocusTracking(
   documentRef.addEventListener("focusin", handleFocusIn, true);
   documentRef.addEventListener("focusout", handleFocusOut, true);
   windowRef.addEventListener("blur", handleWindowBlur);
-  windowRef.addEventListener("focus", handleWindowFocus);
 
   return () => {
-    isTracking = false;
     documentRef.removeEventListener("pointerdown", handlePointerDown, true);
     documentRef.removeEventListener("focusin", handleFocusIn, true);
     documentRef.removeEventListener("focusout", handleFocusOut, true);
     windowRef.removeEventListener("blur", handleWindowBlur);
-    windowRef.removeEventListener("focus", handleWindowFocus);
     clearPendingPointerTarget();
   };
 }

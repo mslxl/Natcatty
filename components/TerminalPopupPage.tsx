@@ -457,8 +457,6 @@ function TerminalPopupPageInner() {
               identities={identities}
               snippets={snippets}
               snippetPackages={snippetPackages}
-              hotkeyScheme={settings.hotkeyScheme}
-              keyBindings={settings.keyBindings}
               chainHosts={chainHosts}
               compactToolbar
               onDeleteSnippets={deleteSelectedSnippets}
