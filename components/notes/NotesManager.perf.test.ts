@@ -8,6 +8,25 @@ const layoutSource = readFileSync(
   "utf8",
 );
 
+test("notes tree width resize avoids React setState on every pointermove", () => {
+  // Dragging the sidebar used to call setTreeWidth per pixel and re-render the
+  // whole NotesManager (including MDXEditor). Live width must stay on the DOM
+  // until pointerup commits state + localStorage.
+  assert.match(managerSource, /treeAsideRef/);
+  assert.match(managerSource, /requestAnimationFrame/);
+  assert.match(managerSource, /aside\.style\.width = `\$\{width\}px`/);
+  assert.match(
+    managerSource,
+    /const handlePointerMove = \(moveEvent: PointerEvent\) => \{[\s\S]*?requestAnimationFrame/,
+  );
+  assert.doesNotMatch(
+    managerSource,
+    /const handlePointerMove = \(moveEvent: PointerEvent\) => \{\s*\n\s*setTreeWidth\(/,
+  );
+  assert.match(managerSource, /persistTreeWidth\(nextWidth\)/);
+  assert.match(managerSource, /isTreeResizing && "pointer-events-none"/);
+});
+
 test("note content drafts stay in refs so MDX keystrokes do not rebuild the shell", () => {
   assert.doesNotMatch(
     managerSource,

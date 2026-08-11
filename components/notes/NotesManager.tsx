@@ -106,6 +106,10 @@ const NOTES_TREE_MAX_WIDTH = 520;
 const NOTE_DRAG_TYPE = "application/x-netcatty-note-id";
 const NOTE_GROUP_DRAG_TYPE = "application/x-netcatty-note-group-path";
 
+export function clampNotesTreeWidth(value: number): number {
+  return Math.max(NOTES_TREE_MIN_WIDTH, Math.min(NOTES_TREE_MAX_WIDTH, value));
+}
+
 export const normalizeNoteEditorMode = (value: string | null): NoteEditorMode | null =>
   value === "edit" || value === "preview" ? value : null;
 
@@ -389,6 +393,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     NOTES_TREE_DEFAULT_WIDTH,
     { min: NOTES_TREE_MIN_WIDTH, max: NOTES_TREE_MAX_WIDTH },
   );
+  const treeAsideRef = useRef<HTMLElement | null>(null);
+  const treeWidthRef = useRef(treeWidth);
+  treeWidthRef.current = treeWidth;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const isImportingMarkdownRef = useRef(false);
@@ -1445,23 +1452,53 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     event.stopPropagation();
 
     const startX = event.clientX;
-    const startWidth = treeWidth;
+    const startWidth = treeWidthRef.current;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
+    const aside = treeAsideRef.current;
+    let frame = 0;
+    let latestWidth = startWidth;
 
+    // Avoid setState on every pointermove — NotesManager owns the MDX editor and
+    // re-rendering it per pixel makes sidebar resize feel stuck.
     setIsTreeResizing(true);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
+    if (aside) {
+      aside.style.willChange = "width";
+    }
 
-    const clampWidth = (value: number) =>
-      Math.max(NOTES_TREE_MIN_WIDTH, Math.min(NOTES_TREE_MAX_WIDTH, value));
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      setTreeWidth(clampWidth(startWidth + moveEvent.clientX - startX));
+    const applyWidth = (width: number) => {
+      latestWidth = width;
+      if (aside) {
+        aside.style.width = `${width}px`;
+      }
     };
 
-    const handlePointerUp = (upEvent: PointerEvent) => {
-      const nextWidth = clampWidth(startWidth + upEvent.clientX - startX);
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampNotesTreeWidth(startWidth + moveEvent.clientX - startX);
+      if (frame) {
+        latestWidth = nextWidth;
+        return;
+      }
+      latestWidth = nextWidth;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        applyWidth(latestWidth);
+      });
+    };
+
+    const handlePointerUp = () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+      const nextWidth = clampNotesTreeWidth(latestWidth);
+      applyWidth(nextWidth);
+      if (aside) {
+        aside.style.willChange = "";
+      }
+      treeWidthRef.current = nextWidth;
       setTreeWidth(nextWidth);
       persistTreeWidth(nextWidth);
       setIsTreeResizing(false);
@@ -1475,7 +1512,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
-  }, [persistTreeWidth, setTreeWidth, treeWidth]);
+  }, [persistTreeWidth, setTreeWidth]);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -1492,6 +1529,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       <div className="flex min-h-0 flex-1">
         {shouldShowNotesTree && (
           <aside
+            ref={treeAsideRef}
             className={cn(
               // min-w-0 on the aside; overflow-hidden stays on the inner tree shell
               // so the resize separator's translate-x-1/2 hit area is not clipped.
@@ -1694,7 +1732,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         )}
 
         {!isSidebarMode && (
-        <main className="flex min-w-0 flex-1 flex-col bg-background">
+        <main
+          className={cn(
+            "flex min-w-0 flex-1 flex-col bg-background",
+            // Keep the editor out of hit-testing / paint thrash while the tree
+            // width is driven from the DOM during resize.
+            isTreeResizing && "pointer-events-none",
+          )}
+        >
           {selectedNoteView ? (
             <>
               <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-8 pt-6 pb-1" data-note-title-row>
