@@ -3,6 +3,24 @@ const {
   windowsFramelessContentChromeOptions,
 } = require("./windowsWindowChrome.cjs");
 
+const TERMINAL_KEYBOARD_FOCUS = Symbol("netcattyTerminalKeyboardFocus");
+
+function setTerminalKeyboardFocusForWindow(win, focused) {
+  if (!win || win.isDestroyed?.() || !win.webContents) return false;
+  const isFocused = focused === true;
+  try {
+    win[TERMINAL_KEYBOARD_FOCUS] = isFocused;
+    win.webContents.setIgnoreMenuShortcuts?.(isFocused);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function hasTerminalKeyboardFocus(win) {
+  return win?.[TERMINAL_KEYBOARD_FOCUS] === true;
+}
+
 function createMainWindowApi(ctx) {
   with (ctx) {
     async function createWindow(electronModule, options) {
@@ -262,6 +280,15 @@ function createMainWindowApi(ctx) {
           return;
         }
 
+        const isTerminalFontShortcut =
+          isPrimaryZoomInEqualInput(input)
+          || isPrimaryZoomOutMinusInput(input)
+          || isPrimaryResetZoomInput(input);
+        if (hasTerminalKeyboardFocus(win) && isTerminalFontShortcut) {
+          win.webContents.setIgnoreMenuShortcuts(true);
+          return;
+        }
+
         if (isPrimaryZoomInEqualInput(input) && adjustWindowZoom("in")) {
           event.preventDefault();
           return;
@@ -513,4 +540,7 @@ function createMainWindowApi(ctx) {
   }
 }
 
-module.exports = { createMainWindowApi };
+module.exports = {
+  createMainWindowApi,
+  setTerminalKeyboardFocusForWindow,
+};

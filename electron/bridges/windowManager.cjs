@@ -887,7 +887,10 @@ function resolveLiveAppIcon(fallback = null) {
 /**
  * Create the main application window
  */
-const { createMainWindowApi } = require("./windowManager/mainWindow.cjs");
+const {
+  createMainWindowApi,
+  setTerminalKeyboardFocusForWindow,
+} = require("./windowManager/mainWindow.cjs");
 const mainWindowApi = createMainWindowApi({
   get mainWindow() { return mainWindow; },
   set mainWindow(value) { mainWindow = value; },
@@ -1084,6 +1087,11 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   ipcMain.handle("netcatty:window:focus", (event) => {
     const win = getWindowForIpcEvent(event);
     return restoreWindowInputFocus(win);
+  });
+
+  ipcMain.on("netcatty:window:set-terminal-keyboard-focus", (event, payload) => {
+    const win = getWindowForIpcEvent(event);
+    setTerminalKeyboardFocusForWindow(win, payload?.focused === true);
   });
 
   ipcMain.handle("netcatty:window:setTitle", (event, title) => {

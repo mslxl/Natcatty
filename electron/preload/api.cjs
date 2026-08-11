@@ -1065,6 +1065,10 @@ function createPreloadApi(ctx) {
   windowIsMaximized: () => ipcRenderer.invoke("netcatty:window:isMaximized"),
   windowIsFullscreen: () => ipcRenderer.invoke("netcatty:window:isFullscreen"),
   windowFocus: () => ipcRenderer.invoke("netcatty:window:focus"),
+  setTerminalKeyboardFocus: (focused) => ipcRenderer.send(
+    "netcatty:window:set-terminal-keyboard-focus",
+    { focused: focused === true },
+  ),
   setWindowTitle: (title) => ipcRenderer.invoke("netcatty:window:setTitle", title),
   openSessionInNewWindow: (payload) => ipcRenderer.invoke("netcatty:window:openSession", payload),
   onOpenSessionInNewWindow: (cb) => {

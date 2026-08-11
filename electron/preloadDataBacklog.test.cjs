@@ -32,6 +32,7 @@ function createFakePort() {
 function loadPreloadWithFakeElectron() {
   const handlers = new Map();
   const listenerCounts = new Map();
+  const sent = [];
   let exposedApi = null;
   const fakeElectron = {
     ipcRenderer: {
@@ -39,7 +40,9 @@ function loadPreloadWithFakeElectron() {
         handlers.set(channel, handler);
         listenerCounts.set(channel, (listenerCounts.get(channel) || 0) + 1);
       },
-      send() {},
+      send(channel, payload) {
+        sent.push({ channel, payload });
+      },
       async invoke(channel, payload) {
         if (channel === "netcatty:local:start") {
           return { sessionId: payload?.sessionId };
@@ -82,6 +85,7 @@ function loadPreloadWithFakeElectron() {
     api: exposedApi,
     handlers,
     listenerCounts,
+    sent,
     cleanup() {
       delete require.cache[preloadPath];
       if (previousElectron) {
@@ -97,6 +101,27 @@ function loadPreloadWithFakeElectron() {
     },
   };
 }
+
+test("setTerminalKeyboardFocus sends renderer focus state to the window manager", () => {
+  const preload = loadPreloadWithFakeElectron();
+  try {
+    preload.api.setTerminalKeyboardFocus(true);
+    preload.api.setTerminalKeyboardFocus(false);
+
+    assert.deepEqual(preload.sent, [
+      {
+        channel: "netcatty:window:set-terminal-keyboard-focus",
+        payload: { focused: true },
+      },
+      {
+        channel: "netcatty:window:set-terminal-keyboard-focus",
+        payload: { focused: false },
+      },
+    ]);
+  } finally {
+    preload.cleanup();
+  }
+});
 
 test("plugin contribution subscribers share one IPC listener", (t) => {
   const preload = loadPreloadWithFakeElectron();
