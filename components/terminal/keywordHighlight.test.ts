@@ -1121,7 +1121,13 @@ test("Enter-driven scroll does not dispose nearby keyword decorations", async ()
 test("user scroll during Enter keeps prior highlights mounted", async () => {
   const raf = installAnimationFrameQueue();
   try {
-    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", {
       lineCount: 80,
     });
     term.rows = 3;
@@ -1143,12 +1149,102 @@ test("user scroll during Enter keeps prior highlights mounted", async () => {
     handlers.data?.("\r");
     handlers.writeParsed?.();
     term.buffer.active.viewportY = 10;
+    resetTranslateCount();
     handlers.scroll?.();
+
+    assert.ok(
+      getTranslatedLineIndexes().some((lineY) => lineY >= 10 && lineY < 20),
+      "scrollback browsing during Enter should synchronously scan newly revealed lines",
+    );
+    raf.flush();
 
     assert.equal(
       existingDecorations.filter(({ isDisposed }) => isDisposed).length,
       0,
       "scroll during Enter should keep prior persistent highlights",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter does not defer a user scroll back to the bottom", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 80 });
+    term.rows = 3;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY = 10;
+    handlers.scroll?.();
+    resetTranslateCount();
+
+    // Pressing End while the Enter guard is active returns to the bottom
+    // without changing the output position or waiting for a remote write.
+    term.buffer.active.viewportY = 20;
+    handlers.scroll?.();
+
+    assert.ok(
+      getTranslatedLineIndexes().some((lineY) => lineY >= 20),
+      "scrolling back to the bottom during Enter should scan synchronously",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("output during Enter does not cancel an active scrollback browse", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, handlers } = createFakeTerminal("hello DEPLOY world", { lineCount: 80 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY = 10;
+    const internals = highlighter as unknown as {
+      pendingRefreshReason: "scroll" | "write" | "full";
+    };
+    // Model a scroll refresh that is pending while the user is browsing
+    // scrollback, then let remote output move the bottom of the buffer.
+    internals.pendingRefreshReason = "scroll";
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+
+    assert.equal(
+      internals.pendingRefreshReason,
+      "scroll",
+      "remote output must not reclassify an active scrollback browse as Enter output",
     );
     highlighter.dispose();
   } finally {
@@ -2077,6 +2173,129 @@ test("pressing Enter does not repaint after keyword markers move", async () => {
     await new Promise((resolve) => { setTimeout(resolve, 220); });
 
     assert.deepEqual(refreshCalls, []);
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("idle Enter scroll before writeParsed does not rescan visible keywords", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+      refreshCalls,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    // Ordinary write refreshes clear lastRenderRange. An idle prompt then has no
+    // scroll coverage hint, so Enter echo onScroll (before writeParsed, Ubuntu RTT)
+    // would otherwise take the immediate user-scroll path and rescan the viewport.
+    const internals = highlighter as unknown as {
+      lastWriteAt: number;
+      lastRenderRange: { start: number; end: number } | null;
+    };
+    internals.lastWriteAt = performance.now() - 10_000;
+    internals.lastRenderRange = null;
+    resetTranslateCount();
+    resetRefreshCalls();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+
+    assert.equal(
+      getTranslateCount(),
+      0,
+      "Enter-pending scroll before writeParsed must not rescan visible keywords",
+    );
+    assert.deepEqual(
+      refreshCalls,
+      [],
+      "Enter-pending scroll before writeParsed must not force a keyword repaint",
+    );
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "Enter-pending scroll must keep existing keyword decorations mounted",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("Enter without write clears pending so later user scroll can highlight", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    const internals = highlighter as unknown as {
+      enterInputPending: boolean;
+      lastWriteAt: number;
+      lastRenderRange: { start: number; end: number } | null;
+    };
+    internals.lastWriteAt = performance.now() - 10_000;
+    internals.lastRenderRange = null;
+
+    // Enter with no echo/writeParsed (echo off / stalled PTY).
+    handlers.data?.("\r");
+    assert.equal(internals.enterInputPending, true);
+
+    await new Promise((resolve) => { setTimeout(resolve, 700); });
+    assert.equal(
+      internals.enterInputPending,
+      false,
+      "Enter protection must time out when no write arrives",
+    );
+
+    // User browsing scrollback after the timed-out Enter guard.
+    resetTranslateCount();
+    term.buffer.active.viewportY = 10;
+    handlers.scroll?.();
+    raf.flush();
+
+    assert.ok(
+      getTranslateCount() > 0,
+      "user scroll after timed-out Enter must scan newly revealed scrollback",
+    );
     highlighter.dispose();
   } finally {
     raf.restore();
