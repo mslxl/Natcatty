@@ -186,6 +186,11 @@ module.exports = {
         'skills/**/*'
     ],
     mac: {
+        // app-builder's PNG-to-ICNS conversion can corrupt the 16px/32px 1x
+        // representations even though the source PNG is valid RGBA. Use the
+        // iconutil-generated bundle instead so Finder and app switchers do not
+        // render those representations as colored noise.
+        icon: 'build/icon.icns',
         target: [
             {
                 target: 'dmg',
