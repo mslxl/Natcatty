@@ -1065,11 +1065,12 @@ function createPreloadApi(ctx) {
   windowIsMaximized: () => ipcRenderer.invoke("netcatty:window:isMaximized"),
   windowIsFullscreen: () => ipcRenderer.invoke("netcatty:window:isFullscreen"),
   windowFocus: () => ipcRenderer.invoke("netcatty:window:focus"),
-  setTerminalKeyboardFocus: (focused, hotkeyScheme) => ipcRenderer.send(
+  setTerminalKeyboardFocus: (focused, hotkeyScheme, terminalFontShortcuts) => ipcRenderer.send(
     "netcatty:window:set-terminal-keyboard-focus",
     {
       focused: focused === true,
-      hotkeyScheme: hotkeyScheme === "mac" || hotkeyScheme === "pc" ? hotkeyScheme : undefined,
+      ...(hotkeyScheme === undefined ? {} : { hotkeyScheme }),
+      ...(terminalFontShortcuts === undefined ? {} : { terminalFontShortcuts }),
     },
   ),
   setWindowTitle: (title) => ipcRenderer.invoke("netcatty:window:setTitle", title),

@@ -137,6 +137,8 @@ test('popup terminals resolve complete host config and pass jump hosts into Term
   assert.match(source, /resolveTerminalPopupHost\(config,\s*hosts,\s*\{\s+groupConfigs,\s+proxyProfiles,/);
   assert.match(source, /resolveTerminalChainHosts\(\{\s+host,\s+hosts,\s+groupConfigs,\s+proxyProfiles,/);
   assert.match(source, /chainHosts=\{chainHosts\}/);
+  assert.match(source, /hotkeyScheme=\{settings\.hotkeyScheme\}/);
+  assert.match(source, /keyBindings=\{settings\.keyBindings\}/);
   // Popup has no AppSideEffects listener; bulk delete must hit this vault instance.
   assert.match(source, /onDeleteSnippets=\{deleteSelectedSnippets\}/);
 });
