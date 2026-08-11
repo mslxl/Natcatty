@@ -25,6 +25,7 @@ interface SelectHostPanelProps {
   title?: string;
   subtitle?: string;
   className?: string;
+  width?: string;
   layout?: AsidePanelLayout;
   resizable?: boolean;
   persistWidthStorageKey?: string;
@@ -50,6 +51,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
   title,
   subtitle,
   className,
+  width,
   layout = "overlay",
   resizable = false,
   persistWidthStorageKey,
@@ -79,6 +81,7 @@ const SelectHostPanel: React.FC<SelectHostPanelProps> = ({
       showBackButton={true}
       onBack={onBack}
       className={cn(layout === "overlay" && "z-40", newHostPanelOpen && "overflow-visible", className)}
+      width={width}
       layout={layout}
       resizable={resizable}
       persistWidthStorageKey={persistWidthStorageKey}

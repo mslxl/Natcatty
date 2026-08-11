@@ -417,7 +417,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
           aria-selected={multiSelect ? groupState === 'all' : false}
           data-active={isActive ? 'true' : undefined}
           className={cn(
-            'flex h-full min-h-0 items-center gap-2.5 overflow-hidden px-2.5 rounded-lg transition-colors',
+            'flex h-full min-h-0 items-center gap-2.5 overflow-hidden rounded-lg px-2.5 transition-colors',
             isActive ? 'bg-primary/10 ring-1 ring-primary/40' : 'hover:bg-muted/70',
           )}
           onClick={() => {
