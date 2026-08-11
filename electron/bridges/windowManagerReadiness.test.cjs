@@ -1217,14 +1217,13 @@ test("main window leaves terminal font shortcuts for the renderer while terminal
     },
   );
 
-  const pcFontShortcuts = ["=", "-", "0"].map((key) => ({
+  setTerminalKeyboardFocusForWindow(createdWindow, true, "pc", ["=", "-", "0"].map((key) => ({
     key,
     meta: false,
     control: true,
     alt: false,
     shift: false,
-  }));
-  setTerminalKeyboardFocusForWindow(createdWindow, true, "pc", pcFontShortcuts);
+  })));
   ignoreMenuShortcutValues.length = 0;
 
   for (const key of ["=", "-", "0"]) {
@@ -1263,9 +1262,9 @@ test("setTerminalKeyboardFocusForWindow stores focus without blanketing menu sho
   };
 
   assert.equal(setTerminalKeyboardFocusForWindow(win, true, "pc"), true);
-  assert.deepEqual(ignoreMenuShortcutValues, [false]);
+  assert.deepEqual(ignoreMenuShortcutValues, []);
   assert.equal(setTerminalKeyboardFocusForWindow(win, false), true);
-  assert.deepEqual(ignoreMenuShortcutValues, [false, false]);
+  assert.deepEqual(ignoreMenuShortcutValues, []);
 });
 
 test("main window keeps native page zoom when terminal scheme uses the other modifier", async () => {

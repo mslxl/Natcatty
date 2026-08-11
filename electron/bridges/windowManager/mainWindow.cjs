@@ -41,10 +41,6 @@ function setTerminalKeyboardFocusForWindow(win, focused, hotkeyScheme, terminalF
     win[TERMINAL_KEYBOARD_SHORTCUTS] = isFocused
       ? normalizeTerminalKeyboardShortcuts(terminalFontShortcuts)
       : [];
-    // Suppression is applied per key in before-input-event. Keeping it off here
-    // lets unrelated application accelerators, such as Cmd+W in terminal popups,
-    // continue to reach the application menu.
-    win.webContents.setIgnoreMenuShortcuts?.(false);
     return true;
   } catch {
     return false;

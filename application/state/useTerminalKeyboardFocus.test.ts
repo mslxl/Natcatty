@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   installTerminalKeyboardFocusTracking,
   isTerminalKeyboardTarget,
-  resolveTerminalFontShortcuts,
 } from "./terminalKeyboardFocus";
 
 const targetWithClosest = (matches: boolean) => ({
@@ -18,21 +17,6 @@ test("terminal keyboard target detection recognizes xterm descendants", () => {
   assert.equal(isTerminalKeyboardTarget(targetWithClosest(true)), true);
   assert.equal(isTerminalKeyboardTarget(targetWithClosest(false)), false);
   assert.equal(isTerminalKeyboardTarget(null), false);
-});
-
-test("terminal font shortcut descriptors follow active and disabled bindings", () => {
-  const bindings = [
-    { id: "increase", action: "increaseTerminalFontSize", label: "", mac: "⌘ + =", pc: "Ctrl + =", category: "terminal" },
-    { id: "decrease", action: "decreaseTerminalFontSize", label: "", mac: "Disabled", pc: "Ctrl + -", category: "terminal" },
-    { id: "reset", action: "resetTerminalFontSize", label: "", mac: "⌘ + 0", pc: "Ctrl + 0", category: "terminal" },
-    { id: "search", action: "searchTerminal", label: "", mac: "⌘ + F", pc: "Ctrl + F", category: "terminal" },
-  ] as const;
-
-  assert.deepEqual(resolveTerminalFontShortcuts(bindings, "mac"), [
-    { key: "=", meta: true, control: false, alt: false, shift: false },
-    { key: "0", meta: true, control: false, alt: false, shift: false },
-  ]);
-  assert.deepEqual(resolveTerminalFontShortcuts(bindings, "disabled"), []);
 });
 
 test("terminal keyboard focus tracking publishes deduplicated focus transitions and cleans up", async () => {
