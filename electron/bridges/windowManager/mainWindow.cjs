@@ -63,15 +63,11 @@ function getTerminalKeyboardShortcuts(win) {
 
 function isTerminalFontShortcutInput(input, shortcuts) {
   if (input?.type !== "keyDown") return false;
-  const inputKey = String(input.key || "");
-  const isLatinKey = /^\p{Script=Latin}$/u.test(inputKey);
-  const isPrintableNonLetter = /^[^\p{Letter}\p{Number}\s]$/u.test(inputKey);
-  const usesLogicalKey = isLatinKey || isPrintableNonLetter;
-  const nativeKey = usesLogicalKey
-    ? inputKey.toLowerCase()
-    : String(input.code || inputKey).toLowerCase();
+  const inputKey = String(input.key || "").toLowerCase();
   return Array.isArray(shortcuts) && shortcuts.some((shortcut) => (
-    nativeKey === String(usesLogicalKey ? shortcut.key : shortcut.code || shortcut.key).toLowerCase()
+    (shortcut.code && input.code
+      ? String(input.code).toLowerCase() === String(shortcut.code).toLowerCase()
+      : inputKey === String(shortcut.key || "").toLowerCase())
     && Boolean(input.meta) === shortcut.meta
     && Boolean(input.control) === shortcut.control
     && Boolean(input.alt) === shortcut.alt
