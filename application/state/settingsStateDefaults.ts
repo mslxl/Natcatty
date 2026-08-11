@@ -82,6 +82,7 @@ export const DEFAULT_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT = false;
 export const DEFAULT_SHOW_SFTP_TAB = true;
 export const DEFAULT_SHOW_HOST_TREE_SIDEBAR = true;
 export const DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS = false;
+export const DEFAULT_SHOW_TAB_NUMBER_BADGES = true;
 export const DEFAULT_DISABLE_TERMINAL_FONT_ZOOM = false;
 export { DEFAULT_RESTORE_PREVIOUS_SESSION } from './sessionRestoreSettings';
 

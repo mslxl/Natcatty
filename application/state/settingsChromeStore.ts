@@ -29,6 +29,8 @@ export type SettingsChromeSnapshot = {
   showOnlyUngroupedHostsInRoot: boolean;
   dynamicTabTitleMode: DynamicTabTitleMode;
   disableTerminalFontZoom: boolean;
+  shellOnlyTabNumberShortcuts: boolean;
+  showTabNumberBadges: boolean;
   restoreTerminalCwd: boolean;
   terminalSidePanelAutoOpen: boolean;
   terminalSidePanelAutoOpenTab: TerminalSidePanelAutoOpenTab;
@@ -58,6 +60,8 @@ export const DEFAULT_SETTINGS_CHROME_SNAPSHOT: SettingsChromeSnapshot = Object.f
   showOnlyUngroupedHostsInRoot: false,
   dynamicTabTitleMode: 'off',
   disableTerminalFontZoom: false,
+  shellOnlyTabNumberShortcuts: false,
+  showTabNumberBadges: true,
   restoreTerminalCwd: true,
   terminalSidePanelAutoOpen: false,
   terminalSidePanelAutoOpenTab: 'ai',
@@ -80,6 +84,8 @@ export function settingsChromeSnapshotsEqual(
     && a.showOnlyUngroupedHostsInRoot === b.showOnlyUngroupedHostsInRoot
     && a.dynamicTabTitleMode === b.dynamicTabTitleMode
     && a.disableTerminalFontZoom === b.disableTerminalFontZoom
+    && a.shellOnlyTabNumberShortcuts === b.shellOnlyTabNumberShortcuts
+    && a.showTabNumberBadges === b.showTabNumberBadges
     && a.restoreTerminalCwd === b.restoreTerminalCwd
     && a.terminalSidePanelAutoOpen === b.terminalSidePanelAutoOpen
     && a.terminalSidePanelAutoOpenTab === b.terminalSidePanelAutoOpenTab;

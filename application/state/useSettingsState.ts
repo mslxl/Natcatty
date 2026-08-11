@@ -75,6 +75,7 @@ import {
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
+  STORAGE_KEY_SHOW_TAB_NUMBER_BADGES,
   STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM,
 } from '../../infrastructure/config/storageKeys';
 import { DEFAULT_UI_LOCALE, resolveSupportedLocale } from '../../infrastructure/config/i18n';
@@ -121,6 +122,7 @@ import {
   DEFAULT_SHOW_SFTP_TAB,
   DEFAULT_SHOW_HOST_TREE_SIDEBAR,
   DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
+  DEFAULT_SHOW_TAB_NUMBER_BADGES,
   DEFAULT_DISABLE_TERMINAL_FONT_ZOOM,
   DEFAULT_SSH_DEBUG_LOGS_ENABLED,
   DEFAULT_SSH_DEEP_LINK_ENABLED,
@@ -412,6 +414,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [shellOnlyTabNumberShortcuts, setShellOnlyTabNumberShortcutsState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     return stored ?? DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS;
+  });
+  const [showTabNumberBadges, setShowTabNumberBadgesState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_TAB_NUMBER_BADGES);
+    return stored ?? DEFAULT_SHOW_TAB_NUMBER_BADGES;
   });
   const [disableTerminalFontZoom, setDisableTerminalFontZoomState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
@@ -941,6 +947,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     );
     const storedShellOnlyTabNumberShortcuts = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     setShellOnlyTabNumberShortcutsState(storedShellOnlyTabNumberShortcuts ?? DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
+    const storedShowTabNumberBadges = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_TAB_NUMBER_BADGES);
+    setShowTabNumberBadgesState(storedShowTabNumberBadges ?? DEFAULT_SHOW_TAB_NUMBER_BADGES);
     const storedDisableTerminalFontZoom = localStorageAdapter.readBoolean(STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM);
     setDisableTerminalFontZoomState(storedDisableTerminalFontZoom ?? DEFAULT_DISABLE_TERMINAL_FONT_ZOOM);
     const storedRestorePreviousSession = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_PREVIOUS_SESSION);
@@ -1145,7 +1153,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
+    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode,
@@ -1155,7 +1163,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize: applyIncomingTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpSkipUnchanged, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
+    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled, setExplorerContextMenuEnabledState: applyIncomingExplorerContextMenuEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, setSshTransportIdleTtlMsState,
@@ -1319,6 +1327,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     localStorageAdapter.writeBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS, enabled);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS, enabled);
+  }, [notifySettingsChanged]);
+
+  const setShowTabNumberBadges = useCallback((enabled: boolean) => {
+    setShowTabNumberBadgesState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_SHOW_TAB_NUMBER_BADGES, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_SHOW_TAB_NUMBER_BADGES, enabled);
   }, [notifySettingsChanged]);
 
   const setDisableTerminalFontZoom = useCallback((enabled: boolean) => {
@@ -1746,6 +1761,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       showOnlyUngroupedHostsInRoot,
       dynamicTabTitleMode: terminalSettings.dynamicTabTitleMode,
       disableTerminalFontZoom,
+      shellOnlyTabNumberShortcuts,
+      showTabNumberBadges,
       restoreTerminalCwd,
       terminalSidePanelAutoOpen,
       terminalSidePanelAutoOpenTab,
@@ -1757,10 +1774,12 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     lightUiThemeId,
     resolvedTheme,
     restoreTerminalCwd,
+    shellOnlyTabNumberShortcuts,
     showHostTreeSidebar,
     showOnlyUngroupedHostsInRoot,
     showRecentHosts,
     showSftpTab,
+    showTabNumberBadges,
     terminalSettings.dynamicTabTitleMode,
     terminalSidePanelAutoOpen,
     terminalSidePanelAutoOpenTab,
@@ -1935,6 +1954,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setTerminalSidePanelAutoOpenTab,
     shellOnlyTabNumberShortcuts,
     setShellOnlyTabNumberShortcuts,
+    showTabNumberBadges,
+    setShowTabNumberBadges,
     disableTerminalFontZoom,
     setDisableTerminalFontZoom,
     restorePreviousSession,
@@ -1994,7 +2015,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, disableTerminalFontZoom,
+      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     ]),
   };

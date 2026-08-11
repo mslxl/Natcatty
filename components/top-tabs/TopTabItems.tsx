@@ -311,6 +311,21 @@ WindowControls.displayName = 'WindowControls';
 type TranslateFn = ReturnType<typeof useI18n>['t'];
 type RenderBulkCloseItems = (anchorId: string) => React.ReactNode;
 
+/** 1-9 badge aligned with Cmd/Ctrl+[1...9] tab switching. */
+export const TabShortcutNumberBadge: React.FC<{ number: number }> = memo(({ number }) => (
+  <span
+    className="inline-flex h-3.5 min-w-3.5 shrink-0 items-center justify-center rounded px-0.5 font-mono text-[10px] font-semibold leading-none tabular-nums"
+    style={{
+      color: 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+      backgroundColor: 'color-mix(in srgb, var(--top-tabs-fg, hsl(var(--foreground))) 12%, transparent)',
+    }}
+    aria-hidden="true"
+  >
+    {number}
+  </span>
+));
+TabShortcutNumberBadge.displayName = 'TabShortcutNumberBadge';
+
 const TOP_TAB_COMFORT_EDGE_RATIO = 0.22;
 const TOP_TAB_COMFORT_EDGE_MIN = 72;
 const TOP_TAB_COMFORT_EDGE_MAX = 160;
@@ -379,9 +394,10 @@ interface RootTopTabProps {
   icon: React.ReactNode;
   className?: string;
   compact?: boolean;
+  shortcutNumber?: number;
 }
 
-export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon, className, compact = false }) => {
+export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon, className, compact = false, shortcutNumber }) => {
   const isActive = useIsTabActive(tabId);
   // The Vaults tab is the app's persistent "home", so keep its selected state
   // visually flat — no active background fill (the label/icon still brighten to
@@ -432,6 +448,7 @@ export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon,
         }
       }}
     >
+      {shortcutNumber != null && <TabShortcutNumberBadge number={shortcutNumber} />}
       {icon}
       <span className={cn('top-tab-root-label', compact && 'top-tab-root-label-compact')}>
         {label}
@@ -457,6 +474,7 @@ interface PluginViewTopTabProps {
   onTabDragLeave(e: React.DragEvent): void;
   onTabDrop(e: React.DragEvent, tabId: string): void;
   tabAnimationClass?: string;
+  shortcutNumber?: number;
 }
 
 export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
@@ -475,6 +493,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
   onTabDragLeave,
   onTabDrop,
   tabAnimationClass,
+  shortcutNumber,
 }) => {
   const isActive = useIsTabActive(tab.id);
   const close = useCallback((event?: React.MouseEvent) => {
@@ -510,6 +529,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
           {showDropIndicatorBefore && isDraggingForReorder && <div className="absolute -left-0.5 bottom-1 top-1 w-0.5 rounded-full bg-primary" />}
           {showDropIndicatorAfter && isDraggingForReorder && <div className="absolute -right-0.5 bottom-1 top-1 w-0.5 rounded-full bg-primary" />}
           <div className="flex min-w-0 flex-1 items-center gap-2">
+            {shortcutNumber != null && <TabShortcutNumberBadge number={shortcutNumber} />}
             <PluginContributionIcon pluginId={tab.pluginId} icon={tab.icon} className="shrink-0" />
             <span className="truncate leading-5">{tab.title}</span>
           </div>
@@ -550,6 +570,7 @@ interface EditorTopTabProps {
   onTabDragLeave: (e: React.DragEvent) => void;
   onTabDrop: (e: React.DragEvent, targetTabId: string) => void;
   tabAnimationClass?: string;
+  shortcutNumber?: number;
 }
 
 export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
@@ -569,6 +590,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
   onTabDragLeave,
   onTabDrop,
   tabAnimationClass,
+  shortcutNumber,
 }) => {
   const isActive = useIsTabActive(tabId);
   // Dirty is store-driven so App/TopTabs structure can stay presence-only.
@@ -640,6 +662,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
             />
           )}
           <div className="flex items-center gap-2 min-w-0 flex-1">
+            {shortcutNumber != null && <TabShortcutNumberBadge number={shortcutNumber} />}
             <FileIcon
               size={14}
               className="shrink-0"
@@ -688,6 +711,7 @@ interface SessionTopTabProps {
   dynamicTabTitleMode?: DynamicTabTitleMode;
   t: TranslateFn;
   tabAnimationClass?: string;
+  shortcutNumber?: number;
 }
 
 export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
@@ -712,6 +736,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   dynamicTabTitleMode,
   t,
   tabAnimationClass,
+  shortcutNumber,
 }) => {
   // Per-session presentation: sibling title/provider updates do not re-render this tab.
   const session = usePresentedSession(sessionProp);
@@ -784,6 +809,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
         />
       )}
       <div className="flex items-center gap-2 min-w-0 flex-1">
+        {shortcutNumber != null && <TabShortcutNumberBadge number={shortcutNumber} />}
         <SessionTabIcon
           host={host}
           session={session}
@@ -869,6 +895,7 @@ interface WorkspaceTopTabProps {
   renderBulkCloseItems: RenderBulkCloseItems;
   t: TranslateFn;
   tabAnimationClass?: string;
+  shortcutNumber?: number;
 }
 
 /**
@@ -915,6 +942,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   renderBulkCloseItems,
   t,
   tabAnimationClass,
+  shortcutNumber,
 }) => {
   const isActive = useIsTabActive(workspace.id);
   const hasActivity = useAnySessionActivity(workspaceSessionIds);
@@ -986,6 +1014,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
             />
           )}
           <div className="flex items-center gap-2 truncate">
+            {shortcutNumber != null && <TabShortcutNumberBadge number={shortcutNumber} />}
             <LayoutGrid
               size={14}
               className="shrink-0"
@@ -1052,6 +1081,7 @@ interface LogViewTopTabProps {
   onTabDrop: (e: React.DragEvent, targetTabId: string) => void;
   t: TranslateFn;
   tabAnimationClass?: string;
+  shortcutNumber?: number;
 }
 
 export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
@@ -1069,6 +1099,7 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
   onTabDrop,
   t,
   tabAnimationClass,
+  shortcutNumber,
 }) => {
   const isActive = useIsTabActive(logView.id);
   const isLocal = logView.log.protocol === 'local' || logView.log.hostname === 'localhost';
@@ -1135,6 +1166,7 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
         />
       )}
       <div className="flex items-center gap-2 min-w-0 flex-1">
+        {shortcutNumber != null && <TabShortcutNumberBadge number={shortcutNumber} />}
         <FileText
           size={14}
           className="shrink-0"
