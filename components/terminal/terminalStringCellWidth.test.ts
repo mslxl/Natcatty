@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 
-import { stringCellWidth } from "./autocomplete/terminalStringCellWidth.ts";
+import { stringCellWidth, sliceStringByCellColumns } from "./autocomplete/terminalStringCellWidth.ts";
+import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 
@@ -12,6 +12,20 @@ test("stringCellWidth counts ASCII as one cell each", () => {
 
 test("stringCellWidth counts CJK ideographs as two cells each", () => {
   assert.equal(stringCellWidth("部署"), 4);
+});
+
+test("sliceStringByCellColumns respects wide CJK cells", () => {
+  const prompt = String.raw`C:\Users\用户>`;
+  const line = `${prompt}部署`;
+  const promptCells = stringCellWidth(prompt);
+  assert.equal(sliceStringByCellColumns(line, 0, promptCells), prompt);
+  assert.equal(sliceStringByCellColumns(line, promptCells), "部署");
+  // Padding spaces after the content must not leak into the cursor prefix.
+  const padded = line + " ".repeat(20);
+  assert.equal(
+    sliceStringByCellColumns(padded, 0, stringCellWidth(line)),
+    line,
+  );
 });
 
 test("stringCellWidth collapses ZWJ emoji to one wide grapheme", () => {

@@ -9,6 +9,7 @@
 
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
+import { sliceStringByCellColumns } from "./terminalStringCellWidth";
 import { COMMON_SHELL_COMMANDS, NON_PROMPT_PATTERNS, PROMPT_CHARS } from "./promptDetectorPatterns";
 
 export interface PromptDetectionResult {
@@ -83,7 +84,8 @@ function getCursorLinePrefix(term: XTerm): string | null {
 
   if (!line) return null;
 
-  return line.translateToString(false).substring(0, Math.max(0, buffer.cursorX));
+  const lineText = line.translateToString(false);
+  return sliceStringByCellColumns(lineText, 0, Math.max(0, buffer.cursorX), term);
 }
 
 function getWrappedCursorPrefix(term: XTerm): string | null {
@@ -112,7 +114,8 @@ function getWrappedCursorPrefix(term: XTerm): string | null {
     prefix += rowLine.translateToString(false);
   }
 
-  return prefix + line.translateToString(false).substring(0, Math.max(0, cursorX));
+  const cursorRowText = line.translateToString(false);
+  return prefix + sliceStringByCellColumns(cursorRowText, 0, Math.max(0, cursorX), term);
 }
 
 function inferPromptTextBeforeTypedInput(
@@ -424,13 +427,27 @@ function endsWithHostStyleGreaterThanPrompt(promptText: string): boolean {
   return /^[\w.-]+$/.test(promptName) && !isLikelyBareMongoPromptName(promptName);
 }
 
+function endsWithWindowsPathGreaterThanPrompt(promptText: string): boolean {
+  const trimmed = promptText.trimEnd();
+  if (!trimmed.endsWith(">")) return false;
+  const before = trimmed.slice(0, -1).trimEnd();
+  // cmd.exe: `C:\path>` / `C:\>`; PowerShell: `PS C:\path>`
+  if (/^[A-Za-z]:[\\/]/.test(before)) return true;
+  if (/^PS\s+[A-Za-z]:[\\/]/i.test(before)) return true;
+  return false;
+}
+
 function endsWithStandardShellPrompt(promptText: string): boolean {
   const finalChar = promptText.trimEnd().at(-1);
   return finalChar === "$" || finalChar === "#" || finalChar === "%";
 }
 
 function allowsShortPromptEcho(promptText: string): boolean {
-  return endsWithStandardShellPrompt(promptText) || endsWithHostStyleGreaterThanPrompt(promptText);
+  return (
+    endsWithStandardShellPrompt(promptText) ||
+    endsWithHostStyleGreaterThanPrompt(promptText) ||
+    endsWithWindowsPathGreaterThanPrompt(promptText)
+  );
 }
 
 function isReliableTypedPrefix(
@@ -539,25 +556,29 @@ export function detectPrompt(term: XTerm): PromptDetectionResult {
   // Empty line
   if (lineText.trim().length === 0) return NO_PROMPT;
 
-  const cursorLinePrefix = lineText.substring(0, Math.max(0, cursorX));
+  // cursorX is a cell column; lineText is characters. Wide glyphs (CJK in a
+  // Windows `C:\Users\用户>` prompt) make substring(cursorX) overshoot into
+  // xterm's empty-cell padding and poison userInput with spaces (#2813 CMD).
+  const cursorLinePrefix = sliceStringByCellColumns(lineText, 0, Math.max(0, cursorX), term);
+  const afterCursor = sliceStringByCellColumns(lineText, Math.max(0, cursorX), undefined, term);
   // Try to find the prompt boundary on the current line. xterm buffer rows are
   // padded with blank cells; when the cursor is at the visible row end, scan
   // only up to the cursor so prompts like "root@host:~#" do not inherit a fake
   // trailing space. If there is command text to the right of the cursor, keep
   // the full line so "$" / ">" inside mid-line edits are validated against
   // their real following character.
-  const promptScanText = lineText.slice(Math.max(0, cursorX)).trim().length > 0
+  const promptScanText = afterCursor.trim().length > 0
     ? lineText
     : cursorLinePrefix;
   const promptEnd = findPromptBoundary(promptScanText);
   if (promptEnd >= 0) {
     const promptText = lineText.substring(0, promptEnd);
-    // Use cursor position to determine actual input length — don't trim trailing
-    // spaces since they're significant for autocomplete (e.g., "git commit " should
-    // produce an empty trailing token to trigger option suggestions).
-    const rawInput = lineText.substring(promptEnd);
-    const userInput = rawInput.substring(0, Math.max(0, cursorX - promptEnd));
-    const cursorOffset = Math.max(0, cursorX - promptEnd);
+    // Input is whatever sits between the prompt and the cursor on the cell-
+    // accurate prefix — don't use cursorX as a character index.
+    const userInput = cursorLinePrefix.length >= promptEnd
+      ? cursorLinePrefix.substring(promptEnd)
+      : "";
+    const cursorOffset = userInput.length;
 
     return { isAtPrompt: true, promptText, userInput, cursorOffset };
   }
