@@ -464,6 +464,7 @@ function TerminalPopupPageInner() {
               snippetPackages={snippetPackages}
               hotkeyScheme={settings.hotkeyScheme}
               keyBindings={terminalKeyBindings}
+              disableTerminalFontZoom={settings.disableTerminalFontZoom}
               chainHosts={chainHosts}
               compactToolbar
               onDeleteSnippets={deleteSelectedSnippets}
@@ -479,7 +480,6 @@ function TerminalPopupPageInner() {
               accentMode={settings.accentMode}
               customAccent={settings.customAccent}
               terminalSettings={settings.terminalSettings}
-              disableTerminalFontZoom={settings.disableTerminalFontZoom}
               sessionId={sessionId}
               startupCommand={isAttachMode ? undefined : config.startupCommand}
               reuseConnectionFromSessionId={isAttachMode ? undefined : reuseId}
