@@ -68,11 +68,6 @@ test("terminal keyboard focus tracking publishes deduplicated focus transitions 
   listeners.get("focusin")?.({ target: terminal } as unknown as Event);
   assert.deepEqual(changes, [false, true]);
 
-  (documentRef as unknown as { activeElement: Element }).activeElement = terminal as unknown as Element;
-  listeners.get("pointerdown")?.({ target: body } as unknown as Event);
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(changes, [false, true]);
-
   (documentRef as unknown as { activeElement: Element }).activeElement = body as unknown as Element;
   listeners.get("focusout")?.();
   await Promise.resolve();

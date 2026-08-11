@@ -78,12 +78,10 @@ export function installTerminalKeyboardFocusTracking(
   const handlePointerDown = (event: Event) => {
     clearPendingPointerTarget();
     pendingPointerTarget = event.target;
+    publishForTarget(event.target);
     pendingPointerClearTimer = setTimeout(() => {
-      const pointerTarget = pendingPointerTarget;
-      clearPendingPointerTarget();
-      if (pointerTarget !== undefined) {
-        publishForTarget(documentRef.activeElement);
-      }
+      pendingPointerTarget = undefined;
+      pendingPointerClearTimer = undefined;
     }, 0);
   };
 
@@ -102,7 +100,7 @@ export function installTerminalKeyboardFocusTracking(
         return;
       }
       if (pointerTarget !== undefined) {
-        publishForTarget(documentRef.activeElement);
+        publishForTarget(pointerTarget);
         return;
       }
       publishForTarget(documentRef.activeElement);
