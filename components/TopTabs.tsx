@@ -7,7 +7,7 @@ import { buildTabShortcutNumberById } from '../application/app/tabShortcutTarget
 import { useShortcutModifierHeld } from '../application/state/useShortcutModifierHeld';
 import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
-import type { DynamicTabTitleMode } from '../domain/models';
+import type { DynamicTabTitleMode, KeyBinding } from '../domain/models';
 
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
 import {
@@ -158,6 +158,7 @@ interface TopTabsProps {
   ) => void;
   showSftpTab: boolean;
   showHostTreeSidebar: boolean;
+  switchTabKeyBinding: Pick<KeyBinding, 'mac' | 'pc'> | null;
   dynamicTabTitleMode?: DynamicTabTitleMode;
   editorTabs: readonly EditorTabChrome[];
   pluginViewTabs: readonly PluginViewTab[];
@@ -202,6 +203,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onRemoveSessionFromWorkspace,
   showSftpTab,
   showHostTreeSidebar,
+  switchTabKeyBinding,
   dynamicTabTitleMode,
   editorTabs,
   pluginViewTabs,
@@ -216,7 +218,12 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     showTabNumberBadges,
     shellOnlyTabNumberShortcuts,
   } = useSettingsChromeStore();
-  const shortcutModifierHeld = useShortcutModifierHeld(hotkeyScheme);
+  const switchTabKey = hotkeyScheme === 'mac'
+    ? switchTabKeyBinding?.mac ?? null
+    : hotkeyScheme === 'pc'
+      ? switchTabKeyBinding?.pc ?? null
+      : null;
+  const shortcutModifierHeld = useShortcutModifierHeld(switchTabKey, hotkeyScheme);
   const tabShortcutNumbers = useMemo(() => {
     // Keep the tab bar quiet until the modifier for the active shortcut scheme
     // is held, while retaining the existing setting as the master toggle.
@@ -1213,6 +1220,7 @@ export const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean
     prev.onThemeChange === next.onThemeChange &&
     prev.showSftpTab === next.showSftpTab &&
     prev.showHostTreeSidebar === next.showHostTreeSidebar &&
+    prev.switchTabKeyBinding === next.switchTabKeyBinding &&
     prev.dynamicTabTitleMode === next.dynamicTabTitleMode &&
     prev.hostById === next.hostById
   );
