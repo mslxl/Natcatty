@@ -17,8 +17,7 @@ function paethPredictor(left, up, upperLeft) {
   return upperLeft;
 }
 
-function readRgbaPngAlphaBounds(file) {
-  const png = fs.readFileSync(file);
+function readRgbaPng(png, label) {
   assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
 
   let offset = 8;
@@ -36,7 +35,7 @@ function readRgbaPngAlphaBounds(file) {
       assert.deepEqual(
         [...data.subarray(8, 13)],
         [8, 6, 0, 0, 0],
-        `${file} must be an 8-bit, non-interlaced RGBA PNG`,
+        `${label} must be an 8-bit, non-interlaced RGBA PNG`,
       );
     } else if (type === "IDAT") {
       imageData.push(data);
@@ -45,12 +44,10 @@ function readRgbaPngAlphaBounds(file) {
     }
   }
 
-  assert.equal(width, 1024, `${file} must keep the 1024px app-icon canvas`);
-  assert.equal(height, 1024, `${file} must keep the 1024px app-icon canvas`);
   const bytesPerPixel = 4;
   const stride = width * bytesPerPixel;
   const raw = zlib.inflateSync(Buffer.concat(imageData));
-  assert.equal(raw.length, (stride + 1) * height, `${file} has unexpected PNG data`);
+  assert.equal(raw.length, (stride + 1) * height, `${label} has unexpected PNG data`);
 
   let sourceOffset = 0;
   let previous = Buffer.alloc(stride);
@@ -58,6 +55,7 @@ function readRgbaPngAlphaBounds(file) {
   let minY = height;
   let maxX = -1;
   let maxY = -1;
+  const rows = [];
   for (let y = 0; y < height; y += 1) {
     const filter = raw[sourceOffset];
     sourceOffset += 1;
@@ -74,7 +72,7 @@ function readRgbaPngAlphaBounds(file) {
       else if (filter === 2) predictor = up;
       else if (filter === 3) predictor = Math.floor((left + up) / 2);
       else if (filter === 4) predictor = paethPredictor(left, up, upperLeft);
-      else assert.fail(`${file} uses unsupported PNG filter ${filter}`);
+      else assert.fail(`${label} uses unsupported PNG filter ${filter}`);
       current[index] = (current[index] + predictor) & 0xff;
     }
 
@@ -85,10 +83,60 @@ function readRgbaPngAlphaBounds(file) {
       maxX = Math.max(maxX, x);
       maxY = Math.max(maxY, y);
     }
+    rows.push(current);
     previous = current;
   }
 
-  return { minX, minY, maxX, maxY };
+  return { width, height, minX, minY, maxX, maxY, rows };
+}
+
+function readRgbaPngAlphaBounds(file) {
+  const image = readRgbaPng(fs.readFileSync(file), file);
+  assert.equal(image.width, 1024, `${file} must keep the 1024px app-icon canvas`);
+  assert.equal(image.height, 1024, `${file} must keep the 1024px app-icon canvas`);
+  return {
+    minX: image.minX,
+    minY: image.minY,
+    maxX: image.maxX,
+    maxY: image.maxY,
+  };
+}
+
+function readIcnsEntry(file, expectedType) {
+  const icns = fs.readFileSync(file);
+  assert.equal(icns.subarray(0, 4).toString("ascii"), "icns", `${file} must be ICNS`);
+  assert.equal(icns.readUInt32BE(4), icns.length, `${file} has an invalid ICNS length`);
+
+  for (let offset = 8; offset < icns.length;) {
+    const type = icns.subarray(offset, offset + 4).toString("ascii");
+    const length = icns.readUInt32BE(offset + 4);
+    assert.ok(length >= 8 && offset + length <= icns.length, `${file} has an invalid ${type} entry`);
+    if (type === expectedType) return icns.subarray(offset + 8, offset + length);
+    offset += length;
+  }
+  assert.fail(`${file} is missing the ${expectedType} representation`);
+}
+
+function assertSmallIcnsRepresentation(file, type, expectedPixels) {
+  const image = readRgbaPng(readIcnsEntry(file, type), `${file}:${type}`);
+  assert.equal(image.width, expectedPixels);
+  assert.equal(image.height, expectedPixels);
+
+  let unexpectedGreenPixels = 0;
+  for (const row of image.rows) {
+    for (let x = 0; x < image.width; x += 1) {
+      const offset = x * 4;
+      const [red, green, blue, alpha] = row.subarray(offset, offset + 4);
+      if (alpha > 8 && green > red + 20 && green > blue + 20) {
+        unexpectedGreenPixels += 1;
+      }
+    }
+  }
+  assert.equal(
+    unexpectedGreenPixels,
+    0,
+    `${file}:${type} contains green noise instead of the navy/white app artwork`,
+  );
 }
 
 test("main process leaves macOS Dock icon to the packaged app bundle", () => {
@@ -104,10 +152,15 @@ test("main process leaves macOS Dock icon to the packaged app bundle", () => {
   );
 });
 
-test("macOS keeps the packaged icon unchanged and sizes only runtime Dock icons", () => {
+test("macOS packages a native ICNS and sizes runtime Dock icons separately", () => {
   const projectRoot = path.join(__dirname, "..");
   const config = require("../electron-builder.config.cjs");
-  assert.equal(config.mac?.icon ?? config.icon, "public/icon.png");
+  assert.equal(config.mac?.icon ?? config.icon, "build/icon.icns");
+  const packagedIcon = path.join(projectRoot, "build/icon.icns");
+  assert.ok(readIcnsEntry(packagedIcon, "ic04").length > 0);
+  assert.ok(readIcnsEntry(packagedIcon, "ic05").length > 0);
+  assertSmallIcnsRepresentation(packagedIcon, "ic11", 32);
+  assertSmallIcnsRepresentation(packagedIcon, "ic12", 64);
   assert.deepEqual(
     readRgbaPngAlphaBounds(path.join(projectRoot, "public/icon.png")),
     { minX: 61, minY: 61, maxX: 962, maxY: 962 },
