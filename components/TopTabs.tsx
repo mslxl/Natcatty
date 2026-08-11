@@ -4,6 +4,7 @@ import { fromEditorTabId, isEditorTabId, toEditorTabId, useActiveTabId } from '.
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
 import { buildTabShortcutNumberById } from '../application/app/tabShortcutTargets';
+import { useShortcutModifierHeld } from '../application/state/useShortcutModifierHeld';
 import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
 import type { DynamicTabTitleMode } from '../domain/models';
@@ -215,17 +216,18 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     showTabNumberBadges,
     shellOnlyTabNumberShortcuts,
   } = useSettingsChromeStore();
+  const shortcutModifierHeld = useShortcutModifierHeld(hotkeyScheme);
   const tabShortcutNumbers = useMemo(() => {
-    // AppSideEffects skips the global digit listener when the scheme is
-    // disabled — hide badges so they do not advertise dead shortcuts.
-    if (!showTabNumberBadges || hotkeyScheme === 'disabled') return null;
+    // Keep the tab bar quiet until the modifier for the active shortcut scheme
+    // is held, while retaining the existing setting as the master toggle.
+    if (!showTabNumberBadges || hotkeyScheme === 'disabled' || !shortcutModifierHeld) return null;
     return buildTabShortcutNumberById({
       showSftpTab,
       shellOnlyTabNumberShortcuts,
       orderedTabs,
       editorTabIds: editorTabs.map((tab) => toEditorTabId(tab.id)),
     });
-  }, [hotkeyScheme, showTabNumberBadges, showSftpTab, shellOnlyTabNumberShortcuts, orderedTabs, editorTabs]);
+  }, [hotkeyScheme, showTabNumberBadges, showSftpTab, shellOnlyTabNumberShortcuts, shortcutModifierHeld, orderedTabs, editorTabs]);
   const isHostTreeOpen = useTerminalHostTreeOpen();
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
