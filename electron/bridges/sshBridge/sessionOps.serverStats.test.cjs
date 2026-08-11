@@ -188,6 +188,64 @@ test("getServerStats keeps PVE CT ZFS/bind mounts and recovers dash Capacity", a
   assert.equal(result.stats.diskTotal, 8);
 });
 
+// rclone / CloudDrive / union-style FUSE mounts expose cloud quotas that should
+// not inflate System Overview disk totals after the PVE CT filter broadening.
+function runStatsCommandWithNetworkFuseDf(command) {
+  const script = [
+    "uname() { printf '%s\\n' Linux; }",
+    "nproc() { printf '%s\\n' 2; }",
+    "ps() { return 1; }",
+    "top() { return 1; }",
+    "df() {",
+    "  path=",
+    "  for a in \"$@\"; do",
+    "    case \"$a\" in /*) path=$a ;; esac",
+    "  done",
+    "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'",
+    "  if [ -n \"$path\" ]; then",
+    "    printf '%s\\n' '/dev/sda1 104857600 20971520 83886080 20% /'",
+    "    return 0",
+    "  fi",
+    "  printf '%s\\n' '/dev/sda1 104857600 20971520 83886080 20% /'",
+    "  printf '%s\\n' '/dev/sdb1 52428800 10485760 41943040 20% /data'",
+    "  printf '%s\\n' 'fuse.rclone 1073741824 536870912 536870912 50% /mnt/rclone'",
+    "  printf '%s\\n' 'rclone:gdrive:media 2147483648 1073741824 1073741824 50% /mnt/gdrive'",
+    "  printf '%s\\n' 'CloudDrive 4294967296 2147483648 2147483648 50% /CloudNAS/CloudDrive'",
+    "  printf '%s\\n' 'ufs 1048576000 524288000 524288000 50% /mnt/ufs'",
+    "  printf '%s\\n' 'tmpfs 102400 100 102300 1% /run'",
+    "}",
+    command,
+  ].join("\n");
+  return spawnSync("sh", ["-c", script], { encoding: "utf8" });
+}
+
+test("getServerStats excludes rclone/CloudDrive/ufs network FUSE mounts from disk overview", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "nas.example.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        const execution = runStatsCommandWithNetworkFuseDf(command);
+        assert.equal(execution.status, 0, execution.stderr);
+        cb(null, fakeStream(execution.stdout));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.stats.disks, [
+    { mountPoint: "/", used: 20, total: 100, percent: 20, capacityKey: "/dev/sda1" },
+    { mountPoint: "/data", used: 10, total: 50, percent: 20, capacityKey: "/dev/sdb1" },
+  ]);
+  assert.equal(result.stats.diskPercent, 20);
+  assert.equal(result.stats.diskUsed, 20);
+  assert.equal(result.stats.diskTotal, 100);
+});
+
 test("getServerStats reads commands after BusyBox top's CPU column", async () => {
   const sessions = new Map();
   sessions.set("sid", {

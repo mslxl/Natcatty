@@ -13,6 +13,20 @@ test("aggregateMountedDiskUsage totals every mounted disk", () => {
   );
 });
 
+test("aggregateMountedDiskUsage skips rclone/CloudDrive/ufs network FUSE capacities", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "/dev/sda1", mountPoint: "/", used: 20, total: 100 },
+      { capacityKey: "/dev/sdb1", mountPoint: "/data", used: 10, total: 50 },
+      { capacityKey: "fuse.rclone", mountPoint: "/mnt/rclone", used: 500, total: 1000 },
+      { capacityKey: "rclone:gdrive:media", mountPoint: "/mnt/gdrive", used: 1000, total: 2000 },
+      { capacityKey: "CloudDrive", mountPoint: "/CloudNAS/CloudDrive", used: 2000, total: 4000 },
+      { capacityKey: "ufs", mountPoint: "/mnt/ufs", used: 500, total: 1000 },
+    ]),
+    { used: 30, total: 150, percent: 20 },
+  );
+});
+
 test("aggregateMountedDiskUsage ignores unusable disk rows", () => {
   assert.deepEqual(
     aggregateMountedDiskUsage([
