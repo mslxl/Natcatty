@@ -105,17 +105,17 @@ function loadPreloadWithFakeElectron() {
 test("setTerminalKeyboardFocus sends renderer focus state to the window manager", () => {
   const preload = loadPreloadWithFakeElectron();
   try {
-    preload.api.setTerminalKeyboardFocus(true);
+    preload.api.setTerminalKeyboardFocus(true, "mac");
     preload.api.setTerminalKeyboardFocus(false);
 
     assert.deepEqual(preload.sent, [
       {
         channel: "netcatty:window:set-terminal-keyboard-focus",
-        payload: { focused: true },
+        payload: { focused: true, hotkeyScheme: "mac" },
       },
       {
         channel: "netcatty:window:set-terminal-keyboard-focus",
-        payload: { focused: false },
+        payload: { focused: false, hotkeyScheme: undefined },
       },
     ]);
   } finally {

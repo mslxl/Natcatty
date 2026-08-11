@@ -282,3 +282,101 @@ test("attach popup waits for renderer handoff before closing", async () => {
   api.closeTerminalPopupWindow("attach-popup");
   assert.equal(popupWindow.destroyed, true);
 });
+
+test("terminal popup routes Cmd+W through command-close while terminal font chords ignore menus", async () => {
+  const { setTerminalKeyboardFocusForWindow } = require("./mainWindow.cjs");
+  const { shouldCloseWindowFromInput } = require("../windowManager.cjs");
+  let beforeInputHandler = null;
+  const ignoreMenuShortcutValues = [];
+  const commandCloseWindows = [];
+  let popupWindow;
+
+  class BrowserWindowStub {
+    constructor() {
+      popupWindow = this;
+      this.handlers = new Map();
+      this.webContents = {
+        id: 99,
+        on(channel, handler) {
+          if (channel === "before-input-event") beforeInputHandler = handler;
+        },
+        send() {},
+        setWindowOpenHandler() {},
+        setIgnoreMenuShortcuts(value) {
+          ignoreMenuShortcutValues.push(value);
+        },
+      };
+    }
+
+    on(channel, handler) { this.handlers.set(channel, handler); }
+    isDestroyed() { return false; }
+    isVisible() { return true; }
+    loadURL() { return Promise.resolve(); }
+    setBackgroundColor() {}
+  }
+
+  const api = createTerminalPopupWindowApi({
+    mainWindow: null,
+    currentTheme: "light",
+    V8_CACHE_OPTIONS: "bypassHeatCheck",
+    resolveFrontendBackgroundColor() { return "#fff"; },
+    resolveSettingsWindowBounds() { return { x: 10, y: 20 }; },
+    createExternalOnlyWindowOpenHandler() { return {}; },
+    applyWindowOpacityToWindow() {},
+    getDevRendererBaseUrl(url) { return url; },
+    showAndFocusWindow() {},
+    registerAppContentWindow() {},
+    unregisterAppContentWindow() {},
+    notifyAppContentWindowClosed() {},
+    shouldCloseWindowFromInput,
+    requestWindowCommandClose(win) {
+      commandCloseWindows.push(win);
+      return true;
+    },
+  });
+
+  await api.openTerminalPopupWindow(
+    {
+      BrowserWindow: BrowserWindowStub,
+      nativeTheme: { shouldUseDarkColors: false },
+      shell: {},
+    },
+    {
+      preload: "/tmp/preload.cjs",
+      isDev: false,
+      appIcon: null,
+      isMac: true,
+      electronDir: __dirname,
+    },
+    { popupId: "popup-shortcuts", title: "Terminal" },
+  );
+
+  assert.equal(typeof beforeInputHandler, "function");
+  setTerminalKeyboardFocusForWindow(popupWindow, true, "mac");
+
+  let prevented = false;
+  beforeInputHandler({ preventDefault: () => { prevented = true; } }, {
+    type: "keyDown",
+    meta: true,
+    key: "w",
+  });
+  assert.equal(prevented, true);
+  assert.deepEqual(commandCloseWindows, [popupWindow]);
+
+  ignoreMenuShortcutValues.length = 0;
+  prevented = false;
+  beforeInputHandler({ preventDefault: () => { prevented = true; } }, {
+    type: "keyDown",
+    meta: true,
+    key: "=",
+  });
+  assert.equal(prevented, false);
+  assert.deepEqual(ignoreMenuShortcutValues, [true]);
+
+  beforeInputHandler({ preventDefault() {} }, {
+    type: "keyDown",
+    meta: true,
+    key: "A",
+  });
+  assert.equal(ignoreMenuShortcutValues.at(-1), false);
+});

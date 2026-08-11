@@ -14,7 +14,7 @@ declare global {
     windowIsMaximized?(): Promise<boolean>;
     windowIsFullscreen?(): Promise<boolean>;
     windowFocus?(): Promise<boolean>;
-    setTerminalKeyboardFocus?(focused: boolean): void;
+    setTerminalKeyboardFocus?(focused: boolean, hotkeyScheme?: 'mac' | 'pc' | 'disabled'): void;
     setWindowTitle?(title: string): Promise<boolean>;
     openSessionInNewWindow?(payload: {
       title: string;

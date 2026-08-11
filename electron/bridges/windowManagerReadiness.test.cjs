@@ -1216,7 +1216,7 @@ test("main window leaves terminal font shortcuts for the renderer while terminal
     },
   );
 
-  setTerminalKeyboardFocusForWindow(createdWindow, true);
+  setTerminalKeyboardFocusForWindow(createdWindow, true, "pc");
   ignoreMenuShortcutValues.length = 0;
 
   for (const key of ["=", "-", "0"]) {
@@ -1241,6 +1241,137 @@ test("main window leaves terminal font shortcuts for the renderer while terminal
     key: "A",
   });
   assert.equal(ignoreMenuShortcutValues.at(-1), false);
+});
+
+test("setTerminalKeyboardFocusForWindow stores focus without blanketing menu shortcuts", () => {
+  const ignoreMenuShortcutValues = [];
+  const win = {
+    isDestroyed() { return false; },
+    webContents: {
+      setIgnoreMenuShortcuts(value) {
+        ignoreMenuShortcutValues.push(value);
+      },
+    },
+  };
+
+  assert.equal(setTerminalKeyboardFocusForWindow(win, true, "pc"), true);
+  assert.deepEqual(ignoreMenuShortcutValues, []);
+  assert.equal(setTerminalKeyboardFocusForWindow(win, false), true);
+  assert.deepEqual(ignoreMenuShortcutValues, []);
+});
+
+test("main window keeps native page zoom when terminal scheme uses the other modifier", async () => {
+  let beforeInputHandler = null;
+  const zoomFactorCalls = [];
+  let createdWindow = null;
+
+  class BrowserWindowStub {
+    constructor() {
+      createdWindow = this;
+      this.webContents = {
+        id: 1,
+        on(channel, handler) {
+          if (channel === "before-input-event") beforeInputHandler = handler;
+        },
+        once() {},
+        isDestroyed() { return false; },
+        isCrashed() { return false; },
+        setIgnoreMenuShortcuts() {},
+        setWindowOpenHandler() {},
+        openDevTools() {},
+        getZoomFactor() { return 1; },
+        setZoomFactor(value) { zoomFactorCalls.push(value); },
+      };
+    }
+
+    on() {}
+    once() {}
+    isDestroyed() { return false; }
+    isMaximized() { return false; }
+    isFullScreen() { return false; }
+    getBounds() { return { x: 0, y: 0, width: 1400, height: 900 }; }
+    setBackgroundColor() {}
+    setOpacity() {}
+    async loadURL() {}
+    close() {}
+  }
+
+  const api = createMainWindowApi({
+    mainWindow: null,
+    electronApp: null,
+    currentTheme: "light",
+    isQuitting: false,
+    pendingWindowStateWrite: null,
+    queuedWindowState: null,
+    windowStateCloseRequested: false,
+    DEFAULT_WINDOW_WIDTH: 1400,
+    DEFAULT_WINDOW_HEIGHT: 900,
+    MIN_WINDOW_WIDTH: 1100,
+    MIN_WINDOW_HEIGHT: 640,
+    V8_CACHE_OPTIONS: "bypassHeatCheck",
+    THEME_COLORS: { light: { background: "#fff" } },
+    unhealthyWebContentsIds: new Set(),
+    rendererReadySeenByWebContentsId: new Set(),
+    __dirname,
+    URL,
+    require,
+    console,
+    setTimeout,
+    clearTimeout,
+    getGlobalShortcutBridge() {
+      return { handleWindowClose: () => false };
+    },
+    debugLog() {},
+    resolveFrontendBackgroundColor() { return null; },
+    loadWindowState() { return null; },
+    getDevRendererBaseUrl(url) { return url; },
+    getWindowBoundsState() { return null; },
+    queueWindowStateSave() {},
+    saveWindowStateSync() {},
+    setupDeferredShow() {},
+    createExternalOnlyWindowOpenHandler() { return {}; },
+    createAppWindowOpenHandler() { return {}; },
+    attachOAuthLoadingOverlay() {},
+    registerWindowHandlers() {},
+    requestWindowCommandClose() { return true; },
+    shouldCloseWindowFromInput,
+    applyWindowOpacityToWindow() {},
+    closeSettingsWindow() {},
+    hideSettingsWindow() {},
+  });
+
+  await api.createWindow(
+    {
+      BrowserWindow: BrowserWindowStub,
+      nativeTheme: {},
+      app: {},
+      screen: {},
+      shell: {},
+      ipcMain: {},
+    },
+    {
+      preload: "/tmp/preload.cjs",
+      devServerUrl: "http://localhost:5173",
+      isDev: true,
+      appIcon: null,
+      isMac: false,
+      electronDir: __dirname,
+    },
+  );
+
+  // Mac scheme on Windows: terminal wants Meta+=, native page zoom stays Ctrl+=.
+  setTerminalKeyboardFocusForWindow(createdWindow, true, "mac");
+
+  let prevented = false;
+  beforeInputHandler({ preventDefault: () => { prevented = true; } }, {
+    type: "keyDown",
+    control: true,
+    shift: false,
+    key: "=",
+  });
+
+  assert.equal(prevented, true);
+  assert.deepEqual(zoomFactorCalls, [1.1]);
 });
 
 test("main window clears renderer readiness when the main frame starts navigating", async () => {
