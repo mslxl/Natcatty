@@ -51,7 +51,12 @@ export function isNetworkOrFuseFilesystemType(filesystemType: string | undefined
   const type = filesystemType?.trim().toLowerCase();
   if (!type) return false;
   if (type.includes("clouddrive")) return true;
-  if (/^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs)$/.test(type)) return true;
+  if (
+    /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs|unionfs-fuse|ceph|ceph-fuse|cephfs|glusterfs)$/
+      .test(type)
+  ) {
+    return true;
+  }
   return [
     "rclone",
     "sshfs",

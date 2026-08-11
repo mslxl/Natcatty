@@ -36,6 +36,9 @@ test("aggregateMountedDiskUsage skips NFS/CIFS/SMB and typed mergerfs network mo
       { capacityKey: "//nas.local/share", filesystemType: "cifs", mountPoint: "/mnt/smb", used: 4000, total: 10000 },
       { capacityKey: "mergerfs", filesystemType: "fuse.mergerfs", mountPoint: "/mnt/pool", used: 9000, total: 30000 },
       { capacityKey: "union", filesystemType: "mergerfs", mountPoint: "/mnt/union", used: 1000, total: 5000 },
+      { capacityKey: "gluster", filesystemType: "fuse.glusterfs", mountPoint: "/mnt/gluster", used: 7000, total: 15000 },
+      { capacityKey: "ceph-fuse", filesystemType: "fuse.ceph-fuse", mountPoint: "/mnt/ceph", used: 6000, total: 12000 },
+      { capacityKey: "unionfs", filesystemType: "fuse.unionfs-fuse", mountPoint: "/mnt/unionfs", used: 2000, total: 8000 },
     ]),
     { used: 20, total: 100, percent: 20 },
   );

@@ -870,7 +870,7 @@ function createSessionOpsApi(ctx) {
           fstype = tolower(filesystem_type);
           source_lower = tolower(source);
           is_network_or_fuse = 0;
-          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs)$/) is_network_or_fuse = 1;
+          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs|unionfs-fuse|ceph|ceph-fuse|cephfs|glusterfs)$/) is_network_or_fuse = 1;
           if (fstype ~ /clouddrive/) is_network_or_fuse = 1;
           if (fstype ~ /^(rclone|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|nfs|nfs4|cifs|smb|smb3|smbfs|afs|ceph|cephfs|glusterfs)$/) is_network_or_fuse = 1;
           if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /clouddrive/) is_network_or_fuse = 1;
