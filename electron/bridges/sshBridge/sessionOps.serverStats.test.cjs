@@ -341,6 +341,50 @@ test("getServerStats uses mount metadata when df filesystem types are unavailabl
   assert.equal(result.stats.diskTotal, 100);
 });
 
+function runStatsCommandWithUntypedIpv6NfsDf(command) {
+  const script = [
+    "uname() { printf '%s\\n' Linux; }",
+    "nproc() { printf '%s\\n' 2; }",
+    "ps() { return 1; }",
+    "top() { return 1; }",
+    "mount() { return 1; }",
+    "df() {",
+    "  if [ \"$1\" = '-kPT' ]; then return 1; fi",
+    "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'",
+    "  printf '%s\\n' '/dev/sda1 104857600 20971520 83886080 20% /'",
+    "  printf '%s\\n' '[2001:db8::1]:/export 20971520000 8388608000 12582912000 40% /mnt/nfs6'",
+    "}",
+    command,
+  ].join("\n");
+  return spawnSync("sh", ["-c", script], { encoding: "utf8" });
+}
+
+test("getServerStats excludes bracketed IPv6 NFS sources without filesystem types", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "nfs6.example.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        const execution = runStatsCommandWithUntypedIpv6NfsDf(command);
+        assert.equal(execution.status, 0, execution.stderr);
+        cb(null, fakeStream(execution.stdout));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.stats.disks, [
+    { mountPoint: "/", used: 20, total: 100, percent: 20, capacityKey: "/dev/sda1" },
+  ]);
+  assert.equal(result.stats.diskPercent, 20);
+  assert.equal(result.stats.diskUsed, 20);
+  assert.equal(result.stats.diskTotal, 100);
+});
+
 test("getServerStats does not fall back to a root FUSE quota", async () => {
   const sessions = new Map();
   sessions.set("sid", {

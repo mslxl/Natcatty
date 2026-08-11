@@ -46,6 +46,7 @@ test("aggregateMountedDiskUsage skips NFS-style sources when filesystem type is 
     aggregateMountedDiskUsage([
       { capacityKey: "/dev/sda1", filesystemType: "-", mountPoint: "/", used: 20, total: 100 },
       { capacityKey: "192.168.1.10:/export", filesystemType: "-", mountPoint: "/mnt/nfs", used: 5000, total: 10000 },
+      { capacityKey: "[2001:db8::1]:/export", filesystemType: "-", mountPoint: "/mnt/nfs6", used: 3000, total: 9000 },
       { capacityKey: "//filer/backup", filesystemType: "-", mountPoint: "/mnt/cifs", used: 2000, total: 8000 },
     ]),
     { used: 20, total: 100, percent: 20 },

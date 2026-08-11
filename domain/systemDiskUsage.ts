@@ -21,14 +21,15 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
   if (lower === "/dev/fuse" || lower.endsWith("/fuse")) return true;
   if (lower === "rclone" || lower.startsWith("rclone:")) return true;
   if (lower.includes("clouddrive")) return true;
-  // CIFS/SMB (`//server/share`) and NFS (`host:/export`). Keep synthetic local
-  // keys such as APFS pools and overlay/overlayfs roots out of this heuristic.
+  // CIFS/SMB (`//server/share`) and NFS (`host:/export` or `[ipv6]:/export`).
+  // Keep synthetic local keys such as APFS pools and overlay/overlayfs roots
+  // out of this heuristic.
   if (lower.startsWith("//")) return true;
   if (
     !lower.startsWith("apfs:")
     && !lower.startsWith("overlay:")
     && !lower.startsWith("overlayfs:")
-    && /^[a-z0-9._-]+:\//.test(lower)
+    && /^([a-z0-9._-]+|\[[0-9a-f:]+\]):\//.test(lower)
   ) {
     return true;
   }
