@@ -11,6 +11,7 @@ import {
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
+import { STORAGE_KEY_PORT_FORWARDING_PANEL_WIDTH } from "../infrastructure/config/storageKeys";
 import {
   GroupConfig,
   Host,
@@ -94,6 +95,11 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
+  const portForwardingPanelResizeProps = {
+    resizable: true as const,
+    persistWidthStorageKey: STORAGE_KEY_PORT_FORWARDING_PANEL_WIDTH,
+    resizeAriaLabel: t("vault.panel.resizeWidth"),
+  };
   const {
     rules: _rules,
     selectedRuleId,
@@ -312,6 +318,12 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   // Start new rule - wizard or form based on user preference
   const startNewRule = (type: PortForwardingType) => {
     setShowNewMenu(false);
+    // The new-rule flow replaces an open editor; never leave both side panels mounted.
+    setShowEditPanel(false);
+    setEditingRule(null);
+    setEditDraft({});
+    setSelectedRuleId(null);
+    setShowHostSelector(false);
 
     if (preferFormMode) {
       // Form mode: show all-in-one form
@@ -605,7 +617,6 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       <div
         className={cn(
           "flex-1 flex flex-col min-h-0",
-          showWizard || showEditPanel || showNewForm ? "mr-[360px]" : "",
         )}
       >
         <VaultPageHeader className="z-20">
@@ -773,7 +784,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       </div>
 
       {/* Edit Panel - shown when a rule is selected */}
-      {showEditPanel && editingRule && (
+      {showEditPanel && editingRule && !showHostSelector && (
         <EditPanel
           rule={editingRule}
           draft={editDraft}
@@ -789,11 +800,12 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           }}
           onDelete={() => handleDeleteRule(editingRule)}
           onOpenHostSelector={() => setShowHostSelector(true)}
+          {...portForwardingPanelResizeProps}
         />
       )}
 
       {/* Wizard Panel */}
-      {showWizard && (
+      {showWizard && !showHostSelector && (
         <AsidePanel
           open={true}
           onClose={() => {
@@ -802,6 +814,8 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           }}
           title={isEditing ? t("pf.wizard.editTitle") : t("pf.wizard.newTitle")}
           width="w-[360px]"
+          layout="inline"
+          {...portForwardingPanelResizeProps}
           showBackButton={!!getPrevStep()}
           onBack={
             getPrevStep()
@@ -902,11 +916,13 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           managedSources={managedSources}
           onSaveHost={onSaveHost}
           onCreateGroup={_onCreateGroup}
+          layout="inline"
+          {...portForwardingPanelResizeProps}
         />
       )}
 
       {/* New Form Panel (skip wizard mode) */}
-      {showNewForm && (
+      {showNewForm && !showHostSelector && (
         <NewFormPanel
           draft={newFormDraft}
           hosts={hosts}
@@ -918,6 +934,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           onOpenHostSelector={() => setShowHostSelector(true)}
           onOpenWizard={openWizardFromForm}
           isValid={isNewFormValid()}
+          {...portForwardingPanelResizeProps}
         />
       )}
 
