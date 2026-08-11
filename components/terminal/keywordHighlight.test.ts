@@ -1121,7 +1121,13 @@ test("Enter-driven scroll does not dispose nearby keyword decorations", async ()
 test("user scroll during Enter keeps prior highlights mounted", async () => {
   const raf = installAnimationFrameQueue();
   try {
-    const { term, decorationStates, handlers } = createFakeTerminal("hello DEPLOY world", {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", {
       lineCount: 80,
     });
     term.rows = 3;
@@ -1143,12 +1149,59 @@ test("user scroll during Enter keeps prior highlights mounted", async () => {
     handlers.data?.("\r");
     handlers.writeParsed?.();
     term.buffer.active.viewportY = 10;
+    resetTranslateCount();
     handlers.scroll?.();
+
+    assert.ok(
+      getTranslatedLineIndexes().some((lineY) => lineY >= 10 && lineY < 20),
+      "scrollback browsing during Enter should synchronously scan newly revealed lines",
+    );
+    raf.flush();
 
     assert.equal(
       existingDecorations.filter(({ isDisposed }) => isDisposed).length,
       0,
       "scroll during Enter should keep prior persistent highlights",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("output during Enter does not cancel an active scrollback browse", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, handlers } = createFakeTerminal("hello DEPLOY world", { lineCount: 80 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY = 10;
+    const internals = highlighter as unknown as {
+      pendingRefreshReason: "scroll" | "write" | "full";
+    };
+    // Model a scroll refresh that is pending while the user is browsing
+    // scrollback, then let remote output move the bottom of the buffer.
+    internals.pendingRefreshReason = "scroll";
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.writeParsed?.();
+
+    assert.equal(
+      internals.pendingRefreshReason,
+      "scroll",
+      "remote output must not reclassify an active scrollback browse as Enter output",
     );
     highlighter.dispose();
   } finally {

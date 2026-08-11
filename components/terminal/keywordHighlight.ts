@@ -134,6 +134,7 @@ export class KeywordHighlighter implements IDisposable {
   private static readonly WRITE_BURST_DEBOUNCE_MS = 180;
   private static readonly WRITE_BURST_IMMEDIATE_MIN_INTERVAL_MS = 48;
   private static readonly WRITE_BURST_HIGHLIGHT_PAUSE_MS = 260;
+  private static readonly ENTER_INPUT_GUARD_MS = 600;
   private static readonly WRITE_PRUNE_IDLE_MS = 600;
 
   constructor(term: XTerm) {
@@ -159,7 +160,7 @@ export class KeywordHighlighter implements IDisposable {
           // Drop any pending user-scroll refresh so Enter echo cannot finish a
           // scroll pass that rescans/repaints still-visible keyword decorations
           // before onWriteParsed owns the write path (Ubuntu RTT).
-          if (this.pendingRefreshReason === "scroll") {
+          if (this.pendingRefreshReason === "scroll" && !this.isBrowsingScrollback()) {
             this.cancelQueuedRefreshSchedule();
             this.pendingRefreshReason = "write";
           }
@@ -171,8 +172,10 @@ export class KeywordHighlighter implements IDisposable {
         if (this.enterInputPending) {
           this.scheduleEnterInputIdleClear();
         }
+        const isBrowsingScrollback = this.isBrowsingScrollback();
         const outputDrivenPendingScroll =
           this.pendingRefreshReason === "scroll"
+          && !isBrowsingScrollback
           && (
             this.hasOutputPositionChangedSinceLastSnapshot()
             || this.hasDecorationMarkerShiftSinceLastRefresh()
@@ -712,13 +715,14 @@ export class KeywordHighlighter implements IDisposable {
   }
 
   private triggerViewportChangeRefresh() {
+    const isBrowsingScrollback = this.isBrowsingScrollback();
     // Enter echo often emits onScroll before onWriteParsed. After an idle gap
     // lastWriteAt looks stale and lastRenderRange is usually null (cleared by
-    // the previous write refresh), so the user-scroll path would synchronously
-    // rescan the viewport and flash keywords still on screen. While Enter
-    // output is pending, skip scroll refresh but mark dirty so writeParsed /
-    // idle-clear can catch up (including user scroll during the window).
-    if (this.enterInputPending) {
+    // the previous write refresh), so the output-driven scroll path would
+    // synchronously rescan the viewport and flash keywords still on screen.
+    // Keep real scrollback browsing synchronous; only defer the bottom-pinned
+    // viewport movement that can be caused by the pending Enter echo.
+    if (this.enterInputPending && !isBrowsingScrollback) {
       if (this.pendingRefreshReason === "scroll") {
         this.cancelQueuedRefreshSchedule();
         this.pendingRefreshReason = "write";
@@ -727,8 +731,6 @@ export class KeywordHighlighter implements IDisposable {
       return;
     }
     const now = performance.now();
-    const buffer = this.term.buffer.active;
-    const isBrowsingScrollback = buffer.viewportY < buffer.baseY;
     const isOutputDrivenViewportChange =
       !isBrowsingScrollback &&
       this.lastWriteAt > 0 &&
@@ -1085,7 +1087,12 @@ export class KeywordHighlighter implements IDisposable {
       // scroll refresh (e.g. user scrolled during the post-Enter window).
       this.markVisibleRangeDirty();
       this.triggerRefresh("debounced", "write");
-    }, KeywordHighlighter.WRITE_PRUNE_IDLE_MS);
+    }, KeywordHighlighter.ENTER_INPUT_GUARD_MS);
+  }
+
+  private isBrowsingScrollback(): boolean {
+    const buffer = this.term.buffer.active;
+    return buffer.viewportY < buffer.baseY;
   }
 
   private mergeRefreshReason(current: RefreshReason, next: RefreshReason): RefreshReason {
