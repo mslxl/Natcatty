@@ -100,7 +100,8 @@ type NotesToolbarPanel = "search" | null;
 const toolbarIconButtonClass = "netcatty-tab h-6 w-6 shrink-0 rounded-md p-0 hover:bg-transparent";
 const menuItemClass = "flex h-8 w-full items-center rounded-md px-3 text-left text-sm hover:bg-secondary";
 const NOTES_TREE_DEFAULT_WIDTH = 300;
-const NOTES_TREE_MIN_WIDTH = 220;
+/** Narrow enough for nested folders + ellipsis; toolbar scrolls if needed. */
+const NOTES_TREE_MIN_WIDTH = 160;
 const NOTES_TREE_MAX_WIDTH = 520;
 const NOTE_DRAG_TYPE = "application/x-netcatty-note-id";
 const NOTE_GROUP_DRAG_TYPE = "application/x-netcatty-note-group-path";
@@ -1232,7 +1233,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     return (
       <div
         key={`new-folder-${parent || "root"}`}
-        className="flex h-7 items-center px-2 text-sm"
+        className="flex h-7 min-w-0 items-center px-2 text-sm"
         style={{ paddingLeft: depth * 16 + 4 }}
       >
         <div className="mr-1 h-5 w-4 shrink-0" />
@@ -1492,15 +1493,17 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         {shouldShowNotesTree && (
           <aside
             className={cn(
-              "relative flex flex-col bg-background",
-              isSidebarMode ? "min-w-0 flex-1" : "shrink-0 border-r border-border/60",
+              // min-w-0 + overflow-hidden so tree rows can shrink with the resizable
+              // sidebar and truncate long titles instead of clipping mid-glyph.
+              "relative flex min-w-0 flex-col overflow-hidden bg-background",
+              isSidebarMode ? "flex-1" : "shrink-0 border-r border-border/60",
             )}
             style={isSidebarMode ? undefined : { width: treeWidth }}
           >
-          <div className="flex-shrink-0">
+          <div className="min-w-0 flex-shrink-0 overflow-hidden">
             <div className={cn(
               TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
-              "flex items-center gap-1 border-b border-border/60 px-1.5",
+              "flex min-w-0 items-center gap-1 overflow-x-auto border-b border-border/60 px-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
             )}>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -1645,9 +1648,13 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               </div>
             </div>
           </div>
-          <ScrollArea className="flex-1">
+          {/* Radix ScrollArea viewport child defaults to display:table, which
+              expands to content width and blocks title ellipsis on narrow trees.
+              Force block + min-w-0 so rows shrink with the sidebar (same pattern
+              as AsidePanelContent). */}
+          <ScrollArea className="min-w-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block [&>[data-radix-scroll-area-viewport]>div]:!min-w-0">
             <div
-              className="min-h-full space-y-1 px-1.5 pt-1.5 pb-4"
+              className="min-h-full min-w-0 space-y-1 overflow-hidden px-1.5 pt-1.5 pb-4"
               data-notes-drop-zone="root"
               onDragOver={(event) => {
                 if (!hasNotesTreeDrag(event.dataTransfer)) return;

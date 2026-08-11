@@ -83,6 +83,25 @@ test("NotesManager balances folder and note tree icon sizes", () => {
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-file-text/);
 });
 
+test("NotesManager tree scroll area constrains width so titles can truncate", () => {
+  const markup = renderNotes();
+
+  // Radix ScrollArea viewport child is display:table by default; force block +
+  // min-w-0 so narrowing the notes sidebar ellipsizes long titles instead of
+  // clipping them. React encodes `&` / `>` in class attributes.
+  assert.match(
+    markup,
+    /data-radix-scroll-area-viewport\](?:&gt;|>)div\]:!block/,
+  );
+  assert.match(
+    markup,
+    /data-radix-scroll-area-viewport\](?:&gt;|>)div\]:!min-w-0/,
+  );
+  assert.match(markup, /data-notes-drop-zone="root"/);
+  assert.match(markup, /min-h-full min-w-0 space-y-1 overflow-hidden/);
+  assert.match(markup, /aside class="[^"]*min-w-0[^"]*overflow-hidden/);
+});
+
 test("NotesManager selection helpers keep note and folder selection exclusive", () => {
   const notes = [note(), note({ id: "note-2", title: "Deploy", group: "Deploy" })];
   const noteSelection = getNoteSelectionState(notes[0], false);
