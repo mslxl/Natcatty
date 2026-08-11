@@ -37,7 +37,9 @@ import {
 import { sidePanelHiddenNotesPanelClassName, sidePanelHiddenPanelClassName } from './terminalLayerSidePanelHiddenWrapper';
 import { shouldKeepSftpBrowseSessionInteractive } from './sftpPanelLifecycle';
 
-type SidePanelStableContext = Record<string, any>;
+type SidePanelStableContext = Record<string, any> & {
+  sftpPaneClosedTabIdsRef: React.MutableRefObject<Set<string>>;
+};
 const navigatorPlatform = typeof navigator !== 'undefined' ? navigator.platform : '';
 const EMPTY_VAULT_NOTES: never[] = [];
 const EMPTY_VAULT_HOSTS: never[] = [];
@@ -657,9 +659,11 @@ export function SidePanelMountedContent({
   const retainedAfterCloseTabIdsRef = ctx.sftpRetainedAfterCloseTabIdsRef as
     | React.MutableRefObject<ReadonlySet<string>>
     | undefined;
+  const sftpPaneClosedTabIdsRef = ctx.sftpPaneClosedTabIdsRef;
   const isSftpOwnerPanelOpen = (tabId: string) => shouldKeepSftpBrowseSessionInteractive({
     sidePanelOpen: openTabs.has(tabId),
     retainedAfterClose: retainedAfterCloseTabIdsRef?.current.has(tabId) ?? false,
+    sftpPaneClosed: sftpPaneClosedTabIdsRef.current.has(tabId),
   });
   const isToolVisible = (tabId: string, tool: SidePanelTab) => (
     activeTabId === tabId && sidePanelLayoutHasTool(layouts.get(tabId), tool)

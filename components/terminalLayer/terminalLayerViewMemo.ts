@@ -242,6 +242,7 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'sidePanelOpenTabs',
   'sidePanelLayouts',
   'sftpHostForTab',
+  'sftpPaneClosedTabIdsRef',
   'sftpRetainedAfterCloseTabIdsRef',
   'effectiveHosts',
   'hosts',

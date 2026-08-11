@@ -4,6 +4,12 @@ import test from "node:test";
 
 import type { TransferTask } from "../../domain/models";
 import {
+  closeSidePanelPane,
+  collectSidePanelPanes,
+  createSidePanelLayout,
+  splitSidePanelPane,
+} from "../../domain/sidePanelLayout.ts";
+import {
   SFTP_TRANSFER_HISTORY_RETENTION_MS,
   countTransfersRetainingSftpOwner,
   isTransferRetainingSftpOwner,
@@ -14,6 +20,7 @@ import {
   shouldClearSftpPanelAfterTransferChange,
   shouldKeepSftpMountedAfterClose,
   shouldKeepSftpBrowseSessionInteractive,
+  shouldMarkSftpPaneClosed,
   shouldScheduleSftpRetainedPanelCleanup,
   terminalSftpTransferOwnerId,
 } from "./sftpPanelLifecycle.ts";
@@ -42,6 +49,15 @@ test("single-pane SFTP close uses the shared full-panel cleanup and stops openin
   );
   assert.match(layerSource, /const handleCloseSidePanel = useCallback[\s\S]*closeTerminalSidePanelTab\(activeTabId\)/);
   assert.match(layerSource, /closeTerminalSidePanelTab[\s\S]*setAiMountedTabIds[\s\S]*setNotesOpenNoteByTab/);
+});
+
+test("all SFTP reopen paths clear the split-close marker", () => {
+  const layerSource = readFileSync(new URL("../TerminalLayer.tsx", import.meta.url), "utf8");
+  const effectsSource = readFileSync(new URL("./useTerminalLayerEffects.ts", import.meta.url), "utf8");
+
+  assert.match(layerSource, /if \(targetPanel === 'sftp'\) \{\s*sftpPaneClosedTabIdsRef\.current\.delete\(tabId\)/);
+  assert.match(effectsSource, /const applySftpTargetOnTab[\s\S]*sftpPaneClosedTabIdsRef\.current\.delete\(tabId\)/);
+  assert.match(effectsSource, /navigation\.kind === 'local-copy-panel'[\s\S]*sftpPaneClosedTabIdsRef\.current\.delete\(currentTabId!\)/);
 });
 
 function task(
@@ -79,14 +95,55 @@ test("closing SFTP keeps another tool from reviving its browse session", () => {
   assert.equal(shouldKeepSftpBrowseSessionInteractive({
     sidePanelOpen: true,
     retainedAfterClose: false,
+    sftpPaneClosed: false,
   }), true);
   assert.equal(shouldKeepSftpBrowseSessionInteractive({
     sidePanelOpen: true,
     retainedAfterClose: true,
+    sftpPaneClosed: false,
+  }), false);
+  assert.equal(shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: true,
+    retainedAfterClose: false,
+    sftpPaneClosed: true,
   }), false);
   assert.equal(shouldKeepSftpBrowseSessionInteractive({
     sidePanelOpen: false,
     retainedAfterClose: true,
+    sftpPaneClosed: false,
+  }), false);
+});
+
+test("closing only the SFTP split pane parks its browse session while the other pane stays open", () => {
+  let layout = createSidePanelLayout("sftp", "pane-sftp");
+  layout = splitSidePanelPane(layout, "pane-sftp", "history", "vertical", {
+    paneId: "pane-history",
+    splitId: "split-root",
+  }, 400);
+
+  const sftpPane = collectSidePanelPanes(layout.root).find((pane) => pane.tool === "sftp");
+  assert.ok(sftpPane);
+  const remaining = closeSidePanelPane(layout, sftpPane.id);
+  assert.ok(remaining);
+  assert.deepEqual(collectSidePanelPanes(remaining.root).map((pane) => pane.tool), ["history"]);
+  let sftpPaneClosed = shouldMarkSftpPaneClosed({
+    closingPaneTool: sftpPane.tool,
+    closesWholePanel: false,
+  });
+  assert.equal(shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: true,
+    retainedAfterClose: false,
+    sftpPaneClosed,
+  }), false);
+  sftpPaneClosed = false;
+  assert.equal(shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: true,
+    retainedAfterClose: false,
+    sftpPaneClosed,
+  }), true);
+  assert.equal(shouldMarkSftpPaneClosed({
+    closingPaneTool: sftpPane.tool,
+    closesWholePanel: true,
   }), false);
 });
 
@@ -254,5 +311,6 @@ test("terminal side panel reports transfer activity and uses store-backed retain
   assert.match(stateSource, /takeBrowseSessionsForClose/);
   assert.match(stateSource, /shouldRestoreBrowseSessions/);
   assert.match(slotsSource, /sftpRetainedAfterCloseTabIdsRef/);
+  assert.match(slotsSource, /sftpPaneClosedTabIdsRef/);
   assert.match(slotsSource, /shouldKeepSftpBrowseSessionInteractive\(/);
 });

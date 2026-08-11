@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   moveSidePanelTabMap,
+  moveSidePanelTabSet,
   remapMountedSidePanelTabIds,
   remapSidePanelTabMap,
 } from './workspaceSidePanelTabRemap.ts';
@@ -143,6 +144,51 @@ test('moveSidePanelTabMap demote relocates the workspace mount onto the survivor
       ['term-a', 'host-a'],
     ],
   );
+});
+
+test('moveSidePanelTabSet promotes and demotes the closed-pane marker with ownership', () => {
+  const promoted = moveSidePanelTabSet(new Set(['term-b']), {
+    kind: 'promote',
+    fromTabIds: ['term-a', 'term-b'],
+    toTabId: 'ws-1',
+    preferredFromTabId: 'term-a',
+  });
+  assert.deepEqual([...promoted], ['ws-1']);
+
+  const demoted = moveSidePanelTabSet(new Set(['ws-1']), {
+    kind: 'demote',
+    fromTabId: 'ws-1',
+    toTabIds: ['term-a', 'term-b'],
+    preferredToTabId: 'term-a',
+  });
+  assert.deepEqual([...demoted], ['term-a']);
+});
+
+test('moveSidePanelTabSet does not bind a marker to a different promoted SFTP owner', () => {
+  const marker = moveSidePanelTabSet(new Set(['term-b']), {
+    kind: 'promote',
+    fromTabIds: ['term-a', 'term-b'],
+    toTabId: 'ws-1',
+    preferredFromTabId: 'term-a',
+  }, { ownerTabIds: new Set(['term-a', 'term-b']) });
+
+  assert.deepEqual([...marker], ['term-b']);
+
+  const preferredMarker = moveSidePanelTabSet(new Set(['term-a']), {
+    kind: 'promote',
+    fromTabIds: ['term-a', 'term-b'],
+    toTabId: 'ws-1',
+    preferredFromTabId: 'term-a',
+  }, { ownerTabIds: new Set(['term-a', 'term-b']) });
+  assert.deepEqual([...preferredMarker], ['ws-1']);
+
+  const nonOwnerDemote = moveSidePanelTabSet(new Set(['term-b']), {
+    kind: 'demote',
+    fromTabId: 'ws-1',
+    toTabIds: ['term-a', 'term-b'],
+    preferredToTabId: 'term-a',
+  }, { ownerTabIds: new Set(['term-a']) });
+  assert.deepEqual([...nonOwnerDemote], ['term-b']);
 });
 
 test('mounted tab ids gain the destination tab when the source was mounted', () => {

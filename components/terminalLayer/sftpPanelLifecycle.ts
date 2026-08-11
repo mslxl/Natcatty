@@ -73,8 +73,18 @@ export function shouldKeepSftpMountedAfterClose(params: {
 export function shouldKeepSftpBrowseSessionInteractive(params: {
   sidePanelOpen: boolean;
   retainedAfterClose: boolean;
+  sftpPaneClosed: boolean;
 }): boolean {
-  return params.sidePanelOpen && !params.retainedAfterClose;
+  return params.sidePanelOpen
+    && !params.retainedAfterClose
+    && !params.sftpPaneClosed;
+}
+
+export function shouldMarkSftpPaneClosed(params: {
+  closingPaneTool: string | null | undefined;
+  closesWholePanel: boolean;
+}): boolean {
+  return !params.closesWholePanel && params.closingPaneTool === 'sftp';
 }
 
 export function shouldCloseSftpSidePanel(params: {
