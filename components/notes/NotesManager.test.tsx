@@ -99,7 +99,12 @@ test("NotesManager tree scroll area constrains width so titles can truncate", ()
   );
   assert.match(markup, /data-notes-drop-zone="root"/);
   assert.match(markup, /min-h-full min-w-0 space-y-1 overflow-hidden/);
-  assert.match(markup, /aside class="[^"]*min-w-0[^"]*overflow-hidden/);
+  // Aside stays unclipped so the resize handle's outer half remains hit-testable;
+  // truncation is enforced by the inner tree shell + ScrollArea constraints.
+  assert.match(markup, /aside class="[^"]*min-w-0[^"]*flex-col bg-background/);
+  assert.match(markup, /flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden/);
+  assert.match(markup, /role="separator"/);
+  assert.match(markup, /translate-x-1\/2 cursor-col-resize/);
 });
 
 test("NotesManager selection helpers keep note and folder selection exclusive", () => {

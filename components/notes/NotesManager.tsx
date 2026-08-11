@@ -1493,13 +1493,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         {shouldShowNotesTree && (
           <aside
             className={cn(
-              // min-w-0 + overflow-hidden so tree rows can shrink with the resizable
-              // sidebar and truncate long titles instead of clipping mid-glyph.
-              "relative flex min-w-0 flex-col overflow-hidden bg-background",
+              // min-w-0 on the aside; overflow-hidden stays on the inner tree shell
+              // so the resize separator's translate-x-1/2 hit area is not clipped.
+              "relative flex min-w-0 flex-col bg-background",
               isSidebarMode ? "flex-1" : "shrink-0 border-r border-border/60",
             )}
             style={isSidebarMode ? undefined : { width: treeWidth }}
           >
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="min-w-0 flex-shrink-0 overflow-hidden">
             <div className={cn(
               TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
@@ -1674,6 +1675,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               )}
             </div>
           </ScrollArea>
+          </div>
           {!isSidebarMode && (
             <div
               role="separator"
