@@ -513,7 +513,10 @@ export const useTerminalBackend = () => {
     return bridge?.onZmodemEvent?.(sessionId, cb) ?? (() => {});
   }, []);
 
-  const getSessionPwd = useCallback(async (sessionId: string, options?: { allowHomeFallback?: boolean }) => {
+  const getSessionPwd = useCallback(async (
+    sessionId: string,
+    options?: { allowHomeFallback?: boolean; allowLoginShellFallback?: boolean },
+  ) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.getSessionPwd) return { success: false, error: 'getSessionPwd unavailable' };
     return bridge.getSessionPwd(sessionId, options);

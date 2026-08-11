@@ -16,7 +16,10 @@ test("resolvePreferredTerminalCwd prefers fresh backend pwd when requested", asy
     preferFreshBackend: true,
     getSessionPwd: async (_sessionId, options) => {
       backendCalls += 1;
-      assert.deepEqual(options, { allowHomeFallback: false });
+      assert.deepEqual(options, {
+        allowHomeFallback: false,
+        allowLoginShellFallback: true,
+      });
       return { success: true, cwd: "/lost+found" };
     },
   });
@@ -47,7 +50,10 @@ test("resolvePreferredTerminalCwd falls back to renderer cwd when fresh backend 
     sessionId: "session-1",
     preferFreshBackend: true,
     getSessionPwd: async (_sessionId, options) => {
-      assert.deepEqual(options, { allowHomeFallback: false });
+      assert.deepEqual(options, {
+        allowHomeFallback: false,
+        allowLoginShellFallback: true,
+      });
       return { success: false, error: "Could not determine cwd" };
     },
   });

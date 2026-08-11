@@ -496,7 +496,14 @@ async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: strin
     }
   }
 
-  const probe = async (id: string, options?: { allowHomeFallback?: boolean; timeoutMs?: number }) =>
+  const probe = async (
+    id: string,
+    options?: {
+      allowHomeFallback?: boolean;
+      allowLoginShellFallback?: boolean;
+      timeoutMs?: number;
+    },
+  ) =>
     (await bridge?.getSessionPwd?.(id, options)) ?? { success: false };
   return captureInheritedCwd(source, probe, { liveCwd, allowSshProbe });
 }

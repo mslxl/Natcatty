@@ -238,6 +238,11 @@ function createSessionOpsApi(ctx) {
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
+      // Login-shell fallback defaults to the same gate as ~ guessing so callers
+      // that pass allowHomeFallback: false (e.g. captureInheritedCwd) keep the
+      // pre-#2886 failure path and can fall through to lastCwd. SFTP fresh-cwd
+      // probes opt in explicitly with allowLoginShellFallback: true.
+      const allowLoginShellFallback = payload?.allowLoginShellFallback ?? allowHomeFallback;
       const requestedTimeoutMs = Number(payload?.timeoutMs);
       const timeoutMs = Number.isFinite(requestedTimeoutMs)
         ? Math.min(Math.max(requestedTimeoutMs, 100), 5000)
@@ -282,14 +287,17 @@ function createSessionOpsApi(ctx) {
         //   2. Follows foreground child shells only, which covers bash->fish
         //      without mistaking background shell scripts for the active shell.
         //   3. Reads /proc/<pid>/cwd via readlink.
-        //   4. Falls back to the user's home directory if the caller allows it.
+        //   4. If the active (su'd) shell cwd is unreadable, falls back to the
+        //      same-uid login shell cwd when allowed.
+        //   5. Falls back to the user's home directory if the caller allows it.
         //
         // `exec` makes sh replace the user's login shell (fish/bash/...)
         // so sh keeps the same PID and $PPID = sshd. Starting another shell
         // without exec would make $PPID point at the intermediate shell instead.
         const posixScript = `SELF=$$
     TARGET_LOGIN=${targetLoginPid}
-    ALLOW_FALLBACK=${allowHomeFallback ? "1" : "0"}
+    ALLOW_HOME_FALLBACK=${allowHomeFallback ? "1" : "0"}
+    ALLOW_LOGIN_FALLBACK=${allowLoginShellFallback ? "1" : "0"}
     # Find the user's interactive shell on this SSH connection.
     # Prefer the one attached to a controlling tty (the user's shell): probe exec
     # channels like this one have no tty ("?"), and ps output is unsorted, so
@@ -396,13 +404,14 @@ function createSessionOpsApi(ctx) {
       # perms on /proc, lsof permissions on macOS/BSD), so this unprivileged
       # exec channel cannot read a su'd / sudo'd shell owned by another user.
       # Fall back to the same-uid login shell's cwd before giving up to the
-      # home directory (#1065 review).
-      if [ -z "$cwd" ] && [ "$pid" != "$login" ] && [ "$ALLOW_FALLBACK" = "1" ]; then
+      # home directory (#1065 review). Callers that need this after disabling
+      # ~ guessing (SFTP preferFreshBackend) must set ALLOW_LOGIN_FALLBACK (#2886).
+      if [ -z "$cwd" ] && [ "$pid" != "$login" ] && [ "$ALLOW_LOGIN_FALLBACK" = "1" ]; then
         cwd=$(read_shell_cwd "$login")
       fi
       [ -n "$cwd" ] && printf '%s\\n' "$cwd" && exit 0
     fi
-    [ "$ALLOW_FALLBACK" = "1" ] || exit 1
+    [ "$ALLOW_HOME_FALLBACK" = "1" ] || exit 1
     emit_home() {
       case "$1" in
         /*) printf '%s\\n' "$1"; exit 0 ;;

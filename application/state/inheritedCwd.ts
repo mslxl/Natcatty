@@ -2,7 +2,11 @@ import type { TerminalSession } from "../../domain/models";
 
 export type SessionPwdProbe = (
   sessionId: string,
-  options?: { allowHomeFallback?: boolean; timeoutMs?: number },
+  options?: {
+    allowHomeFallback?: boolean;
+    allowLoginShellFallback?: boolean;
+    timeoutMs?: number;
+  },
 ) => Promise<{ success: boolean; cwd?: string }>;
 
 type CaptureSession = Pick<TerminalSession, "id" | "protocol" | "status" | "lastCwd" | "localStartDir">;
