@@ -18,6 +18,7 @@ import {
 import { getNotesSnapshot } from '../state/notesStore';
 import { useVaultAgentBridge } from '../state/useVaultAgentBridge';
 import { useWindowControls } from '../state/useWindowControls';
+import { useTerminalKeyboardFocus } from '../state/useTerminalKeyboardFocus';
 import { useEditorTabChromeList } from '../state/editorTabStore';
 import {
   isPluginViewTabId,
@@ -132,11 +133,14 @@ export function AppSideEffects() {
     terminalSettings,
     hotkeyScheme,
     keyBindings,
+    disableTerminalFontZoom,
     isHotkeyRecording,
     showSftpTab,
     shellOnlyTabNumberShortcuts,
     workspaceFocusStyle,
   } = settings;
+
+  useTerminalKeyboardFocus(hotkeyScheme !== 'disabled' && !disableTerminalFontZoom);
 
   const discoveredShells = useDiscoveredShells();
 
