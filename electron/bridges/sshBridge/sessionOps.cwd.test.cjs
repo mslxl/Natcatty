@@ -247,6 +247,7 @@ test("cwd probe keeps login-shell fallback when home fallback is disabled (#2886
   const result = await api.getSessionPwd(null, {
     sessionId: "session-1",
     allowHomeFallback: false,
+    allowLoginShellFallback: true,
   });
 
   assert.deepEqual(result, { success: true, cwd: "/home/alice" });
@@ -257,4 +258,32 @@ test("cwd probe keeps login-shell fallback when home fallback is disabled (#2886
     /if \[ -z "\$cwd" \] && \[ "\$pid" != "\$login" \] && \[ "\$ALLOW_LOGIN_FALLBACK" = "1" \]; then/,
   );
   assert.match(command, /\[ "\$ALLOW_HOME_FALLBACK" = "1" \] \|\| exit 1/);
+});
+
+test("cwd probe couples login-shell fallback to home fallback when unset", async () => {
+  // captureInheritedCwd passes allowHomeFallback: false without opting into
+  // login-shell fallback; the backend must keep ALLOW_LOGIN_FALLBACK=0 so a
+  // failed active-shell probe fails closed and the caller can fall through to
+  // lastCwd instead of inheriting the parent login shell directory after sudo.
+  let command = "";
+  const session = {
+    shellPid: "4242",
+    connRef: { count: 1 },
+    stream: {},
+    conn: {
+      exec(nextCommand, callback) {
+        command = nextCommand;
+        callback(null, makePwdStream("/home/alice", "4242"));
+      },
+    },
+  };
+  const api = makeApi(session);
+
+  await api.getSessionPwd(null, {
+    sessionId: "session-1",
+    allowHomeFallback: false,
+  });
+
+  assert.match(command, /ALLOW_HOME_FALLBACK=0/);
+  assert.match(command, /ALLOW_LOGIN_FALLBACK=0/);
 });

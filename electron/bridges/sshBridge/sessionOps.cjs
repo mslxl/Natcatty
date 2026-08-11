@@ -238,11 +238,11 @@ function createSessionOpsApi(ctx) {
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
-      // Login-shell fallback is independent of home guessing. After su/sudo the
-      // active shell cwd is often unreadable to this login-uid exec channel;
-      // the same-uid login shell cwd is still a real path (issue #2886) and
-      // must remain available when preferFreshBackend only disables ~ guesses.
-      const allowLoginShellFallback = payload?.allowLoginShellFallback !== false;
+      // Login-shell fallback defaults to the same gate as ~ guessing so callers
+      // that pass allowHomeFallback: false (e.g. captureInheritedCwd) keep the
+      // pre-#2886 failure path and can fall through to lastCwd. SFTP fresh-cwd
+      // probes opt in explicitly with allowLoginShellFallback: true.
+      const allowLoginShellFallback = payload?.allowLoginShellFallback ?? allowHomeFallback;
       const requestedTimeoutMs = Number(payload?.timeoutMs);
       const timeoutMs = Number.isFinite(requestedTimeoutMs)
         ? Math.min(Math.max(requestedTimeoutMs, 100), 5000)
@@ -404,9 +404,8 @@ function createSessionOpsApi(ctx) {
       # perms on /proc, lsof permissions on macOS/BSD), so this unprivileged
       # exec channel cannot read a su'd / sudo'd shell owned by another user.
       # Fall back to the same-uid login shell's cwd before giving up to the
-      # home directory (#1065 review). This login-shell fallback is gated
-      # separately from ~ guessing so preferFreshBackend / allowHomeFallback
-      # false still recovers a writable path after sudo su (#2886).
+      # home directory (#1065 review). Callers that need this after disabling
+      # ~ guessing (SFTP preferFreshBackend) must set ALLOW_LOGIN_FALLBACK (#2886).
       if [ -z "$cwd" ] && [ "$pid" != "$login" ] && [ "$ALLOW_LOGIN_FALLBACK" = "1" ]; then
         cwd=$(read_shell_cwd "$login")
       fi
