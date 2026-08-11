@@ -82,6 +82,30 @@ test("VaultTree labels use CJK-safe line-height under truncate", () => {
   assert.doesNotMatch(itemMarkup, /leading-none/);
 });
 
+test("VaultTree labels expose full title and keep actions from shrinking", () => {
+  const groupMarkup = renderToStaticMarkup(
+    <VaultTreeGroupRow
+      name="Dokploy服务信息"
+      depth={0}
+      actions={<button type="button" data-row-action="menu">…</button>}
+    />,
+  );
+  const itemMarkup = renderToStaticMarkup(
+    <VaultTreeItemRow
+      label="Security Audit Report - 完整版"
+      depth={1}
+      actions={<button type="button" data-row-action="menu">…</button>}
+    />,
+  );
+
+  assert.match(groupMarkup, /title="Dokploy服务信息"/);
+  assert.match(groupMarkup, /min-w-0 truncate/);
+  assert.match(groupMarkup, /shrink-0[^>]*>[\s\S]*data-row-action="menu"/);
+  assert.match(itemMarkup, /title="Security Audit Report - 完整版"/);
+  assert.match(itemMarkup, /min-w-0 truncate leading-5/);
+  assert.match(itemMarkup, /shrink-0[^>]*>[\s\S]*data-row-action="menu"/);
+});
+
 test("VaultTreeInlineRenameInput uses shared inline edit marker", () => {
   const markup = renderToStaticMarkup(
     <VaultTreeInlineRenameInput
