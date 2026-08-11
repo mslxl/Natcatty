@@ -616,7 +616,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       {/* Main Content */}
       <div
         className={cn(
-          "flex-1 flex flex-col min-h-0",
+          "flex-1 min-w-0 flex flex-col min-h-0",
         )}
       >
         <VaultPageHeader className="z-20">
