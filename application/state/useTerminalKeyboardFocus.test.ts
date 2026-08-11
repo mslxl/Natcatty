@@ -29,8 +29,8 @@ test("terminal font shortcut descriptors follow active and disabled bindings", (
   ] as const;
 
   assert.deepEqual(resolveTerminalFontShortcuts(bindings, "mac"), [
-    { key: "=", meta: true, control: false, alt: false, shift: false },
-    { key: "0", meta: true, control: false, alt: false, shift: false },
+    { key: "=", code: "Equal", meta: true, control: false, alt: false, shift: false },
+    { key: "0", code: "Digit0", meta: true, control: false, alt: false, shift: false },
   ]);
   assert.deepEqual(resolveTerminalFontShortcuts(bindings, "disabled"), []);
 });

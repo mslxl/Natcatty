@@ -6,6 +6,7 @@ const TERMINAL_KEYBOARD_TARGET_SELECTOR =
 
 export type TerminalKeyboardShortcut = {
   key: string;
+  code?: string;
   meta: boolean;
   control: boolean;
   alt: boolean;
@@ -21,6 +22,35 @@ const TERMINAL_FONT_SIZE_ACTIONS = new Set([
 const normalizeShortcutKey = (key: string): string =>
   /^[A-Za-z]$/.test(key) ? key.toLowerCase() : key;
 
+const SHORTCUT_KEY_CODES: Record<string, string> = {
+  "0": "Digit0",
+  "1": "Digit1",
+  "2": "Digit2",
+  "3": "Digit3",
+  "4": "Digit4",
+  "5": "Digit5",
+  "6": "Digit6",
+  "7": "Digit7",
+  "8": "Digit8",
+  "9": "Digit9",
+  "-": "Minus",
+  "=": "Equal",
+  "[": "BracketLeft",
+  "]": "BracketRight",
+  "\\": "Backslash",
+  ";": "Semicolon",
+  "'": "Quote",
+  ",": "Comma",
+  ".": "Period",
+  "/": "Slash",
+  "`": "Backquote",
+};
+
+const resolveShortcutCode = (key: string): string | undefined => {
+  if (/^[A-Za-z]$/.test(key)) return `Key${key.toUpperCase()}`;
+  return SHORTCUT_KEY_CODES[key];
+};
+
 export function resolveTerminalFontShortcuts(
   keyBindings: readonly KeyBinding[],
   hotkeyScheme: "disabled" | "mac" | "pc",
@@ -34,6 +64,7 @@ export function resolveTerminalFontShortcuts(
     const isMac = hotkeyScheme === "mac";
     return [{
       key: normalizeShortcutKey(parsed.key),
+      code: resolveShortcutCode(parsed.key),
       meta: isMac ? modifiers.has("⌘") : modifiers.has("Win"),
       control: isMac ? modifiers.has("⌃") : modifiers.has("Ctrl"),
       alt: isMac ? modifiers.has("⌥") : modifiers.has("Alt"),
