@@ -1413,6 +1413,14 @@ test("terminal font shortcut routing follows the selected shortcut descriptor", 
     alt: false,
     shift: false,
   }]), true);
+  assert.equal(isTerminalFontShortcutInput({ ...input("control"), key: "A", code: "KeyQ" }, [{
+    key: "a",
+    code: "KeyA",
+    meta: false,
+    control: true,
+    alt: false,
+    shift: false,
+  }]), true);
 });
 
 test("main window clears renderer readiness when the main frame starts navigating", async () => {
