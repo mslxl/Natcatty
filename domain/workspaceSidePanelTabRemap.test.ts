@@ -189,6 +189,14 @@ test('moveSidePanelTabSet does not bind a marker to a different promoted SFTP ow
     preferredToTabId: 'term-a',
   }, { ownerTabIds: new Set(['term-a']) });
   assert.deepEqual([...nonOwnerDemote], ['term-b']);
+
+  const absentMarkerDemote = moveSidePanelTabSet(new Set(), {
+    kind: 'demote',
+    fromTabId: 'ws-1',
+    toTabIds: ['term-a', 'term-b'],
+    preferredToTabId: 'term-a',
+  }, { ownerTabIds: new Set(['ws-1']) });
+  assert.deepEqual([...absentMarkerDemote], []);
 });
 
 test('mounted tab ids gain the destination tab when the source was mounted', () => {

@@ -167,7 +167,7 @@ export function moveSidePanelTabSet(
     && remap.toTabIds.includes(remap.preferredToTabId)
     ? remap.preferredToTabId
     : remap.toTabIds.find(Boolean);
-  if (preferredTo) next.add(preferredTo);
+  if (source.has(remap.fromTabId) && preferredTo) next.add(preferredTo);
   next.delete(remap.fromTabId);
   return next;
 }
