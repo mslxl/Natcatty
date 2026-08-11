@@ -94,7 +94,7 @@ const forcesMenuOverMouseTracking = ({
   forceMenuInAlternateScreen?: boolean;
 }): boolean => Boolean(forceMenuInAlternateScreen && rightClickBehavior === "context-menu");
 
-const isMouseTrackingActive = ({
+export const isMouseTrackingActive = ({
   mouseTracking,
   terminalMouseTrackingMode,
 }: Pick<MouseTrackingContextMenuCaptureState, "mouseTracking" | "terminalMouseTrackingMode">): boolean =>
