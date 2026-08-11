@@ -242,6 +242,7 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'sidePanelOpenTabs',
   'sidePanelLayouts',
   'sftpHostForTab',
+  'sftpRetainedAfterCloseTabIdsRef',
   'effectiveHosts',
   'hosts',
   // SFTP Connected picker reads live terminal sessions from stable ctx.

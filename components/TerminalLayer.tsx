@@ -2155,6 +2155,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sftpHostForTab,
     sftpInitialLocationForTab,
     sftpPendingUploadsForTab,
+    sftpRetainedAfterCloseTabIdsRef,
     sftpShowHiddenFiles,
     SftpSidePanel,
     sftpUseCompressedUpload,

@@ -13,6 +13,7 @@ import {
   shouldCloseSftpSidePanel,
   shouldClearSftpPanelAfterTransferChange,
   shouldKeepSftpMountedAfterClose,
+  shouldKeepSftpBrowseSessionInteractive,
   shouldScheduleSftpRetainedPanelCleanup,
   terminalSftpTransferOwnerId,
 } from "./sftpPanelLifecycle.ts";
@@ -72,6 +73,21 @@ test("closing the panel keeps SFTP mounted while an external editor temp is open
 
 test("closing an idle panel still releases its SFTP state", () => {
   assert.equal(shouldKeepSftpMountedAfterClose({ activeTransfersCount: 0 }), false);
+});
+
+test("closing SFTP keeps another tool from reviving its browse session", () => {
+  assert.equal(shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: true,
+    retainedAfterClose: false,
+  }), true);
+  assert.equal(shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: true,
+    retainedAfterClose: true,
+  }), false);
+  assert.equal(shouldKeepSftpBrowseSessionInteractive({
+    sidePanelOpen: false,
+    retainedAfterClose: true,
+  }), false);
 });
 
 test("a transfer retained by close keeps its history after completion", () => {
@@ -237,5 +253,6 @@ test("terminal side panel reports transfer activity and uses store-backed retain
   assert.match(stateSource, /activeExternalEditCount/);
   assert.match(stateSource, /takeBrowseSessionsForClose/);
   assert.match(stateSource, /shouldRestoreBrowseSessions/);
-  assert.match(slotsSource, /ownerPanelOpen=\{openTabs\.has\(tabId\)\}/);
+  assert.match(slotsSource, /sftpRetainedAfterCloseTabIdsRef/);
+  assert.match(slotsSource, /shouldKeepSftpBrowseSessionInteractive\(/);
 });
