@@ -38,15 +38,13 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
 export function isNetworkOrFuseFilesystemType(filesystemType: string | undefined): boolean {
   const type = filesystemType?.trim().toLowerCase();
   if (!type) return false;
-  if (type.startsWith("fuse") || type.includes("clouddrive")) return true;
+  if (type.includes("clouddrive")) return true;
+  if (/^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs)$/.test(type)) return true;
   return [
     "rclone",
     "sshfs",
     "s3fs",
     "gcsfuse",
-    "mergerfs",
-    "unionfs",
-    "unionfs-fuse",
   ].includes(type);
 }
 

@@ -261,7 +261,7 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
   return spawnSync("sh", ["-c", script], { encoding: "utf8" });
 }
 
-function runStatsCommandWithRootFuseDf(command) {
+function runStatsCommandWithRootFuseDf(command, filesystemType = "fuse.rclone") {
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -271,7 +271,7 @@ function runStatsCommandWithRootFuseDf(command) {
     "df() {",
     "  if [ \"$1\" != '-kPT' ]; then return 1; fi",
     "  printf '%s\\n' 'Filesystem Type 1024-blocks Used Available Capacity Mounted on'",
-    "  printf '%s\\n' 'remote:gdrive fuseblk 1073741824 536870912 536870912 50% /'",
+    `  printf '%s\\n' 'remote:gdrive ${filesystemType} 1073741824 536870912 536870912 50% /'`,
     "}",
     command,
   ].join("\n");
@@ -354,6 +354,32 @@ test("getServerStats does not fall back to a root FUSE quota", async () => {
   assert.equal(result.stats.diskPercent, null);
   assert.equal(result.stats.diskUsed, null);
   assert.equal(result.stats.diskTotal, null);
+});
+
+test("getServerStats keeps a local fuseblk root filesystem", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "ntfs-root.example.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        const execution = runStatsCommandWithRootFuseDf(command, "fuseblk");
+        assert.equal(execution.status, 0, execution.stderr);
+        cb(null, fakeStream(execution.stdout));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.stats.disks, [
+    { mountPoint: "/", used: 512, total: 1024, percent: 50, capacityKey: "remote:gdrive", filesystemType: "fuseblk" },
+  ]);
+  assert.equal(result.stats.diskPercent, 50);
+  assert.equal(result.stats.diskUsed, 512);
+  assert.equal(result.stats.diskTotal, 1024);
 });
 
 test("getServerStats reads commands after BusyBox top's CPU column", async () => {

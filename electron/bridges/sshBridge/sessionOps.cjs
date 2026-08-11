@@ -870,9 +870,9 @@ function createSessionOpsApi(ctx) {
           fstype = tolower(filesystem_type);
           source_lower = tolower(source);
           is_network_or_fuse = 0;
-          if (fstype ~ /^fuse/) is_network_or_fuse = 1;
+          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs)$/) is_network_or_fuse = 1;
           if (fstype ~ /clouddrive/) is_network_or_fuse = 1;
-          if (fstype ~ /^(rclone|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse)$/) is_network_or_fuse = 1;
+          if (fstype ~ /^(rclone|sshfs|s3fs|gcsfuse)$/) is_network_or_fuse = 1;
           if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /clouddrive/) is_network_or_fuse = 1;
           if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /^(fuse|fuse\..*|rclone|rclone:.*|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|ufs)$/) is_network_or_fuse = 1;
           if (is_network_or_fuse) next;
@@ -888,8 +888,8 @@ function createSessionOpsApi(ctx) {
           printf "%s:%.6f:%.6f:%s:%s,", mount_point, used, total, percent, metadata;
         }
       '`;
-      const linuxDiskTable = `{ mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; df -kPT 2>/dev/null || df -kP 2>/dev/null; }`;
-      const linuxDiskRoot = `{ mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; df -kPT / 2>/dev/null || df -kP / 2>/dev/null; }`;
+      const linuxDiskTable = `{ LC_ALL=C mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT 2>/dev/null || LC_ALL=C df -kP 2>/dev/null; }`;
+      const linuxDiskRoot = `{ LC_ALL=C mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT / 2>/dev/null || LC_ALL=C df -kP / 2>/dev/null; }`;
     
       // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
       // This command is designed to work across most Linux distributions

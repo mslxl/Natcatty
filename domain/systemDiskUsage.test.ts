@@ -48,6 +48,15 @@ test("aggregateMountedDiskUsage keeps a local UFS filesystem when its type is re
   );
 });
 
+test("aggregateMountedDiskUsage keeps a local fuseblk filesystem", () => {
+  assert.deepEqual(
+    aggregateMountedDiskUsage([
+      { capacityKey: "/dev/sdb1", filesystemType: "fuseblk", mountPoint: "/media/ntfs", used: 5, total: 10 },
+    ]),
+    { used: 5, total: 10, percent: 50 },
+  );
+});
+
 test("aggregateMountedDiskUsage uses source heuristics when filesystem type is unavailable", () => {
   assert.equal(
     aggregateMountedDiskUsage([
