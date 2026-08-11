@@ -157,6 +157,13 @@ export class KeywordHighlighter implements IDisposable {
             clearTimeout(this.enterInputIdleTimer);
             this.enterInputIdleTimer = null;
           }
+          // Drop any pending user-scroll refresh so Enter echo cannot finish a
+          // scroll pass that rescans/repaints still-visible keyword decorations
+          // before onWriteParsed owns the write path (Ubuntu RTT).
+          if (this.pendingRefreshReason === "scroll") {
+            this.cancelQueuedRefreshSchedule();
+            this.pendingRefreshReason = "write";
+          }
         }
       }),
       // When new data is written, refresh on the next frame so highlights land
@@ -706,6 +713,20 @@ export class KeywordHighlighter implements IDisposable {
   }
 
   private triggerViewportChangeRefresh() {
+    // Enter echo often emits onScroll before onWriteParsed. After an idle gap
+    // lastWriteAt looks stale and lastRenderRange is usually null (cleared by
+    // the previous write refresh), so the user-scroll path would synchronously
+    // rescan the viewport and flash keywords still on screen. While Enter
+    // output is pending, skip scroll refresh but mark dirty so writeParsed /
+    // idle-clear can catch up (including user scroll during the window).
+    if (this.enterInputPending) {
+      if (this.pendingRefreshReason === "scroll") {
+        this.cancelQueuedRefreshSchedule();
+        this.pendingRefreshReason = "write";
+      }
+      this.markVisibleRangeDirty();
+      return;
+    }
     const now = performance.now();
     const buffer = this.term.buffer.active;
     const isBrowsingScrollback = buffer.viewportY < buffer.baseY;
@@ -1061,6 +1082,10 @@ export class KeywordHighlighter implements IDisposable {
     this.enterInputIdleTimer = setTimeout(() => {
       this.enterInputIdleTimer = null;
       this.enterInputPending = false;
+      // Catch up any viewport motion deferred while Enter protection blocked
+      // scroll refresh (e.g. user scrolled during the post-Enter window).
+      this.markVisibleRangeDirty();
+      this.triggerRefresh("debounced", "write");
     }, KeywordHighlighter.WRITE_PRUNE_IDLE_MS);
   }
 

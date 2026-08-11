@@ -2083,6 +2083,72 @@ test("pressing Enter does not repaint after keyword markers move", async () => {
   }
 });
 
+test("idle Enter scroll before writeParsed does not rescan visible keywords", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+      refreshCalls,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    // Ordinary write refreshes clear lastRenderRange. An idle prompt then has no
+    // scroll coverage hint, so Enter echo onScroll (before writeParsed, Ubuntu RTT)
+    // would otherwise take the immediate user-scroll path and rescan the viewport.
+    const internals = highlighter as unknown as {
+      lastWriteAt: number;
+      lastRenderRange: { start: number; end: number } | null;
+    };
+    internals.lastWriteAt = performance.now() - 10_000;
+    internals.lastRenderRange = null;
+    resetTranslateCount();
+    resetRefreshCalls();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+
+    assert.equal(
+      getTranslateCount(),
+      0,
+      "Enter-pending scroll before writeParsed must not rescan visible keywords",
+    );
+    assert.deepEqual(
+      refreshCalls,
+      [],
+      "Enter-pending scroll before writeParsed must not force a keyword repaint",
+    );
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "Enter-pending scroll must keep existing keyword decorations mounted",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("long-line pressure avoids scanning across a whole soft-wrapped logical line", () => {
   const raf = installAnimationFrameQueue();
   try {
