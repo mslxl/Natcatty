@@ -380,15 +380,25 @@ async function executeSnippetOrScriptRun(
     }
   }
 
-  const command = applySnippetVariables(snippet.command, variableValues);
+  const applied = applySnippetVariables(snippet.command, variableValues);
+  if (!applied.ok) {
+    return { ok: false, error: `Missing snippet variable "${applied.missing.join('", "')}".` };
+  }
+  const command = applied.command;
   const bridge = netcattyBridge.get();
   if (!bridge?.aiExec) {
     return { ok: false, error: 'Terminal execution bridge is unavailable.' };
   }
   const chatSessionId = typeof params.chatSessionId === 'string' ? params.chatSessionId : undefined;
   const result = await bridge.aiExec(sessionId, command, chatSessionId);
-  if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
-    return { ok: false, error: (result as { error?: string }).error || 'Snippet execution failed.' };
+  // Real execution failures (timeout, disconnect, no stream) carry an `error`
+  // field. A bare ok:false with exitCode/stdout means the command ran and
+  // exited non-zero — preserve that evidence instead of masking it (#2718).
+  const execError = result && typeof result === 'object' && 'ok' in result && result.ok === false
+    ? (result as { error?: string }).error
+    : undefined;
+  if (execError) {
+    return { ok: false, error: execError, sessionId, snippetId: snippet.id, command, kind: 'snippet', result };
   }
   return { ok: true, sessionId, snippetId: snippet.id, command, kind: 'snippet', result };
 }
