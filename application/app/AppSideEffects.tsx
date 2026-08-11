@@ -140,10 +140,7 @@ export function AppSideEffects() {
     workspaceFocusStyle,
   } = settings;
 
-  useTerminalKeyboardFocus(
-    hotkeyScheme !== 'disabled' && !disableTerminalFontZoom,
-    hotkeyScheme,
-  );
+  useTerminalKeyboardFocus(hotkeyScheme !== 'disabled' && !disableTerminalFontZoom);
 
   const discoveredShells = useDiscoveredShells();
 

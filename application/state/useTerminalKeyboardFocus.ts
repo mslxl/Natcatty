@@ -2,12 +2,7 @@ import { useEffect } from "react";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import { installTerminalKeyboardFocusTracking } from "./terminalKeyboardFocus";
 
-type TerminalHotkeyScheme = "disabled" | "mac" | "pc";
-
-export function useTerminalKeyboardFocus(
-  enabled = true,
-  hotkeyScheme?: TerminalHotkeyScheme,
-): void {
+export function useTerminalKeyboardFocus(enabled = true): void {
   useEffect(() => {
     if (!enabled) return undefined;
     const bridge = netcattyBridge.get();
@@ -18,7 +13,7 @@ export function useTerminalKeyboardFocus(
       if (focused === lastPublished) return;
       lastPublished = focused;
       try {
-        bridge.setTerminalKeyboardFocus?.(focused, hotkeyScheme);
+        bridge.setTerminalKeyboardFocus?.(focused);
       } catch {
         // Browser preview or a disposed Electron bridge.
       }
@@ -34,5 +29,5 @@ export function useTerminalKeyboardFocus(
       cleanupTracking();
       publish(false);
     };
-  }, [enabled, hotkeyScheme]);
+  }, [enabled]);
 }

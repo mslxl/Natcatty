@@ -4,23 +4,13 @@ const {
 } = require("./windowsWindowChrome.cjs");
 
 const TERMINAL_KEYBOARD_FOCUS = Symbol("netcattyTerminalKeyboardFocus");
-const TERMINAL_KEYBOARD_SCHEME = Symbol("netcattyTerminalKeyboardScheme");
 
-function normalizeTerminalHotkeyScheme(scheme) {
-  return scheme === "mac" || scheme === "pc" ? scheme : null;
-}
-
-function setTerminalKeyboardFocusForWindow(win, focused, hotkeyScheme) {
+function setTerminalKeyboardFocusForWindow(win, focused) {
   if (!win || win.isDestroyed?.() || !win.webContents) return false;
   const isFocused = focused === true;
   try {
     win[TERMINAL_KEYBOARD_FOCUS] = isFocused;
-    // Keep the active scheme so native zoom diversion can match createXTermRuntime.
-    // Do not blanket setIgnoreMenuShortcuts here: that swallows Cmd+W (and other
-    // menu accelerators) on windows without before-input routing, such as popups.
-    win[TERMINAL_KEYBOARD_SCHEME] = isFocused
-      ? normalizeTerminalHotkeyScheme(hotkeyScheme)
-      : null;
+    win.webContents.setIgnoreMenuShortcuts?.(isFocused);
     return true;
   } catch {
     return false;
@@ -29,97 +19,6 @@ function setTerminalKeyboardFocusForWindow(win, focused, hotkeyScheme) {
 
 function hasTerminalKeyboardFocus(win) {
   return win?.[TERMINAL_KEYBOARD_FOCUS] === true;
-}
-
-function shouldDeferNativeZoomForTerminal(win, isMac) {
-  if (!hasTerminalKeyboardFocus(win)) return false;
-  const scheme = win[TERMINAL_KEYBOARD_SCHEME];
-  if (scheme !== "mac" && scheme !== "pc") return false;
-  // Only suppress OS page-zoom when the terminal scheme uses that same modifier.
-  return isMac ? scheme === "mac" : scheme === "pc";
-}
-
-function isPrimaryZoomInEqualInput(input, isMac) {
-  if (input?.type !== "keyDown") return false;
-  if (input.alt) return false;
-  const hasPrimaryModifier = isMac
-    ? Boolean(input.meta) && !input.control
-    : Boolean(input.control) && !input.meta;
-  if (!hasPrimaryModifier || input.shift) return false;
-  return String(input.key || "") === "=";
-}
-
-function isPrimaryZoomOutMinusInput(input, isMac) {
-  if (input?.type !== "keyDown") return false;
-  if (input.alt) return false;
-  const hasPrimaryModifier = isMac
-    ? Boolean(input.meta) && !input.control
-    : Boolean(input.control) && !input.meta;
-  if (!hasPrimaryModifier || input.shift) return false;
-  return String(input.key || "") === "-";
-}
-
-function isPrimaryResetZoomInput(input, isMac) {
-  if (input?.type !== "keyDown") return false;
-  if (input.alt) return false;
-  const hasPrimaryModifier = isMac
-    ? Boolean(input.meta) && !input.control
-    : Boolean(input.control) && !input.meta;
-  if (!hasPrimaryModifier || input.shift) return false;
-  return String(input.key || "") === "0";
-}
-
-function isNativeTerminalFontShortcut(input, isMac) {
-  return isPrimaryZoomInEqualInput(input, isMac)
-    || isPrimaryZoomOutMinusInput(input, isMac)
-    || isPrimaryResetZoomInput(input, isMac);
-}
-
-function attachTerminalKeyboardShortcutInputHandler(win, options = {}) {
-  const {
-    isMac = false,
-    shouldCloseWindowFromInput: closeFromInput,
-    requestWindowCommandClose: requestClose,
-    handleNativePageZoom = false,
-    adjustWindowZoom,
-  } = options;
-  if (!win?.webContents?.on) return;
-
-  win.webContents.on("before-input-event", (event, input) => {
-    if (typeof closeFromInput === "function" && isMac && closeFromInput(input)) {
-      event.preventDefault();
-      requestClose?.(win);
-      return;
-    }
-
-    if (shouldDeferNativeZoomForTerminal(win, isMac) && isNativeTerminalFontShortcut(input, isMac)) {
-      win.webContents.setIgnoreMenuShortcuts?.(true);
-      return;
-    }
-
-    if (handleNativePageZoom && typeof adjustWindowZoom === "function") {
-      if (isPrimaryZoomInEqualInput(input, isMac) && adjustWindowZoom("in")) {
-        event.preventDefault();
-        return;
-      }
-      if (isPrimaryZoomOutMinusInput(input, isMac) && adjustWindowZoom("out")) {
-        event.preventDefault();
-        return;
-      }
-      if (isPrimaryResetZoomInput(input, isMac) && adjustWindowZoom("reset")) {
-        event.preventDefault();
-        return;
-      }
-    }
-
-    if (input.alt && !input.control && !input.meta) {
-      if (input.key === "ArrowLeft" || input.key === "ArrowRight") {
-        win.webContents.setIgnoreMenuShortcuts?.(true);
-        return;
-      }
-    }
-    win.webContents.setIgnoreMenuShortcuts?.(false);
-  });
 }
 
 function createMainWindowApi(ctx) {
@@ -146,6 +45,36 @@ function createMainWindowApi(ctx) {
       const CHROMIUM_ZOOM_FACTORS = [
         0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5,
       ];
+
+      const isPrimaryZoomInEqualInput = (input) => {
+        if (input?.type !== "keyDown") return false;
+        if (input.alt) return false;
+        const hasPrimaryModifier = isMac
+          ? Boolean(input.meta) && !input.control
+          : Boolean(input.control) && !input.meta;
+        if (!hasPrimaryModifier || input.shift) return false;
+        return String(input.key || "") === "=";
+      };
+
+      const isPrimaryZoomOutMinusInput = (input) => {
+        if (input?.type !== "keyDown") return false;
+        if (input.alt) return false;
+        const hasPrimaryModifier = isMac
+          ? Boolean(input.meta) && !input.control
+          : Boolean(input.control) && !input.meta;
+        if (!hasPrimaryModifier || input.shift) return false;
+        return String(input.key || "") === "-";
+      };
+
+      const isPrimaryResetZoomInput = (input) => {
+        if (input?.type !== "keyDown") return false;
+        if (input.alt) return false;
+        const hasPrimaryModifier = isMac
+          ? Boolean(input.meta) && !input.control
+          : Boolean(input.control) && !input.meta;
+        if (!hasPrimaryModifier || input.shift) return false;
+        return String(input.key || "") === "0";
+      };
 
       const adjustWindowZoom = (mode) => {
         const webContents = win?.webContents;
@@ -344,12 +273,44 @@ function createMainWindowApi(ctx) {
       // Terminal apps need these keys to pass through to the remote shell (e.g., byobu, tmux).
       // Using setIgnoreMenuShortcuts lets the keydown still reach the page (xterm.js)
       // while preventing Chromium's built-in shortcuts from triggering.
-      attachTerminalKeyboardShortcutInputHandler(win, {
-        isMac,
-        shouldCloseWindowFromInput,
-        requestWindowCommandClose,
-        handleNativePageZoom: true,
-        adjustWindowZoom,
+      win.webContents.on("before-input-event", (event, input) => {
+        if (isMac && shouldCloseWindowFromInput(input)) {
+          event.preventDefault();
+          requestWindowCommandClose(win);
+          return;
+        }
+
+        const isTerminalFontShortcut =
+          isPrimaryZoomInEqualInput(input)
+          || isPrimaryZoomOutMinusInput(input)
+          || isPrimaryResetZoomInput(input);
+        if (hasTerminalKeyboardFocus(win) && isTerminalFontShortcut) {
+          win.webContents.setIgnoreMenuShortcuts(true);
+          return;
+        }
+
+        if (isPrimaryZoomInEqualInput(input) && adjustWindowZoom("in")) {
+          event.preventDefault();
+          return;
+        }
+
+        if (isPrimaryZoomOutMinusInput(input) && adjustWindowZoom("out")) {
+          event.preventDefault();
+          return;
+        }
+
+        if (isPrimaryResetZoomInput(input) && adjustWindowZoom("reset")) {
+          event.preventDefault();
+          return;
+        }
+
+        if (input.alt && !input.control && !input.meta) {
+          if (input.key === "ArrowLeft" || input.key === "ArrowRight") {
+            win.webContents.setIgnoreMenuShortcuts(true);
+            return;
+          }
+        }
+        win.webContents.setIgnoreMenuShortcuts(false);
       });
     
       // Restore maximized state if it was saved
@@ -582,5 +543,4 @@ function createMainWindowApi(ctx) {
 module.exports = {
   createMainWindowApi,
   setTerminalKeyboardFocusForWindow,
-  attachTerminalKeyboardShortcutInputHandler,
 };

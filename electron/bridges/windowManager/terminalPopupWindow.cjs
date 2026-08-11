@@ -12,9 +12,6 @@ const {
 const {
   windowsFramelessContentChromeOptions,
 } = require("./windowsWindowChrome.cjs");
-const {
-  attachTerminalKeyboardShortcutInputHandler,
-} = require("./mainWindow.cjs");
 
 const ATTACH_CLOSE_PREPARE_TIMEOUT_MS = 2000;
 
@@ -154,14 +151,6 @@ function createTerminalPopupWindowApi(ctx) {
       } catch {
         // ignore
       }
-
-      // Mirror main-window shortcut routing: Cmd+W must still close the popup even
-      // when terminal font chords temporarily setIgnoreMenuShortcuts(true).
-      attachTerminalKeyboardShortcutInputHandler(win, {
-        isMac,
-        shouldCloseWindowFromInput: ctx.shouldCloseWindowFromInput,
-        requestWindowCommandClose: ctx.requestWindowCommandClose,
-      });
 
       win.on("close", (event) => {
         if (!attachSessionId || isAttachPopupClosePrepared(attachAuthorization)) return;

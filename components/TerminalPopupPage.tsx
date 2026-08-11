@@ -264,7 +264,6 @@ function TerminalPopupPageInner() {
   const settings = useSettingsState();
   useTerminalKeyboardFocus(
     settings.hotkeyScheme !== 'disabled' && !settings.disableTerminalFontZoom,
-    settings.hotkeyScheme,
   );
   const {
     isInitialized: vaultInitialized,

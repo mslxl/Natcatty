@@ -1018,8 +1018,6 @@ const terminalPopupWindowApi = createTerminalPopupWindowApi({
   registerAppContentWindow,
   unregisterAppContentWindow,
   notifyAppContentWindowClosed,
-  shouldCloseWindowFromInput,
-  requestWindowCommandClose,
 });
 const { openTerminalPopupWindow, closeTerminalPopupWindow } = terminalPopupWindowApi;
 
@@ -1093,7 +1091,7 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
 
   ipcMain.on("netcatty:window:set-terminal-keyboard-focus", (event, payload) => {
     const win = getWindowForIpcEvent(event);
-    setTerminalKeyboardFocusForWindow(win, payload?.focused === true, payload?.hotkeyScheme);
+    setTerminalKeyboardFocusForWindow(win, payload?.focused === true);
   });
 
   ipcMain.handle("netcatty:window:setTitle", (event, title) => {
