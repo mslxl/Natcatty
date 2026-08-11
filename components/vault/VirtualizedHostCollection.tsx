@@ -82,6 +82,23 @@ export function resolveVirtualFocusRequest({
   return { status: "request", key, index };
 }
 
+/**
+ * Virtual collections may retry DOM focus when a remembered active item
+ * re-enters the filtered set. Never steal focus from controls outside the
+ * collection (e.g. the vault host search input).
+ */
+export function shouldApplyVirtualHostDomFocus(input: {
+  collectionRoot: { contains: (node: Node) => boolean } | null | undefined;
+  activeElement: Element | null | undefined;
+}): boolean {
+  const { collectionRoot, activeElement } = input;
+  if (!collectionRoot) return false;
+  if (!activeElement) return true;
+  const tagName = activeElement.tagName;
+  if (tagName === "BODY" || tagName === "HTML") return true;
+  return collectionRoot.contains(activeElement);
+}
+
 export function VirtualizedHostCollection<T>({
   items,
   itemKey,
@@ -170,6 +187,13 @@ export function VirtualizedHostCollection<T>({
   const focusRenderedItem = React.useCallback((key: string) => {
     const root = rootRef.current;
     if (!root) return false;
+    if (!shouldApplyVirtualHostDomFocus({
+      collectionRoot: root,
+      activeElement: typeof document === "undefined" ? null : document.activeElement,
+    })) {
+      pendingFocusKeyRef.current = null;
+      return true;
+    }
     const wrapper = [...root.querySelectorAll<HTMLElement>("[data-vault-item-key]")]
       .find((element) => element.dataset.vaultItemKey === key);
     const focusTarget = wrapper?.querySelector<HTMLElement>(
@@ -450,6 +474,13 @@ export function VirtualizedGroupedHostCollection<T>({
   const focusRenderedItem = React.useCallback((key: string) => {
     const root = rootRef.current;
     if (!root) return false;
+    if (!shouldApplyVirtualHostDomFocus({
+      collectionRoot: root,
+      activeElement: typeof document === "undefined" ? null : document.activeElement,
+    })) {
+      pendingFocusKeyRef.current = null;
+      return true;
+    }
     const wrapper = [...root.querySelectorAll<HTMLElement>("[data-vault-item-key]")]
       .find((element) => element.dataset.vaultItemKey === key);
     const focusTarget = wrapper?.querySelector<HTMLElement>("[data-host-id]");

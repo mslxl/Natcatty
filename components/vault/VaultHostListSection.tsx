@@ -63,6 +63,21 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(hostListScrollRef);
   const [focusedHostId, setFocusedHostId] = React.useState<string | null>(null);
   const [focusedGroupPath, setFocusedGroupPath] = React.useState<string | null>(null);
+  const hostListFilterFocusKey = React.useMemo(
+    () => getVaultTreeAutoExpandKey(search, selectedTags) ?? "",
+    [search, selectedTags],
+  );
+  const [prevHostListFilterFocusKey, setPrevHostListFilterFocusKey] = React.useState(
+    hostListFilterFocusKey,
+  );
+  // Clear keyboard/selection focus as soon as search or tags change so the
+  // virtual list cannot steal DOM focus back from the search input on the
+  // same commit (useEffect would run too late).
+  if (hostListFilterFocusKey !== prevHostListFilterFocusKey) {
+    setPrevHostListFilterFocusKey(hostListFilterFocusKey);
+    setFocusedHostId(null);
+    setFocusedGroupPath(null);
+  }
   const hostCollectionLayoutKey = [
     displayedGroups.length,
     hasHostsSidePanel ? "panel" : "full",
