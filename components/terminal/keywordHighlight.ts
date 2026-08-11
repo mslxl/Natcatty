@@ -177,8 +177,7 @@ export class KeywordHighlighter implements IDisposable {
           this.pendingRefreshReason === "scroll"
           && !isBrowsingScrollback
           && (
-            this.hasOutputPositionChangedSinceLastSnapshot()
-            || this.hasDecorationMarkerShiftSinceLastRefresh()
+            this.hasOutputDrivenViewportChange()
           );
         const cancelQueuedWriteForEnter =
           this.enterQueuedWriteCancellationPending
@@ -722,7 +721,11 @@ export class KeywordHighlighter implements IDisposable {
     // synchronously rescan the viewport and flash keywords still on screen.
     // Keep real scrollback browsing synchronous; only defer the bottom-pinned
     // viewport movement that can be caused by the pending Enter echo.
-    if (this.enterInputPending && !isBrowsingScrollback) {
+    if (
+      this.enterInputPending
+      && !isBrowsingScrollback
+      && this.hasOutputDrivenViewportChange()
+    ) {
       if (this.pendingRefreshReason === "scroll") {
         this.cancelQueuedRefreshSchedule();
         this.pendingRefreshReason = "write";
@@ -1093,6 +1096,13 @@ export class KeywordHighlighter implements IDisposable {
   private isBrowsingScrollback(): boolean {
     const buffer = this.term.buffer.active;
     return buffer.viewportY < buffer.baseY;
+  }
+
+  private hasOutputDrivenViewportChange(): boolean {
+    return (
+      this.hasOutputPositionChangedSinceLastSnapshot()
+      || this.hasDecorationMarkerShiftSinceLastRefresh()
+    );
   }
 
   private mergeRefreshReason(current: RefreshReason, next: RefreshReason): RefreshReason {

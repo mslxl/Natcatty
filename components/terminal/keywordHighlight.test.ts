@@ -1169,6 +1169,49 @@ test("user scroll during Enter keeps prior highlights mounted", async () => {
   }
 });
 
+test("Enter does not defer a user scroll back to the bottom", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      handlers,
+      getTranslatedLineIndexes,
+      resetTranslateCount,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 80 });
+    term.rows = 3;
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY = 10;
+    handlers.scroll?.();
+    resetTranslateCount();
+
+    // Pressing End while the Enter guard is active returns to the bottom
+    // without changing the output position or waiting for a remote write.
+    term.buffer.active.viewportY = 20;
+    handlers.scroll?.();
+
+    assert.ok(
+      getTranslatedLineIndexes().some((lineY) => lineY >= 20),
+      "scrolling back to the bottom during Enter should scan synchronously",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("output during Enter does not cancel an active scrollback browse", () => {
   const raf = installAnimationFrameQueue();
   try {
