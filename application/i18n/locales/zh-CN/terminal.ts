@@ -513,6 +513,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.shortcuts.disableTerminalFontZoom.desc': '关闭终端文字缩放快捷操作，包括 Cmd/Ctrl 加滚轮。',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.label': '标签快捷键跳过固定标签',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': '开启后，Cmd/Ctrl+[1...9] 和 Ctrl+Tab 仅在终端、工作区、编辑器等可关闭标签页之间切换，不包括固定的 Vault 和 SFTP 标签页。',
+  'settings.shortcuts.showTabNumberBadges.label': '显示标签页序号角标',
+  'settings.shortcuts.showTabNumberBadges.desc': '按住 Cmd/Ctrl 时，在对应 Cmd/Ctrl+[1...9] 的标签页上显示 1-9，方便准确切换。',
   'settings.shortcuts.section.custom': '自定义快捷键',
   'settings.shortcuts.resetAll': '全部重置',
   'settings.shortcuts.recording': '请按键...',

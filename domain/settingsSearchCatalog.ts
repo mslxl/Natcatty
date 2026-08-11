@@ -518,6 +518,13 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.shortcuts.section.scheme",
   },
   {
+    id: "shortcuts-show-tab-number-badges",
+    tab: "shortcuts",
+    labelKey: "settings.shortcuts.showTabNumberBadges.label",
+    descriptionKey: "settings.shortcuts.showTabNumberBadges.desc",
+    sectionKey: "settings.shortcuts.section.scheme",
+  },
+  {
     id: "shortcuts-section-custom",
     tab: "shortcuts",
     labelKey: "settings.shortcuts.section.custom",

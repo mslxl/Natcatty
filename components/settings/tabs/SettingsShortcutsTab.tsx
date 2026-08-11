@@ -12,6 +12,8 @@ export default function SettingsShortcutsTab(props: {
   setHotkeyScheme: (scheme: HotkeyScheme) => void;
   shellOnlyTabNumberShortcuts: boolean;
   setShellOnlyTabNumberShortcuts: (enabled: boolean) => void;
+  showTabNumberBadges: boolean;
+  setShowTabNumberBadges: (enabled: boolean) => void;
   disableTerminalFontZoom: boolean;
   setDisableTerminalFontZoom: (enabled: boolean) => void;
   keyBindings: KeyBinding[];
@@ -25,6 +27,8 @@ export default function SettingsShortcutsTab(props: {
     setHotkeyScheme,
     shellOnlyTabNumberShortcuts,
     setShellOnlyTabNumberShortcuts,
+    showTabNumberBadges,
+    setShowTabNumberBadges,
     disableTerminalFontZoom,
     setDisableTerminalFontZoom,
     keyBindings,
@@ -163,6 +167,16 @@ export default function SettingsShortcutsTab(props: {
           <Toggle
             checked={shellOnlyTabNumberShortcuts}
             onChange={setShellOnlyTabNumberShortcuts}
+          />
+        </SettingRow>
+        <SettingRow
+          anchorId="shortcuts-show-tab-number-badges"
+          label={t("settings.shortcuts.showTabNumberBadges.label")}
+          description={t("settings.shortcuts.showTabNumberBadges.desc")}
+        >
+          <Toggle
+            checked={showTabNumberBadges}
+            onChange={setShowTabNumberBadges}
           />
         </SettingRow>
       </div>

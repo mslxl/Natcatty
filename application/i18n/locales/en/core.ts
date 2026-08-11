@@ -789,6 +789,8 @@ Highlight the focused split pane:
   'settings.shortcuts.disableTerminalFontZoom.desc': 'Turn off terminal font zoom shortcuts, including Cmd/Ctrl + mouse wheel.',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.label': 'Tab shortcuts skip pinned tabs',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': 'When enabled, Cmd/Ctrl+[1...9] and Ctrl+Tab switch only work tabs (terminals, workspaces, editors), not the pinned Vault or SFTP tabs.',
+  'settings.shortcuts.showTabNumberBadges.label': 'Show tab number badges',
+  'settings.shortcuts.showTabNumberBadges.desc': 'While holding Cmd/Ctrl, show 1-9 on tabs that match Cmd/Ctrl+[1...9], so you can jump accurately.',
   'settings.shortcuts.section.custom': 'Custom Shortcuts',
   'settings.shortcuts.resetAll': 'Reset All',
   'settings.shortcuts.recording': 'Press keys...',

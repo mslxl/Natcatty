@@ -1,8 +1,10 @@
 import { Folder, FolderLock, Menu, MoreHorizontal, Plus, Settings, Sparkles } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { fromEditorTabId, isEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
+import { fromEditorTabId, isEditorTabId, toEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
 import { topTabsSessionsEqual } from '../domain/topTabsSessionsEqual';
 import { isHostTreeWorkTabSurface } from '../application/app/workTabSurface';
+import { buildTabShortcutNumberById } from '../application/app/tabShortcutTargets';
+import { useShortcutModifierHeld } from '../application/state/useShortcutModifierHeld';
 import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
 import type { DynamicTabTitleMode } from '../domain/models';
@@ -15,6 +17,7 @@ import {
 } from '../application/state/terminalHostTreeStore';
 import type { LogView } from '../application/state/logViewState';
 import { useWindowControls } from '../application/state/useWindowControls';
+import { useSettingsChromeStore } from '../application/state/settingsChromeStore';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { Host, TerminalSession, Workspace } from '../types';
 import { cn } from '../lib/utils';
@@ -208,6 +211,23 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 }) => {
   const { t } = useI18n();
   const { maximize, isFullscreen, onFullscreenChanged } = useWindowControls();
+  const {
+    hotkeyScheme,
+    showTabNumberBadges,
+    shellOnlyTabNumberShortcuts,
+  } = useSettingsChromeStore();
+  const shortcutModifierHeld = useShortcutModifierHeld(hotkeyScheme);
+  const tabShortcutNumbers = useMemo(() => {
+    // Keep the tab bar quiet until the modifier for the active shortcut scheme
+    // is held, while retaining the existing setting as the master toggle.
+    if (!showTabNumberBadges || hotkeyScheme === 'disabled' || !shortcutModifierHeld) return null;
+    return buildTabShortcutNumberById({
+      showSftpTab,
+      shellOnlyTabNumberShortcuts,
+      orderedTabs,
+      editorTabIds: editorTabs.map((tab) => toEditorTabId(tab.id)),
+    });
+  }, [hotkeyScheme, showTabNumberBadges, showSftpTab, shellOnlyTabNumberShortcuts, shortcutModifierHeld, orderedTabs, editorTabs]);
   const isHostTreeOpen = useTerminalHostTreeOpen();
   const hostTreeLayoutWidth = useTerminalHostTreeLayoutWidth();
   const toggleHostTree = useToggleTerminalHostTree();
@@ -752,6 +772,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onTabDragLeave={handleTabDragLeave}
             onTabDrop={handleTabDrop}
             tabAnimationClass={getTabAnimationClass(tabId)}
+            shortcutNumber={tabShortcutNumbers?.get(tabId)}
           />
         );
       }
@@ -776,6 +797,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onTabDragLeave={handleTabDragLeave}
             onTabDrop={handleTabDrop}
             tabAnimationClass={getTabAnimationClass(tabId)}
+            shortcutNumber={tabShortcutNumbers?.get(tabId)}
           />
         );
       }
@@ -811,6 +833,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             dynamicTabTitleMode={dynamicTabTitleMode}
             t={t}
             tabAnimationClass={getTabAnimationClass(session.id)}
+            shortcutNumber={tabShortcutNumbers?.get(session.id)}
           />
         );
       }
@@ -854,6 +877,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             renderBulkCloseItems={renderBulkCloseItems}
             t={t}
             tabAnimationClass={getTabAnimationClass(workspace.id)}
+            shortcutNumber={tabShortcutNumbers?.get(workspace.id)}
           />
         );
       }
@@ -882,6 +906,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             onTabDrop={handleTabDrop}
             t={t}
             tabAnimationClass={getTabAnimationClass(logView.id)}
+            shortcutNumber={tabShortcutNumbers?.get(logView.id)}
           />
         );
       }
@@ -933,6 +958,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             icon={<FolderLock size={14} />}
             className="rounded"
             compact={rootTabsCompact}
+            shortcutNumber={tabShortcutNumbers?.get('vault')}
           />
           {showSftpTab && (
             <RootTopTab
@@ -941,6 +967,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               icon={<Folder size={14} />}
               className="rounded-t-md"
               compact={rootTabsCompact}
+              shortcutNumber={tabShortcutNumbers?.get('sftp')}
             />
           )}
         </div>

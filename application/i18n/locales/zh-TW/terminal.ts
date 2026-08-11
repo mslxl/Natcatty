@@ -513,6 +513,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.shortcuts.disableTerminalFontZoom.desc': '關閉終端文字縮放快捷操作，包括 Cmd/Ctrl 加滾輪。',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.label': '標籤快捷鍵跳過固定標籤',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': '開啟後，Cmd/Ctrl+[1...9] 和 Ctrl+Tab 僅在終端、工作區、編輯器等可關閉標籤頁之間切換，不包括固定的 Vault 和 SFTP 標籤頁。',
+  'settings.shortcuts.showTabNumberBadges.label': '顯示標籤頁序號角標',
+  'settings.shortcuts.showTabNumberBadges.desc': '按住 Cmd/Ctrl 時，在對應 Cmd/Ctrl+[1...9] 的標籤頁上顯示 1-9，方便準確切換。',
   'settings.shortcuts.section.custom': '自訂快捷鍵',
   'settings.shortcuts.resetAll': '全部重置',
   'settings.shortcuts.recording': '請按鍵...',

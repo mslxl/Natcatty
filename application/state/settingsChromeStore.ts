@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 
 import type { UILanguage } from '../../domain/models/connection';
+import type { HotkeyScheme } from '../../domain/models/keyBindings';
 import type { DynamicTabTitleMode } from '../../domain/models/terminal';
 import type { HostClickBehavior } from '../../domain/hostClickBehavior';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
@@ -29,6 +30,9 @@ export type SettingsChromeSnapshot = {
   showOnlyUngroupedHostsInRoot: boolean;
   dynamicTabTitleMode: DynamicTabTitleMode;
   disableTerminalFontZoom: boolean;
+  hotkeyScheme: HotkeyScheme;
+  shellOnlyTabNumberShortcuts: boolean;
+  showTabNumberBadges: boolean;
   restoreTerminalCwd: boolean;
   terminalSidePanelAutoOpen: boolean;
   terminalSidePanelAutoOpenTab: TerminalSidePanelAutoOpenTab;
@@ -58,6 +62,9 @@ export const DEFAULT_SETTINGS_CHROME_SNAPSHOT: SettingsChromeSnapshot = Object.f
   showOnlyUngroupedHostsInRoot: false,
   dynamicTabTitleMode: 'off',
   disableTerminalFontZoom: false,
+  hotkeyScheme: 'pc',
+  shellOnlyTabNumberShortcuts: false,
+  showTabNumberBadges: true,
   restoreTerminalCwd: true,
   terminalSidePanelAutoOpen: false,
   terminalSidePanelAutoOpenTab: 'ai',
@@ -80,6 +87,9 @@ export function settingsChromeSnapshotsEqual(
     && a.showOnlyUngroupedHostsInRoot === b.showOnlyUngroupedHostsInRoot
     && a.dynamicTabTitleMode === b.dynamicTabTitleMode
     && a.disableTerminalFontZoom === b.disableTerminalFontZoom
+    && a.hotkeyScheme === b.hotkeyScheme
+    && a.shellOnlyTabNumberShortcuts === b.shellOnlyTabNumberShortcuts
+    && a.showTabNumberBadges === b.showTabNumberBadges
     && a.restoreTerminalCwd === b.restoreTerminalCwd
     && a.terminalSidePanelAutoOpen === b.terminalSidePanelAutoOpen
     && a.terminalSidePanelAutoOpenTab === b.terminalSidePanelAutoOpenTab;

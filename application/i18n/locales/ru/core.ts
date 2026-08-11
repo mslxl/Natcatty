@@ -734,6 +734,8 @@ export const ruCoreMessages: Messages = {
   'settings.shortcuts.disableTerminalFontZoom.desc': 'Отключает быстрый масштаб текста в терминале, включая Cmd/Ctrl + колесо мыши.',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.label': 'Сочетания без закреплённых вкладок',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': 'Если включено, Cmd/Ctrl+[1...9] и Ctrl+Tab переключают только рабочие вкладки (терминалы, рабочие области, редакторы), а не закреплённые Vault и SFTP.',
+  'settings.shortcuts.showTabNumberBadges.label': 'Номера на вкладках',
+  'settings.shortcuts.showTabNumberBadges.desc': 'Показывать 1-9 на вкладках при удержании Cmd/Ctrl, чтобы точнее переключаться через Cmd/Ctrl+[1...9].',
   'settings.shortcuts.section.custom': 'Пользовательские сочетания',
   'settings.shortcuts.resetAll': 'Сбросить все',
   'settings.shortcuts.recording': 'Нажмите клавиши...',
