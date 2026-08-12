@@ -2056,6 +2056,11 @@ function closeSession(event, payload) {
   }
   ptyProcessTree.unregisterPid(payload.sessionId);
   sessions.delete(payload.sessionId);
+  try {
+    reportOpenedSessionActivity?.({ sessionId: payload.sessionId, phase: "closed" });
+  } catch {
+    // Ownership cleanup must not interfere with session teardown.
+  }
   return { closed: true };
 }
 

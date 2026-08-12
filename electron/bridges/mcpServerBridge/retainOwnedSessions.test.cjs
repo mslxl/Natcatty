@@ -78,3 +78,40 @@ test("retainOwnedSessions ignores owned ids with no recoverable metadata", () =>
   });
   assert.deepEqual(retained.map((entry) => entry.sessionId), ["sess-original"]);
 });
+
+test("retainOwnedSessions refreshes connected from fallback even when previous exists", () => {
+  const retained = retainOwnedSessions({
+    incomingSessions: [{
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+    }],
+    ownedSessionIds: ["sess-opened"],
+    previousById: new Map([
+      ["sess-opened", {
+        hostname: "10.0.0.2",
+        label: "server-b",
+        connected: false,
+        hostId: "host-b",
+      }],
+    ]),
+    findFallbackMeta: (sessionId) => (
+      sessionId === "sess-opened"
+        ? {
+          hostname: "10.0.0.2",
+          label: "server-b",
+          connected: true,
+          hostId: "host-b",
+          username: "root",
+        }
+        : null
+    ),
+  });
+
+  const opened = retained.find((entry) => entry.sessionId === "sess-opened");
+  assert.ok(opened);
+  assert.equal(opened.connected, true);
+  assert.equal(opened.username, "root");
+  assert.equal(opened.hostId, "host-b");
+});

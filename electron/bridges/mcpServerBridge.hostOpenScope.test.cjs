@@ -98,3 +98,118 @@ test("authoritative empty scope replace still clears host_open-owned sessions", 
   bridge.updateSessionMetadata([], "chat-1");
   assert.deepEqual(bridge.getScopedSessionIds("chat-1"), []);
 });
+
+test("retained host_open metadata refreshes connected from another scope", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: false,
+      hostId: "host-b",
+      protocol: "ssh",
+    },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-1",
+    hostId: "host-b",
+  });
+
+  // Another surface (External MCP / opened tab) learns the session connected.
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+      protocol: "ssh",
+      username: "root",
+    },
+  ], "__external_mcp__");
+
+  // Original chat sidebar still pushes only the focused tab.
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-1")?.connected, true);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-1")?.username, "root");
+});
+
+test("ordinary tab close forgets host_open ownership so sidebar sync cannot revive ghosts", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  const closedListeners = new Set();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      onSessionClosed(listener) {
+        closedListeners.add(listener);
+        return {
+          dispose: () => closedListeners.delete(listener),
+        };
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+    },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-1",
+    hostId: "host-b",
+  });
+
+  // User closes the host_open tab through the normal UI / worker path.
+  for (const listener of closedListeners) {
+    listener({ sessionId: "sess-opened" });
+  }
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+
+  assert.deepEqual(bridge.getScopedSessionIds("chat-1"), ["sess-original"]);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-1"), null);
+});

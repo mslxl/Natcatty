@@ -1,6 +1,43 @@
 "use strict";
 
 /**
+ * Merge a previous scoped snapshot with a cross-scope fallback.
+ * Always prefer a connected:true signal from either side so a stale
+ * host_open connected:false snapshot cannot mask a fresher update.
+ *
+ * @param {Record<string, unknown> | null | undefined} previous
+ * @param {Record<string, unknown> | null | undefined} fallback
+ * @returns {Record<string, unknown> | null}
+ */
+function mergeRetentionMeta(previous, fallback) {
+  if (!previous && !fallback) return null;
+  if (!previous) return fallback && typeof fallback === "object" ? fallback : null;
+  if (!fallback || typeof fallback !== "object") return previous;
+
+  const previousConnected = previous.connected !== false;
+  const fallbackConnected = fallback.connected !== false;
+  return {
+    ...previous,
+    hostname: fallback.hostname || previous.hostname,
+    label: fallback.label || previous.label,
+    os: fallback.os || previous.os,
+    username: fallback.username || previous.username,
+    protocol: fallback.protocol || previous.protocol,
+    shellType: fallback.shellType || previous.shellType,
+    deviceType: fallback.deviceType || previous.deviceType,
+    hostId: fallback.hostId || previous.hostId,
+    hostChain: Array.isArray(fallback.hostChain) && fallback.hostChain.length > 0
+      ? fallback.hostChain
+      : previous.hostChain,
+    activePortForwards: Array.isArray(fallback.activePortForwards)
+      && fallback.activePortForwards.length > 0
+      ? fallback.activePortForwards
+      : previous.activePortForwards,
+    connected: previousConnected || fallbackConnected,
+  };
+}
+
+/**
  * Keep host_open-owned sessions in a chat scope when a full metadata replace
  * would otherwise drop them (e.g. AIChatSidePanel pushing only the current
  * terminal tab after a mid-turn host_open).
@@ -38,11 +75,13 @@ function retainOwnedSessions({
     const ownedId = typeof ownedIdRaw === "string" ? ownedIdRaw.trim() : "";
     if (!ownedId || byId.has(ownedId)) continue;
 
-    const previous = previousById?.get?.(ownedId);
-    const fallback = previous ? null : (typeof findFallbackMeta === "function"
+    const previous = previousById?.get?.(ownedId) || null;
+    // Always consult fallback — a stale previous connected:false must not
+    // block a fresher cross-scope snapshot (e.g. External MCP / other tab).
+    const fallback = typeof findFallbackMeta === "function"
       ? findFallbackMeta(ownedId)
-      : null);
-    const meta = previous || fallback;
+      : null;
+    const meta = mergeRetentionMeta(previous, fallback);
     if (!meta || typeof meta !== "object") continue;
 
     byId.set(ownedId, {
@@ -64,4 +103,4 @@ function retainOwnedSessions({
   return Array.from(byId.values());
 }
 
-module.exports = { retainOwnedSessions };
+module.exports = { retainOwnedSessions, mergeRetentionMeta };

@@ -369,6 +369,8 @@ const {
   releaseSessionExecution,
 } = backgroundJobApi;
 
+let disposeWorkerSessionClosed = null;
+
 function init(deps) {
   sessions = deps.sessions;
   terminalWorkerManager = deps.terminalWorkerManager || null;
@@ -378,6 +380,15 @@ function init(deps) {
   debugLog("init", { hasSessions: Boolean(sessions), hasElectron: Boolean(electronModule) });
   if (deps.commandBlocklist) {
     commandBlocklist = deps.commandBlocklist;
+  }
+  try { disposeWorkerSessionClosed?.dispose?.(); } catch { /* ignore */ }
+  disposeWorkerSessionClosed = null;
+  // Ordinary UI / worker tab closes must drop host_open ownership; otherwise
+  // retainOwnedSessions re-injects ghost session ids on the next sidebar sync.
+  if (typeof terminalWorkerManager?.onSessionClosed === "function") {
+    disposeWorkerSessionClosed = terminalWorkerManager.onSessionClosed(({ sessionId }) => {
+      forgetClosedTerminalSession(sessionId);
+    });
   }
 }
 
@@ -599,12 +610,17 @@ function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSI
   return { ok: true, count: sessionList.length, chatSessionId };
 }
 
-function findSessionMetaAcrossScopes(sessionId) {
-  for (const scoped of scopedMetadata.values()) {
+function findSessionMetaAcrossScopes(sessionId, excludeChatSessionId = null) {
+  let fallback = null;
+  for (const [scopeId, scoped] of scopedMetadata.entries()) {
+    if (excludeChatSessionId && scopeId === excludeChatSessionId) continue;
     const meta = scoped?.metadata?.get?.(sessionId);
-    if (meta) return meta;
+    if (!meta) continue;
+    // Prefer a connected snapshot when multiple scopes know this session.
+    if (meta.connected !== false) return meta;
+    if (!fallback) fallback = meta;
   }
-  return null;
+  return fallback;
 }
 
 function seedExternalScopeFromOtherScopes(chatSessionId) {
@@ -690,7 +706,9 @@ function updateSessionMetadata(sessionList, chatSessionId) {
       incomingSessions: incoming,
       ownedSessionIds: openedSessionOwnership.listOwned(chatSessionId),
       previousById: scopedMetadata.get(chatSessionId)?.metadata || null,
-      findFallbackMeta: findSessionMetaAcrossScopes,
+      // Skip the current scope so a stale connected:false snapshot cannot
+      // shadow a fresher copy from External MCP / another chat tab.
+      findFallbackMeta: (sessionId) => findSessionMetaAcrossScopes(sessionId, chatSessionId),
     })
     : incoming;
   debugLog("updateSessionMetadata", {
@@ -932,11 +950,51 @@ function resolveScopedSessionIds(chatSessionId, explicitScopedIds = null) {
 /**
  * Look up metadata for a sessionId, scoped to a specific chat session.
  * Falls back to session object properties if no scoped metadata is found.
+ * When this scope still has a stale connected:false snapshot (common after
+ * host_open + tab switch), refresh connected from a fresher cross-scope copy.
  */
 function getSessionMeta(sessionId, chatSessionId) {
   if (!chatSessionId) return null;
   const scoped = scopedMetadata.get(chatSessionId);
-  return scoped?.metadata?.get(sessionId) || null;
+  const meta = scoped?.metadata?.get(sessionId) || null;
+  if (!meta || meta.connected !== false) return meta;
+  const fresher = findSessionMetaAcrossScopes(sessionId, chatSessionId);
+  if (!fresher || fresher.connected === false) return meta;
+  const refreshed = {
+    ...meta,
+    hostname: fresher.hostname || meta.hostname,
+    label: fresher.label || meta.label,
+    os: fresher.os || meta.os,
+    username: fresher.username || meta.username,
+    protocol: fresher.protocol || meta.protocol,
+    shellType: fresher.shellType || meta.shellType,
+    deviceType: fresher.deviceType || meta.deviceType,
+    hostId: fresher.hostId || meta.hostId,
+    hostChain: Array.isArray(fresher.hostChain) && fresher.hostChain.length > 0
+      ? fresher.hostChain
+      : meta.hostChain,
+    activePortForwards: Array.isArray(fresher.activePortForwards)
+      && fresher.activePortForwards.length > 0
+      ? fresher.activePortForwards
+      : meta.activePortForwards,
+    connected: true,
+  };
+  scoped.metadata.set(sessionId, refreshed);
+  return refreshed;
+}
+
+/**
+ * Drop host_open ownership and scoped metadata after a terminal session is
+ * actually closed (UI tab close, worker exit, or agent session_close).
+ */
+function forgetClosedTerminalSession(sessionId) {
+  if (!sessionId) return;
+  sessionIdleManager.forgetSession(sessionId);
+  openedSessionOwnership.forgetSession(sessionId);
+  for (const scoped of scopedMetadata.values()) {
+    scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
+    scoped.metadata.delete(sessionId);
+  }
 }
 
 /**
@@ -1205,6 +1263,10 @@ const sessionIdleManager = createSessionIdleManager({
 function reportOpenedSessionActivity(event = {}) {
   const sessionId = event?.sessionId;
   if (!sessionId) return false;
+  if (event.phase === "closed") {
+    forgetClosedTerminalSession(sessionId);
+    return true;
+  }
   if (event.phase === "begin") {
     return sessionIdleManager.beginActivity(null, sessionId);
   }
@@ -1244,20 +1306,14 @@ sessionService = createSessionService({
     endTerminalSessionClose(params.sessionId);
     if (outcome.closed) return;
     if (outcome.notFound) {
-      sessionIdleManager.forgetSession(params.sessionId);
-      openedSessionOwnership.forgetSession(params.sessionId);
+      forgetClosedTerminalSession(params.sessionId);
       return;
     }
     sessionIdleManager.resume(params.sessionId);
   },
   onClosed: async (sessionId) => {
     await settleBackgroundJobsForTerminalSession(sessionId);
-    sessionIdleManager.forgetSession(sessionId);
-    openedSessionOwnership.forgetSession(sessionId);
-    for (const scoped of scopedMetadata.values()) {
-      scoped.sessionIds = scoped.sessionIds.filter((id) => id !== sessionId);
-      scoped.metadata.delete(sessionId);
-    }
+    forgetClosedTerminalSession(sessionId);
   },
 });
 
@@ -2005,6 +2061,8 @@ const configAndCleanupApi = createConfigAndCleanupApi({
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
 
 function cleanup() {
+  try { disposeWorkerSessionClosed?.dispose?.(); } catch { /* ignore */ }
+  disposeWorkerSessionClosed = null;
   shutdownHost();
 }
 
@@ -2042,6 +2100,7 @@ module.exports = {
   hasActiveWorkerJobForTerminalSession,
   cancelSftpOpsForSession,
   getSessionMeta,
+  forgetClosedTerminalSession,
   cleanupScopedMetadata,
   cleanup,
   shutdownHost,
