@@ -430,7 +430,9 @@ export interface VaultAgentApiDeps {
   }>;
   removeKeyPassphrases: (keyPaths: string[]) => Promise<void> | void;
   updateNotes: (notes: VaultNote[]) => boolean | void;
-  updateSnippets: (snippets: Snippet[]) => void;
+  updateSnippets: (
+    snippets: Snippet[] | ((current: Snippet[]) => Snippet[]),
+  ) => void;
   startTunnel: (
     rule: PortForwardingRule,
     host: Host,
@@ -1019,12 +1021,11 @@ export async function handleVaultAgentOp(
       deps.updateHosts(result.state.hosts);
       deps.updateManagedSources(result.state.managedSources);
       if (op === 'group.update' && result.config?.path) {
-        const nextSnippets = remapSnippetTargetGroupPaths(
-          deps.snippets,
+        deps.updateSnippets((currentSnippets) => remapSnippetTargetGroupPaths(
+          currentSnippets,
           String(params.path),
-          result.config.path,
-        );
-        if (nextSnippets !== deps.snippets) deps.updateSnippets(nextSnippets);
+          result.config!.path,
+        ));
       }
       return { ok: true, group: sanitizeGroupConfigForAgent(result.config ?? { path: String(params.path) }) };
     }
@@ -1041,8 +1042,9 @@ export async function handleVaultAgentOp(
       deps.updateCustomGroups(result.state.groups);
       deps.updateGroupConfigs(result.state.configs);
       deps.updateHosts(result.state.hosts);
-      const nextSnippets = removeSnippetTargetGroupPaths(deps.snippets, [String(params.path)]);
-      if (nextSnippets !== deps.snippets) deps.updateSnippets(nextSnippets);
+      deps.updateSnippets((currentSnippets) => (
+        removeSnippetTargetGroupPaths(currentSnippets, [String(params.path)])
+      ));
       return { ok: true, path: String(params.path), deletedHosts: deleteHosts ?? false };
     }
     case 'snippets.list': {

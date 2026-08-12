@@ -18,7 +18,11 @@ import {
   type SnippetExportPayload,
   type SnippetImportConflictAction,
 } from '../domain/snippetTransfer';
-import { getRunnableHostsForSnippet, snippetHasRunTargets } from '../domain/snippetTargets.ts';
+import {
+  getRunnableHostsForSnippet,
+  resolveSnippetTargetGroupsForSave,
+  snippetHasRunTargets,
+} from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
 import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
@@ -484,7 +488,6 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     command: '',
     package: '',
     targets: [],
-    targetGroups: [],
   });
   const [targetSelection, setTargetSelection] = useState<string[]>([]);
   const [targetGroupSelection, setTargetGroupSelection] = useState<string[]>([]);
@@ -744,7 +747,6 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         command: DEFAULT_SCRIPT_TEMPLATE,
         package: selectedPackage || '',
         targets: [],
-        targetGroups: [],
         kind: 'script',
         language: 'javascript',
         trigger: 'manual',
@@ -753,7 +755,6 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         command: '',
         package: selectedPackage || '',
         targets: [],
-        targetGroups: [],
       });
       setTargetSelection([]);
       setTargetGroupSelection([]);
@@ -779,7 +780,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       tags: editingSnippet.tags || [],
       package: editingSnippet.package || '',
       targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
-      targetGroups: editingSnippet.targetsAllHosts ? [] : targetGroupSelection,
+      targetGroups: resolveSnippetTargetGroupsForSave(
+        editingSnippet,
+        targetGroupSelection,
+      ),
       targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
       shortkey: editingSnippet.shortkey,
       noAutoRun: editingSnippet.noAutoRun,
@@ -860,7 +864,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   const handleClosePanel = () => {
     setRightPanelMode('none');
-    setEditingSnippet({ label: '', command: '', package: '', targets: [], targetGroups: [] });
+    setEditingSnippet({ label: '', command: '', package: '', targets: [] });
     setTargetSelection([]);
     setTargetGroupSelection([]);
   };

@@ -643,7 +643,7 @@ export const useVaultState = () => {
   }, []);
 
   const updateSnippets = useCallback((
-    data: Snippet[],
+    data: Snippet[] | ((current: Snippet[]) => Snippet[]),
     options?: { replace?: boolean },
   ) => {
     // Capture the pre-update snapshot for a 3-way rebase once we hold the lock.
@@ -653,7 +653,9 @@ export const useVaultState = () => {
     // second edit does not rebase against the first save's optimistic memory.
     const replace =
       options?.replace === true || snippetsWriteReplaceRef.current;
-    const base = snippetsWriteBaseRef.current ?? snippetsRef.current;
+    const updater = typeof data === "function" ? data : null;
+    const current = snippetsRef.current;
+    const base = snippetsWriteBaseRef.current ?? current;
     if (options?.replace === true) {
       snippetsWriteReplaceRef.current = true;
     }
@@ -667,7 +669,9 @@ export const useVaultState = () => {
     } else if (snippetsWriteBaseRef.current === null) {
       snippetsWriteBaseRef.current = base;
     }
-    const cleaned = normalizeVaultOrder(data);
+    const cleaned = normalizeVaultOrder(
+      typeof data === "function" ? data(current) : data,
+    );
     const ver = ++snippetsWriteVersion.current;
     snippetsWriteOwnerRef.current = ver;
     // Keep live snapshot ahead of React commit so same-tick readers (delete,
@@ -681,20 +685,25 @@ export const useVaultState = () => {
     // skips the additive rebase so a concurrent disk-only add cannot survive.
     const writePromise = withVaultImportLock("vault", async () => {
       if (snippetsWriteOwnerRef.current !== ver) return "superseded" as const;
-      const rebased = normalizeVaultOrder(
-        replace
-          ? cleaned
+      const latestPersisted = normalizeVaultOrder(
+        readStoredArray<Snippet>(
+          STORAGE_KEY_SNIPPETS,
+          localStorageAdapter.readString(STORAGE_KEY_SNIPPETS),
+        ),
+      );
+      const rebased = normalizeVaultOrder(replace
+        ? cleaned
+        : updater
+          ? updater(rebaseSnippetVaultWrite({
+              base,
+              ours: current,
+              theirs: latestPersisted,
+            }))
           : rebaseSnippetVaultWrite({
               base,
               ours: cleaned,
-              theirs: normalizeVaultOrder(
-                readStoredArray<Snippet>(
-                  STORAGE_KEY_SNIPPETS,
-                  localStorageAdapter.readString(STORAGE_KEY_SNIPPETS),
-                ),
-              ),
-            }),
-      );
+              theirs: latestPersisted,
+            }));
       const persisted = localStorageAdapter.write(STORAGE_KEY_SNIPPETS, rebased);
       if (!persisted) {
         // Keep the pre-update ancestor. Clearing it here would make the next

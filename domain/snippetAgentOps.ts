@@ -7,6 +7,7 @@ import {
 } from './hostConnectScripts.ts';
 import { isScriptSnippet } from './snippetScript.ts';
 import { getNextVaultOrder } from './vaultOrder.ts';
+import { normalizeGroupTargetPaths } from './hostGroupPathMutations.ts';
 
 export type SnippetAgentListItem = ReturnType<typeof serializeSnippetForAgentList>;
 export type SnippetAgentDetail = ReturnType<typeof serializeSnippetForAgentGet>;
@@ -22,7 +23,9 @@ export function serializeSnippetForAgentList(snippet: Snippet) {
     kind: snippet.kind ?? 'snippet',
     tags: snippet.tags ?? [],
     targets: snippet.targets ?? [],
-    targetGroups: snippet.targetGroups ?? [],
+    // Preserve the distinction between a legacy unscoped script (missing) and
+    // an explicit empty group scope (disabled after its last group is deleted).
+    targetGroups: snippet.targetGroups,
     targetsAllHosts: snippet.targetsAllHosts ?? false,
     package: snippet.package,
     shortkey: snippet.shortkey,
@@ -204,9 +207,11 @@ export function buildSnippetFromAgentDraft(
     if (targetGroupsResult && !Array.isArray(targetGroupsResult)) {
       return { ok: false, error: targetGroupsResult.error };
     }
-    targetGroups = Array.isArray(targetGroupsResult) && targetGroupsResult.length > 0
-      ? targetGroupsResult
-      : undefined;
+    targetGroups = draft.targetGroups === undefined
+      ? undefined
+      : Array.isArray(targetGroupsResult)
+        ? normalizeGroupTargetPaths(targetGroupsResult)
+        : undefined;
   }
 
   const triggerPatternRaw = typeof draft.triggerPattern === 'string' ? draft.triggerPattern : undefined;
@@ -324,9 +329,11 @@ export function applySnippetAgentPatch(
       if (targetGroupsResult && !Array.isArray(targetGroupsResult)) {
         return { ok: false, error: targetGroupsResult.error };
       }
-      targetGroups = Array.isArray(targetGroupsResult) && targetGroupsResult.length > 0
-        ? targetGroupsResult
-        : undefined;
+      targetGroups = patch.targetGroups === undefined
+        ? existing.targetGroups
+        : Array.isArray(targetGroupsResult)
+          ? normalizeGroupTargetPaths(targetGroupsResult)
+          : undefined;
     }
   }
 

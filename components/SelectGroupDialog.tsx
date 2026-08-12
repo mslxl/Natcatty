@@ -2,7 +2,6 @@ import { CheckSquare, FolderTree, Search, Square } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { useI18n } from '@/application/i18n/I18nProvider';
 import type { Host } from '@/domain/models';
-import { hostMatchesGroupPath } from '@/domain/selectHostSelection';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -12,7 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { FixedSizeVirtualList } from '@/components/ui/FixedSizeVirtualList';
 import { cn } from '@/lib/utils';
 
 export interface SelectGroupDialogProps {
@@ -23,6 +22,8 @@ export interface SelectGroupDialogProps {
   selectedGroupPaths: string[];
   onSelectionChange: (selectedGroupPaths: string[]) => void;
 }
+
+const GROUP_ROW_HEIGHT = 48;
 
 function collectGroupPaths(
   hosts: Host[],
@@ -45,6 +46,19 @@ function collectGroupPaths(
   return [...paths].sort((left, right) => left.localeCompare(right));
 }
 
+function countHostsByGroupPath(hosts: Host[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const host of hosts) {
+    if (host.protocol === 'serial') continue;
+    const parts = host.group?.split('/').filter(Boolean) ?? [];
+    for (let index = 1; index <= parts.length; index += 1) {
+      const path = parts.slice(0, index).join('/');
+      counts.set(path, (counts.get(path) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
 export const SelectGroupDialog: React.FC<SelectGroupDialogProps> = ({
   open,
   onOpenChange,
@@ -65,6 +79,7 @@ export const SelectGroupDialog: React.FC<SelectGroupDialogProps> = ({
     if (!query) return groupPaths;
     return groupPaths.filter((path) => path.toLocaleLowerCase().includes(query));
   }, [groupPaths, searchQuery]);
+  const hostCountByPath = useMemo(() => countHostsByGroupPath(hosts), [hosts]);
 
   const togglePath = (path: string) => {
     if (selected.has(path)) {
@@ -96,48 +111,51 @@ export const SelectGroupDialog: React.FC<SelectGroupDialogProps> = ({
           </div>
         </div>
 
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="p-3 space-y-1">
-            {displayedPaths.length === 0 ? (
-              <p className="py-10 text-center text-sm text-muted-foreground">
-                {t('snippets.targets.noGroups')}
-              </p>
-            ) : displayedPaths.map((path) => {
-              const isSelected = selected.has(path);
-              const depth = Math.max(0, path.split('/').filter(Boolean).length - 1);
-              const label = path.split('/').filter(Boolean).pop() ?? path;
-              const hostCount = hosts.filter(
-                (host) => host.protocol !== 'serial' && hostMatchesGroupPath(host, path),
-              ).length;
-              return (
-                <button
-                  key={path}
-                  type="button"
-                  className={cn(
-                    'w-full min-h-11 flex items-center gap-2.5 rounded-lg px-2.5 text-left transition-colors',
-                    isSelected ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/70',
-                  )}
-                  style={{ paddingLeft: `${10 + depth * 16}px` }}
-                  onClick={() => togglePath(path)}
-                >
-                  {isSelected ? (
-                    <CheckSquare size={16} className="text-primary shrink-0" />
-                  ) : (
-                    <Square size={16} className="text-muted-foreground shrink-0" />
-                  )}
-                  <FolderTree size={16} className="text-primary shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium">{label}</span>
-                    <span className="block truncate text-[11px] text-muted-foreground">{path}</span>
-                  </span>
-                  <span className="text-[11px] text-muted-foreground shrink-0">
-                    {t('vault.groups.hostsCount', { count: hostCount })}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </ScrollArea>
+        <div className="flex-1 min-h-0 p-3">
+          {displayedPaths.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              {t('snippets.targets.noGroups')}
+            </p>
+          ) : (
+            <FixedSizeVirtualList
+              className="h-full"
+              items={displayedPaths}
+              itemHeight={GROUP_ROW_HEIGHT}
+              getItemKey={(path) => path}
+              renderItem={(path) => {
+                const isSelected = selected.has(path);
+                const depth = Math.max(0, path.split('/').filter(Boolean).length - 1);
+                const label = path.split('/').filter(Boolean).pop() ?? path;
+                const hostCount = hostCountByPath.get(path) ?? 0;
+                return (
+                  <button
+                    type="button"
+                    className={cn(
+                      'w-full h-11 flex items-center gap-2.5 rounded-lg px-2.5 text-left transition-colors',
+                      isSelected ? 'bg-primary/10 text-foreground' : 'hover:bg-muted/70',
+                    )}
+                    style={{ paddingLeft: `${10 + depth * 16}px` }}
+                    onClick={() => togglePath(path)}
+                  >
+                    {isSelected ? (
+                      <CheckSquare size={16} className="text-primary shrink-0" />
+                    ) : (
+                      <Square size={16} className="text-muted-foreground shrink-0" />
+                    )}
+                    <FolderTree size={16} className="text-primary shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{label}</span>
+                      <span className="block truncate text-[11px] text-muted-foreground">{path}</span>
+                    </span>
+                    <span className="text-[11px] text-muted-foreground shrink-0">
+                      {t('vault.groups.hostsCount', { count: hostCount })}
+                    </span>
+                  </button>
+                );
+              }}
+            />
+          )}
+        </div>
 
         <DialogFooter className="px-4 py-3 border-t border-border/60 shrink-0">
           <Button className="w-full" onClick={() => onOpenChange(false)}>

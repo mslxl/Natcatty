@@ -14,6 +14,13 @@ type DepsSeed = {
   managedSources?: ManagedSource[];
 };
 
+function applySnippetUpdate(
+  current: Snippet[],
+  update: Snippet[] | ((snippets: Snippet[]) => Snippet[]),
+): Snippet[] {
+  return typeof update === 'function' ? update(current) : update;
+}
+
 function createDeps(
   overrides: Partial<VaultAgentApiDeps> & DepsSeed = {},
 ): VaultAgentApiDeps {
@@ -61,8 +68,8 @@ function createDeps(
     updateNotes: (nextNotes) => {
       notes = nextNotes;
     },
-    updateSnippets: (nextSnippets) => {
-      snippets = nextSnippets;
+    updateSnippets: (snippetUpdate) => {
+      snippets = applySnippetUpdate(snippets, snippetUpdate);
     },
     startTunnel: async () => ({ success: true }),
     stopTunnel: async () => ({ success: true }),
@@ -89,9 +96,9 @@ function createDeps(
       base.updateNotes(nextNotes);
       overrides.updateNotes?.(nextNotes);
     },
-    updateSnippets: (nextSnippets) => {
-      base.updateSnippets(nextSnippets);
-      overrides.updateSnippets?.(nextSnippets);
+    updateSnippets: (snippetUpdate) => {
+      base.updateSnippets(snippetUpdate);
+      overrides.updateSnippets?.(snippetUpdate);
     },
     updateCustomGroups: (groups) => {
       base.updateCustomGroups(groups);
@@ -1806,6 +1813,33 @@ describe('handleVaultAgentOp vault management gaps', () => {
     assert.equal(deps.getCustomGroups().includes('prod'), false);
     assert.equal(deps.getHosts()[0]?.group, undefined);
   });
+
+  it('group path updates transform the latest snippet snapshot', async () => {
+    const original: Snippet = {
+      id: 'deploy', label: 'Deploy', command: 'nct.log(1)', kind: 'script',
+      targetGroups: ['prod'],
+    };
+    let snippets = [original];
+    const deps = createDeps({
+      snippets,
+      customGroups: ['prod'],
+      updateSnippets: (snippetUpdate) => {
+        snippets = applySnippetUpdate(
+          [{ ...original, command: 'nct.log(2)' }],
+          snippetUpdate,
+        );
+      },
+    });
+
+    const result = await handleVaultAgentOp('group.update', {
+      path: 'prod',
+      newPath: 'production',
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal(snippets[0]?.command, 'nct.log(2)');
+    assert.deepEqual(snippets[0]?.targetGroups, ['production']);
+  });
 });
 
 describe('handleVaultAgentOp snippets and scripts', () => {
@@ -1814,7 +1848,7 @@ describe('handleVaultAgentOp snippets and scripts', () => {
     const deps = createDeps({
       snippets: [],
       updateSnippets: (nextSnippets) => {
-        updated.push(nextSnippets);
+        updated.push(applySnippetUpdate([], nextSnippets));
       },
     });
 
@@ -1840,7 +1874,7 @@ describe('handleVaultAgentOp snippets and scripts', () => {
     const deps = createDeps({
       snippets: [],
       updateSnippets: (nextSnippets) => {
-        updated.push(nextSnippets);
+        updated.push(applySnippetUpdate([], nextSnippets));
       },
     });
 
@@ -1863,7 +1897,7 @@ describe('handleVaultAgentOp snippets and scripts', () => {
     const deps = createDeps({
       snippets: [{ id: 'snippet-1', label: 'Login', command: 'admin\npassword', kind: 'snippet' }],
       updateSnippets: (nextSnippets) => {
-        updated.push(nextSnippets);
+        updated.push(applySnippetUpdate([], nextSnippets));
       },
     });
 
@@ -1948,7 +1982,7 @@ describe('handleVaultAgentOp snippets and scripts', () => {
     const deps = createDeps({
       snippets,
       updateSnippets: (next) => {
-        updated.push(next);
+        updated.push(applySnippetUpdate(snippets, next));
       },
     });
 

@@ -5,6 +5,7 @@ import {
   snippetAppliesToHost,
   snippetAppliesToOutputTrigger,
   snippetHasRunTargets,
+  resolveSnippetTargetGroupsForSave,
 } from './snippetTargets.ts';
 import type { Host, Snippet } from './models';
 
@@ -63,6 +64,20 @@ test('snippetHasRunTargets requires explicit scope', () => {
   assert.equal(snippetHasRunTargets({ ...baseSnippet, targetGroups: ['Production'] }), true);
 });
 
+test('resolveSnippetTargetGroupsForSave preserves unscoped and explicit-empty states', () => {
+  assert.equal(resolveSnippetTargetGroupsForSave(baseSnippet, []), undefined);
+  assert.deepEqual(resolveSnippetTargetGroupsForSave({
+    ...baseSnippet,
+    targetGroups: [],
+  }, []), []);
+  assert.deepEqual(resolveSnippetTargetGroupsForSave(baseSnippet, ['Production']), ['Production']);
+  assert.equal(resolveSnippetTargetGroupsForSave({
+    ...baseSnippet,
+    targetGroups: [],
+    targetsAllHosts: true,
+  }, []), undefined);
+});
+
 test('group targets resolve current nested membership without storing host ids', () => {
   const grouped = { ...baseSnippet, targetGroups: ['Production'] };
   assert.equal(snippetAppliesToHost(grouped, hosts[0]), true);
@@ -90,6 +105,14 @@ test('snippetAppliesToOutputTrigger applies to current session when targets are 
   const output = { ...baseSnippet, trigger: 'onOutput' as const };
   assert.equal(snippetAppliesToOutputTrigger(output, 'host-a'), true);
   assert.equal(snippetAppliesToOutputTrigger(output, undefined), false);
+});
+
+test('snippetAppliesToOutputTrigger treats an explicit empty group scope as disabled', () => {
+  assert.equal(snippetAppliesToOutputTrigger({
+    ...baseSnippet,
+    trigger: 'onOutput',
+    targetGroups: [],
+  }, { id: 'host-a', group: 'Production' }), false);
 });
 
 test('snippetAppliesToOutputTrigger respects explicit host targets', () => {

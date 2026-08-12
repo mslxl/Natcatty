@@ -19,7 +19,9 @@ function snippetAvailableForAutocomplete(
   host: { hostId?: string; hostGroup?: string },
 ): boolean {
   if (snippet.targetsAllHosts) return true;
-  const hasScopedTargets = Boolean(snippet.targets?.length || snippet.targetGroups?.length);
+  const hasScopedTargets = Boolean(
+    snippet.targets?.length || snippet.targetGroups !== undefined,
+  );
   if (!hasScopedTargets) return true;
   if (!host.hostId) return false;
   return snippetAppliesToHost(snippet, { id: host.hostId, group: host.hostGroup });

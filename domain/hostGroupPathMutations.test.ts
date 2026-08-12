@@ -23,3 +23,25 @@ test('removeSnippetTargetGroupPaths removes a deleted group subtree', () => {
   const next = removeSnippetTargetGroupPaths(snippets, ['Production']);
   assert.deepEqual(next[0].targetGroups, ['Staging']);
 });
+
+test('removeSnippetTargetGroupPaths preserves an explicit empty scope', () => {
+  const next = removeSnippetTargetGroupPaths([
+    { ...snippets[0], targetGroups: ['Production'] },
+  ], ['Production']);
+  assert.deepEqual(next[0].targetGroups, []);
+});
+
+test('remapSnippetTargetGroupPaths deduplicates rename collisions', () => {
+  const next = remapSnippetTargetGroupPaths([
+    { ...snippets[0], targetGroups: ['Platform', 'Production'] },
+  ], 'Production', 'Platform');
+  assert.deepEqual(next[0].targetGroups, ['Platform']);
+});
+
+test('group path mutations normalize imported legacy paths', () => {
+  const legacy = [{ ...snippets[0], targetGroups: [' Production\\Web ', 'Production//Web'] }];
+  const renamed = remapSnippetTargetGroupPaths(legacy, 'Production/Web', 'Platform/Web');
+  assert.deepEqual(renamed[0].targetGroups, ['Platform/Web']);
+  const removed = removeSnippetTargetGroupPaths(legacy, ['Production/Web']);
+  assert.deepEqual(removed[0].targetGroups, []);
+});

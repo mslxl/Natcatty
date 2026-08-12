@@ -1,5 +1,6 @@
 import type { Host, Snippet } from './models';
 import { hostMatchesGroupPath } from './selectHostSelection.ts';
+import { normalizeGroupTargetPath } from './hostGroupPathMutations.ts';
 import { isScriptSnippet } from './snippetScript.ts';
 
 /** Whether the snippet has a runnable scope (explicit targets or all-hosts flag). */
@@ -26,7 +27,21 @@ export function snippetTargetsHostGroup(
   snippet: Pick<Snippet, 'targetGroups'>,
   host: Pick<Host, 'group'>,
 ): boolean {
-  return Boolean(snippet.targetGroups?.some((groupPath) => hostMatchesGroupPath(host, groupPath)));
+  return Boolean(snippet.targetGroups?.some(
+    (groupPath) => hostMatchesGroupPath(host, normalizeGroupTargetPath(groupPath)),
+  ));
+}
+
+/** Keep legacy unscoped onOutput semantics distinct from a deleted/cleared group scope. */
+export function resolveSnippetTargetGroupsForSave(
+  snippet: Pick<Snippet, 'targetGroups' | 'targetsAllHosts'>,
+  selectedGroupPaths: string[],
+): string[] | undefined {
+  if (snippet.targetsAllHosts) return undefined;
+  if (snippet.targetGroups === undefined && selectedGroupPaths.length === 0) {
+    return undefined;
+  }
+  return selectedGroupPaths;
 }
 
 function normalizeTargetHost(hostOrId?: SnippetTargetHost | string): SnippetTargetHost | undefined {
@@ -71,10 +86,7 @@ export function snippetAppliesToOutputTrigger(
   const host = normalizeTargetHost(hostOrId);
   if (!host) return false;
   if (snippet.targetsAllHosts) return true;
-  if (
-    (snippet.targets && snippet.targets.length > 0)
-    || (snippet.targetGroups && snippet.targetGroups.length > 0)
-  ) {
+  if (snippet.targets?.length || snippet.targetGroups !== undefined) {
     return snippetAppliesToHost(snippet, host);
   }
   return true;

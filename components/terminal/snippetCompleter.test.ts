@@ -78,6 +78,21 @@ test("filters dynamic group targets using nested host group membership", () => {
   );
 });
 
+test("does not surface a snippet with an explicitly empty group scope", () => {
+  const disabled = snip({
+    id: "disabled-group-scope",
+    label: "deploy-disabled",
+    targetGroups: [],
+  });
+  assert.deepEqual(
+    getSnippetSuggestions("deploy", [disabled], {
+      hostId: "host-prod",
+      hostGroup: "Production",
+    }),
+    [],
+  );
+});
+
 test("no match returns empty; empty input returns empty", () => {
   assert.deepEqual(getSnippetSuggestions("zzz", [snip({})], {}), []);
   assert.deepEqual(getSnippetSuggestions("", [snip({})], {}), []);

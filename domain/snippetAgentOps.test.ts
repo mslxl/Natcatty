@@ -57,6 +57,29 @@ test('serializeSnippetForAgentGet includes script metadata', () => {
   assert.deepEqual(serialized.targetGroups, ['Production']);
 });
 
+test('agent serialization preserves missing and explicit empty group scopes', () => {
+  const unscoped = serializeSnippetForAgentGet({
+    id: 'legacy',
+    label: 'Legacy',
+    command: 'nct.log(1)',
+    kind: 'script',
+    trigger: 'onOutput',
+    triggerPattern: 'READY',
+  });
+  const disabled = serializeSnippetForAgentGet({
+    id: 'disabled',
+    label: 'Disabled',
+    command: 'nct.log(1)',
+    kind: 'script',
+    trigger: 'onOutput',
+    triggerPattern: 'READY',
+    targetGroups: [],
+  });
+
+  assert.equal(unscoped.targetGroups, undefined);
+  assert.deepEqual(disabled.targetGroups, []);
+});
+
 test('buildSnippetFromAgentDraft validates onOutput triggerPattern', () => {
   const bad = buildSnippetFromAgentDraft(
     { label: 'x', command: 'nct.log(1)', trigger: 'onOutput' },
@@ -188,6 +211,23 @@ test('applySnippetAgentPatch supports dynamic groups alongside explicit hosts', 
   if (!patched.ok) return;
   assert.deepEqual(patched.snippet.targets, ['host-a']);
   assert.deepEqual(patched.snippet.targetGroups, ['Production']);
+});
+
+test('agent group targets normalize paths and preserve an explicit empty scope', () => {
+  const built = buildSnippetFromAgentDraft({
+    label: 'Run',
+    command: 'nct.log(1)',
+    kind: 'script',
+    targetGroups: [' Production\\Web ', 'Production//Web'],
+  }, []);
+  assert.equal(built.ok, true);
+  if (!built.ok) return;
+  assert.deepEqual(built.snippet.targetGroups, ['Production/Web']);
+
+  const patched = applySnippetAgentPatch(built.snippet, { targetGroups: [] });
+  assert.equal(patched.ok, true);
+  if (!patched.ok) return;
+  assert.deepEqual(patched.snippet.targetGroups, []);
 });
 
 test('applySnippetAgentPatch updates multi-line run mode', () => {

@@ -29,7 +29,9 @@ export interface UseVaultAgentBridgeInput {
   terminalSettings?: Pick<TerminalSettings, 'keepaliveInterval' | 'keepaliveCountMax'>;
   updateHosts: (hosts: Host[]) => void;
   updateKeys: (keys: SSHKey[]) => Promise<unknown> | unknown;
-  updateSnippets: (snippets: Snippet[]) => void;
+  updateSnippets: (
+    snippets: Snippet[] | ((current: Snippet[]) => Snippet[]),
+  ) => void;
   customGroups: string[];
   updateCustomGroups: (groups: string[]) => void;
   groupConfigs: GroupConfig[];
@@ -222,9 +224,11 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
           vaultSnapshotRef.current.notes = notes;
           applyUpdateNotes(notes);
         },
-        updateSnippets: (nextSnippets) => {
-          vaultSnapshotRef.current.snippets = nextSnippets;
-          current.updateSnippets(nextSnippets);
+        updateSnippets: (snippetUpdate) => {
+          vaultSnapshotRef.current.snippets = typeof snippetUpdate === 'function'
+            ? snippetUpdate(vaultSnapshotRef.current.snippets)
+            : snippetUpdate;
+          current.updateSnippets(snippetUpdate);
         },
         startTunnel: current.startTunnel,
         stopTunnel: current.stopTunnel,

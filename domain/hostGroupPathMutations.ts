@@ -9,6 +9,12 @@ export function normalizeGroupTargetPath(value: string): string {
     .join('/');
 }
 
+export function normalizeGroupTargetPaths(values: Iterable<string>): string[] {
+  return Array.from(new Set(
+    [...values].map(normalizeGroupTargetPath).filter(Boolean),
+  ));
+}
+
 function replaceGroupPathPrefix(path: string, sourcePath: string, nextPath: string): string {
   if (path === sourcePath) return nextPath;
   if (path.startsWith(`${sourcePath}/`)) return nextPath + path.slice(sourcePath.length);
@@ -27,10 +33,15 @@ export function remapSnippetTargetGroupPaths(
   let changed = false;
   const nextSnippets = snippets.map((snippet) => {
     if (!snippet.targetGroups?.length) return snippet;
-    const targetGroups = Array.from(new Set(
-      snippet.targetGroups.map((path) => replaceGroupPathPrefix(path, sourcePath, nextPath)),
-    ));
-    if (targetGroups.every((path, index) => path === snippet.targetGroups?.[index])) return snippet;
+    const targetGroups = normalizeGroupTargetPaths(
+      snippet.targetGroups.map((path) => replaceGroupPathPrefix(
+        normalizeGroupTargetPath(path), sourcePath, nextPath,
+      )),
+    );
+    if (
+      targetGroups.length === snippet.targetGroups.length
+      && targetGroups.every((path, index) => path === snippet.targetGroups?.[index])
+    ) return snippet;
     changed = true;
     return { ...snippet, targetGroups };
   });
@@ -51,10 +62,19 @@ export function removeSnippetTargetGroupPaths(
 
   let changed = false;
   const nextSnippets = snippets.map((snippet) => {
-    if (!snippet.targetGroups?.some(isRemoved)) return snippet;
-    const targetGroups = snippet.targetGroups.filter((path) => !isRemoved(path));
+    if (snippet.targetGroups === undefined) return snippet;
+    const targetGroups = normalizeGroupTargetPaths(snippet.targetGroups).filter(
+      (path) => !isRemoved(path),
+    );
+    if (
+      targetGroups.length === snippet.targetGroups.length
+      && targetGroups.every((path, index) => path === snippet.targetGroups?.[index])
+    ) return snippet;
     changed = true;
-    return { ...snippet, targetGroups: targetGroups.length > 0 ? targetGroups : undefined };
+    // An absent scope keeps the legacy onOutput "current session" behavior.
+    // Preserve an explicit empty list when the last selected group disappears
+    // so the script is disabled instead of silently widening to every host.
+    return { ...snippet, targetGroups };
   });
   return changed ? nextSnippets : snippets;
 }

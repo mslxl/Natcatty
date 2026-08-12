@@ -6,6 +6,7 @@ import {
 } from '@/domain/snippetScript.ts';
 import {
   getRunnableHostsForSnippet,
+  resolveSnippetTargetGroupsForSave,
 } from '@/domain/snippetTargets.ts';
 import {
   removeHostConnectScript,
@@ -33,7 +34,6 @@ function createBlankScript(): Partial<Snippet> {
     command: DEFAULT_SCRIPT_TEMPLATE,
     package: '',
     targets: [],
-    targetGroups: [],
     kind: 'script',
     language: 'javascript',
     trigger: 'manual',
@@ -102,7 +102,6 @@ export const QuickScriptEditorDialog: React.FC<QuickScriptEditorDialogProps> = (
         command: detail.code,
         package: packagePath,
         targets: [],
-        targetGroups: [],
         kind: 'script',
         language: 'javascript',
         trigger: 'manual',
@@ -138,7 +137,10 @@ export const QuickScriptEditorDialog: React.FC<QuickScriptEditorDialogProps> = (
   const runnableSnippet = useMemo(() => ({
     ...(editingSnippet as Snippet),
     targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
-    targetGroups: editingSnippet.targetsAllHosts ? [] : targetGroupSelection,
+    targetGroups: resolveSnippetTargetGroupsForSave(
+      editingSnippet,
+      targetGroupSelection,
+    ),
     targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
   }), [editingSnippet, targetGroupSelection, targetSelection]);
 
@@ -181,7 +183,10 @@ export const QuickScriptEditorDialog: React.FC<QuickScriptEditorDialogProps> = (
       tags: editingSnippet.tags ?? [],
       package: packagePath,
       targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
-      targetGroups: editingSnippet.targetsAllHosts ? [] : targetGroupSelection,
+      targetGroups: resolveSnippetTargetGroupsForSave(
+        editingSnippet,
+        targetGroupSelection,
+      ),
       targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
       kind: 'script',
       language: editingSnippet.language ?? 'javascript',
@@ -251,7 +256,7 @@ export const QuickScriptEditorDialog: React.FC<QuickScriptEditorDialogProps> = (
         ...prev,
         targetsAllHosts: true,
         targets: [],
-        targetGroups: [],
+        targetGroups: undefined,
       }));
       return;
     }

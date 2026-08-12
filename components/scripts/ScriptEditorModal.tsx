@@ -9,6 +9,7 @@ import { SelectGroupDialog } from '@/components/SelectGroupDialog';
 import { ScriptCodeEditor } from './ScriptCodeEditor';
 import { ScriptMetaFields } from './ScriptMetaFields';
 import { SnippetTargetsSection } from '@/components/snippets/SnippetTargetsSection';
+import { resolveSnippetTargetGroupsForSave } from '@/domain/snippetTargets.ts';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -87,7 +88,7 @@ export const ScriptEditorModal: React.FC<ScriptEditorModalProps> = ({
     onChange({
       ...snippet,
       targets: selectedHostIds,
-      targetGroups: selectedGroupPaths,
+      targetGroups: resolveSnippetTargetGroupsForSave(snippet, selectedGroupPaths),
       targetsAllHosts: undefined,
     });
   }, [onChange, selectedGroupPaths, selectedHostIds, snippet]);

@@ -18,7 +18,10 @@ import { Combobox } from './ui/combobox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { HistoryItem } from './SnippetsHistoryItem';
 import type { Snippet } from '@/domain/models';
-import { getRunnableHostsForSnippet } from '@/domain/snippetTargets.ts';
+import {
+  getRunnableHostsForSnippet,
+  resolveSnippetTargetGroupsForSave,
+} from '@/domain/snippetTargets.ts';
 import { STORAGE_KEY_SNIPPETS_PANEL_WIDTH } from '@/infrastructure/config/storageKeys.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -85,7 +88,10 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   const runnableEditingSnippet = useMemo(() => ({
     ...(editingSnippet as Snippet),
     targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
-    targetGroups: editingSnippet.targetsAllHosts ? [] : targetGroupSelection,
+    targetGroups: resolveSnippetTargetGroupsForSave(
+      editingSnippet,
+      targetGroupSelection,
+    ),
     targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
   }), [editingSnippet, targetGroupSelection, targetSelection]);
 
@@ -109,7 +115,7 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
         ...editingSnippet,
         targetsAllHosts: true,
         targets: [],
-        targetGroups: [],
+        targetGroups: undefined,
       });
       return;
     }
