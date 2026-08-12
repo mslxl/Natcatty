@@ -253,10 +253,16 @@ function createSessionOpsApi(ctx) {
         return { success: false, error: 'Session not found or not connected' };
       }
       if (session.blockUntargetedCwdProbe && !session.shellPid) {
-        return {
-          success: false,
-          error: 'Current directory is unavailable during an immediate reconnect',
-        };
+        const until = session.blockUntargetedCwdProbeUntil;
+        if (Number.isFinite(until) && Date.now() >= until) {
+          session.blockUntargetedCwdProbe = false;
+          session.blockUntargetedCwdProbeUntil = null;
+        } else {
+          return {
+            success: false,
+            error: 'Current directory is unavailable during an immediate reconnect',
+          };
+        }
       }
 
       const targetLoginPid = /^\d+$/.test(String(session.shellPid || ''))

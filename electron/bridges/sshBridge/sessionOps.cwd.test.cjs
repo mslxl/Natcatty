@@ -211,6 +211,7 @@ test("immediate parked reconnect does not guess cwd from an exiting shell", asyn
   let execCalls = 0;
   const session = {
     blockUntargetedCwdProbe: true,
+    blockUntargetedCwdProbeUntil: Date.now() + 15_000,
     connRef: { count: 1 },
     stream: {},
     conn: { exec() { execCalls += 1; } },
@@ -222,6 +223,31 @@ test("immediate parked reconnect does not guess cwd from an exiting shell", asyn
   assert.equal(result.success, false);
   assert.equal(execCalls, 0);
   assert.equal(session.shellPid, undefined);
+});
+
+test("expired reconnect cwd guard allows an untargeted probe", async () => {
+  let execCalls = 0;
+  const session = {
+    blockUntargetedCwdProbe: true,
+    blockUntargetedCwdProbeUntil: Date.now() - 1,
+    connRef: { count: 1 },
+    stream: {},
+    conn: {
+      exec(_command, callback) {
+        execCalls += 1;
+        callback(null, makePwdStream("/home/alice/project", "3131"));
+      },
+    },
+  };
+  const api = makeApi(session);
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1" });
+
+  assert.deepEqual(result, { success: true, cwd: "/home/alice/project" });
+  assert.equal(execCalls, 1);
+  assert.equal(session.shellPid, "3131");
+  assert.equal(session.blockUntargetedCwdProbe, false);
+  assert.equal(session.blockUntargetedCwdProbeUntil, null);
 });
 
 test("an SFTP reference does not make one terminal cwd ambiguous", async () => {

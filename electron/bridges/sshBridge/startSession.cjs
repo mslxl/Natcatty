@@ -834,11 +834,13 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 failReuse(setupErr);
                 return;
               }
-              const reconnectAfterLastShellClose =
+              const reconnectRiskRemainingMs =
                 consumePendingShellReconnectRisk(connRef);
               const copiedSession = sessions.get(sessionId);
-              if (copiedSession && reconnectAfterLastShellClose) {
+              if (copiedSession && reconnectRiskRemainingMs != null) {
                 copiedSession.blockUntargetedCwdProbe = true;
+                copiedSession.blockUntargetedCwdProbeUntil =
+                  Date.now() + reconnectRiskRemainingMs;
               }
               if (copiedSession) {
                 if (typeof transferConnectionRef === "function") {

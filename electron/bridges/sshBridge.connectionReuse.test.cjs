@@ -235,6 +235,7 @@ test("idle-park reconnect after last shell closes skips post-open PID discovery"
   assert.equal(parkedConn.openedShells.length, shellsBefore + 1);
   assert.equal(execCalls, 0, "must not open discovery exec after sole-shell reconnect");
   assert.equal(sessions.get("second").blockUntargetedCwdProbe, true);
+  assert.ok(sessions.get("second").blockUntargetedCwdProbeUntil > Date.now());
 });
 
 for (const leaseKind of ["sftp", "forward"]) {
@@ -332,6 +333,7 @@ test("last shell close stays protected when an SFTP lease keeps the transport li
   assert.equal(getClientConstructCount(), 1);
   assert.equal(sessions.get("new-shell").connRef, transport);
   assert.equal(sessions.get("new-shell").blockUntargetedCwdProbe, true);
+  assert.ok(sessions.get("new-shell").blockUntargetedCwdProbeUntil > Date.now());
 });
 
 test("late reconnect on an SFTP-held transport does not block cwd probes", async (t) => {

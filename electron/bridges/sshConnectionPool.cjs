@@ -1071,13 +1071,19 @@ function returnTransport(leaseIdOrHolder) {
   };
 }
 
+/**
+ * Consume the one-shot reconnect risk marked when the last shell lease
+ * returned. Returns remaining stale-process window in ms (0 at the inclusive
+ * boundary), or null when there is no in-window risk.
+ */
 function consumePendingShellReconnectRisk(transport) {
-  if (!transport?.pendingShellReconnectRisk) return false;
+  if (!transport?.pendingShellReconnectRisk) return null;
   const markedAt = transport.pendingShellReconnectRiskAt;
   transport.pendingShellReconnectRisk = false;
   transport.pendingShellReconnectRiskAt = null;
-  if (!Number.isFinite(markedAt)) return false;
-  return nowFn() - markedAt <= SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS;
+  if (!Number.isFinite(markedAt)) return null;
+  const remainingMs = SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS - (nowFn() - markedAt);
+  return remainingMs < 0 ? null : remainingMs;
 }
 
 function discardTransport(transportOrId, reason = "discard") {
