@@ -125,8 +125,13 @@ export class KeywordHighlighter implements IDisposable {
   private enterViewportScanNeedsRepeat = false;
   /** True while idle-Enter output should not mutate decorations (xterm full-viewport repaint flash). */
   private enterSuppressDecorationMutation = false;
-  /** Whether onWriteParsed has already observed the current Enter submission. */
-  private enterWriteParsedSeen = false;
+  /**
+   * onWriteParsed count for the current Enter submission. Echo + prompt often
+   * arrive as two batches; a second callback alone is not sustained output.
+   */
+  private enterWriteParsedCount = 0;
+  /** Lift idle-Enter decoration mute after this many writeParsed callbacks. */
+  private static readonly ENTER_SUPPRESS_LIFT_WRITE_COUNT = 3;
   /** Viewport browsing state before the latest scroll handler ran. */
   private wasBrowsingScrollback = false;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -164,7 +169,7 @@ export class KeywordHighlighter implements IDisposable {
           // xterm repaints the full viewport on decoration mutation and flashes
           // still-visible keyword highlights (custom ~/# rules make this obvious).
           this.enterSuppressDecorationMutation = true;
-          this.enterWriteParsedSeen = false;
+          this.enterWriteParsedCount = 0;
           // Time-bound Enter protection even when no echo/write arrives (echo
           // off, stalled PTY). onWriteParsed re-arms this on each write.
           this.scheduleEnterInputIdleClear();
@@ -235,12 +240,15 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            if (this.enterWriteParsedSeen) {
-              // Sustained Enter output: allow decoration catch-up so new matches
-              // are not postponed until the stream goes idle. Do not re-add the
-              // whole viewport dirty range — that rewinds multi-frame scans.
-              this.enterSuppressDecorationMutation = false;
+            if (this.enterWriteParsedCount > 0) {
+              this.enterWriteParsedCount += 1;
               this.updateWriteBurst();
+              // Idle Enter often splits echo and prompt across two writeParsed
+              // batches. Keep decoration mute until sustained output (burst or
+              // enough follow-up writes) or the Enter idle guard clears.
+              if (this.shouldLiftEnterDecorationSuppression()) {
+                this.enterSuppressDecorationMutation = false;
+              }
               if (this.enterViewportScanInProgress) {
                 this.enterViewportScanNeedsRepeat = true;
               } else {
@@ -249,7 +257,7 @@ export class KeywordHighlighter implements IDisposable {
                 this.enterViewportScanInProgress = true;
               }
             } else {
-              this.enterWriteParsedSeen = true;
+              this.enterWriteParsedCount = 1;
               this.markDirtyFromWrite({ includeViewportProbe: false });
               // Index the viewport while muted so multi-frame Enter continuation
               // can finish; decoration mutate stays suppressed for idle prompt.
@@ -456,7 +464,7 @@ export class KeywordHighlighter implements IDisposable {
     this.enterViewportScanInProgress = false;
     this.enterViewportScanNeedsRepeat = false;
     this.enterSuppressDecorationMutation = false;
-    this.enterWriteParsedSeen = false;
+    this.enterWriteParsedCount = 0;
     if (hadDecorations) {
       this.term.refresh(0, this.term.rows - 1);
     }
@@ -1121,12 +1129,21 @@ export class KeywordHighlighter implements IDisposable {
       this.enterInputIdleTimer = null;
       this.enterInputPending = false;
       this.enterSuppressDecorationMutation = false;
-      this.enterWriteParsedSeen = false;
+      this.enterWriteParsedCount = 0;
       // Catch up any viewport motion deferred while Enter protection blocked
       // scroll refresh (e.g. user scrolled during the post-Enter window).
       this.markVisibleRangeDirty();
       this.triggerRefresh("debounced", "write");
     }, KeywordHighlighter.ENTER_INPUT_GUARD_MS);
+  }
+
+  /** True when follow-up Enter writes look like real command output, not a split prompt. */
+  private shouldLiftEnterDecorationSuppression(): boolean {
+    if (!this.enterSuppressDecorationMutation) return false;
+    if (this.enterWriteParsedCount >= KeywordHighlighter.ENTER_SUPPRESS_LIFT_WRITE_COUNT) {
+      return true;
+    }
+    return this.isWriteBurstActive(performance.now());
   }
 
   private isBrowsingScrollback(): boolean {

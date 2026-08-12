@@ -2376,6 +2376,74 @@ test("idle Enter prompt redraw does not repaint existing keyword rows", async ()
   }
 });
 
+test("idle Enter keeps suppression across split echo and prompt writes", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      setLineText,
+      refreshCalls,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([
+      {
+        id: "deploy",
+        label: "Deploy",
+        patterns: ["DEPLOY"],
+        color: "#F87171",
+        enabled: true,
+      },
+      {
+        id: "prompt",
+        label: "Prompt",
+        patterns: ["~", "#"],
+        color: "#60A5FA",
+        enabled: true,
+      },
+    ], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+    resetRefreshCalls();
+
+    handlers.data?.("\r");
+    // Batch 1: newline echo advances the buffer.
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 40); });
+    raf.flush();
+
+    // Batch 2: prompt redraw for the same idle Enter (custom ~/# matches).
+    setLineText(22, "user@host:~# ");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+    raf.flush();
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "split idle-Enter writes must keep prior keyword decorations mounted",
+    );
+    assert.deepEqual(
+      refreshCalls,
+      [],
+      "a second writeParsed alone must not register prompt decorations that flash the viewport",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("Enter without write clears pending so later user scroll can highlight", async () => {
   const raf = installAnimationFrameQueue();
   try {
