@@ -14,6 +14,7 @@ const {
   completeTransportDial,
   buildConnectionReuseEndpoint,
   resetSshTransportRegistryForTests,
+  SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS,
 } = sshConnectionPool;
 
 // Load sshBridge with a mocked ssh2 module so we can observe whether a *new*
@@ -331,6 +332,73 @@ test("last shell close stays protected when an SFTP lease keeps the transport li
   assert.equal(getClientConstructCount(), 1);
   assert.equal(sessions.get("new-shell").connRef, transport);
   assert.equal(sessions.get("new-shell").blockUntargetedCwdProbe, true);
+});
+
+test("late reconnect on an SFTP-held transport does not block cwd probes", async (t) => {
+  let now = 1_000;
+  resetSshTransportRegistryForTests({
+    defaultIdleTtlMs: 0,
+    now: () => now,
+  });
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "late-sftp-held.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "old-shell" });
+  const oldSession = sessions.get("old-shell");
+  const transport = oldSession.connRef;
+  acquireConnectionRef({ id: "sftp-holder", __sshLeaseKind: "sftp" }, transport);
+  oldSession.stream.emit("close");
+  assert.equal(transport.state, "live");
+
+  now += SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS + 1;
+  await start({ sender: makeSender() }, { ...options, sessionId: "new-shell" });
+
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sessions.get("new-shell").connRef, transport);
+  assert.notEqual(sessions.get("new-shell").blockUntargetedCwdProbe, true);
+});
+
+test("late parked never-TTL reconnect does not block cwd probes", async (t) => {
+  let now = 1_000;
+  resetSshTransportRegistryForTests({
+    defaultIdleTtlMs: 0,
+    now: () => now,
+  });
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "late-parked.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const transport = first.connRef;
+  first.stream.emit("close");
+  assert.equal(transport.state, "idle");
+
+  now += SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS + 1;
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sessions.get("second").connRef, transport);
+  assert.notEqual(sessions.get("second").blockUntargetedCwdProbe, true);
 });
 
 function makeSender() {

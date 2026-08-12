@@ -39,6 +39,13 @@ const path = require("node:path");
 const DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS = 5 * 60_000;
 
 /**
+ * After the last interactive shell lease returns, the remote process can linger
+ * briefly. Only treat a later shell as a stale-cwd risk inside this window so
+ * SFTP/forward-held or never-TTL transports do not block cwd probes forever.
+ */
+const SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS = 15_000;
+
+/**
  * Global safety bound for authenticated transports with no active leases.
  * Active transports never count toward this limit and are never evicted.
  */
@@ -885,6 +892,7 @@ function createTransport({
     idleDeadlineAt: null,
     createdAt: nowFn(),
     pendingShellReconnectRisk: false,
+    pendingShellReconnectRiskAt: null,
     meta: meta || null,
     endedReason: null,
     _poolOnConnectionClose: null,
@@ -1034,6 +1042,7 @@ function returnTransport(leaseIdOrHolder) {
     // server. Remember that provenance even when SFTP/forward leases keep the
     // transport live, so the next shell does not guess cwd from the old PID.
     transport.pendingShellReconnectRisk = true;
+    transport.pendingShellReconnectRiskAt = nowFn();
   }
 
   if (entry.holder && typeof entry.holder === "object") {
@@ -1064,8 +1073,11 @@ function returnTransport(leaseIdOrHolder) {
 
 function consumePendingShellReconnectRisk(transport) {
   if (!transport?.pendingShellReconnectRisk) return false;
+  const markedAt = transport.pendingShellReconnectRiskAt;
   transport.pendingShellReconnectRisk = false;
-  return true;
+  transport.pendingShellReconnectRiskAt = null;
+  if (!Number.isFinite(markedAt)) return false;
+  return nowFn() - markedAt <= SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS;
 }
 
 function discardTransport(transportOrId, reason = "discard") {
@@ -1400,6 +1412,7 @@ function resolveTransportForReuse({
 module.exports = {
   // Constants
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
+  SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS,
   DEFAULT_MAX_IDLE_SSH_TRANSPORTS,
   STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
   LEASE_KINDS,
