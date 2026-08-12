@@ -3,6 +3,7 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogle } from '@ai-sdk/google';
 import type { ProviderConfig, ProviderStyle } from '../types';
 import { resolveProviderStyle } from '../types';
+import { normalizeAnthropicSdkBaseURL } from '../anthropicCompatBaseUrl';
 import {
   applyOpenAIChatContinuationToBody,
   extractProviderContinuationFromRawChunk,
@@ -640,6 +641,12 @@ export function resolveProviderEndpoint(
     }
   } else if (config.providerId === 'openrouter') {
     baseURL = baseURL || 'https://openrouter.ai/api/v1';
+  }
+  // @ai-sdk/anthropic expects baseURL to include /v1 (then appends /messages).
+  // Users often paste Claude Code style hosts without /v1 — normalize here so
+  // chat matches probe/discovery which request /v1/models on bare hosts.
+  if (style === 'anthropic' && baseURL) {
+    baseURL = normalizeAnthropicSdkBaseURL(baseURL);
   }
   return { baseURL, apiKey };
 }
