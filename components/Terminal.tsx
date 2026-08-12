@@ -102,7 +102,6 @@ import {
 } from "@/application/state/useScriptRecorder.ts";
 import { getScriptRecordingSnapshot, setScriptRecordingState } from "@/application/state/scriptRecordingStore.ts";
 import {
-  getActiveScriptRunForSession,
   runAutomationScript,
   runConnectScriptsSequential,
   selectScriptOverlayRun,
@@ -227,7 +226,14 @@ import {
 import type { CreateXTermRuntimeContext } from "./terminal/runtime/createXTermRuntime";
 import { TerminalView } from "./terminal/TerminalView";
 import {
+  cancelConnectAutomationBatch,
+  createConnectAutomationBatch,
+  trackConnectAutomationStop,
+  type ConnectAutomationBatch,
+} from "./terminal/connectAutomationBatch";
+import {
   getInitialTerminalStatus,
+  resolveTerminalVaultInitialized,
   shouldResetConnectAutomationOnReconnect,
   shouldSuppressHostStartupCommandOnReconnect,
   shouldStartTerminalBackend,
@@ -272,6 +278,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   sessionId,
   workspaceId,
   restoreState,
+  vaultInitializedOverride,
   pendingInitialCwd,
   shellType,
   lastCwd,
@@ -361,11 +368,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, []);
   // Reactive vault-ready flag so restored panes re-arm boot after hydration
   // (module isVaultInitialized() alone is not a React dependency).
-  const vaultInitialized = useVaultSnapshotField("isVaultInitialized");
+  const sharedVaultInitialized = useVaultSnapshotField("isVaultInitialized");
+  const vaultInitialized = resolveTerminalVaultInitialized(
+    sharedVaultInitialized,
+    vaultInitializedOverride,
+  );
   const connectScriptsConsumedRef = useRef(false);
   const connectScriptsCompletedIdsRef = useRef(new Set<string>());
   const connectScriptsInFlightRef = useRef(false);
-  const connectScriptsAbortRef = useRef<AbortController | null>(null);
+  const connectScriptsBatchRef = useRef<ConnectAutomationBatch | null>(null);
   const pendingScriptRunIdRef = useRef<string | null>(null);
   const pendingScriptHandledRef = useRef<Snippet | null>(null);
   const pendingScriptRef = useRef(pendingScript);
@@ -2514,9 +2525,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!shouldEvaluateConnect && !hasPendingWork) return;
     if (connectScriptsInFlightRef.current) return;
 
+    const batch = createConnectAutomationBatch();
+    connectScriptsBatchRef.current = batch;
+    connectScriptsInFlightRef.current = true;
+    const batchStillActive = () => (
+      !batch.controller.signal.aborted && connectScriptsBatchRef.current === batch
+    );
+
     // Defer until xterm has rendered login output and the main-process output tap
     // has populated SessionOutputBuffer (avoids waitForPrompt racing an empty buffer).
+    let timerFired = false;
     const timer = window.setTimeout(() => {
+      timerFired = true;
+      if (!batchStillActive()) return;
       const runPending = Boolean(pendingOne);
       const connectQueueNow = connectScriptsConsumedRef.current
         ? []
@@ -2545,6 +2566,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         })) {
           connectScriptsConsumedRef.current = true;
         }
+        if (connectScriptsBatchRef.current === batch) {
+          connectScriptsBatchRef.current = null;
+          connectScriptsInFlightRef.current = false;
+        }
         return;
       }
 
@@ -2553,18 +2578,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         connectQueueNow.map((item) => item.id).filter((id): id is string => Boolean(id)),
       );
 
-      connectScriptsAbortRef.current?.abort();
-      const batchAbort = new AbortController();
-      connectScriptsAbortRef.current = batchAbort;
-      connectScriptsInFlightRef.current = true;
-      const batchStillActive = () => (
-        !batchAbort.signal.aborted && connectScriptsAbortRef.current === batchAbort
-      );
-
       void runConnectScriptsSequential({
         scripts: scriptsToRun,
         sessionId,
-        signal: batchAbort.signal,
+        signal: batch.controller.signal,
+        onCancelableRunChange: (stopCurrentRun) => (
+          trackConnectAutomationStop(batch, stopCurrentRun)
+        ),
         sessionMeta: {
           connected: true,
           name: scriptSessionName,
@@ -2599,7 +2619,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         .catch(async (err) => {
           if (!batchStillActive()) return;
           const message = err instanceof Error ? err.message : String(err);
-          if (message === 'Aborted') return;
           toast.error(message.includes('Observer mode') ? t('scripts.observer.blocked') : message);
           connectScriptsConsumedRef.current = true;
 
@@ -2614,7 +2633,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
             await runConnectScriptsSequential({
               scripts: [pendingScriptToMark],
               sessionId,
-              signal: batchAbort.signal,
+              signal: batch.controller.signal,
+              onCancelableRunChange: (stopCurrentRun) => (
+                trackConnectAutomationStop(batch, stopCurrentRun)
+              ),
               sessionMeta: {
                 connected: true,
                 name: scriptSessionName,
@@ -2633,19 +2655,30 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           } catch (pendingErr) {
             if (!batchStillActive()) return;
             const pendingMessage = pendingErr instanceof Error ? pendingErr.message : String(pendingErr);
-            if (pendingMessage === 'Aborted') return;
             toast.error(pendingMessage.includes('Observer mode') ? t('scripts.observer.blocked') : pendingMessage);
           }
         })
         .finally(() => {
-          if (connectScriptsAbortRef.current === batchAbort) {
-            connectScriptsAbortRef.current = null;
+          if (
+            !batch.controller.signal.aborted
+            && connectScriptsBatchRef.current === batch
+          ) {
+            connectScriptsBatchRef.current = null;
             connectScriptsInFlightRef.current = false;
           }
         });
     }, 400);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (!timerFired && connectScriptsBatchRef.current === batch) {
+        batch.controller.abort();
+        connectScriptsBatchRef.current = null;
+        connectScriptsInFlightRef.current = false;
+      } else if (statusRef.current !== "connected") {
+        void cancelConnectAutomationBatch(batch).catch(() => {});
+      }
+    };
   }, [effectiveTerminalProtocol, host, isPendingScriptAlreadyHandled, moshShellReady, pendingScript, pendingScriptId, scriptSessionName, sessionId, snippets, status, t]);
 
   useEffect(() => {
@@ -3373,6 +3406,43 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return;
     }
     if (!termRef.current) return;
+    // Claim the retry before awaiting either script cancellation or backend
+    // cleanup. A second reconnect/cancel invalidates this continuation.
+    const retryToken = Symbol("retry");
+    retryTokenRef.current = retryToken;
+    reconnectPreparationTokenRef.current = retryToken;
+    const retryTokenStillCurrent = () => retryTokenRef.current === retryToken;
+    const finishReconnectPreparation = () => {
+      if (reconnectPreparationTokenRef.current === retryToken) {
+        reconnectPreparationTokenRef.current = null;
+      }
+    };
+
+    const connectAutomationBatch = connectScriptsBatchRef.current;
+    if (connectAutomationBatch) {
+      try {
+        await cancelConnectAutomationBatch(connectAutomationBatch);
+      } catch (error) {
+        finishReconnectPreparation();
+        const message = error instanceof Error ? error.message : String(error);
+        toast.error(message);
+        if (mode === "auto" && retryTokenStillCurrent()) {
+          // Return to disconnected so the existing auto-reconnect loop can
+          // schedule another attempt, including another exact stop request.
+          updateStatus("disconnected");
+        }
+        return;
+      }
+      if (!retryTokenStillCurrent()) {
+        finishReconnectPreparation();
+        return;
+      }
+      if (connectScriptsBatchRef.current === connectAutomationBatch) {
+        connectScriptsBatchRef.current = null;
+        connectScriptsInFlightRef.current = false;
+      }
+    }
+
     if (mode === "manual") {
       clearAutoReconnect();
       // Manual reconnect skips the disconnected status transition that normally
@@ -3380,16 +3450,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (shouldResetConnectAutomationOnReconnect(
         restoreState === "restored-disconnected" ? "restored" : "manual",
       )) {
-        // Cancel any in-flight onConnect batch before clearing guards so its
-        // callbacks cannot mutate the newly allocated completed set / consumed flag.
-        // Abort alone only abandons the renderer waiter — stop the backend run so a
-        // paused nct.session.sleep() cannot resume into the reconnected shell.
-        connectScriptsAbortRef.current?.abort();
-        connectScriptsAbortRef.current = null;
-        const activeConnectScript = getActiveScriptRunForSession(sessionId);
-        if (activeConnectScript) {
-          void stopScriptRun(activeConnectScript.runId);
-        }
+        // The prior batch is now stopped, so its callbacks cannot mutate these
+        // newly allocated guards for the fresh manual connection.
         connectScriptsConsumedRef.current = false;
         connectScriptsCompletedIdsRef.current = new Set();
         connectScriptsInFlightRef.current = false;
@@ -3401,20 +3463,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       // once the cwd was consumed or when there is no pending inherited cwd.
       prepareInitialCwdIntent();
     } else {
+      // An automatic reconnect replaces the transport but remains the same user
+      // session. Stop old automation above, then preserve the existing policy of
+      // not starting onConnect scripts again on the replacement transport.
+      connectScriptsConsumedRef.current = true;
       restoreCwdIntentRef.current = null;
       suppressHostStartupCommandRef.current = shouldSuppressHostStartupCommandOnReconnect("automatic");
     }
-    // Claim the retry before awaiting close. A close/cancel/unmount during the
-    // awaited backend cleanup invalidates this token and stops the continuation.
-    const retryToken = Symbol("retry");
-    retryTokenRef.current = retryToken;
-    reconnectPreparationTokenRef.current = retryToken;
-    const retryTokenStillCurrent = () => retryTokenRef.current === retryToken;
-    const finishReconnectPreparation = () => {
-      if (reconnectPreparationTokenRef.current === retryToken) {
-        reconnectPreparationTokenRef.current = null;
-      }
-    };
 
     try {
       await cleanupSession();

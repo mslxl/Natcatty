@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   getInitialTerminalStatus,
+  resolveTerminalVaultInitialized,
   shouldResetConnectAutomationOnReconnect,
   shouldSuppressHostStartupCommandOnReconnect,
   shouldStartTerminalBackend,
@@ -42,6 +43,20 @@ test("terminal boot waits for vaultInitialized before creating a backend session
   );
 });
 
+test("terminal popup can supply its own completed vault hydration state", () => {
+  const terminalSource = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const popupSource = readFileSync(new URL("../TerminalPopupPage.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    terminalSource,
+    /const vaultInitialized = resolveTerminalVaultInitialized\(\s*sharedVaultInitialized,\s*vaultInitializedOverride,\s*\);/,
+  );
+  assert.match(popupSource, /vaultInitializedOverride=\{vaultInitialized\}/);
+  assert.equal(resolveTerminalVaultInitialized(false, true), true);
+  assert.equal(resolveTerminalVaultInitialized(false), false);
+  assert.equal(resolveTerminalVaultInitialized(true, false), false);
+});
+
 test("host startup command policy distinguishes restored and automatic reconnects", () => {
   assert.equal(shouldSuppressHostStartupCommandOnReconnect("restored"), false);
   assert.equal(shouldSuppressHostStartupCommandOnReconnect("manual"), false);
@@ -57,14 +72,18 @@ test("connect automation reset policy distinguishes manual and automatic reconne
 test("manual reconnect resets connect automation before opening a new session", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const reconnectIndex = source.indexOf("const startReconnect = ");
-  const manualBranchIndex = source.indexOf('if (mode === "manual")', reconnectIndex);
-  const abortBatchIndex = source.indexOf(
-    "connectScriptsAbortRef.current?.abort()",
-    manualBranchIndex,
+  const cancelBatchIndex = source.indexOf(
+    "await cancelConnectAutomationBatch(connectAutomationBatch)",
+    reconnectIndex,
   );
-  const stopBackendIndex = source.indexOf(
-    "void stopScriptRun(activeConnectScript.runId)",
-    manualBranchIndex,
+  const manualBranchIndex = source.indexOf('if (mode === "manual")', reconnectIndex);
+  const stopFailureRetryIndex = source.indexOf(
+    'if (mode === "auto" && retryTokenStillCurrent())',
+    cancelBatchIndex,
+  );
+  const stopFailureDisconnectedIndex = source.indexOf(
+    'updateStatus("disconnected")',
+    stopFailureRetryIndex,
   );
   const resetConsumedIndex = source.indexOf(
     "connectScriptsConsumedRef.current = false",
@@ -86,9 +105,10 @@ test("manual reconnect resets connect automation before opening a new session", 
   );
 
   assert.notEqual(reconnectIndex, -1);
+  assert.notEqual(cancelBatchIndex, -1);
   assert.notEqual(manualBranchIndex, -1);
-  assert.notEqual(abortBatchIndex, -1);
-  assert.notEqual(stopBackendIndex, -1);
+  assert.notEqual(stopFailureRetryIndex, -1);
+  assert.notEqual(stopFailureDisconnectedIndex, -1);
   assert.notEqual(resetConsumedIndex, -1);
   assert.notEqual(resetCompletedIndex, -1);
   assert.notEqual(resetInFlightIndex, -1);
@@ -96,11 +116,16 @@ test("manual reconnect resets connect automation before opening a new session", 
   assert.notEqual(autoElseIndex, -1);
   assert.notEqual(autoSuppressIndex, -1);
   assert.ok(
-    abortBatchIndex < stopBackendIndex
-      && stopBackendIndex < resetConsumedIndex
-      && abortBatchIndex < resetCompletedIndex
-      && abortBatchIndex < resetInFlightIndex,
-    "manual reconnect must abort and stop the backend onConnect run before clearing guards",
+    cancelBatchIndex < manualBranchIndex
+      && cancelBatchIndex < resetConsumedIndex
+      && cancelBatchIndex < resetCompletedIndex
+      && cancelBatchIndex < resetInFlightIndex,
+    "every reconnect must await onConnect cancellation before manual guards are cleared",
+  );
+  assert.ok(
+    stopFailureRetryIndex < stopFailureDisconnectedIndex
+      && stopFailureDisconnectedIndex < manualBranchIndex,
+    "automatic reconnect must return to disconnected when stopping the old batch fails",
   );
   assert.ok(
     resetConsumedIndex < connectingIndex && resetCompletedIndex < connectingIndex,
@@ -113,6 +138,11 @@ test("manual reconnect resets connect automation before opening a new session", 
   assert.ok(
     !source.slice(autoElseIndex, connectingIndex).includes("connectScriptsConsumedRef.current = false"),
     "automatic reconnect must not reset connect-automation refs",
+  );
+  assert.match(
+    source.slice(autoElseIndex, connectingIndex),
+    /connectScriptsConsumedRef\.current = true/,
+    "automatic reconnect must stop the old batch without queuing it again",
   );
 });
 test("restored disconnected sessions still create a terminal runtime before backend startup", () => {

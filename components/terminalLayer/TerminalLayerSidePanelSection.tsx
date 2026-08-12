@@ -987,6 +987,9 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
         data-side-panel-tab={isSidePanelOpenForCurrentTab ? (activeSidePanelTab ?? undefined) : undefined}
         style={{
           ...sidePanelCssVars,
+          // Keep native form controls (AI/Codex composer textarea) in sync when a
+          // light terminal theme remaps --background under dark app chrome.
+          colorScheme: resolvedSidePanelTerminalTheme.type,
           backgroundColor: sidePanelTheme.termBg,
           color: sidePanelTheme.termFg,
           ...(isSidePanelOpenForCurrentTab && sidePanelPosition === 'left'

@@ -165,6 +165,17 @@ test('side panel content scopes app color utilities to the resolved terminal the
   assert.match(sectionSource, /\.\.\.sidePanelCssVars/);
 });
 
+test('side panel sets color-scheme from the terminal theme so native inputs match light panels', () => {
+  const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  // When a light terminal theme remaps --background under a dark app chrome,
+  // form controls (Codex/AI composer textarea) still follow color-scheme.
+  assert.match(
+    sectionSource,
+    /colorScheme:\s*resolvedSidePanelTerminalTheme\.type/,
+  );
+});
+
 test('a visible tool without a ready pane host stays in the hidden parking host', () => {
   const parkingHost = { id: 'parking' };
   const paneHost = { id: 'pane' };

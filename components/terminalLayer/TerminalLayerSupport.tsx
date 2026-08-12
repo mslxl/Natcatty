@@ -671,6 +671,7 @@ export interface TerminalLayerProps {
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onRequestAddToWorkspace?: (workspaceId: string) => void;
+  onAppendHostToWorkspace?: (workspaceId: string, hostId: string) => void;
   onUpdateSplitSizes: (workspaceId: string, splitId: string, sizes: number[]) => void;
   onSetDraggingSessionId: (id: string | null) => void;
   onToggleWorkspaceViewMode?: (workspaceId: string) => void;

@@ -220,6 +220,13 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
     "  printf '%s\\n' 'user@host:/media on /mnt/sshfs type fuse.sshfs (rw)'",
     "  printf '%s\\n' 'CloudNAS on /CloudNAS type fuse.CloudDrive (rw)'",
     "  printf '%s\\n' 'ufs-backend on /mnt/ufs type fuse.ufs (rw)'",
+    "  printf '%s\\n' 'nas.local:/volume1/media on /mnt/nas type nfs4 (rw)'",
+    "  printf '%s\\n' '//nas.local/share on /mnt/smb type cifs (rw)'",
+    "  printf '%s\\n' 'mergerfs on /mnt/pool type fuse.mergerfs (rw)'",
+    "  printf '%s\\n' 'gluster on /mnt/gluster type fuse.glusterfs (rw)'",
+    "  printf '%s\\n' 'ceph-fuse on /mnt/ceph type fuse.ceph-fuse (rw)'",
+    "  printf '%s\\n' 'unionfs on /mnt/unionfs type fuse.unionfs-fuse (rw)'",
+    "  printf '%s\\n' 'CloudFS on /mnt/CloudNAS/openlist type fuse (rw)'",
     "}",
     "df() {",
     ...(forceLegacy ? ["  if [ \"$1\" = '-kPT' ]; then return 1; fi"] : []),
@@ -239,6 +246,13 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
     "    printf '%s\\n' 'user@host:/media fuse.sshfs 2147483648 1073741824 1073741824 50% /mnt/sshfs'",
     "    printf '%s\\n' 'CloudNAS fuse.CloudDrive 4294967296 2147483648 2147483648 50% /CloudNAS'",
     "    printf '%s\\n' 'ufs-backend fuse.ufs 1048576000 524288000 524288000 50% /mnt/ufs'",
+    "    printf '%s\\n' 'nas.local:/volume1/media nfs4 20971520000 8388608000 12582912000 40% /mnt/nas'",
+    "    printf '%s\\n' '//nas.local/share cifs 10485760000 4194304000 6291456000 40% /mnt/smb'",
+    "    printf '%s\\n' 'mergerfs fuse.mergerfs 31457280000 9437184000 22020096000 30% /mnt/pool'",
+    "    printf '%s\\n' 'gluster fuse.glusterfs 15728640000 7340032000 8388608000 47% /mnt/gluster'",
+    "    printf '%s\\n' 'ceph-fuse fuse.ceph-fuse 12582912000 6291456000 6291456000 50% /mnt/ceph'",
+    "    printf '%s\\n' 'unionfs fuse.unionfs-fuse 8388608000 2097152000 6291456000 25% /mnt/unionfs'",
+    "    printf '%s\\n' 'CloudFS fuse 10995116277760 0 10995116277760 0% /mnt/CloudNAS/openlist'",
     "    printf '%s\\n' 'tmpfs tmpfs 102400 100 102300 1% /run'",
     "    return 0",
     "  fi",
@@ -254,6 +268,12 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
     "  printf '%s\\n' 'user@host:/media 2147483648 1073741824 1073741824 50% /mnt/sshfs'",
     "  printf '%s\\n' 'CloudDrive 4294967296 2147483648 2147483648 50% /CloudNAS/CloudDrive'",
     "  printf '%s\\n' 'ufs 1048576000 524288000 524288000 50% /mnt/ufs'",
+    "  printf '%s\\n' 'nas.local:/volume1/media 20971520000 8388608000 12582912000 40% /mnt/nas'",
+    "  printf '%s\\n' '//nas.local/share 10485760000 4194304000 6291456000 40% /mnt/smb'",
+    "  printf '%s\\n' 'mergerfs 31457280000 9437184000 22020096000 30% /mnt/pool'",
+    "  printf '%s\\n' 'gluster 15728640000 7340032000 8388608000 47% /mnt/gluster'",
+    "  printf '%s\\n' 'ceph-fuse 12582912000 6291456000 6291456000 50% /mnt/ceph'",
+    "  printf '%s\\n' 'unionfs 8388608000 2097152000 6291456000 25% /mnt/unionfs'",
     "  printf '%s\\n' 'tmpfs 102400 100 102300 1% /run'",
     "}",
     command,
@@ -332,6 +352,52 @@ test("getServerStats uses mount metadata when df filesystem types are unavailabl
   assert.equal(result.stats.diskTotal, 100);
 });
 
+function runStatsCommandWithUntypedScopedIpv6NfsDf(command) {
+  const script = [
+    "uname() { printf '%s\\n' Linux; }",
+    "nproc() { printf '%s\\n' 2; }",
+    "ps() { return 1; }",
+    "top() { return 1; }",
+    "mount() { return 1; }",
+    "df() {",
+    "  if [ \"$1\" = '-kPT' ]; then return 1; fi",
+    "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'",
+    "  printf '%s\\n' '/dev/sda1 104857600 20971520 83886080 20% /'",
+    "  printf '%s\\n' '[fe80::1%eth0]:/export 20971520000 8388608000 12582912000 40% /mnt/nfs6'",
+    "  printf '%s\\n' 'ceph-fuse 12582912000 6291456000 6291456000 50% /mnt/ceph'",
+    "  printf '%s\\n' 'gluster 15728640000 7340032000 8388608000 47% /mnt/gluster'",
+    "}",
+    command,
+  ].join("\n");
+  return spawnSync("sh", ["-c", script], { encoding: "utf8" });
+}
+
+test("getServerStats excludes scoped IPv6 NFS sources without filesystem types", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "nfs6.example.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        const execution = runStatsCommandWithUntypedScopedIpv6NfsDf(command);
+        assert.equal(execution.status, 0, execution.stderr);
+        cb(null, fakeStream(execution.stdout));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.stats.disks, [
+    { mountPoint: "/", used: 20, total: 100, percent: 20, capacityKey: "/dev/sda1" },
+  ]);
+  assert.equal(result.stats.diskPercent, 20);
+  assert.equal(result.stats.diskUsed, 20);
+  assert.equal(result.stats.diskTotal, 100);
+});
+
 test("getServerStats does not fall back to a root FUSE quota", async () => {
   const sessions = new Map();
   sessions.set("sid", {
@@ -380,6 +446,50 @@ test("getServerStats keeps a local fuseblk root filesystem", async () => {
   assert.equal(result.stats.diskPercent, 50);
   assert.equal(result.stats.diskUsed, 512);
   assert.equal(result.stats.diskTotal, 1024);
+});
+
+function runStatsCommandWithLoopRootDf(command) {
+  const script = [
+    "uname() { printf '%s\\n' Linux; }",
+    "nproc() { printf '%s\\n' 2; }",
+    "ps() { return 1; }",
+    "top() { return 1; }",
+    "mount() { return 1; }",
+    "df() {",
+    "  if [ \"$1\" != '-kPT' ]; then return 1; fi",
+    "  printf '%s\\n' 'Filesystem Type 1024-blocks Used Available Capacity Mounted on'",
+    "  printf '%s\\n' '/dev/loop0 ext4 8388608 2097152 6291456 25% /'",
+    "  printf '%s\\n' '/dev/loop1 squashfs 131072 131072 0 100% /snap/example/1'",
+    "}",
+    command,
+  ].join("\n");
+  return spawnSync("sh", ["-c", script], { encoding: "utf8" });
+}
+
+test("getServerStats keeps a loop-backed root while skipping snap loops", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "ct-loop.example.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        const execution = runStatsCommandWithLoopRootDf(command);
+        assert.equal(execution.status, 0, execution.stderr);
+        cb(null, fakeStream(execution.stdout));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.stats.disks, [
+    { mountPoint: "/", used: 2, total: 8, percent: 25, capacityKey: "/dev/loop0", filesystemType: "ext4" },
+  ]);
+  assert.equal(result.stats.diskPercent, 25);
+  assert.equal(result.stats.diskUsed, 2);
+  assert.equal(result.stats.diskTotal, 8);
 });
 
 test("getServerStats reads commands after BusyBox top's CPU column", async () => {

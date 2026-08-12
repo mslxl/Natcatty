@@ -10,6 +10,7 @@ const {
   acquireConnectionRef,
   releaseConnectionRef,
   transferConnectionRef,
+  consumePendingShellReconnectRisk,
   findReusableSession,
   createTransport,
   borrowTransport,
@@ -333,6 +334,20 @@ test("releaseConnectionRef on a session without a descriptor is a safe no-op", (
   assert.equal(releaseConnectionRef({}), false);
   assert.equal(releaseConnectionRef(null), false);
   assert.equal(releaseConnectionRef(undefined), false);
+});
+
+test("last shell close marks reconnect risk while an SFTP lease keeps the transport live", () => {
+  const owner = { id: "shell", stream: {} };
+  const sftp = { id: "sftp", __sshLeaseKind: "sftp" };
+  const transport = createConnectionRef(owner, makeConn(), []);
+  acquireConnectionRef(sftp, transport);
+
+  assert.equal(releaseConnectionRef(owner), false);
+  assert.deepEqual(consumePendingShellReconnectRisk(transport), {
+    oldShellPids: [],
+    hasUnknownOldShell: true,
+  });
+  assert.equal(consumePendingShellReconnectRisk(transport), false);
 });
 
 test("single-channel connection parks on release when TTL is 0", () => {
