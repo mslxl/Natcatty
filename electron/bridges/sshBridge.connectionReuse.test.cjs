@@ -190,15 +190,16 @@ test("an ordinary open with reuse disabled bypasses an idle same-host transport"
   assert.notEqual(firstTransport.conn, sessions.get("second").conn);
 });
 
-test("idle park reconnect still discovers shell PID when no terminal sibling remains", async (t) => {
-  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
-  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+test("idle-park reconnect after last shell closes skips post-open PID discovery", async (t) => {
+  // After the sole interactive shell returns its lease, the next open reuses the
+  // parked transport. Post-open discovery exec has no sibling PIDs to
+  // disambiguate and can tear down bastion sessions (issue #2923).
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
   const sessions = new Map();
   const start = registerStartHandler(bridge, sessions);
   const options = {
-    hostname: "192.168.1.1",
-    username: "test",
+    hostname: "bastion.qzsec.example",
+    username: "alice",
     port: 22,
     authMethod: "password",
     password: "secret",
@@ -214,98 +215,19 @@ test("idle park reconnect still discovers shell PID when no terminal sibling rem
   first.stream.emit("close");
   assert.equal(firstTransport.state, "idle");
 
-  let discoveryExecCalls = 0;
+  let execCalls = 0;
   parkedConn.exec = (_command, callback) => {
-    discoveryExecCalls += 1;
-    setImmediate(() => callback(new Error("PID discovery unavailable")));
+    execCalls += 1;
+    callback(new Error("idle reconnect must not open discovery exec"));
   };
+  const shellsBefore = parkedConn.openedShells.length;
 
   await start({ sender: makeSender() }, { ...options, sessionId: "second" });
 
-  assert.ok(
-    discoveryExecCalls >= 1,
-    "sole reconnect must still identify the new shell against any lingering remote PID",
-  );
-  assert.equal(getClientConstructCount(), 1, "must keep using the authenticated transport");
-  assert.equal(firstTransport.state, "live");
-  assert.equal(sessions.get("second").conn, parkedConn);
-});
-
-test("endpoint reconnect still discovers shell PID when only a non-terminal lease remains", async (t) => {
-  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
-  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
-  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
-  const sessions = new Map();
-  const start = registerStartHandler(bridge, sessions);
-  const options = {
-    hostname: "192.168.1.2",
-    username: "test",
-    port: 22,
-    authMethod: "password",
-    password: "secret",
-    useSshAgent: false,
-    verifyHostKeys: false,
-    sshChannelOpenRateLimitBackoffMs: 1,
-  };
-
-  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
-  const first = sessions.get("first");
-  const sharedConn = first.conn;
-  const sharedTransport = first.connRef;
-  const sftpHolder = { id: "sftp", __sshLeaseKind: "sftp" };
-  acquireConnectionRef(sftpHolder, sharedTransport);
-  first.stream.emit("close");
-  assert.equal(sharedTransport.state, "live");
-  assert.equal(sharedTransport.count, 1);
-
-  let discoveryExecCalls = 0;
-  sharedConn.exec = (_command, callback) => {
-    discoveryExecCalls += 1;
-    setImmediate(() => callback(new Error("PID discovery unavailable")));
-  };
-
-  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
-
-  assert.ok(
-    discoveryExecCalls >= 1,
-    "non-terminal leases do not remove the need to identify the reconnected shell",
-  );
-  assert.equal(getClientConstructCount(), 1, "must keep using the authenticated transport");
-  assert.equal(sharedTransport.count, 2);
-  assert.equal(sessions.get("second").conn, sharedConn);
-});
-
-test("endpoint reconnect still discovers shell PID when a terminal sibling is live", async (t) => {
-  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
-  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
-  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
-  const sessions = new Map();
-  const start = registerStartHandler(bridge, sessions);
-  const options = {
-    hostname: "192.168.1.3",
-    username: "test",
-    port: 22,
-    authMethod: "password",
-    password: "secret",
-    useSshAgent: false,
-    verifyHostKeys: false,
-    sshChannelOpenRateLimitBackoffMs: 1,
-  };
-
-  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
-  const first = sessions.get("first");
-  const sharedConn = first.conn;
-  let discoveryExecCalls = 0;
-  sharedConn.exec = (_command, callback) => {
-    discoveryExecCalls += 1;
-    setImmediate(() => callback(new Error("PID discovery unavailable")));
-  };
-
-  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
-
-  assert.equal(discoveryExecCalls, 1, "shared terminals still need PID disambiguation");
-  assert.equal(getClientConstructCount(), 1);
-  assert.equal(sessions.get("second").conn, sharedConn);
+  assert.equal(getClientConstructCount(), 1, "second open reuses the parked transport");
+  assert.equal(parkedConn.openedShells.length, shellsBefore + 1);
+  assert.equal(execCalls, 0, "must not open discovery exec after sole-shell reconnect");
+  assert.ok(sessions.get("second"));
 });
 
 function makeSender() {

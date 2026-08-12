@@ -281,7 +281,8 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
 
 
   const handleHostDragStart = React.useCallback((e: React.DragEvent, hostId: string) => {
-    e.dataTransfer.effectAllowed = "move";
+    // copyMove: vault reorder uses move; focus-sidebar append uses copy.
+    e.dataTransfer.effectAllowed = "copyMove";
     e.dataTransfer.setData("host-id", hostId);
     draggingHostIdRef.current = hostId;
     setDraggingHostId(hostId);

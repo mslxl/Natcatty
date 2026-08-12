@@ -797,11 +797,6 @@ export const useSessionState = ({
     host: Host,
     direction: SplitDirection = 'vertical',
   ): string | null => {
-    // Serial hosts use a different session constructor; they currently
-    // only enter workspaces via createSerialSession + drag, so reject
-    // them here to avoid a partially-constructed session.
-    if (host.protocol === 'serial') return null;
-
     // Cheap early-exit using the ref when the workspace is clearly
     // absent. The authoritative check lives inside the setWorkspaces
     // updater below so we also cover the concurrent-close race.
