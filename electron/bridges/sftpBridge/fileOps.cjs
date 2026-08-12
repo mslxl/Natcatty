@@ -932,8 +932,9 @@ function createFileOpsApi(ctx) {
         }
       }
     
-      // Method 2: SFTP realpath('.') — skip if result is '/' for non-root users
-      // because some SFTP servers start in '/' rather than the user's home
+      // Method 2: SFTP realpath('.'). A virtual/chroot SFTP server (including
+      // bastion products such as JumpServer) can legitimately expose '/' as
+      // the authenticated user's root even when SSH exec channels are denied.
       try {
         const sftp = await requireSftpChannel(client, {
           signal,
@@ -942,7 +943,7 @@ function createFileOpsApi(ctx) {
         throwIfAborted(signal);
         const absPath = await realpathAsync(sftp, ".");
         throwIfAborted(signal);
-        if (absPath && absPath !== "/") {
+        if (absPath && absPath.startsWith("/")) {
           return { success: true, homeDir: absPath };
         }
       } catch (err) {

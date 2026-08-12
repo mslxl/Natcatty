@@ -30,7 +30,7 @@ import { buildSftpHostCredentials } from "./sftp/useSftpHostCredentials";
 import { useSftpFileWatch } from "./sftp/useSftpFileWatch";
 import { useSftpSessionCleanup } from "./sftp/useSftpSessionCleanup";
 import { useSftpSessionErrors } from "./sftp/useSftpSessionErrors";
-import { ensureRemoteSftpSession } from "./sftp/ensureRemoteSftpSession";
+import { ensureRemoteSftpSession, probeSftpSession } from "./sftp/ensureRemoteSftpSession";
 import { openTransferSftpSession } from "./sftp/dedicatedTransferResume";
 import {
   createTransferPoolKeyCache,
@@ -606,16 +606,7 @@ export const useSftpState = (
         forceReconnect: ensureOptions?.forceReconnect,
         releaseConnection,
         tabId,
-        probeSession: async (sftpId) => {
-          // Lightweight liveness check; any session-error from the bridge
-          // triggers a reconnect in ensureRemoteSftpSession.
-          if (!bridge?.getSftpHomeDir) return true;
-          const result = await bridge.getSftpHomeDir(sftpId);
-          if (result && result.success === false) {
-            throw new Error(result.error || "SFTP session not found");
-          }
-          return true;
-        },
+        probeSession: (sftpId) => probeSftpSession(bridge, sftpId),
       });
     },
     resolveConnectedHost: (tabId) => connectedHostByTabIdRef.current.get(tabId) ?? null,
@@ -720,15 +711,7 @@ export const useSftpState = (
             resolveSourceSessionId: resolvedSourceSessionId
               ? () => resolvedSourceSessionId
               : resolveBrowseSourceSessionId,
-            probeSession: async (sftpId) => {
-              const bridge = netcattyBridge.get();
-              if (!bridge?.getSftpHomeDir) return true;
-              const result = await bridge.getSftpHomeDir(sftpId);
-              if (result && result.success === false) {
-                throw new Error(result.error || "SFTP session not found");
-              }
-              return true;
-            },
+            probeSession: (sftpId) => probeSftpSession(netcattyBridge.get(), sftpId),
             releaseConnection,
           });
           logger.info(`[SFTP] Restored browse session on ${side}`);
