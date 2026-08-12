@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  appendHostFromWorkspaceDrop,
   FOCUS_SIDEBAR_HOST_DRAG_TYPE,
   FOCUS_SIDEBAR_SESSION_DRAG_TYPE,
   readHostIdFromDataTransfer,
@@ -58,4 +59,39 @@ test('readHostIdFromDataTransfer returns trimmed host id', () => {
 test('readHostIdFromDataTransfer returns null when host id is missing', () => {
   assert.equal(readHostIdFromDataTransfer(() => ''), null);
   assert.equal(readHostIdFromDataTransfer(() => '   '), null);
+});
+
+test('appendHostFromWorkspaceDrop appends the dropped host to the target workspace once', () => {
+  const calls: Array<[string, string]> = [];
+
+  assert.equal(appendHostFromWorkspaceDrop({
+    types: [FOCUS_SIDEBAR_HOST_DRAG_TYPE],
+    getData: (type) => (type === FOCUS_SIDEBAR_HOST_DRAG_TYPE ? 'host-42' : ''),
+    workspaceId: 'workspace-7',
+    onAppendHostToWorkspace: (workspaceId, hostId) => calls.push([workspaceId, hostId]),
+  }), true);
+
+  assert.deepEqual(calls, [['workspace-7', 'host-42']]);
+});
+
+test('appendHostFromWorkspaceDrop leaves session and invalid drags alone', () => {
+  const calls: Array<[string, string]> = [];
+  const onAppendHostToWorkspace = (workspaceId: string, hostId: string) => {
+    calls.push([workspaceId, hostId]);
+  };
+
+  assert.equal(appendHostFromWorkspaceDrop({
+    types: [FOCUS_SIDEBAR_SESSION_DRAG_TYPE, FOCUS_SIDEBAR_HOST_DRAG_TYPE],
+    getData: (type) => (type === FOCUS_SIDEBAR_HOST_DRAG_TYPE ? 'host-42' : 'session-1'),
+    workspaceId: 'workspace-7',
+    onAppendHostToWorkspace,
+  }), false);
+  assert.equal(appendHostFromWorkspaceDrop({
+    types: [FOCUS_SIDEBAR_HOST_DRAG_TYPE],
+    getData: () => '   ',
+    workspaceId: 'workspace-7',
+    onAppendHostToWorkspace,
+  }), false);
+
+  assert.deepEqual(calls, []);
 });

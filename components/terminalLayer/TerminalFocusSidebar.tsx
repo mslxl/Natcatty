@@ -8,8 +8,8 @@ import {
 import { useStoredNumber } from '../../application/state/useStoredNumber';
 import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import {
+  appendHostFromWorkspaceDrop,
   FOCUS_SIDEBAR_SESSION_DRAG_TYPE,
-  readHostIdFromDataTransfer,
   resolveFocusSidebarDragKind,
 } from '../../domain/focusSidebarHostDrop';
 import { resolveWorkspaceFocusSessionOrder } from '../../domain/workspace';
@@ -77,6 +77,7 @@ type WorkspaceFocusSessionRowProps = {
   onSelect: (sessionId: string) => void;
   onDragStart: (event: DragEvent, sessionId: string) => void;
   onDragOver: (event: DragEvent, sessionId: string) => void;
+  onHostDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   onDrop: (event: DragEvent, sessionId: string) => void;
   onDragEnd: () => void;
   dynamicTabTitleMode?: DynamicTabTitleMode;
@@ -102,6 +103,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
   onSelect,
   onDragStart,
   onDragOver,
+  onHostDragLeave,
   onDrop,
   onDragEnd,
   dynamicTabTitleMode,
@@ -148,9 +150,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
           onContextMenu={() => onSelect(session.id)}
           onDragStart={(event) => onDragStart(event, session.id)}
           onDragOver={(event) => onDragOver(event, session.id)}
-          onDragLeave={(event) => {
-            event.stopPropagation();
-          }}
+          onDragLeave={onHostDragLeave}
           onDrop={(event) => onDrop(event, session.id)}
           onDragEnd={onDragEnd}
           onMouseEnter={(event) => {
@@ -360,6 +360,14 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
     setFocusSidebarHostDropActive(false);
   }, []);
 
+  const handleFocusSidebarHostDragLeave = useCallback((event: DragEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    const dropZone = event.currentTarget.closest<HTMLElement>('[data-focus-sidebar-drop-zone]');
+    const next = event.relatedTarget;
+    if (next instanceof Node && dropZone?.contains(next)) return;
+    clearFocusSidebarHostDrop();
+  }, [clearFocusSidebarHostDrop]);
+
   const getFocusSidebarContainerDropTarget = useCallback((
     container: HTMLElement,
     clientY: number,
@@ -440,19 +448,17 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
 
   const appendHostFromFocusSidebarDrop = useCallback((event: DragEvent) => {
     if (!onAppendHostToWorkspace) return false;
-    if (resolveFocusSidebarDragKind({
+    const handled = appendHostFromWorkspaceDrop({
       types: event.dataTransfer.types,
+      getData: (type) => event.dataTransfer.getData(type),
       activeSessionDragId: focusSidebarDragSessionId,
-    }) !== 'host-append') {
-      return false;
-    }
-
-    const hostId = readHostIdFromDataTransfer((type) => event.dataTransfer.getData(type));
-    if (!hostId) return false;
+      workspaceId: activeWorkspace.id,
+      onAppendHostToWorkspace,
+    });
+    if (!handled) return false;
 
     event.preventDefault();
     event.stopPropagation();
-    onAppendHostToWorkspace(activeWorkspace.id, hostId);
     setFocusSidebarHostDropActive(false);
     setFocusSidebarDropIndicator(null);
     return true;
@@ -610,13 +616,10 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
             backgroundColor: `color-mix(in srgb, ${theme.termFg} 8%, transparent)`,
             boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${theme.termFg} 28%, transparent)`,
           } : undefined}
+          data-focus-sidebar-drop-zone
           data-host-drop-active={focusSidebarHostDropActive ? 'true' : 'false'}
           onDragOver={handleFocusSidebarContainerDragOver}
-          onDragLeave={(event) => {
-            const next = event.relatedTarget;
-            if (next instanceof Node && event.currentTarget.contains(next)) return;
-            clearFocusSidebarHostDrop();
-          }}
+          onDragLeave={handleFocusSidebarHostDragLeave}
           onDrop={handleFocusSidebarContainerDrop}
         >
           {visibleSessions.map((session) => (
@@ -644,6 +647,7 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
               onSelect={handleSelectSession}
               onDragStart={handleFocusSidebarDragStart}
               onDragOver={handleFocusSidebarDragOver}
+              onHostDragLeave={handleFocusSidebarHostDragLeave}
               onDrop={handleFocusSidebarDrop}
               onDragEnd={handleFocusSidebarDragEnd}
               dynamicTabTitleMode={dynamicTabTitleMode}

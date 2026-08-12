@@ -22,6 +22,7 @@ const {
   getTerminalHostTreeInitialLayoutWidth,
   getTerminalHostTreeLayoutTargetWidth,
   getTerminalHostTreeMeasuredLayoutWidth,
+  resolveTerminalHostTreeDragCapabilities,
   getTerminalHostTreeSidebarPanelStyle,
   getTerminalHostTreeSidebarShellStyle,
   isTerminalHostTreeSidebarVisible,
@@ -186,6 +187,25 @@ test('host tree host inline rename rejects empty names without changing hosts', 
   assert.equal(result.hosts, hosts);
 });
 
+test('filtered host rows can drag outward without enabling filtered tree reorder', () => {
+  assert.deepEqual(resolveTerminalHostTreeDragCapabilities({
+    kind: 'host',
+    canReorder: false,
+    isInlineEditing: false,
+  }), {
+    draggable: true,
+    canAcceptDrop: false,
+  });
+  assert.deepEqual(resolveTerminalHostTreeDragCapabilities({
+    kind: 'group',
+    canReorder: false,
+    isInlineEditing: false,
+  }), {
+    draggable: false,
+    canAcceptDrop: false,
+  });
+});
+
 test('host tree hover card is hidden while the same host is inline editing', () => {
   assert.equal(shouldShowTerminalHostHoverCard('host-1', null), true);
   assert.equal(shouldShowTerminalHostHoverCard('host-1', 'host-2'), true);
@@ -225,9 +245,9 @@ test('filtered host rows can still start host-id drag for focus-sidebar append',
   assert.ok(hostRowStart >= 0 && groupRowStart > hostRowStart);
   const hostRowBlock = source.slice(hostRowStart, groupRowStart);
 
-  assert.match(hostRowBlock, /draggable=\{!isInlineEditing\}/);
-  assert.match(hostRowBlock, /effectAllowed = canDrag \? 'copyMove' : 'copy'/);
-  assert.doesNotMatch(hostRowBlock, /if \(!canDrag \|\| isInlineEditing\) return;/);
-  assert.match(source, /const canDrag = Boolean\(menuActions\) && !searchActive && !tagsActive;/);
-  assert.match(source, /draggable=\{canDrag && !isInlineEditing\}/);
+  assert.match(hostRowBlock, /draggable=\{dragCapabilities\.draggable\}/);
+  assert.match(hostRowBlock, /effectAllowed = canReorder \? 'copyMove' : 'copy'/);
+  assert.match(hostRowBlock, /if \(!dragCapabilities\.draggable\) return;/);
+  assert.match(source, /const canReorder = Boolean\(menuActions\) && !searchActive && !tagsActive;/);
+  assert.match(source, /canAcceptDrop: input\.canReorder/);
 });

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Host } from "../../domain/models";
-import { applyGroupDefaults } from "../../domain/groupConfig";
 import { prepareSerialConfigForSavedHost } from "../../domain/serialBackspace";
 import { buildTelnetDeepLinkConnectionHost } from "../../domain/telnetDeepLink";
+import { resolveEffectiveTerminalHost } from "../../domain/terminalHostResolution";
 import {
   createHostTerminalSession,
   createSerialTerminalSession,
@@ -74,7 +74,34 @@ test("serial session factories snapshot effective legacy Backspace behavior", ()
   assert.equal(explicitDefaultSession.serialConfig?.backspaceBehavior, "default");
 });
 
-test("saved quick-connect hosts can inherit Ctrl-H after moving into a group", () => {
+test("workspace host factory creates a complete serial session", () => {
+  const session = createWorkspaceHostTerminalSession("session-serial", host({
+    protocol: "serial",
+    hostname: "COM7",
+    port: 57600,
+    username: "",
+    serialConfig: {
+      path: "COM7",
+      baudRate: 57600,
+      dataBits: 7,
+      stopBits: 2,
+      parity: "even",
+    },
+  }), "workspace-1");
+
+  assert.equal(session.workspaceId, "workspace-1");
+  assert.equal(session.protocol, "serial");
+  assert.deepEqual(session.serialConfig, {
+    path: "COM7",
+    baudRate: 57600,
+    dataBits: 7,
+    stopBits: 2,
+    parity: "even",
+    backspaceBehavior: "default",
+  });
+});
+
+test("workspace append snapshots serial Backspace behavior inherited from a group", () => {
   const savedHost = host({
     protocol: "serial",
     hostname: "COM3",
@@ -87,12 +114,15 @@ test("saved quick-connect hosts can inherit Ctrl-H after moving into a group", (
       backspaceBehavior: "default",
     }),
   });
-  const effectiveHost = applyGroupDefaults(savedHost, {
-    backspaceBehavior: "ctrl-h",
+  const effectiveHost = resolveEffectiveTerminalHost({
+    host: savedHost,
+    groupConfigs: [{ path: "network", backspaceBehavior: "ctrl-h" }],
+    proxyProfiles: [],
   });
 
-  const session = createHostTerminalSession("session-1", effectiveHost);
+  const session = createWorkspaceHostTerminalSession("session-1", effectiveHost, "workspace-1");
 
+  assert.equal(session.workspaceId, "workspace-1");
   assert.equal(session.serialConfig?.backspaceBehavior, "ctrl-h");
 });
 

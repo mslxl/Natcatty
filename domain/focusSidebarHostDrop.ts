@@ -37,3 +37,19 @@ export function readHostIdFromDataTransfer(
   const hostId = getData(FOCUS_SIDEBAR_HOST_DRAG_TYPE)?.trim();
   return hostId || null;
 }
+
+export function appendHostFromWorkspaceDrop(input: {
+  types: ArrayLike<string> | readonly string[];
+  getData: (type: string) => string;
+  workspaceId: string;
+  activeSessionDragId?: string | null;
+  onAppendHostToWorkspace: (workspaceId: string, hostId: string) => void;
+}): boolean {
+  if (resolveFocusSidebarDragKind(input) !== 'host-append') return false;
+
+  const hostId = readHostIdFromDataTransfer(input.getData);
+  if (!hostId) return false;
+
+  input.onAppendHostToWorkspace(input.workspaceId, hostId);
+  return true;
+}

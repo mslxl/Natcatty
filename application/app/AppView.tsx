@@ -34,6 +34,7 @@ import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocu
 import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import { resolveEffectiveTerminalHost } from '../../domain/terminalHostResolution';
 import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabStore';
 import { buildPluginSettingScopeCatalog } from '../state/usePluginSettingScopeCatalog';
 import { useWorkSurfaceHostEditor } from '../state/useWorkSurfaceHostEditor';
@@ -317,16 +318,28 @@ function AppViewInner({ domains }: AppViewProps) {
     setAddToWorkspaceDialog({ mode: 'append', workspaceId });
   }, [setAddToWorkspaceDialog]);
 
+  const validProxyProfileIds = useMemo(
+    () => new Set(proxyProfiles.map((profile) => profile.id)),
+    [proxyProfiles],
+  );
+
+  const resolveWorkspaceAppendHost = useCallback((host: typeof hosts[number]) => (
+    resolveEffectiveTerminalHost({
+      host,
+      groupConfigs,
+      proxyProfiles,
+      validProxyProfileIds,
+    })
+  ), [groupConfigs, proxyProfiles, validProxyProfileIds]);
+
   const handleAppendHostToWorkspace = useCallback((workspaceId: string, hostId: string) => {
     const host = hosts.find((entry) => entry.id === hostId);
-    // Mirror AddToWorkspaceDialog append mode: serial hosts have no
-    // appendHostToWorkspace path today.
-    if (!host || host.protocol === 'serial') return;
+    if (!host) return;
     const ws = workspaces.find((entry) => entry.id === workspaceId);
     if (!ws) return;
     const rootDir = ws.root.type === 'split' ? ws.root.direction : 'vertical';
-    appendHostToWorkspace(workspaceId, host, rootDir);
-  }, [appendHostToWorkspace, hosts, workspaces]);
+    appendHostToWorkspace(workspaceId, resolveWorkspaceAppendHost(host), rootDir);
+  }, [appendHostToWorkspace, hosts, resolveWorkspaceAppendHost, workspaces]);
 
   const isPeerSessionWindow = typeof window !== 'undefined'
     && window.location.hash.startsWith('#/session-window');
@@ -482,6 +495,7 @@ function AppViewInner({ domains }: AppViewProps) {
         onEndSessionDrag={handleEndSessionDrag}
         onReorderTabs={reorderWorkTabs}
         onRemoveSessionFromWorkspace={removeSessionFromWorkspace}
+        onAppendHostToWorkspace={handleAppendHostToWorkspace}
         showSftpTab={showSftpTab}
         showHostTreeSidebar={showHostTreeSidebar}
         switchTabKeyBinding={keyBindings.find((binding) => binding.action === 'switchToTab') ?? null}
@@ -792,13 +806,7 @@ function AppViewInner({ domains }: AppViewProps) {
         <AddToWorkspaceDialog
           open
           onOpenChange={(open) => { if (!open) setAddToWorkspaceDialog(null); }}
-          // Filter serial hosts only in append mode — appendHostToWorkspace
-          // has no serial code path. Create mode goes through
-          // createWorkspaceFromTargets, which builds a SerialConfig-backed
-          // session for serial hosts, so those should remain pickable.
-          hosts={addToWorkspaceDialog.mode === 'append'
-            ? hosts.filter((h) => h.protocol !== 'serial')
-            : hosts}
+          hosts={hosts}
           workspaceTitle={
             addToWorkspaceDialog.mode === 'append'
               ? workspaces.find((w) => w.id === addToWorkspaceDialog.workspaceId)?.title
@@ -817,7 +825,11 @@ function AppViewInner({ domains }: AppViewProps) {
                 if (target.kind === 'local') {
                   appendLocalTerminalToWorkspace(addToWorkspaceDialog.workspaceId, undefined, rootDir);
                 } else {
-                  appendHostToWorkspace(addToWorkspaceDialog.workspaceId, target.host, rootDir);
+                  appendHostToWorkspace(
+                    addToWorkspaceDialog.workspaceId,
+                    resolveWorkspaceAppendHost(target.host),
+                    rootDir,
+                  );
                 }
               }
             } else {

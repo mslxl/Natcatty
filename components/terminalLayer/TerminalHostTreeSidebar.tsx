@@ -104,6 +104,17 @@ type HostTreeDropTarget =
   | { kind: 'root' }
   | { kind: 'group'; path: string };
 
+export function resolveTerminalHostTreeDragCapabilities(input: {
+  kind: HostTreeFlatRow['kind'];
+  canReorder: boolean;
+  isInlineEditing: boolean;
+}): { draggable: boolean; canAcceptDrop: boolean } {
+  return {
+    draggable: !input.isInlineEditing && (input.kind === 'host' || input.canReorder),
+    canAcceptDrop: input.canReorder,
+  };
+}
+
 interface TerminalHostTreeSidebarProps {
   enabled?: boolean;
   surfaceVisible?: boolean;
@@ -309,7 +320,7 @@ type HostTreeFlatRowProps = {
   activeHostId?: string | null;
   expandedPaths: Set<string>;
   searchActive: boolean;
-  canDrag: boolean;
+  canReorder: boolean;
   isDragOver: boolean;
   isInlineEditing: boolean;
   inlineEditInitialName?: string;
@@ -331,7 +342,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
   activeHostId,
   expandedPaths,
   searchActive,
-  canDrag,
+  canReorder,
   isDragOver,
   isInlineEditing,
   inlineEditInitialName,
@@ -348,6 +359,11 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
   menuActions,
 }) => {
   const { t } = useI18n();
+  const dragCapabilities = resolveTerminalHostTreeDragCapabilities({
+    kind: row.kind,
+    canReorder,
+    isInlineEditing,
+  });
 
   if (row.kind === 'host') {
     const isActive = activeHostId === row.host.id;
@@ -374,17 +390,17 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
           backgroundColor: isActive ? theme.rowActiveBg : (isDragOver ? theme.rowDropBg : undefined),
         }}
         // Host rows stay draggable under search/tag filters so focus-sidebar
-        // append can still receive host-id; in-tree reorder/drop stays on canDrag.
-        draggable={!isInlineEditing}
+        // append can still receive host-id; in-tree reorder/drop stays disabled.
+        draggable={dragCapabilities.draggable}
         onDragStart={(event) => {
-          if (isInlineEditing) return;
+          if (!dragCapabilities.draggable) return;
           event.dataTransfer.setData(HOST_TREE_DRAG_HOST_ID, row.host.id);
           // copyMove: tree reorder uses move; focus-sidebar append uses copy.
           // Filtered trees disable reorder, so allow copy-only for append.
-          event.dataTransfer.effectAllowed = canDrag ? 'copyMove' : 'copy';
+          event.dataTransfer.effectAllowed = canReorder ? 'copyMove' : 'copy';
         }}
         onDragOver={(event) => {
-          if (!canDrag) return;
+          if (!dragCapabilities.canAcceptDrop) return;
           event.preventDefault();
           event.stopPropagation();
           if (hasDragType(event.dataTransfer, HOST_TREE_DRAG_HOST_ID)) {
@@ -397,7 +413,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         }}
         onDragLeave={onDragLeaveRow}
         onDrop={(event) => {
-          if (!canDrag) return;
+          if (!dragCapabilities.canAcceptDrop) return;
           event.preventDefault();
           event.stopPropagation();
           clearHostTreeDropIndicators(event.currentTarget.ownerDocument);
@@ -511,14 +527,14 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         color: theme.termFg,
         backgroundColor: isDragOver ? theme.rowDropBg : undefined,
       }}
-      draggable={canDrag && !isInlineEditing}
+      draggable={dragCapabilities.draggable}
       onDragStart={(event) => {
-        if (!canDrag || isInlineEditing) return;
+        if (!dragCapabilities.draggable) return;
         event.dataTransfer.setData(HOST_TREE_DRAG_GROUP_PATH, node.path);
         event.dataTransfer.effectAllowed = 'move';
       }}
       onDragOver={(event) => {
-        if (!canDrag) return;
+        if (!dragCapabilities.canAcceptDrop) return;
         event.preventDefault();
         event.stopPropagation();
         const isDraggingGroup = hasDragType(event.dataTransfer, HOST_TREE_DRAG_GROUP_PATH);
@@ -533,7 +549,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
       }}
       onDragLeave={onDragLeaveRow}
       onDrop={(event) => {
-        if (!canDrag) return;
+        if (!dragCapabilities.canAcceptDrop) return;
         event.preventDefault();
         event.stopPropagation();
         clearHostTreeDropIndicators(event.currentTarget.ownerDocument);
@@ -619,7 +635,7 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
   if (prev.row !== next.row) return false;
   if (prev.expandedPaths !== next.expandedPaths) return false;
   if (prev.searchActive !== next.searchActive) return false;
-  if (prev.canDrag !== next.canDrag) return false;
+  if (prev.canReorder !== next.canReorder) return false;
   if (prev.isDragOver !== next.isDragOver) return false;
   if (prev.isInlineEditing !== next.isInlineEditing) return false;
   if (prev.inlineEditInitialName !== next.inlineEditInitialName) return false;
@@ -743,7 +759,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     });
   }, [expandedPaths, filteredTree, filteredUngrouped, treeExpandAll]);
 
-  const canDrag = Boolean(menuActions) && !searchActive && !tagsActive;
+  const canReorder = Boolean(menuActions) && !searchActive && !tagsActive;
 
   const handleNewRootGroup = useCallback(() => {
     if (!menuActions) return;
@@ -830,10 +846,10 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   }, [clearDragOver]);
 
   const handleRootDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    if (!canDrag) return;
+    if (!canReorder) return;
     event.preventDefault();
     setDragOverTarget({ kind: 'root' });
-  }, [canDrag]);
+  }, [canReorder]);
 
   const handleRootDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     const nextTarget = event.relatedTarget;
@@ -845,11 +861,11 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
   }, [clearDragOver]);
 
   const handleRootDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    if (!canDrag) return;
+    if (!canReorder) return;
     event.preventDefault();
     clearHostTreeDropIndicators(event.currentTarget.ownerDocument);
     handleDropToParent(null, event.dataTransfer);
-  }, [canDrag, handleDropToParent]);
+  }, [canReorder, handleDropToParent]);
 
   const handleListPointerDownCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!menuActions) return;
@@ -911,7 +927,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
       activeHostId={activeHostId}
       expandedPaths={expandedPaths}
       searchActive={treeExpandAll}
-      canDrag={canDrag}
+      canReorder={canReorder}
       isDragOver={isRowDragOver(row)}
       isInlineEditing={
         (row.kind === 'group' && inlineEdit?.groupPath === row.node.path)
@@ -938,7 +954,7 @@ const TerminalHostTreeSidebarInner: React.FC<TerminalHostTreeSidebarProps> = ({
     />
   ), [
     activeHostId,
-    canDrag,
+    canReorder,
     clearDragOver,
     expandedPaths,
     inlineEdit,
