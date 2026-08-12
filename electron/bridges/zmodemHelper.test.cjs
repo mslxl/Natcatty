@@ -600,3 +600,54 @@ test("drag-drop upload auto-overwrites remote conflicts without prompting", asyn
   assert.deepEqual(offerNames, ["upload.txt"]);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+test("handleUpload restores modes for accepted overwrites before partial ZSKIP failure", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const acceptedPath = path.join(tempDir, "a.sh");
+  const skippedPath = path.join(tempDir, "b.txt");
+  fs.writeFileSync(acceptedPath, "a");
+  fs.writeFileSync(skippedPath, "b");
+  let offerCount = 0;
+  let restored = [];
+
+  const zsession = {
+    async send_offer(params) {
+      offerCount += 1;
+      if (params.name === "b.txt") return undefined;
+      return {
+        send() {},
+        async end() {},
+      };
+    },
+    abort() {},
+    async close() {},
+  };
+
+  await assert.rejects(
+    handleUpload(zsession, {
+      sessionId: "session-1",
+      getWebContents: () => null,
+      writeToRemote: () => true,
+      takeDragDropUpload: () => ({
+        filePaths: [acceptedPath, skippedPath],
+        remoteNames: ["a.sh", "b.txt"],
+      }),
+      probeReceiveConflicts: async () => ({
+        dir: "/home/u",
+        existing: ["a.sh", "b.txt"],
+        modes: { "a.sh": "755", "b.txt": "644" },
+      }),
+      // Required to enter the SSH conflict path; drag-drop still auto-overwrites.
+      requestOverwriteDecision: async () => ({ action: "skip", applyToRest: false }),
+      removeRemoteFiles: async () => {},
+      restoreRemoteModes: async (entries) => {
+        restored = entries;
+      },
+    }),
+    /Remote skipped some files/,
+  );
+
+  assert.equal(offerCount, 2);
+  assert.deepEqual(restored, [{ path: "/home/u/a.sh", mode: "755" }]);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});

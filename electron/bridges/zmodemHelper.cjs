@@ -901,9 +901,29 @@ async function handleUpload(zsession, opts) {
     }
   }
 
+  // rz re-creates overwritten files with the remote umask, dropping their
+  // original permission bits. Restore modes for files that landed on disk
+  // (including when a later offer is ZSKIP'd and we abort the batch — #1079).
+  async function restoreAcceptedOverwriteModes(skipped) {
+    if (!plan.removeIndices.length || !probeDir || !opts.restoreRemoteModes) return;
+    const skippedSet = skipped?.length ? new Set(skipped) : null;
+    const restoreIndices = skippedSet
+      ? plan.removeIndices.filter((i) => !skippedSet.has(allNames[i]))
+      : plan.removeIndices;
+    if (!restoreIndices.length) return;
+    const restores = buildModeRestores(probeDir, allNames, restoreIndices, probeModes);
+    if (!restores.length) return;
+    try {
+      await opts.restoreRemoteModes(restores);
+    } catch (err) {
+      console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
+    }
+  }
+
   if (skippedNames.length > 0) {
     try { zsession.abort(); } catch { /* ignore */ }
     abortRemoteProcess(opts.writeToRemote);
+    await restoreAcceptedOverwriteModes(skippedNames);
     const listed = skippedNames.join(", ");
     throw new Error(
       skippedNames.length === offers.length
@@ -919,19 +939,7 @@ async function handleUpload(zsession, opts) {
     opts,
   );
 
-  // rz re-creates overwritten files with the remote umask, dropping their
-  // original permission bits. Now that everything is on disk, restore them
-  // to the modes captured before the rm (issue #1079).
-  if (plan.removeIndices.length && probeDir && opts.restoreRemoteModes) {
-    const restores = buildModeRestores(probeDir, allNames, plan.removeIndices, probeModes);
-    if (restores.length) {
-      try {
-        await opts.restoreRemoteModes(restores);
-      } catch (err) {
-        console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
-      }
-    }
-  }
+  await restoreAcceptedOverwriteModes();
 
   } finally {
     if (dragDropTempPaths.length) {
