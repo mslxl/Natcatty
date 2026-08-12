@@ -39,13 +39,6 @@ const path = require("node:path");
 const DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS = 5 * 60_000;
 
 /**
- * After the last interactive shell lease returns, the remote process can linger
- * briefly. Only treat a later shell as a stale-cwd risk inside this window so
- * SFTP/forward-held or never-TTL transports do not block cwd probes forever.
- */
-const SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS = 15_000;
-
-/**
  * Global safety bound for authenticated transports with no active leases.
  * Active transports never count toward this limit and are never evicted.
  */
@@ -891,8 +884,10 @@ function createTransport({
     idleSince: null,
     idleDeadlineAt: null,
     createdAt: nowFn(),
-    pendingShellReconnectRisk: false,
-    pendingShellReconnectRiskAt: null,
+    pendingShellReconnectRisk: null,
+    closedShellPids: new Set(),
+    closedShellPidUnknown: false,
+    shellCloseGeneration: 0,
     meta: meta || null,
     endedReason: null,
     _poolOnConnectionClose: null,
@@ -1034,15 +1029,25 @@ function returnTransport(leaseIdOrHolder) {
   if (
     releasedLease?.kind === LEASE_KINDS.shell
     && releasedLease.meta?.activeShellChannel === true
-    && ![...transport.leases.values()].some(
-      (lease) => lease.kind === LEASE_KINDS.shell && lease.meta?.activeShellChannel === true,
-    )
   ) {
+    transport.shellCloseGeneration = (transport.shellCloseGeneration || 0) + 1;
+    const releasedPid = String(releasedLease.holder?.shellPid || "");
+    if (/^\d+$/.test(releasedPid)) transport.closedShellPids.add(releasedPid);
+    else transport.closedShellPidUnknown = true;
+    const hasActiveShell = [...transport.leases.values()].some(
+      (lease) => lease.kind === LEASE_KINDS.shell && lease.meta?.activeShellChannel === true,
+    );
+    if (!hasActiveShell) {
     // A locally closed shell channel can outlive its lease briefly on the
     // server. Remember that provenance even when SFTP/forward leases keep the
     // transport live, so the next shell does not guess cwd from the old PID.
-    transport.pendingShellReconnectRisk = true;
-    transport.pendingShellReconnectRiskAt = nowFn();
+      transport.pendingShellReconnectRisk = {
+        oldShellPids: [...transport.closedShellPids],
+        hasUnknownOldShell: transport.closedShellPidUnknown,
+      };
+      transport.closedShellPids.clear();
+      transport.closedShellPidUnknown = false;
+    }
   }
 
   if (entry.holder && typeof entry.holder === "object") {
@@ -1071,19 +1076,11 @@ function returnTransport(leaseIdOrHolder) {
   };
 }
 
-/**
- * Consume the one-shot reconnect risk marked when the last shell lease
- * returned. Returns remaining stale-process window in ms (0 at the inclusive
- * boundary), or null when there is no in-window risk.
- */
 function consumePendingShellReconnectRisk(transport) {
-  if (!transport?.pendingShellReconnectRisk) return null;
-  const markedAt = transport.pendingShellReconnectRiskAt;
-  transport.pendingShellReconnectRisk = false;
-  transport.pendingShellReconnectRiskAt = null;
-  if (!Number.isFinite(markedAt)) return null;
-  const remainingMs = SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS - (nowFn() - markedAt);
-  return remainingMs < 0 ? null : remainingMs;
+  if (!transport?.pendingShellReconnectRisk) return false;
+  const risk = transport.pendingShellReconnectRisk;
+  transport.pendingShellReconnectRisk = null;
+  return risk;
 }
 
 function discardTransport(transportOrId, reason = "discard") {
@@ -1418,7 +1415,6 @@ function resolveTransportForReuse({
 module.exports = {
   // Constants
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
-  SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS,
   DEFAULT_MAX_IDLE_SSH_TRANSPORTS,
   STORAGE_KEY_SSH_TRANSPORT_IDLE_TTL_MS,
   LEASE_KINDS,

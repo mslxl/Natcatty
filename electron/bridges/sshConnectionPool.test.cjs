@@ -33,7 +33,6 @@ const {
   fingerprintAuth,
   resetSshTransportRegistryForTests,
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
-  SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS,
   DEFAULT_MAX_IDLE_SSH_TRANSPORTS,
   LEASE_KINDS,
 } = require("./sshConnectionPool.cjs");
@@ -344,58 +343,11 @@ test("last shell close marks reconnect risk while an SFTP lease keeps the transp
   acquireConnectionRef(sftp, transport);
 
   assert.equal(releaseConnectionRef(owner), false);
-  const remainingMs = consumePendingShellReconnectRisk(transport);
-  assert.equal(typeof remainingMs, "number");
-  assert.ok(remainingMs >= 0);
-  assert.ok(remainingMs <= SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS);
-  assert.equal(consumePendingShellReconnectRisk(transport), null);
-});
-
-test("pending shell reconnect risk still applies at the stale-process window boundary", () => {
-  let now = 1_000;
-  resetSshTransportRegistryForTests({
-    defaultIdleTtlMs: 0,
-    now: () => now,
+  assert.deepEqual(consumePendingShellReconnectRisk(transport), {
+    oldShellPids: [],
+    hasUnknownOldShell: true,
   });
-  const owner = { id: "shell", stream: {} };
-  const sftp = { id: "sftp", __sshLeaseKind: "sftp" };
-  const transport = createConnectionRef(owner, makeConn(), []);
-  acquireConnectionRef(sftp, transport);
-
-  assert.equal(releaseConnectionRef(owner), false);
-  now += SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS;
-  assert.equal(consumePendingShellReconnectRisk(transport), 0);
-});
-
-test("pending shell reconnect risk expires after the stale-process window", () => {
-  let now = 1_000;
-  resetSshTransportRegistryForTests({
-    defaultIdleTtlMs: 0,
-    now: () => now,
-  });
-  const owner = { id: "shell", stream: {} };
-  const sftp = { id: "sftp", __sshLeaseKind: "sftp" };
-  const transport = createConnectionRef(owner, makeConn(), []);
-  acquireConnectionRef(sftp, transport);
-
-  assert.equal(releaseConnectionRef(owner), false);
-  now += SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS + 1;
-  assert.equal(consumePendingShellReconnectRisk(transport), null);
-});
-
-test("parked never-TTL reconnect risk expires after the stale-process window", () => {
-  let now = 1_000;
-  resetSshTransportRegistryForTests({
-    defaultIdleTtlMs: 0,
-    now: () => now,
-  });
-  const owner = { id: "shell", stream: {} };
-  const transport = createConnectionRef(owner, makeConn(), []);
-
-  assert.equal(releaseConnectionRef(owner), false);
-  assert.equal(transport.state, "idle");
-  now += SHELL_RECONNECT_STALE_PROCESS_WINDOW_MS + 1;
-  assert.equal(consumePendingShellReconnectRisk(transport), null);
+  assert.equal(consumePendingShellReconnectRisk(transport), false);
 });
 
 test("single-channel connection parks on release when TTL is 0", () => {

@@ -64,6 +64,30 @@ test("bounded SSH exec times out while opening and terminates a late stream", as
   assert.equal(timers.active.size, 0);
 });
 
+test("best-effort SSH exec open timeout can preserve a shared transport", async () => {
+  let callback;
+  let endCalls = 0;
+  let destroyCalls = 0;
+  const sshClient = {
+    exec(_command, next) { callback = next; },
+    end() { endCalls += 1; },
+    destroy() { destroyCalls += 1; },
+  };
+  await assert.rejects(
+    executeBoundedSshCommand(sshClient, "true", {
+      openingTimeoutMs: 2,
+      invalidateOnOpenTimeout: false,
+    }),
+    (error) => error.code === "SSH_EXEC_OPEN_TIMEOUT",
+  );
+  assert.equal(endCalls, 0);
+  assert.equal(destroyCalls, 0);
+
+  const stream = createStream();
+  callback(null, stream);
+  assert.ok(stream.closed > 0 || stream.destroyed > 0);
+});
+
 test("bounded raw exec stream preserves options and invalidates a hung open", async () => {
   let callback;
   let receivedOptions;
