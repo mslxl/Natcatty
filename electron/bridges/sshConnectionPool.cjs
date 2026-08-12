@@ -884,6 +884,7 @@ function createTransport({
     idleSince: null,
     idleDeadlineAt: null,
     createdAt: nowFn(),
+    pendingShellReconnectRisk: false,
     meta: meta || null,
     endedReason: null,
     _poolOnConnectionClose: null,
@@ -963,6 +964,9 @@ function transferConnectionRef(fromHolder, toHolder) {
   if (!lease) return false;
 
   lease.holder = toHolder;
+  if (lease.kind === LEASE_KINDS.shell && toHolder?.stream) {
+    lease.meta = { ...(lease.meta || {}), activeShellChannel: true };
+  }
   leasesById.set(leaseId, { transport, holder: toHolder });
 
   fromHolder.connRef = null;
@@ -1014,9 +1018,23 @@ function returnTransport(leaseIdOrHolder) {
   }
 
   const { transport } = entry;
+  const releasedLease = transport.leases.get(leaseId);
   leasesById.delete(leaseId);
   transport.leases.delete(leaseId);
   transport.count = transport.leases.size;
+
+  if (
+    releasedLease?.kind === LEASE_KINDS.shell
+    && releasedLease.meta?.activeShellChannel === true
+    && ![...transport.leases.values()].some(
+      (lease) => lease.kind === LEASE_KINDS.shell && lease.meta?.activeShellChannel === true,
+    )
+  ) {
+    // A locally closed shell channel can outlive its lease briefly on the
+    // server. Remember that provenance even when SFTP/forward leases keep the
+    // transport live, so the next shell does not guess cwd from the old PID.
+    transport.pendingShellReconnectRisk = true;
+  }
 
   if (entry.holder && typeof entry.holder === "object") {
     if (entry.holder.connRef === transport) entry.holder.connRef = null;
@@ -1042,6 +1060,12 @@ function returnTransport(leaseIdOrHolder) {
     idle: park.idle,
     remaining: 0,
   };
+}
+
+function consumePendingShellReconnectRisk(transport) {
+  if (!transport?.pendingShellReconnectRisk) return false;
+  transport.pendingShellReconnectRisk = false;
+  return true;
 }
 
 function discardTransport(transportOrId, reason = "discard") {
@@ -1239,7 +1263,11 @@ function createConnectionRef(session, conn, chainConnections) {
     holder: session,
     // Unique per connection generation: same sessionId can reconnect while an
     // old lease is still draining (same-session reconnect path).
-    meta: { source: "createConnectionRef", sessionId: session?.id || null },
+    meta: {
+      source: "createConnectionRef",
+      sessionId: session?.id || null,
+      activeShellChannel: true,
+    },
   });
 
   return transport;
@@ -1268,7 +1296,11 @@ function acquireConnectionRef(session, connRef) {
     holder: session,
     // Always allocate a unique lease id — stable session/sftp ids can collide
     // across reconnect generations while old leases drain.
-    meta: { source: "acquireConnectionRef", holderId: session?.id || null },
+    meta: {
+      source: "acquireConnectionRef",
+      holderId: session?.id || null,
+      activeShellChannel: kind === LEASE_KINDS.shell && Boolean(session?.stream),
+    },
   });
 }
 
@@ -1401,5 +1433,6 @@ module.exports = {
   acquireConnectionRef,
   releaseConnectionRef,
   transferConnectionRef,
+  consumePendingShellReconnectRisk,
   findReusableSession,
 };

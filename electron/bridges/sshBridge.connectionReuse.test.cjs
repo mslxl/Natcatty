@@ -3,12 +3,18 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
 
+const sshConnectionPool = require("./sshConnectionPool.cjs");
 const {
+  createTransport,
+  borrowTransport,
   createConnectionRef,
   acquireConnectionRef,
   releaseConnectionRef,
+  beginTransportDial,
+  completeTransportDial,
+  buildConnectionReuseEndpoint,
   resetSshTransportRegistryForTests,
-} = require("./sshConnectionPool.cjs");
+} = sshConnectionPool;
 
 // Load sshBridge with a mocked ssh2 module so we can observe whether a *new*
 // SSH client is constructed (a fresh connection) versus an existing connection
@@ -228,6 +234,103 @@ test("idle-park reconnect after last shell closes skips post-open PID discovery"
   assert.equal(parkedConn.openedShells.length, shellsBefore + 1);
   assert.equal(execCalls, 0, "must not open discovery exec after sole-shell reconnect");
   assert.equal(sessions.get("second").blockUntargetedCwdProbe, true);
+});
+
+for (const leaseKind of ["sftp", "forward"]) {
+  test(`first shell on a ${leaseKind}-only transport keeps cwd discovery enabled`, async (t) => {
+    const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+    const sessions = new Map();
+    const start = registerStartHandler(bridge, sessions);
+    const options = {
+      hostname: `${leaseKind}-only.example`,
+      username: "alice",
+      port: 22,
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: false,
+      verifyHostKeys: false,
+    };
+    const conn = makeReusableConn();
+    const transport = createTransport({
+      conn,
+      endpoint: buildConnectionReuseEndpoint(options),
+    });
+    borrowTransport(transport, {
+      kind: leaseKind,
+      holder: { id: `${leaseKind}-holder` },
+    });
+
+    await start({ sender: makeSender() }, { ...options, sessionId: "first-shell" });
+
+    assert.equal(getClientConstructCount(), 0);
+    assert.equal(sessions.get("first-shell").connRef, transport);
+    assert.notEqual(sessions.get("first-shell").blockUntargetedCwdProbe, true);
+  });
+}
+
+test("shell joining an SFTP-led initial dial keeps cwd discovery enabled", async (t) => {
+  const originalWaitForTransportDial = sshConnectionPool.waitForTransportDial;
+  let observeJoin;
+  const joinedDial = new Promise((resolve) => { observeJoin = resolve; });
+  sshConnectionPool.waitForTransportDial = (coordination, ...args) => {
+    if (coordination?.role === "join") observeJoin();
+    return originalWaitForTransportDial(coordination, ...args);
+  };
+  t.after(() => { sshConnectionPool.waitForTransportDial = originalWaitForTransportDial; });
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "sftp-led.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+  const endpoint = buildConnectionReuseEndpoint(options);
+  const coordination = beginTransportDial(endpoint, { kind: "channel" });
+  const pendingStart = start({ sender: makeSender() }, { ...options, sessionId: "first-shell" });
+  await joinedDial;
+
+  const conn = makeReusableConn();
+  const transport = createTransport({ conn, endpoint });
+  borrowTransport(transport, { kind: "sftp", holder: { id: "sftp-holder" } });
+  completeTransportDial(coordination, transport);
+  await pendingStart;
+
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sessions.get("first-shell").connRef, transport);
+  assert.notEqual(sessions.get("first-shell").blockUntargetedCwdProbe, true);
+});
+
+test("last shell close stays protected when an SFTP lease keeps the transport live", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "shell-plus-sftp.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "old-shell" });
+  const oldSession = sessions.get("old-shell");
+  const transport = oldSession.connRef;
+  acquireConnectionRef({ id: "sftp-holder", __sshLeaseKind: "sftp" }, transport);
+  oldSession.stream.emit("close");
+  assert.equal(transport.state, "live");
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "new-shell" });
+
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sessions.get("new-shell").connRef, transport);
+  assert.equal(sessions.get("new-shell").blockUntargetedCwdProbe, true);
 });
 
 function makeSender() {

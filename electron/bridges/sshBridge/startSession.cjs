@@ -834,7 +834,12 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 failReuse(setupErr);
                 return;
               }
+              const reconnectAfterLastShellClose =
+                consumePendingShellReconnectRisk(connRef);
               const copiedSession = sessions.get(sessionId);
+              if (copiedSession && reconnectAfterLastShellClose) {
+                copiedSession.blockUntargetedCwdProbe = true;
+              }
               if (copiedSession) {
                 if (typeof transferConnectionRef === "function") {
                   transferConnectionRef(refHolder, copiedSession);
@@ -886,7 +891,6 @@ printf '%s\n' '${scanCompleteMarker}'`;
                   && !needsUntrackedReconcile
                   && !options.sourceSessionId
                 ) {
-                  if (copiedSession) copiedSession.blockUntargetedCwdProbe = true;
                   return null;
                 }
                 if (baseline.length === 0 || needsUntrackedReconcile) {
