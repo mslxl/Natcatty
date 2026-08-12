@@ -141,6 +141,10 @@ test('popup terminals resolve complete host config and pass jump hosts into Term
   assert.match(source, /onDeleteSnippets=\{deleteSelectedSnippets\}/);
 });
 
+test('popup terminals use their window-local vault readiness', () => {
+  assert.match(source, /vaultInitializedOverride=\{vaultInitialized\}/);
+});
+
 test('popup provider tree mounts the plugin authentication host', () => {
   assert.match(source, /import \{ PluginAuthenticationHost \} from '\.\/plugins\/PluginAuthenticationHost';/);
   assert.match(

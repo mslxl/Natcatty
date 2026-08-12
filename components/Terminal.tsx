@@ -227,6 +227,7 @@ import type { CreateXTermRuntimeContext } from "./terminal/runtime/createXTermRu
 import { TerminalView } from "./terminal/TerminalView";
 import {
   getInitialTerminalStatus,
+  resolveTerminalVaultInitialized,
   shouldSuppressHostStartupCommandOnReconnect,
   shouldStartTerminalBackend,
 } from "./terminal/restoredSessionGate";
@@ -270,6 +271,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   sessionId,
   workspaceId,
   restoreState,
+  vaultInitializedOverride,
   pendingInitialCwd,
   shellType,
   lastCwd,
@@ -359,7 +361,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   }, []);
   // Reactive vault-ready flag so restored panes re-arm boot after hydration
   // (module isVaultInitialized() alone is not a React dependency).
-  const vaultInitialized = useVaultSnapshotField("isVaultInitialized");
+  const sharedVaultInitialized = useVaultSnapshotField("isVaultInitialized");
+  const vaultInitialized = resolveTerminalVaultInitialized(
+    sharedVaultInitialized,
+    vaultInitializedOverride,
+  );
   const connectScriptsConsumedRef = useRef(false);
   const connectScriptsCompletedIdsRef = useRef(new Set<string>());
   const connectScriptsInFlightRef = useRef(false);
