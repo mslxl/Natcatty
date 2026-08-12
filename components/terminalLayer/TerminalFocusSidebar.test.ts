@@ -16,6 +16,18 @@ test('focus sidebar accepts host-id drops for append-to-workspace', () => {
   assert.match(source, /data-host-drop-active/);
 });
 
+test('the entire focus sidebar is the host drop target', () => {
+  const sidebarStart = source.indexOf('data-section="terminal-workspace-sidebar"');
+  const scrollAreaStart = source.indexOf('<ScrollArea className="flex-1">', sidebarStart);
+  assert.ok(sidebarStart >= 0 && scrollAreaStart > sidebarStart);
+
+  const sidebarOpeningTag = source.slice(sidebarStart, scrollAreaStart);
+  assert.match(sidebarOpeningTag, /data-focus-sidebar-drop-zone/);
+  assert.match(sidebarOpeningTag, /onDragOver=\{handleFocusSidebarHostDragOver\}/);
+  assert.match(sidebarOpeningTag, /onDrop=\{handleFocusSidebarHostDrop\}/);
+  assert.doesNotMatch(source.slice(scrollAreaStart), /\sdata-focus-sidebar-drop-zone(?:\s|>)/);
+});
+
 test('focus sidebar clears host-drop feedback when the drag leaves from a session row', () => {
   assert.match(source, /data-focus-sidebar-drop-zone/);
   assert.match(source, /onDragLeave=\{handleFocusSidebarHostDragLeave\}/);

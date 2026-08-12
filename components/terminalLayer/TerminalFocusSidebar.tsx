@@ -415,6 +415,10 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
     return true;
   }, [focusSidebarDragSessionId, onAppendHostToWorkspace]);
 
+  const handleFocusSidebarHostDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
+    acceptFocusSidebarHostDrag(event);
+  }, [acceptFocusSidebarHostDrag]);
+
   const handleFocusSidebarDragOver = useCallback((event: DragEvent, targetSessionId: string) => {
     if (acceptFocusSidebarHostDrag(event)) return;
 
@@ -463,6 +467,10 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
     setFocusSidebarDropIndicator(null);
     return true;
   }, [activeWorkspace.id, focusSidebarDragSessionId, onAppendHostToWorkspace]);
+
+  const handleFocusSidebarHostDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
+    appendHostFromFocusSidebarDrop(event);
+  }, [appendHostFromFocusSidebarDrop]);
 
   const handleFocusSidebarContainerDrop = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (appendHostFromFocusSidebarDrop(event)) return;
@@ -543,14 +551,27 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
 
   return (
     <div
-      className="flex-shrink-0 flex flex-col relative"
+      className={cn(
+        'flex-shrink-0 flex flex-col relative transition-[box-shadow,background-color]',
+        focusSidebarHostDropActive && 'ring-1 ring-inset',
+      )}
       style={{
         width: focusSidebarWidth,
-        backgroundColor: theme.termBg,
+        backgroundColor: focusSidebarHostDropActive
+          ? `color-mix(in srgb, ${theme.termFg} 8%, ${theme.termBg})`
+          : theme.termBg,
         color: theme.termFg,
+        boxShadow: focusSidebarHostDropActive
+          ? `inset 0 0 0 1px color-mix(in srgb, ${theme.termFg} 28%, transparent)`
+          : undefined,
         ['--terminal-workspace-sidebar-border' as string]: `1px solid ${theme.separator}`,
       }}
       data-section="terminal-workspace-sidebar"
+      data-focus-sidebar-drop-zone
+      data-host-drop-active={focusSidebarHostDropActive ? 'true' : 'false'}
+      onDragOver={handleFocusSidebarHostDragOver}
+      onDragLeave={handleFocusSidebarHostDragLeave}
+      onDrop={handleFocusSidebarHostDrop}
     >
       <div
         className="absolute top-0 right-[-3px] h-full w-2 cursor-ew-resize z-30"
@@ -608,18 +629,8 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
 
       <ScrollArea className="flex-1">
         <div
-          className={cn(
-            'p-2 space-y-1 min-h-full rounded-md transition-[box-shadow,background-color]',
-            focusSidebarHostDropActive && 'ring-1 ring-inset',
-          )}
-          style={focusSidebarHostDropActive ? {
-            backgroundColor: `color-mix(in srgb, ${theme.termFg} 8%, transparent)`,
-            boxShadow: `inset 0 0 0 1px color-mix(in srgb, ${theme.termFg} 28%, transparent)`,
-          } : undefined}
-          data-focus-sidebar-drop-zone
-          data-host-drop-active={focusSidebarHostDropActive ? 'true' : 'false'}
+          className="p-2 space-y-1 min-h-full rounded-md"
           onDragOver={handleFocusSidebarContainerDragOver}
-          onDragLeave={handleFocusSidebarHostDragLeave}
           onDrop={handleFocusSidebarContainerDrop}
         >
           {visibleSessions.map((session) => (
