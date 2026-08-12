@@ -1089,7 +1089,7 @@ function createSessionOpsApi(ctx) {
       const linuxDiskTable = `{ LC_ALL=C mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT 2>/dev/null || LC_ALL=C df -kP 2>/dev/null; }`;
       const linuxDiskRoot = `{ LC_ALL=C mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT / 2>/dev/null || LC_ALL=C df -kP / 2>/dev/null; }`;
     
-      // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
+      // Command to get CPU (overall + per-core), Memory, and Network stats
       // This command is designed to work across most Linux distributions
       // Note: Using semicolons and avoiding comments for single-line execution
       // CPU: Output raw values (total and idle) instead of percentage - we calculate delta on backend
@@ -1107,19 +1107,6 @@ function createSessionOpsApi(ctx) {
         // GNU ps: ps -eo pid,%mem,comm --sort=-%mem
         // BusyBox fallback: top exposes %VSZ/%CPU; minimal builds without top use plain ps VSZ.
         `procs=$(if procraw=$(ps -eo pid,%mem,comm --sort=-%mem 2>/dev/null); then printf "%s\n" "$procraw" | awk 'NR>1 && NR<=11 {gsub(/;/, "_", $3); printf "%s;%.1f;%s,", $1, $2, $3}' | sed 's/,$//'; elif topraw=$(top -b -n 1 2>/dev/null); then printf "%s\n" "$topraw" | awk '$1 == "PID" {for(i=1;i<=NF;i++){if($i=="%VSZ") mem_col=i; else if($i=="COMMAND") cmd_col=i} next} $1 ~ /^[0-9]+$/ && mem_col && cmd_col {pct=$(mem_col); gsub(/%/, "", pct); cmd=$(cmd_col); gsub(/;/, "_", cmd); print pct ";" $1 ";" cmd}' | sort -t ';' -k1,1rn | head -10 | awk -F';' '{printf "%s;%.1f;%s,", $2, $1, $3}' | sed 's/,$//'; else ps ww 2>/dev/null | awk -v total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo) '$1 ~ /^[0-9]+$/ {v=$3; unit=substr(v,length(v),1); mult=1; if(unit=="m"||unit=="M")mult=1024; else if(unit=="g"||unit=="G")mult=1048576; sub(/[mMgG]$/, "", v); pct=total>0?v*mult*100/total:0; cmd=$5; gsub(/;/, "_", cmd); print pct, $1, cmd}' | sort -rn | head -10 | awk '{printf "%s;%.1f;%s,", $2, $1, $3}' | sed 's/,$//'; fi)`,
-        // Get mounted disk info. GNU and BusyBox support df -T; the awk
-        // parser also accepts the legacy POSIX -kP layout as a fallback.
-        // PVE/LXC guests often expose ZFS datasets and host bind mounts without a
-        // /dev/* source, so keep non-pseudo filesystems (not only block devices).
-        // Skip FUSE/cloud/NFS/CIFS network mounts (rclone, CloudDrive, mergerfs,
-        // nfs, cifs, …): their quotas inflate System Overview totals and are not
-        // local block capacity. Keep a loop-backed rootfs (some CT images) while
-        // still dropping snap loop mounts under /snap.
-        // When Capacity is "-" (some CT/cgroup views), derive percent from used/total.
-        // If the full table yields nothing, fall back to df on "/" alone.
-        // Do not blanket-skip /run: udisks may mount real volumes under /run/media;
-        // tmpfs/udev/shm rows are dropped by filesystem-source checks instead.
-        `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' ); [ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         // Get network interface stats from /proc/net/dev (interface:rx_bytes:tx_bytes), excluding lo and virtual interfaces
         `net=$(cat /proc/net/dev 2>/dev/null | awk 'NR>2 {gsub(/^[ \\t]+/, ""); split($0, a, ":"); iface=a[1]; if(iface != "lo" && iface !~ /^veth/ && iface !~ /^docker/ && iface !~ /^br-/) {split(a[2], b); printf "%s:%s:%s,", iface, b[1], b[9]}}' | sed 's/,$//' || echo "")`,
         `hostname_value=$(hostname 2>/dev/null || uname -n 2>/dev/null || echo "")`,
@@ -1128,16 +1115,53 @@ function createSessionOpsApi(ctx) {
         `uptime=$(awk '{printf "%.0f",$1}' /proc/uptime 2>/dev/null || echo "")`,
         `loadavg=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null || echo "")`,
         // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
-        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
+        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
       ].join('; ');
-    
-      // Auto-detect OS via uname — only Linux and macOS are supported
+
+      // Get mounted disk info. GNU and BusyBox support df -T; the awk parser
+      // also accepts the legacy POSIX -kP layout as a fallback. PVE/LXC guests
+      // often expose ZFS datasets and host bind mounts without a /dev/* source,
+      // so keep non-pseudo filesystems. Skip FUSE/cloud/NFS/CIFS network mounts:
+      // their quotas are not local capacity. Keep a loop-backed rootfs while
+      // dropping snap loops, derive missing percentages, and fall back to "/".
+      const linuxDiskStatsCommand = [
+        `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
+        `[ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
+        `echo "DISKS:$disks"`,
+      ].join('; ');
+
+      // Dropbear rejects command requests larger than 9000 bytes by closing
+      // the entire SSH transport, including an already-open interactive shell.
+      // Keep Linux's large disk parser in its own request so future stats
+      // additions cannot repeat issue #2924.
+      const dropbearMaxCommandBytes = 9000;
       const latencyMarker = "NC_LATENCY_MARK";
       const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const statsExecOptions = {
+        openingTimeoutMs: 10000,
+        runTimeoutMs: 10000,
+        maxOutputBytes: 1024 * 1024,
+        setTimeoutFn: setTimeout,
+        clearTimeoutFn: clearTimeout,
+      };
+      const executeStatsCommand = (command, options = statsExecOptions) => {
+        const commandBytes = Buffer.byteLength(command, 'utf8');
+        if (commandBytes > dropbearMaxCommandBytes) {
+          const error = new Error(`Server stats command exceeds Dropbear limit (${commandBytes} bytes)`);
+          error.code = "SSH_EXEC_COMMAND_LIMIT";
+          return Promise.reject(error);
+        }
+        return executeBoundedSshCommand(conn, command, options);
+      };
       const tcpLatencyTarget = getTcpLatencyTarget(session);
       const tcpLatencyPromise = tcpLatencyTarget && typeof measureTcpConnectLatency === 'function'
         ? Promise.resolve(measureTcpConnectLatency(tcpLatencyTarget)).catch(() => null)
         : Promise.resolve(null);
+      const formatStatsError = (error) => (
+        error?.code === "SSH_EXEC_OPEN_TIMEOUT" || error?.code === "SSH_EXEC_RUN_TIMEOUT"
+          ? "Timeout getting server stats"
+          : error?.message || String(error)
+      );
       return new Promise((resolve) => {
         let settled = false;
         const settle = (result) => {
@@ -1146,20 +1170,24 @@ function createSessionOpsApi(ctx) {
           resolve(result);
           return true;
         };
-        void executeBoundedSshCommand(conn, statsCommand, {
-          openingTimeoutMs: 10000,
-          runTimeoutMs: 10000,
-          maxOutputBytes: 1024 * 1024,
-          setTimeoutFn: setTimeout,
-          clearTimeoutFn: clearTimeout,
-        }).then(async ({ stdout }) => {
+        void (async () => {
+          try {
+            const { stdout } = await executeStatsCommand(statsCommand);
             if (settled) return;
+            let combinedStdout = String(stdout || '').trim();
+            const primaryOutput = combinedStdout.replace(new RegExp(`^${latencyMarker}\\|?`), '');
+            if (primaryOutput.startsWith('CPURAW:')) {
+              const diskResult = await executeStatsCommand(linuxDiskStatsCommand);
+              combinedStdout = [combinedStdout, String(diskResult.stdout || '').trim()]
+                .filter(Boolean)
+                .join('|');
+            }
             const measuredLatency = await tcpLatencyPromise;
             if (settled) return;
             const latencyMs = Number.isFinite(measuredLatency) ? measuredLatency : null;
     
             // Parse the output
-            const output = stdout.trim().replace(new RegExp(`^${latencyMarker}\\|?`), '');
+            const output = combinedStdout.replace(new RegExp(`^${latencyMarker}\\|?`), '');
     
             // Unsupported OS — stop polling this session
             if (output.startsWith('UNSUPPORTED_OS:')) {
@@ -1487,14 +1515,10 @@ function createSessionOpsApi(ctx) {
                 loadAverage,
               },
             });
-          }, (error) => {
-            settle({
-              success: false,
-              error: error?.code === "SSH_EXEC_OPEN_TIMEOUT" || error?.code === "SSH_EXEC_RUN_TIMEOUT"
-                ? "Timeout getting server stats"
-                : error?.message || String(error),
-            });
-          });
+          } catch (error) {
+            settle({ success: false, error: formatStatsError(error) });
+          }
+        })();
       });
     }
     

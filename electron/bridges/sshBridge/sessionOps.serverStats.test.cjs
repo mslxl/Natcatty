@@ -4,6 +4,7 @@ const { spawnSync } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 
 const { createSessionOpsApi } = require("./sessionOps.cjs");
+const { selectServerStatsFixtureOutput } = require("./serverStatsTestHelpers.cjs");
 const {
   borrowTransport,
   createTransport,
@@ -33,10 +34,7 @@ function fakeStream(stdout) {
 function fakeConn(stdout) {
   return {
     exec(command, cb) {
-      const output = command.includes("NC_LATENCY_MARK") && !stdout.includes("NC_LATENCY_MARK")
-        ? `NC_LATENCY_MARK|${stdout}`
-        : stdout;
-      cb(null, fakeStream(output));
+      cb(null, fakeStream(selectServerStatsFixtureOutput(command, stdout)));
     },
   };
 }
@@ -856,6 +854,64 @@ test("getServerStats parses macOS stats and avoids blocking top command", async 
   assert.equal(result.stats.netInterfaces[0].rxBytes, 1000);
   assert.equal(result.stats.netInterfaces[0].txBytes, 3000);
   assert.equal(typeof result.stats.latencyMs, "number");
+});
+
+test("getServerStats keeps every remote command within Dropbear's command limit", async () => {
+  const commands = [];
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "openwrt.example.test", port: 22 },
+    conn: {
+      exec(command, cb) {
+        commands.push(command);
+        const output = command.includes("CPURAW:")
+          ? `NC_LATENCY_MARK|${LINUX_STATS}`
+          : command.includes("DISKS:")
+            ? "DISKS:"
+            : "";
+        cb(null, fakeStream(output));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(commands.length, 2, "Linux base and disk stats must use separate commands");
+  for (const command of commands) {
+    assert.ok(
+      Buffer.byteLength(command, "utf8") <= 9000,
+      `remote command is ${Buffer.byteLength(command, "utf8")} bytes`,
+    );
+  }
+});
+
+test("getServerStats settles when the split disk command fails", async () => {
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    conn: {
+      exec(command, cb) {
+        if (command.includes('echo "DISKS:$disks"')) {
+          cb(new Error("disk stats rejected"));
+          return;
+        }
+        cb(null, fakeStream(`NC_LATENCY_MARK|${LINUX_STATS}`));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await Promise.race([
+    api.getServerStats({ sender: {} }, { sessionId: "sid" }),
+    new Promise((resolve) => setTimeout(() => resolve({ timedOut: true }), 100)),
+  ]);
+
+  assert.notEqual(result.timedOut, true);
+  assert.equal(result.success, false);
+  assert.equal(result.error, "disk stats rejected");
 });
 
 test("getServerStats reports pending (not a hard failure) for a Mosh session before the handshake swap", async () => {
