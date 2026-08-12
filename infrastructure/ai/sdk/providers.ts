@@ -643,8 +643,9 @@ export function resolveProviderEndpoint(
     baseURL = baseURL || 'https://openrouter.ai/api/v1';
   }
   // @ai-sdk/anthropic expects baseURL to include /v1 (then appends /messages).
-  // Users often paste Claude Code style hosts without /v1 — normalize here so
-  // chat matches probe/discovery which request /v1/models on bare hosts.
+  // Bare Claude Code style hosts get /v1 so chat matches probe/discovery.
+  // Custom path prefixes (e.g. …/anthropic) are left alone — they already
+  // complete the SDK base and must not become …/anthropic/v1.
   if (style === 'anthropic' && baseURL) {
     baseURL = normalizeAnthropicSdkBaseURL(baseURL);
   }

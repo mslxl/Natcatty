@@ -98,6 +98,16 @@ test("resolveProviderEndpoint normalizes Anthropic-compat Base URL for @ai-sdk/a
     ).baseURL,
     "https://api.anthropic.com/v1",
   );
+  // Custom complete SDK prefix without /v1 must not gain /v1
+  // (proxy serves …/anthropic/messages, not …/anthropic/v1/messages).
+  assert.equal(
+    resolveProviderEndpoint(
+      makeConfig({ style: "anthropic", baseURL: "https://proxy.example/anthropic" }),
+      "anthropic",
+      "sk-test",
+    ).baseURL,
+    "https://proxy.example/anthropic",
+  );
   // OpenAI-compat style must not rewrite the path.
   assert.equal(
     resolveProviderEndpoint(
