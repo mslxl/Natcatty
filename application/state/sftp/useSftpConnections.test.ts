@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  buildSftpConnectInFlightKey,
   runSftpConnectOnceByKey,
   createSftpConnectionId,
   createPinnedReconnectSideResolver,
@@ -43,6 +44,27 @@ test("runSftpConnectOnceByKey shares an in-flight connect for the same tab and e
   await Promise.all([first, second]);
   assert.equal(runs, 1);
   assert.equal(inFlight.size, 0);
+});
+
+test("buildSftpConnectInFlightKey uses the allocated tab id for forced new tabs", () => {
+  const first = buildSftpConnectInFlightKey({
+    side: "left",
+    tabId: "new-tab-a",
+    targetConnectionKey: "host-key",
+    sourceSessionId: "ssh-session-1",
+    initialPath: "/home",
+    forceNewTab: true,
+  });
+  const second = buildSftpConnectInFlightKey({
+    side: "left",
+    tabId: "new-tab-b",
+    targetConnectionKey: "host-key",
+    sourceSessionId: "ssh-session-1",
+    initialPath: "/home",
+    forceNewTab: true,
+  });
+
+  assert.notEqual(first, second);
 });
 
 const openOptions = {

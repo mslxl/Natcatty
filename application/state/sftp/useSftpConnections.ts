@@ -193,6 +193,24 @@ export function runSftpConnectOnceByKey(
   return promise;
 }
 
+export function buildSftpConnectInFlightKey(params: {
+  side: "left" | "right";
+  tabId: string;
+  targetConnectionKey: string;
+  sourceSessionId?: string;
+  initialPath?: string;
+  forceNewTab?: boolean;
+}): string {
+  return [
+    params.side,
+    params.tabId,
+    params.targetConnectionKey,
+    params.sourceSessionId ?? "",
+    params.initialPath ?? "",
+    params.forceNewTab ? "force-new-tab" : "",
+  ].join("\u0000");
+}
+
 interface UseSftpConnectionsResult {
   connect: (side: "left" | "right", host: Host | "local", options?: SftpConnectOptions) => Promise<void>;
   disconnect: (side: "left" | "right") => Promise<void>;
@@ -359,7 +377,6 @@ export const useSftpConnections = ({
 
       let activeTabId: string | null = null;
       const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
-      const connectTargetSlot = options?.tabId ?? sideTabs.activeTabId ?? `new:${side}`;
 
       if (options?.tabId) {
         // Background reconnect for a pinned upload must not retarget the focused tab.
@@ -445,32 +462,31 @@ export const useSftpConnections = ({
       // immediately, avoiding race conditions with deferred effects.
       options?.onTabCreated?.(activeTabId);
 
-      const connectInFlightKey = [
+      const connectInFlightKey = buildSftpConnectInFlightKey({
         side,
-        connectTargetSlot,
+        tabId: activeTabId,
         targetConnectionKey,
-        host === "local" ? "" : (options?.sourceSessionId ?? ""),
-        effectiveInitialPath ?? "",
-        options?.forceNewTab ? "force-new-tab" : "",
-      ].join("\u0000");
+        sourceSessionId: host === "local" ? undefined : options?.sourceSessionId,
+        initialPath: effectiveInitialPath,
+        forceNewTab: options?.forceNewTab,
+      });
 
       return runSftpConnectOnceByKey(connectInFlightRef.current, connectInFlightKey, async () => {
+        const connectionId = createSftpConnectionId(side);
 
-      const connectionId = createSftpConnectionId(side);
-
-      navSeqRef.current[side] += 1;
-      const connectRequestId = navSeqRef.current[side];
-      const getTargetPane = () => {
-        const targetSide = resolveTargetSide();
-        const tabs = targetSide === "left" ? leftTabsRef.current.tabs : rightTabsRef.current.tabs;
-        return tabs.find((tab) => tab.id === activeTabId) ?? null;
-      };
-      const isTargetConnectionCurrent = () => {
-        const pane = getTargetPane();
-        if (!pane) return false;
-        if (pane.connection?.id === connectionId) return true;
-        return !pane.connection && navSeqRef.current[side] === connectRequestId;
-      };
+        navSeqRef.current[side] += 1;
+        const connectRequestId = navSeqRef.current[side];
+        const getTargetPane = () => {
+          const targetSide = resolveTargetSide();
+          const tabs = targetSide === "left" ? leftTabsRef.current.tabs : rightTabsRef.current.tabs;
+          return tabs.find((tab) => tab.id === activeTabId) ?? null;
+        };
+        const isTargetConnectionCurrent = () => {
+          const pane = getTargetPane();
+          if (!pane) return false;
+          if (pane.connection?.id === connectionId) return true;
+          return !pane.connection && navSeqRef.current[side] === connectRequestId;
+        };
       const isTargetConnectionAtPath = (path: string) => {
         const connection = getTargetPane()?.connection;
         if (!connection) return navSeqRef.current[side] === connectRequestId;
