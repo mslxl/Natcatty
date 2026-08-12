@@ -1417,7 +1417,9 @@ test("Enter dirty work continues after a queued full refresh", async () => {
     handlers.data?.("\r");
     setLineText(22, "redrawn without a keyword");
     handlers.writeParsed?.();
-    await new Promise((resolve) => { setTimeout(resolve, 340); });
+    // Idle Enter suppresses decoration mutation until the Enter guard clears
+    // (~600ms) so prompt redraw cannot flash still-visible keywords.
+    await new Promise((resolve) => { setTimeout(resolve, 850); });
     raf.flush();
 
     const originalDisposed = originalDecoration.isDisposed;
@@ -1923,7 +1925,9 @@ test("Enter input still detects redraws away from the cursor", async () => {
     handlers.data?.("\r");
     setLineText(20, "redrawn without a keyword");
     handlers.writeParsed?.();
-    await new Promise((resolve) => { setTimeout(resolve, 220); });
+    // Idle Enter defers decoration dispose/apply until the Enter guard clears.
+    await new Promise((resolve) => { setTimeout(resolve, 850); });
+    raf.flush();
 
     assert.equal(originalDecoration.isDisposed, true);
     highlighter.dispose();
@@ -2238,6 +2242,133 @@ test("idle Enter scroll before writeParsed does not rescan visible keywords", ()
       existingDecorations.filter(({ isDisposed }) => isDisposed).length,
       0,
       "Enter-pending scroll must keep existing keyword decorations mounted",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("idle Enter scroll before buffer dims update does not rescan", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      getTranslateCount,
+      resetTranslateCount,
+      refreshCalls,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+
+    const internals = highlighter as unknown as {
+      lastWriteAt: number;
+      lastRenderRange: { start: number; end: number } | null;
+    };
+    internals.lastWriteAt = performance.now() - 10_000;
+    internals.lastRenderRange = null;
+    resetTranslateCount();
+    resetRefreshCalls();
+
+    // Ubuntu RTT: onScroll can fire while length/baseY/cursor still match the
+    // last snapshot, so output-driven detection is false. Bottom-pinned Enter
+    // must still defer — requiring hasOutputDrivenViewportChange reopens flash.
+    handlers.data?.("\r");
+    handlers.scroll?.();
+
+    assert.equal(
+      getTranslateCount(),
+      0,
+      "Enter-pending bottom scroll without buffer-dim change must not rescan",
+    );
+    assert.deepEqual(
+      refreshCalls,
+      [],
+      "Enter-pending bottom scroll without buffer-dim change must not repaint",
+    );
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "Enter-pending bottom scroll must keep existing keyword decorations mounted",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("idle Enter prompt redraw does not repaint existing keyword rows", async () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      setLineText,
+      refreshCalls,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([
+      {
+        id: "deploy",
+        label: "Deploy",
+        patterns: ["DEPLOY"],
+        color: "#F87171",
+        enabled: true,
+      },
+      {
+        id: "prompt",
+        label: "Prompt",
+        patterns: ["~", "#"],
+        color: "#60A5FA",
+        enabled: true,
+      },
+    ], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+    resetRefreshCalls();
+
+    handlers.data?.("\r");
+    term.buffer.active.viewportY += 1;
+    term.buffer.active.baseY += 1;
+    term.buffer.active.length += 1;
+    // New prompt line matches custom ~/# rules — applying those decorations
+    // makes xterm repaint the full viewport and flashes still-visible keywords.
+    setLineText(22, "user@host:~# ");
+    handlers.scroll?.();
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 220); });
+    raf.flush();
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "idle Enter must keep prior keyword decorations mounted",
+    );
+    assert.deepEqual(
+      refreshCalls,
+      [],
+      "idle Enter prompt redraw must not register decorations that force a viewport repaint",
     );
     highlighter.dispose();
   } finally {
