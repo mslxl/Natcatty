@@ -58,12 +58,20 @@ test("manual reconnect resets connect automation before opening a new session", 
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const reconnectIndex = source.indexOf("const startReconnect = ");
   const manualBranchIndex = source.indexOf('if (mode === "manual")', reconnectIndex);
+  const abortBatchIndex = source.indexOf(
+    "connectScriptsAbortRef.current?.abort()",
+    manualBranchIndex,
+  );
   const resetConsumedIndex = source.indexOf(
     "connectScriptsConsumedRef.current = false",
     manualBranchIndex,
   );
   const resetCompletedIndex = source.indexOf(
     "connectScriptsCompletedIdsRef.current = new Set()",
+    manualBranchIndex,
+  );
+  const resetInFlightIndex = source.indexOf(
+    "connectScriptsInFlightRef.current = false",
     manualBranchIndex,
   );
   const connectingIndex = source.indexOf('updateStatus("connecting")', manualBranchIndex);
@@ -75,11 +83,19 @@ test("manual reconnect resets connect automation before opening a new session", 
 
   assert.notEqual(reconnectIndex, -1);
   assert.notEqual(manualBranchIndex, -1);
+  assert.notEqual(abortBatchIndex, -1);
   assert.notEqual(resetConsumedIndex, -1);
   assert.notEqual(resetCompletedIndex, -1);
+  assert.notEqual(resetInFlightIndex, -1);
   assert.notEqual(connectingIndex, -1);
   assert.notEqual(autoElseIndex, -1);
   assert.notEqual(autoSuppressIndex, -1);
+  assert.ok(
+    abortBatchIndex < resetConsumedIndex
+      && abortBatchIndex < resetCompletedIndex
+      && abortBatchIndex < resetInFlightIndex,
+    "manual reconnect must abort the in-flight onConnect batch before clearing guards",
+  );
   assert.ok(
     resetConsumedIndex < connectingIndex && resetCompletedIndex < connectingIndex,
     "manual reconnect must clear connect-automation consumption before status becomes connecting",
