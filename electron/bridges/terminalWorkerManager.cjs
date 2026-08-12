@@ -1758,6 +1758,10 @@ function createTerminalWorkerManager(options = {}) {
       && payload?.sessionId
       && closedSessions.has(payload.sessionId)
       && !pendingSessionStartSequences.has(payload.sessionId)) {
+      // Worker already tombstoned the session (clean exit / crash). A later
+      // renderer close still has to notify host listeners as explicit so
+      // auto-close can drop host_open ownership.
+      notifySessionClosed(payload.sessionId, "closed", { explicit: true });
       return Promise.resolve(undefined);
     }
     const requestId = randomUUID();
@@ -1908,6 +1912,7 @@ function createTerminalWorkerManager(options = {}) {
       && closedSessions.has(payload.sessionId)
       && !pendingSessionStartSequences.has(payload.sessionId)) {
       closeOutputSession(payload.sessionId);
+      notifySessionClosed(payload.sessionId, "closed", { explicit: true });
       return;
     }
     if (channel === "netcatty:close" && payload?.sessionId) {

@@ -2172,6 +2172,69 @@ test("explicit close notifies host session lifecycle exactly once before the wor
   assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
 });
 
+async function startWorkerSessionForLifecycle(manager, child) {
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+  });
+  await start;
+}
+
+function createLifecycleManager(child, closed) {
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: { webContents: { fromId: (id) => ({ id, isDestroyed: () => false, send() {} }) } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionClosed((event) => closed.push(event));
+  return manager;
+}
+
+test("fire-and-forget close after a worker exit still emits an explicit lifecycle event", async () => {
+  const child = new FakeChild();
+  const closed = [];
+  const manager = createLifecycleManager(child, closed);
+  await startWorkerSessionForLifecycle(manager, child);
+
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:exit",
+    payload: { sessionId: "session-1", reason: "exited", exitCode: 0 },
+  });
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "exited" }]);
+
+  manager.send("netcatty:close", { sessionId: "session-1" }, { webContentsId: 7 });
+  assert.deepEqual(closed, [
+    { sessionId: "session-1", reason: "exited" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
+  ]);
+});
+
+test("awaited close after a worker exit still emits an explicit lifecycle event", async () => {
+  const child = new FakeChild();
+  const closed = [];
+  const manager = createLifecycleManager(child, closed);
+  await startWorkerSessionForLifecycle(manager, child);
+
+  child.emit("message", {
+    kind: "renderer-event",
+    webContentsId: 7,
+    channel: "netcatty:exit",
+    payload: { sessionId: "session-1", reason: "exited", exitCode: 0 },
+  });
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "exited" }]);
+
+  await manager.request("netcatty:close:await", { sessionId: "session-1" }, { webContentsId: 7 });
+  assert.deepEqual(closed, [
+    { sessionId: "session-1", reason: "exited" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
+  ]);
+});
+
 test("a duplicate exit from an old session generation cannot close a reconnected session", async () => {
   const child = new FakeChild();
   const closed = [];
@@ -3092,7 +3155,10 @@ test("closing a crashed session is idempotent until a new worker reuses its id",
   }
   await close;
   assert.equal(children.length, 1);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "worker-exit" }]);
+  assert.deepEqual(closed, [
+    { sessionId: "session-1", reason: "worker-exit" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
+  ]);
 
   const secondStart = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
   const secondChild = children[1];
@@ -3105,6 +3171,7 @@ test("closing a crashed session is idempotent until a new worker reuses its id",
   secondChild.emit("exit", 1);
   assert.deepEqual(closed, [
     { sessionId: "session-1", reason: "worker-exit" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
     { sessionId: "session-1", reason: "worker-exit" },
   ]);
 });
@@ -4237,7 +4304,10 @@ test("a failed reconnect after worker exit keeps later close cleanup idempotent"
 
   manager.send("netcatty:close", { sessionId: "session-1" }, { webContentsId: 7 });
   assert.equal(children.length, 2);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "worker-exit" }]);
+  assert.deepEqual(closed, [
+    { sessionId: "session-1", reason: "worker-exit" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
+  ]);
 });
 
 test("a same-id reconnect that outputs before another worker exit closes its new lifecycle", async () => {

@@ -180,6 +180,61 @@ test("retained host_open metadata refreshes connected from another scope", async
   assert.equal(bridge.getSessionMeta("sess-opened", "chat-1")?.username, "root");
 });
 
+test("retained host_open metadata accepts a later disconnect from another scope", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+      protocol: "ssh",
+    },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-1",
+    hostId: "host-b",
+  });
+
+  // The focused tab moved away; External MCP later learns the host dropped.
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: false,
+      hostId: "host-b",
+      protocol: "ssh",
+    },
+  ], "__external_mcp__");
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-1")?.connected, false);
+});
+
 test("ordinary tab close forgets host_open ownership so sidebar sync cannot revive ghosts", async (t) => {
   const bridge = loadFreshBridge();
   t.after(() => bridge.cleanup());

@@ -2,8 +2,8 @@
 
 /**
  * Merge a previous scoped snapshot with a cross-scope fallback.
- * Always prefer a connected:true signal from either side so a stale
- * host_open connected:false snapshot cannot mask a fresher update.
+ * Fallback is the other-scope snapshot and wins for connected when it
+ * includes that field, so a later disconnect can replace a stale true.
  *
  * @param {Record<string, unknown> | null | undefined} previous
  * @param {Record<string, unknown> | null | undefined} fallback
@@ -14,8 +14,9 @@ function mergeRetentionMeta(previous, fallback) {
   if (!previous) return fallback && typeof fallback === "object" ? fallback : null;
   if (!fallback || typeof fallback !== "object") return previous;
 
-  const previousConnected = previous.connected !== false;
-  const fallbackConnected = fallback.connected !== false;
+  const connected = Object.prototype.hasOwnProperty.call(fallback, "connected")
+    ? fallback.connected !== false
+    : previous.connected !== false;
   return {
     ...previous,
     hostname: fallback.hostname || previous.hostname,
@@ -33,7 +34,7 @@ function mergeRetentionMeta(previous, fallback) {
     activePortForwards: Array.isArray(fallback.activePortForwards)
       ? fallback.activePortForwards
       : previous.activePortForwards,
-    connected: previousConnected || fallbackConnected,
+    connected,
   };
 }
 
