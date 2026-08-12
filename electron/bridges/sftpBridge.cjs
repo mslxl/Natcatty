@@ -1971,12 +1971,43 @@ async function openSftpForSession(_event, payload) {
   }
 
   try {
+    // Forced SCP cannot provide sudo elevation; reject before touching the channel
+    // so session reuse matches the fresh openSftp contract.
+    if (sudoRequested && fileProtocol === "scp") {
+      throw new Error(
+        "Sudo Mode is not supported with File Protocol set to SCP. Disable Sudo Mode or use Auto/SFTP.",
+      );
+    }
+
     if (sudoRequested) {
-      const sftpWrapper = await connectSudoSftp(sshClient, payload?.password || "");
+      let sftpWrapper;
+      let sudoActive = true;
+      try {
+        sftpWrapper = await connectSudoSftp(sshClient, payload?.password || "");
+      } catch (e) {
+        // Fallback: if sftp-server binary is missing (exit code 127), try the
+        // standard SFTP subsystem instead of failing completely. Mirrors openSftp
+        // (ESXi / hosts without a standalone sftp-server). Keeps the reused SSH
+        // transport so MFA is not repeated.
+        if (e?.message && e.message.includes("exit code 127")) {
+          console.warn(
+            "[SFTP] openSftpForSession sftp-server not found, falling back to standard SFTP subsystem",
+          );
+          sudoActive = false;
+          sftpWrapper = await requireSftpChannel(client, {
+            signal: payload?.abortSignal,
+            timeoutMs: payload?.timeoutMs,
+          });
+        } else {
+          throw e;
+        }
+      }
       client.sftp = sftpWrapper;
       client.__netcattyFileProtocol = "sftp";
-      client.__netcattySudoMode = true;
-      sftpWrapper.on?.("close", () => client.end());
+      client.__netcattySudoMode = sudoActive;
+      if (sudoActive) {
+        sftpWrapper.on?.("close", () => client.end());
+      }
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
