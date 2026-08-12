@@ -759,7 +759,11 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
             : -1}
           onFocus={() => onActiveTreeItemChange(`host:${host.id}`)}
           draggable={!isMultiSelectMode}
-          onDragStart={(e) => e.dataTransfer.setData("host-id", host.id)}
+          onDragStart={(e) => {
+            // copyMove: vault reorder uses move; focus-sidebar append uses copy.
+            e.dataTransfer.effectAllowed = "copyMove";
+            e.dataTransfer.setData("host-id", host.id);
+          }}
           onClick={() => {
             const action = resolveHostActivateAction({
               behavior: normalizedHostClickBehavior,

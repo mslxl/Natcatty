@@ -317,6 +317,17 @@ function AppViewInner({ domains }: AppViewProps) {
     setAddToWorkspaceDialog({ mode: 'append', workspaceId });
   }, [setAddToWorkspaceDialog]);
 
+  const handleAppendHostToWorkspace = useCallback((workspaceId: string, hostId: string) => {
+    const host = hosts.find((entry) => entry.id === hostId);
+    // Mirror AddToWorkspaceDialog append mode: serial hosts have no
+    // appendHostToWorkspace path today.
+    if (!host || host.protocol === 'serial') return;
+    const ws = workspaces.find((entry) => entry.id === workspaceId);
+    if (!ws) return;
+    const rootDir = ws.root.type === 'split' ? ws.root.direction : 'vertical';
+    appendHostToWorkspace(workspaceId, host, rootDir);
+  }, [appendHostToWorkspace, hosts, workspaces]);
+
   const isPeerSessionWindow = typeof window !== 'undefined'
     && window.location.hash.startsWith('#/session-window');
   const externalMcpToggle = useExternalMcpToggleState();
@@ -659,6 +670,7 @@ function AppViewInner({ domains }: AppViewProps) {
           onCreateWorkspaceFromSessions={createWorkspaceFromSessions}
           onAddSessionToWorkspace={addSessionToWorkspace}
           onRequestAddToWorkspace={handleRequestAddToWorkspace}
+          onAppendHostToWorkspace={handleAppendHostToWorkspace}
           onUpdateSplitSizes={updateSplitSizes}
           onSetDraggingSessionId={setDraggingSessionId}
           onToggleWorkspaceViewMode={toggleWorkspaceViewMode}

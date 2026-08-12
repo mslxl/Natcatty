@@ -377,7 +377,8 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
         onDragStart={(event) => {
           if (!canDrag || isInlineEditing) return;
           event.dataTransfer.setData(HOST_TREE_DRAG_HOST_ID, row.host.id);
-          event.dataTransfer.effectAllowed = 'move';
+          // copyMove: tree reorder uses move; focus-sidebar append uses copy.
+          event.dataTransfer.effectAllowed = 'copyMove';
         }}
         onDragOver={(event) => {
           if (!canDrag) return;
