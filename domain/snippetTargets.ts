@@ -74,6 +74,18 @@ export function snippetAppliesToHost(
     || snippetTargetsHostGroup(snippet, host);
 }
 
+/** Whether a library/shortcut invocation may run in the current terminal. */
+export function snippetCanRunInTerminal(
+  snippet: Pick<Snippet, 'targets' | 'targetGroups' | 'targetsAllHosts'>,
+  host: SnippetTargetHost,
+): boolean {
+  if (snippet.targetsAllHosts) return true;
+  const hasScopedTargets = Boolean(
+    snippet.targets?.length || snippet.targetGroups !== undefined,
+  );
+  return !hasScopedTargets || snippetAppliesToHost(snippet, host);
+}
+
 /**
  * onOutput triggers listen on the active terminal session. When no explicit targets
  * are configured, they apply to whichever host the session is connected to.

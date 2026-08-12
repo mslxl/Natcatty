@@ -38,6 +38,7 @@ export async function commitVaultGroupMutationPersistence({
   encryptHosts,
   encryptConfigs,
   isCurrent,
+  validateCurrent,
 }: {
   storage: TransactionStorage;
   mutate: (current: VaultGroupMutationState) => VaultGroupMutationResult;
@@ -47,6 +48,7 @@ export async function commitVaultGroupMutationPersistence({
   encryptHosts: (hosts: Host[]) => Promise<unknown>;
   encryptConfigs: (configs: GroupConfig[]) => Promise<unknown>;
   isCurrent: () => boolean;
+  validateCurrent?: (current: VaultGroupMutationState) => boolean;
 }): Promise<VaultGroupMutationResult | { ok: false; superseded: true }> {
   const raw = new Map(GROUP_MUTATION_KEYS.map((key) => [key, storage.readString(key)]));
   const [hosts, configs] = await Promise.all([
@@ -66,6 +68,9 @@ export async function commitVaultGroupMutationPersistence({
     ),
     snippets: readStoredArray<Snippet>(STORAGE_KEY_SNIPPETS, raw.get(STORAGE_KEY_SNIPPETS) ?? null),
   };
+  if (!isCurrent() || (validateCurrent && !validateCurrent(current))) {
+    return { ok: false, superseded: true };
+  }
   const mutation = mutate(current);
   if (!mutation.ok) return mutation;
 

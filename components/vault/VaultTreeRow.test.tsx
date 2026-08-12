@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { act, create, type ReactTestRenderer } from "react-test-renderer";
 
 import {
   VaultTreeGroupRow,
@@ -93,4 +94,46 @@ test("VaultTreeInlineRenameInput uses shared inline edit marker", () => {
 
   assert.match(markup, /data-vault-tree-inline-edit="true"/);
   assert.match(markup, /value="Ops"/);
+});
+
+test("VaultTreeInlineRenameInput can retry after an asynchronous commit failure", async () => {
+  const actEnvironment = globalThis as typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+  };
+  const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+  let renderer: ReactTestRenderer | null = null;
+  let attempts = 0;
+
+  try {
+    await act(async () => {
+      renderer = create(
+        <VaultTreeInlineRenameInput
+          initialName="Ops"
+          onCommit={async () => {
+            attempts += 1;
+            return attempts > 1;
+          }}
+          onCancel={() => undefined}
+        />,
+      );
+    });
+    const input = renderer!.root.findByType("input");
+    const pressEnter = async () => {
+      input.props.onKeyDown({
+        key: "Enter",
+        preventDefault: () => undefined,
+        stopPropagation: () => undefined,
+      });
+      await Promise.resolve();
+    };
+    await act(pressEnter);
+    await act(pressEnter);
+    assert.equal(attempts, 2);
+  } finally {
+    await act(async () => {
+      renderer?.unmount();
+    });
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
 });

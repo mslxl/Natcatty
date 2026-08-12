@@ -156,3 +156,65 @@ test('group rename preserves a concurrent snippet update from the locked snapsho
     ['production/child'],
   ]);
 });
+
+test('group delete cleans targets from the latest persisted snippet snapshot', async () => {
+  const concurrentSnippet = { ...initialSnippet, command: 'nct.log(2)' };
+  const addedSnippet: Snippet = {
+    id: 'script-2', label: 'Check', command: 'nct.log(3)', kind: 'script',
+    targetGroups: ['prod/child', 'staging'],
+  };
+  const storage = createStorage({
+    ...initialVault(),
+    [STORAGE_KEY_SNIPPETS]: [concurrentSnippet, addedSnippet],
+  });
+
+  const result = await commitVaultGroupMutationPersistence({
+    storage,
+    mutate: (current) => ({
+      ok: true,
+      state: {
+        ...current,
+        groups: [],
+        snippets: removeSnippetTargetGroupPaths(current.snippets, ['prod']),
+      },
+    }),
+    prepareState,
+    decryptHosts: identity,
+    decryptConfigs: identity,
+    encryptHosts: identity,
+    encryptConfigs: identity,
+    isCurrent: () => true,
+  });
+
+  assert.equal(result.ok, true);
+  const saved = storage.read<Snippet[]>(STORAGE_KEY_SNIPPETS) ?? [];
+  assert.equal(saved[0]?.command, 'nct.log(2)');
+  assert.deepEqual(saved.map((snippet) => snippet.targetGroups), [
+    [],
+    ['staging'],
+  ]);
+});
+
+test('group mutation stops before writing when memory is ahead of persisted Vault state', async () => {
+  const storage = createStorage(initialVault());
+  let mutateCalled = false;
+
+  const result = await commitVaultGroupMutationPersistence({
+    storage,
+    mutate: (current) => {
+      mutateCalled = true;
+      return { ok: true, state: current };
+    },
+    prepareState,
+    decryptHosts: identity,
+    decryptConfigs: identity,
+    encryptHosts: identity,
+    encryptConfigs: identity,
+    isCurrent: () => true,
+    validateCurrent: (current) => current.snippets[0]?.command === 'nct.log(2)',
+  });
+
+  assert.deepEqual(result, { ok: false, superseded: true });
+  assert.equal(mutateCalled, false);
+  assert.deepEqual(storage.read<Snippet[]>(STORAGE_KEY_SNIPPETS), [initialSnippet]);
+});

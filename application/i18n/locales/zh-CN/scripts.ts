@@ -20,6 +20,7 @@ export const zhCNScriptsMessages = {
   'scripts.editor.resize': '调整编辑器高度',
   'scripts.targets.hint': '所选分组会动态匹配，之后加入分组的主机也会自动生效。',
   'scripts.targets.connectOrderHint': '连接脚本的执行顺序请在主机详情 → 自动化 中调整。',
+  'scripts.targets.currentHostMismatch': '此脚本未分配给当前主机。',
   'hostDetails.automation.groupScripts': '分组继承脚本',
   'hostDetails.automation.groupScriptsHint': '这些脚本动态跟随主机所在分组，并在主机专属队列之前执行。',
   'scripts.actions.runNowHint': '在所选目标主机上运行；勾选「对所有主机生效」时在所有可连接主机上运行。',

@@ -121,6 +121,7 @@ import { useVaultSnapshotField } from "@/application/state/vaultSnapshotStore.ts
 import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
 import { ScriptExecutionOverlay } from "./terminal/ScriptExecutionOverlay";
 import { isScriptSnippet } from "@/domain/snippetScript.ts";
+import { snippetCanRunInTerminal } from "@/domain/snippetTargets.ts";
 import { useOutputTriggers } from "@/application/state/useOutputTriggers.ts";
 import { TerminalComposeBar } from "./terminal/TerminalComposeBar";
 import { TerminalContextMenu } from "./terminal/TerminalContextMenu";
@@ -3013,6 +3014,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const executeSnippet = useCallback(async (snippet: Snippet) => {
     if (isScriptSnippet(snippet)) {
+      if (!snippetCanRunInTerminal(snippet, host)) {
+        toast.error(t('scripts.targets.currentHostMismatch'));
+        return;
+      }
       try {
         await runAutomationScript({
           snippet,
@@ -3035,7 +3040,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     executeSnippetCommand(command, snippet.noAutoRun, {
       multiLineRunMode: snippet.multiLineRunMode,
     });
-  }, [executeSnippetCommand, host.hostname, host.username, scriptSessionName, sessionId, t]);
+  }, [executeSnippetCommand, host, scriptSessionName, sessionId, t]);
 
   const onSnippetShortkeyRef = useRef(executeSnippet);
   onSnippetShortkeyRef.current = executeSnippet;

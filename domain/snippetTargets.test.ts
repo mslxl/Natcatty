@@ -4,6 +4,7 @@ import {
   getRunnableHostsForSnippet,
   snippetAppliesToHost,
   snippetAppliesToOutputTrigger,
+  snippetCanRunInTerminal,
   snippetHasRunTargets,
   resolveSnippetTargetGroupsForSave,
 } from './snippetTargets.ts';
@@ -55,6 +56,26 @@ test('snippetAppliesToHost matches all hosts when targetsAllHosts is set', () =>
   assert.equal(snippetAppliesToHost(snippet, 'host-a'), true);
   assert.equal(snippetAppliesToHost(snippet, 'host-c'), true);
   assert.equal(snippetAppliesToHost(snippet, undefined), false);
+});
+
+test('snippetCanRunInTerminal enforces explicit host and dynamic group scopes', () => {
+  assert.equal(snippetCanRunInTerminal(baseSnippet, hosts[0]!), true);
+  assert.equal(snippetCanRunInTerminal({
+    ...baseSnippet,
+    targets: ['host-b'],
+  }, hosts[0]!), false);
+  assert.equal(snippetCanRunInTerminal({
+    ...baseSnippet,
+    targetGroups: ['Production'],
+  }, hosts[0]!), true);
+  assert.equal(snippetCanRunInTerminal({
+    ...baseSnippet,
+    targetGroups: ['Staging'],
+  }, hosts[0]!), false);
+  assert.equal(snippetCanRunInTerminal({
+    ...baseSnippet,
+    targetGroups: [],
+  }, hosts[0]!), false);
 });
 
 test('snippetHasRunTargets requires explicit scope', () => {

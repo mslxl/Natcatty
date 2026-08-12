@@ -20,7 +20,10 @@ type UseHostTreeInlineGroupActionsParams = {
   onCommitGroupPathChange: (
     sourcePath: string,
     nextPath: string,
-  ) => Promise<{ ok: true } | { ok: false; error?: string }>;
+  ) => Promise<
+    | { ok: true }
+    | { ok: false; error?: string; superseded?: true }
+  >;
   selectedGroupPath: string | null;
   setSelectedGroupPath: (path: string | null) => void;
   ensurePathExpanded: (path: string) => void;
@@ -74,9 +77,9 @@ export function useHostTreeInlineGroupActions({
     hostTreeInlineGroupEditStore.clear();
   }, [customGroups, onUpdateCustomGroups]);
 
-  const commitInlineGroupRename = useCallback(async (rawName: string) => {
+  const commitInlineGroupRename = useCallback(async (rawName: string): Promise<boolean> => {
     const edit = hostTreeInlineGroupEditStore.getEdit();
-    if (!edit) return;
+    if (!edit) return false;
 
     const result = applyGroupPathRename({
       renameTargetPath: edit.groupPath,
@@ -89,31 +92,31 @@ export function useHostTreeInlineGroupActions({
     if (result.ok === false) {
       if (result.error === 'unchanged') {
         hostTreeInlineGroupEditStore.clear();
-        return;
+        return true;
       }
       if (result.error === 'required') {
         if (edit.isNew) {
           cancelInlineGroupEdit();
-          return;
+          return true;
         }
         toast.error(t('vault.groups.errors.required'));
-        return;
+        return false;
       }
       if (result.error === 'invalidChars') {
         toast.error(t('vault.groups.errors.invalidChars'));
-        return;
+        return false;
       }
       if (result.error === 'duplicatePath') {
         toast.error(t('vault.groups.errors.duplicatePath'));
-        return;
+        return false;
       }
-      return;
+      return false;
     }
 
     const committed = await onCommitGroupPathChange(edit.groupPath, result.nextPath);
-    if ("error" in committed) {
+    if (!committed.ok) {
       toast.error(committed.error || t('common.error'));
-      return;
+      return false;
     }
 
     if (
@@ -128,6 +131,7 @@ export function useHostTreeInlineGroupActions({
     }
 
     hostTreeInlineGroupEditStore.clear();
+    return true;
   }, [
     cancelInlineGroupEdit,
     customGroups,

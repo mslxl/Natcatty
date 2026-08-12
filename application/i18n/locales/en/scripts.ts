@@ -20,6 +20,7 @@ export const enScriptsMessages = {
   'scripts.editor.resize': 'Resize editor',
   'scripts.targets.hint': 'Selected groups are resolved dynamically, so hosts added later are included automatically.',
   'scripts.targets.connectOrderHint': 'Run order for connect scripts is configured per host under Host details → Automation.',
+  'scripts.targets.currentHostMismatch': 'This script is not assigned to the current host.',
   'hostDetails.automation.groupScripts': 'Inherited group scripts',
   'hostDetails.automation.groupScriptsHint': 'These scripts follow the host group dynamically and are ordered before the host-specific queue.',
   'scripts.actions.runNowHint': 'Run on selected targets, or on all connectable hosts when that option is enabled.',

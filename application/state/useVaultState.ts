@@ -301,6 +301,7 @@ export const useVaultState = () => {
   const managedSourcesRef = useRef<ManagedSource[]>([]);
   const hostsRef = useRef<Host[]>([]);
   const snippetsRef = useRef<Snippet[]>([]);
+  const groupConfigsRef = useRef<GroupConfig[]>([]);
   const notesRef = useRef<VaultNote[]>([]);
   const noteGroupsRef = useRef<string[]>([]);
   const notesPersistFailureNotifiedAtRef = useRef(0);
@@ -308,6 +309,7 @@ export const useVaultState = () => {
   managedSourcesRef.current = managedSources;
   hostsRef.current = hosts;
   snippetsRef.current = snippets;
+  groupConfigsRef.current = groupConfigs;
   notesRef.current = notes;
   noteGroupsRef.current = noteGroups;
 
@@ -870,6 +872,7 @@ export const useVaultState = () => {
     setCustomGroups(next);
 
     const cleanedGroupConfigs = buildGroupConfigsForGroups(next, groupConfigs);
+    groupConfigsRef.current = cleanedGroupConfigs;
     setGroupConfigs(cleanedGroupConfigs);
     const configsVer = ++groupConfigsWriteVersion.current;
     const encryptPromise = encryptGroupConfigs(cleanedGroupConfigs);
@@ -914,14 +917,30 @@ export const useVaultState = () => {
     mutate: (current: VaultGroupMutationState) => VaultGroupMutationResult,
     lock?: VaultLockHandle | null,
   ): Promise<VaultGroupMutationResult | { ok: false; superseded: true }> => {
-    const runCommit = async (): Promise<VaultGroupMutationResult | { ok: false; superseded: true }> => {
-      const versions = {
-        hosts: hostsWriteVersion.current,
-        snippets: snippetsWriteVersion.current,
-        groups: customGroupsWriteVersion.current,
-        configs: groupConfigsWriteVersion.current,
-        sources: managedSourcesWriteVersion.current,
-      };
+    const captureVersions = () => ({
+      hosts: hostsWriteVersion.current,
+      snippets: snippetsWriteVersion.current,
+      groups: customGroupsWriteVersion.current,
+      configs: groupConfigsWriteVersion.current,
+      sources: managedSourcesWriteVersion.current,
+    });
+    const versionsAreCurrent = (versions: ReturnType<typeof captureVersions>) => (
+      versions.hosts === hostsWriteVersion.current
+      && versions.snippets === snippetsWriteVersion.current
+      && versions.groups === customGroupsWriteVersion.current
+      && versions.configs === groupConfigsWriteVersion.current
+      && versions.sources === managedSourcesWriteVersion.current
+    );
+    const stateMatchesLiveSnapshot = (current: VaultGroupMutationState) => (
+      JSON.stringify(current.hosts) === JSON.stringify(hostsRef.current)
+      && JSON.stringify(current.snippets) === JSON.stringify(snippetsRef.current)
+      && JSON.stringify(current.groups) === JSON.stringify(customGroupsRef.current)
+      && JSON.stringify(current.configs) === JSON.stringify(groupConfigsRef.current)
+      && JSON.stringify(current.managedSources) === JSON.stringify(managedSourcesRef.current)
+    );
+    const runCommit = async (
+      versions: ReturnType<typeof captureVersions>,
+    ): Promise<VaultGroupMutationResult | { ok: false; superseded: true }> => {
       const result = await commitVaultGroupMutationPersistence({
         storage: localStorageAdapter,
         mutate,
@@ -943,13 +962,8 @@ export const useVaultState = () => {
         ),
         encryptHosts,
         encryptConfigs: encryptGroupConfigs,
-        isCurrent: () => (
-          versions.hosts === hostsWriteVersion.current
-          && versions.snippets === snippetsWriteVersion.current
-          && versions.groups === customGroupsWriteVersion.current
-          && versions.configs === groupConfigsWriteVersion.current
-          && versions.sources === managedSourcesWriteVersion.current
-        ),
+        isCurrent: () => versionsAreCurrent(versions),
+        validateCurrent: lock ? stateMatchesLiveSnapshot : undefined,
       });
       if (!result.ok) return result;
       const nextState = result.state;
@@ -970,13 +984,18 @@ export const useVaultState = () => {
       setCustomGroups(nextState.groups);
       setManagedSources(nextState.managedSources);
       setGroupConfigs(nextState.configs);
+      groupConfigsRef.current = nextState.configs;
       return { ok: true, state: nextState };
     };
 
-    if (lock) return withVaultImportLockIfNeeded("vault", runCommit, lock);
+    if (lock) {
+      const versions = captureVersions();
+      return withVaultImportLockIfNeeded("vault", () => runCommit(versions), lock);
+    }
     while (true) {
       await waitForPendingVaultWrites();
-      const result = await withVaultImportLock("vault", runCommit);
+      const versions = captureVersions();
+      const result = await withVaultImportLock("vault", () => runCommit(versions));
       if (!("superseded" in result)) return result;
     }
   }, [waitForPendingVaultWrites]);
@@ -1090,6 +1109,8 @@ export const useVaultState = () => {
       ++groupConfigsWriteVersion.current;
       customGroupsRef.current = result.groups;
       managedSourcesRef.current = result.sources;
+      hostsRef.current = cleanedHosts;
+      groupConfigsRef.current = nextGroupConfigs;
       setHosts(cleanedHosts);
       setCustomGroups(result.groups);
       setManagedSources(result.sources);
@@ -1112,6 +1133,7 @@ export const useVaultState = () => {
     // sit in memory and re-persist with `fontFamilyOverride: true` until
     // the next reload. Mirrors updateHosts → sanitizeHost.
     const cleaned = normalizeVaultOrder(data.map(sanitizeGroupConfig));
+    groupConfigsRef.current = cleaned;
     setGroupConfigs(cleaned);
     const ver = ++groupConfigsWriteVersion.current;
     const encryptPromise = encryptGroupConfigs(cleaned);
@@ -1555,7 +1577,10 @@ export const useVaultState = () => {
         const savedManagedSources = localStorageAdapter.read<ManagedSource[]>(
           STORAGE_KEY_MANAGED_SOURCES,
         );
-        if (savedManagedSources) setManagedSources(savedManagedSources);
+        if (savedManagedSources) {
+          managedSourcesRef.current = savedManagedSources;
+          setManagedSources(savedManagedSources);
+        }
 
         // Load group configs
         const savedGroupConfigs = localStorageAdapter.read<GroupConfig[]>(STORAGE_KEY_GROUP_CONFIGS);
@@ -1565,6 +1590,7 @@ export const useVaultState = () => {
           if (cancelled) return;
           if (gcVer === groupConfigsWriteVersion.current) {
             const sanitizedGC = normalizeVaultOrder(decryptedGC.map(sanitizeGroupConfig));
+            groupConfigsRef.current = sanitizedGC;
             setGroupConfigs(sanitizedGC);
             encryptGroupConfigs(sanitizedGC).then((enc) => {
               if (gcVer === groupConfigsWriteVersion.current)
@@ -1735,6 +1761,7 @@ export const useVaultState = () => {
       if (key === STORAGE_KEY_GROUPS) {
         const next = safeParse<string[]>(event.newValue) ?? [];
         ++customGroupsWriteVersion.current;
+        customGroupsRef.current = next;
         setCustomGroups(next);
         return;
       }
@@ -1801,8 +1828,11 @@ export const useVaultState = () => {
         const seq = ++groupConfigsReadSeq.current;
         const writeAtStart = groupConfigsWriteVersion.current;
         decryptGroupConfigs(next).then((dec) => {
-          if (seq === groupConfigsReadSeq.current && writeAtStart === groupConfigsWriteVersion.current)
-            setGroupConfigs(normalizeVaultOrder(dec.map(sanitizeGroupConfig)));
+          if (seq === groupConfigsReadSeq.current && writeAtStart === groupConfigsWriteVersion.current) {
+            const normalized = normalizeVaultOrder(dec.map(sanitizeGroupConfig));
+            groupConfigsRef.current = normalized;
+            setGroupConfigs(normalized);
+          }
         });
         return;
       }
@@ -2048,6 +2078,8 @@ export const useVaultState = () => {
         ]);
         customGroupsRef.current = nextGroups;
         snippetsRef.current = nextSnippets;
+        hostsRef.current = nextHosts;
+        groupConfigsRef.current = nextGroupConfigs;
         snippetsWriteBaseRef.current = null;
         snippetsWriteReplaceRef.current = false;
         setHosts(nextHosts);

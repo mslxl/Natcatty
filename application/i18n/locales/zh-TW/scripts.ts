@@ -20,6 +20,7 @@ export const zhTWScriptsMessages = {
   'scripts.editor.resize': '調整編輯器高度',
   'scripts.targets.hint': '所選分組會動態比對，之後加入分組的主機也會自動生效。',
   'scripts.targets.connectOrderHint': '連線指令碼的執行順序請在主機詳情 → 自動化 中調整。',
+  'scripts.targets.currentHostMismatch': '此指令碼未分配給目前主機。',
   'hostDetails.automation.groupScripts': '分組繼承指令碼',
   'hostDetails.automation.groupScriptsHint': '這些指令碼會動態跟隨主機所在分組，並在主機專屬佇列之前執行。',
   'scripts.actions.runNowHint': '在所選目標主機上執行；勾選「對所有主機生效」時在所有可連線的主機上執行。',
