@@ -886,6 +886,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
                   && !needsUntrackedReconcile
                   && !options.sourceSessionId
                 ) {
+                  if (copiedSession) copiedSession.blockUntargetedCwdProbe = true;
                   return null;
                 }
                 if (baseline.length === 0 || needsUntrackedReconcile) {

@@ -227,7 +227,7 @@ test("idle-park reconnect after last shell closes skips post-open PID discovery"
   assert.equal(getClientConstructCount(), 1, "second open reuses the parked transport");
   assert.equal(parkedConn.openedShells.length, shellsBefore + 1);
   assert.equal(execCalls, 0, "must not open discovery exec after sole-shell reconnect");
-  assert.ok(sessions.get("second"));
+  assert.equal(sessions.get("second").blockUntargetedCwdProbe, true);
 });
 
 function makeSender() {

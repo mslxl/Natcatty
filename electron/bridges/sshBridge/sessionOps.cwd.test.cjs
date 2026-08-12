@@ -207,6 +207,23 @@ test("an unshared terminal remembers the shell pid discovered by its cwd probe",
   assert.equal(session.shellPid, "3131");
 });
 
+test("immediate parked reconnect does not guess cwd from an exiting shell", async () => {
+  let execCalls = 0;
+  const session = {
+    blockUntargetedCwdProbe: true,
+    connRef: { count: 1 },
+    stream: {},
+    conn: { exec() { execCalls += 1; } },
+  };
+  const api = makeApi(session);
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1" });
+
+  assert.equal(result.success, false);
+  assert.equal(execCalls, 0);
+  assert.equal(session.shellPid, undefined);
+});
+
 test("an SFTP reference does not make one terminal cwd ambiguous", async () => {
   const session = {
     connRef: { count: 2 },

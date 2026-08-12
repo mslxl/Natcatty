@@ -252,6 +252,12 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      if (session.blockUntargetedCwdProbe && !session.shellPid) {
+        return {
+          success: false,
+          error: 'Current directory is unavailable during an immediate reconnect',
+        };
+      }
 
       const targetLoginPid = /^\d+$/.test(String(session.shellPid || ''))
         ? String(session.shellPid)
