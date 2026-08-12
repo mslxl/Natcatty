@@ -29,7 +29,7 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
     !lower.startsWith("apfs:")
     && !lower.startsWith("overlay:")
     && !lower.startsWith("overlayfs:")
-    && /^([a-z0-9._-]+|\[[0-9a-f:]+\]):\//.test(lower)
+    && /^([a-z0-9._-]+|\[[0-9a-f:]+(?:%[a-z0-9._-]+)?\]):\//.test(lower)
   ) {
     return true;
   }
@@ -58,6 +58,7 @@ export function isNetworkOrFuseFilesystemType(filesystemType: string | undefined
     return true;
   }
   return [
+    "fuse",
     "rclone",
     "sshfs",
     "s3fs",

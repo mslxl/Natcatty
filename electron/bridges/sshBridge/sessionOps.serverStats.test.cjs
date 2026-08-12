@@ -226,6 +226,7 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
     "  printf '%s\\n' 'gluster on /mnt/gluster type fuse.glusterfs (rw)'",
     "  printf '%s\\n' 'ceph-fuse on /mnt/ceph type fuse.ceph-fuse (rw)'",
     "  printf '%s\\n' 'unionfs on /mnt/unionfs type fuse.unionfs-fuse (rw)'",
+    "  printf '%s\\n' 'CloudFS on /mnt/CloudNAS/openlist type fuse (rw)'",
     "}",
     "df() {",
     ...(forceLegacy ? ["  if [ \"$1\" = '-kPT' ]; then return 1; fi"] : []),
@@ -251,6 +252,7 @@ function runStatsCommandWithNetworkFuseDf(command, { forceLegacy = false } = {})
     "    printf '%s\\n' 'gluster fuse.glusterfs 15728640000 7340032000 8388608000 47% /mnt/gluster'",
     "    printf '%s\\n' 'ceph-fuse fuse.ceph-fuse 12582912000 6291456000 6291456000 50% /mnt/ceph'",
     "    printf '%s\\n' 'unionfs fuse.unionfs-fuse 8388608000 2097152000 6291456000 25% /mnt/unionfs'",
+    "    printf '%s\\n' 'CloudFS fuse 10995116277760 0 10995116277760 0% /mnt/CloudNAS/openlist'",
     "    printf '%s\\n' 'tmpfs tmpfs 102400 100 102300 1% /run'",
     "    return 0",
     "  fi",
@@ -350,7 +352,7 @@ test("getServerStats uses mount metadata when df filesystem types are unavailabl
   assert.equal(result.stats.diskTotal, 100);
 });
 
-function runStatsCommandWithUntypedIpv6NfsDf(command) {
+function runStatsCommandWithUntypedScopedIpv6NfsDf(command) {
   const script = [
     "uname() { printf '%s\\n' Linux; }",
     "nproc() { printf '%s\\n' 2; }",
@@ -361,21 +363,21 @@ function runStatsCommandWithUntypedIpv6NfsDf(command) {
     "  if [ \"$1\" = '-kPT' ]; then return 1; fi",
     "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'",
     "  printf '%s\\n' '/dev/sda1 104857600 20971520 83886080 20% /'",
-    "  printf '%s\\n' '[2001:db8::1]:/export 20971520000 8388608000 12582912000 40% /mnt/nfs6'",
+    "  printf '%s\\n' '[fe80::1%eth0]:/export 20971520000 8388608000 12582912000 40% /mnt/nfs6'",
     "}",
     command,
   ].join("\n");
   return spawnSync("sh", ["-c", script], { encoding: "utf8" });
 }
 
-test("getServerStats excludes bracketed IPv6 NFS sources without filesystem types", async () => {
+test("getServerStats excludes scoped IPv6 NFS sources without filesystem types", async () => {
   const sessions = new Map();
   sessions.set("sid", {
     type: "ssh",
     _reuseEndpoint: { hostname: "nfs6.example.test", port: 22 },
     conn: {
       exec(command, cb) {
-        const execution = runStatsCommandWithUntypedIpv6NfsDf(command);
+        const execution = runStatsCommandWithUntypedScopedIpv6NfsDf(command);
         assert.equal(execution.status, 0, execution.stderr);
         cb(null, fakeStream(execution.stdout));
       },
