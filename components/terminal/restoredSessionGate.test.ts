@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 import {
   getInitialTerminalStatus,
+  resolveTerminalVaultInitialized,
   shouldSuppressHostStartupCommandOnReconnect,
   shouldStartTerminalBackend,
 } from "./restoredSessionGate.ts";
@@ -39,6 +40,20 @@ test("terminal boot waits for vaultInitialized before creating a backend session
     /vaultInitialized,/,
     "vaultInitialized must be in the boot effect dependency list",
   );
+});
+
+test("terminal popup can supply its own completed vault hydration state", () => {
+  const terminalSource = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const popupSource = readFileSync(new URL("../TerminalPopupPage.tsx", import.meta.url), "utf8");
+
+  assert.match(
+    terminalSource,
+    /const vaultInitialized = resolveTerminalVaultInitialized\(\s*sharedVaultInitialized,\s*vaultInitializedOverride,\s*\);/,
+  );
+  assert.match(popupSource, /vaultInitializedOverride=\{vaultInitialized\}/);
+  assert.equal(resolveTerminalVaultInitialized(false, true), true);
+  assert.equal(resolveTerminalVaultInitialized(false), false);
+  assert.equal(resolveTerminalVaultInitialized(true, false), false);
 });
 
 test("host startup command policy distinguishes restored and automatic reconnects", () => {
