@@ -5,6 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildSftpHomeDirCandidates,
   createSftpConnectionId,
   createPinnedReconnectSideResolver,
   openSftpConnectionOnce,
@@ -14,6 +15,13 @@ import {
   releaseSftpConnectionMetadata,
   resolvePinnedReconnectSide,
 } from "./useSftpConnections.ts";
+
+test("home dir candidates prefer user home then root", () => {
+  assert.deepEqual(buildSftpHomeDirCandidates("deploy"), ["/home/deploy", "/root"]);
+  assert.deepEqual(buildSftpHomeDirCandidates("root"), ["/root"]);
+  assert.deepEqual(buildSftpHomeDirCandidates(undefined), ["/root"]);
+  assert.deepEqual(buildSftpHomeDirCandidates(null), ["/root"]);
+});
 
 test("connection ids stay unique even when connects start in the same millisecond", () => {
   const ids = ["uuid-a", "uuid-b"];
