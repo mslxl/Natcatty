@@ -43,6 +43,12 @@ function createSessionOwnershipRegistry() {
     return { ok: true };
   }
 
+  function listOwned(chatSessionId) {
+    if (!chatSessionId) return [];
+    const owned = ownedByScope.get(chatSessionId);
+    return owned ? Array.from(owned) : [];
+  }
+
   function forgetSession(sessionId) {
     for (const [scopeId, owned] of ownedByScope) {
       owned.delete(sessionId);
@@ -65,6 +71,7 @@ function createSessionOwnershipRegistry() {
     captureGeneration,
     register,
     validate,
+    listOwned,
     forgetSession,
     clearScope,
     getTrackedGenerationCountForTests,

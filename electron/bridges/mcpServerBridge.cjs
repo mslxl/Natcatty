@@ -96,6 +96,7 @@ function disconnectExternalMcpClients() {
 const scopedMetadata = new Map();
 const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
 const { createSessionOwnershipRegistry } = require("./mcpServerBridge/sessionOwnership.cjs");
+const { retainOwnedSessions } = require("./mcpServerBridge/retainOwnedSessions.cjs");
 const {
   createSessionIdleManager,
   normalizeSessionIdleTimeoutMinutes,
@@ -680,14 +681,26 @@ function beginChatExecution(chatSessionId, sessionId, command) {
  * @param {string} [chatSessionId] - AI chat session ID for per-scope isolation
  */
 function updateSessionMetadata(sessionList, chatSessionId) {
+  const incoming = Array.isArray(sessionList) ? sessionList : [];
+  // host_open merges the new session into this chat scope, but the AI side
+  // panel later pushes a full replace of only the currently focused tab —
+  // which would drop mid-turn opened sessions. Retain ownership-tracked ids.
+  const effectiveList = chatSessionId
+    ? retainOwnedSessions({
+      incomingSessions: incoming,
+      ownedSessionIds: openedSessionOwnership.listOwned(chatSessionId),
+      previousById: scopedMetadata.get(chatSessionId)?.metadata || null,
+      findFallbackMeta: findSessionMetaAcrossScopes,
+    })
+    : incoming;
   debugLog("updateSessionMetadata", {
     chatSessionId,
-    count: Array.isArray(sessionList) ? sessionList.length : 0,
-    sessionIds: Array.isArray(sessionList) ? sessionList.map(s => s.sessionId) : [],
+    count: effectiveList.length,
+    sessionIds: effectiveList.map(s => s.sessionId),
   });
-  const ids = sessionList.map(s => s.sessionId);
+  const ids = effectiveList.map(s => s.sessionId);
   const metaMap = new Map();
-  for (const s of sessionList) {
+  for (const s of effectiveList) {
     metaMap.set(s.sessionId, {
       hostname: s.hostname || "",
       label: s.label || "",

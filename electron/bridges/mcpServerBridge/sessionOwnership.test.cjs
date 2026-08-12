@@ -13,6 +13,18 @@ test("session ownership is isolated by AI scope", () => {
   assert.match(ownership.validate("chat-b", "session-1").error, /not opened/i);
 });
 
+test("listOwned returns sessions registered for a chat scope", () => {
+  const ownership = createSessionOwnershipRegistry();
+  ownership.register("chat-a", "session-1");
+  ownership.register("chat-a", "session-2");
+  ownership.register("chat-b", "session-3");
+
+  assert.deepEqual(ownership.listOwned("chat-a").sort(), ["session-1", "session-2"]);
+  assert.deepEqual(ownership.listOwned("chat-b"), ["session-3"]);
+  assert.deepEqual(ownership.listOwned("missing"), []);
+  assert.deepEqual(ownership.listOwned(""), []);
+});
+
 test("forgetSession revokes ownership from every scope", () => {
   const ownership = createSessionOwnershipRegistry();
   ownership.register("chat-a", "session-1");
