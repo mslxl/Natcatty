@@ -1970,6 +1970,9 @@ function closeSession(event, payload) {
   const session = sessions.get(payload.sessionId);
   const {
     abortPendingBoot,
+    forgetBootEpoch,
+    hasNewerBootEpoch,
+    hasPendingBootAfter,
     sessionMatchesBootEpoch,
   } = require("./sessionBootEpoch.cjs");
   const passphraseHandler = require("./passphraseHandler.cjs");
@@ -1983,8 +1986,26 @@ function closeSession(event, payload) {
   if (session && !sessionMatchesBootEpoch(session, payload?.bootEpoch)) {
     return { skipped: true, reason: "boot-epoch-mismatch" };
   }
+  if (!session) {
+    // A direct-mode backend can remove a naturally exited session before the
+    // renderer closes its tab. That later close is still authoritative for AI
+    // ownership, unless it belongs to an older boot than a pending reconnect.
+    if (
+      hasPendingBootAfter(payload.sessionId, payload?.bootEpoch)
+      || hasNewerBootEpoch(payload.sessionId, payload?.bootEpoch)
+    ) {
+      return { skipped: true, reason: "boot-epoch-mismatch" };
+    }
+    releaseAttachedSessionState(payload.sessionId);
+    try {
+      reportOpenedSessionActivity?.({ sessionId: payload.sessionId, phase: "closed" });
+    } catch {
+      // Ownership cleanup must not interfere with session teardown.
+    }
+    forgetBootEpoch(payload.sessionId, payload?.bootEpoch);
+    return { closed: false, reason: "missing" };
+  }
   releaseAttachedSessionState(payload.sessionId);
-  if (!session) return { closed: false, reason: "missing" };
   terminalFlowPauseArbiter.clearSession(payload.sessionId);
   session.closed = true;
   fanoutSessionLifecycleEvent(
@@ -2056,6 +2077,7 @@ function closeSession(event, payload) {
   }
   ptyProcessTree.unregisterPid(payload.sessionId);
   sessions.delete(payload.sessionId);
+  forgetBootEpoch(payload.sessionId, payload?.bootEpoch);
   try {
     reportOpenedSessionActivity?.({ sessionId: payload.sessionId, phase: "closed" });
   } catch {

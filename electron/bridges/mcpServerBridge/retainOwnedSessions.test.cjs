@@ -240,3 +240,28 @@ test("retainOwnedSessions applies empty activePortForwards from fallback metadat
   assert.deepEqual(opened.activePortForwards, []);
   assert.equal(opened.connected, true);
 });
+
+test("mergeRetentionMeta keeps the higher metadata revision in either argument", () => {
+  const oldConnected = {
+    connected: true,
+    username: "old-user",
+    activePortForwards: [{ ruleId: "old-forward" }],
+    _revision: 4,
+  };
+  const newDisconnected = {
+    connected: false,
+    username: "new-user",
+    activePortForwards: [],
+    _revision: 7,
+  };
+
+  for (const merged of [
+    mergeRetentionMeta(oldConnected, newDisconnected),
+    mergeRetentionMeta(newDisconnected, oldConnected),
+  ]) {
+    assert.equal(merged.connected, false);
+    assert.equal(merged.username, "new-user");
+    assert.deepEqual(merged.activePortForwards, []);
+    assert.equal(merged._revision, 7);
+  }
+});

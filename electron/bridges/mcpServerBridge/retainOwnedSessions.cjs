@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * Merge a previous scoped snapshot with a cross-scope fallback.
- * Fallback is the other-scope snapshot and wins for connected when it
- * includes that field, so a later disconnect can replace a stale true.
+ * Merge two scoped snapshots without letting an older cross-scope copy
+ * overwrite newer connection state. Metadata revisions are assigned by the
+ * main-process bridge when a renderer update arrives.
  *
  * @param {Record<string, unknown> | null | undefined} previous
  * @param {Record<string, unknown> | null | undefined} fallback
@@ -14,27 +14,36 @@ function mergeRetentionMeta(previous, fallback) {
   if (!previous) return fallback && typeof fallback === "object" ? fallback : null;
   if (!fallback || typeof fallback !== "object") return previous;
 
-  const connected = Object.prototype.hasOwnProperty.call(fallback, "connected")
-    ? fallback.connected !== false
-    : previous.connected !== false;
+  const previousRevision = Number.isSafeInteger(previous._revision) ? previous._revision : 0;
+  const fallbackRevision = Number.isSafeInteger(fallback._revision) ? fallback._revision : 0;
+  // Unversioned direct helper inputs retain the historical fallback-wins
+  // behavior. Bridge-owned metadata is always versioned.
+  const fallbackIsNewer = fallbackRevision >= previousRevision;
+  const newer = fallbackIsNewer ? fallback : previous;
+  const older = fallbackIsNewer ? previous : fallback;
+  const connected = Object.prototype.hasOwnProperty.call(newer, "connected")
+    ? newer.connected !== false
+    : older.connected !== false;
   return {
-    ...previous,
-    hostname: fallback.hostname || previous.hostname,
-    label: fallback.label || previous.label,
-    os: fallback.os || previous.os,
-    username: fallback.username || previous.username,
-    protocol: fallback.protocol || previous.protocol,
-    shellType: fallback.shellType || previous.shellType,
-    deviceType: fallback.deviceType || previous.deviceType,
-    hostId: fallback.hostId || previous.hostId,
-    hostChain: Array.isArray(fallback.hostChain) && fallback.hostChain.length > 0
-      ? fallback.hostChain
-      : previous.hostChain,
-    // An explicit empty array clears stopped forwards; omit/undefined keeps prior.
-    activePortForwards: Array.isArray(fallback.activePortForwards)
-      ? fallback.activePortForwards
-      : previous.activePortForwards,
+    ...older,
+    ...newer,
+    hostname: newer.hostname || older.hostname,
+    label: newer.label || older.label,
+    os: newer.os || older.os,
+    username: newer.username || older.username,
+    protocol: newer.protocol || older.protocol,
+    shellType: newer.shellType || older.shellType,
+    deviceType: newer.deviceType || older.deviceType,
+    hostId: newer.hostId || older.hostId,
+    hostChain: Array.isArray(newer.hostChain) ? newer.hostChain : older.hostChain,
+    // Explicit empty arrays in the newer snapshot clear stopped forwards.
+    activePortForwards: Array.isArray(newer.activePortForwards)
+      ? newer.activePortForwards
+      : older.activePortForwards,
     connected,
+    ...(Math.max(previousRevision, fallbackRevision) > 0
+      ? { _revision: Math.max(previousRevision, fallbackRevision) }
+      : {}),
   };
 }
 
@@ -98,6 +107,7 @@ function retainOwnedSessions({
       hostId: meta.hostId || "",
       hostChain: Array.isArray(meta.hostChain) ? meta.hostChain : [],
       activePortForwards: Array.isArray(meta.activePortForwards) ? meta.activePortForwards : [],
+      ...(Number.isSafeInteger(meta._revision) ? { _revision: meta._revision } : {}),
     });
   }
 

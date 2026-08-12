@@ -521,3 +521,296 @@ test("clean shell exit keeps ownership until the tab is explicitly closed", asyn
   ], "chat-1");
   assert.deepEqual(bridge.getScopedSessionIds("chat-1"), ["sess-original"]);
 });
+
+test("latest metadata revision wins across multiple chat and external scopes", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({ sessions: new Map(), electronModule: null });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  bridge.updateSessionMetadata([{
+    sessionId: "sess-opened",
+    connected: true,
+    activePortForwards: [{ ruleId: "old-forward" }],
+  }], "chat-stale");
+  bridge.updateSessionMetadata([{
+    sessionId: "sess-opened",
+    connected: true,
+    activePortForwards: [],
+  }], "chat-owner");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-owner",
+    hostId: "host-b",
+  });
+
+  bridge.updateSessionMetadata([{
+    sessionId: "sess-opened",
+    connected: false,
+    activePortForwards: [],
+  }], "__external_mcp__");
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-owner")?.connected, false);
+  assert.deepEqual(bridge.getSessionMeta("sess-opened", "chat-owner")?.activePortForwards, []);
+
+  bridge.updateSessionMetadata([{
+    sessionId: "sess-opened",
+    connected: true,
+    username: "reconnected-user",
+    activePortForwards: [{ ruleId: "new-forward" }],
+  }], "chat-live");
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-owner")?.connected, true);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-owner")?.username, "reconnected-user");
+  assert.deepEqual(
+    bridge.getSessionMeta("sess-opened", "chat-owner")?.activePortForwards,
+    [{ ruleId: "new-forward" }],
+  );
+});
+
+test("host_open finishing after an empty scope replace restores its returned session", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({ sessions: new Map(), electronModule: null });
+  bridge.setPermissionMode("auto");
+  let finishOpen;
+  bridge.setVaultAgentInvoker(() => new Promise((resolve) => {
+    finishOpen = resolve;
+  }));
+
+  bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-race");
+  const opening = bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-race",
+    hostId: "host-b",
+  });
+  bridge.updateSessionMetadata([], "chat-race");
+  finishOpen({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+    protocol: "ssh",
+    host: { id: "host-b", hostname: "10.0.0.2", label: "server-b", username: "root" },
+  });
+
+  const opened = await opening;
+  assert.equal(opened.ok, true);
+  assert.deepEqual(bridge.getScopedSessionIds("chat-race"), ["sess-opened"]);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-race")?.label, "server-b");
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-race")?.connected, false);
+});
+
+test("initial external scope seed selects the latest session snapshot", (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({ sessions: new Map(), electronModule: null });
+
+  bridge.updateSessionMetadata([{
+    sessionId: "sess-shared",
+    connected: true,
+    username: "old-user",
+  }], "chat-old");
+  bridge.updateSessionMetadata([{
+    sessionId: "sess-shared",
+    connected: false,
+    username: "new-user",
+  }], "chat-new");
+
+  const seeded = bridge.syncLiveSessionsToExternalScope();
+  assert.equal(seeded.seeded, true);
+  assert.equal(bridge.getSessionMeta("sess-shared", "__external_mcp__")?.connected, false);
+  assert.equal(bridge.getSessionMeta("sess-shared", "__external_mcp__")?.username, "new-user");
+});
+
+test("explicit close before host_open returns cannot revive the closed session", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({ sessions: new Map(), electronModule: null });
+  bridge.setPermissionMode("auto");
+  let finishOpen;
+  bridge.setVaultAgentInvoker(() => new Promise((resolve) => {
+    finishOpen = resolve;
+  }));
+
+  bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-close-race");
+  const opening = bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-close-race",
+    hostId: "host-b",
+  });
+  // Renderer-side host.open creates and merges the tab before returning its
+  // result to the main process. Simulate the user closing that tab immediately.
+  bridge.mergeSessionMetadata([{
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    connected: false,
+  }], "chat-close-race");
+  bridge.forgetClosedTerminalSession("sess-opened");
+  finishOpen({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+    protocol: "ssh",
+  });
+
+  assert.equal((await opening).ok, true);
+  bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-close-race");
+  assert.deepEqual(bridge.getScopedSessionIds("chat-close-race"), ["sess-original"]);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-close-race"), null);
+});
+
+test("app live sync makes host_open session usable without External MCP or a second AI panel", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  const requests = [];
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel, payload, options) {
+        requests.push({ channel, payload, options });
+        if (channel === "netcatty:portforward:list") return Promise.resolve([]);
+        if (channel === "netcatty:ai:exec") {
+          return Promise.resolve({ ok: true, stdout: "ready\n", stderr: "", exitCode: 0 });
+        }
+        throw new Error(`unexpected worker request: ${channel}`);
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+    protocol: "ssh",
+    host: { id: "host-b", hostname: "10.0.0.2", label: "server-b", username: "root" },
+  }));
+
+  bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-owner");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-owner",
+    hostId: "host-b",
+  });
+
+  // The app-level session state observes the connection. No External MCP scope
+  // and no AI panel for the opened tab are involved.
+  bridge.updateLiveSessionMetadata([{
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    hostname: "10.0.0.2",
+    label: "server-b",
+    username: "root",
+    protocol: "ssh",
+    connected: true,
+  }]);
+
+  // Returning to the original tab replaces its sidebar payload with only A.
+  bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-owner");
+  assert.deepEqual(
+    bridge.getScopedSessionIds("chat-owner").sort(),
+    ["sess-opened", "sess-original"],
+  );
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-owner")?.connected, true);
+
+  const environment = await bridge.dispatchBuiltinRpc("netcatty/getContext", {
+    chatSessionId: "chat-owner",
+  });
+  const openedHost = environment.hosts.find((host) => host.sessionId === "sess-opened");
+  assert.equal(openedHost?.connected, true);
+
+  const executed = await bridge.dispatchBuiltinRpc("netcatty/exec", {
+    chatSessionId: "chat-owner",
+    sessionId: "sess-opened",
+    command: "pwd",
+  });
+  assert.deepEqual(executed, { ok: true, stdout: "ready\n", stderr: "", exitCode: 0 });
+  assert.equal(requests.some((entry) => entry.channel === "netcatty:ai:exec"), true);
+});
+
+test("chat cleanup during host_open closes the late-created unowned session", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({ sessions: new Map(), electronModule: null });
+  bridge.setPermissionMode("auto");
+  let finishOpen;
+  const calls = [];
+  bridge.setVaultAgentInvoker((op, params) => {
+    calls.push({ op, params });
+    if (op === "host.open") {
+      return new Promise((resolve) => {
+        finishOpen = resolve;
+      });
+    }
+    if (op === "session.close") return Promise.resolve({ ok: true, sessionId: params.sessionId });
+    throw new Error(`unexpected op ${op}`);
+  });
+
+  bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-deleted");
+  const opening = bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-deleted",
+    hostId: "host-b",
+  });
+  await bridge.cleanupScopedMetadata("chat-deleted");
+
+  // Renderer host.open can still finish its own merge after chat cleanup.
+  bridge.mergeSessionMetadata([{
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    connected: false,
+  }], "chat-deleted");
+  finishOpen({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+    protocol: "ssh",
+  });
+
+  assert.equal((await opening).ok, true);
+  assert.deepEqual(calls.map(({ op }) => op), ["host.open", "session.close"]);
+  assert.deepEqual(bridge.getScopedSessionIds("chat-deleted"), []);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-deleted"), null);
+});
+
+test("failed compensating close keeps the late-created session tracked for retry", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({ sessions: new Map(), electronModule: null });
+  bridge.setPermissionMode("auto");
+  let finishOpen;
+  bridge.setVaultAgentInvoker((op) => {
+    if (op === "host.open") {
+      return new Promise((resolve) => {
+        finishOpen = resolve;
+      });
+    }
+    if (op === "session.close") {
+      return Promise.resolve({ ok: false, error: "renderer unavailable" });
+    }
+    throw new Error(`unexpected op ${op}`);
+  });
+
+  const opening = bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-deleted",
+    hostId: "host-b",
+  });
+  await bridge.cleanupScopedMetadata("chat-deleted");
+  bridge.mergeSessionMetadata([{
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    connected: false,
+  }], "chat-deleted");
+  finishOpen({ ok: true, sessionId: "sess-opened", hostId: "host-b", status: "connecting" });
+
+  assert.equal((await opening).ok, true);
+  assert.deepEqual(bridge.getScopedSessionIds("chat-deleted"), []);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-deleted"), null);
+  assert.equal(
+    bridge.reportOpenedSessionActivity({ sessionId: "sess-opened", phase: "touch" }),
+    true,
+  );
+});

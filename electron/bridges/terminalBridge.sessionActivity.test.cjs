@@ -29,3 +29,47 @@ test("renderer terminal input reports activity for the matching session", () => 
     { sessionId: "session-1", phase: "touch" },
   ]);
 });
+
+test("direct-mode close reports ownership cleanup after the backend already exited", () => {
+  const activity = [];
+  terminalBridge.init({
+    sessions: new Map(),
+    electronModule: {},
+    reportOpenedSessionActivity: (event) => activity.push(event),
+  });
+
+  const result = terminalBridge.closeSession({ sender: {} }, {
+    sessionId: "already-exited",
+    bootEpoch: 3,
+  });
+
+  assert.deepEqual(result, { closed: false, reason: "missing" });
+  assert.deepEqual(activity, [{ sessionId: "already-exited", phase: "closed" }]);
+});
+
+test("stale direct-mode close cannot clean up a newer same-id boot", () => {
+  const activity = [];
+  const { claimSessionSlot } = require("./sessionBootEpoch.cjs");
+  const lifecycle = new Map();
+  claimSessionSlot(lifecycle, "reconnected", {}, 4);
+  lifecycle.delete("reconnected");
+  terminalBridge.init({
+    sessions: new Map(),
+    electronModule: {},
+    reportOpenedSessionActivity: (event) => activity.push(event),
+  });
+
+  const stale = terminalBridge.closeSession({ sender: {} }, {
+    sessionId: "reconnected",
+    bootEpoch: 3,
+  });
+  assert.deepEqual(stale, { skipped: true, reason: "boot-epoch-mismatch" });
+  assert.deepEqual(activity, []);
+
+  const current = terminalBridge.closeSession({ sender: {} }, {
+    sessionId: "reconnected",
+    bootEpoch: 4,
+  });
+  assert.deepEqual(current, { closed: false, reason: "missing" });
+  assert.deepEqual(activity, [{ sessionId: "reconnected", phase: "closed" }]);
+});
