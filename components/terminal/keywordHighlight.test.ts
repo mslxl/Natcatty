@@ -1628,6 +1628,67 @@ test("continuous Enter output still refreshes highlights periodically", async ()
   }
 });
 
+test("slow post-Enter output still applies highlights after the Enter guard", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const { term, decorationStates, handlers, setLineText } = createFakeTerminal("no match", {
+      lineCount: 40,
+    });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([{
+      id: "deploy",
+      label: "Deploy",
+      patterns: ["DEPLOY"],
+      color: "#F87171",
+      enabled: true,
+    }], true);
+    raf.flush();
+    assert.equal(decorationStates.filter(({ isDisposed }) => !isDisposed).length, 0);
+
+    const internals = highlighter as unknown as {
+      lastRefreshTime: number;
+      lastUserInputAt: number;
+    };
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 1_000;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => simulatedNow,
+      },
+    });
+    try {
+      handlers.data?.("\r");
+      setLineText(22, "DEPLOY");
+      internals.lastUserInputAt = Number.NEGATIVE_INFINITY;
+      // Intervals above WRITE_BURST_INTERVAL_MS never reach the burst
+      // threshold, and each write rearms the real idle timer.
+      for (let index = 0; index < 10; index += 1) {
+        simulatedNow += 80;
+        internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+        handlers.writeParsed?.();
+        raf.flush();
+      }
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+
+    assert.ok(
+      decorationStates.some(({ isDisposed }) => !isDisposed),
+      "steady non-bursty output should highlight after the Enter window, not wait for a pause",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
 test("recent user input delays keyword highlight scans until typing is quiet", async () => {
   const raf = installAnimationFrameQueue();
   try {
@@ -2466,6 +2527,100 @@ test("idle Enter keeps suppression across split echo and prompt writes", async (
       refreshCalls,
       [],
       "a three-batch idle prompt must not register decorations that flash the viewport",
+    );
+    highlighter.dispose();
+  } finally {
+    raf.restore();
+  }
+});
+
+test("pre-Enter write burst does not lift idle-Enter decoration suppression", () => {
+  const raf = installAnimationFrameQueue();
+  try {
+    const {
+      term,
+      decorationStates,
+      handlers,
+      setLineText,
+      refreshCalls,
+      resetRefreshCalls,
+    } = createFakeTerminal("hello DEPLOY world", { lineCount: 40 });
+    term.buffer.active.viewportY = 20;
+    term.buffer.active.baseY = 20;
+    term.buffer.active.cursorY = 2;
+    const highlighter = new KeywordHighlighter(term as never);
+    highlighter.setRules([
+      {
+        id: "deploy",
+        label: "Deploy",
+        patterns: ["DEPLOY"],
+        color: "#F87171",
+        enabled: true,
+      },
+      {
+        id: "prompt",
+        label: "Prompt",
+        patterns: ["~", "#"],
+        color: "#60A5FA",
+        enabled: true,
+      },
+    ], true);
+    raf.flush();
+    const existingDecorations = [...decorationStates];
+    assert.ok(existingDecorations.length > 0);
+    resetRefreshCalls();
+
+    const internals = highlighter as unknown as {
+      recentWriteBurst: number;
+      lastWriteAt: number;
+      lastBurstDecayAt: number;
+    };
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 1_000;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => simulatedNow,
+      },
+    });
+    try {
+      internals.recentWriteBurst = 8;
+      internals.lastWriteAt = simulatedNow;
+      internals.lastBurstDecayAt = simulatedNow;
+
+      handlers.data?.("\r");
+      term.buffer.active.viewportY += 1;
+      term.buffer.active.baseY += 1;
+      term.buffer.active.length += 1;
+      handlers.scroll?.();
+      simulatedNow += 5;
+      handlers.writeParsed?.();
+      raf.flush();
+
+      setLineText(22, "user@host:~# ");
+      simulatedNow += 5;
+      handlers.writeParsed?.();
+      raf.flush();
+
+      simulatedNow += 5;
+      handlers.writeParsed?.();
+      raf.flush();
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
+    }
+
+    assert.equal(
+      existingDecorations.filter(({ isDisposed }) => isDisposed).length,
+      0,
+      "stale pre-Enter burst must not dispose still-visible keyword decorations",
+    );
+    assert.deepEqual(
+      refreshCalls,
+      [],
+      "stale pre-Enter burst must not register prompt decorations that flash the viewport",
     );
     highlighter.dispose();
   } finally {

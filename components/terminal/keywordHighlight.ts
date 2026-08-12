@@ -131,6 +131,8 @@ export class KeywordHighlighter implements IDisposable {
    * prompt text, mode sets); callback count is not a sustained-output signal.
    */
   private enterWriteParsedSeen = false;
+  /** performance.now() when the current Enter started suppressing mutations. */
+  private enterSuppressionStartedAt = 0;
   /** Viewport browsing state before the latest scroll handler ran. */
   private wasBrowsingScrollback = false;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -169,6 +171,12 @@ export class KeywordHighlighter implements IDisposable {
           // still-visible keyword highlights (custom ~/# rules make this obvious).
           this.enterSuppressDecorationMutation = true;
           this.enterWriteParsedSeen = false;
+          this.enterSuppressionStartedAt = performance.now();
+          // Pre-Enter burst must not lift mute on a split prompt. Keep
+          // lastWriteAt so output-driven scroll detection still works before
+          // the first post-Enter updateWriteBurst.
+          this.recentWriteBurst = 0;
+          this.lastBurstDecayAt = 0;
           // Time-bound Enter protection even when no echo/write arrives (echo
           // off, stalled PTY). onWriteParsed re-arms this on each write.
           this.scheduleEnterInputIdleClear();
@@ -462,6 +470,7 @@ export class KeywordHighlighter implements IDisposable {
     this.enterViewportScanNeedsRepeat = false;
     this.enterSuppressDecorationMutation = false;
     this.enterWriteParsedSeen = false;
+    this.enterSuppressionStartedAt = 0;
     if (hadDecorations) {
       this.term.refresh(0, this.term.rows - 1);
     }
@@ -1127,6 +1136,7 @@ export class KeywordHighlighter implements IDisposable {
       this.enterInputPending = false;
       this.enterSuppressDecorationMutation = false;
       this.enterWriteParsedSeen = false;
+      this.enterSuppressionStartedAt = 0;
       // Catch up any viewport motion deferred while Enter protection blocked
       // scroll refresh (e.g. user scrolled during the post-Enter window).
       this.markVisibleRangeDirty();
@@ -1137,12 +1147,18 @@ export class KeywordHighlighter implements IDisposable {
   /**
    * True when follow-up Enter writes look like sustained command output.
    * WriteParsed callback count alone cannot prove that — a split prompt may
-   * need three (or more) batches — so only a write burst lifts mute early.
-   * Otherwise the Enter idle guard clears suppression after quiet.
+   * need three (or more) batches — so a write burst lifts mute early.
+   * Slow streams never burst and keep rearming the idle timer; after the
+   * Enter window, prompt redraw is done and mutation is safe.
    */
   private shouldLiftEnterDecorationSuppression(): boolean {
     if (!this.enterSuppressDecorationMutation) return false;
-    return this.isWriteBurstActive(performance.now());
+    const now = performance.now();
+    if (this.isWriteBurstActive(now)) return true;
+    return (
+      this.enterSuppressionStartedAt > 0
+      && now - this.enterSuppressionStartedAt >= KeywordHighlighter.ENTER_INPUT_GUARD_MS
+    );
   }
 
   private isBrowsingScrollback(): boolean {
