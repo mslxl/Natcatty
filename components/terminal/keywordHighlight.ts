@@ -1584,6 +1584,11 @@ export class KeywordHighlighter implements IDisposable {
     if (end < start) return;
     const buffer = this.term.buffer.active;
     const pressure = getTerminalOutputPressure(this.term);
+    // Idle Enter must not mutate prompt-area decorations (xterm full-viewport
+    // flash). A real scrollback browse still needs new decorations: the scroll
+    // path records lastRenderRange even when this guard skips apply.
+    const allowEnterBrowseDecorations = this.enterSuppressDecorationMutation
+      && this.isBrowsingScrollback();
     for (let lineY = start; lineY <= end; lineY++) {
       const line = buffer.getLine(lineY);
       if (!line) {
@@ -1627,10 +1632,16 @@ export class KeywordHighlighter implements IDisposable {
         continue;
       }
 
-      // Idle Enter: keep prior decorations mounted and skip new ones until the
-      // guard clears or sustained Enter output opts back into mutation.
+      // Idle Enter: keep prior decorations mounted. Scrollback browse still
+      // creates decorations on unindexed lines so matches are visible before
+      // the 600ms guard; lines that already have decorations stay untouched.
       if (this.enterSuppressDecorationMutation) {
-        continue;
+        if (!allowEnterBrowseDecorations) {
+          continue;
+        }
+        if (existing && existing.decorations.length > 0) {
+          continue;
+        }
       }
 
       this.disposeLineDecorations(lineY, existing);

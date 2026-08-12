@@ -1156,6 +1156,10 @@ test("user scroll during Enter keeps prior highlights mounted", async () => {
       getTranslatedLineIndexes().some((lineY) => lineY >= 10 && lineY < 20),
       "scrollback browsing during Enter should synchronously scan newly revealed lines",
     );
+    assert.ok(
+      decorationStates.some((state) => !state.isDisposed && state.line >= 10 && state.line < 13),
+      "scrollback browsing during Enter should apply highlights on newly revealed lines",
+    );
     raf.flush();
 
     assert.equal(
