@@ -242,6 +242,7 @@ export async function getCompletions(
   input: string,
   options: {
     hostId?: string;
+    hostGroup?: string;
     os?: "linux" | "windows" | "macos";
     maxResults?: number;
     /** Session ID for remote path completion */
@@ -397,7 +398,10 @@ export async function getCompletions(
   // a snippet's label collides with an existing history entry's text, the
   // score-sort + final dedup below keeps the snippet (the higher-scored one).
   if (options.snippets && options.snippets.length > 0 && ctx.wordIndex === 0) {
-    for (const snippetSuggestion of getSnippetSuggestions(input, options.snippets, { hostId })) {
+    for (const snippetSuggestion of getSnippetSuggestions(input, options.snippets, {
+      hostId,
+      hostGroup: options.hostGroup,
+    })) {
       suggestions.push(snippetSuggestion);
     }
   }

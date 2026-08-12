@@ -18,7 +18,11 @@ import {
   type SnippetExportPayload,
   type SnippetImportConflictAction,
 } from '../domain/snippetTransfer';
-import { getRunnableHostsForSnippet, snippetHasRunTargets } from '../domain/snippetTargets.ts';
+import {
+  getRunnableHostsForSnippet,
+  resolveSnippetTargetGroupsForSave,
+  snippetHasRunTargets,
+} from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
 import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
@@ -486,6 +490,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     targets: [],
   });
   const [targetSelection, setTargetSelection] = useState<string[]>([]);
+  const [targetGroupSelection, setTargetGroupSelection] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
   const [newPackageName, setNewPackageName] = useState('');
@@ -735,6 +740,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     if (snippet) {
       setEditingSnippet(snippet);
       setTargetSelection(snippet.targetsAllHosts ? [] : (snippet.targets || []));
+      setTargetGroupSelection(snippet.targetsAllHosts ? [] : (snippet.targetGroups || []));
     } else {
       setEditingSnippet(asScript ? {
         label: '',
@@ -751,6 +757,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         targets: [],
       });
       setTargetSelection([]);
+      setTargetGroupSelection([]);
     }
     setRightPanelMode('edit-snippet');
   }, [selectedPackage]);
@@ -773,6 +780,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       tags: editingSnippet.tags || [],
       package: editingSnippet.package || '',
       targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
+      targetGroups: resolveSnippetTargetGroupsForSave(
+        editingSnippet,
+        targetGroupSelection,
+      ),
       targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
       shortkey: editingSnippet.shortkey,
       noAutoRun: editingSnippet.noAutoRun,
@@ -784,7 +795,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       trigger: editingSnippet.trigger,
       triggerPattern: editingSnippet.triggerPattern,
     };
-  }, [editingSnippet, targetSelection]);
+  }, [editingSnippet, targetGroupSelection, targetSelection]);
 
   const syncHostsAfterSnippetSave = useCallback((
     savedSnippet: Snippet,
@@ -855,6 +866,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     setRightPanelMode('none');
     setEditingSnippet({ label: '', command: '', package: '', targets: [] });
     setTargetSelection([]);
+    setTargetGroupSelection([]);
   };
 
   const hostById = useMemo(() => (
@@ -1663,6 +1675,8 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       customGroups={customGroups}
       targetSelection={targetSelection}
       setTargetSelection={setTargetSelection}
+      targetGroupSelection={targetGroupSelection}
+      setTargetGroupSelection={setTargetGroupSelection}
       handleTargetSelect={handleTargetSelect}
       handleTargetSelectionChange={handleTargetSelectionChange}
       handleTargetPickerBack={handleTargetPickerBack}

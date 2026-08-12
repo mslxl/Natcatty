@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 
 type VaultTreeInlineRenameInputProps = {
   initialName: string;
-  onCommit: (name: string) => void;
+  onCommit: (name: string) => boolean | void | Promise<boolean | void>;
   onCancel: () => void;
   className?: string;
   style?: React.CSSProperties;
@@ -20,7 +20,7 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(initialName);
-  const committedRef = useRef(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -29,15 +29,20 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
     input.select();
   }, []);
 
-  const commit = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
-    onCommit(value);
+  const commit = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      const committed = await onCommit(value);
+      if (committed === false) submittingRef.current = false;
+    } catch {
+      submittingRef.current = false;
+    }
   };
 
   const cancel = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     onCancel();
   };
 
@@ -51,7 +56,7 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
       onChange={(event) => setValue(event.target.value)}
       onBlur={() => {
         queueMicrotask(() => {
-          commit();
+          void commit();
         });
       }}
       onClick={(event) => event.stopPropagation()}
@@ -66,7 +71,7 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
         event.stopPropagation();
         if (event.key === "Enter") {
           event.preventDefault();
-          commit();
+          void commit();
         }
         if (event.key === "Escape") {
           event.preventDefault();
@@ -91,7 +96,7 @@ type VaultTreeGroupRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childr
   hasChildren?: boolean;
   editing?: boolean;
   editingInitialName?: string;
-  onRenameCommit?: (name: string) => void;
+  onRenameCommit?: (name: string) => boolean | void | Promise<boolean | void>;
   onRenameCancel?: () => void;
   actions?: React.ReactNode;
   labelActions?: React.ReactNode;
@@ -190,7 +195,7 @@ type VaultTreeItemRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childre
   actions?: React.ReactNode;
   editing?: boolean;
   editingInitialName?: string;
-  onRenameCommit?: (name: string) => void;
+  onRenameCommit?: (name: string) => boolean | void | Promise<boolean | void>;
   onRenameCancel?: () => void;
   content?: React.ReactNode;
 };

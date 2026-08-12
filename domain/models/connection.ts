@@ -347,6 +347,8 @@ export interface Snippet {
   tags?: string[];
   package?: string; // package path
   targets?: string[]; // host ids
+  /** Group paths resolved against the latest host inventory when the snippet runs. */
+  targetGroups?: string[];
   /** When true, script/snippet applies to every connectable host (no per-host picker). */
   targetsAllHosts?: boolean;
   shortkey?: string; // Keyboard shortcut to send this snippet in terminal (e.g., "F1", "Ctrl + F1")

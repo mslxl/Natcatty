@@ -993,6 +993,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             termRef={termRef}
             sessionId={sessionId}
             hostId={host.id}
+            hostGroup={host.group}
             hostOs={autocompleteHostOs}
             settings={autocompleteSettings}
             protocol={effectiveTerminalProtocol ?? resolveEffectiveTerminalProtocol(host)}

@@ -200,6 +200,7 @@ export function AppSideEffects() {
     readPersistedHosts,
     groupConfigs,
     updateGroupConfigs,
+    commitVaultGroupMutation,
   } = vaultState;
 
   const hostsRef = useRef(hosts);
@@ -1283,6 +1284,7 @@ export function AppSideEffects() {
     groupConfigs,
     updateGroupConfigs,
     updateManagedSources,
+    commitVaultGroupMutation,
     updatePortForwardingRules: importPortForwardingRules,
     startTunnel,
     stopTunnel,
