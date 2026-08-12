@@ -771,11 +771,17 @@ async function handleUpload(zsession, opts) {
     const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
-  // On any failure we fall back to today's behavior (rz silently skips).
+  // On probe failure we still offer files; rz -y (drag-drop) or an explicit
+  // overwrite decision should replace same-named remotes. If the receiver
+  // still ZSKIPs, we fail below instead of reporting a false success (#2863).
+  const isDragDropUpload = Boolean(dragDrop?.filePaths?.length);
   let plan = { offerIndices: allNames.map((_, i) => i), removeIndices: [], aborted: false };
   let probeDir = null;
   let probeModes = null;
-  if (opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
+  // Drag-drop already starts rz with -y, so let the receiver replace files in
+  // place. Pre-deleting a conflict would lose the original if the offer or
+  // transfer fails before the replacement is committed.
+  if (!isDragDropUpload && opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
     try {
       const probe = await opts.probeReceiveConflicts(allNames);
       if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
@@ -803,10 +809,16 @@ async function handleUpload(zsession, opts) {
     }
   }
 
-  const offers = plan.offerIndices.map((i) => ({ filePath: filePaths[i], stat: fileStats[i], name: allNames[i] }));
+  const offers = plan.offerIndices.map((i) => ({
+    originalIndex: i,
+    filePath: filePaths[i],
+    stat: fileStats[i],
+    name: allNames[i],
+  }));
+  const skippedOfferIndices = [];
 
   for (let i = 0; i < offers.length; i++) {
-    const { filePath, stat, name } = offers[i];
+    const { originalIndex, filePath, stat, name } = offers[i];
     opts.resetUploadBackpressure?.();
 
     safeSend(getWebContents(), "netcatty:zmodem:progress", {
@@ -831,7 +843,8 @@ async function handleUpload(zsession, opts) {
     });
 
     if (!xfer) {
-      // Receiver skipped this file
+      // Receiver protected/skipped this file (e.g. rz without -y).
+      skippedOfferIndices.push(originalIndex);
       continue;
     }
 
@@ -892,6 +905,39 @@ async function handleUpload(zsession, opts) {
     }
   }
 
+  // rz re-creates overwritten files with the remote umask, dropping their
+  // original permission bits. Restore modes for files that landed on disk
+  // (including when a later offer is ZSKIP'd and we abort the batch — #1079).
+  // Filter by original offer index (not basename) so a duplicate-name ZSKIP
+  // does not suppress mode restore for an earlier accepted overwrite.
+  async function restoreAcceptedOverwriteModes(skippedIndices) {
+    if (!plan.removeIndices.length || !probeDir || !opts.restoreRemoteModes) return;
+    const skippedSet = skippedIndices?.length ? new Set(skippedIndices) : null;
+    const restoreIndices = skippedSet
+      ? plan.removeIndices.filter((i) => !skippedSet.has(i))
+      : plan.removeIndices;
+    if (!restoreIndices.length) return;
+    const restores = buildModeRestores(probeDir, allNames, restoreIndices, probeModes);
+    if (!restores.length) return;
+    try {
+      await opts.restoreRemoteModes(restores);
+    } catch (err) {
+      console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
+    }
+  }
+
+  if (skippedOfferIndices.length > 0) {
+    try { zsession.abort(); } catch { /* ignore */ }
+    abortRemoteProcess(opts.writeToRemote);
+    await restoreAcceptedOverwriteModes(skippedOfferIndices);
+    const listed = skippedOfferIndices.map((idx) => allNames[idx]).join(", ");
+    throw new Error(
+      skippedOfferIndices.length === offers.length
+        ? `Remote protected existing files and skipped the upload (not overwritten): ${listed}`
+        : `Remote skipped some files (not overwritten): ${listed}`,
+    );
+  }
+
   await waitForUploadHandshake(
     zsession.close(),
     uploadSessionCloseTimeoutMs,
@@ -899,19 +945,7 @@ async function handleUpload(zsession, opts) {
     opts,
   );
 
-  // rz re-creates overwritten files with the remote umask, dropping their
-  // original permission bits. Now that everything is on disk, restore them
-  // to the modes captured before the rm (issue #1079).
-  if (plan.removeIndices.length && probeDir && opts.restoreRemoteModes) {
-    const restores = buildModeRestores(probeDir, allNames, plan.removeIndices, probeModes);
-    if (restores.length) {
-      try {
-        await opts.restoreRemoteModes(restores);
-      } catch (err) {
-        console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
-      }
-    }
-  }
+  await restoreAcceptedOverwriteModes();
 
   } finally {
     if (dragDropTempPaths.length) {
