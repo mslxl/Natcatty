@@ -162,7 +162,6 @@ export async function openTransferSftpSession(
     if (
       !wantDedicated
       && options?.sourceSessionId
-      && !host.sftpSudo
       && bridge.openSftpForSession
     ) {
       try {
