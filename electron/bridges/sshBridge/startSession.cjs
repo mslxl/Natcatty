@@ -873,6 +873,21 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 // copy source (or another tab) still lacks shellPid — otherwise
                 // waitForNew sees multiple "new" PIDs and returns null.
                 const needsUntrackedReconcile = listUnassignedSiblings().length > 0;
+                // Idle-park reconnect after the last interactive shell closed:
+                // no sibling tabs share this transport, so post-open discovery
+                // cannot disambiguate anything. Skip the exec — bastions often
+                // tear down the interactive session when a second channel opens,
+                // racing start completion as
+                // "Terminal session closed before its output route opened" (#2923).
+                // Copy Tab (sourceSessionId) still needs discovery even when the
+                // source closes mid-open and leaves an empty baseline.
+                if (
+                  baseline.length === 0
+                  && !needsUntrackedReconcile
+                  && !options.sourceSessionId
+                ) {
+                  return null;
+                }
                 if (baseline.length === 0 || needsUntrackedReconcile) {
                   const discovery = await listInteractiveShellPidsResilient(conn, {
                     initialDelayMs: discoveryBackoffMs,
