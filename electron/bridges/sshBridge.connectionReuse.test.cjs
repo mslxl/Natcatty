@@ -190,6 +190,46 @@ test("an ordinary open with reuse disabled bypasses an idle same-host transport"
   assert.notEqual(firstTransport.conn, sessions.get("second").conn);
 });
 
+test("idle-park reconnect after last shell closes skips post-open PID discovery", async (t) => {
+  // After the sole interactive shell returns its lease, the next open reuses the
+  // parked transport. Post-open discovery exec has no sibling PIDs to
+  // disambiguate and can tear down bastion sessions (issue #2923).
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "bastion.qzsec.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+    sshChannelOpenRateLimitBackoffMs: 1,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const parkedConn = first.conn;
+  const firstTransport = first.connRef;
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "idle");
+
+  let execCalls = 0;
+  parkedConn.exec = (_command, callback) => {
+    execCalls += 1;
+    callback(new Error("idle reconnect must not open discovery exec"));
+  };
+  const shellsBefore = parkedConn.openedShells.length;
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+
+  assert.equal(getClientConstructCount(), 1, "second open reuses the parked transport");
+  assert.equal(parkedConn.openedShells.length, shellsBefore + 1);
+  assert.equal(execCalls, 0, "must not open discovery exec after sole-shell reconnect");
+  assert.ok(sessions.get("second"));
+});
+
 function makeSender() {
   return {
     id: 1,
