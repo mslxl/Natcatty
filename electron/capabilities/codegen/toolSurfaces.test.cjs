@@ -128,6 +128,18 @@ test("listCattyToolSpecs binds vault and portforward tools to global RPC methods
   assert.equal(portforwardStart?.rpcMethod, "portforward/start");
 });
 
+test("generic snippet agent tools expose dynamic group targets", () => {
+  const { AGENT_KINDS, listAgentToolSpecs } = require("./toolSurfaces.cjs");
+  for (const kind of [AGENT_KINDS.SIDEBAR, AGENT_KINDS.GLOBAL]) {
+    const specs = listAgentToolSpecs(kind);
+    for (const capabilityId of ["vault.snippets.create", "vault.snippets.update"]) {
+      const spec = specs.find((entry) => entry.capabilityId === capabilityId);
+      assert.ok(spec, `${capabilityId} should be exposed to ${kind}`);
+      assert.match(spec.inputShape.targetGroups?.description ?? "", /group paths/i);
+    }
+  }
+});
+
 test("listAgentToolSpecs splits sidebar harness tools from shared RPC tools", () => {
   const { AGENT_KINDS, listAgentToolSpecs } = require("./toolSurfaces.cjs");
   const sidebarIds = listAgentToolSpecs(AGENT_KINDS.SIDEBAR).map((spec) => spec.capabilityId);

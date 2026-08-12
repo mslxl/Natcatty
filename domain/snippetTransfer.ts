@@ -12,6 +12,7 @@ export type SnippetExportItem = {
   command: string;
   tags?: string[];
   package?: string;
+  targetGroups?: string[];
   shortkey?: string;
   noAutoRun?: boolean;
   multiLineRunMode?: Snippet["multiLineRunMode"];
@@ -101,6 +102,7 @@ const toExportItem = (snippet: Snippet): SnippetExportItem => ({
   command: snippet.command,
   tags: Array.isArray(snippet.tags) ? [...snippet.tags] : [],
   package: snippet.package || "",
+  ...(snippet.targetGroups?.length ? { targetGroups: [...snippet.targetGroups] } : {}),
   ...(snippet.shortkey ? { shortkey: snippet.shortkey } : {}),
   ...(snippet.noAutoRun ? { noAutoRun: snippet.noAutoRun } : {}),
   ...(snippet.multiLineRunMode ? { multiLineRunMode: snippet.multiLineRunMode } : {}),
@@ -148,6 +150,9 @@ const sanitizeImportItem = (value: unknown): SnippetExportItem | null => {
       ? uniqueStrings(value.tags)
       : [],
     package: typeof value.package === "string" ? value.package.trim() : "",
+    targetGroups: Array.isArray(value.targetGroups)
+      ? uniqueStrings(value.targetGroups)
+      : undefined,
     shortkey: typeof value.shortkey === "string" && value.shortkey.trim()
       ? value.shortkey.trim()
       : undefined,
@@ -247,6 +252,7 @@ const toImportedSnippet = (item: SnippetExportItem, id: string, order?: number):
   tags: item.tags || [],
   package: item.package || "",
   targets: [],
+  ...(item.targetGroups?.length ? { targetGroups: [...item.targetGroups] } : {}),
   ...(item.shortkey ? { shortkey: item.shortkey } : {}),
   ...(item.noAutoRun ? { noAutoRun: item.noAutoRun } : {}),
   ...(item.multiLineRunMode ? { multiLineRunMode: item.multiLineRunMode } : {}),

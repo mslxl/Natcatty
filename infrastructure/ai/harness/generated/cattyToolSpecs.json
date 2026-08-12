@@ -1271,6 +1271,11 @@
         "optional": true,
         "description": "Optional JSON array of vault host IDs."
       },
+      "targetGroups": {
+        "type": "string",
+        "optional": true,
+        "description": "Optional JSON array of dynamic vault group paths."
+      },
       "targetsAllHosts": {
         "type": "string",
         "optional": true,
@@ -1363,6 +1368,11 @@
         "type": "string",
         "optional": true,
         "description": "Optional JSON array of vault host IDs."
+      },
+      "targetGroups": {
+        "type": "string",
+        "optional": true,
+        "description": "Optional JSON array of dynamic vault group paths."
       },
       "targetsAllHosts": {
         "type": "string",

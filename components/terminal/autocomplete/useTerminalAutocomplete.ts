@@ -149,6 +149,7 @@ interface UseTerminalAutocompleteOptions {
   containerRef: RefObject<HTMLElement | null>;
   sessionId: string;
   hostId: string;
+  hostGroup?: string;
   hostOs: "linux" | "windows" | "macos";
   settings?: Partial<AutocompleteSettings>;
   /** Callback to write text to the terminal session — replaces CustomEvent */
@@ -200,6 +201,7 @@ export function useTerminalAutocomplete(
     containerRef,
     sessionId,
     hostId,
+    hostGroup,
     hostOs,
     settings: userSettings,
     onAcceptText,
@@ -237,6 +239,8 @@ export function useTerminalAutocomplete(
   onAcceptSnippetRef.current = onAcceptSnippet;
   const hostIdRef = useRef(hostId);
   hostIdRef.current = hostId;
+  const hostGroupRef = useRef(hostGroup);
+  hostGroupRef.current = hostGroup;
   const hostOsRef = useRef(hostOs);
   hostOsRef.current = hostOs;
   const sessionIdRef = useRef(sessionId);
@@ -1048,6 +1052,7 @@ export function useTerminalAutocomplete(
     try {
       completions = await provideCompletionsRef.current(input, {
         hostId: hostIdRef.current,
+        hostGroup: hostGroupRef.current,
         os: hostOsRef.current,
         maxResults: settingsRef.current.maxSuggestions,
         historyScope: settingsRef.current.historyScope,

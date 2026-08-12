@@ -192,6 +192,36 @@ test("buildSnippetExportPayload preserves multi-line run mode", () => {
   assert.equal(payload.snippets[0].multiLineRunMode, "lineDelay");
 });
 
+test("snippet export and import preserve dynamic group scope", () => {
+  const exported = buildSnippetExportPayload({
+    snippets: [
+      snippet({
+        id: "script-1",
+        label: "Watch production",
+        command: "nct.log('matched')",
+        kind: "script",
+        trigger: "onOutput",
+        triggerPattern: "ERROR",
+        targetGroups: ["Production", "Production/Web"],
+      }),
+    ],
+    snippetPackages: [],
+    exportedAt: "2026-08-11T00:00:00.000Z",
+  });
+  const parsed = parseSnippetImportPayload(JSON.stringify(exported));
+  const result = mergeSnippetImportPayload({
+    existingSnippets: [],
+    existingSnippetPackages: [],
+    payload: parsed,
+    conflictAction: "skip",
+    createId: () => "imported-script",
+  });
+
+  assert.deepEqual(parsed.snippets[0].targetGroups, ["Production", "Production/Web"]);
+  assert.deepEqual(result.snippets[0].targetGroups, ["Production", "Production/Web"]);
+  assert.equal(result.snippets[0].trigger, "onOutput");
+});
+
 test("mergeSnippetImportPayload keeps existing empty snippet packages", () => {
   const payload = parseSnippetImportPayload(JSON.stringify({
     kind: "netcatty.snippets",
