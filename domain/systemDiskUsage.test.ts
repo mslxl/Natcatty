@@ -53,6 +53,8 @@ test("aggregateMountedDiskUsage skips NFS-style sources when filesystem type is 
       { capacityKey: "[2001:db8::1]:/export", filesystemType: "-", mountPoint: "/mnt/nfs6", used: 3000, total: 9000 },
       { capacityKey: "[fe80::1%eth0]:/export", filesystemType: "-", mountPoint: "/mnt/nfs6-scoped", used: 3000, total: 9000 },
       { capacityKey: "//filer/backup", filesystemType: "-", mountPoint: "/mnt/cifs", used: 2000, total: 8000 },
+      { capacityKey: "ceph-fuse", filesystemType: "-", mountPoint: "/mnt/ceph", used: 6000, total: 12000 },
+      { capacityKey: "gluster", filesystemType: "-", mountPoint: "/mnt/gluster", used: 7000, total: 15000 },
     ]),
     { used: 20, total: 100, percent: 20 },
   );

@@ -40,6 +40,11 @@ export function isNetworkOrFuseCapacityKey(capacityKey: string | undefined): boo
     || lower === "mergerfs"
     || lower === "unionfs"
     || lower === "unionfs-fuse"
+    || lower === "ceph"
+    || lower === "ceph-fuse"
+    || lower === "cephfs"
+    || lower === "gluster"
+    || lower === "glusterfs"
     || lower === "ufs"
   ) {
     return true;

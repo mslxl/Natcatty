@@ -364,6 +364,8 @@ function runStatsCommandWithUntypedScopedIpv6NfsDf(command) {
     "  printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on'",
     "  printf '%s\\n' '/dev/sda1 104857600 20971520 83886080 20% /'",
     "  printf '%s\\n' '[fe80::1%eth0]:/export 20971520000 8388608000 12582912000 40% /mnt/nfs6'",
+    "  printf '%s\\n' 'ceph-fuse 12582912000 6291456000 6291456000 50% /mnt/ceph'",
+    "  printf '%s\\n' 'gluster 15728640000 7340032000 8388608000 47% /mnt/gluster'",
     "}",
     command,
   ].join("\n");
