@@ -771,7 +771,10 @@ async function handleUpload(zsession, opts) {
     const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
-  // On any failure we fall back to today's behavior (rz silently skips).
+  // On probe failure we still offer files; rz -y (drag-drop) or an explicit
+  // overwrite decision should replace same-named remotes. If the receiver
+  // still ZSKIPs, we fail below instead of reporting a false success (#2863).
+  const isDragDropUpload = Boolean(dragDrop?.filePaths?.length);
   let plan = { offerIndices: allNames.map((_, i) => i), removeIndices: [], aborted: false };
   let probeDir = null;
   let probeModes = null;
@@ -781,7 +784,11 @@ async function handleUpload(zsession, opts) {
       if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
         probeDir = probe.dir;
         probeModes = probe.modes || {};
-        plan = await buildUploadPlan(allNames, probe.existing, opts.requestOverwriteDecision);
+        // Terminal drag-drop is an explicit replace intent; do not prompt.
+        const resolveDecision = isDragDropUpload
+          ? async () => ({ action: "overwrite", applyToRest: true })
+          : opts.requestOverwriteDecision;
+        plan = await buildUploadPlan(allNames, probe.existing, resolveDecision);
         if (plan.aborted) {
           try { zsession.abort(); } catch { /* ignore */ }
           abortRemoteProcess(opts.writeToRemote);
@@ -804,6 +811,7 @@ async function handleUpload(zsession, opts) {
   }
 
   const offers = plan.offerIndices.map((i) => ({ filePath: filePaths[i], stat: fileStats[i], name: allNames[i] }));
+  const skippedNames = [];
 
   for (let i = 0; i < offers.length; i++) {
     const { filePath, stat, name } = offers[i];
@@ -831,7 +839,8 @@ async function handleUpload(zsession, opts) {
     });
 
     if (!xfer) {
-      // Receiver skipped this file
+      // Receiver protected/skipped this file (e.g. rz without -y).
+      skippedNames.push(name);
       continue;
     }
 
@@ -890,6 +899,17 @@ async function handleUpload(zsession, opts) {
     } finally {
       fs.closeSync(fd);
     }
+  }
+
+  if (skippedNames.length > 0) {
+    try { zsession.abort(); } catch { /* ignore */ }
+    abortRemoteProcess(opts.writeToRemote);
+    const listed = skippedNames.join(", ");
+    throw new Error(
+      skippedNames.length === offers.length
+        ? `Remote protected existing files and skipped the upload (not overwritten): ${listed}`
+        : `Remote skipped some files (not overwritten): ${listed}`,
+    );
   }
 
   await waitForUploadHandshake(

@@ -520,3 +520,83 @@ test("handleUpload allows a longer final wait after upload backpressure", async 
   assert.equal(closed, true);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
+
+// Issue #2863: rz protect/skip must not look like a successful upload.
+test("handleUpload fails when the remote skips an offered file", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const filePath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  let closed = false;
+
+  const zsession = {
+    async send_offer() {
+      return undefined; // ZSKIP / protect mode
+    },
+    async close() {
+      closed = true;
+    },
+  };
+
+  await assert.rejects(
+    handleUpload(zsession, {
+      sessionId: "session-1",
+      getWebContents: () => null,
+      writeToRemote: () => true,
+      takeDragDropUpload: () => ({
+        filePaths: [filePath],
+        remoteNames: ["upload.txt"],
+      }),
+    }),
+    /skipped|not overwritten|protect/i,
+  );
+
+  assert.equal(closed, false);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("drag-drop upload auto-overwrites remote conflicts without prompting", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const filePath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  let prompted = false;
+  let removed = [];
+  let offerNames = [];
+
+  const zsession = {
+    async send_offer(params) {
+      offerNames.push(params.name);
+      return {
+        send() {},
+        async end() {},
+      };
+    },
+    async close() {},
+  };
+
+  await handleUpload(zsession, {
+    sessionId: "session-1",
+    getWebContents: () => null,
+    writeToRemote: () => true,
+    takeDragDropUpload: () => ({
+      filePaths: [filePath],
+      remoteNames: ["upload.txt"],
+    }),
+    probeReceiveConflicts: async () => ({
+      dir: "/home/u",
+      existing: ["upload.txt"],
+      modes: { "upload.txt": "644" },
+    }),
+    requestOverwriteDecision: async () => {
+      prompted = true;
+      return { action: "skip", applyToRest: false };
+    },
+    removeRemoteFiles: async (paths) => {
+      removed = paths;
+    },
+  });
+
+  assert.equal(prompted, false);
+  assert.deepEqual(removed, ["/home/u/upload.txt"]);
+  assert.deepEqual(offerNames, ["upload.txt"]);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
