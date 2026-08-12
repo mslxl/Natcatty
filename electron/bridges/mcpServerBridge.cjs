@@ -96,7 +96,7 @@ function disconnectExternalMcpClients() {
 const scopedMetadata = new Map();
 const scopedAttachments = new Map(); // chatSessionId -> Map<filePath, attachment>
 const { createSessionOwnershipRegistry } = require("./mcpServerBridge/sessionOwnership.cjs");
-const { retainOwnedSessions } = require("./mcpServerBridge/retainOwnedSessions.cjs");
+const { retainOwnedSessions, mergeRetentionMeta } = require("./mcpServerBridge/retainOwnedSessions.cjs");
 const {
   createSessionIdleManager,
   normalizeSessionIdleTimeoutMinutes,
@@ -965,33 +965,24 @@ function resolveScopedSessionIds(chatSessionId, explicitScopedIds = null) {
  * Falls back to session object properties if no scoped metadata is found.
  * When this scope still has a stale connected:false snapshot (common after
  * host_open + tab switch), refresh connected from a fresher cross-scope copy.
+ * Owned host_open sessions also refresh while still connected so another
+ * scope's empty activePortForwards reaches getContext without a later sidebar
+ * replace.
  */
 function getSessionMeta(sessionId, chatSessionId) {
   if (!chatSessionId) return null;
   const scoped = scopedMetadata.get(chatSessionId);
   const meta = scoped?.metadata?.get(sessionId) || null;
-  if (!meta || meta.connected !== false) return meta;
+  if (!meta) return null;
+  const owned = openedSessionOwnership.validate(chatSessionId, sessionId).ok;
+  // Live non-owned snapshots stay local. Owned sessions (and stale
+  // connected:false copies) consult other scopes.
+  if (!owned && meta.connected !== false) return meta;
   const fresher = findSessionMetaAcrossScopes(sessionId, chatSessionId);
-  if (!fresher || fresher.connected === false) return meta;
-  const refreshed = {
-    ...meta,
-    hostname: fresher.hostname || meta.hostname,
-    label: fresher.label || meta.label,
-    os: fresher.os || meta.os,
-    username: fresher.username || meta.username,
-    protocol: fresher.protocol || meta.protocol,
-    shellType: fresher.shellType || meta.shellType,
-    deviceType: fresher.deviceType || meta.deviceType,
-    hostId: fresher.hostId || meta.hostId,
-    hostChain: Array.isArray(fresher.hostChain) && fresher.hostChain.length > 0
-      ? fresher.hostChain
-      : meta.hostChain,
-    // Explicit empty array clears stopped forwards; omit/undefined keeps prior.
-    activePortForwards: Array.isArray(fresher.activePortForwards)
-      ? fresher.activePortForwards
-      : meta.activePortForwards,
-    connected: true,
-  };
+  if (!fresher) return meta;
+  if (!owned && fresher.connected === false) return meta;
+  const refreshed = mergeRetentionMeta(meta, fresher);
+  if (!refreshed) return meta;
   scoped.metadata.set(sessionId, refreshed);
   return refreshed;
 }

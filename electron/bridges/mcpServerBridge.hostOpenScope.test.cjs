@@ -235,6 +235,92 @@ test("retained host_open metadata accepts a later disconnect from another scope"
   assert.equal(bridge.getSessionMeta("sess-opened", "chat-1")?.connected, false);
 });
 
+test("getSessionMeta clears stopped port forwards from another scope while owned session stays connected", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  const forwards = [{ ruleId: "fwd-1", localPort: 8080, status: "active" }];
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+      protocol: "ssh",
+      activePortForwards: forwards,
+    },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-1",
+    hostId: "host-b",
+  });
+
+  // Another surface reports the session still up, but forwards already stopped.
+  // chat-1 does not get another metadata replace (focused tab stayed elsewhere).
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+      protocol: "ssh",
+      activePortForwards: [],
+    },
+  ], "__external_mcp__");
+
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-1")?.connected, true);
+  assert.deepEqual(bridge.getSessionMeta("sess-opened", "chat-1")?.activePortForwards, []);
+});
+
+test("getSessionMeta does not let another scope clear forwards on a live non-owned session", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+  });
+
+  const forwards = [{ ruleId: "fwd-1", localPort: 8080, status: "active" }];
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-live",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+      activePortForwards: forwards,
+    },
+  ], "chat-1");
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-live",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+      activePortForwards: [],
+    },
+  ], "__external_mcp__");
+
+  assert.deepEqual(
+    bridge.getSessionMeta("sess-live", "chat-1")?.activePortForwards,
+    forwards,
+  );
+});
+
 test("ordinary tab close forgets host_open ownership so sidebar sync cannot revive ghosts", async (t) => {
   const bridge = loadFreshBridge();
   t.after(() => bridge.cleanup());
