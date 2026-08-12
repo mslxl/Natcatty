@@ -97,6 +97,13 @@ export async function releaseSftpConnectionMetadata(params: {
   params.onRemoteSessionClosed?.(sftpId);
 }
 
+/** Hardcoded home-path candidates when SSH exec / listable realpath fail. */
+export function buildSftpHomeDirCandidates(username?: string | null): string[] {
+  if (username === "root") return ["/root"];
+  if (username) return [`/home/${username}`, "/root"];
+  return ["/root"];
+}
+
 export function createSftpConnectionId(
   side: "left" | "right",
   randomUUID: () => string = () => crypto.randomUUID(),
@@ -742,15 +749,7 @@ export const useSftpConnections = ({
             }
 
             if (!detected) {
-              const candidates: string[] = [];
-              if (credentials.username === "root") {
-                candidates.push("/root");
-              } else if (credentials.username) {
-                candidates.push(`/home/${credentials.username}`);
-                candidates.push("/root");
-              } else {
-                candidates.push("/root");
-              }
+              const candidates = buildSftpHomeDirCandidates(credentials.username);
               const statSftp = bridge?.statSftp;
               if (statSftp) {
                 for (const candidate of candidates) {
@@ -826,6 +825,23 @@ export const useSftpConnections = ({
                 fallbackSucceeded = true;
               } catch {
                 // root also failed
+              }
+            }
+            // Last resort: home candidates. Covers provisional "/" from realpath
+            // when discovery treated root as home and listing it failed, so
+            // /home/<user> or /root can still recover the session.
+            if (!fallbackSucceeded) {
+              for (const candidate of buildSftpHomeDirCandidates(credentials.username)) {
+                if (candidate === startPath) continue;
+                try {
+                  files = await listRemoteFiles(sftpId, candidate, filenameEncoding);
+                  startPath = candidate;
+                  homeDir = candidate;
+                  fallbackSucceeded = true;
+                  break;
+                } catch {
+                  // Ignore missing/permission errors
+                }
               }
             }
             if (!fallbackSucceeded) {

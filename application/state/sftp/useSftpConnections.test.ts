@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 
 import {
   buildSftpConnectInFlightKey,
+  buildSftpHomeDirCandidates,
   runSftpConnectOnceByKey,
   createSftpConnectionId,
   createPinnedReconnectSideResolver,
@@ -17,6 +18,13 @@ import {
   releaseSftpConnectionMetadata,
   resolvePinnedReconnectSide,
 } from "./useSftpConnections.ts";
+
+test("home dir candidates prefer user home then root", () => {
+  assert.deepEqual(buildSftpHomeDirCandidates("deploy"), ["/home/deploy", "/root"]);
+  assert.deepEqual(buildSftpHomeDirCandidates("root"), ["/root"]);
+  assert.deepEqual(buildSftpHomeDirCandidates(undefined), ["/root"]);
+  assert.deepEqual(buildSftpHomeDirCandidates(null), ["/root"]);
+});
 
 test("connection ids stay unique even when connects start in the same millisecond", () => {
   const ids = ["uuid-a", "uuid-b"];
