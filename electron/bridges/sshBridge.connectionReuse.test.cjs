@@ -190,6 +190,88 @@ test("an ordinary open with reuse disabled bypasses an idle same-host transport"
   assert.notEqual(firstTransport.conn, sessions.get("second").conn);
 });
 
+test("idle park shell failure discards the transport and dials fresh once", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "192.168.1.1",
+    username: "test",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const parkedConn = first.conn;
+  const firstTransport = first.connRef;
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "idle");
+
+  let parkedShellAttempts = 0;
+  parkedConn.shell = (_window, _shellOpts, callback) => {
+    parkedShellAttempts += 1;
+    setImmediate(() => callback(new Error("Not connected")));
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+
+  assert.equal(
+    parkedShellAttempts,
+    1,
+    "a failed idle park must not be retried via dial coordination",
+  );
+  assert.equal(getClientConstructCount(), 2, "must fall back to one fresh dial");
+  assert.equal(firstTransport.state, "dead");
+  assert.notEqual(sessions.get("second").conn, parkedConn);
+});
+
+test("idle park shell open uses a short timeout before falling back", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "192.168.1.2",
+    username: "test",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const parkedConn = first.conn;
+  const firstTransport = first.connRef;
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "idle");
+
+  parkedConn.shell = () => {
+    // Never invoke the callback — simulates a silently dropped router session.
+  };
+
+  const startedAt = Date.now();
+  await start({ sender: makeSender() }, {
+    ...options,
+    sessionId: "second",
+    sshChannelOpenTimeoutMs: 40,
+  });
+  const elapsedMs = Date.now() - startedAt;
+
+  assert.ok(elapsedMs < 2_000, `idle park fallback took too long (${elapsedMs}ms)`);
+  assert.equal(getClientConstructCount(), 2);
+  assert.equal(firstTransport.state, "dead");
+  assert.notEqual(sessions.get("second").conn, parkedConn);
+});
+
 function makeSender() {
   return {
     id: 1,
@@ -1395,4 +1477,16 @@ test("falls back to a fresh connection when the source is gone", async (t) => {
     getConnectionReuseFallbackEvents(sender).map((m) => m.payload),
     [{ sessionId: "copy", sourceSessionId: "missing-source" }],
   );
+});
+
+test("idle park shell-open timeout defaults to a short bound", () => {
+  const {
+    IDLE_PARK_SHELL_OPEN_TIMEOUT_MS,
+    resolveShellOpenTimeoutMs,
+  } = require("./sshBridge/startSession.cjs");
+
+  assert.equal(IDLE_PARK_SHELL_OPEN_TIMEOUT_MS, 2_500);
+  assert.equal(resolveShellOpenTimeoutMs({}, { idle: true }), 2_500);
+  assert.equal(resolveShellOpenTimeoutMs({}, { idle: false }), undefined);
+  assert.equal(resolveShellOpenTimeoutMs({ sshChannelOpenTimeoutMs: 40 }, { idle: true }), 40);
 });

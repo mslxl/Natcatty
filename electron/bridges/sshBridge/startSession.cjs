@@ -25,6 +25,11 @@ const {
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
 const MAX_SSH_CONNECTION_TIMEOUT_MS = 3600000;
+// Idle-parked transports are often silently dropped by routers / MaxSessions
+// appliances. Bound the wake shell-open so a dead park fails fast and the
+// ordinary reconnect path dials fresh instead of waiting ~30s (or twice that
+// when dial coordination retries the same park).
+const IDLE_PARK_SHELL_OPEN_TIMEOUT_MS = 2_500;
 
 /**
  * Fan out netcatty:exit to the primary contents plus any attach-home owner
@@ -78,6 +83,20 @@ function resolveSshConnectionTimeouts(options = {}) {
       SSH_AUTH_READY_TIMEOUT_MS,
     ),
   };
+}
+
+function resolveShellOpenTimeoutMs(options = {}, { idle = false } = {}) {
+  const configured = Number(options.sshChannelOpenTimeoutMs);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  if (idle) return IDLE_PARK_SHELL_OPEN_TIMEOUT_MS;
+  return undefined;
+}
+
+function withShellOpenTimeout(options, { idle = false } = {}) {
+  const timeoutMs = resolveShellOpenTimeoutMs(options, { idle });
+  if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) return options;
+  if (Number(options?.sshChannelOpenTimeoutMs) === timeoutMs) return options;
+  return { ...options, sshChannelOpenTimeoutMs: timeoutMs };
 }
 
 function isSshAuthFailure(err) {
@@ -786,6 +805,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
         try {
           const rateLimitBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
+          const shellOpenTimeoutMs = Number(options.sshChannelOpenTimeoutMs);
           openBoundedSshShellCallback(
             conn,
             {
@@ -968,9 +988,14 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 resolve({ sessionId });
               });
             },
-            Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
-              ? { rateLimitBackoffMs }
-              : {},
+            {
+              ...(Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
+                ? { rateLimitBackoffMs }
+                : {}),
+              ...(Number.isFinite(shellOpenTimeoutMs) && shellOpenTimeoutMs > 0
+                ? { timeoutMs: shellOpenTimeoutMs }
+                : {}),
+            },
           );
         } catch (syncErr) {
           // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
@@ -1096,16 +1121,17 @@ printf '%s\n' '${scanCompleteMarker}'`;
         // ForwardAgent cannot reattach to a warm conn that still exposes the agent.
         const parked = findTransportByEndpoint(reuseEndpoint, { kind: "shell" });
         if (parked?.conn && (parked.state === "live" || parked.state === "idle")) {
+          const parkedState = parked.state;
           try {
             log("reusing parked or shared transport for new shell channel", {
               sessionId,
               hostname: options.hostname,
               transportId: parked.id,
-              transportState: parked.state,
+              transportState: parkedState,
             });
             return await reuseShellSession(
               event,
-              options,
+              withShellOpenTimeout(options, { idle: parkedState === "idle" }),
               {
                 conn: parked.conn,
                 connRef: parked,
@@ -1122,6 +1148,11 @@ printf '%s\n' '${scanCompleteMarker}'`;
               hostname: options.hostname,
               error: parkErr?.message,
             });
+            // Drop a failed idle park so dial coordination cannot retry the same
+            // half-open socket (common on routers after the last shell closes).
+            if (parkedState === "idle" && typeof discardTransport === "function") {
+              try { discardTransport(parked, "idle-reuse-failed"); } catch { /* ignore */ }
+            }
             // Fall through to a normal dial.
           }
         }
@@ -1144,9 +1175,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
             const transport = coordination.role === "reuse"
               ? coordination.transport
               : await waitForTransportDial(coordination);
+            const transportStateBeforeReuse = transport?.state;
             return await reuseShellSession(
               event,
-              options,
+              withShellOpenTimeout(options, { idle: transportStateBeforeReuse === "idle" }),
               { conn: transport.conn, connRef: transport, stream: {} },
               sessionId,
               log,
@@ -1161,6 +1193,19 @@ printf '%s\n' '${scanCompleteMarker}'`;
               hostname: options.hostname,
               error: coordinationErr?.message,
             });
+            if (
+              coordination.role === "reuse"
+              && coordination.transport
+              && typeof discardTransport === "function"
+            ) {
+              // beginTransportDial only returns role=reuse for an already-indexed
+              // transport. If that wake failed, drop it so the next open dials
+              // fresh instead of looping on the same half-open socket.
+              const failedTransport = coordination.transport;
+              if (failedTransport.state === "idle" || failedTransport.leases?.size === 0) {
+                try { discardTransport(failedTransport, "idle-reuse-failed"); } catch { /* ignore */ }
+              }
+            }
           }
         } else {
           pendingDialCoordination = coordination;
@@ -2424,8 +2469,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
 module.exports = {
   SSH_AUTH_READY_TIMEOUT_MS,
   SSH_TCP_CONNECT_TIMEOUT_MS,
+  IDLE_PARK_SHELL_OPEN_TIMEOUT_MS,
   createStartSessionApi,
   resolveSshConnectionTimeouts,
+  resolveShellOpenTimeoutMs,
   shouldOfferAgentForLogin,
   shouldPrepareSystemAgentForLogin,
   resolveUnlockedEncryptedKeysForAuth,
