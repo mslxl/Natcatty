@@ -554,10 +554,11 @@ test("handleUpload fails when the remote skips an offered file", async () => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("drag-drop upload auto-overwrites remote conflicts without prompting", async () => {
+test("drag-drop upload relies on rz overwrite without probing, prompting, or pre-deleting", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
   const filePath = path.join(tempDir, "upload.txt");
   fs.writeFileSync(filePath, "payload");
+  let probed = false;
   let prompted = false;
   let removed = [];
   let offerNames = [];
@@ -581,11 +582,14 @@ test("drag-drop upload auto-overwrites remote conflicts without prompting", asyn
       filePaths: [filePath],
       remoteNames: ["upload.txt"],
     }),
-    probeReceiveConflicts: async () => ({
-      dir: "/home/u",
-      existing: ["upload.txt"],
-      modes: { "upload.txt": "644" },
-    }),
+    probeReceiveConflicts: async () => {
+      probed = true;
+      return {
+        dir: "/home/u",
+        existing: ["upload.txt"],
+        modes: { "upload.txt": "644" },
+      };
+    },
     requestOverwriteDecision: async () => {
       prompted = true;
       return { action: "skip", applyToRest: false };
@@ -595,13 +599,58 @@ test("drag-drop upload auto-overwrites remote conflicts without prompting", asyn
     },
   });
 
+  assert.equal(probed, false);
   assert.equal(prompted, false);
-  assert.deepEqual(removed, ["/home/u/upload.txt"]);
+  assert.deepEqual(removed, []);
   assert.deepEqual(offerNames, ["upload.txt"]);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test("failed earlier offer does not delete later conflict targets", async () => {
+test("drag-drop offers duplicate remote names independently without pre-deleting", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const firstPath = path.join(tempDir, "first.txt");
+  const secondPath = path.join(tempDir, "second.txt");
+  fs.writeFileSync(firstPath, "first");
+  fs.writeFileSync(secondPath, "second");
+  const offered = [];
+  const removed = [];
+
+  const zsession = {
+    async send_offer(params) {
+      offered.push(params.name);
+      return {
+        send() {},
+        async end() {},
+      };
+    },
+    async close() {},
+  };
+
+  await handleUpload(zsession, {
+    sessionId: "session-1",
+    getWebContents: () => null,
+    writeToRemote: () => true,
+    takeDragDropUpload: () => ({
+      filePaths: [firstPath, secondPath],
+      remoteNames: ["x.txt", "x.txt"],
+    }),
+    probeReceiveConflicts: async () => {
+      throw new Error("drag-drop should not probe conflicts");
+    },
+    requestOverwriteDecision: async () => {
+      throw new Error("drag-drop should not prompt for conflicts");
+    },
+    removeRemoteFiles: async (paths) => {
+      removed.push(...paths);
+    },
+  });
+
+  assert.deepEqual(offered, ["x.txt", "x.txt"]);
+  assert.deepEqual(removed, []);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("failed drag-drop offer does not delete any existing conflict targets", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
   const firstPath = path.join(tempDir, "a.txt");
   const secondPath = path.join(tempDir, "b.txt");
@@ -645,7 +694,7 @@ test("failed earlier offer does not delete later conflict targets", async () => 
     /simulated early failure/,
   );
 
-  assert.deepEqual(removed, ["/home/u/a.txt"]);
+  assert.deepEqual(removed, []);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -676,17 +725,16 @@ test("handleUpload restores modes for accepted overwrites before partial ZSKIP f
       sessionId: "session-1",
       getWebContents: () => null,
       writeToRemote: () => true,
-      takeDragDropUpload: () => ({
+      selectUploadFiles: async () => ({
+        canceled: false,
         filePaths: [acceptedPath, skippedPath],
-        remoteNames: ["a.sh", "b.txt"],
       }),
       probeReceiveConflicts: async () => ({
         dir: "/home/u",
         existing: ["a.sh", "b.txt"],
         modes: { "a.sh": "755", "b.txt": "644" },
       }),
-      // Required to enter the SSH conflict path; drag-drop still auto-overwrites.
-      requestOverwriteDecision: async () => ({ action: "skip", applyToRest: false }),
+      requestOverwriteDecision: async () => ({ action: "overwrite", applyToRest: true }),
       removeRemoteFiles: async () => {},
       restoreRemoteModes: async (entries) => {
         restored = entries;
@@ -702,8 +750,12 @@ test("handleUpload restores modes for accepted overwrites before partial ZSKIP f
 
 test("mode restore tracks skipped offers by index for duplicate basenames", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
-  const firstPath = path.join(tempDir, "first.txt");
-  const secondPath = path.join(tempDir, "second.txt");
+  const firstDir = path.join(tempDir, "first");
+  const secondDir = path.join(tempDir, "second");
+  fs.mkdirSync(firstDir);
+  fs.mkdirSync(secondDir);
+  const firstPath = path.join(firstDir, "x.txt");
+  const secondPath = path.join(secondDir, "x.txt");
   fs.writeFileSync(firstPath, "first");
   fs.writeFileSync(secondPath, "second");
   let offerCount = 0;
@@ -728,16 +780,16 @@ test("mode restore tracks skipped offers by index for duplicate basenames", asyn
       sessionId: "session-1",
       getWebContents: () => null,
       writeToRemote: () => true,
-      takeDragDropUpload: () => ({
+      selectUploadFiles: async () => ({
+        canceled: false,
         filePaths: [firstPath, secondPath],
-        remoteNames: ["x.txt", "x.txt"],
       }),
       probeReceiveConflicts: async () => ({
         dir: "/home/u",
         existing: ["x.txt"],
         modes: { "x.txt": "600" },
       }),
-      requestOverwriteDecision: async () => ({ action: "skip", applyToRest: false }),
+      requestOverwriteDecision: async () => ({ action: "overwrite", applyToRest: true }),
       removeRemoteFiles: async () => {},
       restoreRemoteModes: async (entries) => {
         restored = entries;

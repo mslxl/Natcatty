@@ -778,24 +778,30 @@ async function handleUpload(zsession, opts) {
   let plan = { offerIndices: allNames.map((_, i) => i), removeIndices: [], aborted: false };
   let probeDir = null;
   let probeModes = null;
-  if (opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
+  // Drag-drop already starts rz with -y, so let the receiver replace files in
+  // place. Pre-deleting a conflict would lose the original if the offer or
+  // transfer fails before the replacement is committed.
+  if (!isDragDropUpload && opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
     try {
       const probe = await opts.probeReceiveConflicts(allNames);
       if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
         probeDir = probe.dir;
         probeModes = probe.modes || {};
-        // Terminal drag-drop is an explicit replace intent; do not prompt.
-        const resolveDecision = isDragDropUpload
-          ? async () => ({ action: "overwrite", applyToRest: true })
-          : opts.requestOverwriteDecision;
-        plan = await buildUploadPlan(allNames, probe.existing, resolveDecision);
+        plan = await buildUploadPlan(allNames, probe.existing, opts.requestOverwriteDecision);
         if (plan.aborted) {
           try { zsession.abort(); } catch { /* ignore */ }
           abortRemoteProcess(opts.writeToRemote);
           throw new Error("Transfer cancelled");
         }
-        // Do not batch-delete conflicts here: a later offer may ZSKIP or fail,
-        // and upfront rm would permanently drop remotes that never transferred.
+        if (plan.removeIndices.length && opts.removeRemoteFiles) {
+          const base = probe.dir.replace(/\/+$/, "");
+          const targets = [...new Set(plan.removeIndices.map((i) => `${base}/${allNames[i]}`))];
+          try {
+            await opts.removeRemoteFiles(targets);
+          } catch (err) {
+            console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
+          }
+        }
       }
     } catch (err) {
       if (err instanceof Error && err.message === "Transfer cancelled") throw err;
@@ -810,9 +816,6 @@ async function handleUpload(zsession, opts) {
     name: allNames[i],
   }));
   const skippedOfferIndices = [];
-  const removeIndexSet = new Set(plan.removeIndices);
-  const removedRemotePaths = new Set();
-  const probeBase = probeDir ? String(probeDir).replace(/\/+$/, "") : null;
 
   for (let i = 0; i < offers.length; i++) {
     const { originalIndex, filePath, stat, name } = offers[i];
@@ -830,19 +833,6 @@ async function handleUpload(zsession, opts) {
 
     let bytesRemaining = 0;
     for (let j = i; j < offers.length; j++) bytesRemaining += offers[j].stat.size;
-
-    // Replace this conflict only when its offer is about to go out.
-    if (removeIndexSet.has(originalIndex) && opts.removeRemoteFiles && probeBase) {
-      const target = `${probeBase}/${name}`;
-      if (!removedRemotePaths.has(target)) {
-        removedRemotePaths.add(target);
-        try {
-          await opts.removeRemoteFiles([target]);
-        } catch (err) {
-          console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
-        }
-      }
-    }
 
     const xfer = await zsession.send_offer({
       name,
