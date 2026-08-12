@@ -794,15 +794,8 @@ async function handleUpload(zsession, opts) {
           abortRemoteProcess(opts.writeToRemote);
           throw new Error("Transfer cancelled");
         }
-        if (plan.removeIndices.length && opts.removeRemoteFiles) {
-          const base = probe.dir.replace(/\/+$/, "");
-          const targets = [...new Set(plan.removeIndices.map((i) => `${base}/${allNames[i]}`))];
-          try {
-            await opts.removeRemoteFiles(targets);
-          } catch (err) {
-            console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
-          }
-        }
+        // Do not batch-delete conflicts here: a later offer may ZSKIP or fail,
+        // and upfront rm would permanently drop remotes that never transferred.
       }
     } catch (err) {
       if (err instanceof Error && err.message === "Transfer cancelled") throw err;
@@ -810,11 +803,19 @@ async function handleUpload(zsession, opts) {
     }
   }
 
-  const offers = plan.offerIndices.map((i) => ({ filePath: filePaths[i], stat: fileStats[i], name: allNames[i] }));
-  const skippedNames = [];
+  const offers = plan.offerIndices.map((i) => ({
+    originalIndex: i,
+    filePath: filePaths[i],
+    stat: fileStats[i],
+    name: allNames[i],
+  }));
+  const skippedOfferIndices = [];
+  const removeIndexSet = new Set(plan.removeIndices);
+  const removedRemotePaths = new Set();
+  const probeBase = probeDir ? String(probeDir).replace(/\/+$/, "") : null;
 
   for (let i = 0; i < offers.length; i++) {
-    const { filePath, stat, name } = offers[i];
+    const { originalIndex, filePath, stat, name } = offers[i];
     opts.resetUploadBackpressure?.();
 
     safeSend(getWebContents(), "netcatty:zmodem:progress", {
@@ -830,6 +831,19 @@ async function handleUpload(zsession, opts) {
     let bytesRemaining = 0;
     for (let j = i; j < offers.length; j++) bytesRemaining += offers[j].stat.size;
 
+    // Replace this conflict only when its offer is about to go out.
+    if (removeIndexSet.has(originalIndex) && opts.removeRemoteFiles && probeBase) {
+      const target = `${probeBase}/${name}`;
+      if (!removedRemotePaths.has(target)) {
+        removedRemotePaths.add(target);
+        try {
+          await opts.removeRemoteFiles([target]);
+        } catch (err) {
+          console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
+        }
+      }
+    }
+
     const xfer = await zsession.send_offer({
       name,
       size: stat.size,
@@ -840,7 +854,7 @@ async function handleUpload(zsession, opts) {
 
     if (!xfer) {
       // Receiver protected/skipped this file (e.g. rz without -y).
-      skippedNames.push(name);
+      skippedOfferIndices.push(originalIndex);
       continue;
     }
 
@@ -904,11 +918,13 @@ async function handleUpload(zsession, opts) {
   // rz re-creates overwritten files with the remote umask, dropping their
   // original permission bits. Restore modes for files that landed on disk
   // (including when a later offer is ZSKIP'd and we abort the batch — #1079).
-  async function restoreAcceptedOverwriteModes(skipped) {
+  // Filter by original offer index (not basename) so a duplicate-name ZSKIP
+  // does not suppress mode restore for an earlier accepted overwrite.
+  async function restoreAcceptedOverwriteModes(skippedIndices) {
     if (!plan.removeIndices.length || !probeDir || !opts.restoreRemoteModes) return;
-    const skippedSet = skipped?.length ? new Set(skipped) : null;
+    const skippedSet = skippedIndices?.length ? new Set(skippedIndices) : null;
     const restoreIndices = skippedSet
-      ? plan.removeIndices.filter((i) => !skippedSet.has(allNames[i]))
+      ? plan.removeIndices.filter((i) => !skippedSet.has(i))
       : plan.removeIndices;
     if (!restoreIndices.length) return;
     const restores = buildModeRestores(probeDir, allNames, restoreIndices, probeModes);
@@ -920,13 +936,13 @@ async function handleUpload(zsession, opts) {
     }
   }
 
-  if (skippedNames.length > 0) {
+  if (skippedOfferIndices.length > 0) {
     try { zsession.abort(); } catch { /* ignore */ }
     abortRemoteProcess(opts.writeToRemote);
-    await restoreAcceptedOverwriteModes(skippedNames);
-    const listed = skippedNames.join(", ");
+    await restoreAcceptedOverwriteModes(skippedOfferIndices);
+    const listed = skippedOfferIndices.map((idx) => allNames[idx]).join(", ");
     throw new Error(
-      skippedNames.length === offers.length
+      skippedOfferIndices.length === offers.length
         ? `Remote protected existing files and skipped the upload (not overwritten): ${listed}`
         : `Remote skipped some files (not overwritten): ${listed}`,
     );

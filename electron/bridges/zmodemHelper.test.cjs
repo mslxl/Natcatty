@@ -591,13 +591,61 @@ test("drag-drop upload auto-overwrites remote conflicts without prompting", asyn
       return { action: "skip", applyToRest: false };
     },
     removeRemoteFiles: async (paths) => {
-      removed = paths;
+      removed.push(...paths);
     },
   });
 
   assert.equal(prompted, false);
   assert.deepEqual(removed, ["/home/u/upload.txt"]);
   assert.deepEqual(offerNames, ["upload.txt"]);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("failed earlier offer does not delete later conflict targets", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const firstPath = path.join(tempDir, "a.txt");
+  const secondPath = path.join(tempDir, "b.txt");
+  fs.writeFileSync(firstPath, "a");
+  fs.writeFileSync(secondPath, "b");
+  const removed = [];
+
+  const zsession = {
+    async send_offer(params) {
+      if (params.name === "a.txt") {
+        throw new Error("simulated early failure");
+      }
+      return {
+        send() {},
+        async end() {},
+      };
+    },
+    abort() {},
+    async close() {},
+  };
+
+  await assert.rejects(
+    handleUpload(zsession, {
+      sessionId: "session-1",
+      getWebContents: () => null,
+      writeToRemote: () => true,
+      takeDragDropUpload: () => ({
+        filePaths: [firstPath, secondPath],
+        remoteNames: ["a.txt", "b.txt"],
+      }),
+      probeReceiveConflicts: async () => ({
+        dir: "/home/u",
+        existing: ["a.txt", "b.txt"],
+        modes: { "a.txt": "644", "b.txt": "600" },
+      }),
+      requestOverwriteDecision: async () => ({ action: "skip", applyToRest: false }),
+      removeRemoteFiles: async (paths) => {
+        removed.push(...paths);
+      },
+    }),
+    /simulated early failure/,
+  );
+
+  assert.deepEqual(removed, ["/home/u/a.txt"]);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -649,5 +697,57 @@ test("handleUpload restores modes for accepted overwrites before partial ZSKIP f
 
   assert.equal(offerCount, 2);
   assert.deepEqual(restored, [{ path: "/home/u/a.sh", mode: "755" }]);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("mode restore tracks skipped offers by index for duplicate basenames", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const firstPath = path.join(tempDir, "first.txt");
+  const secondPath = path.join(tempDir, "second.txt");
+  fs.writeFileSync(firstPath, "first");
+  fs.writeFileSync(secondPath, "second");
+  let offerCount = 0;
+  let restored = [];
+
+  const zsession = {
+    async send_offer() {
+      offerCount += 1;
+      // Accept the first duplicate-name offer; ZSKIP the second.
+      if (offerCount > 1) return undefined;
+      return {
+        send() {},
+        async end() {},
+      };
+    },
+    abort() {},
+    async close() {},
+  };
+
+  await assert.rejects(
+    handleUpload(zsession, {
+      sessionId: "session-1",
+      getWebContents: () => null,
+      writeToRemote: () => true,
+      takeDragDropUpload: () => ({
+        filePaths: [firstPath, secondPath],
+        remoteNames: ["x.txt", "x.txt"],
+      }),
+      probeReceiveConflicts: async () => ({
+        dir: "/home/u",
+        existing: ["x.txt"],
+        modes: { "x.txt": "600" },
+      }),
+      requestOverwriteDecision: async () => ({ action: "skip", applyToRest: false }),
+      removeRemoteFiles: async () => {},
+      restoreRemoteModes: async (entries) => {
+        restored = entries;
+      },
+    }),
+    /Remote skipped some files/,
+  );
+
+  assert.equal(offerCount, 2);
+  // Filename-based skip filtering would drop this restore; index-based keeps it.
+  assert.deepEqual(restored, [{ path: "/home/u/x.txt", mode: "600" }]);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
