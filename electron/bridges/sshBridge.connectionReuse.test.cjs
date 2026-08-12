@@ -190,7 +190,7 @@ test("an ordinary open with reuse disabled bypasses an idle same-host transport"
   assert.notEqual(firstTransport.conn, sessions.get("second").conn);
 });
 
-test("idle park reconnect skips PID discovery when no terminal sibling remains", async (t) => {
+test("idle park reconnect still discovers shell PID when no terminal sibling remains", async (t) => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
@@ -204,6 +204,7 @@ test("idle park reconnect skips PID discovery when no terminal sibling remains",
     password: "secret",
     useSshAgent: false,
     verifyHostKeys: false,
+    sshChannelOpenRateLimitBackoffMs: 1,
   };
 
   await start({ sender: makeSender() }, { ...options, sessionId: "first" });
@@ -216,18 +217,21 @@ test("idle park reconnect skips PID discovery when no terminal sibling remains",
   let discoveryExecCalls = 0;
   parkedConn.exec = (_command, callback) => {
     discoveryExecCalls += 1;
-    setTimeout(() => callback(new Error("PID discovery unavailable")), 500);
+    setImmediate(() => callback(new Error("PID discovery unavailable")));
   };
 
   await start({ sender: makeSender() }, { ...options, sessionId: "second" });
 
-  assert.equal(discoveryExecCalls, 0, "a sole reconnected shell needs no PID disambiguation");
+  assert.ok(
+    discoveryExecCalls >= 1,
+    "sole reconnect must still identify the new shell against any lingering remote PID",
+  );
   assert.equal(getClientConstructCount(), 1, "must keep using the authenticated transport");
   assert.equal(firstTransport.state, "live");
   assert.equal(sessions.get("second").conn, parkedConn);
 });
 
-test("endpoint reconnect skips PID discovery when only a non-terminal lease remains", async (t) => {
+test("endpoint reconnect still discovers shell PID when only a non-terminal lease remains", async (t) => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
@@ -241,6 +245,7 @@ test("endpoint reconnect skips PID discovery when only a non-terminal lease rema
     password: "secret",
     useSshAgent: false,
     verifyHostKeys: false,
+    sshChannelOpenRateLimitBackoffMs: 1,
   };
 
   await start({ sender: makeSender() }, { ...options, sessionId: "first" });
@@ -256,12 +261,15 @@ test("endpoint reconnect skips PID discovery when only a non-terminal lease rema
   let discoveryExecCalls = 0;
   sharedConn.exec = (_command, callback) => {
     discoveryExecCalls += 1;
-    setTimeout(() => callback(new Error("PID discovery unavailable")), 500);
+    setImmediate(() => callback(new Error("PID discovery unavailable")));
   };
 
   await start({ sender: makeSender() }, { ...options, sessionId: "second" });
 
-  assert.equal(discoveryExecCalls, 0, "non-terminal leases do not make shell PID ambiguous");
+  assert.ok(
+    discoveryExecCalls >= 1,
+    "non-terminal leases do not remove the need to identify the reconnected shell",
+  );
   assert.equal(getClientConstructCount(), 1, "must keep using the authenticated transport");
   assert.equal(sharedTransport.count, 2);
   assert.equal(sessions.get("second").conn, sharedConn);

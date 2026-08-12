@@ -848,14 +848,11 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
               const discoverCopiedShellPid = async () => {
                 if (options.skipShellPidDiscovery) return null;
-                if (options.skipShellPidDiscoveryWithoutSibling) {
-                  const hasTerminalSibling = [...sessions.values()].some((candidate) => (
-                    candidate?.connRef === connRef
-                    && candidate !== copiedSession
-                    && candidate?.stream
-                  ));
-                  if (!hasTerminalSibling) return null;
-                }
+                // Do not skip discovery merely because the registry has no live
+                // terminal sibling: after an immediate parked reconnect the prior
+                // session is already gone, but its remote shell may still appear
+                // in ps. The reconcile path below waits out that transient PID so
+                // getSessionPwd does not bind the new session to the exiting shell.
                 const liveBaseline = () => [...sessions.values()]
                   .filter((candidate) => (
                     candidate?.connRef === connRef
@@ -1099,10 +1096,6 @@ printf '%s\n' '${scanCompleteMarker}'`;
 
       // Idle-park / endpoint reuse: after the last tab returns its lease the
       // transport may still be warm. Open a new shell channel without re-auth.
-      const endpointReuseOptions = {
-        ...options,
-        skipShellPidDiscoveryWithoutSibling: true,
-      };
       if (allowGeneralTransportReuse && !options.x11Forwarding && typeof findTransportByEndpoint === "function") {
         // Shell park reuse requires exact agentForwarding match so disabling
         // ForwardAgent cannot reattach to a warm conn that still exposes the agent.
@@ -1117,7 +1110,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
             });
             return await reuseShellSession(
               event,
-              endpointReuseOptions,
+              options,
               {
                 conn: parked.conn,
                 connRef: parked,
@@ -1158,7 +1151,7 @@ printf '%s\n' '${scanCompleteMarker}'`;
               : await waitForTransportDial(coordination);
             return await reuseShellSession(
               event,
-              endpointReuseOptions,
+              options,
               { conn: transport.conn, connRef: transport, stream: {} },
               sessionId,
               log,
