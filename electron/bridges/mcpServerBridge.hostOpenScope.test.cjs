@@ -97,6 +97,29 @@ test("authoritative empty scope replace still clears host_open-owned sessions", 
 
   bridge.updateSessionMetadata([], "chat-1");
   assert.deepEqual(bridge.getScopedSessionIds("chat-1"), []);
+
+  // A later non-empty sync must not resurrect the cleared owned session via
+  // cross-scope fallback / stale ownership.
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+    },
+  ], "__external_mcp__");
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+  assert.deepEqual(bridge.getScopedSessionIds("chat-1"), ["sess-original"]);
+  assert.equal(bridge.getSessionMeta("sess-opened", "chat-1"), null);
 });
 
 test("retained host_open metadata refreshes connected from another scope", async (t) => {
@@ -197,7 +220,7 @@ test("ordinary tab close forgets host_open ownership so sidebar sync cannot revi
 
   // User closes the host_open tab through the normal UI / worker path.
   for (const listener of closedListeners) {
-    listener({ sessionId: "sess-opened" });
+    listener({ sessionId: "sess-opened", reason: "closed", explicit: true });
   }
 
   bridge.updateSessionMetadata([
@@ -212,4 +235,66 @@ test("ordinary tab close forgets host_open ownership so sidebar sync cannot revi
 
   assert.deepEqual(bridge.getScopedSessionIds("chat-1"), ["sess-original"]);
   assert.equal(bridge.getSessionMeta("sess-opened", "chat-1"), null);
+});
+
+test("recoverable worker exits keep host_open ownership for reconnect", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  const closedListeners = new Set();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      onSessionClosed(listener) {
+        closedListeners.add(listener);
+        return {
+          dispose: () => closedListeners.delete(listener),
+        };
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+    },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-1",
+    hostId: "host-b",
+  });
+
+  for (const reason of ["error", "worker-exit", "superseded", "closed"]) {
+    for (const listener of closedListeners) {
+      listener({ sessionId: "sess-opened", reason });
+    }
+  }
+
+  // After reconnect, sidebar may push only the focused tab; ownership must
+  // still retain the host_open session.
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+
+  assert.deepEqual(
+    bridge.getScopedSessionIds("chat-1").sort(),
+    ["sess-opened", "sess-original"],
+  );
 });

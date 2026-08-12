@@ -1125,10 +1125,14 @@ function createTerminalWorkerManager(options = {}) {
     }
   }
 
-  function notifySessionClosed(sessionId, reason) {
+  function notifySessionClosed(sessionId, reason, options = {}) {
     if (!sessionId) return;
+    const explicit = options?.explicit === true;
+    const event = explicit
+      ? { sessionId, reason, explicit: true }
+      : { sessionId, reason };
     for (const listener of [...sessionClosedListeners]) {
-      try { listener(Object.freeze({ sessionId, reason })); } catch {}
+      try { listener(Object.freeze(event)); } catch {}
     }
   }
 
@@ -1473,7 +1477,9 @@ function createTerminalWorkerManager(options = {}) {
         clearAttachHome(sessionId);
         terminalOutputChannel?.closeSession?.(sessionId);
         suppressedPendingOutputSessions.add(sessionId);
-        notifySessionClosed(sessionId, message.payload?.reason || "superseded");
+        // Always label superseded exits as such — payload reason may be
+        // "closed"/"error" and must not be mistaken for an authoritative end.
+        notifySessionClosed(sessionId, "superseded");
         const targets = new Set([displayWebContentsId, homeWebContentsId]);
         if (onRendererEvent) {
           for (const webContentsId of targets) {
@@ -1502,7 +1508,7 @@ function createTerminalWorkerManager(options = {}) {
         finishPendingSessionStart(originEntry);
         pending.delete(message.originRequestId);
         originEntry.reject(new Error("Terminal session was superseded by a newer start request"));
-        notifySessionClosed(sessionId, message.payload?.reason);
+        notifySessionClosed(sessionId, "superseded");
         return;
       }
       const displayWebContentsId =
@@ -1813,7 +1819,9 @@ function createTerminalWorkerManager(options = {}) {
       finishPendingSessionStart(entry);
       entry?.reject(error);
     }
-    if (notifyClosedAfterPost) notifySessionClosed(payload.sessionId, "closed");
+    if (notifyClosedAfterPost) {
+      notifySessionClosed(payload.sessionId, "closed", { explicit: true });
+    }
     return promise;
   }
 
@@ -1921,7 +1929,9 @@ function createTerminalWorkerManager(options = {}) {
         retireWorkerAfterIpcFailure(worker, error);
         postError = error;
       }
-      if (shouldNotifyClosed) notifySessionClosed(payload.sessionId, "closed");
+      if (shouldNotifyClosed) {
+        notifySessionClosed(payload.sessionId, "closed", { explicit: true });
+      }
       if (postError) throw postError;
       return;
     }

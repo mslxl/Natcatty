@@ -2162,14 +2162,14 @@ test("explicit close notifies host session lifecycle exactly once before the wor
   await start;
 
   manager.send("netcatty:close", { sessionId: "session-1" }, { webContentsId: 7 });
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
   child.emit("message", {
     kind: "renderer-event",
     webContentsId: 7,
     channel: "netcatty:exit",
     payload: { sessionId: "session-1", reason: "exited" },
   });
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
 });
 
 test("a duplicate exit from an old session generation cannot close a reconnected session", async () => {
@@ -2357,7 +2357,7 @@ test("an old-generation exit after explicit close cannot cancel a pending reconn
 
   await reconnect;
   assert.equal(manager.hasOpenSession("session-1"), true);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
   assert.deepEqual(routed, [{ sessionId: "session-1", data: "NEW-EARLY" }]);
 });
 
@@ -2404,7 +2404,7 @@ test("a closed pending start response records its generation before a later reco
 
   await second;
   assert.equal(manager.hasOpenSession("session-1"), true);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
 });
 
 test("a much older exit cannot cancel a reconnect after multiple generations", async () => {
@@ -3615,7 +3615,7 @@ test("an internal same-id replacement exit retires only the old generation", asy
     data: "NEW-EARLY",
     webContentsId: 8,
   }]);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "superseded" }]);
   assert.equal(outputOpen, true);
   assert.equal(
     child.messages.some((message) => (
@@ -3690,7 +3690,7 @@ test("a failed replacement is not reported closed again when the worker exits", 
   await assert.rejects(replacement, /start failed/u);
   child.emit("exit", 1);
 
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "superseded" }]);
 });
 
 test("manager and runtime preserve a completed same-id replacement end to end", async () => {
@@ -3770,7 +3770,7 @@ test("manager and runtime preserve a completed same-id replacement end to end", 
     { sessionId: "session-1", data: "OLD", webContentsId: 7 },
     { sessionId: "session-1", data: "NEW-EARLY", webContentsId: 8 },
   ]);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "superseded" }]);
   assert.equal(outputWebContentsId, 8);
   assert.equal(
     child.messages.some((message) => (
@@ -4183,7 +4183,7 @@ test("a superseded start failure cannot cancel the queued same-id restart", asyn
 
   await second;
   assert.equal(manager.hasOpenSession("session-1"), true);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "failed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "superseded" }]);
 });
 
 test("a failed reconnect after worker exit keeps later close cleanup idempotent", async () => {
@@ -4350,7 +4350,7 @@ test("closing a same-id reconnect before its response closes the new lifecycle o
   assert.equal(closeMessage.channel, "netcatty:close");
   assert.deepEqual(closed, [
     { sessionId: "session-1", reason: "worker-exit" },
-    { sessionId: "session-1", reason: "closed" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
   ]);
 
   secondChild.emit("message", {
@@ -4362,7 +4362,7 @@ test("closing a same-id reconnect before its response closes the new lifecycle o
   secondChild.emit("message", { kind: "session-exit", sessionId: "session-1", exitCode: 0 });
   assert.deepEqual(closed, [
     { sessionId: "session-1", reason: "worker-exit" },
-    { sessionId: "session-1", reason: "closed" },
+    { sessionId: "session-1", reason: "closed", explicit: true },
   ]);
 });
 
@@ -4675,7 +4675,7 @@ test("an awaited close still notifies lifecycle cleanup when worker IPC is alrea
   );
 
   await assert.rejects(close, /IPC closed/u);
-  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
   assert.equal(manager.hasOpenSession("session-1"), false);
 });
 

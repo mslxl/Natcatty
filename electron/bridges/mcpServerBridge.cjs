@@ -383,11 +383,17 @@ function init(deps) {
   }
   try { disposeWorkerSessionClosed?.dispose?.(); } catch { /* ignore */ }
   disposeWorkerSessionClosed = null;
-  // Ordinary UI / worker tab closes must drop host_open ownership; otherwise
+  // Explicit UI closes and clean shell exits drop host_open ownership; otherwise
   // retainOwnedSessions re-injects ghost session ids on the next sidebar sync.
+  // Recoverable exits (error / worker-exit / superseded / quiet transport
+  // "closed") keep ownership so auto-reconnect can reuse the same session id.
   if (typeof terminalWorkerManager?.onSessionClosed === "function") {
-    disposeWorkerSessionClosed = terminalWorkerManager.onSessionClosed(({ sessionId }) => {
-      forgetClosedTerminalSession(sessionId);
+    disposeWorkerSessionClosed = terminalWorkerManager.onSessionClosed((event) => {
+      const sessionId = event?.sessionId;
+      if (!sessionId) return;
+      if (event?.explicit === true || event?.reason === "exited") {
+        forgetClosedTerminalSession(sessionId);
+      }
     });
   }
 }
@@ -698,6 +704,11 @@ function beginChatExecution(chatSessionId, sessionId, command) {
  */
 function updateSessionMetadata(sessionList, chatSessionId) {
   const incoming = Array.isArray(sessionList) ? sessionList : [];
+  // Authoritative empty replace: clear retention ownership for this scope so a
+  // later non-empty sync cannot resurrect sessions via cross-scope fallback.
+  if (chatSessionId && incoming.length === 0) {
+    openedSessionOwnership.releaseScopeOwnership(chatSessionId);
+  }
   // host_open merges the new session into this chat scope, but the AI side
   // panel later pushes a full replace of only the currently focused tab —
   // which would drop mid-turn opened sessions. Retain ownership-tracked ids.

@@ -56,6 +56,16 @@ function createSessionOwnershipRegistry() {
     }
   }
 
+  /**
+   * Drop retained ownership for a chat scope without revoking its host_open
+   * generation. Used when the renderer pushes an authoritative empty scope
+   * replace so a later non-empty sync cannot resurrect cleared sessions.
+   */
+  function releaseScopeOwnership(chatSessionId) {
+    if (!chatSessionId) return;
+    ownedByScope.delete(chatSessionId);
+  }
+
   function clearScope(chatSessionId) {
     ownedByScope.delete(chatSessionId);
     const generation = scopeGenerations.get(chatSessionId);
@@ -73,6 +83,7 @@ function createSessionOwnershipRegistry() {
     validate,
     listOwned,
     forgetSession,
+    releaseScopeOwnership,
     clearScope,
     getTrackedGenerationCountForTests,
   };
