@@ -126,12 +126,11 @@ export class KeywordHighlighter implements IDisposable {
   /** True while idle-Enter output should not mutate decorations (xterm full-viewport repaint flash). */
   private enterSuppressDecorationMutation = false;
   /**
-   * onWriteParsed count for the current Enter submission. Echo + prompt often
-   * arrive as two batches; a second callback alone is not sustained output.
+   * Whether onWriteParsed has already observed the current Enter submission.
+   * Prompt redraw can span several writeParsed batches (control sequences,
+   * prompt text, mode sets); callback count is not a sustained-output signal.
    */
-  private enterWriteParsedCount = 0;
-  /** Lift idle-Enter decoration mute after this many writeParsed callbacks. */
-  private static readonly ENTER_SUPPRESS_LIFT_WRITE_COUNT = 3;
+  private enterWriteParsedSeen = false;
   /** Viewport browsing state before the latest scroll handler ran. */
   private wasBrowsingScrollback = false;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
@@ -169,7 +168,7 @@ export class KeywordHighlighter implements IDisposable {
           // xterm repaints the full viewport on decoration mutation and flashes
           // still-visible keyword highlights (custom ~/# rules make this obvious).
           this.enterSuppressDecorationMutation = true;
-          this.enterWriteParsedCount = 0;
+          this.enterWriteParsedSeen = false;
           // Time-bound Enter protection even when no echo/write arrives (echo
           // off, stalled PTY). onWriteParsed re-arms this on each write.
           this.scheduleEnterInputIdleClear();
@@ -240,12 +239,10 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            if (this.enterWriteParsedCount > 0) {
-              this.enterWriteParsedCount += 1;
+            if (this.enterWriteParsedSeen) {
               this.updateWriteBurst();
-              // Idle Enter often splits echo and prompt across two writeParsed
-              // batches. Keep decoration mute until sustained output (burst or
-              // enough follow-up writes) or the Enter idle guard clears.
+              // Multi-batch prompt redraw is still not command output. Keep
+              // decoration mute until a write burst or the Enter idle guard.
               if (this.shouldLiftEnterDecorationSuppression()) {
                 this.enterSuppressDecorationMutation = false;
               }
@@ -257,7 +254,7 @@ export class KeywordHighlighter implements IDisposable {
                 this.enterViewportScanInProgress = true;
               }
             } else {
-              this.enterWriteParsedCount = 1;
+              this.enterWriteParsedSeen = true;
               this.markDirtyFromWrite({ includeViewportProbe: false });
               // Index the viewport while muted so multi-frame Enter continuation
               // can finish; decoration mutate stays suppressed for idle prompt.
@@ -464,7 +461,7 @@ export class KeywordHighlighter implements IDisposable {
     this.enterViewportScanInProgress = false;
     this.enterViewportScanNeedsRepeat = false;
     this.enterSuppressDecorationMutation = false;
-    this.enterWriteParsedCount = 0;
+    this.enterWriteParsedSeen = false;
     if (hadDecorations) {
       this.term.refresh(0, this.term.rows - 1);
     }
@@ -1129,7 +1126,7 @@ export class KeywordHighlighter implements IDisposable {
       this.enterInputIdleTimer = null;
       this.enterInputPending = false;
       this.enterSuppressDecorationMutation = false;
-      this.enterWriteParsedCount = 0;
+      this.enterWriteParsedSeen = false;
       // Catch up any viewport motion deferred while Enter protection blocked
       // scroll refresh (e.g. user scrolled during the post-Enter window).
       this.markVisibleRangeDirty();
@@ -1137,12 +1134,14 @@ export class KeywordHighlighter implements IDisposable {
     }, KeywordHighlighter.ENTER_INPUT_GUARD_MS);
   }
 
-  /** True when follow-up Enter writes look like real command output, not a split prompt. */
+  /**
+   * True when follow-up Enter writes look like sustained command output.
+   * WriteParsed callback count alone cannot prove that — a split prompt may
+   * need three (or more) batches — so only a write burst lifts mute early.
+   * Otherwise the Enter idle guard clears suppression after quiet.
+   */
   private shouldLiftEnterDecorationSuppression(): boolean {
     if (!this.enterSuppressDecorationMutation) return false;
-    if (this.enterWriteParsedCount >= KeywordHighlighter.ENTER_SUPPRESS_LIFT_WRITE_COUNT) {
-      return true;
-    }
     return this.isWriteBurstActive(performance.now());
   }
 

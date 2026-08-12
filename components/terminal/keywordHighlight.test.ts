@@ -1589,15 +1589,38 @@ test("continuous Enter output still refreshes highlights periodically", async ()
 
     handlers.data?.("\r");
     setLineText(22, "DEPLOY");
-    for (let index = 0; index < 20; index += 1) {
-      handlers.writeParsed?.();
-      raf.flush();
-      await new Promise((resolve) => { setTimeout(resolve, 50); });
+    const internals = highlighter as unknown as {
+      lastRefreshTime: number;
+      lastUserInputAt: number;
+    };
+    // Sustained output must be a write burst, not spaced callbacks that look
+    // like a multi-batch prompt redraw.
+    internals.lastUserInputAt = Number.NEGATIVE_INFINITY;
+    const originalPerformance = globalThis.performance;
+    let simulatedNow = 0;
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {
+        now: () => simulatedNow,
+      },
+    });
+    try {
+      for (let index = 0; index < 12; index += 1) {
+        simulatedNow += 10;
+        internals.lastRefreshTime = Number.NEGATIVE_INFINITY;
+        handlers.writeParsed?.();
+        raf.flush();
+      }
+    } finally {
+      Object.defineProperty(globalThis, "performance", {
+        configurable: true,
+        value: originalPerformance,
+      });
     }
 
     assert.ok(
       decorationStates.some(({ isDisposed }) => !isDisposed),
-      "ongoing output should not postpone new highlights until the stream stops",
+      "ongoing write-burst output should not postpone new highlights until the stream stops",
     );
     highlighter.dispose();
   } finally {
@@ -2422,8 +2445,14 @@ test("idle Enter keeps suppression across split echo and prompt writes", async (
     await new Promise((resolve) => { setTimeout(resolve, 40); });
     raf.flush();
 
-    // Batch 2: prompt redraw for the same idle Enter (custom ~/# matches).
+    // Batch 2: prompt text for the same idle Enter (custom ~/# matches).
     setLineText(22, "user@host:~# ");
+    handlers.writeParsed?.();
+    await new Promise((resolve) => { setTimeout(resolve, 40); });
+    raf.flush();
+
+    // Batch 3: trailing mode/control write — still the same prompt redraw,
+    // not sustained command output.
     handlers.writeParsed?.();
     await new Promise((resolve) => { setTimeout(resolve, 220); });
     raf.flush();
@@ -2436,7 +2465,7 @@ test("idle Enter keeps suppression across split echo and prompt writes", async (
     assert.deepEqual(
       refreshCalls,
       [],
-      "a second writeParsed alone must not register prompt decorations that flash the viewport",
+      "a three-batch idle prompt must not register decorations that flash the viewport",
     );
     highlighter.dispose();
   } finally {
