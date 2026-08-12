@@ -176,6 +176,23 @@ export function createPinnedReconnectSideResolver(
   };
 }
 
+export function runSftpConnectOnceByKey(
+  inFlight: Map<string, Promise<void>>,
+  key: string,
+  run: () => Promise<void>,
+): Promise<void> {
+  const existing = inFlight.get(key);
+  if (existing) return existing;
+
+  const promise = run().finally(() => {
+    if (inFlight.get(key) === promise) {
+      inFlight.delete(key);
+    }
+  });
+  inFlight.set(key, promise);
+  return promise;
+}
+
 interface UseSftpConnectionsResult {
   connect: (side: "left" | "right", host: Host | "local", options?: SftpConnectOptions) => Promise<void>;
   disconnect: (side: "left" | "right") => Promise<void>;
@@ -249,6 +266,7 @@ export const useSftpConnections = ({
   const [hostKeyVerification, setHostKeyVerification] = useState<SftpHostKeyVerificationState | null>(null);
   const hostKeyVerificationRef = useRef<(SftpHostKeyVerificationState & { requestId: string; sessionId: string }) | null>(null);
   const activeHostKeySessionsRef = useRef<Map<string, { side: "left" | "right"; tabId: string }>>(new Map());
+  const connectInFlightRef = useRef<Map<string, Promise<void>>>(new Map());
 
   const setPendingHostKeyVerification = useCallback((
     next: (SftpHostKeyVerificationState & { requestId: string; sessionId: string }) | null,
@@ -341,6 +359,7 @@ export const useSftpConnections = ({
 
       let activeTabId: string | null = null;
       const sideTabs = side === "left" ? leftTabsRef.current : rightTabsRef.current;
+      const connectTargetSlot = options?.tabId ?? sideTabs.activeTabId ?? `new:${side}`;
 
       if (options?.tabId) {
         // Background reconnect for a pinned upload must not retarget the focused tab.
@@ -425,6 +444,17 @@ export const useSftpConnections = ({
       // This allows callers to map metadata (e.g. connection keys) to the tab
       // immediately, avoiding race conditions with deferred effects.
       options?.onTabCreated?.(activeTabId);
+
+      const connectInFlightKey = [
+        side,
+        connectTargetSlot,
+        targetConnectionKey,
+        host === "local" ? "" : (options?.sourceSessionId ?? ""),
+        effectiveInitialPath ?? "",
+        options?.forceNewTab ? "force-new-tab" : "",
+      ].join("\u0000");
+
+      return runSftpConnectOnceByKey(connectInFlightRef.current, connectInFlightKey, async () => {
 
       const connectionId = createSftpConnectionId(side);
 
@@ -573,9 +603,7 @@ export const useSftpConnections = ({
           sharedHostCache?.path,
         );
 
-        // Sudo never reuses a terminal shell; normalize before UI state so
-        // reusedConnection (spinner/overlay) matches the actual open path.
-        const sourceSessionId = host.sftpSudo ? undefined : options?.sourceSessionId;
+        const sourceSessionId = options?.sourceSessionId;
 
         const connection: SftpConnection = {
           id: connectionId,
@@ -855,6 +883,7 @@ export const useSftpConnections = ({
           unsubSftpProgress?.();
         }
       }
+      });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [

@@ -560,6 +560,19 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       activeHost.username,
       activeHost.sftpFileProtocol,
     );
+    const pendingSameEndpointSession = sessions.find((session) => (
+      session.hostId === activeHost.id
+      && session.status !== "connected"
+      && session.hostname === activeHost.hostname
+      && (session.port ?? 22) === (activeHost.port ?? 22)
+      && session.username === activeHost.username
+      && (session.protocol === "ssh" || session.protocol === undefined)
+      && !session.moshEnabled
+      && !session.etEnabled
+    ));
+    if (!activeSessionId && pendingSameEndpointSession) {
+      return;
+    }
     const sessionChanged = shouldResetSftpSidePanelSourceSession(
       lastSourceSessionIdRef.current,
       activeSessionId,
@@ -737,7 +750,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         tabConnectionKeyMapRef.current.set(tabId, connectionKey);
       },
     });
-  }, [activeHost, activeSessionId, initialLocation, interactiveWorkActive]);
+  }, [activeHost, activeSessionId, initialLocation, interactiveWorkActive, sessions]);
 
   useEffect(() => {
     if (!activeHost || !isVisible) return;

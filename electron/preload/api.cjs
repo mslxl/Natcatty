@@ -811,10 +811,11 @@ function createPreloadApi(ctx) {
       const result = await ipcRenderer.invoke("netcatty:sftp:open", options);
       return result.sftpId;
     },
-  openSftpForSession: async (sessionId, expectedEndpoint) => {
+  openSftpForSession: async (sessionId, options) => {
     const result = await ipcRenderer.invoke("netcatty:sftp:openForSession", {
+      ...(options || {}),
       sessionId,
-      expectedEndpoint,
+      expectedEndpoint: options,
     });
     return result.sftpId;
   },

@@ -316,9 +316,7 @@ export const useSftpState = (
       // Prefer borrowing the live (or parked) terminal SSH transport so MFA is
       // not repeated. Transport leases keep the shared conn alive after the
       // terminal tab closes until the transfer SFTP lease is returned.
-      const sourceSessionId = !host.sftpSudo
-        ? resolveTransferSourceSessionId?.(host.id, host)
-        : undefined;
+      const sourceSessionId = resolveTransferSourceSessionId?.(host.id, host);
       if (sourceSessionId) {
         try {
           logger.info(
@@ -704,6 +702,12 @@ export const useSftpState = (
         const pane = getActivePane(side);
         if (!pane?.connection || pane.connection.isLocal) continue;
         if (sftpSessionsRef.current.has(pane.connection.id)) continue;
+        const connectedHost = connectedHostByTabIdRef.current.get(pane.id) ?? null;
+        const vaultHost = hosts.find((host) => host.id === pane.connection?.hostId) ?? null;
+        const targetHost = connectedHost && connectedHost !== "local" ? connectedHost : vaultHost;
+        const resolvedSourceSessionId = targetHost
+          ? resolveBrowseSourceSessionId?.(targetHost.id, targetHost)
+          : undefined;
         try {
           await ensureRemoteSftpSession({
             side,
@@ -713,7 +717,9 @@ export const useSftpState = (
             connect,
             resolveConnectedHost: (id) => connectedHostByTabIdRef.current.get(id) ?? null,
             resolveHostById: (hostId) => hosts.find((host) => host.id === hostId) ?? null,
-            resolveSourceSessionId: resolveBrowseSourceSessionId,
+            resolveSourceSessionId: resolvedSourceSessionId
+              ? () => resolvedSourceSessionId
+              : resolveBrowseSourceSessionId,
             probeSession: async (sftpId) => {
               const bridge = netcattyBridge.get();
               if (!bridge?.getSftpHomeDir) return true;

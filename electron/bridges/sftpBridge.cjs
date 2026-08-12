@@ -1945,6 +1945,7 @@ async function openSftpForSession(_event, payload) {
   const probeTimeoutMs = Number.isFinite(payload?.timeoutMs) && payload.timeoutMs > 0
     ? payload.timeoutMs
     : SCP_PROBE_TIMEOUT_MS;
+  const sudoRequested = Boolean(payload?.sudo);
 
   async function probeScpCapability() {
     const bounded = createBoundedProbeSignal(payload?.abortSignal || null, probeTimeoutMs);
@@ -1970,6 +1971,18 @@ async function openSftpForSession(_event, payload) {
   }
 
   try {
+    if (sudoRequested) {
+      const sftpWrapper = await connectSudoSftp(sshClient, payload?.password || "");
+      client.sftp = sftpWrapper;
+      client.__netcattyFileProtocol = "sftp";
+      client.__netcattySudoMode = true;
+      sftpWrapper.on?.("close", () => client.end());
+      throwIfAborted(payload?.abortSignal);
+      copySftpEncodingState(payload?.encodingStateKey, sftpId);
+      sftpClients.set(sftpId, client);
+      return { ok: true, sftpId, fileProtocol: "sftp", sourceSessionId };
+    }
+
     if (fileProtocol === "scp") {
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
