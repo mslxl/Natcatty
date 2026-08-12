@@ -275,9 +275,17 @@ test("recoverable worker exits keep host_open ownership for reconnect", async (t
     hostId: "host-b",
   });
 
-  for (const reason of ["error", "worker-exit", "superseded", "closed"]) {
+  for (const event of [
+    { reason: "error" },
+    { reason: "worker-exit" },
+    { reason: "superseded" },
+    { reason: "closed" },
+    // Shell exits that leave the tab for reconnect (missing/nonzero exitCode).
+    { reason: "exited" },
+    { reason: "exited", exitCode: 1 },
+  ]) {
     for (const listener of closedListeners) {
-      listener({ sessionId: "sess-opened", reason });
+      listener({ sessionId: "sess-opened", ...event });
     }
   }
 
@@ -297,4 +305,78 @@ test("recoverable worker exits keep host_open ownership for reconnect", async (t
     bridge.getScopedSessionIds("chat-1").sort(),
     ["sess-opened", "sess-original"],
   );
+});
+
+test("clean shell exit keeps ownership until the tab is explicitly closed", async (t) => {
+  const bridge = loadFreshBridge();
+  t.after(() => bridge.cleanup());
+  const closedListeners = new Set();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      onSessionClosed(listener) {
+        closedListeners.add(listener);
+        return {
+          dispose: () => closedListeners.delete(listener),
+        };
+      },
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setVaultAgentInvoker(async () => ({
+    ok: true,
+    sessionId: "sess-opened",
+    hostId: "host-b",
+    status: "connecting",
+  }));
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-opened",
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      hostId: "host-b",
+    },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("public/vault/hosts/open", {
+    chatSessionId: "chat-1",
+    hostId: "host-b",
+  });
+
+  // Worker reports a clean exit; auto-close may still leave the tab briefly,
+  // and disabled auto-close keeps it for reconnect — ownership stays.
+  for (const listener of closedListeners) {
+    listener({ sessionId: "sess-opened", reason: "exited", exitCode: 0 });
+  }
+
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+  assert.deepEqual(
+    bridge.getScopedSessionIds("chat-1").sort(),
+    ["sess-opened", "sess-original"],
+  );
+
+  // Renderer tab close is the authoritative ownership drop.
+  for (const listener of closedListeners) {
+    listener({ sessionId: "sess-opened", reason: "closed", explicit: true });
+  }
+  bridge.updateSessionMetadata([
+    {
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+      hostId: "host-a",
+    },
+  ], "chat-1");
+  assert.deepEqual(bridge.getScopedSessionIds("chat-1"), ["sess-original"]);
 });

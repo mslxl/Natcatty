@@ -29,8 +29,8 @@ function mergeRetentionMeta(previous, fallback) {
     hostChain: Array.isArray(fallback.hostChain) && fallback.hostChain.length > 0
       ? fallback.hostChain
       : previous.hostChain,
+    // An explicit empty array clears stopped forwards; omit/undefined keeps prior.
     activePortForwards: Array.isArray(fallback.activePortForwards)
-      && fallback.activePortForwards.length > 0
       ? fallback.activePortForwards
       : previous.activePortForwards,
     connected: previousConnected || fallbackConnected,

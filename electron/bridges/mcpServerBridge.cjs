@@ -383,15 +383,17 @@ function init(deps) {
   }
   try { disposeWorkerSessionClosed?.dispose?.(); } catch { /* ignore */ }
   disposeWorkerSessionClosed = null;
-  // Explicit UI closes and clean shell exits drop host_open ownership; otherwise
-  // retainOwnedSessions re-injects ghost session ids on the next sidebar sync.
-  // Recoverable exits (error / worker-exit / superseded / quiet transport
-  // "closed") keep ownership so auto-reconnect can reuse the same session id.
+  // Only explicit UI/tab closes drop host_open ownership. Shell "exited"
+  // events (including missing/nonzero exitCode) and recoverable exits
+  // (error / worker-exit / superseded / quiet transport "closed") keep
+  // ownership so a disconnected tab can reconnect with the same session id.
+  // Auto-close clean exits still forget ownership when the renderer closes
+  // the tab and the worker emits explicit:true.
   if (typeof terminalWorkerManager?.onSessionClosed === "function") {
     disposeWorkerSessionClosed = terminalWorkerManager.onSessionClosed((event) => {
       const sessionId = event?.sessionId;
       if (!sessionId) return;
-      if (event?.explicit === true || event?.reason === "exited") {
+      if (event?.explicit === true) {
         forgetClosedTerminalSession(sessionId);
       }
     });
@@ -984,8 +986,8 @@ function getSessionMeta(sessionId, chatSessionId) {
     hostChain: Array.isArray(fresher.hostChain) && fresher.hostChain.length > 0
       ? fresher.hostChain
       : meta.hostChain,
+    // Explicit empty array clears stopped forwards; omit/undefined keeps prior.
     activePortForwards: Array.isArray(fresher.activePortForwards)
-      && fresher.activePortForwards.length > 0
       ? fresher.activePortForwards
       : meta.activePortForwards,
     connected: true,
@@ -996,7 +998,7 @@ function getSessionMeta(sessionId, chatSessionId) {
 
 /**
  * Drop host_open ownership and scoped metadata after a terminal session is
- * actually closed (UI tab close, worker exit, or agent session_close).
+ * actually closed (explicit UI tab close or agent session_close).
  */
 function forgetClosedTerminalSession(sessionId) {
   if (!sessionId) return;

@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { retainOwnedSessions } = require("./retainOwnedSessions.cjs");
+const { retainOwnedSessions, mergeRetentionMeta } = require("./retainOwnedSessions.cjs");
 
 test("retainOwnedSessions keeps host_open-owned sessions dropped by a full scope replace", () => {
   const previousById = new Map([
@@ -114,4 +114,77 @@ test("retainOwnedSessions refreshes connected from fallback even when previous e
   assert.equal(opened.connected, true);
   assert.equal(opened.username, "root");
   assert.equal(opened.hostId, "host-b");
+});
+
+test("mergeRetentionMeta clears activePortForwards when fallback reports an empty array", () => {
+  const merged = mergeRetentionMeta(
+    {
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      activePortForwards: [{ ruleId: "fwd-1", localPort: 8080, status: "active" }],
+    },
+    {
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      activePortForwards: [],
+    },
+  );
+  assert.deepEqual(merged.activePortForwards, []);
+});
+
+test("mergeRetentionMeta keeps prior activePortForwards when fallback omits them", () => {
+  const prior = [{ ruleId: "fwd-1", localPort: 8080, status: "active" }];
+  const merged = mergeRetentionMeta(
+    {
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+      activePortForwards: prior,
+    },
+    {
+      hostname: "10.0.0.2",
+      label: "server-b",
+      connected: true,
+    },
+  );
+  assert.deepEqual(merged.activePortForwards, prior);
+});
+
+test("retainOwnedSessions applies empty activePortForwards from fallback metadata", () => {
+  const retained = retainOwnedSessions({
+    incomingSessions: [{
+      sessionId: "sess-original",
+      hostname: "10.0.0.1",
+      label: "server-a",
+      connected: true,
+    }],
+    ownedSessionIds: ["sess-opened"],
+    previousById: new Map([
+      ["sess-opened", {
+        hostname: "10.0.0.2",
+        label: "server-b",
+        connected: false,
+        hostId: "host-b",
+        activePortForwards: [{ ruleId: "fwd-1", localPort: 8080, status: "active" }],
+      }],
+    ]),
+    findFallbackMeta: (sessionId) => (
+      sessionId === "sess-opened"
+        ? {
+          hostname: "10.0.0.2",
+          label: "server-b",
+          connected: true,
+          hostId: "host-b",
+          activePortForwards: [],
+        }
+        : null
+    ),
+  });
+
+  const opened = retained.find((entry) => entry.sessionId === "sess-opened");
+  assert.ok(opened);
+  assert.deepEqual(opened.activePortForwards, []);
+  assert.equal(opened.connected, true);
 });
