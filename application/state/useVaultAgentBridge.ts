@@ -16,6 +16,10 @@ import {
   resolveDefaultKeyPassphraseAliases,
 } from '../defaultKeyPassphrases';
 import { getNotesActions, getNotesSnapshot, subscribeNotes } from './notesStore';
+import type {
+  VaultGroupMutationResult,
+  VaultGroupMutationState,
+} from '../../domain/vaultGroupMutation';
 
 export interface UseVaultAgentBridgeInput {
   hosts: Host[];
@@ -37,6 +41,9 @@ export interface UseVaultAgentBridgeInput {
   groupConfigs: GroupConfig[];
   updateGroupConfigs: (configs: GroupConfig[]) => void;
   updateManagedSources: (sources: ManagedSource[]) => void;
+  commitVaultGroupMutation: (
+    mutate: (current: VaultGroupMutationState) => VaultGroupMutationResult,
+  ) => Promise<VaultGroupMutationResult | { ok: false; superseded: true }>;
   updatePortForwardingRules: (rules: PortForwardingRule[]) => void;
   /** Optional override; defaults to notesStore so App need not subscribe to notes. */
   notes?: VaultNote[];
@@ -186,6 +193,17 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         updateHosts: (hosts) => {
           vaultSnapshotRef.current.hosts = hosts;
           current.updateHosts(hosts);
+        },
+        commitVaultGroupMutation: async (mutate) => {
+          const result = await current.commitVaultGroupMutation(mutate);
+          if (result.ok) {
+            vaultSnapshotRef.current.customGroups = result.state.groups;
+            vaultSnapshotRef.current.groupConfigs = result.state.configs;
+            vaultSnapshotRef.current.hosts = result.state.hosts;
+            vaultSnapshotRef.current.managedSources = result.state.managedSources;
+            vaultSnapshotRef.current.snippets = result.state.snippets;
+          }
+          return result;
         },
         saveKeyPassphrase: (keyPath, passphrase) => rememberKeyPassphrase({
           keyPath,

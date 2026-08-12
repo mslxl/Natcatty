@@ -61,6 +61,23 @@ function createDeps(
     updateHosts: (nextHosts) => {
       hosts = nextHosts;
     },
+    commitVaultGroupMutation: async (mutate) => {
+      const result = mutate({
+        groups: customGroups,
+        configs: groupConfigs,
+        hosts,
+        managedSources,
+        snippets,
+      });
+      if (result.ok) {
+        customGroups = result.state.groups;
+        groupConfigs = result.state.configs;
+        hosts = result.state.hosts;
+        managedSources = result.state.managedSources;
+        snippets = result.state.snippets;
+      }
+      return result;
+    },
     saveKeyPassphrase: async () => {},
     resolveKeyPassphraseAliases: async (keyPath) => [keyPath],
     readKeyPassphrases: async () => ({ values: [], unreadable: false }),
@@ -1819,15 +1836,20 @@ describe('handleVaultAgentOp vault management gaps', () => {
       id: 'deploy', label: 'Deploy', command: 'nct.log(1)', kind: 'script',
       targetGroups: ['prod'],
     };
-    let snippets = [original];
+    let committedSnippets: Snippet[] = [];
     const deps = createDeps({
-      snippets,
+      snippets: [original],
       customGroups: ['prod'],
-      updateSnippets: (snippetUpdate) => {
-        snippets = applySnippetUpdate(
-          [{ ...original, command: 'nct.log(2)' }],
-          snippetUpdate,
-        );
+      commitVaultGroupMutation: async (mutate) => {
+        const result = mutate({
+          groups: ['prod'],
+          configs: [],
+          hosts: [],
+          managedSources: [],
+          snippets: [{ ...original, command: 'nct.log(2)' }],
+        });
+        if (result.ok) committedSnippets = result.state.snippets;
+        return result;
       },
     });
 
@@ -1837,8 +1859,40 @@ describe('handleVaultAgentOp vault management gaps', () => {
     }, deps);
 
     assert.equal(result.ok, true);
-    assert.equal(snippets[0]?.command, 'nct.log(2)');
-    assert.deepEqual(snippets[0]?.targetGroups, ['production']);
+    assert.equal(committedSnippets[0]?.command, 'nct.log(2)');
+    assert.deepEqual(committedSnippets[0]?.targetGroups, ['production']);
+  });
+
+  it('does not report group update success when the joint Vault commit fails', async () => {
+    const deps = createDeps({
+      customGroups: ['prod'],
+      commitVaultGroupMutation: async () => {
+        throw new Error('Vault quota exhausted');
+      },
+    });
+
+    const result = await handleVaultAgentOp('group.update', {
+      path: 'prod', newPath: 'production',
+    }, deps);
+
+    assert.equal(result.ok, false);
+    assert.match(String(result.error), /quota exhausted/i);
+    assert.deepEqual(deps.getCustomGroups(), ['prod']);
+  });
+
+  it('does not report group delete success when the joint Vault commit fails', async () => {
+    const deps = createDeps({
+      customGroups: ['prod'],
+      commitVaultGroupMutation: async () => {
+        throw new Error('Vault quota exhausted');
+      },
+    });
+
+    const result = await handleVaultAgentOp('group.delete', { path: 'prod' }, deps);
+
+    assert.equal(result.ok, false);
+    assert.match(String(result.error), /quota exhausted/i);
+    assert.deepEqual(deps.getCustomGroups(), ['prod']);
   });
 });
 

@@ -8,9 +8,8 @@ import {
   applyGroupPathRename,
   ensureAncestorPathsExpanded,
   groupDisplayName,
-  remapSnippetTargetGroupPaths,
 } from '../../domain/hostGroupPathMutations';
-import type { Host, ManagedSource, Snippet } from '../../types';
+import type { Host, ManagedSource } from '../../types';
 import { toast } from '../ui/toast';
 
 type UseHostTreeInlineGroupActionsParams = {
@@ -18,11 +17,10 @@ type UseHostTreeInlineGroupActionsParams = {
   hosts: Host[];
   managedSources: ManagedSource[];
   onUpdateCustomGroups: (groups: string[]) => void;
-  onUpdateHosts: (hosts: Host[]) => void;
-  onUpdateSnippets: (
-    snippets: Snippet[] | ((current: Snippet[]) => Snippet[]),
-  ) => void;
-  onUpdateManagedSources: (sources: ManagedSource[]) => void;
+  onCommitGroupPathChange: (
+    sourcePath: string,
+    nextPath: string,
+  ) => Promise<{ ok: true } | { ok: false; error?: string }>;
   selectedGroupPath: string | null;
   setSelectedGroupPath: (path: string | null) => void;
   ensurePathExpanded: (path: string) => void;
@@ -35,9 +33,7 @@ export function useHostTreeInlineGroupActions({
   hosts,
   managedSources,
   onUpdateCustomGroups,
-  onUpdateHosts,
-  onUpdateSnippets,
-  onUpdateManagedSources,
+  onCommitGroupPathChange,
   selectedGroupPath,
   setSelectedGroupPath,
   ensurePathExpanded,
@@ -78,7 +74,7 @@ export function useHostTreeInlineGroupActions({
     hostTreeInlineGroupEditStore.clear();
   }, [customGroups, onUpdateCustomGroups]);
 
-  const commitInlineGroupRename = useCallback((rawName: string) => {
+  const commitInlineGroupRename = useCallback(async (rawName: string) => {
     const edit = hostTreeInlineGroupEditStore.getEdit();
     if (!edit) return;
 
@@ -114,14 +110,11 @@ export function useHostTreeInlineGroupActions({
       return;
     }
 
-    if (result.updatedManagedSources.some((source, index) => source !== managedSources[index])) {
-      onUpdateManagedSources(result.updatedManagedSources);
+    const committed = await onCommitGroupPathChange(edit.groupPath, result.nextPath);
+    if ("error" in committed) {
+      toast.error(committed.error || t('common.error'));
+      return;
     }
-    onUpdateCustomGroups(result.updatedGroups);
-    onUpdateHosts(result.updatedHosts);
-    onUpdateSnippets((currentSnippets) => (
-      remapSnippetTargetGroupPaths(currentSnippets, edit.groupPath, result.nextPath)
-    ));
 
     if (
       selectedGroupPath
@@ -140,10 +133,7 @@ export function useHostTreeInlineGroupActions({
     customGroups,
     hosts,
     managedSources,
-    onUpdateCustomGroups,
-    onUpdateHosts,
-    onUpdateSnippets,
-    onUpdateManagedSources,
+    onCommitGroupPathChange,
     selectedGroupPath,
     setSelectedGroupPath,
     t,

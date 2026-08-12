@@ -257,7 +257,7 @@ function AppViewInner({ domains }: AppViewProps) {
 
   const {
     addShellHistoryEntry, removeShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
-    clearAndRemoveSource, clearAndRemoveSources, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell,
+    clearAndRemoveSource, clearAndRemoveSources, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, commitVaultGroupMutation, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, copyWorkspaceWithCurrentShell,
     convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts,
     customGroups, currentTerminalTheme, deepLinkHostDraft, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
     followAppTerminalTheme,
@@ -566,6 +566,7 @@ function AppViewInner({ domains }: AppViewProps) {
             onUpdateManagedSources={updateManagedSources}
             onReadPersistedManagedSources={readPersistedManagedSources}
             onCommitVaultImportTransaction={commitVaultImportTransaction}
+            onCommitVaultGroupMutation={commitVaultGroupMutation}
             onClearAndRemoveManagedSource={clearAndRemoveSource}
             onClearAndRemoveManagedSources={clearAndRemoveSources}
             onUnmanageSource={unmanageSource}
