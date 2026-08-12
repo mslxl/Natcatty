@@ -480,7 +480,6 @@ const {
   buildConnectionReuseEndpoint,
   resolveConnectionKeepalivePolicy,
   normalizeEndpoint,
-  discardTransport,
   discardAllTransports,
 } = require("./sshConnectionPool.cjs");
 
@@ -980,7 +979,7 @@ const startSessionApi = createStartSessionApi({
   get selectZmodemDownloadDirectory() { return selectZmodemDownloadDirectory; },
   preparePrivateKeyForAuth, loadFirstIdentityFileForAuth, prepareSystemSshAgentForAuth, hasUserConfiguredKey, isPasswordProvided, createKeyboardInteractiveHandler, createOrderedStringAuthHandler, createAuthPhase, markAuthPhasePartialSuccess, canRepeatKeyboardInteractive, shouldSkipKiPasswordAutoFill,
   createConnectionRef, acquireConnectionRef, releaseConnectionRef, transferConnectionRef,
-  findReusableSession, findTransportByEndpoint, resolveTransportForReuse, discardTransport, discardAllTransports,
+  findReusableSession, findTransportByEndpoint, resolveTransportForReuse, discardAllTransports,
   beginTransportDial, waitForTransportDial, completeTransportDial, failTransportDial,
   buildConnectionReuseEndpoint,
   resolveConnectionKeepalivePolicy,

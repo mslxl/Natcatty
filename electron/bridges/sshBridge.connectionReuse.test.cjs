@@ -190,7 +190,7 @@ test("an ordinary open with reuse disabled bypasses an idle same-host transport"
   assert.notEqual(firstTransport.conn, sessions.get("second").conn);
 });
 
-test("idle park shell failure discards the transport and dials fresh once", async (t) => {
+test("idle park reconnect skips PID discovery when no terminal sibling remains", async (t) => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
@@ -213,65 +213,21 @@ test("idle park shell failure discards the transport and dials fresh once", asyn
   first.stream.emit("close");
   assert.equal(firstTransport.state, "idle");
 
-  let parkedShellAttempts = 0;
-  parkedConn.shell = (_window, _shellOpts, callback) => {
-    parkedShellAttempts += 1;
-    setImmediate(() => callback(new Error("Not connected")));
+  let discoveryExecCalls = 0;
+  parkedConn.exec = (_command, callback) => {
+    discoveryExecCalls += 1;
+    setTimeout(() => callback(new Error("PID discovery unavailable")), 500);
   };
 
   await start({ sender: makeSender() }, { ...options, sessionId: "second" });
 
-  assert.equal(
-    parkedShellAttempts,
-    1,
-    "a failed idle park must not be retried via dial coordination",
-  );
-  assert.equal(getClientConstructCount(), 2, "must fall back to one fresh dial");
-  assert.equal(firstTransport.state, "dead");
-  assert.notEqual(sessions.get("second").conn, parkedConn);
+  assert.equal(discoveryExecCalls, 0, "a sole reconnected shell needs no PID disambiguation");
+  assert.equal(getClientConstructCount(), 1, "must keep using the authenticated transport");
+  assert.equal(firstTransport.state, "live");
+  assert.equal(sessions.get("second").conn, parkedConn);
 });
 
-test("idle park shell failure keeps transport when concurrent leases exist", async (t) => {
-  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
-  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
-  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
-  const sessions = new Map();
-  const start = registerStartHandler(bridge, sessions);
-  const options = {
-    hostname: "192.168.1.3",
-    username: "test",
-    port: 22,
-    authMethod: "password",
-    password: "secret",
-    useSshAgent: false,
-    verifyHostKeys: false,
-  };
-
-  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
-  const first = sessions.get("first");
-  const parkedConn = first.conn;
-  const firstTransport = first.connRef;
-  first.stream.emit("close");
-  assert.equal(firstTransport.state, "idle");
-
-  const concurrentHolder = {};
-  parkedConn.shell = (_window, _shellOpts, callback) => {
-    // Another SFTP/forward/shell borrows the wake while this shell() is pending.
-    acquireConnectionRef(concurrentHolder, firstTransport);
-    setImmediate(() => callback(new Error("Not connected")));
-  };
-
-  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
-
-  assert.equal(getClientConstructCount(), 2, "must fall back to one fresh dial");
-  assert.equal(firstTransport.state, "live", "must not discard a transport with concurrent leases");
-  assert.ok(firstTransport.leases.size >= 1);
-  assert.notEqual(sessions.get("second").conn, parkedConn);
-
-  releaseConnectionRef(concurrentHolder);
-});
-
-test("idle park shell open uses a short timeout before falling back", async (t) => {
+test("endpoint reconnect skips PID discovery when only a non-terminal lease remains", async (t) => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
@@ -289,27 +245,59 @@ test("idle park shell open uses a short timeout before falling back", async (t) 
 
   await start({ sender: makeSender() }, { ...options, sessionId: "first" });
   const first = sessions.get("first");
-  const parkedConn = first.conn;
-  const firstTransport = first.connRef;
+  const sharedConn = first.conn;
+  const sharedTransport = first.connRef;
+  const sftpHolder = { id: "sftp", __sshLeaseKind: "sftp" };
+  acquireConnectionRef(sftpHolder, sharedTransport);
   first.stream.emit("close");
-  assert.equal(firstTransport.state, "idle");
+  assert.equal(sharedTransport.state, "live");
+  assert.equal(sharedTransport.count, 1);
 
-  parkedConn.shell = () => {
-    // Never invoke the callback — simulates a silently dropped router session.
+  let discoveryExecCalls = 0;
+  sharedConn.exec = (_command, callback) => {
+    discoveryExecCalls += 1;
+    setTimeout(() => callback(new Error("PID discovery unavailable")), 500);
   };
 
-  const startedAt = Date.now();
-  await start({ sender: makeSender() }, {
-    ...options,
-    sessionId: "second",
-    sshChannelOpenTimeoutMs: 40,
-  });
-  const elapsedMs = Date.now() - startedAt;
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
 
-  assert.ok(elapsedMs < 2_000, `idle park fallback took too long (${elapsedMs}ms)`);
-  assert.equal(getClientConstructCount(), 2);
-  assert.equal(firstTransport.state, "dead");
-  assert.notEqual(sessions.get("second").conn, parkedConn);
+  assert.equal(discoveryExecCalls, 0, "non-terminal leases do not make shell PID ambiguous");
+  assert.equal(getClientConstructCount(), 1, "must keep using the authenticated transport");
+  assert.equal(sharedTransport.count, 2);
+  assert.equal(sessions.get("second").conn, sharedConn);
+});
+
+test("endpoint reconnect still discovers shell PID when a terminal sibling is live", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "192.168.1.3",
+    username: "test",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+    sshChannelOpenRateLimitBackoffMs: 1,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const sharedConn = first.conn;
+  let discoveryExecCalls = 0;
+  sharedConn.exec = (_command, callback) => {
+    discoveryExecCalls += 1;
+    setImmediate(() => callback(new Error("PID discovery unavailable")));
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+
+  assert.equal(discoveryExecCalls, 1, "shared terminals still need PID disambiguation");
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sessions.get("second").conn, sharedConn);
 });
 
 function makeSender() {
@@ -1517,16 +1505,4 @@ test("falls back to a fresh connection when the source is gone", async (t) => {
     getConnectionReuseFallbackEvents(sender).map((m) => m.payload),
     [{ sessionId: "copy", sourceSessionId: "missing-source" }],
   );
-});
-
-test("idle park shell-open timeout defaults to a short bound", () => {
-  const {
-    IDLE_PARK_SHELL_OPEN_TIMEOUT_MS,
-    resolveShellOpenTimeoutMs,
-  } = require("./sshBridge/startSession.cjs");
-
-  assert.equal(IDLE_PARK_SHELL_OPEN_TIMEOUT_MS, 2_500);
-  assert.equal(resolveShellOpenTimeoutMs({}, { idle: true }), 2_500);
-  assert.equal(resolveShellOpenTimeoutMs({}, { idle: false }), undefined);
-  assert.equal(resolveShellOpenTimeoutMs({ sshChannelOpenTimeoutMs: 40 }, { idle: true }), 40);
 });
