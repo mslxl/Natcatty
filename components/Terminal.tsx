@@ -1617,7 +1617,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     terminalCwdTracker,
   ]);
 
-  const cleanupSession = async () => {
+  const cleanupSession = async (options?: { retainOwnership?: boolean }) => {
     const closingSessionId = sessionRef.current;
     xtermRuntimeRef.current?.flushKittyKeyboardReleases();
     sessionRef.current = null;
@@ -1645,7 +1645,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       // Still notify main so in-flight SSH passphrase prompts for this UI
       // sessionId are aborted even before a backend session was attached.
       try {
-        await terminalBackend.closeSession(sessionId, { bootEpoch: resolveCloseBootEpoch() });
+        await terminalBackend.closeSession(sessionId, {
+          bootEpoch: resolveCloseBootEpoch(),
+          ...(options?.retainOwnership === true ? { retainOwnership: true } : {}),
+        });
       } catch (err) {
         logger.warn("Failed to cancel pending session boot on disconnect", err);
       }
@@ -1754,7 +1757,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         clearTerminalSessionFlowAck(closingSessionId);
       }
       try {
-        await terminalBackend.closeSession(closingSessionId, { bootEpoch: resolveCloseBootEpoch() });
+        await terminalBackend.closeSession(closingSessionId, {
+          bootEpoch: resolveCloseBootEpoch(),
+          ...(options?.retainOwnership === true ? { retainOwnership: true } : {}),
+        });
       } catch (err) {
         logger.warn("Failed to close SSH session", err);
       }
@@ -3303,7 +3309,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setPendingHostKeyRequestId(null);
     setError(null);
     setProgressLogs((prev) => [...prev, "Disconnected by user."]);
-    void cleanupSession();
+    void cleanupSession({ retainOwnership: true });
     updateStatus("disconnected");
     setChainProgress(null);
     setIsDisconnectedDialogDismissed(false);
@@ -3472,7 +3478,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
 
     try {
-      await cleanupSession();
+      await cleanupSession({ retainOwnership: true });
     } catch (error) {
       finishReconnectPreparation();
       throw error;

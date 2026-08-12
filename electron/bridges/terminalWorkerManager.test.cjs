@@ -2172,6 +2172,31 @@ test("explicit close notifies host session lifecycle exactly once before the wor
   assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed", explicit: true }]);
 });
 
+test("retainOwnership close does not mark host_open cleanup as explicit", async () => {
+  const child = new FakeChild();
+  const closed = [];
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    terminalOutputChannel: { openSession: () => true, closeSession() {} },
+    electronModule: { webContents: { fromId: (id) => ({ id, isDestroyed: () => false, send() {} }) } },
+    workerScriptPath: "/worker.cjs",
+  });
+  manager.onSessionClosed((event) => closed.push(event));
+  const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  child.emit("message", {
+    kind: "response",
+    requestId: child.messages[0].requestId,
+    result: { sessionId: "session-1" },
+  });
+  await start;
+
+  manager.send("netcatty:close", {
+    sessionId: "session-1",
+    retainOwnership: true,
+  }, { webContentsId: 7 });
+  assert.deepEqual(closed, [{ sessionId: "session-1", reason: "closed" }]);
+});
+
 async function startWorkerSessionForLifecycle(manager, child) {
   const start = manager.request("netcatty:local:start", {}, { webContentsId: 7 });
   child.emit("message", {

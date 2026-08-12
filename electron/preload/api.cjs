@@ -529,6 +529,7 @@ function createPreloadApi(ctx) {
     const payload = {
       sessionId,
       ...(Number.isFinite(options?.bootEpoch) ? { bootEpoch: Number(options.bootEpoch) } : {}),
+      ...(options?.retainOwnership === true ? { retainOwnership: true } : {}),
     };
     const epochScoped = Number.isFinite(options?.bootEpoch);
     // Unscoped closes keep the historical sync listener teardown so reconnect

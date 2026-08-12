@@ -1136,6 +1136,16 @@ function createTerminalWorkerManager(options = {}) {
     }
   }
 
+  function notifyRendererSessionClosed(sessionId, payload) {
+    // Disconnect / reconnect keep the tab and session id, so they must not
+    // look like an explicit tab close to host_open ownership.
+    if (payload?.retainOwnership === true) {
+      notifySessionClosed(sessionId, "closed");
+      return;
+    }
+    notifySessionClosed(sessionId, "closed", { explicit: true });
+  }
+
   function drainOutputSession(sessionId, requestId) {
     if (!sessionId || !requestId || !outputPortReady.has(sessionId)) return false;
     const worker = ensureStarted();
@@ -1760,8 +1770,9 @@ function createTerminalWorkerManager(options = {}) {
       && !pendingSessionStartSequences.has(payload.sessionId)) {
       // Worker already tombstoned the session (clean exit / crash). A later
       // renderer close still has to notify host listeners as explicit so
-      // auto-close can drop host_open ownership.
-      notifySessionClosed(payload.sessionId, "closed", { explicit: true });
+      // auto-close can drop host_open ownership, unless this is a disconnect
+      // that keeps the tab for reconnect.
+      notifyRendererSessionClosed(payload.sessionId, payload);
       return Promise.resolve(undefined);
     }
     const requestId = randomUUID();
@@ -1824,7 +1835,7 @@ function createTerminalWorkerManager(options = {}) {
       entry?.reject(error);
     }
     if (notifyClosedAfterPost) {
-      notifySessionClosed(payload.sessionId, "closed", { explicit: true });
+      notifyRendererSessionClosed(payload.sessionId, payload);
     }
     return promise;
   }
@@ -1912,7 +1923,7 @@ function createTerminalWorkerManager(options = {}) {
       && closedSessions.has(payload.sessionId)
       && !pendingSessionStartSequences.has(payload.sessionId)) {
       closeOutputSession(payload.sessionId);
-      notifySessionClosed(payload.sessionId, "closed", { explicit: true });
+      notifyRendererSessionClosed(payload.sessionId, payload);
       return;
     }
     if (channel === "netcatty:close" && payload?.sessionId) {
@@ -1935,7 +1946,7 @@ function createTerminalWorkerManager(options = {}) {
         postError = error;
       }
       if (shouldNotifyClosed) {
-        notifySessionClosed(payload.sessionId, "closed", { explicit: true });
+        notifyRendererSessionClosed(payload.sessionId, payload);
       }
       if (postError) throw postError;
       return;

@@ -1975,6 +1975,21 @@ function clearSessionPtyBuffer(event, payload) {
   }
 }
 
+function shouldRevokeOpenedSessionOwnership(payload) {
+  // Disconnect / reconnect tear down the transport but keep the tab and session
+  // id. Those closes must not drop host_open ownership.
+  return payload?.retainOwnership !== true;
+}
+
+function reportOpenedSessionClosed(sessionId, payload) {
+  if (!shouldRevokeOpenedSessionOwnership(payload)) return;
+  try {
+    reportOpenedSessionActivity?.({ sessionId, phase: "closed" });
+  } catch {
+    // Ownership cleanup must not interfere with session teardown.
+  }
+}
+
 /**
  * Close a session
  */
@@ -2009,11 +2024,7 @@ function closeSession(event, payload) {
       return { skipped: true, reason: "boot-epoch-mismatch" };
     }
     releaseAttachedSessionState(payload.sessionId);
-    try {
-      reportOpenedSessionActivity?.({ sessionId: payload.sessionId, phase: "closed" });
-    } catch {
-      // Ownership cleanup must not interfere with session teardown.
-    }
+    reportOpenedSessionClosed(payload.sessionId, payload);
     forgetBootEpoch(payload.sessionId, payload?.bootEpoch);
     return { closed: false, reason: "missing" };
   }
@@ -2090,11 +2101,7 @@ function closeSession(event, payload) {
   ptyProcessTree.unregisterPid(payload.sessionId);
   sessions.delete(payload.sessionId);
   forgetBootEpoch(payload.sessionId, payload?.bootEpoch);
-  try {
-    reportOpenedSessionActivity?.({ sessionId: payload.sessionId, phase: "closed" });
-  } catch {
-    // Ownership cleanup must not interfere with session teardown.
-  }
+  reportOpenedSessionClosed(payload.sessionId, payload);
   return { closed: true };
 }
 
