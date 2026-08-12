@@ -123,6 +123,18 @@ export class KeywordHighlighter implements IDisposable {
   private enterQueuedWriteCancellationPending = false;
   private enterViewportScanInProgress = false;
   private enterViewportScanNeedsRepeat = false;
+  /** True while idle-Enter output should not mutate decorations (xterm full-viewport repaint flash). */
+  private enterSuppressDecorationMutation = false;
+  /**
+   * Whether onWriteParsed has already observed the current Enter submission.
+   * Prompt redraw can span several writeParsed batches (control sequences,
+   * prompt text, mode sets); callback count is not a sustained-output signal.
+   */
+  private enterWriteParsedSeen = false;
+  /** performance.now() when the current Enter started suppressing mutations. */
+  private enterSuppressionStartedAt = 0;
+  /** Viewport browsing state before the latest scroll handler ran. */
+  private wasBrowsingScrollback = false;
   private static readonly DIRTY_SCAN_PADDING = XTERM_PERFORMANCE_CONFIG.highlighting.dirtyScanPadding;
   private static readonly INPUT_QUIET_MS = XTERM_PERFORMANCE_CONFIG.highlighting.inputQuietMs;
   private static readonly WRITE_BURST_INTERVAL_MS = 28;
@@ -154,6 +166,17 @@ export class KeywordHighlighter implements IDisposable {
         if (data.includes("\r") || data.includes("\n")) {
           this.enterInputPending = true;
           this.enterQueuedWriteCancellationPending = true;
+          // First prompt redraw after Enter must not register/dispose decorations:
+          // xterm repaints the full viewport on decoration mutation and flashes
+          // still-visible keyword highlights (custom ~/# rules make this obvious).
+          this.enterSuppressDecorationMutation = true;
+          this.enterWriteParsedSeen = false;
+          this.enterSuppressionStartedAt = performance.now();
+          // Pre-Enter burst must not lift mute on a split prompt. Keep
+          // lastWriteAt so output-driven scroll detection still works before
+          // the first post-Enter updateWriteBurst.
+          this.recentWriteBurst = 0;
+          this.lastBurstDecayAt = 0;
           // Time-bound Enter protection even when no echo/write arrives (echo
           // off, stalled PTY). onWriteParsed re-arms this on each write.
           this.scheduleEnterInputIdleClear();
@@ -224,11 +247,25 @@ export class KeywordHighlighter implements IDisposable {
         const inputProtectionActive = this.isInputProtectionActive(performance.now());
         if (inputProtectionActive || this.enterInputPending) {
           if (this.enterInputPending) {
-            if (this.enterViewportScanInProgress) {
+            if (this.enterWriteParsedSeen) {
               this.updateWriteBurst();
-              this.enterViewportScanNeedsRepeat = true;
+              // Multi-batch prompt redraw is still not command output. Keep
+              // decoration mute until a write burst or the Enter idle guard.
+              if (this.shouldLiftEnterDecorationSuppression()) {
+                this.enterSuppressDecorationMutation = false;
+              }
+              if (this.enterViewportScanInProgress) {
+                this.enterViewportScanNeedsRepeat = true;
+              } else {
+                const buffer = this.term.buffer.active;
+                this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
+                this.enterViewportScanInProgress = true;
+              }
             } else {
+              this.enterWriteParsedSeen = true;
               this.markDirtyFromWrite({ includeViewportProbe: false });
+              // Index the viewport while muted so multi-frame Enter continuation
+              // can finish; decoration mutate stays suppressed for idle prompt.
               const buffer = this.term.buffer.active;
               this.addDirtyRange(buffer.viewportY, buffer.viewportY + this.term.rows - 1);
               this.enterViewportScanInProgress = true;
@@ -266,6 +303,7 @@ export class KeywordHighlighter implements IDisposable {
       })
     );
     this.lastBufferSnapshot = this.readBufferSnapshot();
+    this.wasBrowsingScrollback = this.isBrowsingScrollback();
   }
 
   public setRules(rules: readonly RuntimeKeywordHighlightRule[], enabled: boolean) {
@@ -430,6 +468,9 @@ export class KeywordHighlighter implements IDisposable {
     this.enterQueuedWriteCancellationPending = false;
     this.enterViewportScanInProgress = false;
     this.enterViewportScanNeedsRepeat = false;
+    this.enterSuppressDecorationMutation = false;
+    this.enterWriteParsedSeen = false;
+    this.enterSuppressionStartedAt = 0;
     if (hadDecorations) {
       this.term.refresh(0, this.term.rows - 1);
     }
@@ -715,16 +756,23 @@ export class KeywordHighlighter implements IDisposable {
 
   private triggerViewportChangeRefresh() {
     const isBrowsingScrollback = this.isBrowsingScrollback();
+    // End (or other jump-to-bottom) while Enter is pending: we were browsing
+    // scrollback and just landed on the bottom without waiting for echo.
+    // Distinguish that from idle-Enter echo still pinned at the bottom.
+    const returningToBottomFromScrollback =
+      this.wasBrowsingScrollback && !isBrowsingScrollback;
+    this.wasBrowsingScrollback = isBrowsingScrollback;
     // Enter echo often emits onScroll before onWriteParsed. After an idle gap
     // lastWriteAt looks stale and lastRenderRange is usually null (cleared by
     // the previous write refresh), so the output-driven scroll path would
     // synchronously rescan the viewport and flash keywords still on screen.
-    // Keep real scrollback browsing synchronous; only defer the bottom-pinned
-    // viewport movement that can be caused by the pending Enter echo.
+    // Keep real scrollback browsing synchronous; defer bottom-pinned Enter
+    // echo even when buffer dims have not updated yet (Ubuntu RTT). Do not
+    // require hasOutputDrivenViewportChange — that hole reopened the flash.
     if (
       this.enterInputPending
       && !isBrowsingScrollback
-      && this.hasOutputDrivenViewportChange()
+      && !returningToBottomFromScrollback
     ) {
       if (this.pendingRefreshReason === "scroll") {
         this.cancelQueuedRefreshSchedule();
@@ -1086,11 +1134,31 @@ export class KeywordHighlighter implements IDisposable {
     this.enterInputIdleTimer = setTimeout(() => {
       this.enterInputIdleTimer = null;
       this.enterInputPending = false;
+      this.enterSuppressDecorationMutation = false;
+      this.enterWriteParsedSeen = false;
+      this.enterSuppressionStartedAt = 0;
       // Catch up any viewport motion deferred while Enter protection blocked
       // scroll refresh (e.g. user scrolled during the post-Enter window).
       this.markVisibleRangeDirty();
       this.triggerRefresh("debounced", "write");
     }, KeywordHighlighter.ENTER_INPUT_GUARD_MS);
+  }
+
+  /**
+   * True when follow-up Enter writes look like sustained command output.
+   * WriteParsed callback count alone cannot prove that — a split prompt may
+   * need three (or more) batches — so a write burst lifts mute early.
+   * Slow streams never burst and keep rearming the idle timer; after the
+   * Enter window, prompt redraw is done and mutation is safe.
+   */
+  private shouldLiftEnterDecorationSuppression(): boolean {
+    if (!this.enterSuppressDecorationMutation) return false;
+    const now = performance.now();
+    if (this.isWriteBurstActive(now)) return true;
+    return (
+      this.enterSuppressionStartedAt > 0
+      && now - this.enterSuppressionStartedAt >= KeywordHighlighter.ENTER_INPUT_GUARD_MS
+    );
   }
 
   private isBrowsingScrollback(): boolean {
@@ -1516,16 +1584,25 @@ export class KeywordHighlighter implements IDisposable {
     if (end < start) return;
     const buffer = this.term.buffer.active;
     const pressure = getTerminalOutputPressure(this.term);
+    // Idle Enter must not mutate prompt-area decorations (xterm full-viewport
+    // flash). A real scrollback browse still needs new decorations: the scroll
+    // path records lastRenderRange even when this guard skips apply.
+    const allowEnterBrowseDecorations = this.enterSuppressDecorationMutation
+      && this.isBrowsingScrollback();
     for (let lineY = start; lineY <= end; lineY++) {
       const line = buffer.getLine(lineY);
       if (!line) {
-        this.disposeLineDecorations(lineY);
+        if (!this.enterSuppressDecorationMutation) {
+          this.disposeLineDecorations(lineY);
+        }
         continue;
       }
 
       const lineText = line.translateToString(true); // true = trim right whitespace
       if (!lineText) {
-        this.disposeLineDecorations(lineY);
+        if (!this.enterSuppressDecorationMutation) {
+          this.disposeLineDecorations(lineY);
+        }
         continue;
       }
 
@@ -1536,7 +1613,9 @@ export class KeywordHighlighter implements IDisposable {
           : this.scanWrappedLine(buffer, lineY, line, lineText, wrappedBlockCache)
         : this.getCachedRanges(line, lineText);
       if (cachedRanges.length === 0) {
-        this.disposeLineDecorations(lineY);
+        if (!this.enterSuppressDecorationMutation) {
+          this.disposeLineDecorations(lineY);
+        }
         continue;
       }
 
@@ -1551,6 +1630,18 @@ export class KeywordHighlighter implements IDisposable {
         existing.signature === signature
       ) {
         continue;
+      }
+
+      // Idle Enter: keep prior decorations mounted. Scrollback browse still
+      // creates decorations on unindexed lines so matches are visible before
+      // the 600ms guard; lines that already have decorations stay untouched.
+      if (this.enterSuppressDecorationMutation) {
+        if (!allowEnterBrowseDecorations) {
+          continue;
+        }
+        if (existing && existing.decorations.length > 0) {
+          continue;
+        }
       }
 
       this.disposeLineDecorations(lineY, existing);
