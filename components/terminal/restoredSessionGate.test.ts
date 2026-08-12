@@ -62,6 +62,10 @@ test("manual reconnect resets connect automation before opening a new session", 
     "connectScriptsAbortRef.current?.abort()",
     manualBranchIndex,
   );
+  const stopBackendIndex = source.indexOf(
+    "void stopScriptRun(activeConnectScript.runId)",
+    manualBranchIndex,
+  );
   const resetConsumedIndex = source.indexOf(
     "connectScriptsConsumedRef.current = false",
     manualBranchIndex,
@@ -84,6 +88,7 @@ test("manual reconnect resets connect automation before opening a new session", 
   assert.notEqual(reconnectIndex, -1);
   assert.notEqual(manualBranchIndex, -1);
   assert.notEqual(abortBatchIndex, -1);
+  assert.notEqual(stopBackendIndex, -1);
   assert.notEqual(resetConsumedIndex, -1);
   assert.notEqual(resetCompletedIndex, -1);
   assert.notEqual(resetInFlightIndex, -1);
@@ -91,10 +96,11 @@ test("manual reconnect resets connect automation before opening a new session", 
   assert.notEqual(autoElseIndex, -1);
   assert.notEqual(autoSuppressIndex, -1);
   assert.ok(
-    abortBatchIndex < resetConsumedIndex
+    abortBatchIndex < stopBackendIndex
+      && stopBackendIndex < resetConsumedIndex
       && abortBatchIndex < resetCompletedIndex
       && abortBatchIndex < resetInFlightIndex,
-    "manual reconnect must abort the in-flight onConnect batch before clearing guards",
+    "manual reconnect must abort and stop the backend onConnect run before clearing guards",
   );
   assert.ok(
     resetConsumedIndex < connectingIndex && resetCompletedIndex < connectingIndex,
