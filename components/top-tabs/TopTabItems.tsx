@@ -886,6 +886,7 @@ interface WorkspaceTopTabProps {
   shiftStyle: React.CSSProperties;
   showDropIndicatorBefore: boolean;
   showDropIndicatorAfter: boolean;
+  isHostDropTarget: boolean;
   onTabDragStart: (e: React.DragEvent, tabId: string) => void;
   onTabDragEnd: () => void;
   onTabDragOver: (e: React.DragEvent, tabId: string) => void;
@@ -936,6 +937,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
   shiftStyle,
   showDropIndicatorBefore,
   showDropIndicatorAfter,
+  isHostDropTarget,
   onTabDragStart,
   onTabDragEnd,
   onTabDragOver,
@@ -969,6 +971,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
           data-tab-id={workspace.id}
           data-tab-type="workspace"
           data-state={isActive ? 'active' : 'inactive'}
+          data-host-drop-active={isHostDropTarget ? 'true' : 'false'}
           onClick={handleClick}
           onDoubleClick={handleDoubleClick}
           onMouseDown={handleTabMiddleMouseDown}
@@ -983,6 +986,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
             "netcatty-tab relative h-7 pl-3 pr-2 min-w-[150px] max-w-[260px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
             "transition-transform duration-150",
             isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
+            isHostDropTarget && "ring-1 ring-inset",
             tabAnimationClass,
           )}
           style={{

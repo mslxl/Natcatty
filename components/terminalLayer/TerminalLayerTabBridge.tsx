@@ -537,6 +537,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     onUpdateSessionDynamicTitle: s.onUpdateSessionDynamicTitle,
     onUpdateSessionCodingCliProvider: s.onUpdateSessionCodingCliProvider,
     onRequestAddToWorkspace: s.onRequestAddToWorkspace,
+    onAppendHostToWorkspace: s.onAppendHostToWorkspace,
     onSetWorkspaceFocusedSession: s.onSetWorkspaceFocusedSession,
     onStartSessionRename: s.onStartSessionRename,
     onSubmitSessionRename: s.onSubmitSessionRename,
