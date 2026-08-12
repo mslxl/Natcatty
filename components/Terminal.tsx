@@ -227,6 +227,7 @@ import type { CreateXTermRuntimeContext } from "./terminal/runtime/createXTermRu
 import { TerminalView } from "./terminal/TerminalView";
 import {
   getInitialTerminalStatus,
+  shouldResetConnectAutomationOnReconnect,
   shouldSuppressHostStartupCommandOnReconnect,
   shouldStartTerminalBackend,
 } from "./terminal/restoredSessionGate";
@@ -3354,6 +3355,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!termRef.current) return;
     if (mode === "manual") {
       clearAutoReconnect();
+      // Manual reconnect skips the disconnected status transition that normally
+      // clears these refs, so onConnect scripts would otherwise stay consumed.
+      if (shouldResetConnectAutomationOnReconnect(
+        restoreState === "restored-disconnected" ? "restored" : "manual",
+      )) {
+        connectScriptsConsumedRef.current = false;
+        connectScriptsCompletedIdsRef.current = new Set();
+        connectScriptsInFlightRef.current = false;
+      }
       prepareRestoredReconnect();
       // A clone's first connection can fail (auth/host-key/transport) before the
       // inherited `cd` is consumed. prepareRestoredReconnect() just cleared the
