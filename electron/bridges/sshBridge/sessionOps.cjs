@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+const { listInteractiveShellPids } = require("../sshInteractiveShells.cjs");
 function decodeLsofFileName(value) {
   if (typeof value !== 'string') return null;
   // lsof's caret form is ambiguous: a BEL byte and the literal characters
@@ -54,6 +55,7 @@ function decodeLsofFileName(value) {
 
 function createSessionOpsApi(ctx) {
   with (ctx) {
+    const cwdRecoveryToken = Symbol('cwd-recovery');
     function getTcpLatencyTarget(session) {
       if (session.tcpLatencyDirect === false) return null;
 
@@ -237,6 +239,7 @@ function createSessionOpsApi(ctx) {
     
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
+      const isTargetedRecovery = payload?._cwdRecoveryToken === cwdRecoveryToken;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
       // Login-shell fallback defaults to the same gate as ~ guessing so callers
       // that pass allowHomeFallback: false (e.g. captureInheritedCwd) keep the
@@ -252,9 +255,178 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      if (
+        session.blockUntargetedCwdProbe
+        && session.cwdRecoveryPromise
+        && !isTargetedRecovery
+      ) {
+        return session.cwdRecoveryPromise;
+      }
+      if (session.blockUntargetedCwdProbe && !session.shellPid && !isTargetedRecovery) {
+        const transport = session.connRef || null;
+        if (session.cwdRecoveryPromise) return session.cwdRecoveryPromise;
+        if (transport?.cwdRecoveryPromise) {
+          await transport.cwdRecoveryPromise.catch(() => {});
+          return { success: false, error: 'Another cwd recovery was already in progress' };
+        }
+        if (session.allowCwdRecovery !== true || transport?.cwdRecoveryDisabled) {
+          return {
+            success: false,
+            error: 'Current directory is unavailable during an immediate reconnect',
+          };
+        }
+        const reconnectRisk = session.parkedReconnectRisk;
+        if (!reconnectRisk || reconnectRisk.hasUnknownOldShell) {
+          return {
+            success: false,
+            error: 'Current directory cannot be safely identified after reconnect',
+          };
+        }
+        // One real command/output pair permits one attempt. Ambiguous or failed
+        // recovery stays closed until another command produces output.
+        session.allowCwdRecovery = false;
+        const recoveryOwner = {
+          conn: session.conn,
+          connRef: session.connRef,
+          stream: session.stream,
+          shellCloseGeneration: transport?.shellCloseGeneration || 0,
+        };
+        const isCurrentOwner = () => (
+          sessions.get(sessionId) === session
+          && session.conn === recoveryOwner.conn
+          && session.connRef === recoveryOwner.connRef
+          && session.stream === recoveryOwner.stream
+        );
+        const recoveryPromise = (async () => {
+          const sharedTerminalCountBeforeRecovery = transport
+            ? [...sessions.values()].filter(
+              (candidate) => candidate?.connRef === transport && candidate?.stream,
+            ).length
+            : 1;
+          if (sharedTerminalCountBeforeRecovery !== 1) {
+            return {
+              success: false,
+              error: 'Current directory is ambiguous across shared terminal channels',
+            };
+          }
+          if (transport?.closedShellPidUnknown) {
+            return {
+              success: false,
+              error: 'Current directory cannot be safely identified after reconnect',
+            };
+          }
+          const oldShellPids = new Set([
+            ...(Array.isArray(reconnectRisk.oldShellPids) ? reconnectRisk.oldShellPids : []),
+            ...(
+              transport?.closedShellPids instanceof Set
+                ? [...transport.closedShellPids]
+                : []
+            ),
+          ].map(String));
+          const discovery = await listInteractiveShellPids(session.conn, {
+            quoteShellArg,
+            openingTimeoutMs: timeoutMs,
+            runTimeoutMs: timeoutMs,
+            setTimeoutFn: setTimeout,
+            clearTimeoutFn: clearTimeout,
+            // Best-effort cwd recovery must not kill the interactive shell or
+            // other SFTP/forward leases when a server never answers exec open.
+            invalidateOnOpenTimeout: false,
+          });
+          if (discovery.openTimedOut && transport) transport.cwdRecoveryDisabled = true;
+          if (!isCurrentOwner()) {
+            return { success: false, error: 'Session changed during cwd recovery' };
+          }
+          if (
+            transport
+            && (transport.shellCloseGeneration || 0) !== recoveryOwner.shellCloseGeneration
+          ) {
+            return { success: false, error: 'Terminal set changed during cwd recovery' };
+          }
+          if (transport?.closedShellPidUnknown) {
+            return {
+              success: false,
+              error: 'Current directory cannot be safely identified after reconnect',
+            };
+          }
+          const assignedSiblingPids = new Set(
+            [...sessions.values()]
+              .filter((candidate) => (
+                candidate?.connRef === session.connRef
+                && candidate !== session
+                && candidate.shellPid
+              ))
+              .map((candidate) => String(candidate.shellPid)),
+          );
+          const unclaimedPids = discovery.pids.filter(
+            (pid) => (
+              !assignedSiblingPids.has(String(pid))
+              && !oldShellPids.has(String(pid))
+            ),
+          );
+          const sharedTerminalCountAfterRecovery = session.connRef
+            ? [...sessions.values()].filter(
+              (candidate) => candidate?.connRef === session.connRef && candidate?.stream,
+            ).length
+            : 1;
+          if (
+            sharedTerminalCountAfterRecovery !== 1
+            || !discovery.available
+            || unclaimedPids.length !== 1
+          ) {
+            return {
+              success: false,
+              error: 'Current directory is still ambiguous after reconnect',
+            };
+          }
+          const recoveredPid = unclaimedPids[0];
+          const result = await getSessionPwd(event, {
+            ...payload,
+            _cwdRecoveryToken: cwdRecoveryToken,
+            _cwdRecoveryTargetPid: recoveredPid,
+            _cwdRecoveryTransport: transport,
+          });
+          if (!isCurrentOwner()) {
+            return { success: false, error: 'Session changed during cwd recovery' };
+          }
+          const sharedTerminalCountAfterPwd = transport
+            ? [...sessions.values()].filter(
+              (candidate) => candidate?.connRef === transport && candidate?.stream,
+            ).length
+            : 1;
+          if (
+            sharedTerminalCountAfterPwd !== 1
+            || (
+              transport
+              && (transport.shellCloseGeneration || 0) !== recoveryOwner.shellCloseGeneration
+            )
+            || transport?.closedShellPidUnknown
+          ) {
+            return { success: false, error: 'Terminal set changed during cwd recovery' };
+          }
+          if (!result.success) {
+            return result;
+          }
+          session.shellPid = recoveredPid;
+          session.blockUntargetedCwdProbe = false;
+          session.parkedReconnectRisk = null;
+          return result;
+        })().finally(() => {
+          if (session.cwdRecoveryPromise === recoveryPromise) {
+            session.cwdRecoveryPromise = null;
+          }
+          if (transport?.cwdRecoveryPromise === recoveryPromise) {
+            transport.cwdRecoveryPromise = null;
+          }
+        });
+        session.cwdRecoveryPromise = recoveryPromise;
+        if (transport) transport.cwdRecoveryPromise = recoveryPromise;
+        return recoveryPromise;
+      }
 
-      const targetLoginPid = /^\d+$/.test(String(session.shellPid || ''))
-        ? String(session.shellPid)
+      const requestedRecoveryPid = isTargetedRecovery ? payload?._cwdRecoveryTargetPid : '';
+      const targetLoginPid = /^\d+$/.test(String(requestedRecoveryPid || session.shellPid || ''))
+        ? String(requestedRecoveryPid || session.shellPid)
         : '';
       const sharedTerminalCount = session.connRef
         ? [...sessions.values()].filter(
@@ -272,6 +444,17 @@ function createSessionOpsApi(ctx) {
       // in the interactive terminal. The exec channel and the interactive
       // shell are both children of the same per-connection sshd process,
       // so we find the shell as a sibling via $PPID.
+      const pwdOwner = {
+        conn: session.conn,
+        connRef: session.connRef,
+        stream: session.stream,
+      };
+      const isCurrentPwdOwner = () => (
+        sessions.get(sessionId) === session
+        && session.conn === pwdOwner.conn
+        && session.connRef === pwdOwner.connRef
+        && session.stream === pwdOwner.stream
+      );
       return new Promise((resolve) => {
         let settled = false;
         const settle = (result) => {
@@ -440,14 +623,19 @@ function createSessionOpsApi(ctx) {
           maxOutputBytes: 256 * 1024,
           setTimeoutFn: setTimeout,
           clearTimeoutFn: clearTimeout,
+          invalidateOnOpenTimeout: !isTargetedRecovery,
         }).then(({ stdout, stderr, code }) => {
+              if (!isCurrentPwdOwner()) {
+                settle({ success: false, error: 'Session changed during cwd probe' });
+                return;
+              }
               const rawPath = stdout.replace(/\r?\n$/, '');
               const lsofPrefix = 'NETCATTY_LSOF_CWD=';
               const path = rawPath.startsWith(lsofPrefix)
                 ? decodeLsofFileName(rawPath.slice(lsofPrefix.length))
                 : rawPath;
               const loginPidMatch = stderr.match(/(?:^|\n)NETCATTY_LOGIN_PID=(\d+)(?:\n|$)/);
-              if (loginPidMatch) {
+              if (loginPidMatch && !isTargetedRecovery) {
                 session.shellPid = loginPidMatch[1];
               }
               log('[getSessionPwd]', { stdout: rawPath, stderr: stderr.trim(), exitCode: code });
@@ -457,6 +645,14 @@ function createSessionOpsApi(ctx) {
                 settle({ success: false, error: 'Could not determine cwd' });
               }
         }, (err) => {
+          if (isTargetedRecovery && err?.code === "SSH_EXEC_OPEN_TIMEOUT") {
+            const recoveryTransport = payload?._cwdRecoveryTransport || session.connRef;
+            if (recoveryTransport) recoveryTransport.cwdRecoveryDisabled = true;
+          }
+          if (!isCurrentPwdOwner()) {
+            settle({ success: false, error: 'Session changed during cwd probe' });
+            return;
+          }
           log('[getSessionPwd] exec error:', err?.message || String(err));
           settle({
             success: false,
@@ -864,17 +1060,19 @@ function createSessionOpsApi(ctx) {
             filesystem_type = mount_filesystem_types[mount_point];
           }
           if (mount_point == "") next;
-          if (source ~ /^\/dev\/loop/) next;
+          if (source ~ /^\/dev\/loop/ && mount_point != "/") next;
           if (mount_point != "/" && mount_point ~ /^\/(etc|proc|sys|dev|snap)(\/|$)/) next;
           if (mount_point != "/" && source ~ /^(overlay|overlayfs)(\/|$|:)/) next;
           fstype = tolower(filesystem_type);
           source_lower = tolower(source);
           is_network_or_fuse = 0;
-          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs)$/) is_network_or_fuse = 1;
+          if (fstype ~ /^fuse\.(rclone|sshfs|s3fs|gcsfuse|ufs|mergerfs|unionfs|unionfs-fuse|ceph|ceph-fuse|cephfs|glusterfs)$/) is_network_or_fuse = 1;
           if (fstype ~ /clouddrive/) is_network_or_fuse = 1;
-          if (fstype ~ /^(rclone|sshfs|s3fs|gcsfuse)$/) is_network_or_fuse = 1;
+          if (fstype ~ /^(fuse|rclone|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|nfs|nfs4|cifs|smb|smb3|smbfs|afs|ceph|cephfs|glusterfs)$/) is_network_or_fuse = 1;
           if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /clouddrive/) is_network_or_fuse = 1;
-          if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /^(fuse|fuse\..*|rclone|rclone:.*|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|ufs)$/) is_network_or_fuse = 1;
+          if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /^(fuse|fuse\..*|rclone|rclone:.*|sshfs|s3fs|gcsfuse|mergerfs|unionfs|unionfs-fuse|ceph|ceph-fuse|cephfs|gluster|glusterfs|ufs)$/) is_network_or_fuse = 1;
+          if ((filesystem_type == "" || filesystem_type == "-") && source_lower ~ /^\/\//) is_network_or_fuse = 1;
+          if ((filesystem_type == "" || filesystem_type == "-") && source_lower !~ /^(apfs|overlay|overlayfs):/ && source_lower ~ /^([a-z0-9._-]+|\[[0-9a-f:]+(%[a-z0-9._-]+)?\]):\//) is_network_or_fuse = 1;
           if (is_network_or_fuse) next;
           pseudo_type = (fstype != "" && fstype != "-") ? fstype : source_lower;
           if (mount_point != "/" && pseudo_type ~ /^(tmpfs|shm|devtmpfs|udev|none|proc|sysfs|cgroup|cgroup2|devpts|mqueue|hugetlbfs|debugfs|tracefs|securityfs|pstore|bpf|fusectl|configfs|ramfs|rpc_pipefs|binfmt_misc|efivarfs)$/) next;
@@ -891,7 +1089,7 @@ function createSessionOpsApi(ctx) {
       const linuxDiskTable = `{ LC_ALL=C mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT 2>/dev/null || LC_ALL=C df -kP 2>/dev/null; }`;
       const linuxDiskRoot = `{ LC_ALL=C mount 2>/dev/null; printf "%s\\n" "__NETCATTY_DF__"; LC_ALL=C df -kPT / 2>/dev/null || LC_ALL=C df -kP / 2>/dev/null; }`;
     
-      // Command to get CPU (overall + per-core), Memory, Disk, and Network stats
+      // Command to get CPU (overall + per-core), Memory, and Network stats
       // This command is designed to work across most Linux distributions
       // Note: Using semicolons and avoiding comments for single-line execution
       // CPU: Output raw values (total and idle) instead of percentage - we calculate delta on backend
@@ -909,17 +1107,6 @@ function createSessionOpsApi(ctx) {
         // GNU ps: ps -eo pid,%mem,comm --sort=-%mem
         // BusyBox fallback: top exposes %VSZ/%CPU; minimal builds without top use plain ps VSZ.
         `procs=$(if procraw=$(ps -eo pid,%mem,comm --sort=-%mem 2>/dev/null); then printf "%s\n" "$procraw" | awk 'NR>1 && NR<=11 {gsub(/;/, "_", $3); printf "%s;%.1f;%s,", $1, $2, $3}' | sed 's/,$//'; elif topraw=$(top -b -n 1 2>/dev/null); then printf "%s\n" "$topraw" | awk '$1 == "PID" {for(i=1;i<=NF;i++){if($i=="%VSZ") mem_col=i; else if($i=="COMMAND") cmd_col=i} next} $1 ~ /^[0-9]+$/ && mem_col && cmd_col {pct=$(mem_col); gsub(/%/, "", pct); cmd=$(cmd_col); gsub(/;/, "_", cmd); print pct ";" $1 ";" cmd}' | sort -t ';' -k1,1rn | head -10 | awk -F';' '{printf "%s;%.1f;%s,", $2, $1, $3}' | sed 's/,$//'; else ps ww 2>/dev/null | awk -v total=$(awk '/^MemTotal:/{print $2}' /proc/meminfo) '$1 ~ /^[0-9]+$/ {v=$3; unit=substr(v,length(v),1); mult=1; if(unit=="m"||unit=="M")mult=1024; else if(unit=="g"||unit=="G")mult=1048576; sub(/[mMgG]$/, "", v); pct=total>0?v*mult*100/total:0; cmd=$5; gsub(/;/, "_", cmd); print pct, $1, cmd}' | sort -rn | head -10 | awk '{printf "%s;%.1f;%s,", $2, $1, $3}' | sed 's/,$//'; fi)`,
-        // Get mounted disk info. GNU and BusyBox support df -T; the awk
-        // parser also accepts the legacy POSIX -kP layout as a fallback.
-        // PVE/LXC guests often expose ZFS datasets and host bind mounts without a
-        // /dev/* source, so keep non-pseudo filesystems (not only block devices).
-        // Skip FUSE/cloud network mounts (rclone, CloudDrive, ufs, …): their
-        // quotas inflate System Overview totals and are not local block capacity.
-        // When Capacity is "-" (some CT/cgroup views), derive percent from used/total.
-        // If the full table yields nothing, fall back to df on "/" alone.
-        // Do not blanket-skip /run: udisks may mount real volumes under /run/media;
-        // tmpfs/udev/shm rows are dropped by filesystem-source checks instead.
-        `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' ); [ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         // Get network interface stats from /proc/net/dev (interface:rx_bytes:tx_bytes), excluding lo and virtual interfaces
         `net=$(cat /proc/net/dev 2>/dev/null | awk 'NR>2 {gsub(/^[ \\t]+/, ""); split($0, a, ":"); iface=a[1]; if(iface != "lo" && iface !~ /^veth/ && iface !~ /^docker/ && iface !~ /^br-/) {split(a[2], b); printf "%s:%s:%s,", iface, b[1], b[9]}}' | sed 's/,$//' || echo "")`,
         `hostname_value=$(hostname 2>/dev/null || uname -n 2>/dev/null || echo "")`,
@@ -928,16 +1115,53 @@ function createSessionOpsApi(ctx) {
         `uptime=$(awk '{printf "%.0f",$1}' /proc/uptime 2>/dev/null || echo "")`,
         `loadavg=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null || echo "")`,
         // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
-        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|DISKS:$disks|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
+        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
       ].join('; ');
-    
-      // Auto-detect OS via uname — only Linux and macOS are supported
+
+      // Get mounted disk info. GNU and BusyBox support df -T; the awk parser
+      // also accepts the legacy POSIX -kP layout as a fallback. PVE/LXC guests
+      // often expose ZFS datasets and host bind mounts without a /dev/* source,
+      // so keep non-pseudo filesystems. Skip FUSE/cloud/NFS/CIFS network mounts:
+      // their quotas are not local capacity. Keep a loop-backed rootfs while
+      // dropping snap loops, derive missing percentages, and fall back to "/".
+      const linuxDiskStatsCommand = [
+        `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
+        `[ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
+        `echo "DISKS:$disks"`,
+      ].join('; ');
+
+      // Dropbear rejects command requests larger than 9000 bytes by closing
+      // the entire SSH transport, including an already-open interactive shell.
+      // Keep Linux's large disk parser in its own request so future stats
+      // additions cannot repeat issue #2924.
+      const dropbearMaxCommandBytes = 9000;
       const latencyMarker = "NC_LATENCY_MARK";
       const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const statsExecOptions = {
+        openingTimeoutMs: 10000,
+        runTimeoutMs: 10000,
+        maxOutputBytes: 1024 * 1024,
+        setTimeoutFn: setTimeout,
+        clearTimeoutFn: clearTimeout,
+      };
+      const executeStatsCommand = (command, options = statsExecOptions) => {
+        const commandBytes = Buffer.byteLength(command, 'utf8');
+        if (commandBytes > dropbearMaxCommandBytes) {
+          const error = new Error(`Server stats command exceeds Dropbear limit (${commandBytes} bytes)`);
+          error.code = "SSH_EXEC_COMMAND_LIMIT";
+          return Promise.reject(error);
+        }
+        return executeBoundedSshCommand(conn, command, options);
+      };
       const tcpLatencyTarget = getTcpLatencyTarget(session);
       const tcpLatencyPromise = tcpLatencyTarget && typeof measureTcpConnectLatency === 'function'
         ? Promise.resolve(measureTcpConnectLatency(tcpLatencyTarget)).catch(() => null)
         : Promise.resolve(null);
+      const formatStatsError = (error) => (
+        error?.code === "SSH_EXEC_OPEN_TIMEOUT" || error?.code === "SSH_EXEC_RUN_TIMEOUT"
+          ? "Timeout getting server stats"
+          : error?.message || String(error)
+      );
       return new Promise((resolve) => {
         let settled = false;
         const settle = (result) => {
@@ -946,20 +1170,24 @@ function createSessionOpsApi(ctx) {
           resolve(result);
           return true;
         };
-        void executeBoundedSshCommand(conn, statsCommand, {
-          openingTimeoutMs: 10000,
-          runTimeoutMs: 10000,
-          maxOutputBytes: 1024 * 1024,
-          setTimeoutFn: setTimeout,
-          clearTimeoutFn: clearTimeout,
-        }).then(async ({ stdout }) => {
+        void (async () => {
+          try {
+            const { stdout } = await executeStatsCommand(statsCommand);
             if (settled) return;
+            let combinedStdout = String(stdout || '').trim();
+            const primaryOutput = combinedStdout.replace(new RegExp(`^${latencyMarker}\\|?`), '');
+            if (primaryOutput.startsWith('CPURAW:')) {
+              const diskResult = await executeStatsCommand(linuxDiskStatsCommand);
+              combinedStdout = [combinedStdout, String(diskResult.stdout || '').trim()]
+                .filter(Boolean)
+                .join('|');
+            }
             const measuredLatency = await tcpLatencyPromise;
             if (settled) return;
             const latencyMs = Number.isFinite(measuredLatency) ? measuredLatency : null;
     
             // Parse the output
-            const output = stdout.trim().replace(new RegExp(`^${latencyMarker}\\|?`), '');
+            const output = combinedStdout.replace(new RegExp(`^${latencyMarker}\\|?`), '');
     
             // Unsupported OS — stop polling this session
             if (output.startsWith('UNSUPPORTED_OS:')) {
@@ -1287,14 +1515,10 @@ function createSessionOpsApi(ctx) {
                 loadAverage,
               },
             });
-          }, (error) => {
-            settle({
-              success: false,
-              error: error?.code === "SSH_EXEC_OPEN_TIMEOUT" || error?.code === "SSH_EXEC_RUN_TIMEOUT"
-                ? "Timeout getting server stats"
-                : error?.message || String(error),
-            });
-          });
+          } catch (error) {
+            settle({ success: false, error: formatStatsError(error) });
+          }
+        })();
       });
     }
     

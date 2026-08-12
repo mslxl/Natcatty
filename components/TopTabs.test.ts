@@ -361,6 +361,14 @@ test("workspace session drag data is recognized with a dedicated drag type", () 
   assert.equal(getWorkspaceSessionDragId(transfer), "session-1");
 });
 
+test("TopTabs wires host drops to workspace tabs without replacing tab reorder", () => {
+  assert.match(topTabsSource, /appendHostFromWorkspaceDrop/);
+  assert.match(topTabsSource, /workspaceMap\.has\(targetTabId\)/);
+  assert.match(topTabsSource, /dropEffect = 'copy'/);
+  assert.match(topTabsSource, /isHostDropTarget=\{hostDropWorkspaceId === workspace\.id\}/);
+  assert.match(appViewSource, /<TopTabs[\s\S]*?onAppendHostToWorkspace=\{handleAppendHostToWorkspace\}/);
+});
+
 test("workspace session drag id falls back to the legacy session id", () => {
   const transfer = {
     types: ["session-id"],

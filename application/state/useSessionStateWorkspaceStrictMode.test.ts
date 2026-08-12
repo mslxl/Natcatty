@@ -105,4 +105,8 @@ test('workspace host creation paths use the host session snapshot factory', () =
     source,
     /createWorkspaceHostTerminalSession\(newSessionId,\s*host,\s*workspaceId\)/,
   );
+  assert.doesNotMatch(
+    source,
+    /if \(host\.protocol === 'serial'\) return null/,
+  );
 });

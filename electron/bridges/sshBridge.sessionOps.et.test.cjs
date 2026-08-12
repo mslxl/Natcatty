@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 
 const { createSessionOpsApi } = require("./sshBridge/sessionOps.cjs");
+const { selectServerStatsFixtureOutput } = require("./sshBridge/serverStatsTestHelpers.cjs");
 
 function fakeStream(stdout, waitForWrite = false) {
   const stream = new EventEmitter();
@@ -25,10 +26,7 @@ function fakeStream(stdout, waitForWrite = false) {
 function fakeConn(stdout) {
   return {
     exec(command, cb) {
-      const output = command.includes("NC_LATENCY_MARK") && !stdout.includes("NC_LATENCY_MARK")
-        ? `NC_LATENCY_MARK|${stdout}`
-        : stdout;
-      cb(null, fakeStream(output));
+      cb(null, fakeStream(selectServerStatsFixtureOutput(command, stdout)));
     },
   };
 }
@@ -120,7 +118,7 @@ test("getServerStats opens an ET stats companion connection for direct ET sessio
 });
 
 test("getServerStats falls back to execOnEtSession for jumped ET sessions", async () => {
-  let command = "";
+  const commands = [];
   let ensureCalls = 0;
   const api = makeApi(
     {
@@ -131,8 +129,12 @@ test("getServerStats falls back to execOnEtSession for jumped ET sessions", asyn
       etStatsAuth: { hostname: "example.test", hasJumpHost: true },
     },
     async (_session, cmd) => {
-      command = cmd;
-      return { success: true, stdout: LINUX_STATS, stderr: "" };
+      commands.push(cmd);
+      return {
+        success: true,
+        stdout: cmd.includes('echo "DISKS:$disks"') ? "DISKS:" : LINUX_STATS,
+        stderr: "",
+      };
     },
     {
       ensureEtStatsConnection: async () => {
@@ -145,11 +147,14 @@ test("getServerStats falls back to execOnEtSession for jumped ET sessions", asyn
   const result = await api.getServerStats(null, { sessionId: "et-1" });
 
   assert.equal(ensureCalls, 0);
-  assert.match(command, /CPURAW|UNSUPPORTED_OS/);
+  assert.equal(commands.length, 2);
+  assert.match(commands[0], /CPURAW|UNSUPPORTED_OS/);
+  assert.match(commands[1], /DISKS:/);
+  assert.ok(commands.every((command) => Buffer.byteLength(command, "utf8") <= 9000));
   assert.equal(result.success, true);
   assert.equal(result.stats.memTotal, 8000);
   assert.equal(result.stats.latencyMs, null);
-  assert.doesNotMatch(command, /read -r nc_latency_probe/);
+  assert.ok(commands.every((command) => !/read -r nc_latency_probe/.test(command)));
 });
 
 test("getServerStats falls back to execOnEtSession when the direct ET companion is unavailable", async () => {
@@ -163,9 +168,13 @@ test("getServerStats falls back to execOnEtSession when the direct ET companion 
       etStatsAuth: { hostname: "example.test" },
       etStatsConnFailed: true,
     },
-    async () => {
+    async (_session, command) => {
       execFallbackCalls += 1;
-      return { success: true, stdout: LINUX_STATS, stderr: "" };
+      return {
+        success: true,
+        stdout: command.includes('echo "DISKS:$disks"') ? "DISKS:" : LINUX_STATS,
+        stderr: "",
+      };
     },
     {
       ensureEtStatsConnection: async () => {
@@ -176,7 +185,7 @@ test("getServerStats falls back to execOnEtSession when the direct ET companion 
 
   const result = await api.getServerStats(null, { sessionId: "et-1" });
 
-  assert.equal(execFallbackCalls, 1);
+  assert.equal(execFallbackCalls, 2);
   assert.equal(result.success, true);
   assert.equal(result.stats.memTotal, 8000);
   assert.equal(result.stats.latencyMs, 3);

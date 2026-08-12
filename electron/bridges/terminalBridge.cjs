@@ -1528,6 +1528,18 @@ function writeToSessionNow(payload, data, logRewrite = payload.logRewrite) {
         }, trace);
       }
       const writeResult = session.stream.write(outgoing);
+      if (
+        session.blockUntargetedCwdProbe
+        && !payload.automated
+        && payload.sensitive !== true
+        && !isTerminalReportSequence(data)
+        && /[\r\n]/.test(String(data || ""))
+      ) {
+        // Arm recovery only after this generation's interactive stream really
+        // accepted a submitted user command. Blocked transfers and failed or
+        // superseded async input never reach this point.
+        session.pendingCwdRecoveryAfterUserCommand = true;
+      }
       if (shouldLogInterruptWrite) {
         logTerminalInterruptDebug("ssh-stream-write-done", {
           writeResult,

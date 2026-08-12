@@ -15,8 +15,8 @@ const {
 } = require("../terminalInterruptDiagnostics.cjs");
 const { runWhenProxyConnectionReady } = require("../proxyUtils.cjs");
 const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
-const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
-const { openBoundedSshShellCallback, isSshChannelOpenRateLimitedError } = require("../boundedSshChannelOpen.cjs");
+const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
+const { listInteractiveShellPids: listInteractiveShellPidsShared } = require("../sshInteractiveShells.cjs");
 const {
   annotateMacLocalNetworkErrorMessage,
   resolveFirstTcpEndpoint,
@@ -189,86 +189,9 @@ async function prepareAgentForwardingOptions(options, resolveForwardingAgentSock
 
 function createStartSessionApi(ctx) {
   with (ctx) {
-    const listInteractiveShellPids = async (conn) => {
-      if (!conn || typeof conn.exec !== "function") {
-        return Promise.resolve({ available: false, pids: [], ages: {} });
-      }
-
-      const scanCompleteMarker = "__NETCATTY_SHELL_SCAN_COMPLETE__";
-      // Emit "pid etimes" when possible. etimes (elapsed seconds) is a
-      // wrap-safe ordering key: higher means older. Plain "pid" remains valid
-      // for hosts that lack etimes.
-      const script = `SELF=$$
-ps_output=$(ps -e -o pid=,ppid=,tty=,comm=,etimes= 2>/dev/null) || ps_output=$(ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null) || exit 69
-{
-  printf '%s\n' "$ps_output" | awk -v pp="$PPID" -v self="$SELF" '
-    function isshell(c) { sub(/^.*\\//, "", c); sub(/^-/, "", c); return c ~ /^(ba|z|fi|k|da|a|c|tc)?sh$/ }
-    $1 != self && $2 == pp && $3 !~ /^\\?+$/ && isshell($4) {
-      if (NF >= 5 && $5 ~ /^[0-9]+$/) print $1, $5+0
-      else print $1
-    }
-  '
-  if [ -r /proc/$SELF/environ ]; then
-    conn=$(tr '\\0' '\\n' < /proc/$SELF/environ 2>/dev/null | sed -n 's/^SSH_CONNECTION=//p' | head -n1)
-    if [ -n "$conn" ]; then
-      for d in /proc/[0-9]*; do
-        pid=$(basename "$d")
-        [ "$pid" = "$SELF" ] && continue
-        [ -r "$d/environ" ] || continue
-        conn2=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null | sed -n 's/^SSH_CONNECTION=//p' | head -n1)
-        [ "$conn2" = "$conn" ] || continue
-        comm=$(cat "$d/comm" 2>/dev/null)
-        case "$comm" in sh|bash|zsh|fish|ksh|dash|ash|csh|tcsh) ;; *) continue ;; esac
-        ppid=$(awk '{ print $4 }' "$d/stat" 2>/dev/null)
-        pcomm=$(cat "/proc/$ppid/comm" 2>/dev/null)
-        case "$pcomm" in sshd|dropbear|dropbearmulti) ;; *) continue ;; esac
-        tty=$(ps -p "$pid" -o tty= 2>/dev/null | tr -d '[:space:]')
-        [ -n "$tty" ] && [ "$tty" != "?" ] || continue
-        etimes=$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d '[:space:]')
-        case "$etimes" in
-          ''|*[!0-9]*) printf '%s\\n' "$pid" ;;
-          *) printf '%s %s\\n' "$pid" "$etimes" ;;
-        esac
-      done
-    fi
-  fi
-} | awk '/^[0-9]+/ && !seen[$1]++ { print }'
-printf '%s\n' '${scanCompleteMarker}'`;
-
-      try {
-        const result = await executeBoundedSshCommand(
-          conn,
-          `exec sh -c ${quoteShellArg(script)}`,
-          {
-            openingTimeoutMs: 1500,
-            runTimeoutMs: 1500,
-            maxOutputBytes: 1024 * 1024,
-          },
-        );
-        const lines = result.stdout.split(/\r?\n/);
-        const completed = lines.includes(scanCompleteMarker);
-        const available = completed && (result.code === null || result.code === 0);
-        const pids = [];
-        const ages = {};
-        if (available) {
-          for (const line of lines) {
-            const match = /^(\d+)(?:\s+(\d+))?$/.exec(String(line || "").trim());
-            if (!match) continue;
-            const pid = match[1];
-            if (!pids.includes(pid)) pids.push(pid);
-            if (match[2] !== undefined) ages[pid] = Number(match[2]);
-          }
-        }
-        return { available, pids, ages };
-      } catch (error) {
-        return {
-          available: false,
-          rateLimited: isSshChannelOpenRateLimitedError(error),
-          pids: [],
-          ages: {},
-        };
-      }
-    };
+    const listInteractiveShellPids = (conn) => listInteractiveShellPidsShared(conn, {
+      quoteShellArg,
+    });
 
     const listInteractiveShellPidsResilient = async (conn, opts = {}) => {
       const attempts = Math.max(1, Number(opts.attempts) || 1);
@@ -545,6 +468,10 @@ printf '%s\n' '${scanCompleteMarker}'`;
             bytes: Buffer.isBuffer(data) ? data.length : Buffer.byteLength(String(data)),
           });
           return;
+        }
+        if (session.blockUntargetedCwdProbe && session.pendingCwdRecoveryAfterUserCommand) {
+          session.pendingCwdRecoveryAfterUserCommand = false;
+          session.allowCwdRecovery = true;
         }
         // data is Buffer from ssh2 — feed raw bytes to ZMODEM sentry.
         // In normal mode, sentry's onData callback handles decoding and buffering.
@@ -834,7 +761,13 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 failReuse(setupErr);
                 return;
               }
+              const reconnectAfterLastShellClose =
+                consumePendingShellReconnectRisk(connRef);
               const copiedSession = sessions.get(sessionId);
+              if (copiedSession && reconnectAfterLastShellClose) {
+                copiedSession.blockUntargetedCwdProbe = true;
+                copiedSession.parkedReconnectRisk = reconnectAfterLastShellClose;
+              }
               if (copiedSession) {
                 if (typeof transferConnectionRef === "function") {
                   transferConnectionRef(refHolder, copiedSession);
@@ -873,6 +806,32 @@ printf '%s\n' '${scanCompleteMarker}'`;
                 // copy source (or another tab) still lacks shellPid — otherwise
                 // waitForNew sees multiple "new" PIDs and returns null.
                 const needsUntrackedReconcile = listUnassignedSiblings().length > 0;
+                const blockedEndpointSibling = !options.sourceSessionId
+                  && listUnassignedSiblings().some(
+                    (candidate) => candidate.blockUntargetedCwdProbe === true,
+                  );
+                // Idle-park reconnect after the last interactive shell closed:
+                // no sibling tabs share this transport, so post-open discovery
+                // cannot disambiguate anything. Skip the exec — bastions often
+                // tear down the interactive session when a second channel opens,
+                // racing start completion as
+                // "Terminal session closed before its output route opened" (#2923).
+                // Copy Tab (sourceSessionId) still needs discovery even when the
+                // source closes mid-open and leaves an empty baseline.
+                if (
+                  baseline.length === 0
+                  && !options.sourceSessionId
+                  && (!needsUntrackedReconcile || blockedEndpointSibling)
+                ) {
+                  if (copiedSession && blockedEndpointSibling) {
+                    copiedSession.blockUntargetedCwdProbe = true;
+                    copiedSession.parkedReconnectRisk = {
+                      oldShellPids: [],
+                      hasUnknownOldShell: true,
+                    };
+                  }
+                  return null;
+                }
                 if (baseline.length === 0 || needsUntrackedReconcile) {
                   const discovery = await listInteractiveShellPidsResilient(conn, {
                     initialDelayMs: discoveryBackoffMs,

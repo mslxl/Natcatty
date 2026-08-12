@@ -7,6 +7,10 @@ import { buildTabShortcutNumberById } from '../application/app/tabShortcutTarget
 import { useShortcutModifierHeld } from '../application/state/useShortcutModifierHeld';
 import type { EditorTabChrome } from '../application/state/editorTabStore';
 import { collectSessionIds } from '../domain/workspace';
+import {
+  appendHostFromWorkspaceDrop,
+  resolveFocusSidebarDragKind,
+} from '../domain/focusSidebarHostDrop';
 import type { DynamicTabTitleMode, KeyBinding } from '../domain/models';
 
 import { getTopTabInsertionTarget, getWorkspaceSessionDragId, hasWorkspaceSessionDrag } from '../application/state/terminalDragData';
@@ -156,6 +160,7 @@ interface TopTabsProps {
     sessionId: string,
     tabInsertionTarget?: { tabId: string; position: 'before' | 'after'; additionalTabIds?: readonly string[] },
   ) => void;
+  onAppendHostToWorkspace?: (workspaceId: string, hostId: string) => void;
   showSftpTab: boolean;
   showHostTreeSidebar: boolean;
   switchTabKeyBinding: Pick<KeyBinding, 'mac' | 'pc'> | null;
@@ -201,6 +206,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   onEndSessionDrag,
   onReorderTabs,
   onRemoveSessionFromWorkspace,
+  onAppendHostToWorkspace,
   showSftpTab,
   showHostTreeSidebar,
   switchTabKeyBinding,
@@ -260,6 +266,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   // Tab reorder drag state
   const [dropIndicator, setDropIndicator] = useState<{ tabId: string; position: 'before' | 'after' } | null>(null);
   const [isDraggingForReorder, setIsDraggingForReorder] = useState(false);
+  const [hostDropWorkspaceId, setHostDropWorkspaceId] = useState<string | null>(null);
   const draggedTabIdRef = useRef<string | null>(null);
   const [isWindowFullscreen, setIsWindowFullscreen] = useState(false);
 
@@ -521,12 +528,28 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
     draggedTabIdRef.current = null;
     setDropIndicator(null);
     setIsDraggingForReorder(false);
+    setHostDropWorkspaceId(null);
     onEndSessionDrag();
   }, [onEndSessionDrag]);
 
   const handleTabDragOver = useCallback((e: React.DragEvent, tabId: string) => {
+    const dragKind = resolveFocusSidebarDragKind({ types: e.dataTransfer.types });
+    if (dragKind === 'host-append') {
+      if (!onAppendHostToWorkspace || !workspaceMap.has(tabId)) {
+        setHostDropWorkspaceId(null);
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      setDropIndicator(null);
+      setHostDropWorkspaceId(tabId);
+      return;
+    }
+
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    setHostDropWorkspaceId(null);
 
     if (hasWorkspaceSessionDrag(e.dataTransfer)) {
       setDropIndicator(null);
@@ -544,16 +567,40 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
     // Always update drop indicator on drag over to ensure it doesn't get stuck
     setDropIndicator({ tabId, position });
-  }, []);
+  }, [onAppendHostToWorkspace, workspaceMap]);
 
-  const handleTabDragLeave = useCallback((_e: React.DragEvent) => {
+  const handleTabDragLeave = useCallback((e: React.DragEvent) => {
+    const next = e.relatedTarget;
+    if (next instanceof Node && e.currentTarget.contains(next)) return;
+    setHostDropWorkspaceId(null);
     // Don't clear drop indicator on drag leave - let onDragOver manage it
     // This prevents the indicator from flickering/disappearing during fast drags
     // The indicator will be cleared when drag ends or on drop
   }, []);
 
   const handleTabDrop = useCallback((e: React.DragEvent, targetTabId: string) => {
+    const dragKind = resolveFocusSidebarDragKind({ types: e.dataTransfer.types });
+    if (dragKind === 'host-append') {
+      const handled = Boolean(
+        onAppendHostToWorkspace
+        && workspaceMap.has(targetTabId)
+        && appendHostFromWorkspaceDrop({
+          types: e.dataTransfer.types,
+          getData: (type) => e.dataTransfer.getData(type),
+          workspaceId: targetTabId,
+          onAppendHostToWorkspace,
+        }),
+      );
+      setHostDropWorkspaceId(null);
+      setDropIndicator(null);
+      if (!handled) return;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
     e.preventDefault();
+    setHostDropWorkspaceId(null);
     if (hasWorkspaceSessionDrag(e.dataTransfer)) {
       const draggedSessionId = getWorkspaceSessionDragId(e.dataTransfer);
       const draggedSession = sessions.find((s) => s.id === draggedSessionId);
@@ -582,7 +629,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
 
     setDropIndicator(null);
     setIsDraggingForReorder(false);
-  }, [dropIndicator, onEndSessionDrag, onRemoveSessionFromWorkspace, onReorderTabs, sessions, workspaces]);
+  }, [dropIndicator, onAppendHostToWorkspace, onEndSessionDrag, onRemoveSessionFromWorkspace, onReorderTabs, sessions, workspaceMap, workspaces]);
 
   const handleTabBarDrop = useCallback((e: React.DragEvent) => {
     if (!hasWorkspaceSessionDrag(e.dataTransfer)) return;
@@ -872,6 +919,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
             shiftStyle={shiftStyle}
             showDropIndicatorBefore={showDropIndicatorBefore}
             showDropIndicatorAfter={showDropIndicatorAfter}
+            isHostDropTarget={hostDropWorkspaceId === workspace.id}
             onTabDragStart={handleTabDragStart}
             onTabDragEnd={handleTabDragEnd}
             onTabDragOver={handleTabDragOver}
@@ -1208,6 +1256,7 @@ export const topTabsAreEqual = (prev: TopTabsProps, next: TopTabsProps): boolean
     prev.onCopySession === next.onCopySession &&
     prev.onCopySessionToNewWindow === next.onCopySessionToNewWindow &&
     prev.onEditHost === next.onEditHost &&
+    prev.onAppendHostToWorkspace === next.onAppendHostToWorkspace &&
     prev.onCopyWorkspace === next.onCopyWorkspace &&
     prev.onOpenSettings === next.onOpenSettings &&
     prev.externalMcpEnabled === next.externalMcpEnabled &&

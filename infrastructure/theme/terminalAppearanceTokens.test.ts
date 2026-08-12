@@ -141,3 +141,16 @@ test('every built-in terminal theme keeps side panel text readable', () => {
     }
   }
 });
+
+test('Netcatty Light side panel tokens are light so color-scheme can match the composer', () => {
+  const theme = TERMINAL_THEMES.find((entry) => entry.id === 'netcatty-light');
+  assert.ok(theme);
+  assert.equal(theme.type, 'light');
+  const vars = buildTerminalSidePanelCssVars(theme);
+  const backgroundLuminance = getHslTokenRelativeLuminance(vars['--background']);
+  assert.notEqual(backgroundLuminance, null);
+  assert.ok(
+    (backgroundLuminance as number) > 0.5,
+    'Netcatty Light --background must stay light for the AI composer surface',
+  );
+});

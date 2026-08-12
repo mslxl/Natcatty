@@ -379,3 +379,26 @@ test("terminal layer focus sidebar re-renders when dynamic tab title mode change
     false,
   );
 });
+
+test("terminal layer focus sidebar re-renders when host-append handler changes", () => {
+  const baseCtx = {
+    isFocusMode: true,
+    activeWorkspace: workspace(),
+    focusedSessionId: "session-1",
+    resolvedPreviewTheme: {},
+    sessionHostsMap: new Map(),
+    sessions: [],
+    terminalSettings: { dynamicTabTitleMode: "agent" },
+    onAppendHostToWorkspace: undefined as
+      | ((workspaceId: string, hostId: string) => void)
+      | undefined,
+  };
+
+  assert.equal(
+    terminalLayerFocusSidebarPropsEqual(
+      baseCtx,
+      { ...baseCtx, onAppendHostToWorkspace: () => {} },
+    ),
+    false,
+  );
+});

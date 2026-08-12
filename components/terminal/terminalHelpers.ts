@@ -136,6 +136,8 @@ export interface TerminalProps {
   sessionId: string;
   workspaceId?: string;
   restoreState?: TerminalSession["restoreState"];
+  /** Secondary windows hydrate their own vault state outside the main snapshot store. */
+  vaultInitializedOverride?: boolean;
   pendingInitialCwd?: string;
   shellType?: TerminalSession["shellType"];
   lastCwd?: string;
