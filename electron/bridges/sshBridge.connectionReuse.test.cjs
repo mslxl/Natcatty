@@ -231,6 +231,46 @@ test("idle park shell failure discards the transport and dials fresh once", asyn
   assert.notEqual(sessions.get("second").conn, parkedConn);
 });
 
+test("idle park shell failure keeps transport when concurrent leases exist", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "192.168.1.3",
+    username: "test",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const parkedConn = first.conn;
+  const firstTransport = first.connRef;
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "idle");
+
+  const concurrentHolder = {};
+  parkedConn.shell = (_window, _shellOpts, callback) => {
+    // Another SFTP/forward/shell borrows the wake while this shell() is pending.
+    acquireConnectionRef(concurrentHolder, firstTransport);
+    setImmediate(() => callback(new Error("Not connected")));
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+
+  assert.equal(getClientConstructCount(), 2, "must fall back to one fresh dial");
+  assert.equal(firstTransport.state, "live", "must not discard a transport with concurrent leases");
+  assert.ok(firstTransport.leases.size >= 1);
+  assert.notEqual(sessions.get("second").conn, parkedConn);
+
+  releaseConnectionRef(concurrentHolder);
+});
+
 test("idle park shell open uses a short timeout before falling back", async (t) => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));

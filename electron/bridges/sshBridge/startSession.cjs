@@ -1150,7 +1150,14 @@ printf '%s\n' '${scanCompleteMarker}'`;
             });
             // Drop a failed idle park so dial coordination cannot retry the same
             // half-open socket (common on routers after the last shell closes).
-            if (parkedState === "idle" && typeof discardTransport === "function") {
+            // Recheck current state/leases: reuseShellSession wakes the transport,
+            // and another shell/SFTP/forward can borrow while shell() is pending.
+            // Discarding from the pre-wake parkedState would tear those down.
+            if (
+              parkedState === "idle"
+              && typeof discardTransport === "function"
+              && (parked.state === "idle" || parked.leases?.size === 0)
+            ) {
               try { discardTransport(parked, "idle-reuse-failed"); } catch { /* ignore */ }
             }
             // Fall through to a normal dial.
