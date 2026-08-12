@@ -1,5 +1,6 @@
 /* eslint-disable no-undef */
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+const { listInteractiveShellPids } = require("../sshInteractiveShells.cjs");
 function decodeLsofFileName(value) {
   if (typeof value !== 'string') return null;
   // lsof's caret form is ambiguous: a BEL byte and the literal characters
@@ -54,6 +55,7 @@ function decodeLsofFileName(value) {
 
 function createSessionOpsApi(ctx) {
   with (ctx) {
+    const cwdRecoveryToken = Symbol('cwd-recovery');
     function getTcpLatencyTarget(session) {
       if (session.tcpLatencyDirect === false) return null;
 
@@ -237,6 +239,7 @@ function createSessionOpsApi(ctx) {
     
     async function getSessionPwd(event, payload) {
       const { sessionId } = payload;
+      const isTargetedRecovery = payload?._cwdRecoveryToken === cwdRecoveryToken;
       const allowHomeFallback = payload?.allowHomeFallback !== false;
       // Login-shell fallback defaults to the same gate as ~ guessing so callers
       // that pass allowHomeFallback: false (e.g. captureInheritedCwd) keep the
@@ -252,9 +255,178 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      if (
+        session.blockUntargetedCwdProbe
+        && session.cwdRecoveryPromise
+        && !isTargetedRecovery
+      ) {
+        return session.cwdRecoveryPromise;
+      }
+      if (session.blockUntargetedCwdProbe && !session.shellPid && !isTargetedRecovery) {
+        const transport = session.connRef || null;
+        if (session.cwdRecoveryPromise) return session.cwdRecoveryPromise;
+        if (transport?.cwdRecoveryPromise) {
+          await transport.cwdRecoveryPromise.catch(() => {});
+          return { success: false, error: 'Another cwd recovery was already in progress' };
+        }
+        if (session.allowCwdRecovery !== true || transport?.cwdRecoveryDisabled) {
+          return {
+            success: false,
+            error: 'Current directory is unavailable during an immediate reconnect',
+          };
+        }
+        const reconnectRisk = session.parkedReconnectRisk;
+        if (!reconnectRisk || reconnectRisk.hasUnknownOldShell) {
+          return {
+            success: false,
+            error: 'Current directory cannot be safely identified after reconnect',
+          };
+        }
+        // One real command/output pair permits one attempt. Ambiguous or failed
+        // recovery stays closed until another command produces output.
+        session.allowCwdRecovery = false;
+        const recoveryOwner = {
+          conn: session.conn,
+          connRef: session.connRef,
+          stream: session.stream,
+          shellCloseGeneration: transport?.shellCloseGeneration || 0,
+        };
+        const isCurrentOwner = () => (
+          sessions.get(sessionId) === session
+          && session.conn === recoveryOwner.conn
+          && session.connRef === recoveryOwner.connRef
+          && session.stream === recoveryOwner.stream
+        );
+        const recoveryPromise = (async () => {
+          const sharedTerminalCountBeforeRecovery = transport
+            ? [...sessions.values()].filter(
+              (candidate) => candidate?.connRef === transport && candidate?.stream,
+            ).length
+            : 1;
+          if (sharedTerminalCountBeforeRecovery !== 1) {
+            return {
+              success: false,
+              error: 'Current directory is ambiguous across shared terminal channels',
+            };
+          }
+          if (transport?.closedShellPidUnknown) {
+            return {
+              success: false,
+              error: 'Current directory cannot be safely identified after reconnect',
+            };
+          }
+          const oldShellPids = new Set([
+            ...(Array.isArray(reconnectRisk.oldShellPids) ? reconnectRisk.oldShellPids : []),
+            ...(
+              transport?.closedShellPids instanceof Set
+                ? [...transport.closedShellPids]
+                : []
+            ),
+          ].map(String));
+          const discovery = await listInteractiveShellPids(session.conn, {
+            quoteShellArg,
+            openingTimeoutMs: timeoutMs,
+            runTimeoutMs: timeoutMs,
+            setTimeoutFn: setTimeout,
+            clearTimeoutFn: clearTimeout,
+            // Best-effort cwd recovery must not kill the interactive shell or
+            // other SFTP/forward leases when a server never answers exec open.
+            invalidateOnOpenTimeout: false,
+          });
+          if (discovery.openTimedOut && transport) transport.cwdRecoveryDisabled = true;
+          if (!isCurrentOwner()) {
+            return { success: false, error: 'Session changed during cwd recovery' };
+          }
+          if (
+            transport
+            && (transport.shellCloseGeneration || 0) !== recoveryOwner.shellCloseGeneration
+          ) {
+            return { success: false, error: 'Terminal set changed during cwd recovery' };
+          }
+          if (transport?.closedShellPidUnknown) {
+            return {
+              success: false,
+              error: 'Current directory cannot be safely identified after reconnect',
+            };
+          }
+          const assignedSiblingPids = new Set(
+            [...sessions.values()]
+              .filter((candidate) => (
+                candidate?.connRef === session.connRef
+                && candidate !== session
+                && candidate.shellPid
+              ))
+              .map((candidate) => String(candidate.shellPid)),
+          );
+          const unclaimedPids = discovery.pids.filter(
+            (pid) => (
+              !assignedSiblingPids.has(String(pid))
+              && !oldShellPids.has(String(pid))
+            ),
+          );
+          const sharedTerminalCountAfterRecovery = session.connRef
+            ? [...sessions.values()].filter(
+              (candidate) => candidate?.connRef === session.connRef && candidate?.stream,
+            ).length
+            : 1;
+          if (
+            sharedTerminalCountAfterRecovery !== 1
+            || !discovery.available
+            || unclaimedPids.length !== 1
+          ) {
+            return {
+              success: false,
+              error: 'Current directory is still ambiguous after reconnect',
+            };
+          }
+          const recoveredPid = unclaimedPids[0];
+          const result = await getSessionPwd(event, {
+            ...payload,
+            _cwdRecoveryToken: cwdRecoveryToken,
+            _cwdRecoveryTargetPid: recoveredPid,
+            _cwdRecoveryTransport: transport,
+          });
+          if (!isCurrentOwner()) {
+            return { success: false, error: 'Session changed during cwd recovery' };
+          }
+          const sharedTerminalCountAfterPwd = transport
+            ? [...sessions.values()].filter(
+              (candidate) => candidate?.connRef === transport && candidate?.stream,
+            ).length
+            : 1;
+          if (
+            sharedTerminalCountAfterPwd !== 1
+            || (
+              transport
+              && (transport.shellCloseGeneration || 0) !== recoveryOwner.shellCloseGeneration
+            )
+            || transport?.closedShellPidUnknown
+          ) {
+            return { success: false, error: 'Terminal set changed during cwd recovery' };
+          }
+          if (!result.success) {
+            return result;
+          }
+          session.shellPid = recoveredPid;
+          session.blockUntargetedCwdProbe = false;
+          session.parkedReconnectRisk = null;
+          return result;
+        })().finally(() => {
+          if (session.cwdRecoveryPromise === recoveryPromise) {
+            session.cwdRecoveryPromise = null;
+          }
+          if (transport?.cwdRecoveryPromise === recoveryPromise) {
+            transport.cwdRecoveryPromise = null;
+          }
+        });
+        session.cwdRecoveryPromise = recoveryPromise;
+        if (transport) transport.cwdRecoveryPromise = recoveryPromise;
+        return recoveryPromise;
+      }
 
-      const targetLoginPid = /^\d+$/.test(String(session.shellPid || ''))
-        ? String(session.shellPid)
+      const requestedRecoveryPid = isTargetedRecovery ? payload?._cwdRecoveryTargetPid : '';
+      const targetLoginPid = /^\d+$/.test(String(requestedRecoveryPid || session.shellPid || ''))
+        ? String(requestedRecoveryPid || session.shellPid)
         : '';
       const sharedTerminalCount = session.connRef
         ? [...sessions.values()].filter(
@@ -272,6 +444,17 @@ function createSessionOpsApi(ctx) {
       // in the interactive terminal. The exec channel and the interactive
       // shell are both children of the same per-connection sshd process,
       // so we find the shell as a sibling via $PPID.
+      const pwdOwner = {
+        conn: session.conn,
+        connRef: session.connRef,
+        stream: session.stream,
+      };
+      const isCurrentPwdOwner = () => (
+        sessions.get(sessionId) === session
+        && session.conn === pwdOwner.conn
+        && session.connRef === pwdOwner.connRef
+        && session.stream === pwdOwner.stream
+      );
       return new Promise((resolve) => {
         let settled = false;
         const settle = (result) => {
@@ -440,14 +623,19 @@ function createSessionOpsApi(ctx) {
           maxOutputBytes: 256 * 1024,
           setTimeoutFn: setTimeout,
           clearTimeoutFn: clearTimeout,
+          invalidateOnOpenTimeout: !isTargetedRecovery,
         }).then(({ stdout, stderr, code }) => {
+              if (!isCurrentPwdOwner()) {
+                settle({ success: false, error: 'Session changed during cwd probe' });
+                return;
+              }
               const rawPath = stdout.replace(/\r?\n$/, '');
               const lsofPrefix = 'NETCATTY_LSOF_CWD=';
               const path = rawPath.startsWith(lsofPrefix)
                 ? decodeLsofFileName(rawPath.slice(lsofPrefix.length))
                 : rawPath;
               const loginPidMatch = stderr.match(/(?:^|\n)NETCATTY_LOGIN_PID=(\d+)(?:\n|$)/);
-              if (loginPidMatch) {
+              if (loginPidMatch && !isTargetedRecovery) {
                 session.shellPid = loginPidMatch[1];
               }
               log('[getSessionPwd]', { stdout: rawPath, stderr: stderr.trim(), exitCode: code });
@@ -457,6 +645,14 @@ function createSessionOpsApi(ctx) {
                 settle({ success: false, error: 'Could not determine cwd' });
               }
         }, (err) => {
+          if (isTargetedRecovery && err?.code === "SSH_EXEC_OPEN_TIMEOUT") {
+            const recoveryTransport = payload?._cwdRecoveryTransport || session.connRef;
+            if (recoveryTransport) recoveryTransport.cwdRecoveryDisabled = true;
+          }
+          if (!isCurrentPwdOwner()) {
+            settle({ success: false, error: 'Session changed during cwd probe' });
+            return;
+          }
           log('[getSessionPwd] exec error:', err?.message || String(err));
           settle({
             success: false,

@@ -113,6 +113,7 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
   const openingTimeoutMs = Math.max(1, Number(options.openingTimeoutMs) || DEFAULT_SSH_EXEC_OPEN_TIMEOUT_MS);
   const runTimeoutMs = Math.max(1, Number(options.runTimeoutMs) || DEFAULT_SSH_EXEC_RUN_TIMEOUT_MS);
   const maxOutputBytes = Math.max(1, Number(options.maxOutputBytes) || DEFAULT_SSH_EXEC_MAX_OUTPUT_BYTES);
+  const invalidateOnOpenTimeout = options.invalidateOnOpenTimeout !== false;
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -184,7 +185,7 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
     openingTimer = setTimeoutFn(() => {
       const error = new Error(`SSH exec channel open timed out after ${openingTimeoutMs} ms`);
       error.code = "SSH_EXEC_OPEN_TIMEOUT";
-      finish(error, null, { terminate: true, invalidateTransport: true });
+      finish(error, null, { terminate: true, invalidateTransport: invalidateOnOpenTimeout });
     }, openingTimeoutMs);
 
     try {
