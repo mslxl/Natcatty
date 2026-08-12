@@ -373,12 +373,15 @@ const HostTreeFlatRowItem = memo<HostTreeFlatRowProps>(({
           paddingLeft: row.depth * 16 + 8,
           backgroundColor: isActive ? theme.rowActiveBg : (isDragOver ? theme.rowDropBg : undefined),
         }}
-        draggable={canDrag && !isInlineEditing}
+        // Host rows stay draggable under search/tag filters so focus-sidebar
+        // append can still receive host-id; in-tree reorder/drop stays on canDrag.
+        draggable={!isInlineEditing}
         onDragStart={(event) => {
-          if (!canDrag || isInlineEditing) return;
+          if (isInlineEditing) return;
           event.dataTransfer.setData(HOST_TREE_DRAG_HOST_ID, row.host.id);
           // copyMove: tree reorder uses move; focus-sidebar append uses copy.
-          event.dataTransfer.effectAllowed = 'copyMove';
+          // Filtered trees disable reorder, so allow copy-only for append.
+          event.dataTransfer.effectAllowed = canDrag ? 'copyMove' : 'copy';
         }}
         onDragOver={(event) => {
           if (!canDrag) return;

@@ -217,3 +217,17 @@ test('host tree row icons, labels, and protocol badges share centered line boxes
   assert.match(source, /flex h-5 shrink-0 items-center">\s*\{isExpanded/);
   assert.match(source, /flex min-w-0 flex-1 items-center truncate leading-5">\{node\.name\}/);
 });
+
+test('filtered host rows can still start host-id drag for focus-sidebar append', () => {
+  const source = readFileSync(new URL('./TerminalHostTreeSidebar.tsx', import.meta.url), 'utf8');
+  const hostRowStart = source.indexOf('data-row-type="host"');
+  const groupRowStart = source.indexOf('data-row-type="group"');
+  assert.ok(hostRowStart >= 0 && groupRowStart > hostRowStart);
+  const hostRowBlock = source.slice(hostRowStart, groupRowStart);
+
+  assert.match(hostRowBlock, /draggable=\{!isInlineEditing\}/);
+  assert.match(hostRowBlock, /effectAllowed = canDrag \? 'copyMove' : 'copy'/);
+  assert.doesNotMatch(hostRowBlock, /if \(!canDrag \|\| isInlineEditing\) return;/);
+  assert.match(source, /const canDrag = Boolean\(menuActions\) && !searchActive && !tagsActive;/);
+  assert.match(source, /draggable=\{canDrag && !isInlineEditing\}/);
+});
