@@ -571,6 +571,133 @@ test("file replace unlinks an existing symlink before upload", async () => {
   assert.equal(results[0].success, true);
 });
 
+test("LSTAT ENOTSUP is not treated as an absent destination during conflict check", async () => {
+  // If unsupported LSTAT is swallowed as "missing", upload skips Replace and may
+  // write through an existing symlink to a target outside the displayed dir.
+  const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
+  Object.defineProperty(file, "path", { value: "/local/tool.sh" });
+  let uploaded = 0;
+  let conflictPrompts = 0;
+
+  await assert.rejects(
+    () => uploadFromFileList(
+      [file],
+      {
+        targetPath: "/usr/local/bin",
+        sftpId: "sftp-1",
+        isLocal: false,
+        bridge: {
+          mkdirSftp: async () => {},
+          lstatSftp: async () => {
+            const error = new Error(
+              "Remote server does not support LSTAT; cannot classify path without following symlinks",
+            ) as Error & { code: string; lstatUnavailable: boolean };
+            error.code = "ENOTSUP";
+            error.lstatUnavailable = true;
+            throw error;
+          },
+          startStreamTransfer: async () => {
+            uploaded += 1;
+            return { transferId: "upload-1" };
+          },
+        },
+        joinPath: (base, name) => `${base}/${name}`,
+        resolveConflict: async () => {
+          conflictPrompts += 1;
+          return "replace";
+        },
+      },
+    ),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "ENOTSUP");
+      assert.match(String(error.message), /does not support LSTAT/i);
+      return true;
+    },
+  );
+
+  assert.equal(uploaded, 0, "must not upload when destination type is unknown");
+  assert.equal(conflictPrompts, 0, "must not pretend destination is missing");
+});
+
+test("ENOENT from lstat still means absent destination for conflict check", async () => {
+  const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
+  Object.defineProperty(file, "path", { value: "/local/tool.sh" });
+  const uploadedPaths: string[] = [];
+
+  const results = await uploadFromFileList(
+    [file],
+    {
+      targetPath: "/usr/local/bin",
+      sftpId: "sftp-1",
+      isLocal: false,
+      bridge: {
+        mkdirSftp: async () => {},
+        lstatSftp: async () => {
+          const error = new Error("No such file") as Error & { code: string };
+          error.code = "ENOENT";
+          throw error;
+        },
+        startStreamTransfer: async ({ targetPath: path }) => {
+          uploadedPaths.push(path);
+          return { transferId: "upload-1" };
+        },
+      },
+      joinPath: (base, name) => `${base}/${name}`,
+      resolveConflict: async () => {
+        throw new Error("absent destination must not prompt for conflict");
+      },
+    },
+  );
+
+  assert.deepEqual(uploadedPaths, ["/usr/local/bin/tool.sh"]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].success, true);
+});
+
+test("compressed-upload LSTAT ENOTSUP is not treated as an absent destination", async (t) => {
+  let compressedStarts = 0;
+  installCompressedUploadBridge(t, {
+    onStart: () => { compressedStarts += 1; },
+  });
+  let streamCalls = 0;
+
+  await assert.rejects(
+    () => uploadFromFileList(
+      [createPickedFolderFile()],
+      {
+        targetPath: "/remote",
+        sftpId: "sftp-1",
+        isLocal: false,
+        bridge: {
+          mkdirSftp: async () => {},
+          lstatSftp: async () => {
+            const error = new Error(
+              "Remote server does not support LSTAT; cannot classify path without following symlinks",
+            ) as Error & { code: string; lstatUnavailable: boolean };
+            error.code = "ENOTSUP";
+            error.lstatUnavailable = true;
+            throw error;
+          },
+          startStreamTransfer: async (payload) => {
+            streamCalls += 1;
+            return { transferId: payload.transferId };
+          },
+        },
+        joinPath: (base, name) => `${base}/${name}`,
+        useCompressedUpload: true,
+        resolveConflict: async () => "merge",
+      },
+    ),
+    (error: Error & { code?: string }) => {
+      assert.equal(error.code, "ENOTSUP");
+      return true;
+    },
+  );
+
+  assert.equal(compressedStarts, 0);
+  assert.equal(streamCalls, 0);
+});
+
 test("directory replace unlinks an existing symlink before mkdir", async () => {
   // No-follow lstat reports symlink; Replace must unlink then create the dir
   // (followed stat used to classify symlink-to-dir as directory and succeed).

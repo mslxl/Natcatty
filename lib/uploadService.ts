@@ -37,6 +37,16 @@ import type { UploadBridge, UploadCallbacks, UploadConfig, UploadResult } from "
 const formatUploadError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** Only true absence may map to "no conflict"; ENOTSUP/etc. must not. */
+const isMissingStatError = (error: unknown): boolean => {
+  const code = (error as { code?: string | number } | null)?.code;
+  return code === 2
+    || code === "ENOENT"
+    || code === "NO_SUCH_FILE"
+    || code === "SSH_FX_NO_SUCH_FILE"
+    || String((error as { message?: string } | null)?.message || "").trim() === "ENOENT";
+};
+
 const getDropEntrySize = (entry: DropEntry): number => (
   entry.isDirectory ? 0 : entry.file?.size ?? entry.size ?? 0
 );
@@ -291,8 +301,10 @@ async function uploadEntriesWithOptionalCompression(
       // Prefer no-follow lstat so Replace can unlink a symlink instead of
       // writing through it. Followed statSftp stays for source sizing / resume.
       return await (bridge.lstatSftp ?? bridge.statSftp)?.(sftpId, path) ?? null;
-    } catch {
-      return null;
+    } catch (error) {
+      if (isMissingStatError(error)) return null;
+      // e.g. LSTAT ENOTSUP: unknown target type — fail closed, do not upload.
+      throw error;
     }
   };
   const groupInfos = await Promise.all(rootGroups.map(async ([key, groupEntries]) => {
@@ -447,8 +459,10 @@ async function uploadEntries(
       // source sizing / resume (link size must not become totalBytes).
       if (isLocal) return await (bridge.lstatLocal ?? bridge.statLocal)?.(path);
       if (sftpId) return await (bridge.lstatSftp ?? bridge.statSftp)?.(sftpId, path);
-    } catch {
-      return null;
+    } catch (error) {
+      if (isMissingStatError(error)) return null;
+      // e.g. LSTAT ENOTSUP: unknown target type — fail closed, do not upload.
+      throw error;
     }
     return null;
   };
