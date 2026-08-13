@@ -118,7 +118,7 @@ interface SftpSidePanelProps {
   sftpDefaultViewMode: "list" | "tree";
   /** The host to connect to (follows focused terminal) */
   activeHost: Host | null;
-  /** The terminal session id whose SSH connection can be reused for SFTP */
+  /** Linked same-endpoint SSH session id (may be reconnecting; reuse only when connected) */
   activeSessionId?: string | null;
   /** Focused terminal session (includes mosh/et/local) for locate-path writes */
   focusedSessionId?: string | null;
@@ -221,7 +221,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }, [hosts, sessions]);
 
   // Browse restore can run before the session list reflects the focused tab;
-  // prefer the active source when its visible endpoint matches the pane host.
+  // prefer the active source when its visible endpoint matches the pane host
+  // and the SSH transport is already up (linked id survives reconnect phases).
   const resolveBrowseSourceSessionId = useCallback((hostId: string, host?: Host) => {
     if (
       activeSessionId
@@ -229,10 +230,13 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       && activeHost.id === hostId
       && (!host || sftpHostEndpointsEqual(activeHost, host))
     ) {
-      return activeSessionId;
+      const linkedSession = sessions.find((session) => session.id === activeSessionId);
+      if (linkedSession?.status === "connected") {
+        return activeSessionId;
+      }
     }
     return resolveTransferSourceSessionId(hostId, host);
-  }, [activeHost, activeSessionId, resolveTransferSourceSessionId]);
+  }, [activeHost, activeSessionId, resolveTransferSourceSessionId, sessions]);
 
   const fileWatchHandlers = useMemo(() => ({
     onFileWatchSynced: (payload: { remotePath: string }) => {
@@ -770,7 +774,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
     s.connect("left", activeHost, {
-      sourceSessionId: activeSessionId ?? undefined,
+      sourceSessionId: activeSessionStatus === "connected"
+        ? (activeSessionId ?? undefined)
+        : undefined,
       ...(initialPath ? { initialPath } : undefined),
       ...(needsNewTab ? { forceNewTab: true } : undefined),
       onTabCreated: (tabId) => {

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSyn
 import { useActiveTabId } from '../../application/state/activeTabStore';
 import { sessionCapabilitiesStore } from '../../application/state/sessionCapabilitiesStore';
 import { useSystemManagerBackend } from '../../application/state/useSystemManagerBackend';
-import { canReuseTerminalConnection } from '../../application/state/terminalConnectionReuse';
+import { isTerminalSessionEligibleForSftpReuse } from '../../application/state/terminalConnectionReuse';
 import { resolveSystemSidebarSession } from '../../domain/systemManager/resolveSystemSession';
 import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import { useSystemCapabilitiesWarmup } from '../../application/state/useSystemManager';
@@ -143,12 +143,15 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     return sftpHostForTab.get(activeTabId) ?? null;
   }, [activeSession, activeTabId, activeWorkspace, focusedSessionId, isSftpOpenForCurrentTab, sessionHostsMap, sftpHostForTab]);
 
+  // Keep the same-endpoint SSH session id across disconnected/connecting so
+  // SftpSidePanel can observe status transitions and rebind after 重新开始.
+  // Transport reuse for openSftp still requires status === "connected".
   const activeTerminalSessionIdForSftp = useMemo((): string | null => {
     if (!isSftpOpenForCurrentTab || !sftpActiveHost) return null;
     const sessionId = activeWorkspace ? focusedSessionId : activeSession?.id;
     if (!sessionId) return null;
     const session = sessions.find((candidate) => candidate.id === sessionId);
-    if (!session || !canReuseTerminalConnection(session)) return null;
+    if (!session || !isTerminalSessionEligibleForSftpReuse(session)) return null;
     const sessionHost = sessionHostsMap.get(session.id);
     if (!sessionHost) return null;
     const sameEndpoint =
