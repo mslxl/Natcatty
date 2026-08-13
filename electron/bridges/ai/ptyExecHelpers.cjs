@@ -2,7 +2,12 @@
 
 const { StringDecoder } = require("node:string_decoder");
 const iconv = require("iconv-lite");
-const { stripAnsi, isDefaultPowerShellPromptLine, isDefaultCmdPromptLine } = require("./shellUtils.cjs");
+const {
+  stripAnsi,
+  isDefaultPowerShellPromptLine,
+  isDefaultCmdPromptLine,
+  isDefaultPosixPromptLine,
+} = require("./shellUtils.cjs");
 const { classifyLocalShellType } = require("../../../lib/localShell.cjs");
 
 // Build a stateful decoder for a full exec call. Serial data events can
@@ -103,6 +108,15 @@ function isCmdPrompt(prompt) {
   return isDefaultCmdPromptLine(lastLine);
 }
 
+function isPosixPrompt(prompt) {
+  const lastLine = stripAnsi(String(prompt || ""))
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .pop()
+    .replace(/\s+$/, "");
+  return isDefaultPosixPromptLine(lastLine);
+}
+
 // Prompt-driven override is intentionally narrow: only flip to PowerShell
 // when the session has no confirmed shell type. This keeps the issue #841
 // fix working for remote Windows shells that never set shellKind at connect
@@ -116,7 +130,8 @@ function isCmdPrompt(prompt) {
 //   - hint "posix" → native posix wrapper evaluated by interactive bash/zsh
 //                    (NOT sh -c / dash — Codex P2 on #2061)
 //   - hint "powershell" / "cmd" → Windows DefaultShell (issue #2959) without
-//     permanent pin, so a live opposing PS/cmd prompt can still win
+//     permanent pin, so a live opposing PS/cmd prompt can still win, and a
+//     live `user@host:...$` POSIX prompt (e.g. WSL nesting) can override too
 //   - live PS ...> still overrides when base kind is open
 //   - live C:\...> selects cmd when base kind is open (Windows OpenSSH default)
 //
@@ -136,6 +151,7 @@ const LOGIN_SHELL_HINTS = new Set(["posix", "fish", "powershell", "cmd"]);
 
 function resolveEffectiveShellKind(shellKind, expectedPrompt, options = {}) {
   const baseKind = shellKind || "";
+  const hint = options.loginShellHint || "";
   if (SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE.has(baseKind)) {
     if (isPowerShellPrompt(expectedPrompt)) {
       return "powershell";
@@ -143,11 +159,20 @@ function resolveEffectiveShellKind(shellKind, expectedPrompt, options = {}) {
     if (isCmdPrompt(expectedPrompt)) {
       return "cmd";
     }
+    // Windows OpenSSH DefaultShell soft hint + nested WSL/bash: live
+    // `user@host:...$` must win so AI does not type a PS/cmd wrapper into
+    // a POSIX shell and hang on markers. Fish/posix soft hints stay put —
+    // those login shells already share this prompt family.
+    if (
+      isPosixPrompt(expectedPrompt)
+      && (hint === "powershell" || hint === "cmd")
+    ) {
+      return "posix";
+    }
   }
   if (baseKind) return baseKind;
 
   // Soft login-shell hint from remote probe (not a permanent pin).
-  const hint = options.loginShellHint || "";
   if (LOGIN_SHELL_HINTS.has(hint)) return hint;
 
   return "posix";

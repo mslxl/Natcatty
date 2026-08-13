@@ -61,12 +61,21 @@ const POWERSHELL_PROMPT_PATTERN = /^PS(?:\s+\S.*)?>$/;
 // PowerShell's `PS C:\...>` (handled by POWERSHELL_PROMPT_PATTERN first).
 const CMD_PROMPT_PATTERN = /^[A-Za-z]:(?:\\[^<>"|]*)?>$/;
 
+// Classic `user@host:...$` / `user@host:...#` login prompt (bash/zsh in WSL,
+// remote Linux, etc.). Intentionally narrow so custom / fish prompts do not
+// flip a Windows DefaultShell soft hint.
+const POSIX_PROMPT_PATTERN = /^[^\s@]+@[^\s:]+(?::[^\n\r]*)?[#$]$/;
+
 function isDefaultPowerShellPromptLine(line) {
   return POWERSHELL_PROMPT_PATTERN.test(String(line || ""));
 }
 
 function isDefaultCmdPromptLine(line) {
   return CMD_PROMPT_PATTERN.test(String(line || "").replace(/\s+$/, ""));
+}
+
+function isDefaultPosixPromptLine(line) {
+  return POSIX_PROMPT_PATTERN.test(String(line || "").replace(/\s+$/, ""));
 }
 
 function extractTrailingIdlePrompt(output) {
@@ -85,7 +94,7 @@ function extractTrailingIdlePrompt(output) {
     return lastLine;
   }
 
-  if (/^[^\s@]+@[^\s:]+(?::[^\n\r]*)?[#$]$/.test(rightTrimmed)) {
+  if (isDefaultPosixPromptLine(rightTrimmed)) {
     return lastLine;
   }
 
@@ -955,6 +964,7 @@ module.exports = {
   getFreshIdlePrompt,
   isDefaultPowerShellPromptLine,
   isDefaultCmdPromptLine,
+  isDefaultPosixPromptLine,
   trackSessionIdlePrompt,
   looksLikeIdleAutoLogout,
   isLocalhostHostname,

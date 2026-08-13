@@ -362,6 +362,13 @@ test("ensureSessionShellKind soft-hints powershell login shells without pinning"
     }),
     "cmd",
   );
+  // Live POSIX prompt (WSL) overrides a PowerShell soft hint.
+  assert.equal(
+    resolveEffectiveShellKind(session.shellKind, "user@host:~$", {
+      loginShellHint: session._loginShellKind,
+    }),
+    "posix",
+  );
 });
 
 test("ensureSessionShellKind uses Windows DefaultShell probe for OpenSSH_for_Windows", async () => {
@@ -528,6 +535,69 @@ test("ensureSessionShellKind falls back to Windows reg probe when Unix probe yie
   assert.equal(probed.length, 2);
   assert.match(probed[0], /getent passwd|exec sh -c/);
   assert.match(probed[1], /reg query/i);
+});
+
+test("ensureSessionShellKind settles completed unclassifiable Windows fallback without re-probing", async () => {
+  // Codex P2: when remoteSshVersion is missing, Unix probe returns non-marker
+  // bytes, and Windows reg returns access-denied, settle so later AI execs do
+  // not re-run both probes forever. Null/timeout still retries.
+  let probes = 0;
+  const session = { protocol: "ssh" };
+  const kind = await ensureSessionShellKind(session, {
+    execProbe: async (command) => {
+      probes += 1;
+      if (/reg query/i.test(command)) {
+        return "ERROR: Access is denied.\r\n";
+      }
+      return "no marker here\n";
+    },
+  });
+  assert.equal(kind, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._loginShellKind, undefined);
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(probes, 2);
+
+  await ensureSessionShellKind(session, {
+    execProbe: async () => {
+      probes += 1;
+      return "should not run\n";
+    },
+  });
+  assert.equal(probes, 2);
+});
+
+test("ensureSessionShellKind retries Windows fallback after null/timeout when banner missing", async () => {
+  let probes = 0;
+  const session = { protocol: "ssh" };
+  const first = await ensureSessionShellKind(session, {
+    execProbe: async (command) => {
+      probes += 1;
+      if (/reg query/i.test(command)) return null;
+      return "no marker here\n";
+    },
+  });
+  assert.equal(first, undefined);
+  assert.equal(session._shellKindProbeSettled, undefined);
+  assert.equal(session._shellKindProbePromise, null);
+  assert.equal(probes, 2);
+
+  const second = await ensureSessionShellKind(session, {
+    execProbe: async (command) => {
+      probes += 1;
+      if (/reg query/i.test(command)) {
+        return (
+          "HKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\n" +
+          "    DefaultShell    REG_SZ    C:\\Windows\\System32\\cmd.exe\n"
+        );
+      }
+      return "no marker here\n";
+    },
+  });
+  assert.equal(second, undefined);
+  assert.equal(session._loginShellKind, "cmd");
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(probes, 4);
 });
 
 test("ensureSessionShellKindForExec cancels when Stop fires during the probe", async () => {

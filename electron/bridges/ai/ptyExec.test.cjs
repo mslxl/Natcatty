@@ -307,6 +307,16 @@ test("loginShellHint selects fish/posix/powershell/cmd without pinning confirmed
     resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "cmd" }),
     "powershell",
   );
+  // Live POSIX prompt (e.g. WSL nested from Windows OpenSSH) overrides a
+  // PowerShell/cmd soft hint so AI does not type a Windows wrapper into bash.
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "powershell" }),
+    "posix",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "alice@wsl:/mnt/c$", { loginShellHint: "cmd" }),
+    "posix",
+  );
   // Confirmed shellKind is never overridden by a login hint.
   assert.equal(
     resolveEffectiveShellKind("posix", "user@host:~$", { loginShellHint: "fish" }),

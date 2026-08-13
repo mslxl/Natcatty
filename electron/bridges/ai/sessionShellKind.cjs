@@ -211,6 +211,8 @@ function withProbeTimeout(promise, timeoutMs) {
  *   powershell/cmd for Windows DefaultShell — issue #1854 / #2959)
  * - still honor a live opposing Windows prompt when the user nested cmd from
  *   a PowerShell login or PowerShell from a cmd login (Codex P2 on #2960)
+ * - still honor a live `user@host:...$` POSIX prompt over a Windows soft hint
+ *   (e.g. WSL nested from PowerShell/cmd OpenSSH login)
  * - still honor a live PowerShell prompt over a Unix login hint (#841)
  *
  * Always mark the probe settled so we do not re-probe every AI exec.
@@ -290,7 +292,16 @@ async function probeRemoteLoginShellKind(execProbe, timeoutMs, session) {
     execProbe(buildRemoteWindowsLoginShellProbeCommand(), timeoutMs),
     timeoutMs,
   );
-  return { kind: parseRemoteWindowsLoginShellProbeOutput(winStdout) };
+  // Timed out / SSH exec failed — leave unsettled for a later retry.
+  if (winStdout == null) {
+    return { kind: null };
+  }
+  const winKind = parseRemoteWindowsLoginShellProbeOutput(winStdout);
+  if (winKind) return { kind: winKind };
+  // Completed Windows fallback but nothing classifiable (access denied, empty,
+  // garbage). Settle without pinning so we do not re-run both probes on every
+  // AI exec for the life of the session (Codex P2 on #2960).
+  return { kind: null, settleWithoutKind: true };
 }
 
 /**
