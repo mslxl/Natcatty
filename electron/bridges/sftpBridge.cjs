@@ -1241,6 +1241,18 @@ async function restoreRemoteMode(client, encodedPath, mode, options = {}) {
   if (mode == null || !Number.isFinite(mode)) return;
   const bestEffort = options?.bestEffort !== false;
   try {
+    const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+    if (isScpModeClient(client)) {
+      // SCP-only servers have no SFTP channel; chmod via shell backend.
+      const encoding = options?.encoding || "utf-8";
+      const remotePath = options?.remotePath
+        || (Buffer.isBuffer(encodedPath) ? decodeName(encodedPath, encoding) : String(encodedPath));
+      await getScpBackendForClient(client).chmod(remotePath, mode, {
+        encoding,
+        signal: options?.signal || null,
+      });
+      return;
+    }
     if (typeof client.chmod === "function") {
       await client.chmod(encodedPath, mode);
       return;
@@ -1521,6 +1533,9 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     if (Number.isFinite(plan.existingMode)) {
       await restoreRemoteMode(client, encodedPath, plan.existingMode, {
         bestEffort: true,
+        remotePath,
+        encoding,
+        signal,
       });
     }
     // SCP stat reports the link node itself. After an in-place symlink upload,

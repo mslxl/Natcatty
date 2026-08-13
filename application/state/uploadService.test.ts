@@ -571,6 +571,49 @@ test("file replace unlinks an existing symlink before upload", async () => {
   assert.equal(results[0].success, true);
 });
 
+test("directory replace unlinks an existing symlink before mkdir", async () => {
+  // No-follow lstat reports symlink; Replace must unlink then create the dir
+  // (followed stat used to classify symlink-to-dir as directory and succeed).
+  const file = new File(["nested"], "file.txt", { lastModified: 1234 });
+  Object.defineProperty(file, "path", { value: "/local/docs/file.txt" });
+  Object.defineProperty(file, "webkitRelativePath", { value: "docs/file.txt" });
+  const deletedPaths: string[] = [];
+  const madeDirs: string[] = [];
+  const uploadedPaths: string[] = [];
+
+  const results = await uploadFromFileList(
+    [file],
+    {
+      targetPath: "/remote",
+      sftpId: "sftp-1",
+      isLocal: false,
+      bridge: {
+        mkdirSftp: async (_sftpId, path) => {
+          madeDirs.push(path);
+        },
+        lstatSftp: async (_sftpId, path) =>
+          path === "/remote/docs"
+            ? { type: "symlink", size: 8, lastModified: 1000 }
+            : null,
+        deleteSftp: async (_sftpId, path) => {
+          deletedPaths.push(path);
+        },
+        startStreamTransfer: async ({ targetPath: path }) => {
+          uploadedPaths.push(path);
+          return { transferId: "upload-dir-1" };
+        },
+      },
+      joinPath: (base, name) => `${base}/${name}`,
+      resolveConflict: async () => "replace",
+    },
+  );
+
+  assert.deepEqual(deletedPaths, ["/remote/docs"]);
+  assert.ok(madeDirs.includes("/remote/docs"), `expected mkdir after unlink, got ${JSON.stringify(madeDirs)}`);
+  assert.deepEqual(uploadedPaths, ["/remote/docs/file.txt"]);
+  assert.equal(results.some((r) => r.success), true);
+});
+
 test("local file replace unlinks an existing symlink before writeLocalFile", async () => {
   // Pathless File uploads fall back to writeLocalFile, which follows symlinks.
   // Conflict checks use lstatLocal so Replace unlinks the link first.

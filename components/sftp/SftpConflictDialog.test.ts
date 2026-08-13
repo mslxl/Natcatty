@@ -23,3 +23,17 @@ test("offers replace when a file upload conflicts with an existing file", () => 
     existingType: "file",
   }), true);
 });
+
+test("offers replace when a directory upload conflicts with an existing symlink", () => {
+  assert.equal(canReplaceConflict({
+    isDirectory: true,
+    existingType: "symlink",
+  }), true);
+});
+
+test("offers replace when a file upload conflicts with an existing symlink", () => {
+  assert.equal(canReplaceConflict({
+    isDirectory: false,
+    existingType: "symlink",
+  }), true);
+});
