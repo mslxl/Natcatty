@@ -957,6 +957,39 @@ test("createZmodemUploadDrainWaiter waits on transport drain after backpressure"
   assert.equal(needsDrain, false);
 });
 
+test("createZmodemUploadDrainWaiter recovers remote rz on transport drain timeout", async () => {
+  let needsDrain = true;
+  let timeoutNotified = false;
+  const writes = [];
+
+  const waitForDrain = createZmodemUploadDrainWaiter({
+    getNeedsDrain: () => needsDrain,
+    clearNeedsDrain: () => {
+      needsDrain = false;
+    },
+    waitForTransportDrain: async () => {
+      const err = new Error("Transport drain timeout");
+      err.code = "NETCATTY_ZMODEM_TIMEOUT";
+      throw err;
+    },
+    onUploadTimeout: () => {
+      timeoutNotified = true;
+    },
+    writeToRemote: (buf) => {
+      writes.push(Buffer.from(buf));
+    },
+  });
+
+  await assert.rejects(
+    () => waitForDrain(),
+    (err) => err && err.code === "NETCATTY_ZMODEM_TIMEOUT",
+  );
+
+  assert.equal(timeoutNotified, true);
+  assert.equal(needsDrain, false);
+  assert.deepEqual([...writes[0]], [0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18]);
+});
+
 test("createZmodemUploadDrainWaiter falls back to a single yield without transport drain", async () => {
   let needsDrain = true;
   const waitForDrain = createZmodemUploadDrainWaiter({

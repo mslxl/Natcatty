@@ -430,6 +430,10 @@ function createZmodemSentry(opts) {
       // underlying transport's write buffer is full. Prefer a real stream
       // drain (waitForTransportDrain) so large rz uploads do not flood SSH
       // and drop the session before the remote has the full file (#2967).
+      const onUploadTimeout = () => {
+        ignoreDetectionUntil = Date.now() + 1000;
+        cooldownUntil = Date.now() + COOLDOWN_MS;
+      };
       const transferOpts = {
         ...opts,
         getDragDropUpload: () => dragDropUpload,
@@ -439,16 +443,16 @@ function createZmodemSentry(opts) {
         resetUploadBackpressure: () => {
           _sawUploadBackpressure = false;
         },
-        onUploadTimeout: () => {
-          ignoreDetectionUntil = Date.now() + 1000;
-          cooldownUntil = Date.now() + COOLDOWN_MS;
-        },
+        onUploadTimeout,
         waitForDrain: createZmodemUploadDrainWaiter({
           getNeedsDrain: () => _needsDrain,
           clearNeedsDrain: () => {
             _needsDrain = false;
           },
           waitForTransportDrain: opts.waitForTransportDrain,
+          // Drain timeouts bypass waitForUploadHandshake; recover the same way.
+          onUploadTimeout,
+          writeToRemote: opts.writeToRemote,
         }),
       };
       handleTransfer(zsession, transferType, transferOpts)
@@ -794,10 +798,16 @@ function waitForWritableDrain(stream, opts = {}) {
  * When the transport provides waitForTransportDrain, pause until that
  * promise settles. Otherwise fall back to one event-loop yield.
  *
+ * Transport-drain timeouts reject with NETCATTY_ZMODEM_TIMEOUT and never
+ * pass through waitForUploadHandshake, so apply the same onUploadTimeout +
+ * abortRemoteProcess recovery here before rethrowing (stuck rz after cancel).
+ *
  * @param {{
  *   getNeedsDrain: () => boolean,
  *   clearNeedsDrain: () => void,
  *   waitForTransportDrain?: () => Promise<void> | void,
+ *   onUploadTimeout?: () => void,
+ *   writeToRemote?: (data: any) => void,
  * }} opts
  * @returns {() => Promise<void>}
  */
@@ -806,8 +816,19 @@ function createZmodemUploadDrainWaiter(opts) {
     if (!opts.getNeedsDrain()) return;
 
     if (typeof opts.waitForTransportDrain === "function") {
-      await opts.waitForTransportDrain();
-      opts.clearNeedsDrain();
+      try {
+        await opts.waitForTransportDrain();
+      } catch (err) {
+        if (isZmodemTimeoutError(err)) {
+          try { opts.onUploadTimeout?.(); } catch { /* ignore */ }
+          if (typeof opts.writeToRemote === "function") {
+            abortRemoteProcess(opts.writeToRemote);
+          }
+        }
+        throw err;
+      } finally {
+        opts.clearNeedsDrain();
+      }
       return;
     }
 
