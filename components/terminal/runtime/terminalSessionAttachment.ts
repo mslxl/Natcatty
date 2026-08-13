@@ -956,7 +956,7 @@ export const attachSessionToTerminal = (
   );
   ctx.terminalBackend.notifyTerminalSessionDisplayReady?.(id);
 
-  ctx.disposeExitRef.current = ctx.terminalBackend.onSessionExit(id, (evt) => {
+  ctx.disposeExitRef.current = ctx.terminalBackend.onSessionExit(id, async (evt) => {
     // The backend is already gone. In particular, an observe popup must not
     // run its normal pause/snapshot/restore handoff while closing afterward.
     if (ctx.sessionRef.current === id) {
@@ -971,6 +971,7 @@ export const attachSessionToTerminal = (
 
     if (ctx.onTerminalDataCapture && ctx.serializeAddonRef.current) {
       try {
+        await ctx.prepareKeywordHighlightSerialization?.();
         const terminalData = ctx.serializeAddonRef.current.serialize();
         ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
       } catch (err) {

@@ -536,7 +536,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     cursorStyle,
     cursorBlink,
     scrollback,
-    // Decorations (keyword highlighting) use proposed APIs; enable globally so toggles work at runtime.
+    // Cursor-line rendering and Unicode width handling use proposed APIs.
     allowProposedApi: true,
     drawBoldTextInBrightColors,
     minimumContrastRatio,
@@ -2218,7 +2218,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     resizeScheduler.schedule({ sessionId: id, cols, rows });
   });
 
-  const keywordHighlighter = new KeywordHighlighter(term);
+  const keywordHighlighter = new KeywordHighlighter(term, {
+    serializeAddon,
+  });
   keywordHighlighter.setRules(keywordHighlightRules, keywordHighlightEnabled);
 
   const cursorLineHighlighter = new CursorLineHighlighter(term);

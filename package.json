@@ -64,7 +64,8 @@
     "test:ssh-mfa-models": "node --test electron/bridges/sshMfaModels.live.test.cjs",
     "test:ssh-mfa-models:live": "SSH_MFA_LIVE=1 node --test electron/bridges/sshMfaModels.live.test.cjs",
     "test:xterm-webgl-overflow": "electron scripts/xterm-webgl-atlas-overflow.live.test.cjs",
-    "test:xterm-decoration-performance": "electron scripts/xterm-decoration-performance.live.test.cjs"
+    "test:xterm-keyword-highlight-performance": "electron scripts/xterm-keyword-highlight-performance.live.test.cjs",
+    "test:xterm-keyword-highlight-throughput": "electron scripts/xterm-keyword-highlight-throughput.live.test.cjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.0",

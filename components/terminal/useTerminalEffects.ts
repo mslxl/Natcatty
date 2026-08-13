@@ -909,7 +909,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         if (!terminalDataCapturedRef.current && term && serializeAddon) {
           const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
           try {
-            const payload = await serializeTerminalCloseFallback(term, serializeAddon, { preferWasm });
+            const payload = await serializeTerminalCloseFallback(term, serializeAddon, {
+              preferWasm,
+              prepare: () => xtermRuntimeRef.current?.keywordHighlighter.prepareForSerialization()
+                ?? Promise.resolve(),
+            });
             if (!isTerminalCloseGenerationCurrent(
               closeGeneration,
               terminalBootCloseGenerationRef.current,

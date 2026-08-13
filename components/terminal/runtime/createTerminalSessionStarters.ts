@@ -1797,7 +1797,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         { replayBacklog: true },
       );
 
-      ctx.disposeExitRef.current = ctx.terminalBackend.onSessionExit(id, (evt) => {
+      ctx.disposeExitRef.current = ctx.terminalBackend.onSessionExit(id, async (evt) => {
         ctx.updateStatus("disconnected");
         const exitMessage = `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`;
         writeTerminalLine(ctx, term, exitMessage);
@@ -1810,6 +1810,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
 
         if (ctx.onTerminalDataCapture && ctx.serializeAddonRef.current) {
           try {
+            await ctx.prepareKeywordHighlightSerialization?.();
             const terminalData = ctx.serializeAddonRef.current.serialize();
             logger.info("[Terminal] Serialized terminal data", {
               sessionId: ctx.sessionId,

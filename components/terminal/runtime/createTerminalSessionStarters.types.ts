@@ -209,6 +209,7 @@ export type TerminalSessionStartersContext = {
   disposeTelnetEchoModeRef?: RefObject<(() => void) | null>;
   fitAddonRef: RefObject<FitAddon | null>;
   serializeAddonRef: RefObject<SerializeAddon | null>;
+  prepareKeywordHighlightSerialization?: () => Promise<void>;
   pendingAuthRef: RefObject<PendingAuth>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
