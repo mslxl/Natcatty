@@ -929,6 +929,36 @@ test("waitForWritableDrain rejects with the transport error event", async () => 
   );
 });
 
+test("waitForWritableDrain rejects promptly when the transfer AbortSignal aborts", async () => {
+  const listeners = new Map();
+  const stream = {
+    writableNeedDrain: true,
+    once(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(cb);
+    },
+    off(event, cb) {
+      const list = listeners.get(event) || [];
+      listeners.set(event, list.filter((fn) => fn !== cb));
+    },
+  };
+  const controller = new AbortController();
+
+  const pending = waitForWritableDrain(stream, {
+    timeoutMs: 60_000,
+    signal: controller.signal,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((listeners.get("drain") || []).length, 1);
+
+  controller.abort();
+  await assert.rejects(
+    () => pending,
+    (err) => err && err.code === "NETCATTY_ZMODEM_CANCELLED",
+  );
+  assert.equal((listeners.get("drain") || []).length, 0);
+});
+
 test("resolveSerialUploadDrainTimeoutMs scales above the TCP default for slow baud", () => {
   const at9600 = resolveSerialUploadDrainTimeoutMs({ baudRate: 9600 });
   // ZDLE worst-case 2x * 64 KiB * 10 bits @ 9600 ≈ 136.5s + margin.
@@ -1037,6 +1067,51 @@ test("createZmodemUploadDrainWaiter recovers remote rz on transport drain timeou
   assert.equal(timeoutNotified, true);
   assert.equal(needsDrain, false);
   assert.deepEqual([...writes[0]], [0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18]);
+});
+
+test("createZmodemUploadDrainWaiter rejects on transfer cancel without timeout recovery", async () => {
+  let needsDrain = true;
+  let timeoutNotified = false;
+  let releaseTransport;
+  const transportPending = new Promise((resolve) => {
+    releaseTransport = resolve;
+  });
+  const controller = new AbortController();
+
+  const waitForDrain = createZmodemUploadDrainWaiter({
+    getNeedsDrain: () => needsDrain,
+    clearNeedsDrain: () => {
+      needsDrain = false;
+    },
+    signal: controller.signal,
+    waitForTransportDrain: async ({ signal } = {}) => waitForWritableDrain({
+      writableNeedDrain: true,
+      once(event, cb) {
+        if (event === "drain") {
+          transportPending.then(() => cb());
+        }
+      },
+      off() {},
+    }, { timeoutMs: 60_000, signal }),
+    onUploadTimeout: () => {
+      timeoutNotified = true;
+    },
+    writeToRemote: () => {
+      throw new Error("cancel must not abort remote via timeout recovery");
+    },
+  });
+
+  const pending = waitForDrain();
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+
+  await assert.rejects(
+    () => pending,
+    (err) => err && err.code === "NETCATTY_ZMODEM_CANCELLED",
+  );
+  assert.equal(timeoutNotified, false);
+  assert.equal(needsDrain, false);
+  releaseTransport();
 });
 
 test("createZmodemUploadDrainWaiter falls back to a single yield without transport drain", async () => {

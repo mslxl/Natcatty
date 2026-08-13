@@ -418,8 +418,8 @@ function createStartSessionApi(ctx) {
         writeToRemote(buf) {
           try { return stream.write(buf); } catch { return true; /* ignore */ }
         },
-        waitForTransportDrain() {
-          return waitForWritableDrain(stream);
+        waitForTransportDrain(drainOpts) {
+          return waitForWritableDrain(stream, drainOpts);
         },
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }
