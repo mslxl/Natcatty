@@ -1530,12 +1530,14 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     // Some servers recreate the inode on OPEN|CREAT|TRUNC. Restore captured
     // permission bits after an in-place overwrite (incl. stage→in-place
     // fallback) so executable/setuid bits are not left at umask defaults.
+    // Do not forward the transfer AbortSignal: promotion already committed, and
+    // a late cancel must not abort required mode restoration (best-effort would
+    // otherwise swallow the failure and leave umask defaults).
     if (Number.isFinite(plan.existingMode)) {
       await restoreRemoteMode(client, encodedPath, plan.existingMode, {
         bestEffort: true,
         remotePath,
         encoding,
-        signal,
       });
     }
     // SCP stat reports the link node itself. After an in-place symlink upload,

@@ -2106,6 +2106,83 @@ test("SCP in-place fallback restores mode via SCP backend chmod", async () => {
   assert.equal(modes.get(finalPath) & 0o777, 0o755);
 });
 
+test("SCP in-place mode restore ignores late cancel after commitPromotion", async () => {
+  const finalPath = "/usr/local/bin/tool";
+  const files = new Map([[finalPath, Buffer.from("old")]]);
+  const modes = new Map([[finalPath, 0o100755]]);
+  const chmodCalls = [];
+  const controller = new AbortController();
+  const missing = (candidate) => {
+    const error = new Error(`ENOENT: ${candidate}`);
+    error.code = "ENOENT";
+    return error;
+  };
+  const backend = {
+    async stat(candidate) {
+      if (!files.has(candidate)) throw missing(candidate);
+      return {
+        type: "file",
+        isDirectory: false,
+        isSymbolicLink: false,
+        size: files.get(candidate).length,
+        mode: modes.get(candidate) ?? 0o100644,
+        permissions: "rwxr-xr-x",
+        modifyTime: 1,
+      };
+    },
+    async chmod(candidate, mode, options = {}) {
+      if (options.signal?.aborted) {
+        throw new Error("Transfer cancelled");
+      }
+      chmodCalls.push({ path: candidate, mode, hadSignal: Boolean(options.signal) });
+      modes.set(candidate, 0o100000 | (mode & 0o7777));
+    },
+    async rename(from, to) {
+      if (!files.has(from)) throw missing(from);
+      if (files.has(to)) throw new Error(`EEXIST: ${to}`);
+      files.set(to, files.get(from));
+      files.delete(from);
+      if (modes.has(from)) {
+        modes.set(to, modes.get(from));
+        modes.delete(from);
+      }
+    },
+    async remove(candidate) {
+      files.delete(candidate);
+      modes.delete(candidate);
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+
+  await sftpBridge.runRemoteUploadTransaction(client, "/tmp/local.bin", finalPath, {
+    expectedSize: 3,
+    signal: controller.signal,
+    commitPromotion() {
+      controller.abort();
+    },
+    async uploadFile(_path, uploadTarget) {
+      if (uploadTarget.generatedStagePath) {
+        const err = new Error("Permission denied creating stage");
+        err.code = "EACCES";
+        throw err;
+      }
+      files.set(uploadTarget.logicalPath, Buffer.from("new"));
+      modes.set(uploadTarget.logicalPath, 0o100644);
+    },
+  });
+
+  assert.equal(controller.signal.aborted, true, "late cancel should have fired after commit");
+  assert.ok(
+    chmodCalls.some((c) => c.path === finalPath && (c.mode & 0o777) === 0o755 && !c.hadSignal),
+    `expected post-commit mode restore without cancel signal, got ${JSON.stringify(chmodCalls)}`,
+  );
+  assert.equal(modes.get(finalPath) & 0o777, 0o755);
+  assert.deepEqual(files.get(finalPath), Buffer.from("new"));
+});
+
 test("no-lstat new upload aborted during staged size verify leaves no final", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-late-abort-promote-"));
   t.after(async () => {
