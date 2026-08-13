@@ -57,7 +57,7 @@ const ptyProcessTree = require("./ptyProcessTree.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { detectShellKind } = require("./ai/ptyExec.cjs");
 const { stripAnsi, trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
-const { createZmodemSentry } = require("./zmodemHelper.cjs");
+const { createZmodemSentry, waitForWritableDrain } = require("./zmodemHelper.cjs");
 const { discoverShells } = require("./shellDiscovery.cjs");
 const moshHandshake = require("./moshHandshake.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
@@ -1093,7 +1093,7 @@ const telnetSessionApi = createTelnetSessionApi({
   get electronModule() { return electronModule; },
   net, randomUUID, StringDecoder, iconv, Buffer, console, setTimeout, clearTimeout,
   normalizeTerminalEncoding, encodeTerminalInput, createTelnetAutoLogin, telnetProtocol,
-  createPtyOutputBuffer, sessionLogStreamManager, createZmodemSentry, ptyProcessTree,
+  createPtyOutputBuffer, sessionLogStreamManager, createZmodemSentry, waitForWritableDrain, ptyProcessTree,
   enableTcpNoDelay, trackSessionIdlePrompt, stripAnsi, clearPendingAutomatedWrites,
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
@@ -1323,6 +1323,9 @@ async function startSerialSession(event, options) {
           },
           writeToRemote(buf) {
             try { return serialPort.write(buf); } catch { return true; }
+          },
+          waitForTransportDrain() {
+            return waitForWritableDrain(serialPort);
           },
           getWebContents() {
             return electronModule.webContents.fromId(session.webContentsId);

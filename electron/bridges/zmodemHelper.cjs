@@ -84,8 +84,13 @@ function buildModeRestores(dir, names, removeIndices, modes) {
  * @param {(data: Buffer) => void} opts.onData
  *   Called with raw bytes during normal (non-ZMODEM) operation.
  *   The caller is responsible for charset-aware decoding (UTF-8, iconv, etc.).
- * @param {(buf: Buffer) => void} opts.writeToRemote
+ * @param {(buf: Buffer) => boolean | void} opts.writeToRemote
  *   Write raw bytes back to the remote side (PTY / SSH stream / socket).
+ *   Prefer returning the underlying stream.write() boolean so uploads can
+ *   honor backpressure.
+ * @param {() => Promise<void> | void} [opts.waitForTransportDrain]
+ *   Optional. When writeToRemote returns false, the upload loop awaits this
+ *   before sending more file data (typically waitForWritableDrain(stream)).
  * @param {() => import('electron').WebContents | null} opts.getWebContents
  *   Returns the Electron WebContents for sending progress IPC events.
  * @param {string} [opts.label]
@@ -422,7 +427,9 @@ function createZmodemSentry(opts) {
       });
 
       // Provide a drain helper so the upload loop can pause when the
-      // underlying transport's write buffer is full.
+      // underlying transport's write buffer is full. Prefer a real stream
+      // drain (waitForTransportDrain) so large rz uploads do not flood SSH
+      // and drop the session before the remote has the full file (#2967).
       const transferOpts = {
         ...opts,
         getDragDropUpload: () => dragDropUpload,
@@ -436,14 +443,13 @@ function createZmodemSentry(opts) {
           ignoreDetectionUntil = Date.now() + 1000;
           cooldownUntil = Date.now() + COOLDOWN_MS;
         },
-        waitForDrain: () => {
-          if (!_needsDrain) return Promise.resolve();
-          _needsDrain = false;
-          // Yield to the event loop so Node can flush buffered writes to
-          // the kernel.  Using setImmediate (not setTimeout) avoids any
-          // fixed delay — we resume as soon as the I/O phase completes.
-          return new Promise((resolve) => setImmediate(resolve));
-        },
+        waitForDrain: createZmodemUploadDrainWaiter({
+          getNeedsDrain: () => _needsDrain,
+          clearNeedsDrain: () => {
+            _needsDrain = false;
+          },
+          waitForTransportDrain: opts.waitForTransportDrain,
+        }),
       };
       handleTransfer(zsession, transferType, transferOpts)
         .then(() => {
@@ -670,6 +676,75 @@ function withTimeout(promise, ms, message = "ZMODEM handshake timeout") {
 
 function isZmodemTimeoutError(err) {
   return err && err.code === "NETCATTY_ZMODEM_TIMEOUT";
+}
+
+/**
+ * Wait until a Node writable stream reports it can accept more data.
+ * Used after stream.write() returns false so ZMODEM uploads do not flood
+ * the SSH/TCP buffer (issue #2967).
+ *
+ * Resolves immediately when `writableNeedDrain` is already false (drain may
+ * have fired between write(false) and this call). Also resolves on
+ * close/end/error so a dead transport cannot hang the upload loop forever.
+ *
+ * @param {NodeJS.WritableStream | null | undefined} stream
+ * @returns {Promise<void>}
+ */
+function waitForWritableDrain(stream) {
+  if (!stream || typeof stream.once !== "function") {
+    return new Promise((resolve) => setImmediate(resolve));
+  }
+  if (stream.writableNeedDrain === false) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      try { stream.off("drain", finish); } catch { /* ignore */ }
+      try { stream.off("close", finish); } catch { /* ignore */ }
+      try { stream.off("end", finish); } catch { /* ignore */ }
+      try { stream.off("error", finish); } catch { /* ignore */ }
+      resolve();
+    };
+
+    stream.once("drain", finish);
+    stream.once("close", finish);
+    stream.once("end", finish);
+    stream.once("error", finish);
+
+    // Drain may have cleared between write(false) and listener attach.
+    if (stream.writableNeedDrain === false) finish();
+  });
+}
+
+/**
+ * Build the upload-loop drain waiter used by createZmodemSentry.
+ * When the transport provides waitForTransportDrain, pause until that
+ * promise settles. Otherwise fall back to one event-loop yield.
+ *
+ * @param {{
+ *   getNeedsDrain: () => boolean,
+ *   clearNeedsDrain: () => void,
+ *   waitForTransportDrain?: () => Promise<void> | void,
+ * }} opts
+ * @returns {() => Promise<void>}
+ */
+function createZmodemUploadDrainWaiter(opts) {
+  return async function waitForDrain() {
+    if (!opts.getNeedsDrain()) return;
+
+    if (typeof opts.waitForTransportDrain === "function") {
+      await opts.waitForTransportDrain();
+      opts.clearNeedsDrain();
+      return;
+    }
+
+    opts.clearNeedsDrain();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
 }
 
 /**
@@ -1145,4 +1220,12 @@ function safeSend(contents, channel, data) {
   }
 }
 
-module.exports = { createZmodemSentry, buildUploadPlan, buildModeRestores, handleUpload, handleDownload };
+module.exports = {
+  createZmodemSentry,
+  buildUploadPlan,
+  buildModeRestores,
+  handleUpload,
+  handleDownload,
+  waitForWritableDrain,
+  createZmodemUploadDrainWaiter,
+};
