@@ -1330,7 +1330,8 @@ async function startSerialSession(event, options) {
           },
           waitForTransportDrain() {
             // Low-baud serial needs longer than the generic SSH/TCP drain
-            // budget: one 64 KiB upload chunk at 9600 8N1 is already ~68s.
+            // budget: ZDLE can roughly double wire bytes, so one 64 KiB
+            // upload chunk at 9600 8N1 can need ~137s on the wire.
             return waitForWritableDrain(serialPort, {
               timeoutMs: resolveSerialUploadDrainTimeoutMs({
                 baudRate,

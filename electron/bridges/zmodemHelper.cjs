@@ -660,6 +660,14 @@ const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
 const UPLOAD_CHUNK_SIZE = 64 * 1024;
 /** Extra headroom beyond pure wire time for serial drain waits. */
 const SERIAL_DRAIN_MARGIN_MS = 15000;
+/**
+ * Worst-case ZDLE wire expansion when zmodem.js FORCE_ESCAPE_CTRL_CHARS is on:
+ * every control octet becomes ZDLE + (octet XOR 0x40), so one input byte can
+ * occupy two serial bytes. Budget drain waits from this ceiling, not raw chunk
+ * size — otherwise control-heavy (or even typical binary) data exceeds the
+ * timeout at low baud while the link is still transferring.
+ */
+const SERIAL_ZDLE_WORST_CASE_EXPANSION = 2;
 
 function resolveTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -685,7 +693,7 @@ function bitsPerSerialByte(opts = {}) {
 /**
  * Drain timeout for ZMODEM uploads over a serial link. A fixed TCP/SSH-style
  * 60s budget rejects valid transfers once backpressure applies at low baud
- * (e.g. 64 KiB @ 9600 8N1 needs ~68s on the wire).
+ * (e.g. a ZDLE-expanded 64 KiB chunk @ 9600 8N1 needs ~137s on the wire).
  *
  * @param {{
  *   baudRate?: number,
@@ -707,7 +715,8 @@ function resolveSerialUploadDrainTimeoutMs(opts = {}) {
     return minTimeoutMs;
   }
   const bytes = Number.isFinite(byteCount) && byteCount > 0 ? byteCount : UPLOAD_CHUNK_SIZE;
-  const transmitMs = Math.ceil((bytes * bitsPerSerialByte(opts) * 1000) / baudRate);
+  const wireBytes = bytes * SERIAL_ZDLE_WORST_CASE_EXPANSION;
+  const transmitMs = Math.ceil((wireBytes * bitsPerSerialByte(opts) * 1000) / baudRate);
   return Math.max(minTimeoutMs, transmitMs + marginMs);
 }
 
@@ -740,10 +749,12 @@ function isZmodemTimeoutError(err) {
  * the SSH/TCP buffer (issue #2967).
  *
  * Resolves immediately when `writableNeedDrain` is already false (drain may
- * have fired between write(false) and this call). Also resolves on
- * close/end/error so a dead transport cannot hang the upload loop forever.
- * Races against a timeout so a peer that stays connected but never drains
- * (stuck SSH window / unread TCP buffer) cannot block handleUpload forever.
+ * have fired between write(false) and this call). Rejects on close/end/error
+ * so a dead transport stops the upload loop instead of looking like a successful
+ * drain (wrappers that catch write failures and return true would otherwise keep
+ * scanning the file until a later handshake timeout). Races against a timeout so
+ * a peer that stays connected but never drains (stuck SSH window / unread TCP
+ * buffer) cannot block handleUpload forever.
  *
  * @param {NodeJS.WritableStream | null | undefined} stream
  * @param {{ timeoutMs?: number }} [opts]
@@ -762,23 +773,32 @@ function waitForWritableDrain(stream, opts = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
-    const onDrainOrClose = () => finish();
+    const onDrain = () => finish();
+    const onTransportGone = (cause) => {
+      if (cause instanceof Error) {
+        finish(cause);
+        return;
+      }
+      const err = new Error("Transport closed during drain wait");
+      err.code = "NETCATTY_ZMODEM_TRANSPORT_CLOSED";
+      finish(err);
+    };
     const finish = (err) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
-      try { stream.off("drain", onDrainOrClose); } catch { /* ignore */ }
-      try { stream.off("close", onDrainOrClose); } catch { /* ignore */ }
-      try { stream.off("end", onDrainOrClose); } catch { /* ignore */ }
-      try { stream.off("error", onDrainOrClose); } catch { /* ignore */ }
+      try { stream.off("drain", onDrain); } catch { /* ignore */ }
+      try { stream.off("close", onTransportGone); } catch { /* ignore */ }
+      try { stream.off("end", onTransportGone); } catch { /* ignore */ }
+      try { stream.off("error", onTransportGone); } catch { /* ignore */ }
       if (err) reject(err);
       else resolve();
     };
 
-    stream.once("drain", onDrainOrClose);
-    stream.once("close", onDrainOrClose);
-    stream.once("end", onDrainOrClose);
-    stream.once("error", onDrainOrClose);
+    stream.once("drain", onDrain);
+    stream.once("close", onTransportGone);
+    stream.once("end", onTransportGone);
+    stream.once("error", onTransportGone);
 
     if (timeoutMs > 0) {
       timer = setTimeout(() => {

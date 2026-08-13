@@ -880,15 +880,64 @@ test("waitForWritableDrain rejects when the transport never drains", async () =>
   assert.equal((listeners.get("drain") || []).length, 0);
 });
 
+test("waitForWritableDrain rejects when the transport closes before drain", async () => {
+  const listeners = new Map();
+  const stream = {
+    writableNeedDrain: true,
+    once(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(cb);
+    },
+    off(event, cb) {
+      const list = listeners.get(event) || [];
+      listeners.set(event, list.filter((fn) => fn !== cb));
+    },
+  };
+
+  const pending = waitForWritableDrain(stream, { timeoutMs: 5_000 });
+  await new Promise((resolve) => setImmediate(resolve));
+  for (const cb of listeners.get("close") || []) cb();
+  await assert.rejects(
+    () => pending,
+    (err) => err && err.code === "NETCATTY_ZMODEM_TRANSPORT_CLOSED",
+  );
+  assert.equal((listeners.get("drain") || []).length, 0);
+});
+
+test("waitForWritableDrain rejects with the transport error event", async () => {
+  const listeners = new Map();
+  const stream = {
+    writableNeedDrain: true,
+    once(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(cb);
+    },
+    off(event, cb) {
+      const list = listeners.get(event) || [];
+      listeners.set(event, list.filter((fn) => fn !== cb));
+    },
+  };
+
+  const pending = waitForWritableDrain(stream, { timeoutMs: 5_000 });
+  await new Promise((resolve) => setImmediate(resolve));
+  const boom = new Error("socket hang up");
+  boom.code = "ECONNRESET";
+  for (const cb of listeners.get("error") || []) cb(boom);
+  await assert.rejects(
+    () => pending,
+    (err) => err === boom,
+  );
+});
+
 test("resolveSerialUploadDrainTimeoutMs scales above the TCP default for slow baud", () => {
   const at9600 = resolveSerialUploadDrainTimeoutMs({ baudRate: 9600 });
-  // 64 KiB * 10 bits @ 9600 ≈ 68.3s wire time + margin; must beat 60s default.
+  // ZDLE worst-case 2x * 64 KiB * 10 bits @ 9600 ≈ 136.5s + margin.
   assert.ok(at9600 > UPLOAD_DRAIN_TIMEOUT_MS);
   assert.equal(
     at9600,
     Math.max(
       UPLOAD_DRAIN_TIMEOUT_MS,
-      Math.ceil((UPLOAD_CHUNK_SIZE * 10 * 1000) / 9600) + 15_000,
+      Math.ceil((UPLOAD_CHUNK_SIZE * 2 * 10 * 1000) / 9600) + 15_000,
     ),
   );
 
@@ -917,8 +966,8 @@ test("resolveSerialUploadDrainTimeoutMs accounts for parity and stop bits", () =
     marginMs: 0,
     minTimeoutMs: 0,
   });
-  assert.equal(eightN1, Math.ceil((1024 * 10 * 1000) / 300));
-  assert.equal(eightE2, Math.ceil((1024 * 12 * 1000) / 300));
+  assert.equal(eightN1, Math.ceil((1024 * 2 * 10 * 1000) / 300));
+  assert.equal(eightE2, Math.ceil((1024 * 2 * 12 * 1000) / 300));
   assert.ok(eightE2 > eightN1);
 });
 
