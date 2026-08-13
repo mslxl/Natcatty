@@ -143,6 +143,8 @@ declare global {
     renameLocalFile?(oldPath: string, newPath: string): Promise<void>;
     mkdirLocal?(path: string): Promise<void>;
     statLocal?(path: string): Promise<SftpStatResult>;
+    /** No-follow local metadata for conflict detection (symlink vs target). */
+    lstatLocal?(path: string): Promise<SftpStatResult>;
     listLocalTree?(
       path: string,
       options?: {

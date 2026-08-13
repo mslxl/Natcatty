@@ -440,7 +440,10 @@ async function uploadEntries(
 
   const statTarget = async (path: string) => {
     try {
-      if (isLocal) return await bridge.statLocal?.(path);
+      // Prefer no-follow lstat for local destinations so Replace can unlink a
+      // symlink instead of writing through it. Followed statLocal stays for
+      // source sizing / resume (link size must not become totalBytes).
+      if (isLocal) return await (bridge.lstatLocal ?? bridge.statLocal)?.(path);
       if (sftpId) return await bridge.statSftp?.(sftpId, path);
     } catch {
       return null;

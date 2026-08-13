@@ -69,6 +69,8 @@ export interface UploadBridge {
   writeLocalFile?: (path: string, data: ArrayBuffer) => Promise<void>;
   mkdirLocal?: (path: string) => Promise<void>;
   statLocal?: (path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
+  /** No-follow local metadata so Replace can unlink symlinks before writeLocalFile. */
+  lstatLocal?: (path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
   deleteLocalFile?: (path: string) => Promise<void>;
   stageUploadFile?: (file: File, taskId: string) => Promise<string>;
   cancelStagedUploadFile?: (taskId: string) => Promise<unknown>;

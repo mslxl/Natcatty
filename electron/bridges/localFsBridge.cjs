@@ -295,12 +295,25 @@ async function mkdirLocal(event, payload) {
 }
 
 /**
- * Get local file statistics
+ * Get local file statistics (follows symlinks — size/mtime of the target).
+ * Resume and upload sizing rely on target bytes, not the link node.
  */
 async function statLocal(event, payload) {
-  // Prefer lstat so conflict resolution can distinguish symlinks from the
-  // files they point at. Following stat would report type "file" and skip
-  // pre-delete on Replace, letting writeLocalFile overwrite the link target.
+  const stat = await fs.promises.stat(payload.path);
+  return {
+    name: path.basename(payload.path),
+    type: stat.isDirectory() ? "directory" : "file",
+    size: stat.size,
+    lastModified: stat.mtime.getTime(),
+  };
+}
+
+/**
+ * Get local path metadata without following symlinks.
+ * Conflict resolution needs this so Replace can unlink a link instead of
+ * writing through it via writeLocalFile.
+ */
+async function lstatLocal(event, payload) {
   const stat = await fs.promises.lstat(payload.path);
   return {
     name: path.basename(payload.path),
@@ -607,6 +620,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:local:rename", renameLocalFile);
   ipcMain.handle("netcatty:local:mkdir", mkdirLocal);
   ipcMain.handle("netcatty:local:stat", statLocal);
+  ipcMain.handle("netcatty:local:lstat", lstatLocal);
   ipcMain.handle("netcatty:local:tree", listLocalTree);
   ipcMain.handle("netcatty:local:homedir", getHomeDir);
   ipcMain.handle("netcatty:local:drives", listDrives);
@@ -624,6 +638,7 @@ module.exports = {
   renameLocalFile,
   mkdirLocal,
   statLocal,
+  lstatLocal,
   collectLocalTreeEntries,
   createLocalTreeTraversalBudget,
   MAX_LOCAL_TREE_DIRECTORIES,

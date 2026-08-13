@@ -570,7 +570,7 @@ test("file replace unlinks an existing symlink before upload", async () => {
 
 test("local file replace unlinks an existing symlink before writeLocalFile", async () => {
   // Pathless File uploads fall back to writeLocalFile, which follows symlinks.
-  // statLocal must report type "symlink" (via lstat) so Replace unlinks first.
+  // Conflict checks use lstatLocal so Replace unlinks the link first.
   const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
   const deletedPaths: string[] = [];
   const writtenPaths: string[] = [];
@@ -583,7 +583,7 @@ test("local file replace unlinks an existing symlink before writeLocalFile", asy
       isLocal: true,
       bridge: {
         mkdirSftp: async () => {},
-        statLocal: async (path) =>
+        lstatLocal: async (path) =>
           path === "/Users/me/bin/tool.sh"
             ? { type: "symlink", size: 12, lastModified: 1000 }
             : null,

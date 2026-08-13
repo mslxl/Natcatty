@@ -25,7 +25,8 @@ export function useSftpTransferConflictOps() {
       if (!targetPane.connection) return null;
 
       if (targetPane.connection.isLocal) {
-        const stat = await netcattyBridge.get()?.statLocal?.(targetPath);
+        const bridge = netcattyBridge.get();
+        const stat = await (bridge?.lstatLocal ?? bridge?.statLocal)?.(targetPath);
         if (!stat) return null;
         return {
           type: stat.type as "file" | "directory" | "symlink" | undefined,
