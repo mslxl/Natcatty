@@ -652,9 +652,59 @@ const UPLOAD_BACKPRESSURE_FILE_END_TIMEOUT_MS = 120000;
 const UPLOAD_SESSION_CLOSE_TIMEOUT_MS = 15000;
 /** Max wait for a single transport drain after write() returned false. */
 const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
+/** Upload read/send chunk size (must stay aligned with drain timeout sizing). */
+const UPLOAD_CHUNK_SIZE = 64 * 1024;
+/** Extra headroom beyond pure wire time for serial drain waits. */
+const SERIAL_DRAIN_MARGIN_MS = 15000;
 
 function resolveTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+/**
+ * Bits on the wire per payload byte for common serial framing (start + data +
+ * optional parity + stop). Defaults to 8N1 => 10 bits/byte.
+ *
+ * @param {{ dataBits?: number, stopBits?: number, parity?: string }} [opts]
+ * @returns {number}
+ */
+function bitsPerSerialByte(opts = {}) {
+  const dataBits = Number(opts.dataBits);
+  const stopBits = Number(opts.stopBits);
+  const data = Number.isFinite(dataBits) && dataBits > 0 ? dataBits : 8;
+  const stop = Number.isFinite(stopBits) && stopBits > 0 ? stopBits : 1;
+  const parity = String(opts.parity || "none").toLowerCase();
+  const parityBits = parity && parity !== "none" ? 1 : 0;
+  return 1 + data + parityBits + stop;
+}
+
+/**
+ * Drain timeout for ZMODEM uploads over a serial link. A fixed TCP/SSH-style
+ * 60s budget rejects valid transfers once backpressure applies at low baud
+ * (e.g. 64 KiB @ 9600 8N1 needs ~68s on the wire).
+ *
+ * @param {{
+ *   baudRate?: number,
+ *   byteCount?: number,
+ *   dataBits?: number,
+ *   stopBits?: number,
+ *   parity?: string,
+ *   marginMs?: number,
+ *   minTimeoutMs?: number,
+ * }} [opts]
+ * @returns {number}
+ */
+function resolveSerialUploadDrainTimeoutMs(opts = {}) {
+  const baudRate = Number(opts.baudRate);
+  const byteCount = Number(opts.byteCount);
+  const marginMs = resolveTimeoutMs(opts.marginMs, SERIAL_DRAIN_MARGIN_MS);
+  const minTimeoutMs = resolveTimeoutMs(opts.minTimeoutMs, UPLOAD_DRAIN_TIMEOUT_MS);
+  if (!Number.isFinite(baudRate) || baudRate <= 0) {
+    return minTimeoutMs;
+  }
+  const bytes = Number.isFinite(byteCount) && byteCount > 0 ? byteCount : UPLOAD_CHUNK_SIZE;
+  const transmitMs = Math.ceil((bytes * bitsPerSerialByte(opts) * 1000) / baudRate);
+  return Math.max(minTimeoutMs, transmitMs + marginMs);
 }
 
 /**
@@ -943,14 +993,13 @@ async function handleUpload(zsession, opts) {
     }
 
     // Read and send in chunks
-    const CHUNK_SIZE = 64 * 1024; // Leave room for inbound ZMODEM control frames
     const fd = fs.openSync(filePath, "r");
-    const buf = Buffer.alloc(CHUNK_SIZE);
+    const buf = Buffer.alloc(UPLOAD_CHUNK_SIZE);
     let sent = 0;
 
     try {
       while (true) {
-        const bytesRead = fs.readSync(fd, buf, 0, CHUNK_SIZE);
+        const bytesRead = fs.readSync(fd, buf, 0, UPLOAD_CHUNK_SIZE);
         if (bytesRead === 0) break;
 
         // zmodem.js send() is synchronous and triggers writeToRemote via
@@ -1247,4 +1296,7 @@ module.exports = {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
+  resolveSerialUploadDrainTimeoutMs,
+  UPLOAD_CHUNK_SIZE,
+  UPLOAD_DRAIN_TIMEOUT_MS,
 };

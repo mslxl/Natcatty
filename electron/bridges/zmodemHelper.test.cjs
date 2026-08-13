@@ -11,6 +11,9 @@ const {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
+  resolveSerialUploadDrainTimeoutMs,
+  UPLOAD_CHUNK_SIZE,
+  UPLOAD_DRAIN_TIMEOUT_MS,
 } = require("./zmodemHelper.cjs");
 
 const never = () => { throw new Error("resolver should not be called"); };
@@ -875,6 +878,48 @@ test("waitForWritableDrain rejects when the transport never drains", async () =>
     (err) => err && err.code === "NETCATTY_ZMODEM_TIMEOUT",
   );
   assert.equal((listeners.get("drain") || []).length, 0);
+});
+
+test("resolveSerialUploadDrainTimeoutMs scales above the TCP default for slow baud", () => {
+  const at9600 = resolveSerialUploadDrainTimeoutMs({ baudRate: 9600 });
+  // 64 KiB * 10 bits @ 9600 ≈ 68.3s wire time + margin; must beat 60s default.
+  assert.ok(at9600 > UPLOAD_DRAIN_TIMEOUT_MS);
+  assert.equal(
+    at9600,
+    Math.max(
+      UPLOAD_DRAIN_TIMEOUT_MS,
+      Math.ceil((UPLOAD_CHUNK_SIZE * 10 * 1000) / 9600) + 15_000,
+    ),
+  );
+
+  const at115200 = resolveSerialUploadDrainTimeoutMs({ baudRate: 115200 });
+  assert.equal(at115200, UPLOAD_DRAIN_TIMEOUT_MS);
+
+  assert.equal(
+    resolveSerialUploadDrainTimeoutMs({ baudRate: Number.NaN }),
+    UPLOAD_DRAIN_TIMEOUT_MS,
+  );
+});
+
+test("resolveSerialUploadDrainTimeoutMs accounts for parity and stop bits", () => {
+  const eightN1 = resolveSerialUploadDrainTimeoutMs({
+    baudRate: 300,
+    byteCount: 1024,
+    marginMs: 0,
+    minTimeoutMs: 0,
+  });
+  const eightE2 = resolveSerialUploadDrainTimeoutMs({
+    baudRate: 300,
+    byteCount: 1024,
+    dataBits: 8,
+    stopBits: 2,
+    parity: "even",
+    marginMs: 0,
+    minTimeoutMs: 0,
+  });
+  assert.equal(eightN1, Math.ceil((1024 * 10 * 1000) / 300));
+  assert.equal(eightE2, Math.ceil((1024 * 12 * 1000) / 300));
+  assert.ok(eightE2 > eightN1);
 });
 
 test("createZmodemUploadDrainWaiter waits on transport drain after backpressure", async () => {

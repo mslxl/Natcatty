@@ -57,7 +57,11 @@ const ptyProcessTree = require("./ptyProcessTree.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { detectShellKind } = require("./ai/ptyExec.cjs");
 const { stripAnsi, trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
-const { createZmodemSentry, waitForWritableDrain } = require("./zmodemHelper.cjs");
+const {
+  createZmodemSentry,
+  waitForWritableDrain,
+  resolveSerialUploadDrainTimeoutMs,
+} = require("./zmodemHelper.cjs");
 const { discoverShells } = require("./shellDiscovery.cjs");
 const moshHandshake = require("./moshHandshake.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
@@ -1325,7 +1329,16 @@ async function startSerialSession(event, options) {
             try { return serialPort.write(buf); } catch { return true; }
           },
           waitForTransportDrain() {
-            return waitForWritableDrain(serialPort);
+            // Low-baud serial needs longer than the generic SSH/TCP drain
+            // budget: one 64 KiB upload chunk at 9600 8N1 is already ~68s.
+            return waitForWritableDrain(serialPort, {
+              timeoutMs: resolveSerialUploadDrainTimeoutMs({
+                baudRate,
+                dataBits,
+                stopBits,
+                parity,
+              }),
+            });
           },
           getWebContents() {
             return electronModule.webContents.fromId(session.webContentsId);
