@@ -66,3 +66,53 @@ test("home discovery still accepts non-root realpath without listing", async () 
   assert.deepEqual(result, { success: true, homeDir: "/home/deploy" });
   assert.equal(readdirCalls, 0);
 });
+
+test("statSftp classifies symlinks via lstat without following the target", async () => {
+  const channel = { lstat() {} };
+  let lstatCalls = 0;
+  let statCalls = 0;
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    path: require("node:path"),
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "utf-8",
+    encodePath: (remotePath) => remotePath,
+    lstatAsync: async () => {
+      lstatCalls += 1;
+      return {
+        size: 11,
+        mode: 0o120777,
+        mtime: 10,
+        isDirectory: () => false,
+        isSymbolicLink: () => true,
+      };
+    },
+    statAsync: async () => {
+      statCalls += 1;
+      return {
+        size: 42,
+        mode: 0o100644,
+        mtime: 20,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      };
+    },
+    statResultFromAttrs: (attrs) => ({
+      size: attrs.size,
+      modifyTime: attrs.mtime * 1000,
+      mode: attrs.mode,
+      isDirectory: attrs.isDirectory(),
+      isSymbolicLink: attrs.isSymbolicLink(),
+    }),
+  });
+
+  const result = await api.statSftp(null, {
+    sftpId: "sftp-1",
+    path: "/usr/local/bin/tool",
+  });
+
+  assert.equal(lstatCalls, 1);
+  assert.equal(statCalls, 0, "must not follow the symlink with STAT");
+  assert.equal(result.type, "symlink");
+  assert.equal(result.size, 11);
+});

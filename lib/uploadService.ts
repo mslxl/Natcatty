@@ -580,11 +580,11 @@ async function uploadEntries(
           });
           continue;
         }
-        // Directories must be cleared so replace does not merge with stale
-        // children. Files must stay: deleting first creates a new inode with
-        // umask defaults and drops mode bits (e.g. +x) that stage+rename
-        // would otherwise restore (#2954).
-        if (isDirectory) {
+        // Preserve only confirmed regular files so stage+rename can restore
+        // mode bits (#2954). Directories must be cleared so replace does not
+        // merge with stale children. Symlinks must be unlinked so upload does
+        // not write through the link and overwrite an out-of-directory target.
+        if (existing.type !== "file") {
           await deleteTarget(rootTargetPath);
         }
         resolved.push(...groupEntries);

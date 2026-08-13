@@ -832,10 +832,28 @@ function createFileOpsApi(ctx) {
         };
       }
     
-      await requireSftpChannel(client);
+      const sftp = await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(payload.path, encoding);
-      const stat = await client.stat(encodedPath);
+      // Prefer lstat so conflict resolution can distinguish symlinks from the
+      // files they point at. Following stat would report type "file" and skip
+      // pre-delete on Replace, letting upload write through the link.
+      let attrs;
+      try {
+        attrs = await lstatAsync(sftp, encodedPath);
+      } catch (error) {
+        const code = error?.code;
+        const lstatUnsupported = code === 8
+          || code === "ENOTSUP"
+          || code === "EOPNOTSUPP"
+          || code === "SSH_FX_OP_UNSUPPORTED";
+        if (typeof sftp?.lstat === "function" && lstatUnsupported) {
+          attrs = await statAsync(sftp, encodedPath);
+        } else {
+          throw error;
+        }
+      }
+      const stat = statResultFromAttrs(attrs);
       return {
         name: path.basename(payload.path),
         type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
