@@ -109,11 +109,18 @@ function parseRemoteLoginShellProbeOutput(stdout) {
  */
 function buildRemoteWindowsLoginShellProbeCommand() {
   // Merge stderr for REG_SZ success lines that some hosts split across streams.
-  // On missing DefaultShell, reg.exe exits non-zero — echo a stable marker
-  // (English "unable to find..." is only a parser fallback for older fixtures).
+  // Echo the missing-value marker only when the OpenSSH key is readable but
+  // DefaultShell is absent. A bare `if errorlevel 1` would also fire on access
+  // denied / policy blocks and permanently pin cmd on PowerShell hosts
+  // (Codex P2). English "unable to find..." remains a parser fallback only.
+  //
+  // `if errorlevel 1` means exit code >= 1; `if not errorlevel 1` means 0.
   return (
     'cmd.exe /d /s /c "reg query HKLM\\SOFTWARE\\OpenSSH /v DefaultShell 2>&1'
-    + ` & if errorlevel 1 echo ${WINDOWS_NO_DEFAULT_SHELL_MARKER}"`
+    + " & if errorlevel 1 ("
+    + "reg query HKLM\\SOFTWARE\\OpenSSH >nul 2>&1"
+    + ` & if not errorlevel 1 echo ${WINDOWS_NO_DEFAULT_SHELL_MARKER}`
+    + ')"'
   );
 }
 

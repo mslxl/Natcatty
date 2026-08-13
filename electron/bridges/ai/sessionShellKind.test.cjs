@@ -61,7 +61,10 @@ test("Windows login-shell probe uses reg query for DefaultShell", () => {
   assert.match(command, /DefaultShell/);
   // Force cmd.exe so ERRORLEVEL works under powershell DefaultShell too.
   assert.match(command, /cmd\.exe/i);
+  // Missing-value marker only after confirming the OpenSSH key is readable
+  // (`if not errorlevel 1`), not on every reg failure (access denied).
   assert.match(command, /if errorlevel 1/i);
+  assert.match(command, /if not errorlevel 1/i);
   assert.match(command, new RegExp(WINDOWS_NO_DEFAULT_SHELL_MARKER));
   // Missing DefaultShell diagnostics may still land on stderr; redirect keeps
   // REG_SZ success lines visible when hosts split streams.
@@ -98,6 +101,17 @@ test("parseRemoteWindowsLoginShellProbeOutput reads DefaultShell and missing-key
   // Localized text alone must not classify — that was the P2 hang risk.
   assert.equal(
     parseRemoteWindowsLoginShellProbeOutput("错误: 系统找不到指定的注册表项或值。\r\n"),
+    null,
+  );
+  // Access denied / policy blocks must stay unclassified (no missing-value
+  // marker). Treating them as cmd permanently pins the wrong wrapper on
+  // PowerShell DefaultShell hosts.
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput("ERROR: Access is denied.\r\n"),
+    null,
+  );
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput("错误: 拒绝访问。\r\n"),
     null,
   );
   assert.equal(parseRemoteWindowsLoginShellProbeOutput(""), null);
@@ -374,6 +388,26 @@ test("ensureSessionShellKind pins cmd when Windows OpenSSH has no DefaultShell v
   assert.equal(kind, "cmd");
   assert.equal(session.shellKind, "cmd");
   assert.equal(session._shellKindProbeSettled, true);
+});
+
+test("ensureSessionShellKind does not pin cmd when Windows reg probe is access-denied", async () => {
+  // Codex P2: access denied must not share the missing-value → cmd path.
+  let probes = 0;
+  const session = {
+    protocol: "ssh",
+    remoteSshVersion: "OpenSSH_for_Windows_9.5",
+  };
+  const kind = await ensureSessionShellKind(session, {
+    execProbe: async () => {
+      probes += 1;
+      // Live probe no longer echoes WINDOWS_NO_DEFAULT_SHELL_MARKER here.
+      return "ERROR: Access is denied.\r\n";
+    },
+  });
+  assert.equal(kind, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(probes, 1);
 });
 
 test("ensureSessionShellKind settles Windows OpenSSH without pinning when reg probe is empty", async () => {
