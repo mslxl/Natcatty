@@ -810,8 +810,19 @@ function createFileOpsApi(ctx) {
       return true;
     }
     
+    function formatSftpStatResult(payloadPath, stat, permissions) {
+      return {
+        name: path.basename(payloadPath),
+        type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
+        size: stat.size,
+        lastModified: stat.modifyTime,
+        permissions,
+      };
+    }
+
     /**
-     * Get file statistics
+     * Get file statistics (follows symlinks — size/mtime of the target).
+     * Resume and transfer sizing rely on target bytes, not the link node.
      */
     async function statSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
@@ -823,21 +834,50 @@ function createFileOpsApi(ctx) {
           encoding,
           signal: payload?.abortSignal || null,
         });
-        return {
-          name: path.basename(payload.path),
-          type: st.isDirectory ? "directory" : st.isSymbolicLink ? "symlink" : "file",
-          size: st.size,
-          lastModified: st.modifyTime,
-          permissions: st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
-        };
+        return formatSftpStatResult(
+          payload.path,
+          st,
+          st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
+        );
       }
-    
+
       const sftp = await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(payload.path, encoding);
-      // Prefer lstat so conflict resolution can distinguish symlinks from the
-      // files they point at. Following stat would report type "file" and skip
-      // pre-delete on Replace, letting upload write through the link.
+      const stat = statResultFromAttrs(await statAsync(sftp, encodedPath));
+      return formatSftpStatResult(
+        payload.path,
+        stat,
+        stat.mode ? (stat.mode & 0o777).toString(8) : undefined,
+      );
+    }
+
+    /**
+     * Get remote path metadata without following symlinks.
+     * Conflict resolution needs this so Replace can unlink a link instead of
+     * writing through it via in-place upload.
+     */
+    async function lstatSftp(event, payload) {
+      const client = sftpClients.get(payload.sftpId);
+      if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        // SCP shell stat already reports the link node (no follow).
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const st = await getScpBackendForClient(client).stat(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return formatSftpStatResult(
+          payload.path,
+          st,
+          st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
+        );
+      }
+
+      const sftp = await requireSftpChannel(client);
+      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+      const encodedPath = encodePath(payload.path, encoding);
       let attrs;
       try {
         attrs = await lstatAsync(sftp, encodedPath);
@@ -854,13 +894,11 @@ function createFileOpsApi(ctx) {
         }
       }
       const stat = statResultFromAttrs(attrs);
-      return {
-        name: path.basename(payload.path),
-        type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
-        size: stat.size,
-        lastModified: stat.modifyTime,
-        permissions: stat.mode ? (stat.mode & 0o777).toString(8) : undefined,
-      };
+      return formatSftpStatResult(
+        payload.path,
+        stat,
+        stat.mode ? (stat.mode & 0o777).toString(8) : undefined,
+      );
     }
     
     /**
@@ -1015,6 +1053,7 @@ function createFileOpsApi(ctx) {
       deleteSftp,
       renameSftp,
       statSftp,
+      lstatSftp,
       chmodSftp,
       getSftpHomeDir,
     };

@@ -859,6 +859,9 @@ function createPreloadApi(ctx) {
   statSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:stat", { sftpId, path, encoding });
   },
+  lstatSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:lstat", { sftpId, path, encoding });
+  },
   chmodSftp: async (sftpId, path, mode, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:chmod", { sftpId, path, mode, encoding });
   },

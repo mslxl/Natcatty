@@ -18,6 +18,8 @@ declare global {
     deleteSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
     renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
     statSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpStatResult>;
+    /** No-follow remote metadata for conflict detection (symlink vs target). */
+    lstatSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpStatResult>;
     chmodSftp?(sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding): Promise<void>;
     getSftpHomeDir?(sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ success: boolean; homeDir?: string; error?: string }>;
 

@@ -2397,6 +2397,7 @@ const {
   deleteSftp,
   renameSftp,
   statSftp,
+  lstatSftp,
   chmodSftp,
   getSftpHomeDir,
 } = fileOpsApi;
@@ -2591,6 +2592,7 @@ function registerHandlers(ipcMain, options = {}) {
       "netcatty:sftp:delete",
       "netcatty:sftp:rename",
       "netcatty:sftp:stat",
+      "netcatty:sftp:lstat",
       "netcatty:sftp:chmod",
       "netcatty:sftp:homeDir",
     ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel, ownership));
@@ -2612,6 +2614,7 @@ function registerHandlers(ipcMain, options = {}) {
     ["netcatty:sftp:delete", deleteSftp],
     ["netcatty:sftp:rename", renameSftp],
     ["netcatty:sftp:stat", statSftp],
+    ["netcatty:sftp:lstat", lstatSftp],
     ["netcatty:sftp:chmod", chmodSftp],
     ["netcatty:sftp:homeDir", getSftpHomeDir],
   ].forEach(([channel, handler]) => registerActivityHandle(ipcMain, channel, handler, ownership));
@@ -2658,6 +2661,7 @@ module.exports = {
   deleteSftp,
   renameSftp,
   statSftp,
+  lstatSftp,
   chmodSftp,
   getSftpHomeDir,
   resolveEncodingForRequest,

@@ -532,6 +532,7 @@ test("file replace leaves the remote destination so upload can restore mode bits
 test("file replace unlinks an existing symlink before upload", async () => {
   // Leaving the symlink would let in-place upload follow it and overwrite the
   // link target outside the displayed directory.
+  // Conflict checks use lstatSftp so Replace unlinks the link first.
   const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
   Object.defineProperty(file, "path", { value: "/local/tool.sh" });
   const deletedPaths: string[] = [];
@@ -545,7 +546,9 @@ test("file replace unlinks an existing symlink before upload", async () => {
       isLocal: false,
       bridge: {
         mkdirSftp: async () => {},
-        statSftp: async (_sftpId, path) =>
+        // Followed stat would report type "file" and skip pre-delete.
+        statSftp: async () => ({ type: "file", size: 4096, lastModified: 1000 }),
+        lstatSftp: async (_sftpId, path) =>
           path === "/usr/local/bin/tool.sh"
             ? { type: "symlink", size: 12, lastModified: 1000 }
             : null,

@@ -36,7 +36,8 @@ export function useSftpTransferConflictOps() {
       }
 
       if (!targetSftpId) return null;
-      const stat = await netcattyBridge.get()?.statSftp?.(
+      const bridge = netcattyBridge.get();
+      const stat = await (bridge?.lstatSftp ?? bridge?.statSftp)?.(
         targetSftpId,
         targetPath,
         targetEncoding,

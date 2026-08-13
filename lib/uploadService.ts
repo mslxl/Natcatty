@@ -288,7 +288,9 @@ async function uploadEntriesWithOptionalCompression(
 
   const statTarget = async (path: string) => {
     try {
-      return await bridge.statSftp?.(sftpId, path) ?? null;
+      // Prefer no-follow lstat so Replace can unlink a symlink instead of
+      // writing through it. Followed statSftp stays for source sizing / resume.
+      return await (bridge.lstatSftp ?? bridge.statSftp)?.(sftpId, path) ?? null;
     } catch {
       return null;
     }
@@ -440,11 +442,11 @@ async function uploadEntries(
 
   const statTarget = async (path: string) => {
     try {
-      // Prefer no-follow lstat for local destinations so Replace can unlink a
-      // symlink instead of writing through it. Followed statLocal stays for
+      // Prefer no-follow lstat for destinations so Replace can unlink a
+      // symlink instead of writing through it. Followed stat* stays for
       // source sizing / resume (link size must not become totalBytes).
       if (isLocal) return await (bridge.lstatLocal ?? bridge.statLocal)?.(path);
-      if (sftpId) return await bridge.statSftp?.(sftpId, path);
+      if (sftpId) return await (bridge.lstatSftp ?? bridge.statSftp)?.(sftpId, path);
     } catch {
       return null;
     }
