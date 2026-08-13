@@ -382,6 +382,40 @@ test("ensureSessionShellKind settles Windows OpenSSH without pinning when reg pr
   assert.equal(probes, 1);
 });
 
+test("ensureSessionShellKind retries Windows OpenSSH probe after null/timeout", async () => {
+  // Codex P1: timeout/channel failure must not settleWithoutKind — otherwise
+  // later AI execs permanently use the POSIX wrapper on Windows.
+  let probes = 0;
+  const session = {
+    protocol: "ssh",
+    remoteSshVersion: "OpenSSH_for_Windows_9.5",
+  };
+  const failThenSucceed = async () => {
+    probes += 1;
+    if (probes === 1) return null;
+    return (
+      "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\r\n" +
+      "    DefaultShell    REG_SZ    C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n"
+    );
+  };
+
+  const first = await ensureSessionShellKind(session, {
+    execProbe: failThenSucceed,
+  });
+  assert.equal(first, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._shellKindProbeSettled, undefined);
+  assert.equal(session._shellKindProbePromise, null);
+
+  const second = await ensureSessionShellKind(session, {
+    execProbe: failThenSucceed,
+  });
+  assert.equal(second, "powershell");
+  assert.equal(session.shellKind, "powershell");
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(probes, 2);
+});
+
 test("ensureSessionShellKind falls back to Windows reg probe when Unix probe yields nothing", async () => {
   const probed = [];
   const session = { protocol: "ssh" };

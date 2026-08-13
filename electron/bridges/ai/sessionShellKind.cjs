@@ -231,11 +231,17 @@ async function probeRemoteLoginShellKind(execProbe, timeoutMs, session) {
       execProbe(buildRemoteWindowsLoginShellProbeCommand(), timeoutMs),
       timeoutMs,
     );
+    // Timed out / SSH exec failed — leave unsettled for a later retry
+    // (same as the Unix probe branch below). Settling here would permanently
+    // fall back to the POSIX wrapper on Windows sessions until reconnect.
+    if (winStdout == null) {
+      return { kind: null };
+    }
     const winKind = parseRemoteWindowsLoginShellProbeOutput(winStdout);
     if (winKind) return { kind: winKind };
-    // Banner is Windows OpenSSH but reg query returned nothing useful. Settle
-    // without pinning so we stop re-probing; live PS/cmd prompt override can
-    // still select the wrapper when lastIdlePrompt is available.
+    // Completed probe but nothing classifiable. Settle without pinning so we
+    // stop re-probing; live PS/cmd prompt override can still select the
+    // wrapper when lastIdlePrompt is available.
     return { kind: null, settleWithoutKind: true };
   }
 
