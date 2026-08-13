@@ -52,6 +52,7 @@ import {
   STORAGE_KEY_SESSION_LOGS_ENABLED,
   STORAGE_KEY_RESTORE_PREVIOUS_SESSION,
   STORAGE_KEY_RESTORE_TERMINAL_CWD,
+  STORAGE_KEY_STARTUP_LANDING,
   STORAGE_KEY_SESSION_LOGS_DIR,
   STORAGE_KEY_SESSION_LOGS_FORMAT,
   STORAGE_KEY_SESSION_LOGS_TIMESTAMPS_ENABLED,
@@ -146,6 +147,10 @@ import {
   type HostClickBehavior,
 } from './settingsStateDefaults';
 import { isHostClickBehavior } from '../../domain/hostClickBehavior';
+import {
+  resolveStartupLandingSetting,
+  type StartupLanding,
+} from '../../domain/startupLanding';
 import { resolveRestorePreviousSessionSetting, resolveRestoreTerminalCwdSetting } from './sessionRestoreSettings';
 import { sessionRestoreStorage } from './sessionRestoreStorage';
 import { useSettingsStorageSync } from './settingsStorageSync';
@@ -430,6 +435,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [restoreTerminalCwd, setRestoreTerminalCwdState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_TERMINAL_CWD);
     return resolveRestoreTerminalCwdSetting(stored);
+  });
+  const [startupLanding, setStartupLandingState] = useState<StartupLanding>(() => {
+    return resolveStartupLandingSetting(readStoredString(STORAGE_KEY_STARTUP_LANDING));
   });
   const [sftpTransferConcurrency, setSftpTransferConcurrencyState] = useState<number>(() => {
     return resolveSftpTransferConcurrency(() =>
@@ -955,6 +963,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setRestorePreviousSessionState(resolveRestorePreviousSessionSetting(storedRestorePreviousSession));
     const storedRestoreTerminalCwd = localStorageAdapter.readBoolean(STORAGE_KEY_RESTORE_TERMINAL_CWD);
     setRestoreTerminalCwdState(resolveRestoreTerminalCwdSetting(storedRestoreTerminalCwd));
+    setStartupLandingState(resolveStartupLandingSetting(readStoredString(STORAGE_KEY_STARTUP_LANDING)));
 
     // Workspace focus style
     const storedFocusStyle = readStoredString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
@@ -1123,6 +1132,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setDisableTerminalFontZoomState,
     setRestorePreviousSessionState,
     setRestoreTerminalCwdState,
+    setStartupLandingState,
     setSftpTransferConcurrencyState,
     setSshTransportIdleTtlMsState,
   });
@@ -1153,7 +1163,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd,
+    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode,
@@ -1163,7 +1173,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize: applyIncomingTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpSkipUnchanged, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState,
+    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState, setStartupLandingState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled, setExplorerContextMenuEnabledState: applyIncomingExplorerContextMenuEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, setSshTransportIdleTtlMsState,
@@ -1358,6 +1368,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     localStorageAdapter.writeBoolean(STORAGE_KEY_RESTORE_TERMINAL_CWD, enabled);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_RESTORE_TERMINAL_CWD, enabled);
+  }, [notifySettingsChanged]);
+
+  const setStartupLanding = useCallback((landing: StartupLanding) => {
+    setStartupLandingState(landing);
+    localStorageAdapter.writeString(STORAGE_KEY_STARTUP_LANDING, landing);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_STARTUP_LANDING, landing);
   }, [notifySettingsChanged]);
 
   // Apply and persist custom CSS
@@ -1964,6 +1981,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setRestorePreviousSession,
     restoreTerminalCwd,
     setRestoreTerminalCwd,
+    startupLanding,
+    setStartupLanding,
     sftpTransferConcurrency,
     setSftpTransferConcurrency,
     sshTransportIdleTtlMs,

@@ -42,6 +42,8 @@ export const STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA = 'netcatty_connection_log
 export const STORAGE_KEY_SESSION_RESTORE = 'netcatty_session_restore_v1';
 export const STORAGE_KEY_RESTORE_PREVIOUS_SESSION = 'netcatty_restore_previous_session_v1';
 export const STORAGE_KEY_RESTORE_TERMINAL_CWD = 'netcatty_restore_terminal_cwd_v1';
+/** Cold-start landing: vault (home) or local terminal when nothing is restored. */
+export const STORAGE_KEY_STARTUP_LANDING = 'netcatty_startup_landing_v1';
 export const STORAGE_KEY_IDENTITIES = 'netcatty_identities_v1';
 export const STORAGE_KEY_PROXY_PROFILES = 'netcatty_proxy_profiles_v1';
 export const STORAGE_KEY_VAULT_HOSTS_VIEW_MODE = 'netcatty_vault_hosts_view_mode_v1';

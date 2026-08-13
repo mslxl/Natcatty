@@ -173,6 +173,10 @@ export const enCoreMessages: Messages = {
 
   // Settings > Session Restore
   'settings.sessionRestore.title': 'Session Restore',
+  'settings.sessionRestore.startupLanding': 'On launch',
+  'settings.sessionRestore.startupLandingDesc': 'Choose whether to open the host home page or a local terminal when Netcatty starts with no restored sessions.',
+  'settings.sessionRestore.startupLanding.vault': 'Home (hosts)',
+  'settings.sessionRestore.startupLanding.localTerminal': 'Local terminal',
   'settings.sessionRestore.restorePreviousSession': 'Restore previous tabs and workspaces',
   'settings.sessionRestore.restorePreviousSessionDesc': 'Reopen terminal tabs and workspace layouts from the last app session.',
   'settings.sessionRestore.restoreTerminalCwd': 'Restore terminal working directory',

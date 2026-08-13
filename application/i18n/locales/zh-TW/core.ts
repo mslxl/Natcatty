@@ -170,6 +170,10 @@ export const zhTWCoreMessages: Messages = {
 
   // Settings > Session Restore
   'settings.sessionRestore.title': '工作階段恢復',
+  'settings.sessionRestore.startupLanding': '啟動時開啟',
+  'settings.sessionRestore.startupLandingDesc': '當沒有可恢復的工作階段時，選擇啟動後進入主機主頁還是直接開啟本機終端。',
+  'settings.sessionRestore.startupLanding.vault': '主頁（主機）',
+  'settings.sessionRestore.startupLanding.localTerminal': '本機終端',
   'settings.sessionRestore.restorePreviousSession': '恢復上次的標籤頁和工作區',
   'settings.sessionRestore.restorePreviousSessionDesc': '啟動時重新開啟上次的終端標籤頁和工作區佈局。',
   'settings.sessionRestore.restoreTerminalCwd': '恢復終端工作目錄',

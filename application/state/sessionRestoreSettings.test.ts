@@ -175,7 +175,7 @@ test("restore-only settings do not bump the cloud sync settings version", () => 
   const settingsVersionSource = settingsSource.slice(settingsVersionIndex);
 
   assert.notEqual(settingsVersionIndex, -1);
-  assert.doesNotMatch(settingsVersionSource, /restorePreviousSession|restoreTerminalCwd/);
+  assert.doesNotMatch(settingsVersionSource, /restorePreviousSession|restoreTerminalCwd|startupLanding/);
 });
 
 test("restore previous session re-arms after cross-window settings ipc sync", () => {

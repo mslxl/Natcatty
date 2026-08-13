@@ -72,6 +72,7 @@ import { useExternalMcpSessionSync } from '../state/useExternalMcpSessionSync';
 import {
   STORAGE_KEY_DEBUG_HOTKEYS,
   STORAGE_KEY_PORT_FORWARDING,
+  STORAGE_KEY_STARTUP_LANDING,
 } from '../../infrastructure/config/storageKeys';
 import { getEffectiveKnownHosts } from '../../infrastructure/syncHelpers';
 import { toast } from '../../components/ui/toast';
@@ -84,6 +85,7 @@ import { Host, HostProtocol, KnownHost, SerialConfig, Snippet, SSHKey, TerminalS
 import { resolveSnippetCommand } from '../../components/SnippetExecutionProvider';
 import { isScriptSnippet } from '../../domain/snippetScript.ts';
 import { collectSnippetDeleteIds } from '../../domain/snippetSelection.ts';
+import { shouldOpenLocalTerminalOnStartup, resolveStartupLandingSetting } from '../../domain/startupLanding';
 import { useAppStartupEffects } from './useAppStartupEffects';
 import { handleTrayJumpToSessionImpl, handleTrayTogglePortForwardImpl, handleTrayPanelConnectImpl, handleTrayPanelConnectRequestImpl, flushQueuedTrayPanelConnectHostsImpl, handleGlobalHotkeyKeyDownImpl, handleEscapeKeyDownImpl, handleKeyboardInteractiveSubmitImpl, handleKeyboardInteractiveCancelImpl, handlePassphraseSubmitImpl, handlePassphraseCancelImpl, handlePassphraseSkipImpl, createLocalTerminalWithCurrentShellImpl, splitSessionWithCurrentShellImpl, copySessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, copySessionToNewWindowWithCurrentShellImpl, confirmIfBusyLocalTerminalImpl, closeTabsBatchImpl, executeHotkeyActionImpl, handleCreateLocalTerminalImpl, handleConnectToHostImpl, handleTerminalDataCaptureImpl, hasMultipleProtocolsImpl, handleHostConnectWithProtocolCheckImpl, handleProtocolSelectImpl, handleRootContextMenuImpl } from './AppHandlers';
 
@@ -1176,6 +1178,26 @@ export function AppSideEffects() {
       options,
     );
   }, [addConnectionLog, createLocalTerminal, terminalSettings, discoveredShells]);
+
+  // Cold-start landing: open a local terminal once when preferred and nothing was restored.
+  const startupLocalTerminalAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (startupLocalTerminalAttemptedRef.current) return;
+    startupLocalTerminalAttemptedRef.current = true;
+    if (isPeerSessionWindow) return;
+    const landing = resolveStartupLandingSetting(
+      localStorageAdapter.readString(STORAGE_KEY_STARTUP_LANDING),
+    );
+    const hasRestoredSessionState = sessions.length > 0 || workspaces.length > 0;
+    if (!shouldOpenLocalTerminalOnStartup({
+      startupLanding: landing,
+      hasRestoredSessionState,
+      isPeerSessionWindow: false,
+    })) {
+      return;
+    }
+    handleCreateLocalTerminal();
+  }, [handleCreateLocalTerminal, isPeerSessionWindow, sessions.length, workspaces.length]);
 
   const proxyProfileIdSet = useMemo(
     () => new Set(proxyProfiles.map((profile) => profile.id)),
