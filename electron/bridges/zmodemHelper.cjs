@@ -650,6 +650,8 @@ function createZmodemSentry(opts) {
 const UPLOAD_FILE_END_TIMEOUT_MS = 45000;
 const UPLOAD_BACKPRESSURE_FILE_END_TIMEOUT_MS = 120000;
 const UPLOAD_SESSION_CLOSE_TIMEOUT_MS = 15000;
+/** Max wait for a single transport drain after write() returned false. */
+const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
 
 function resolveTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -686,11 +688,14 @@ function isZmodemTimeoutError(err) {
  * Resolves immediately when `writableNeedDrain` is already false (drain may
  * have fired between write(false) and this call). Also resolves on
  * close/end/error so a dead transport cannot hang the upload loop forever.
+ * Races against a timeout so a peer that stays connected but never drains
+ * (stuck SSH window / unread TCP buffer) cannot block handleUpload forever.
  *
  * @param {NodeJS.WritableStream | null | undefined} stream
+ * @param {{ timeoutMs?: number }} [opts]
  * @returns {Promise<void>}
  */
-function waitForWritableDrain(stream) {
+function waitForWritableDrain(stream, opts = {}) {
   if (!stream || typeof stream.once !== "function") {
     return new Promise((resolve) => setImmediate(resolve));
   }
@@ -698,22 +703,36 @@ function waitForWritableDrain(stream) {
     return Promise.resolve();
   }
 
-  return new Promise((resolve) => {
+  const timeoutMs = resolveTimeoutMs(opts.timeoutMs, UPLOAD_DRAIN_TIMEOUT_MS);
+
+  return new Promise((resolve, reject) => {
     let settled = false;
-    const finish = () => {
+    let timer = null;
+    const onDrainOrClose = () => finish();
+    const finish = (err) => {
       if (settled) return;
       settled = true;
-      try { stream.off("drain", finish); } catch { /* ignore */ }
-      try { stream.off("close", finish); } catch { /* ignore */ }
-      try { stream.off("end", finish); } catch { /* ignore */ }
-      try { stream.off("error", finish); } catch { /* ignore */ }
-      resolve();
+      if (timer) clearTimeout(timer);
+      try { stream.off("drain", onDrainOrClose); } catch { /* ignore */ }
+      try { stream.off("close", onDrainOrClose); } catch { /* ignore */ }
+      try { stream.off("end", onDrainOrClose); } catch { /* ignore */ }
+      try { stream.off("error", onDrainOrClose); } catch { /* ignore */ }
+      if (err) reject(err);
+      else resolve();
     };
 
-    stream.once("drain", finish);
-    stream.once("close", finish);
-    stream.once("end", finish);
-    stream.once("error", finish);
+    stream.once("drain", onDrainOrClose);
+    stream.once("close", onDrainOrClose);
+    stream.once("end", onDrainOrClose);
+    stream.once("error", onDrainOrClose);
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => {
+        const err = new Error("Transport drain timeout");
+        err.code = "NETCATTY_ZMODEM_TIMEOUT";
+        finish(err);
+      }, timeoutMs);
+    }
 
     // Drain may have cleared between write(false) and listener attach.
     if (stream.writableNeedDrain === false) finish();

@@ -856,6 +856,27 @@ test("waitForWritableDrain waits until the stream emits drain", async () => {
   assert.equal(resolved, true);
 });
 
+test("waitForWritableDrain rejects when the transport never drains", async () => {
+  const listeners = new Map();
+  const stream = {
+    writableNeedDrain: true,
+    once(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(cb);
+    },
+    off(event, cb) {
+      const list = listeners.get(event) || [];
+      listeners.set(event, list.filter((fn) => fn !== cb));
+    },
+  };
+
+  await assert.rejects(
+    () => waitForWritableDrain(stream, { timeoutMs: 20 }),
+    (err) => err && err.code === "NETCATTY_ZMODEM_TIMEOUT",
+  );
+  assert.equal((listeners.get("drain") || []).length, 0);
+});
+
 test("createZmodemUploadDrainWaiter waits on transport drain after backpressure", async () => {
   let needsDrain = true;
   let transportWaits = 0;
