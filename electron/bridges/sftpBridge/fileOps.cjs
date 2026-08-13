@@ -887,11 +887,19 @@ function createFileOpsApi(ctx) {
           || code === "ENOTSUP"
           || code === "EOPNOTSUPP"
           || code === "SSH_FX_OP_UNSUPPORTED";
+        // Never fall back to followed STAT here: that would report a symlink's
+        // target as a regular file, so Replace would skip unlinking the link
+        // and overwrite a target outside the displayed directory.
         if (typeof sftp?.lstat === "function" && lstatUnsupported) {
-          attrs = await statAsync(sftp, encodedPath);
-        } else {
-          throw error;
+          const unavailable = new Error(
+            "Remote server does not support LSTAT; cannot classify path without following symlinks",
+            { cause: error },
+          );
+          unavailable.code = "ENOTSUP";
+          unavailable.lstatUnavailable = true;
+          throw unavailable;
         }
+        throw error;
       }
       const stat = statResultFromAttrs(attrs);
       return formatSftpStatResult(

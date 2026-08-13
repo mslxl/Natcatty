@@ -166,3 +166,48 @@ test("lstatSftp classifies symlinks without following the target", async () => {
   assert.equal(result.type, "symlink");
   assert.equal(result.size, 11);
 });
+
+test("lstatSftp refuses followed STAT when LSTAT is unsupported", async () => {
+  const channel = { lstat() {}, stat() {} };
+  let statCalls = 0;
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    path: require("node:path"),
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "utf-8",
+    encodePath: (remotePath) => remotePath,
+    lstatAsync: async () => {
+      const error = new Error("SSH_FX_OP_UNSUPPORTED");
+      error.code = 8;
+      throw error;
+    },
+    statAsync: async () => {
+      statCalls += 1;
+      return {
+        size: 42,
+        mode: 0o100644,
+        mtime: 20,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      };
+    },
+    statResultFromAttrs: (attrs) => ({
+      size: attrs.size,
+      modifyTime: attrs.mtime * 1000,
+      mode: attrs.mode,
+      isDirectory: attrs.isDirectory(),
+      isSymbolicLink: attrs.isSymbolicLink(),
+    }),
+  });
+
+  await assert.rejects(
+    () => api.lstatSftp(null, { sftpId: "sftp-1", path: "/usr/local/bin/tool" }),
+    (error) => {
+      assert.equal(error.code, "ENOTSUP");
+      assert.equal(error.lstatUnavailable, true);
+      assert.match(String(error.message), /does not support LSTAT/i);
+      return true;
+    },
+  );
+  assert.equal(statCalls, 0, "must not classify via followed STAT");
+});
