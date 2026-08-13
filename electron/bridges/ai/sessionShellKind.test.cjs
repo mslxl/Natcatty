@@ -6,6 +6,7 @@ const { existsSync } = require("node:fs");
 const {
   isConfirmedShellKind,
   PROBE_OUTPUT_MARKER,
+  WINDOWS_NO_DEFAULT_SHELL_MARKER,
   classifyShellKindFromRemotePath,
   buildRemoteLoginShellProbeCommand,
   buildRemoteWindowsLoginShellProbeCommand,
@@ -58,7 +59,12 @@ test("Windows login-shell probe uses reg query for DefaultShell", () => {
   assert.match(command, /reg query/i);
   assert.match(command, /HKLM\\SOFTWARE\\OpenSSH/i);
   assert.match(command, /DefaultShell/);
-  // Missing DefaultShell is reported on stderr; redirect so parsers see it.
+  // Force cmd.exe so ERRORLEVEL works under powershell DefaultShell too.
+  assert.match(command, /cmd\.exe/i);
+  assert.match(command, /if errorlevel 1/i);
+  assert.match(command, new RegExp(WINDOWS_NO_DEFAULT_SHELL_MARKER));
+  // Missing DefaultShell diagnostics may still land on stderr; redirect keeps
+  // REG_SZ success lines visible when hosts split streams.
   assert.match(command, /2>&1/);
 });
 
@@ -75,11 +81,24 @@ test("parseRemoteWindowsLoginShellProbeOutput reads DefaultShell and missing-key
     ),
     "cmd",
   );
+  // Locale-independent marker from ERRORLEVEL (preferred path).
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput(
+      `错误: 系统找不到指定的注册表项或值。\r\n${WINDOWS_NO_DEFAULT_SHELL_MARKER}\r\n`,
+    ),
+    "cmd",
+  );
+  // English diagnostic kept as fallback for older fixtures / probe output.
   assert.equal(
     parseRemoteWindowsLoginShellProbeOutput(
       "ERROR: The system was unable to find the specified registry key or value.\r\n",
     ),
     "cmd",
+  );
+  // Localized text alone must not classify — that was the P2 hang risk.
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput("错误: 系统找不到指定的注册表项或值。\r\n"),
+    null,
   );
   assert.equal(parseRemoteWindowsLoginShellProbeOutput(""), null);
   assert.equal(parseRemoteWindowsLoginShellProbeOutput("reg: command not found\n"), null);
@@ -350,7 +369,7 @@ test("ensureSessionShellKind pins cmd when Windows OpenSSH has no DefaultShell v
   };
   const kind = await ensureSessionShellKind(session, {
     execProbe: async () =>
-      "ERROR: The system was unable to find the specified registry key or value.\r\n",
+      `错误: 系统找不到指定的注册表项或值。\r\n${WINDOWS_NO_DEFAULT_SHELL_MARKER}\r\n`,
   });
   assert.equal(kind, "cmd");
   assert.equal(session.shellKind, "cmd");
@@ -555,6 +574,8 @@ test("createSshConnExecProbe includes stderr so missing DefaultShell is classifi
   // Codex P1: reg.exe writes the missing-value error only on stderr. Dropping
   // it made Windows OpenSSH probes settle without a kind and hang on POSIX
   // wrappers when the interactive prompt was unrecognized.
+  // Codex P2: the live probe also echoes WINDOWS_NO_DEFAULT_SHELL_MARKER via
+  // ERRORLEVEL so non-English hosts do not depend on localized stderr text.
   const { EventEmitter } = require("node:events");
   const conn = {
     exec(_command, cb) {
@@ -564,10 +585,9 @@ test("createSshConnExecProbe includes stderr so missing DefaultShell is classifi
       queueMicrotask(() => {
         stream.stderr.emit(
           "data",
-          Buffer.from(
-            "ERROR: The system was unable to find the specified registry key or value.\r\n",
-          ),
+          Buffer.from("错误: 系统找不到指定的注册表项或值。\r\n"),
         );
+        stream.emit("data", Buffer.from(`${WINDOWS_NO_DEFAULT_SHELL_MARKER}\r\n`));
         stream.emit("close", 1);
       });
       cb(null, stream);
@@ -575,7 +595,7 @@ test("createSshConnExecProbe includes stderr so missing DefaultShell is classifi
   };
   const probe = createSshConnExecProbe(conn);
   const output = await probe(buildRemoteWindowsLoginShellProbeCommand(), 1000);
-  assert.match(output, /unable to find the specified registry key or value/i);
+  assert.match(output, new RegExp(WINDOWS_NO_DEFAULT_SHELL_MARKER));
   assert.equal(parseRemoteWindowsLoginShellProbeOutput(output), "cmd");
 });
 

@@ -39,6 +39,9 @@ const CONFIRMED_SHELL_KINDS = new Set([
 
 const DEFAULT_PROBE_TIMEOUT_MS = 3000;
 const PROBE_OUTPUT_MARKER = "__NETCATTY_SHELL_KIND__:";
+// Locale-independent: reg.exe missing-value stderr is translated on non-English
+// Windows, so the probe echoes this marker via ERRORLEVEL instead.
+const WINDOWS_NO_DEFAULT_SHELL_MARKER = "__NETCATTY_NO_DEFAULT_SHELL__";
 
 function isConfirmedShellKind(shellKind) {
   return CONFIRMED_SHELL_KINDS.has(shellKind);
@@ -100,15 +103,18 @@ function parseRemoteLoginShellProbeOutput(stdout) {
 }
 
 /**
- * Silent Windows OpenSSH probe. `reg.exe` runs under both DefaultShell=cmd and
- * DefaultShell=powershell (sshd routes the exec through the configured shell,
- * which still invokes console PE binaries).
+ * Silent Windows OpenSSH probe. Force `cmd.exe` so ERRORLEVEL works under both
+ * DefaultShell=cmd and DefaultShell=powershell (sshd still invokes console PE
+ * binaries). Do not match localized reg.exe diagnostics.
  */
 function buildRemoteWindowsLoginShellProbeCommand() {
-  // Merge stderr: missing DefaultShell is reported only on stderr
-  // ("unable to find the specified registry key or value"), which the
-  // parser treats as the documented cmd.exe default.
-  return 'reg query "HKLM\\SOFTWARE\\OpenSSH" /v DefaultShell 2>&1';
+  // Merge stderr for REG_SZ success lines that some hosts split across streams.
+  // On missing DefaultShell, reg.exe exits non-zero — echo a stable marker
+  // (English "unable to find..." is only a parser fallback for older fixtures).
+  return (
+    'cmd.exe /d /s /c "reg query HKLM\\SOFTWARE\\OpenSSH /v DefaultShell 2>&1'
+    + ` & if errorlevel 1 echo ${WINDOWS_NO_DEFAULT_SHELL_MARKER}"`
+  );
 }
 
 /**
@@ -123,7 +129,10 @@ function parseRemoteWindowsLoginShellProbeOutput(stdout) {
     const kind = classifyShellKindFromRemotePath(rawPath);
     if (kind) return kind;
   }
-  if (/unable to find the specified registry key or value/i.test(text)) {
+  if (
+    text.includes(WINDOWS_NO_DEFAULT_SHELL_MARKER)
+    || /unable to find the specified registry key or value/i.test(text)
+  ) {
     return "cmd";
   }
   return null;
@@ -411,6 +420,7 @@ module.exports = {
   CONFIRMED_SHELL_KINDS,
   DEFAULT_PROBE_TIMEOUT_MS,
   PROBE_OUTPUT_MARKER,
+  WINDOWS_NO_DEFAULT_SHELL_MARKER,
   isConfirmedShellKind,
   isWindowsOpenSshRemote,
   classifyShellKindFromRemotePath,
