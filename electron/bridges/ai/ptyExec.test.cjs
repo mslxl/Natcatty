@@ -272,7 +272,7 @@ test("does not misclassify command output that happens to contain 'PS'", () => {
   assert.equal(resolveEffectiveShellKind(undefined, "ZIPS>"), "posix");
 });
 
-test("loginShellHint selects fish/posix without pinning confirmed shellKind", () => {
+test("loginShellHint selects fish/posix/powershell/cmd without pinning confirmed shellKind", () => {
   assert.equal(
     resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "fish" }),
     "fish",
@@ -281,6 +281,14 @@ test("loginShellHint selects fish/posix without pinning confirmed shellKind", ()
     resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "posix" }),
     "posix",
   );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "", { loginShellHint: "powershell" }),
+    "powershell",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "", { loginShellHint: "cmd" }),
+    "cmd",
+  );
   // Live PowerShell prompt still wins over a posix/fish login hint.
   assert.equal(
     resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "posix" }),
@@ -288,6 +296,15 @@ test("loginShellHint selects fish/posix without pinning confirmed shellKind", ()
   );
   assert.equal(
     resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "fish" }),
+    "powershell",
+  );
+  // Live opposing Windows prompt wins over a Windows DefaultShell soft hint.
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "C:\\Users\\alice>", { loginShellHint: "powershell" }),
+    "cmd",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "cmd" }),
     "powershell",
   );
   // Confirmed shellKind is never overridden by a login hint.

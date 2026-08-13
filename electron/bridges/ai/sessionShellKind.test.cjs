@@ -341,13 +341,27 @@ test("ensureSessionShellKind uses a session-level exec probe when provided", asy
   assert.equal(probes, 1);
 });
 
-test("ensureSessionShellKind pins powershell login shells", async () => {
+test("ensureSessionShellKind soft-hints powershell login shells without pinning", async () => {
   const session = { protocol: "ssh" };
   await ensureSessionShellKind(session, {
     execProbe: async () => `${PROBE_OUTPUT_MARKER}/usr/bin/pwsh\n`,
   });
-  assert.equal(session.shellKind, "powershell");
+  assert.equal(session.shellKind, undefined);
   assert.equal(session._loginShellKind, "powershell");
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(
+    resolveEffectiveShellKind(session.shellKind, "", {
+      loginShellHint: session._loginShellKind,
+    }),
+    "powershell",
+  );
+  // Live cmd prompt overrides a PowerShell DefaultShell soft hint.
+  assert.equal(
+    resolveEffectiveShellKind(session.shellKind, "C:\\Users\\alice>", {
+      loginShellHint: session._loginShellKind,
+    }),
+    "cmd",
+  );
 });
 
 test("ensureSessionShellKind uses Windows DefaultShell probe for OpenSSH_for_Windows", async () => {
@@ -367,16 +381,22 @@ test("ensureSessionShellKind uses Windows DefaultShell probe for OpenSSH_for_Win
       );
     },
   });
-  assert.equal(kind, "powershell");
-  assert.equal(session.shellKind, "powershell");
+  assert.equal(kind, undefined);
+  assert.equal(session.shellKind, undefined);
   assert.equal(session._loginShellKind, "powershell");
   assert.equal(session._shellKindProbeSettled, true);
   assert.equal(probed.length, 1);
   assert.match(probed[0], /reg query/i);
   assert.doesNotMatch(probed[0], /getent passwd/);
+  assert.equal(
+    resolveEffectiveShellKind(session.shellKind, "", {
+      loginShellHint: session._loginShellKind,
+    }),
+    "powershell",
+  );
 });
 
-test("ensureSessionShellKind pins cmd when Windows OpenSSH has no DefaultShell value", async () => {
+test("ensureSessionShellKind soft-hints cmd when Windows OpenSSH has no DefaultShell value", async () => {
   const session = {
     protocol: "ssh",
     remoteSshVersion: "OpenSSH_for_Windows_8.1",
@@ -385,9 +405,23 @@ test("ensureSessionShellKind pins cmd when Windows OpenSSH has no DefaultShell v
     execProbe: async () =>
       `错误: 系统找不到指定的注册表项或值。\r\n${WINDOWS_NO_DEFAULT_SHELL_MARKER}\r\n`,
   });
-  assert.equal(kind, "cmd");
-  assert.equal(session.shellKind, "cmd");
+  assert.equal(kind, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._loginShellKind, "cmd");
   assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(
+    resolveEffectiveShellKind(session.shellKind, "", {
+      loginShellHint: session._loginShellKind,
+    }),
+    "cmd",
+  );
+  // Live PowerShell prompt overrides a cmd DefaultShell soft hint.
+  assert.equal(
+    resolveEffectiveShellKind(session.shellKind, "PS C:\\Users\\alice>", {
+      loginShellHint: session._loginShellKind,
+    }),
+    "powershell",
+  );
 });
 
 test("ensureSessionShellKind does not pin cmd when Windows reg probe is access-denied", async () => {
@@ -465,8 +499,9 @@ test("ensureSessionShellKind retries Windows OpenSSH probe after null/timeout", 
   const second = await ensureSessionShellKind(session, {
     execProbe: failThenSucceed,
   });
-  assert.equal(second, "powershell");
-  assert.equal(session.shellKind, "powershell");
+  assert.equal(second, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._loginShellKind, "powershell");
   assert.equal(session._shellKindProbeSettled, true);
   assert.equal(probes, 2);
 });
@@ -486,8 +521,10 @@ test("ensureSessionShellKind falls back to Windows reg probe when Unix probe yie
       return "no marker here\n";
     },
   });
-  assert.equal(kind, "cmd");
-  assert.equal(session.shellKind, "cmd");
+  assert.equal(kind, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._loginShellKind, "cmd");
+  assert.equal(session._shellKindProbeSettled, true);
   assert.equal(probed.length, 2);
   assert.match(probed[0], /getent passwd|exec sh -c/);
   assert.match(probed[1], /reg query/i);

@@ -7,12 +7,13 @@
  * wrapper into fish login shells (issue #1854).
  *
  * Before AI exec we probe the remote login shell once via a separate SSH exec
- * channel (silent — does not touch the interactive PTY). Only Windows login
- * shells (powershell/cmd) are pinned on session.shellKind. Unix login shells
- * (fish/posix) are stored as session._loginShellKind (soft hint) so
- * resolveEffectiveShellKind can pick fish vs native posix wrappers without
- * permanently assuming login shell === active interactive shell, and without
- * routing bash sessions through /bin/sh (dash).
+ * channel (silent — does not touch the interactive PTY). All login-shell probe
+ * results (fish/posix/powershell/cmd) are stored as session._loginShellKind
+ * (soft hint) so resolveEffectiveShellKind can pick the matching wrapper
+ * without permanently assuming login shell === active interactive shell, and
+ * without routing bash sessions through /bin/sh (dash). Live PS/cmd prompts
+ * can still override a Windows DefaultShell hint when the user nested the
+ * opposite shell.
  *
  * Windows OpenSSH (issue #2959) has no POSIX `getent`/`sh` login-shell probe:
  * we read HKLM\SOFTWARE\OpenSSH DefaultShell via `reg query` instead. Without
@@ -203,12 +204,14 @@ function withProbeTimeout(promise, timeoutMs) {
 /**
  * Apply a successful remote probe result onto the session.
  *
- * Login-shell probe is a soft hint, not a permanent active-shell pin:
- * - posix / fish: store on session._loginShellKind only. resolveEffectiveShellKind
- *   uses the hint for the wrapper (native posix for bash/zsh, fish for fish)
- *   while leaving session.shellKind unset so live PowerShell prompts can still
- *   override (issue #841 / #1854; Codex P2s on PR #2061).
- * - powershell / cmd: also pin session.shellKind (Windows remote shells).
+ * Login-shell probe is a soft hint, not a permanent active-shell pin.
+ * Store on session._loginShellKind only and leave session.shellKind unset so
+ * resolveEffectiveShellKind can:
+ * - use the hint for the wrapper (native posix for bash/zsh, fish for fish,
+ *   powershell/cmd for Windows DefaultShell — issue #1854 / #2959)
+ * - still honor a live opposing Windows prompt when the user nested cmd from
+ *   a PowerShell login or PowerShell from a cmd login (Codex P2 on #2960)
+ * - still honor a live PowerShell prompt over a Unix login hint (#841)
  *
  * Always mark the probe settled so we do not re-probe every AI exec.
  */
@@ -216,11 +219,7 @@ function applyProbedShellKind(session, kind) {
   if (!kind) return session.shellKind;
   session._shellKindProbeSettled = true;
   session._loginShellKind = kind;
-  if (kind === "powershell" || kind === "cmd") {
-    session.shellKind = kind;
-    return session.shellKind;
-  }
-  // fish / posix — soft hint only; do not pin session.shellKind.
+  // Soft hint only; never pin session.shellKind from a remote login probe.
   return session.shellKind;
 }
 

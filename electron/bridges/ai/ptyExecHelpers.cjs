@@ -111,10 +111,12 @@ function isCmdPrompt(prompt) {
 // mis-wrapped command.
 //
 // Remote login-shell probing stores a *soft* hint (`loginShellHint` /
-// session._loginShellKind) without pinning session.shellKind for fish/posix:
+// session._loginShellKind) without pinning session.shellKind:
 //   - hint "fish"  → fish wrapper (issue #1854) without permanent pin
 //   - hint "posix" → native posix wrapper evaluated by interactive bash/zsh
 //                    (NOT sh -c / dash — Codex P2 on #2061)
+//   - hint "powershell" / "cmd" → Windows DefaultShell (issue #2959) without
+//     permanent pin, so a live opposing PS/cmd prompt can still win
 //   - live PS ...> still overrides when base kind is open
 //   - live C:\...> selects cmd when base kind is open (Windows OpenSSH default)
 //
@@ -122,8 +124,8 @@ function isCmdPrompt(prompt) {
 // terminalBridge.cjs:368, :932, :1074):
 //   "posix" | "powershell" | "cmd" | "fish" | "unknown" | "raw" | "" | undefined
 // Excluded on purpose from prompt override:
-//   - "posix" / "fish" / "cmd": confirmed — never override.
-//   - "powershell": already correct; no override needed (would be a no-op).
+//   - "posix" / "fish" / "cmd" / "powershell": confirmed local/spawn kinds —
+//     never override (anti-spoof for #841).
 //   - "raw": serial / network device — execViaRawPty bypasses buildWrappedCommand.
 const SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE = new Set([
   "",
