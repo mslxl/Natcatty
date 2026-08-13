@@ -105,7 +105,10 @@ function parseRemoteLoginShellProbeOutput(stdout) {
  * which still invokes console PE binaries).
  */
 function buildRemoteWindowsLoginShellProbeCommand() {
-  return 'reg query "HKLM\\SOFTWARE\\OpenSSH" /v DefaultShell';
+  // Merge stderr: missing DefaultShell is reported only on stderr
+  // ("unable to find the specified registry key or value"), which the
+  // parser treats as the documented cmd.exe default.
+  return 'reg query "HKLM\\SOFTWARE\\OpenSSH" /v DefaultShell 2>&1';
 }
 
 /**
@@ -139,7 +142,9 @@ function createSshConnExecProbe(conn) {
         runTimeoutMs: timeoutMs,
         maxOutputBytes: 64 * 1024,
       });
-      return result.stdout;
+      // Include stderr so Windows `reg query` missing-value diagnostics
+      // (and any probe that only prints errors) still reach the parser.
+      return `${result.stdout || ""}${result.stderr || ""}`;
     } catch {
       return null;
     }

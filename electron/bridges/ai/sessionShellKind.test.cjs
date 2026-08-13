@@ -58,6 +58,8 @@ test("Windows login-shell probe uses reg query for DefaultShell", () => {
   assert.match(command, /reg query/i);
   assert.match(command, /HKLM\\SOFTWARE\\OpenSSH/i);
   assert.match(command, /DefaultShell/);
+  // Missing DefaultShell is reported on stderr; redirect so parsers see it.
+  assert.match(command, /2>&1/);
 });
 
 test("parseRemoteWindowsLoginShellProbeOutput reads DefaultShell and missing-key default", () => {
@@ -547,6 +549,34 @@ test("createSshConnExecProbe returns stdout from conn.exec", async () => {
   const command = buildRemoteLoginShellProbeCommand();
   assert.equal(await probe(command, 1000), "/usr/bin/fish\n");
   assert.equal(seenCommand, command);
+});
+
+test("createSshConnExecProbe includes stderr so missing DefaultShell is classifiable", async () => {
+  // Codex P1: reg.exe writes the missing-value error only on stderr. Dropping
+  // it made Windows OpenSSH probes settle without a kind and hang on POSIX
+  // wrappers when the interactive prompt was unrecognized.
+  const { EventEmitter } = require("node:events");
+  const conn = {
+    exec(_command, cb) {
+      const stream = new EventEmitter();
+      stream.stderr = new EventEmitter();
+      stream.close = () => {};
+      queueMicrotask(() => {
+        stream.stderr.emit(
+          "data",
+          Buffer.from(
+            "ERROR: The system was unable to find the specified registry key or value.\r\n",
+          ),
+        );
+        stream.emit("close", 1);
+      });
+      cb(null, stream);
+    },
+  };
+  const probe = createSshConnExecProbe(conn);
+  const output = await probe(buildRemoteWindowsLoginShellProbeCommand(), 1000);
+  assert.match(output, /unable to find the specified registry key or value/i);
+  assert.equal(parseRemoteWindowsLoginShellProbeOutput(output), "cmd");
 });
 
 test("createSshConnExecProbe closes a channel that arrives after timeout", async () => {
