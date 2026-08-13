@@ -568,6 +568,43 @@ test("file replace unlinks an existing symlink before upload", async () => {
   assert.equal(results[0].success, true);
 });
 
+test("local file replace unlinks an existing symlink before writeLocalFile", async () => {
+  // Pathless File uploads fall back to writeLocalFile, which follows symlinks.
+  // statLocal must report type "symlink" (via lstat) so Replace unlinks first.
+  const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
+  const deletedPaths: string[] = [];
+  const writtenPaths: string[] = [];
+
+  const results = await uploadFromFileList(
+    [file],
+    {
+      targetPath: "/Users/me/bin",
+      sftpId: null,
+      isLocal: true,
+      bridge: {
+        mkdirSftp: async () => {},
+        statLocal: async (path) =>
+          path === "/Users/me/bin/tool.sh"
+            ? { type: "symlink", size: 12, lastModified: 1000 }
+            : null,
+        deleteLocalFile: async (path) => {
+          deletedPaths.push(path);
+        },
+        writeLocalFile: async (path) => {
+          writtenPaths.push(path);
+        },
+      },
+      joinPath: (base, name) => `${base}/${name}`,
+      resolveConflict: async () => "replace",
+    },
+  );
+
+  assert.deepEqual(deletedPaths, ["/Users/me/bin/tool.sh"]);
+  assert.deepEqual(writtenPaths, ["/Users/me/bin/tool.sh"]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].success, true);
+});
+
 test("counts apply-to-all upload conflicts by incoming and existing type", async () => {
   const files = [
     new File(["local"], "existing-file", { lastModified: 1234 }),

@@ -298,7 +298,10 @@ async function mkdirLocal(event, payload) {
  * Get local file statistics
  */
 async function statLocal(event, payload) {
-  const stat = await fs.promises.stat(payload.path);
+  // Prefer lstat so conflict resolution can distinguish symlinks from the
+  // files they point at. Following stat would report type "file" and skip
+  // pre-delete on Replace, letting writeLocalFile overwrite the link target.
+  const stat = await fs.promises.lstat(payload.path);
   return {
     name: path.basename(payload.path),
     type: stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file",

@@ -12,6 +12,7 @@ const {
   WINDOWS_ATTRIB_TIMEOUT_MS,
   parseAttribOutput,
   listWindowsHiddenBasenames,
+  statLocal,
 } = require("./localFsBridge.cjs");
 
 test("local tree traversal defaults match the remote traversal safety budget", () => {
@@ -433,6 +434,33 @@ test("collectLocalTreeEntries follows a non-cyclic directory symlink for folder 
     assert.equal(linkedDirectory?.type, "directory");
     assert.equal(linkedFile?.type, "file");
     assert.equal(linkedFile?.localPath, path.join(link, "logo.txt"));
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("statLocal classifies symlinks via lstat without following the target", async (t) => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-stat-local-link-"));
+  const target = path.join(root, "outside.bin");
+  const link = path.join(root, "tool.sh");
+  await fs.promises.writeFile(target, "target-bytes-longer");
+  try {
+    await fs.promises.symlink(target, link, "file");
+  } catch (error) {
+    await fs.promises.rm(root, { recursive: true, force: true });
+    t.skip(`symlink creation unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    return;
+  }
+
+  try {
+    const linkStat = await fs.promises.lstat(link);
+    const targetStat = await fs.promises.stat(target);
+    assert.notEqual(linkStat.size, targetStat.size, "fixture must distinguish link metadata from target");
+
+    const result = await statLocal(null, { path: link });
+    assert.equal(result.type, "symlink");
+    assert.equal(result.size, linkStat.size);
+    assert.equal(result.lastModified, linkStat.mtime.getTime());
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
