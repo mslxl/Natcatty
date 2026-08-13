@@ -110,24 +110,33 @@ function parseRemoteLoginShellProbeOutput(stdout) {
  */
 function buildRemoteWindowsLoginShellProbeCommand() {
   // Merge stderr for REG_SZ success lines that some hosts split across streams.
-  // Echo the missing-value marker only when the OpenSSH key is readable but
-  // DefaultShell is absent. A bare `if errorlevel 1` would also fire on access
-  // denied / policy blocks and permanently pin cmd on PowerShell hosts
-  // (Codex P2). English "unable to find..." remains a parser fallback only.
+  // Echo the missing-value / missing-key marker only when registry reads are
+  // otherwise succeeding:
+  //   1) OpenSSH key readable but DefaultShell absent → Microsoft default cmd
+  //   2) OpenSSH key absent but HKLM\SOFTWARE readable → same default cmd
+  // A bare `if errorlevel 1` on the value query alone would also fire on
+  // access denied / policy blocks and permanently pin cmd on PowerShell hosts
+  // (Codex P2). When both OpenSSH queries fail and HKLM\SOFTWARE is also
+  // unreadable, emit nothing (access denial). English "unable to find..."
+  // remains a parser fallback only.
   //
   // `if errorlevel 1` means exit code >= 1; `if not errorlevel 1` means 0.
   return (
     'cmd.exe /d /s /c "reg query HKLM\\SOFTWARE\\OpenSSH /v DefaultShell 2>&1'
     + " & if errorlevel 1 ("
     + "reg query HKLM\\SOFTWARE\\OpenSSH >nul 2>&1"
+    + ` & if not errorlevel 1 (echo ${WINDOWS_NO_DEFAULT_SHELL_MARKER})`
+    + " else ("
+    + "reg query HKLM\\SOFTWARE >nul 2>&1"
     + ` & if not errorlevel 1 echo ${WINDOWS_NO_DEFAULT_SHELL_MARKER}`
+    + ")"
     + ')"'
   );
 }
 
 /**
  * Parse `reg query` DefaultShell output.
- * Missing value → Microsoft's documented Windows OpenSSH default (cmd.exe).
+ * Missing value or missing OpenSSH key → Microsoft's documented default (cmd).
  */
 function parseRemoteWindowsLoginShellProbeOutput(stdout) {
   const text = String(stdout || "").replace(/\r/g, "");
