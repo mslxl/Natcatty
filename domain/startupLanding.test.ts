@@ -56,4 +56,13 @@ test('should open local terminal only for empty main-window cold start', () => {
     }),
     false,
   );
+  assert.equal(
+    shouldOpenLocalTerminalOnStartup({
+      startupLanding: 'local-terminal',
+      hasRestoredSessionState: false,
+      isPeerSessionWindow: false,
+      hasQueuedStartupIntent: true,
+    }),
+    false,
+  );
 });

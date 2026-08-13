@@ -80,7 +80,7 @@ import { VaultSection } from '../../components/VaultView';
 import { KeyboardInteractiveRequest } from '../../components/KeyboardInteractiveModal';
 import { PassphraseRequest } from '../../components/PassphraseModal';
 import { classifyLocalShellType } from '../../lib/localShell';
-import { useDiscoveredShells, resolveShellSetting } from '../../lib/useDiscoveredShells';
+import { useDiscoveredShells, resolveShellSetting, ensureDiscoveredShells } from '../../lib/useDiscoveredShells';
 import { Host, HostProtocol, KnownHost, SerialConfig, Snippet, SSHKey, TerminalSession } from '../../types';
 import { resolveSnippetCommand } from '../../components/SnippetExecutionProvider';
 import { isScriptSnippet } from '../../domain/snippetScript.ts';
@@ -1179,25 +1179,99 @@ export function AppSideEffects() {
     );
   }, [addConnectionLog, createLocalTerminal, terminalSettings, discoveredShells]);
 
-  // Cold-start landing: open a local terminal once when preferred and nothing was restored.
+  // Cold-start landing: open a local terminal once when preferred and nothing
+  // was restored. Wait for queued launch intents (deep links / Explorer open)
+  // and shell discovery so we neither duplicate tabs nor mislabel WSL/Git Bash.
   const startupLocalTerminalAttemptedRef = useRef(false);
+  const startupLaunchIntentReceivedRef = useRef(false);
+  const sessionsLengthRef = useRef(sessions.length);
+  const workspacesLengthRef = useRef(workspaces.length);
+  sessionsLengthRef.current = sessions.length;
+  workspacesLengthRef.current = workspaces.length;
+  const [coldStartIntentsSettled, setColdStartIntentsSettled] = useState(false);
+
+  useEffect(() => {
+    if (isPeerSessionWindow) {
+      setColdStartIntentsSettled(true);
+      return;
+    }
+    const bridge = netcattyBridge.get();
+    if (!bridge?.onColdStartIntentsSettled) {
+      setColdStartIntentsSettled(true);
+      return;
+    }
+    return bridge.onColdStartIntentsSettled(() => {
+      setColdStartIntentsSettled(true);
+    });
+  }, [isPeerSessionWindow]);
+
   useEffect(() => {
     if (startupLocalTerminalAttemptedRef.current) return;
-    startupLocalTerminalAttemptedRef.current = true;
-    if (isPeerSessionWindow) return;
+    if (isPeerSessionWindow) {
+      startupLocalTerminalAttemptedRef.current = true;
+      return;
+    }
+
     const landing = resolveStartupLandingSetting(
       localStorageAdapter.readString(STORAGE_KEY_STARTUP_LANDING),
     );
-    const hasRestoredSessionState = sessions.length > 0 || workspaces.length > 0;
-    if (!shouldOpenLocalTerminalOnStartup({
-      startupLanding: landing,
-      hasRestoredSessionState,
-      isPeerSessionWindow: false,
-    })) {
+    if (landing !== 'local-terminal') {
+      startupLocalTerminalAttemptedRef.current = true;
       return;
     }
-    handleCreateLocalTerminal();
-  }, [handleCreateLocalTerminal, isPeerSessionWindow, sessions.length, workspaces.length]);
+    if (sessions.length > 0 || workspaces.length > 0) {
+      startupLocalTerminalAttemptedRef.current = true;
+      return;
+    }
+    if (!coldStartIntentsSettled) return;
+
+    let cancelled = false;
+    void (async () => {
+      const shells = await ensureDiscoveredShells();
+      if (cancelled || startupLocalTerminalAttemptedRef.current) return;
+
+      if (!shouldOpenLocalTerminalOnStartup({
+        startupLanding: landing,
+        hasRestoredSessionState:
+          sessionsLengthRef.current > 0 || workspacesLengthRef.current > 0,
+        isPeerSessionWindow: false,
+        hasQueuedStartupIntent: startupLaunchIntentReceivedRef.current,
+      })) {
+        startupLocalTerminalAttemptedRef.current = true;
+        return;
+      }
+
+      const resolved = resolveShellSetting(
+        terminalSettings.localShell,
+        shells,
+        terminalSettings.localShellArgs,
+      );
+      const matchedShell = shells.find((shell) => shell.id === terminalSettings.localShell);
+      startupLocalTerminalAttemptedRef.current = true;
+      handleCreateLocalTerminal(
+        resolved
+          ? {
+              command: resolved.command,
+              args: resolved.args,
+              name: matchedShell?.name,
+              icon: matchedShell?.icon,
+            }
+          : undefined,
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    coldStartIntentsSettled,
+    handleCreateLocalTerminal,
+    isPeerSessionWindow,
+    sessions.length,
+    terminalSettings.localShell,
+    terminalSettings.localShellArgs,
+    workspaces.length,
+  ]);
 
   const proxyProfileIdSet = useMemo(
     () => new Set(proxyProfiles.map((profile) => profile.id)),
@@ -1317,6 +1391,7 @@ export function AppSideEffects() {
   });
 
   const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {
+    startupLaunchIntentReceivedRef.current = true;
     const rawUrl = payload?.url || '';
     const target = parseSshDeepLink(rawUrl);
     if (!target) {
@@ -1374,6 +1449,7 @@ export function AppSideEffects() {
   }, [isPeerSessionWindow]);
 
   const _handleTelnetDeepLink = useEffectEvent((payload: { url?: string }) => {
+    startupLaunchIntentReceivedRef.current = true;
     const rawUrl = payload?.url || '';
     const target = parseTelnetDeepLink(rawUrl);
     if (!target) {
@@ -1420,6 +1496,7 @@ export function AppSideEffects() {
   }, [isPeerSessionWindow]);
 
   const _handleJmsDeepLink = useEffectEvent((payload: { url?: string }) => {
+    startupLaunchIntentReceivedRef.current = true;
     const rawUrl = payload?.url || '';
     const target = parseJmsDeepLink(rawUrl);
     if (!target) {
@@ -1459,6 +1536,7 @@ export function AppSideEffects() {
   }, [sessions]);
 
   const _handleOpenTerminalPath = useEffectEvent((payload: { path?: string }) => {
+    startupLaunchIntentReceivedRef.current = true;
     const localStartDir = typeof payload?.path === 'string' ? payload.path : '';
     if (!localStartDir.trim()) return;
     handleCreateLocalTerminal(undefined, { localStartDir });

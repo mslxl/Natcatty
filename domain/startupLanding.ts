@@ -18,14 +18,17 @@ export function resolveStartupLandingSetting(stored: string | null | undefined):
 
 /**
  * Whether the main window should create a local terminal on cold start.
- * Session restore and peer/new windows take precedence over this preference.
+ * Session restore, peer/new windows, and queued startup launch intents
+ * (ssh/telnet/jms deep links, Explorer "open terminal here") take precedence.
  */
 export function shouldOpenLocalTerminalOnStartup(input: {
   startupLanding: StartupLanding;
   hasRestoredSessionState: boolean;
   isPeerSessionWindow: boolean;
+  hasQueuedStartupIntent?: boolean;
 }): boolean {
   if (input.isPeerSessionWindow) return false;
   if (input.hasRestoredSessionState) return false;
+  if (input.hasQueuedStartupIntent) return false;
   return input.startupLanding === 'local-terminal';
 }

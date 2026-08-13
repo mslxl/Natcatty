@@ -30,14 +30,17 @@ test("main window opens local terminal on cold start when preferred", () => {
   assert.match(sideEffectsSource, /startupLocalTerminalAttemptedRef/);
   assert.match(sideEffectsSource, /shouldOpenLocalTerminalOnStartup/);
   assert.match(sideEffectsSource, /STORAGE_KEY_STARTUP_LANDING/);
-  assert.match(sideEffectsSource, /handleCreateLocalTerminal\(\)/);
+  assert.match(sideEffectsSource, /handleCreateLocalTerminal\(/);
+  assert.match(sideEffectsSource, /onColdStartIntentsSettled/);
+  assert.match(sideEffectsSource, /ensureDiscoveredShells/);
+  assert.match(sideEffectsSource, /hasQueuedStartupIntent:\s*startupLaunchIntentReceivedRef\.current/);
 
   const latchAt = sideEffectsSource.indexOf("if (startupLocalTerminalAttemptedRef.current) return;");
   const setLatchAt = sideEffectsSource.indexOf(
     "startupLocalTerminalAttemptedRef.current = true;",
     latchAt,
   );
-  const createAt = sideEffectsSource.indexOf("handleCreateLocalTerminal();", setLatchAt);
+  const createAt = sideEffectsSource.indexOf("handleCreateLocalTerminal(", setLatchAt);
   assert.notEqual(latchAt, -1);
   assert.notEqual(setLatchAt, -1);
   assert.notEqual(createAt, -1);

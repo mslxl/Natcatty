@@ -893,6 +893,43 @@ async function flushPendingOpenTerminalPaths() {
   }
 }
 
+function hasPendingColdStartLaunchIntents() {
+  return (
+    flushingSshDeepLinks
+    || flushingTelnetDeepLinks
+    || flushingJmsDeepLinks
+    || flushingOpenTerminalPaths
+    || pendingSshDeepLinkUrls.length > 0
+    || pendingTelnetDeepLinkUrls.length > 0
+    || pendingJmsDeepLinkUrls.length > 0
+    || pendingOpenTerminalPaths.length > 0
+  );
+}
+
+async function drainColdStartLaunchIntents() {
+  // Re-entrant void flushes from finally blocks must finish before we notify
+  // the renderer; otherwise landing can race a still-queued startup intent.
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    await Promise.all([
+      flushPendingSshDeepLinks(),
+      flushPendingTelnetDeepLinks(),
+      flushPendingJmsDeepLinks(),
+      flushPendingOpenTerminalPaths(),
+    ]);
+    if (!hasPendingColdStartLaunchIntents()) return;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+function notifyColdStartIntentsSettled(win) {
+  try {
+    if (!win || win.isDestroyed?.()) return;
+    win.webContents?.send?.("netcatty:startup:coldStartIntentsSettled");
+  } catch (err) {
+    console.warn("[Main] Failed to notify cold-start intents settled:", err);
+  }
+}
+
 function hasUsableWindow() {
   try {
     const windowManager = getWindowManager();
@@ -1135,11 +1172,21 @@ if (!gotLock) {
     });
 
     // Create the main window
-    void createAndShowMainWindow().then(() => {
-      void flushPendingSshDeepLinks();
-      void flushPendingTelnetDeepLinks();
-      void flushPendingJmsDeepLinks();
-      void flushPendingOpenTerminalPaths();
+    void createAndShowMainWindow().then(async (win) => {
+      // Empty cold-start queues would otherwise notify immediately (before the
+      // renderer subscribes). Wait for ready, then drain, then settle.
+      try {
+        await getWindowManager().waitForRendererReady(win, {
+          timeoutMs: isDev ? 30000 : 15000,
+        });
+      } catch (err) {
+        console.warn(
+          "[Main] Renderer ready signal was late or missing before cold-start settle:",
+          err?.message || err,
+        );
+      }
+      await drainColdStartLaunchIntents();
+      notifyColdStartIntentsSettled(win);
 
       // Trigger auto-update check 5 s after window creation.
       // startAutoCheck() is a no-op on unsupported platforms (for example Linux
