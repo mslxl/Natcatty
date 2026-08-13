@@ -73,7 +73,7 @@ test("foreground PTY capture preserves UTF-8 and markers split across chunks", a
       if (!marker) return;
       queueMicrotask(() => {
         const start = Buffer.from(`${marker}_S\n`);
-        const content = Buffer.from("中文回复", "utf8");
+        const content = Buffer.from("中文回夝", "utf8");
         const end = Buffer.from(`\n${marker}_E:0\n`);
         this.emit("data", start.subarray(0, 7));
         this.emit("data", start.subarray(7));
@@ -90,7 +90,7 @@ test("foreground PTY capture preserves UTF-8 and markers split across chunks", a
     timeoutMs: 1_000,
   });
   assert.equal(result.ok, true);
-  assert.equal(result.stdout, "中文回复");
+  assert.equal(result.stdout, "中文回夝");
 });
 
 test("foreground PTY timeout returns only a bounded tail", async () => {
@@ -166,6 +166,16 @@ test("uses PowerShell wrapping when a session with no confirmed shell sees a Pow
     resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>"),
     "powershell",
   );
+});
+
+test("uses cmd wrapping when a session with no confirmed shell sees a cmd.exe prompt", () => {
+  // Windows OpenSSH defaults to cmd.exe; without this override AI types a
+  // posix wrapper into cmd and hangs until Stop (issue #2959).
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "C:\\Users\\alice>"),
+    "cmd",
+  );
+  assert.equal(resolveEffectiveShellKind("unknown", "C:\\>"), "cmd");
 });
 
 test("uses PowerShell wrapping when shellKind is 'unknown'", () => {
@@ -262,7 +272,7 @@ test("does not misclassify command output that happens to contain 'PS'", () => {
   assert.equal(resolveEffectiveShellKind(undefined, "ZIPS>"), "posix");
 });
 
-test("loginShellHint selects fish/posix without pinning confirmed shellKind", () => {
+test("loginShellHint selects fish/posix/powershell/cmd without pinning confirmed shellKind", () => {
   assert.equal(
     resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "fish" }),
     "fish",
@@ -270,6 +280,14 @@ test("loginShellHint selects fish/posix without pinning confirmed shellKind", ()
   assert.equal(
     resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "posix" }),
     "posix",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "", { loginShellHint: "powershell" }),
+    "powershell",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "", { loginShellHint: "cmd" }),
+    "cmd",
   );
   // Live PowerShell prompt still wins over a posix/fish login hint.
   assert.equal(
@@ -279,6 +297,25 @@ test("loginShellHint selects fish/posix without pinning confirmed shellKind", ()
   assert.equal(
     resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "fish" }),
     "powershell",
+  );
+  // Live opposing Windows prompt wins over a Windows DefaultShell soft hint.
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "C:\\Users\\alice>", { loginShellHint: "powershell" }),
+    "cmd",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>", { loginShellHint: "cmd" }),
+    "powershell",
+  );
+  // Live POSIX prompt (e.g. WSL nested from Windows OpenSSH) overrides a
+  // PowerShell/cmd soft hint so AI does not type a Windows wrapper into bash.
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "user@host:~$", { loginShellHint: "powershell" }),
+    "posix",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "alice@wsl:/mnt/c$", { loginShellHint: "cmd" }),
+    "posix",
   );
   // Confirmed shellKind is never overridden by a login hint.
   assert.equal(

@@ -8,6 +8,8 @@ const {
   formatSyntheticEcho,
   getFreshIdlePrompt,
   isDefaultPowerShellPromptLine,
+  isDefaultCmdPromptLine,
+  isDefaultPosixPromptLine,
   isPlausibleCliVersionOutput,
   looksLikeIdleAutoLogout,
   prepareCommandForSpawn,
@@ -91,6 +93,37 @@ test("isDefaultPowerShellPromptLine matches default shapes and rejects look-alik
   assert.equal(isDefaultPowerShellPromptLine("ZIPS>"), false);
   assert.equal(isDefaultPowerShellPromptLine(""), false);
   assert.equal(isDefaultPowerShellPromptLine(null), false);
+});
+
+test("extracts a trailing cmd.exe idle prompt", () => {
+  // Windows OpenSSH default shell is cmd.exe; without capturing `C:\...>`
+  // AI exec cannot select the cmd wrapper when shellKind is still unset.
+  assert.equal(
+    extractTrailingIdlePrompt("Microsoft Windows...\r\nC:\\Users\\alice>"),
+    "C:\\Users\\alice>",
+  );
+  assert.equal(extractTrailingIdlePrompt("welcome\r\nC:\\>"), "C:\\>");
+  assert.equal(extractTrailingIdlePrompt("welcome\r\nD:\\data\\proj>"), "D:\\data\\proj>");
+});
+
+test("isDefaultCmdPromptLine matches drive-letter cmd prompts only", () => {
+  assert.equal(isDefaultCmdPromptLine("C:\\Users\\alice>"), true);
+  assert.equal(isDefaultCmdPromptLine("C:\\>"), true);
+  assert.equal(isDefaultCmdPromptLine("C:>"), true);
+  assert.equal(isDefaultCmdPromptLine("PS C:\\Users\\alice>"), false);
+  assert.equal(isDefaultCmdPromptLine("alice@host:~$"), false);
+  assert.equal(isDefaultCmdPromptLine("C: >"), false);
+  assert.equal(isDefaultCmdPromptLine(""), false);
+});
+
+test("isDefaultPosixPromptLine matches classic user@host prompts", () => {
+  assert.equal(isDefaultPosixPromptLine("alice@host:~$"), true);
+  assert.equal(isDefaultPosixPromptLine("alice@wsl:/mnt/c$"), true);
+  assert.equal(isDefaultPosixPromptLine("root@box:/#"), true);
+  assert.equal(isDefaultPosixPromptLine("root@host ~#"), false);
+  assert.equal(isDefaultPosixPromptLine("PS C:\\Users\\alice>"), false);
+  assert.equal(isDefaultPosixPromptLine("C:\\Users\\alice>"), false);
+  assert.equal(isDefaultPosixPromptLine(""), false);
 });
 
 test("isPlausibleCliVersionOutput rejects stack traces and file URLs", () => {
