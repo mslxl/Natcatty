@@ -490,6 +490,45 @@ test("does not replace an existing directory when uploading a same-named file", 
   assert.match(results[0].error ?? "", /directory/i);
 });
 
+test("file replace leaves the remote destination so upload can restore mode bits", async () => {
+  // Deleting before overwrite recreates the inode with umask defaults and drops
+  // bits like +x (#2954). Keep the target so stage+rename can restore mode.
+  const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
+  Object.defineProperty(file, "path", { value: "/local/tool.sh" });
+  const deletedPaths: string[] = [];
+  const uploadedPaths: string[] = [];
+
+  const results = await uploadFromFileList(
+    [file],
+    {
+      targetPath: "/usr/local/bin",
+      sftpId: "sftp-1",
+      isLocal: false,
+      bridge: {
+        mkdirSftp: async () => {},
+        statSftp: async (_sftpId, path) =>
+          path === "/usr/local/bin/tool.sh"
+            ? { type: "file", size: 9, lastModified: 1000 }
+            : null,
+        deleteSftp: async (_sftpId, path) => {
+          deletedPaths.push(path);
+        },
+        startStreamTransfer: async ({ targetPath: path }) => {
+          uploadedPaths.push(path);
+          return { transferId: "upload-1" };
+        },
+      },
+      joinPath: (base, name) => `${base}/${name}`,
+      resolveConflict: async () => "replace",
+    },
+  );
+
+  assert.deepEqual(deletedPaths, [], "file replace must not delete before upload");
+  assert.deepEqual(uploadedPaths, ["/usr/local/bin/tool.sh"]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].success, true);
+});
+
 test("counts apply-to-all upload conflicts by incoming and existing type", async () => {
   const files = [
     new File(["local"], "existing-file", { lastModified: 1234 }),

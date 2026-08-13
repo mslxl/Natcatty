@@ -1976,6 +1976,64 @@ test("parent-dir permission on staged path falls back to in-place for new files"
   assert.deepEqual(remoteFiles.get("/ro-dir/file.bin"), payload);
 });
 
+test("in-place fallback restores existing destination mode bits", async (t) => {
+  const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-inplace-mode-"));
+  t.after(async () => {
+    await fs.promises.rm(tempRoot, { recursive: true, force: true });
+  });
+  tempDirBridge.init?.({ getPath: () => tempRoot });
+
+  const localPath = path.join(tempRoot, "tool.bin");
+  const payload = Buffer.from("replaced-bytes");
+  await fs.promises.writeFile(localPath, payload);
+
+  const { channel, fastPutCalls, remoteFiles, remoteMeta, chmodCalls } = createSessionChannel({
+    onFastPut(_local, remotePath) {
+      if (String(remotePath).includes(".netcatty-upload-")) {
+        const err = new Error("Permission denied");
+        err.code = 3;
+        return { error: err };
+      }
+      // Simulate servers that recreate the inode on in-place OPEN|CREAT|TRUNC
+      // with umask defaults (losing the prior executable bit).
+      remoteMeta.set("/usr/local/bin/tool", { mode: 0o100644 });
+      return null;
+    },
+  });
+  remoteMeta.set("/usr/local/bin/tool", { mode: 0o100755 });
+  remoteFiles.set("/usr/local/bin/tool", Buffer.from("old-tool"));
+
+  const connection = {
+    sftp(callback) { callback(null, channel); },
+  };
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["session-inplace-mode", { conn: connection }]]),
+    sftpClients,
+  });
+  const opened = await sftpBridge.openSftpForSession(null, {
+    sessionId: "session-inplace-mode",
+    fileProtocol: "sftp",
+  });
+
+  await sftpBridge.uploadLocalToSftp(null, {
+    sftpId: opened.sftpId,
+    localPath,
+    remotePath: "/usr/local/bin/tool",
+    encoding: "utf-8",
+  });
+
+  assert.ok(fastPutCalls.length >= 2, "expected staged attempt then in-place");
+  assert.equal(fastPutCalls[fastPutCalls.length - 1].remotePath, "/usr/local/bin/tool");
+  assert.ok(
+    chmodCalls.some((c) => c.targetPath === "/usr/local/bin/tool" && (c.mode & 0o777) === 0o755),
+    `expected final mode restore via chmod, got ${JSON.stringify(chmodCalls)}`,
+  );
+  assert.equal(remoteMeta.get("/usr/local/bin/tool")?.mode & 0o777, 0o755);
+  assert.deepEqual(remoteFiles.get("/usr/local/bin/tool"), payload);
+});
+
 test("no-lstat new upload aborted during staged size verify leaves no final", async (t) => {
   const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-late-abort-promote-"));
   t.after(async () => {

@@ -580,7 +580,13 @@ async function uploadEntries(
           });
           continue;
         }
-        await deleteTarget(rootTargetPath);
+        // Directories must be cleared so replace does not merge with stale
+        // children. Files must stay: deleting first creates a new inode with
+        // umask defaults and drops mode bits (e.g. +x) that stage+rename
+        // would otherwise restore (#2954).
+        if (isDirectory) {
+          await deleteTarget(rootTargetPath);
+        }
         resolved.push(...groupEntries);
         continue;
       }

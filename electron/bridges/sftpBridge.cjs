@@ -1515,6 +1515,14 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     // back. Stop accepting cancellation before the final size verification so
     // a late request cannot report the completed overwrite as cancelled.
     commitPromotion();
+    // Some servers recreate the inode on OPEN|CREAT|TRUNC. Restore captured
+    // permission bits after an in-place overwrite (incl. stage→in-place
+    // fallback) so executable/setuid bits are not left at umask defaults.
+    if (Number.isFinite(plan.existingMode)) {
+      await restoreRemoteMode(client, encodedPath, plan.existingMode, {
+        bestEffort: true,
+      });
+    }
     // SCP stat reports the link node itself. After an in-place symlink upload,
     // it cannot reliably verify the followed target's byte count.
     if (Number.isFinite(expectedSize) && expectedSize >= 0 && !(scpMode && plan.writeInPlace)) {
