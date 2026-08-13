@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import type { SftpFilenameEncoding, TransferTask } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
+import { isMissingStatError } from "./errors";
 import type { SftpPane } from "./types";
 import { getParentPath, joinPath } from "./utils";
 
@@ -24,30 +25,36 @@ export function useSftpTransferConflictOps() {
     ): Promise<{ type?: "file" | "directory" | "symlink"; size: number; mtime: number } | null> => {
       if (!targetPane.connection) return null;
 
-      if (targetPane.connection.isLocal) {
+      try {
+        if (targetPane.connection.isLocal) {
+          const bridge = netcattyBridge.get();
+          const stat = await (bridge?.lstatLocal ?? bridge?.statLocal)?.(targetPath);
+          if (!stat) return null;
+          return {
+            type: stat.type as "file" | "directory" | "symlink" | undefined,
+            size: stat.size,
+            mtime: stat.lastModified || Date.now(),
+          };
+        }
+
+        if (!targetSftpId) return null;
         const bridge = netcattyBridge.get();
-        const stat = await (bridge?.lstatLocal ?? bridge?.statLocal)?.(targetPath);
+        const stat = await (bridge?.lstatSftp ?? bridge?.statSftp)?.(
+          targetSftpId,
+          targetPath,
+          targetEncoding,
+        );
         if (!stat) return null;
         return {
           type: stat.type as "file" | "directory" | "symlink" | undefined,
           size: stat.size,
           mtime: stat.lastModified || Date.now(),
         };
+      } catch (error) {
+        // Missing path = no conflict. ENOTSUP / unknown type must fail closed.
+        if (isMissingStatError(error)) return null;
+        throw error;
       }
-
-      if (!targetSftpId) return null;
-      const bridge = netcattyBridge.get();
-      const stat = await (bridge?.lstatSftp ?? bridge?.statSftp)?.(
-        targetSftpId,
-        targetPath,
-        targetEncoding,
-      );
-      if (!stat) return null;
-      return {
-        type: stat.type as "file" | "directory" | "symlink" | undefined,
-        size: stat.size,
-        mtime: stat.lastModified || Date.now(),
-      };
     },
     [],
   );
@@ -66,12 +73,9 @@ export function useSftpTransferConflictOps() {
         const suffix = index === 1 ? " (copy)" : ` (copy ${index})`;
         const fileName = `${baseName}${suffix}${ext}`;
         const targetPath = joinPath(parentPath, fileName);
-        try {
-          const existing = await statTargetPath(targetPane, targetSftpId, targetPath, targetEncoding);
-          if (!existing) return { fileName, targetPath };
-        } catch {
-          return { fileName, targetPath };
-        }
+        // Unsupported LSTAT must propagate — do not treat as a free name.
+        const existing = await statTargetPath(targetPane, targetSftpId, targetPath, targetEncoding);
+        if (!existing) return { fileName, targetPath };
       }
 
       const fallbackName = `${baseName} (copy ${Date.now()})${ext}`;

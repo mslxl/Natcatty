@@ -23,6 +23,7 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import { logger } from "../../../lib/logger";
 import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
 import { SftpPane } from "./types";
+import { isMissingStatError } from "./errors";
 import { useSftpDirectoryTransferOps } from "./transferDirectoryOps";
 import { useSftpTransferConflictOps } from "./transferConflictOps";
 import { useSftpTransferTaskOps } from "./transferTaskOps";
@@ -740,8 +741,10 @@ export const useSftpTransfers = ({
               newModified: sourceStat?.mtime || Date.now(),
             };
           }
-        } catch {
-          // ignore
+        } catch (error) {
+          // Missing path = no conflict. ENOTSUP / unknown type fail closed.
+          if (isMissingStatError(error)) return null;
+          throw error;
         }
         return null;
       })();
