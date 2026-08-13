@@ -135,3 +135,37 @@ export function shouldResetSftpSidePanelSourceSession(
   if (!previousSessionId) return false;
   return nextSessionId !== previousSessionId;
 }
+
+/**
+ * True when the SFTP side panel must rebind onto a fresh SSH transport.
+ * Covers focus switches (session id change) and same-tab reconnect /
+ * “Start over”, where the id is stable but the underlying channel was replaced.
+ */
+export function shouldRebindSftpSidePanelSourceSession(params: {
+  previousSessionId: string | null | undefined;
+  nextSessionId: string | null | undefined;
+  previousStatus?: string | null;
+  nextStatus?: string | null;
+}): boolean {
+  if (shouldResetSftpSidePanelSourceSession(params.previousSessionId, params.nextSessionId)) {
+    return true;
+  }
+  if (!params.nextSessionId) return false;
+  if (params.previousSessionId !== params.nextSessionId) return false;
+  if (params.nextStatus !== "connected") return false;
+  if (params.previousStatus == null) return false;
+  return params.previousStatus !== "connected";
+}
+
+/**
+ * When the panel is tied to a live terminal session, wait until that SSH
+ * session is connected before dialing SFTP (avoids racing 重新开始).
+ */
+export function shouldDeferSftpSidePanelAutoConnectForSession(params: {
+  activeSessionId?: string | null;
+  sessionStatus?: string | null;
+}): boolean {
+  if (!params.activeSessionId) return false;
+  if (!params.sessionStatus) return false;
+  return params.sessionStatus !== "connected";
+}

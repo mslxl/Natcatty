@@ -88,7 +88,8 @@ import {
   findReusableSftpSidePanelTab,
   isPendingSameEndpointSshSession,
   shouldAcceptPendingSftpUpload,
-  shouldResetSftpSidePanelSourceSession,
+  shouldDeferSftpSidePanelAutoConnectForSession,
+  shouldRebindSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftp/sftpSidePanelAutoConnect";
 import {
@@ -494,6 +495,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const connectedKeyRef = useRef<string | null>(null);
   const connectedHostObjRef = useRef<Host | null>(null);
   const lastSourceSessionIdRef = useRef<string | null>(null);
+  const lastSourceSessionStatusRef = useRef<string | null>(null);
   const lastAppliedInitialLocationKeyRef = useRef<string | null>(null);
   const handledPendingUploadIdRef = useRef<string | null>(null);
   const tabConnectionKeyMapRef = useRef<Map<string, string>>(new Map());
@@ -567,10 +569,33 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (!activeSessionId && pendingSameEndpointSession) {
       return;
     }
-    const sessionChanged = shouldResetSftpSidePanelSourceSession(
-      lastSourceSessionIdRef.current,
-      activeSessionId,
-    );
+    const activeSession = activeSessionId
+      ? sessions.find((session) => session.id === activeSessionId) ?? null
+      : null;
+    const activeSessionStatus = activeSession?.status ?? null;
+    if (
+      shouldDeferSftpSidePanelAutoConnectForSession({
+        activeSessionId,
+        sessionStatus: activeSessionStatus,
+      })
+    ) {
+      // Remember the non-connected status so the later connected transition
+      // is treated as a transport rebind (same session id after 重新开始).
+      lastSourceSessionStatusRef.current = activeSessionStatus;
+      if (activeSessionId) {
+        lastSourceSessionIdRef.current = activeSessionId;
+      }
+      // Drop the stable-endpoint cursor so a stale healthy tab cannot skip
+      // rebind once SSH is back.
+      connectedKeyRef.current = null;
+      return;
+    }
+    const sessionChanged = shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: lastSourceSessionIdRef.current,
+      nextSessionId: activeSessionId,
+      previousStatus: lastSourceSessionStatusRef.current,
+      nextStatus: activeSessionStatus ?? (activeSessionId ? "connected" : null),
+    });
 
     const hasBackendSession = (connectionId: string) => !!s.getSftpIdForConnection(connectionId);
     const activeTab = s.leftTabs.tabs.find((tab) => tab.id === s.leftTabs.activeTabId) ?? null;
@@ -599,6 +624,9 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       if (activeSessionId) {
         lastSourceSessionIdRef.current = activeSessionId;
       }
+      if (activeSessionStatus) {
+        lastSourceSessionStatusRef.current = activeSessionStatus;
+      }
       return;
     }
     // Defer advancing the session cursor while interactive work blocks rebind,
@@ -606,6 +634,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (hasActiveWork) return;
     if (activeSessionId) {
       lastSourceSessionIdRef.current = activeSessionId;
+    }
+    if (activeSessionStatus) {
+      lastSourceSessionStatusRef.current = activeSessionStatus;
+    } else if (!activeSessionId) {
+      lastSourceSessionStatusRef.current = null;
     }
 
     logger.info("[SftpSidePanel] Auto-connect triggered", {

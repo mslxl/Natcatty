@@ -7,6 +7,8 @@ import {
   isPendingSameEndpointSshSession,
   isRemoteSftpTabHealthy,
   shouldAcceptPendingSftpUpload,
+  shouldDeferSftpSidePanelAutoConnectForSession,
+  shouldRebindSftpSidePanelSourceSession,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftpSidePanelAutoConnect";
@@ -174,6 +176,87 @@ test("shouldResetSftpSidePanelSourceSession detects terminal session changes", (
   assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", "sess-a"), false);
   assert.equal(shouldResetSftpSidePanelSourceSession(null, "sess-a"), false);
   assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", null), false);
+});
+
+test("shouldRebindSftpSidePanelSourceSession treats SSH start-over as a transport change", () => {
+  // Same terminal tab id after 重新开始 — transport was replaced even though
+  // the session id did not change.
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "disconnected",
+      nextStatus: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "connecting",
+      nextStatus: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "connected",
+      nextStatus: "connected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-b",
+      previousStatus: "connected",
+      nextStatus: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "disconnected",
+      nextStatus: "connecting",
+    }),
+    false,
+  );
+});
+
+test("shouldDeferSftpSidePanelAutoConnectForSession waits for the linked SSH session", () => {
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: "sess-a",
+      sessionStatus: "disconnected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: "sess-a",
+      sessionStatus: "connecting",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: "sess-a",
+      sessionStatus: "connected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: null,
+      sessionStatus: "connecting",
+    }),
+    false,
+  );
 });
 
 test("session change still requires rebind even when the endpoint key matches", () => {
