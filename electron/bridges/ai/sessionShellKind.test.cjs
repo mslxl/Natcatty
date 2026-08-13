@@ -61,12 +61,13 @@ test("Windows login-shell probe uses reg query for DefaultShell", () => {
   assert.match(command, /DefaultShell/);
   // Force cmd.exe so ERRORLEVEL works under powershell DefaultShell too.
   assert.match(command, /cmd\.exe/i);
-  // Missing-value marker after OpenSSH key is readable; missing-key marker
-  // after parent HKLM\SOFTWARE is readable. Access denial emits neither.
+  // Missing-value marker only after confirming the OpenSSH key is readable
+  // (`if not errorlevel 1`), not on every reg failure (access denied / missing
+  // key under a readable parent). Parent SOFTWARE readability must not imply
+  // OpenSSH absence — ACL is per-key.
   assert.match(command, /if errorlevel 1/i);
   assert.match(command, /if not errorlevel 1/i);
-  assert.match(command, /HKLM\\SOFTWARE(?!\\OpenSSH)/);
-  assert.match(command, /else/i);
+  assert.doesNotMatch(command, /HKLM\\SOFTWARE(?!\\OpenSSH)/);
   assert.match(command, new RegExp(WINDOWS_NO_DEFAULT_SHELL_MARKER));
   // Missing DefaultShell diagnostics may still land on stderr; redirect keeps
   // REG_SZ success lines visible when hosts split streams.
@@ -86,8 +87,8 @@ test("parseRemoteWindowsLoginShellProbeOutput reads DefaultShell and missing-key
     ),
     "cmd",
   );
-  // Locale-independent marker from ERRORLEVEL (preferred path) — covers both
-  // missing DefaultShell value and absent OpenSSH key on non-English hosts.
+  // Locale-independent marker from ERRORLEVEL (preferred path): OpenSSH key
+  // readable, DefaultShell value absent.
   assert.equal(
     parseRemoteWindowsLoginShellProbeOutput(
       `错误: 系统找不到指定的注册表项或值。\r\n${WINDOWS_NO_DEFAULT_SHELL_MARKER}\r\n`,
