@@ -8,7 +8,10 @@ const {
   PROBE_OUTPUT_MARKER,
   classifyShellKindFromRemotePath,
   buildRemoteLoginShellProbeCommand,
+  buildRemoteWindowsLoginShellProbeCommand,
   parseRemoteLoginShellProbeOutput,
+  parseRemoteWindowsLoginShellProbeOutput,
+  isWindowsOpenSshRemote,
   createSshConnExecProbe,
   createSessionExecProbe,
   ensureSessionShellKind,
@@ -28,8 +31,56 @@ test("classifies remote login shell paths", () => {
   assert.equal(classifyShellKindFromRemotePath("/bin/zsh"), "posix");
   assert.equal(classifyShellKindFromRemotePath("/usr/bin/pwsh"), "powershell");
   assert.equal(classifyShellKindFromRemotePath("/bin/cmd.exe"), "cmd");
+  assert.equal(
+    classifyShellKindFromRemotePath(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    ),
+    "powershell",
+  );
+  assert.equal(
+    classifyShellKindFromRemotePath("C:\\Windows\\System32\\cmd.exe"),
+    "cmd",
+  );
   assert.equal(classifyShellKindFromRemotePath("/usr/bin/nu"), null);
   assert.equal(classifyShellKindFromRemotePath(""), null);
+});
+
+test("isWindowsOpenSshRemote matches OpenSSH_for_Windows banners", () => {
+  assert.equal(isWindowsOpenSshRemote("OpenSSH_for_Windows_9.5"), true);
+  assert.equal(isWindowsOpenSshRemote("SSH-2.0-OpenSSH_for_Windows_8.1"), true);
+  assert.equal(isWindowsOpenSshRemote("OpenSSH_9.6"), false);
+  assert.equal(isWindowsOpenSshRemote(""), false);
+  assert.equal(isWindowsOpenSshRemote(undefined), false);
+});
+
+test("Windows login-shell probe uses reg query for DefaultShell", () => {
+  const command = buildRemoteWindowsLoginShellProbeCommand();
+  assert.match(command, /reg query/i);
+  assert.match(command, /HKLM\\SOFTWARE\\OpenSSH/i);
+  assert.match(command, /DefaultShell/);
+});
+
+test("parseRemoteWindowsLoginShellProbeOutput reads DefaultShell and missing-key default", () => {
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput(
+      "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\r\n    DefaultShell    REG_SZ    C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n",
+    ),
+    "powershell",
+  );
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput(
+      "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\r\n    DefaultShell    REG_SZ    C:\\Windows\\System32\\cmd.exe\r\n",
+    ),
+    "cmd",
+  );
+  assert.equal(
+    parseRemoteWindowsLoginShellProbeOutput(
+      "ERROR: The system was unable to find the specified registry key or value.\r\n",
+    ),
+    "cmd",
+  );
+  assert.equal(parseRemoteWindowsLoginShellProbeOutput(""), null);
+  assert.equal(parseRemoteWindowsLoginShellProbeOutput("reg: command not found\n"), null);
 });
 
 test("parseRemoteLoginShellProbeOutput reads classifiable probe output lines", () => {
@@ -262,6 +313,95 @@ test("ensureSessionShellKind pins powershell login shells", async () => {
   });
   assert.equal(session.shellKind, "powershell");
   assert.equal(session._loginShellKind, "powershell");
+});
+
+test("ensureSessionShellKind uses Windows DefaultShell probe for OpenSSH_for_Windows", async () => {
+  // Issue #2959: Unix `exec sh -c` probes never classify Windows OpenSSH, so AI
+  // fell through to a posix wrapper, hung, and Stop/Ctrl+C tore down the tab.
+  const probed = [];
+  const session = {
+    protocol: "ssh",
+    remoteSshVersion: "OpenSSH_for_Windows_9.5",
+  };
+  const kind = await ensureSessionShellKind(session, {
+    execProbe: async (command) => {
+      probed.push(command);
+      return (
+        "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\r\n" +
+        "    DefaultShell    REG_SZ    C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\r\n"
+      );
+    },
+  });
+  assert.equal(kind, "powershell");
+  assert.equal(session.shellKind, "powershell");
+  assert.equal(session._loginShellKind, "powershell");
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(probed.length, 1);
+  assert.match(probed[0], /reg query/i);
+  assert.doesNotMatch(probed[0], /getent passwd/);
+});
+
+test("ensureSessionShellKind pins cmd when Windows OpenSSH has no DefaultShell value", async () => {
+  const session = {
+    protocol: "ssh",
+    remoteSshVersion: "OpenSSH_for_Windows_8.1",
+  };
+  const kind = await ensureSessionShellKind(session, {
+    execProbe: async () =>
+      "ERROR: The system was unable to find the specified registry key or value.\r\n",
+  });
+  assert.equal(kind, "cmd");
+  assert.equal(session.shellKind, "cmd");
+  assert.equal(session._shellKindProbeSettled, true);
+});
+
+test("ensureSessionShellKind settles Windows OpenSSH without pinning when reg probe is empty", async () => {
+  let probes = 0;
+  const session = {
+    protocol: "ssh",
+    remoteSshVersion: "OpenSSH_for_Windows_9.5",
+  };
+  const kind = await ensureSessionShellKind(session, {
+    execProbe: async () => {
+      probes += 1;
+      return "";
+    },
+  });
+  assert.equal(kind, undefined);
+  assert.equal(session.shellKind, undefined);
+  assert.equal(session._shellKindProbeSettled, true);
+  assert.equal(probes, 1);
+
+  // Settled: do not re-probe on the next AI exec.
+  await ensureSessionShellKind(session, {
+    execProbe: async () => {
+      probes += 1;
+      return "";
+    },
+  });
+  assert.equal(probes, 1);
+});
+
+test("ensureSessionShellKind falls back to Windows reg probe when Unix probe yields nothing", async () => {
+  const probed = [];
+  const session = { protocol: "ssh" };
+  const kind = await ensureSessionShellKind(session, {
+    execProbe: async (command) => {
+      probed.push(command);
+      if (/reg query/i.test(command)) {
+        return (
+          "HKEY_LOCAL_MACHINE\\SOFTWARE\\OpenSSH\n" +
+          "    DefaultShell    REG_SZ    C:\\Windows\\System32\\cmd.exe\n"
+        );
+      }
+      return "no marker here\n";
+    },
+  });
+  assert.equal(kind, "cmd");
+  assert.equal(session.shellKind, "cmd");
+  assert.equal(probed.length, 2);
+  assert.match(probed[0], /getent passwd|exec sh -c/);
+  assert.match(probed[1], /reg query/i);
 });
 
 test("ensureSessionShellKindForExec cancels when Stop fires during the probe", async () => {

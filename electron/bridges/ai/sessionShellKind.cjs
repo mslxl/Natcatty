@@ -13,6 +13,11 @@
  * resolveEffectiveShellKind can pick fish vs native posix wrappers without
  * permanently assuming login shell === active interactive shell, and without
  * routing bash sessions through /bin/sh (dash).
+ *
+ * Windows OpenSSH (issue #2959) has no POSIX `getent`/`sh` login-shell probe:
+ * we read HKLM\SOFTWARE\OpenSSH DefaultShell via `reg query` instead. Without
+ * that, AI typed a bash wrapper into PowerShell/cmd, hung waiting for markers,
+ * and Stop/Ctrl+C tore down the SSH tab.
  */
 "use strict";
 
@@ -41,6 +46,14 @@ function isConfirmedShellKind(shellKind) {
 
 function quoteShellArg(value) {
   return `'${String(value ?? "").replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * True when the SSH identification software string is Win32-OpenSSH.
+ * `session.remoteSshVersion` is the software token from `SSH-2.0-<software>`.
+ */
+function isWindowsOpenSshRemote(remoteSshVersion) {
+  return /openssh_for_windows/i.test(String(remoteSshVersion || ""));
 }
 
 /**
@@ -82,6 +95,33 @@ function parseRemoteLoginShellProbeOutput(stdout) {
     if (!line.startsWith(PROBE_OUTPUT_MARKER)) continue;
     const kind = classifyShellKindFromRemotePath(line.slice(PROBE_OUTPUT_MARKER.length));
     if (kind) return kind;
+  }
+  return null;
+}
+
+/**
+ * Silent Windows OpenSSH probe. `reg.exe` runs under both DefaultShell=cmd and
+ * DefaultShell=powershell (sshd routes the exec through the configured shell,
+ * which still invokes console PE binaries).
+ */
+function buildRemoteWindowsLoginShellProbeCommand() {
+  return 'reg query "HKLM\\SOFTWARE\\OpenSSH" /v DefaultShell';
+}
+
+/**
+ * Parse `reg query` DefaultShell output.
+ * Missing value → Microsoft's documented Windows OpenSSH default (cmd.exe).
+ */
+function parseRemoteWindowsLoginShellProbeOutput(stdout) {
+  const text = String(stdout || "").replace(/\r/g, "");
+  const sz = text.match(/DefaultShell\s+REG_SZ\s+([^\n]+)/i);
+  if (sz) {
+    const rawPath = sz[1].trim().replace(/^"+|"+$/g, "");
+    const kind = classifyShellKindFromRemotePath(rawPath);
+    if (kind) return kind;
+  }
+  if (/unable to find the specified registry key or value/i.test(text)) {
+    return "cmd";
   }
   return null;
 }
@@ -163,9 +203,68 @@ function applyProbedShellKind(session, kind) {
   return session.shellKind;
 }
 
+function markShellKindProbeSettled(session) {
+  if (!session || typeof session !== "object") return;
+  session._shellKindProbeSettled = true;
+}
+
 function isShellKindProbeSettled(session) {
   return Boolean(session?._shellKindProbeSettled)
     || isConfirmedShellKind(session?.shellKind);
+}
+
+/**
+ * Probe once for the remote login shell kind.
+ *
+ * Prefer the Windows OpenSSH DefaultShell registry probe when the banner says
+ * Win32-OpenSSH (POSIX getent/sh never works there). Otherwise try the Unix
+ * marker probe, then fall back to the Windows reg probe for hosts whose banner
+ * was not recorded on the session.
+ *
+ * @returns {Promise<{ kind: string|null, settleWithoutKind?: boolean }>}
+ */
+async function probeRemoteLoginShellKind(execProbe, timeoutMs, session) {
+  const preferWindows = isWindowsOpenSshRemote(session?.remoteSshVersion);
+
+  if (preferWindows) {
+    const winStdout = await withProbeTimeout(
+      execProbe(buildRemoteWindowsLoginShellProbeCommand(), timeoutMs),
+      timeoutMs,
+    );
+    const winKind = parseRemoteWindowsLoginShellProbeOutput(winStdout);
+    if (winKind) return { kind: winKind };
+    // Banner is Windows OpenSSH but reg query returned nothing useful. Settle
+    // without pinning so we stop re-probing; live PS/cmd prompt override can
+    // still select the wrapper when lastIdlePrompt is available.
+    return { kind: null, settleWithoutKind: true };
+  }
+
+  const stdout = await withProbeTimeout(
+    execProbe(buildRemoteLoginShellProbeCommand(), timeoutMs),
+    timeoutMs,
+  );
+  const kind = parseRemoteLoginShellProbeOutput(stdout);
+  if (kind) return { kind };
+
+  // Timed out / probe returned null — leave unsettled for a later retry.
+  // Do not stack a second full-timeout Windows probe in the same attempt.
+  if (stdout == null) {
+    return { kind: null };
+  }
+
+  // Got bytes but no classifiable Unix marker. Skip Windows reg when the
+  // Unix probe already printed our marker with an unclassifiable path
+  // (exotic login shells); otherwise try DefaultShell for Windows OpenSSH
+  // hosts whose banner was not recorded on the session.
+  if (String(stdout).includes(PROBE_OUTPUT_MARKER)) {
+    return { kind: null };
+  }
+
+  const winStdout = await withProbeTimeout(
+    execProbe(buildRemoteWindowsLoginShellProbeCommand(), timeoutMs),
+    timeoutMs,
+  );
+  return { kind: parseRemoteWindowsLoginShellProbeOutput(winStdout) };
 }
 
 /**
@@ -217,15 +316,14 @@ async function ensureSessionShellKind(session, options = {}) {
 
   session._shellKindProbePromise = (async () => {
     try {
-      const stdout = await withProbeTimeout(
-        execProbe(
-          buildRemoteLoginShellProbeCommand(),
-          timeoutMs,
-        ),
-        timeoutMs,
-      );
-      const kind = parseRemoteLoginShellProbeOutput(stdout);
-      return applyProbedShellKind(session, kind);
+      const probed = await probeRemoteLoginShellKind(execProbe, timeoutMs, session);
+      if (probed.kind) {
+        return applyProbedShellKind(session, probed.kind);
+      }
+      if (probed.settleWithoutKind) {
+        markShellKindProbeSettled(session);
+      }
+      return session.shellKind;
     } catch {
       return session.shellKind;
     } finally {
@@ -303,9 +401,12 @@ module.exports = {
   DEFAULT_PROBE_TIMEOUT_MS,
   PROBE_OUTPUT_MARKER,
   isConfirmedShellKind,
+  isWindowsOpenSshRemote,
   classifyShellKindFromRemotePath,
   buildRemoteLoginShellProbeCommand,
+  buildRemoteWindowsLoginShellProbeCommand,
   parseRemoteLoginShellProbeOutput,
+  parseRemoteWindowsLoginShellProbeOutput,
   createSshConnExecProbe,
   createSessionExecProbe,
   applyProbedShellKind,

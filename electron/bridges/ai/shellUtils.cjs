@@ -56,8 +56,17 @@ function formatSyntheticEcho(command) {
 // such a line can't trick prompt-driven shell-kind selection.
 const POWERSHELL_PROMPT_PATTERN = /^PS(?:\s+\S.*)?>$/;
 
+// Default cmd.exe prompt (e.g. `C:\>`, `C:\Users\alice>`, `D:\data>`).
+// Drive letter + optional path + `>`. Rejects `C: >` (space before `>`) and
+// PowerShell's `PS C:\...>` (handled by POWERSHELL_PROMPT_PATTERN first).
+const CMD_PROMPT_PATTERN = /^[A-Za-z]:(?:\\[^<>"|]*)?>$/;
+
 function isDefaultPowerShellPromptLine(line) {
   return POWERSHELL_PROMPT_PATTERN.test(String(line || ""));
+}
+
+function isDefaultCmdPromptLine(line) {
+  return CMD_PROMPT_PATTERN.test(String(line || "").replace(/\s+$/, ""));
 }
 
 function extractTrailingIdlePrompt(output) {
@@ -77,6 +86,10 @@ function extractTrailingIdlePrompt(output) {
   }
 
   if (/^[^\s@]+@[^\s:]+(?::[^\n\r]*)?[#$]$/.test(rightTrimmed)) {
+    return lastLine;
+  }
+
+  if (isDefaultCmdPromptLine(rightTrimmed)) {
     return lastLine;
   }
 
@@ -126,8 +139,8 @@ function trackSessionIdlePrompt(session, chunk) {
 
 // Return `session.lastIdlePrompt` only if the PTY's recent rolling tail
 // still ends with it. The cached prompt is updated only when
-// extractTrailingIdlePrompt recognizes a known shape (PowerShell or
-// `user@host[:path][#$]`); a remote shell switch into cmd.exe, an
+// extractTrailingIdlePrompt recognizes a known shape (PowerShell, cmd.exe,
+// or `user@host[:path][#$]`); a remote shell switch into another shell, an
 // oh-my-posh / starship / custom PS1, or any unrecognized prompt would
 // otherwise leave a stale value behind, which `resolveEffectiveShellKind`
 // would then keep using to coerce future commands into a PowerShell
@@ -941,6 +954,7 @@ module.exports = {
   extractTrailingIdlePrompt,
   getFreshIdlePrompt,
   isDefaultPowerShellPromptLine,
+  isDefaultCmdPromptLine,
   trackSessionIdlePrompt,
   looksLikeIdleAutoLogout,
   isLocalhostHostname,

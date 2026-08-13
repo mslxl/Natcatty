@@ -2,7 +2,7 @@
 
 const { StringDecoder } = require("node:string_decoder");
 const iconv = require("iconv-lite");
-const { stripAnsi, isDefaultPowerShellPromptLine } = require("./shellUtils.cjs");
+const { stripAnsi, isDefaultPowerShellPromptLine, isDefaultCmdPromptLine } = require("./shellUtils.cjs");
 const { classifyLocalShellType } = require("../../../lib/localShell.cjs");
 
 // Build a stateful decoder for a full exec call. Serial data events can
@@ -94,6 +94,15 @@ function isPowerShellPrompt(prompt) {
   return isDefaultPowerShellPromptLine(lastLine);
 }
 
+function isCmdPrompt(prompt) {
+  const lastLine = stripAnsi(String(prompt || ""))
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .pop()
+    .replace(/\s+$/, "");
+  return isDefaultCmdPromptLine(lastLine);
+}
+
 // Prompt-driven override is intentionally narrow: only flip to PowerShell
 // when the session has no confirmed shell type. This keeps the issue #841
 // fix working for remote Windows shells that never set shellKind at connect
@@ -107,6 +116,7 @@ function isPowerShellPrompt(prompt) {
 //   - hint "posix" → native posix wrapper evaluated by interactive bash/zsh
 //                    (NOT sh -c / dash — Codex P2 on #2061)
 //   - live PS ...> still overrides when base kind is open
+//   - live C:\...> selects cmd when base kind is open (Windows OpenSSH default)
 //
 // Universe of shellKind values (see lib/localShell.cjs:23-33 and
 // terminalBridge.cjs:368, :932, :1074):
@@ -124,11 +134,13 @@ const LOGIN_SHELL_HINTS = new Set(["posix", "fish", "powershell", "cmd"]);
 
 function resolveEffectiveShellKind(shellKind, expectedPrompt, options = {}) {
   const baseKind = shellKind || "";
-  if (
-    SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE.has(baseKind) &&
-    isPowerShellPrompt(expectedPrompt)
-  ) {
-    return "powershell";
+  if (SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE.has(baseKind)) {
+    if (isPowerShellPrompt(expectedPrompt)) {
+      return "powershell";
+    }
+    if (isCmdPrompt(expectedPrompt)) {
+      return "cmd";
+    }
   }
   if (baseKind) return baseKind;
 

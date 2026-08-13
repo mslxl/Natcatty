@@ -73,7 +73,7 @@ test("foreground PTY capture preserves UTF-8 and markers split across chunks", a
       if (!marker) return;
       queueMicrotask(() => {
         const start = Buffer.from(`${marker}_S\n`);
-        const content = Buffer.from("中文回复", "utf8");
+        const content = Buffer.from("中文回夝", "utf8");
         const end = Buffer.from(`\n${marker}_E:0\n`);
         this.emit("data", start.subarray(0, 7));
         this.emit("data", start.subarray(7));
@@ -90,7 +90,7 @@ test("foreground PTY capture preserves UTF-8 and markers split across chunks", a
     timeoutMs: 1_000,
   });
   assert.equal(result.ok, true);
-  assert.equal(result.stdout, "中文回复");
+  assert.equal(result.stdout, "中文回夝");
 });
 
 test("foreground PTY timeout returns only a bounded tail", async () => {
@@ -166,6 +166,16 @@ test("uses PowerShell wrapping when a session with no confirmed shell sees a Pow
     resolveEffectiveShellKind(undefined, "PS C:\\Users\\alice>"),
     "powershell",
   );
+});
+
+test("uses cmd wrapping when a session with no confirmed shell sees a cmd.exe prompt", () => {
+  // Windows OpenSSH defaults to cmd.exe; without this override AI types a
+  // posix wrapper into cmd and hangs until Stop (issue #2959).
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "C:\\Users\\alice>"),
+    "cmd",
+  );
+  assert.equal(resolveEffectiveShellKind("unknown", "C:\\>"), "cmd");
 });
 
 test("uses PowerShell wrapping when shellKind is 'unknown'", () => {
