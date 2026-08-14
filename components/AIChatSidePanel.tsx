@@ -406,6 +406,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   panelViewRef.current = normalizedPanelView;
   const permissionModeRef = useRef(globalPermissionMode);
   permissionModeRef.current = globalPermissionMode;
+  const sendEpochRef = useRef(0);
+  useEffect(() => () => {
+    sendEpochRef.current += 1;
+  }, [scopeKey]);
   const currentDraftRef = useRef(currentDraft);
   if (pendingComposerTextRef.current != null) {
     const pending = pendingComposerTextRef.current;
@@ -1141,6 +1145,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       return;
     }
     let sessionSendGateKey: string | null = null;
+    const sendEpoch = sendEpochRef.current;
+    const isSendStale = () => sendEpochRef.current !== sendEpoch;
     setIsSending(true);
 
     try {
@@ -1175,6 +1181,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
       setIsSending(false);
       const sendPermissionMode = permissionModeRef.current;
+      if (isSendStale()) return;
       if (currentAgentId !== sendAgentId) return;
       const liveView = panelViewRef.current;
       if (liveView.mode !== currentPanelView.mode) return;

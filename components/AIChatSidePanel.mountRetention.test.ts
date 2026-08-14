@@ -109,6 +109,12 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   ...overrides,
 });
 
+test('send preflight aborts after the panel unmounts or the scope changes', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.match(source, /sendEpochRef/);
+  assert.match(source, /if \(isSendStale\(\)\) return;/);
+});
+
 test('send preflight locks header agent and new-chat controls', () => {
   const panel = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
   const content = readFileSync(new URL('./AIChatPanelContent.tsx', import.meta.url), 'utf8');
