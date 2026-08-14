@@ -541,8 +541,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     pendingComposerTextRef.current = null;
   }, []);
 
-  const clearScopeDraft = useCallback(() => {
-    discardPendingComposerText();
+  const clearScopeDraft = useCallback((options?: { keepPendingText?: boolean }) => {
+    if (!options?.keepPendingText) discardPendingComposerText();
     clearDraftForScope(scopeKey);
   }, [clearDraftForScope, discardPendingComposerText, scopeKey]);
 
@@ -685,9 +685,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (!isVisible) return;
     const bridge = getNetcattyBridge();
     if (!bridge?.aiSyncWebSearch) return;
-    return scheduleWhenAiComposerIdle(() => {
-      void bridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
-    });
+    void bridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
   }, [isVisible, webSearchConfig?.apiHost, webSearchConfig?.apiKey, webSearchConfig?.enabled]);
 
   const {
@@ -803,24 +801,21 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const bridge = getNetcattyBridge();
     if (!bridge?.aiCodexGetIntegration) return;
     let cancelled = false;
-    const cancelIdle = scheduleWhenAiComposerIdle(() => {
-      void Promise.resolve(
-        bridge.aiCodexGetIntegration({ codexPath: getManualAgentCommand(currentAgentConfig) }) as Promise<CodexIntegrationStatus>,
-      ).then((info) => {
-        if (cancelled) return;
-        const hasCustom = info?.state === 'connected_custom_config';
-        setCodexConfigModel(info?.customConfig?.model ?? null);
-        setCodexCustomConfigResolved(hasCustom);
-      }).catch(() => {
-        if (!cancelled) {
-          setCodexConfigModel(null);
-          setCodexCustomConfigResolved(false);
-        }
-      });
+    void Promise.resolve(
+      bridge.aiCodexGetIntegration({ codexPath: getManualAgentCommand(currentAgentConfig) }) as Promise<CodexIntegrationStatus>,
+    ).then((info) => {
+      if (cancelled) return;
+      const hasCustom = info?.state === 'connected_custom_config';
+      setCodexConfigModel(info?.customConfig?.model ?? null);
+      setCodexCustomConfigResolved(hasCustom);
+    }).catch(() => {
+      if (!cancelled) {
+        setCodexConfigModel(null);
+        setCodexCustomConfigResolved(false);
+      }
     });
     return () => {
       cancelled = true;
-      cancelIdle();
     };
   }, [isVisible, isCodexManagedAgent, currentAgentId, currentAgentConfig]);
 
@@ -1133,6 +1128,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const isDraftMode = currentPanelView.mode === 'draft';
 
     flushDraftText();
+    const submittedText = draft?.text ?? '';
+    const keepPendingAfterSend = () => {
+      const pending = pendingComposerTextRef.current;
+      return pending != null && pending !== submittedText;
+    };
     const sendGateKey = currentSessionView?.id ?? `draft:${scopeKey}`;
     if (!tryBeginSendForKey(sendGateKey)) {
       return;
@@ -1144,6 +1144,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       if (sendBridge?.aiSyncProviders && providers.length > 0) {
         await sendBridge.aiSyncProviders(providers);
       }
+      if (sendBridge?.aiSyncWebSearch) {
+        await sendBridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
+      }
       void warmAiMarkdownRenderer();
       let sessionId = currentSessionView?.id ?? null;
       let currentSession = currentSessionView ?? null;
@@ -1152,7 +1155,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         const createdSession = createSession(scope, sendAgentId);
         sessionId = createdSession.id;
         currentSession = createdSession;
-        clearScopeDraft();
+        clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
         showScopeSessionView(createdSession.id);
         setActiveSessionId(createdSession.id);
         sessionSendGateKey = sessionId;
@@ -1182,7 +1185,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
-          clearScopeDraft();
+          clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
           showScopeSessionView(sessionId);
         }
         return;
@@ -1196,7 +1199,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProviderModel'), timestamp: Date.now() });
         if (currentPanelView.mode === 'session') {
-          clearScopeDraft();
+          clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
           showScopeSessionView(sessionId);
         }
         return;
@@ -1207,7 +1210,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         ...(attachments.length > 0 ? { attachments } : {}),
         timestamp: Date.now(),
       });
-      clearScopeDraft();
+      clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
       showScopeSessionView(sessionId);
       setActiveSessionId(sessionId);
       setStreamingForScope(sessionId, true);
