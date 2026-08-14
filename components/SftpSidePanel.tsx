@@ -586,7 +586,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       })
     ) {
       // Remember the non-connected status so the later connected transition
-      // is treated as a transport rebind (same session id after 重新开始).
+      // is treated as a transport rebind (same session id after Start over).
       lastSourceSessionStatusRef.current = activeSessionStatus;
       if (activeSessionId) {
         lastSourceSessionIdRef.current = activeSessionId;

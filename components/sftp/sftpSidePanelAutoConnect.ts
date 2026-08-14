@@ -139,7 +139,7 @@ export function shouldResetSftpSidePanelSourceSession(
 /**
  * True when the SFTP side panel must rebind onto a fresh SSH transport.
  * Covers focus switches (session id change) and same-tab reconnect /
- * “Start over”, where the id is stable but the underlying channel was replaced.
+ * Start over, where the id is stable but the underlying channel was replaced.
  */
 export function shouldRebindSftpSidePanelSourceSession(params: {
   previousSessionId: string | null | undefined;

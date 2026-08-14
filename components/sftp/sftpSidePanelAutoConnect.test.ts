@@ -181,7 +181,7 @@ test("shouldResetSftpSidePanelSourceSession detects terminal session changes", (
 });
 
 test("shouldRebindSftpSidePanelSourceSession treats SSH start-over as a transport change", () => {
-  // Same terminal tab id after 重新开始 — transport was replaced even though
+  // Same terminal tab id after Start over - transport was replaced even though
   // the session id did not change.
   assert.equal(
     shouldRebindSftpSidePanelSourceSession({

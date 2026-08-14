@@ -144,7 +144,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
   }, [activeSession, activeTabId, activeWorkspace, focusedSessionId, isSftpOpenForCurrentTab, sessionHostsMap, sftpHostForTab]);
 
   // Keep the same-endpoint SSH session id across disconnected/connecting so
-  // SftpSidePanel can observe status transitions and rebind after 重新开始.
+  // SftpSidePanel can observe status transitions and rebind after Start over.
   // Transport reuse for openSftp still requires status === "connected".
   const activeTerminalSessionIdForSftp = useMemo((): string | null => {
     if (!isSftpOpenForCurrentTab || !sftpActiveHost) return null;
