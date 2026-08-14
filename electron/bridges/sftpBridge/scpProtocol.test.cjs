@@ -24,6 +24,7 @@ const {
   buildListCommand,
   buildMkdirCommand,
   buildDeleteCommand,
+  buildUnlinkCommand,
   buildRenameCommand,
   buildChmodCommand,
   parseListRecords,
@@ -125,6 +126,7 @@ describe("scpShell quoting and commands", () => {
     assert.match(buildListCommand("/home/user"), /do\n/);
     assert.match(buildMkdirCommand("/x/y"), /mkdir -p -- '\/x\/y'/);
     assert.match(buildDeleteCommand("/x", { recursive: true }), /rm -rf -- '\/x'/);
+    assert.equal(buildUnlinkCommand("/x"), "rm -f -- '/x'");
     assert.match(buildRenameCommand("/a", "/b"), /mv -- '\/a' '\/b'/);
     assert.match(buildChmodCommand("/a", "755"), /chmod 755 -- '\/a'/);
   });

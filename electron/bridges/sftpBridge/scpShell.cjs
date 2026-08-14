@@ -149,6 +149,12 @@ function buildDeleteCommand(remotePath, { recursive = false, encoding = "utf-8" 
   return `rm -f -- ${q} 2>/dev/null || rmdir -- ${q}`;
 }
 
+function buildUnlinkCommand(remotePath, encoding = "utf-8") {
+  const p = assertSafeRemotePath(remotePath);
+  const q = shellQuotePath(p, encoding);
+  return `rm -f -- ${q}`;
+}
+
 function buildRenameCommand(oldPath, newPath, encoding = "utf-8") {
   const a = shellQuotePath(assertSafeRemotePath(oldPath), encoding);
   const b = shellQuotePath(assertSafeRemotePath(newPath), encoding);
@@ -382,6 +388,7 @@ module.exports = {
   buildStatCommand,
   buildMkdirCommand,
   buildDeleteCommand,
+  buildUnlinkCommand,
   buildRenameCommand,
   buildChmodCommand,
   buildHomeCommand,

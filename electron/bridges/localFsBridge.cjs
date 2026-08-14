@@ -259,8 +259,16 @@ async function writeLocalFile(event, payload) {
  * Delete a local file or directory
  */
 async function deleteLocalFile(event, payload) {
-  const stat = await fs.promises.stat(payload.path);
-  if (stat.isDirectory()) {
+  const stat = await fs.promises.lstat(payload.path);
+  const actualType = stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file";
+  if (payload.expectedType && actualType !== payload.expectedType) {
+    const error = new Error(
+      `Local target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+    );
+    error.code = "ESTALE";
+    throw error;
+  }
+  if (actualType === "directory") {
     await fs.promises.rm(payload.path, { recursive: true, force: true });
   } else {
     await fs.promises.unlink(payload.path);
@@ -295,10 +303,26 @@ async function mkdirLocal(event, payload) {
 }
 
 /**
- * Get local file statistics
+ * Get local file statistics (follows symlinks — size/mtime of the target).
+ * Resume and upload sizing rely on target bytes, not the link node.
  */
 async function statLocal(event, payload) {
   const stat = await fs.promises.stat(payload.path);
+  return {
+    name: path.basename(payload.path),
+    type: stat.isDirectory() ? "directory" : "file",
+    size: stat.size,
+    lastModified: stat.mtime.getTime(),
+  };
+}
+
+/**
+ * Get local path metadata without following symlinks.
+ * Conflict resolution needs this so Replace can unlink a link instead of
+ * writing through it via writeLocalFile.
+ */
+async function lstatLocal(event, payload) {
+  const stat = await fs.promises.lstat(payload.path);
   return {
     name: path.basename(payload.path),
     type: stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file",
@@ -604,6 +628,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:local:rename", renameLocalFile);
   ipcMain.handle("netcatty:local:mkdir", mkdirLocal);
   ipcMain.handle("netcatty:local:stat", statLocal);
+  ipcMain.handle("netcatty:local:lstat", lstatLocal);
   ipcMain.handle("netcatty:local:tree", listLocalTree);
   ipcMain.handle("netcatty:local:homedir", getHomeDir);
   ipcMain.handle("netcatty:local:drives", listDrives);
@@ -621,6 +646,7 @@ module.exports = {
   renameLocalFile,
   mkdirLocal,
   statLocal,
+  lstatLocal,
   collectLocalTreeEntries,
   createLocalTreeTraversalBudget,
   MAX_LOCAL_TREE_DIRECTORIES,

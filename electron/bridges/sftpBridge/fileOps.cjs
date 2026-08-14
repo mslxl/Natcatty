@@ -733,11 +733,36 @@ function createFileOpsApi(ctx) {
       if (isScpModeClient(client)) {
         throwIfAborted(payload?.abortSignal || null);
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        await getScpBackendForClient(client).remove(payload.path, {
-          recursive: true,
-          encoding,
-          signal: payload?.abortSignal || null,
-        });
+        if (payload.expectedType) {
+          const stat = await getScpBackendForClient(client).stat(payload.path, {
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+          const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
+          if (actualType !== payload.expectedType) {
+            const error = new Error(
+              `Remote target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+            );
+            error.code = "ESTALE";
+            throw error;
+          }
+        }
+        const backend = getScpBackendForClient(client);
+        if (payload.expectedType === "symlink") {
+          // Keep the final operation non-recursive. If another client replaces
+          // the link with a directory after the check above, rm -f must fail
+          // instead of recursively deleting the new directory.
+          await backend.unlink(payload.path, {
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+        } else {
+          await backend.remove(payload.path, {
+            recursive: true,
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+        }
         return true;
       }
     
@@ -747,7 +772,20 @@ function createFileOpsApi(ctx) {
         throwIfAborted(signal);
         const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
         const encodedPath = encodePath(payload.path, encoding);
+        if (payload.expectedType && typeof sftp?.lstat !== "function") {
+          const error = new Error("Remote server cannot safely verify the target type before replace");
+          error.code = "ENOTSUP";
+          throw error;
+        }
         const stat = statResultFromAttrs(await lstatAsync(sftp, encodedPath));
+        const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
+        if (payload.expectedType && actualType !== payload.expectedType) {
+          const error = new Error(
+            `Remote target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+          );
+          error.code = "ESTALE";
+          throw error;
+        }
         throwIfAborted(signal);
         if (stat.isSymbolicLink) {
           await unlinkAsync(sftp, encodedPath);
@@ -781,8 +819,29 @@ function createFileOpsApi(ctx) {
       // Non-UTF-8: keep protocol walk (shell path encoding is unsafe).
       const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const normalizedPath = await normalizeRemotePathString(client, payload.path);
+      const encodedNormalizedPath = encodePath(normalizedPath, encoding);
+      if (payload.expectedType) {
+        if (typeof sftp?.lstat !== "function") {
+          const error = new Error("Remote server cannot safely verify the target type before replace");
+          error.code = "ENOTSUP";
+          throw error;
+        }
+        const stat = statResultFromAttrs(await lstatAsync(sftp, encodedNormalizedPath));
+        const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
+        if (actualType !== payload.expectedType) {
+          const error = new Error(
+            `Remote target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+          );
+          error.code = "ESTALE";
+          throw error;
+        }
+      }
       throwIfAborted(signal);
-      await removeRemotePathInternal(sftp, normalizedPath, encoding, signal);
+      if (payload.expectedType === "symlink") {
+        await unlinkAsync(sftp, encodedNormalizedPath);
+      } else {
+        await removeRemotePathInternal(sftp, normalizedPath, encoding, signal);
+      }
       return true;
     }
     
@@ -810,8 +869,19 @@ function createFileOpsApi(ctx) {
       return true;
     }
     
+    function formatSftpStatResult(payloadPath, stat, permissions) {
+      return {
+        name: path.basename(payloadPath),
+        type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
+        size: stat.size,
+        lastModified: stat.modifyTime,
+        permissions,
+      };
+    }
+
     /**
-     * Get file statistics
+     * Get file statistics (follows symlinks — size/mtime of the target).
+     * Resume and transfer sizing rely on target bytes, not the link node.
      */
     async function statSftp(event, payload) {
       const client = sftpClients.get(payload.sftpId);
@@ -823,26 +893,87 @@ function createFileOpsApi(ctx) {
           encoding,
           signal: payload?.abortSignal || null,
         });
-        return {
-          name: path.basename(payload.path),
-          type: st.isDirectory ? "directory" : st.isSymbolicLink ? "symlink" : "file",
-          size: st.size,
-          lastModified: st.modifyTime,
-          permissions: st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
-        };
+        return formatSftpStatResult(
+          payload.path,
+          st,
+          st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
+        );
       }
-    
-      await requireSftpChannel(client);
+
+      const sftp = await requireSftpChannel(client);
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(payload.path, encoding);
-      const stat = await client.stat(encodedPath);
-      return {
-        name: path.basename(payload.path),
-        type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
-        size: stat.size,
-        lastModified: stat.modifyTime,
-        permissions: stat.mode ? (stat.mode & 0o777).toString(8) : undefined,
-      };
+      const stat = statResultFromAttrs(await statAsync(sftp, encodedPath));
+      return formatSftpStatResult(
+        payload.path,
+        stat,
+        stat.mode ? (stat.mode & 0o777).toString(8) : undefined,
+      );
+    }
+
+    /**
+     * Get remote path metadata without following symlinks.
+     * Conflict resolution needs this so Replace can unlink a link instead of
+     * writing through it via in-place upload.
+     */
+    async function lstatSftp(event, payload) {
+      const client = sftpClients.get(payload.sftpId);
+      if (!client) throw new Error("SFTP session not found");
+
+      if (isScpModeClient(client)) {
+        // SCP shell stat already reports the link node (no follow).
+        const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        const st = await getScpBackendForClient(client).stat(payload.path, {
+          encoding,
+          signal: payload?.abortSignal || null,
+        });
+        return formatSftpStatResult(
+          payload.path,
+          st,
+          st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
+        );
+      }
+
+      const sftp = await requireSftpChannel(client);
+      if (typeof sftp?.lstat !== "function") {
+        const unavailable = new Error(
+          "Remote server does not support LSTAT; cannot classify path without following symlinks",
+        );
+        unavailable.code = "ENOTSUP";
+        unavailable.lstatUnavailable = true;
+        throw unavailable;
+      }
+      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+      const encodedPath = encodePath(payload.path, encoding);
+      let attrs;
+      try {
+        attrs = await lstatAsync(sftp, encodedPath);
+      } catch (error) {
+        const code = error?.code;
+        const lstatUnsupported = code === 8
+          || code === "ENOTSUP"
+          || code === "EOPNOTSUPP"
+          || code === "SSH_FX_OP_UNSUPPORTED";
+        // Never fall back to followed STAT here: that would report a symlink's
+        // target as a regular file, so Replace would skip unlinking the link
+        // and overwrite a target outside the displayed directory.
+        if (typeof sftp?.lstat === "function" && lstatUnsupported) {
+          const unavailable = new Error(
+            "Remote server does not support LSTAT; cannot classify path without following symlinks",
+            { cause: error },
+          );
+          unavailable.code = "ENOTSUP";
+          unavailable.lstatUnavailable = true;
+          throw unavailable;
+        }
+        throw error;
+      }
+      const stat = statResultFromAttrs(attrs);
+      return formatSftpStatResult(
+        payload.path,
+        stat,
+        stat.mode ? (stat.mode & 0o777).toString(8) : undefined,
+      );
     }
     
     /**
@@ -997,6 +1128,7 @@ function createFileOpsApi(ctx) {
       deleteSftp,
       renameSftp,
       statSftp,
+      lstatSftp,
       chmodSftp,
       getSftpHomeDir,
     };

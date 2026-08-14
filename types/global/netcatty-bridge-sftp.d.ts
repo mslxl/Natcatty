@@ -15,9 +15,16 @@ declare global {
     retainSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;
     releaseSftpTransferSession?(sftpId: string, leaseId: string): Promise<{ success: boolean; reason?: string }>;
     mkdirSftp(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
-    deleteSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<void>;
+    deleteSftp?(
+      sftpId: string,
+      path: string,
+      encoding?: SftpFilenameEncoding,
+      expectedType?: SftpStatResult["type"],
+    ): Promise<void>;
     renameSftp?(sftpId: string, oldPath: string, newPath: string, encoding?: SftpFilenameEncoding): Promise<void>;
     statSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpStatResult>;
+    /** No-follow remote metadata for conflict detection (symlink vs target). */
+    lstatSftp?(sftpId: string, path: string, encoding?: SftpFilenameEncoding): Promise<SftpStatResult>;
     chmodSftp?(sftpId: string, path: string, mode: string, encoding?: SftpFilenameEncoding): Promise<void>;
     getSftpHomeDir?(sftpId: string, encoding?: SftpFilenameEncoding): Promise<{ success: boolean; homeDir?: string; error?: string }>;
 
@@ -139,10 +146,12 @@ declare global {
     listLocalDir?(path: string): Promise<RemoteFile[]>;
     readLocalFile?(path: string, options?: { maxBytes?: number }): Promise<ArrayBuffer>;
     writeLocalFile?(path: string, content: ArrayBuffer): Promise<void>;
-    deleteLocalFile?(path: string): Promise<void>;
+    deleteLocalFile?(path: string, expectedType?: SftpStatResult["type"]): Promise<void>;
     renameLocalFile?(oldPath: string, newPath: string): Promise<void>;
     mkdirLocal?(path: string): Promise<void>;
     statLocal?(path: string): Promise<SftpStatResult>;
+    /** No-follow local metadata for conflict detection (symlink vs target). */
+    lstatLocal?(path: string): Promise<SftpStatResult>;
     listLocalTree?(
       path: string,
       options?: {

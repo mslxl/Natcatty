@@ -877,17 +877,6 @@ async function reconcileRemoteUploadBackup(options) {
   });
 }
 
-function isRemotePermissionError(err) {
-  // Codes only — do not match message substrings (filenames may contain
-  // "permission"/"access"/"denied" and must not trigger in-place fallback).
-  const code = err?.code;
-  return code === 3
-    || code === "EACCES"
-    || code === "EPERM"
-    || code === "ERR_PERMISSION"
-    || code === "SSH_FX_PERMISSION_DENIED";
-}
-
 function isRemoteMissingError(err) {
   const code = err?.code;
   return code === 2
@@ -1241,6 +1230,18 @@ async function restoreRemoteMode(client, encodedPath, mode, options = {}) {
   if (mode == null || !Number.isFinite(mode)) return;
   const bestEffort = options?.bestEffort !== false;
   try {
+    const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
+    if (isScpModeClient(client)) {
+      // SCP-only servers have no SFTP channel; chmod via shell backend.
+      const encoding = options?.encoding || "utf-8";
+      const remotePath = options?.remotePath
+        || (Buffer.isBuffer(encodedPath) ? decodeName(encodedPath, encoding) : String(encodedPath));
+      await getScpBackendForClient(client).chmod(remotePath, mode, {
+        encoding,
+        signal: options?.signal || null,
+      });
+      return;
+    }
     if (typeof client.chmod === "function") {
       await client.chmod(encodedPath, mode);
       return;
@@ -1433,7 +1434,6 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const runCancelablePreflight = typeof options?.runCancelablePreflight === "function"
     ? options.runCancelablePreflight
     : (operation) => operation();
-  const allowInPlaceFallback = options?.allowInPlaceFallback !== false;
   const preserveStageOnUploadError = options?.preserveStageOnUploadError === true;
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const scpMode = isScpModeClient(client);
@@ -1515,6 +1515,19 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     // back. Stop accepting cancellation before the final size verification so
     // a late request cannot report the completed overwrite as cancelled.
     commitPromotion();
+    // Some servers recreate the inode on OPEN|CREAT|TRUNC. Restore captured
+    // permission bits after an in-place overwrite (incl. stage→in-place
+    // fallback) so executable/setuid bits are not left at umask defaults.
+    // Do not forward the transfer AbortSignal: promotion already committed, and
+    // a late cancel must not abort required mode restoration (best-effort would
+    // otherwise swallow the failure and leave umask defaults).
+    if (Number.isFinite(plan.existingMode)) {
+      await restoreRemoteMode(client, encodedPath, plan.existingMode, {
+        bestEffort: false,
+        remotePath,
+        encoding,
+      });
+    }
     // SCP stat reports the link node itself. After an in-place symlink upload,
     // it cannot reliably verify the followed target's byte count.
     if (Number.isFinite(expectedSize) && expectedSize >= 0 && !(scpMode && plan.writeInPlace)) {
@@ -1553,15 +1566,6 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   try {
     await uploadTo(stagedLogical, encodedStagedPath, true);
   } catch (err) {
-    // Only stage creation/write permission errors may fall back to in-place.
-    if (allowInPlaceFallback && isRemotePermissionError(err)) {
-      await cleanupStage();
-      console.warn(
-        "[SFTP] Staged upload unavailable (permission); falling back to in-place overwrite:",
-        err?.message || String(err),
-      );
-      return uploadDirect();
-    }
     if (!preserveStageOnUploadError) {
       await cleanupStage();
     }
@@ -2389,6 +2393,7 @@ const {
   deleteSftp,
   renameSftp,
   statSftp,
+  lstatSftp,
   chmodSftp,
   getSftpHomeDir,
 } = fileOpsApi;
@@ -2583,6 +2588,7 @@ function registerHandlers(ipcMain, options = {}) {
       "netcatty:sftp:delete",
       "netcatty:sftp:rename",
       "netcatty:sftp:stat",
+      "netcatty:sftp:lstat",
       "netcatty:sftp:chmod",
       "netcatty:sftp:homeDir",
     ].forEach((channel) => registerWorkerHandle(ipcMain, terminalWorkerManager, channel, ownership));
@@ -2604,6 +2610,7 @@ function registerHandlers(ipcMain, options = {}) {
     ["netcatty:sftp:delete", deleteSftp],
     ["netcatty:sftp:rename", renameSftp],
     ["netcatty:sftp:stat", statSftp],
+    ["netcatty:sftp:lstat", lstatSftp],
     ["netcatty:sftp:chmod", chmodSftp],
     ["netcatty:sftp:homeDir", getSftpHomeDir],
   ].forEach(([channel, handler]) => registerActivityHandle(ipcMain, channel, handler, ownership));
@@ -2650,6 +2657,7 @@ module.exports = {
   deleteSftp,
   renameSftp,
   statSftp,
+  lstatSftp,
   chmodSftp,
   getSftpHomeDir,
   resolveEncodingForRequest,

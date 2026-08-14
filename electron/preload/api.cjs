@@ -850,14 +850,17 @@ function createPreloadApi(ctx) {
   mkdirSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:mkdir", { sftpId, path, encoding });
   },
-  deleteSftp: async (sftpId, path, encoding) => {
-    return ipcRenderer.invoke("netcatty:sftp:delete", { sftpId, path, encoding });
+  deleteSftp: async (sftpId, path, encoding, expectedType) => {
+    return ipcRenderer.invoke("netcatty:sftp:delete", { sftpId, path, encoding, expectedType });
   },
   renameSftp: async (sftpId, oldPath, newPath, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:rename", { sftpId, oldPath, newPath, encoding });
   },
   statSftp: async (sftpId, path, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:stat", { sftpId, path, encoding });
+  },
+  lstatSftp: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:lstat", { sftpId, path, encoding });
   },
   chmodSftp: async (sftpId, path, mode, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:chmod", { sftpId, path, mode, encoding });
@@ -878,8 +881,8 @@ function createPreloadApi(ctx) {
   writeLocalFile: async (path, content) => {
     return ipcRenderer.invoke("netcatty:local:write", { path, content });
   },
-  deleteLocalFile: async (path) => {
-    return ipcRenderer.invoke("netcatty:local:delete", { path });
+  deleteLocalFile: async (path, expectedType) => {
+    return ipcRenderer.invoke("netcatty:local:delete", { path, expectedType });
   },
   renameLocalFile: async (oldPath, newPath) => {
     return ipcRenderer.invoke("netcatty:local:rename", { oldPath, newPath });
@@ -889,6 +892,9 @@ function createPreloadApi(ctx) {
   },
   statLocal: async (path) => {
     return ipcRenderer.invoke("netcatty:local:stat", { path });
+  },
+  lstatLocal: async (path) => {
+    return ipcRenderer.invoke("netcatty:local:lstat", { path });
   },
   listLocalTree: async (path, options = {}) => {
     const onProgress = typeof options?.onProgress === "function" ? options.onProgress : null;
