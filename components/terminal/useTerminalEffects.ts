@@ -1592,23 +1592,22 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const wasAtBottom = buffer.viewportY >= buffer.baseY;
     const prevViewportY = buffer.viewportY;
     const closingSearch = wasSearchOpen && !isSearchOpen;
+    let raf = 0;
+    const settleClosedSearch = () => {
+      // A later open flips prevIsSearchOpenRef before this stale frame runs.
+      if (!closingSearch || prevIsSearchOpenRef.current) return;
+      settleTerminalSearchAfterLayout(
+        searchAddonRef.current,
+        term,
+        () => xtermRuntimeRef.current?.clearTextureAtlas(),
+      );
+    };
     const timer = setTimeout(() => {
       safeFit({ force: true, requireVisible: true });
-      if (closingSearch) {
-        settleTerminalSearchAfterLayout(
-          searchAddonRef.current,
-          term,
-          () => xtermRuntimeRef.current?.clearTextureAtlas(),
-        );
-      }
-      requestAnimationFrame(() => {
-        if (closingSearch) {
-          settleTerminalSearchAfterLayout(
-            searchAddonRef.current,
-            term,
-            () => xtermRuntimeRef.current?.clearTextureAtlas(),
-          );
-        }
+      settleClosedSearch();
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        settleClosedSearch();
         if (wasAtBottom) {
           term.scrollToBottom();
         } else {
@@ -1616,7 +1615,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         }
       });
     }, 0);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [isSearchOpen]);
 
   // When compose bar opens/closes, re-fit terminal and maintain scroll position

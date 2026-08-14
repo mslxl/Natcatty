@@ -596,8 +596,10 @@ test("search-bar close fit settles leftover highlights after layout", () => {
   const source = readFileSync(new URL("./useTerminalEffects.ts", import.meta.url), "utf8");
   assert.match(source, /settleTerminalSearchAfterLayout/);
   assert.match(source, /closingSearch = wasSearchOpen && !isSearchOpen/);
+  assert.match(source, /if \(!closingSearch \|\| prevIsSearchOpenRef\.current\) return/);
+  assert.match(source, /if \(raf\) cancelAnimationFrame\(raf\)/);
   assert.match(
     source,
-    /safeFit\(\{ force: true, requireVisible: true \}\);[\s\S]*if \(closingSearch\) \{[\s\S]*settleTerminalSearchAfterLayout/,
+    /safeFit\(\{ force: true, requireVisible: true \}\);[\s\S]*settleClosedSearch/,
   );
 });
