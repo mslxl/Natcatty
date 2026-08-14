@@ -13,11 +13,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, closed]
   # Reaction-only clean (👍 on @codex request) does not emit review events;
   # poll open automation PRs so the loop can observe and mark ready.
-  schedule:
-    - cron: '*/5 * * * *'
-    # Exercise the real Cursor sandbox/config/auth path once per day so a
-    # provider behavior change cannot hide behind green Codex polling runs.
-    - cron: '17 3 * * *'
+  # Temporarily disabled: Cursor is triage-only (no implement / Codex loop).
+  # Restore both crons when CURSOR_AUTOMATION_MODE is set back to `full`.
+  # schedule:
+  #   - cron: '*/5 * * * *'
+  #   # Exercise the real Cursor sandbox/config/auth path once per day so a
+  #   # provider behavior change cannot hide behind green Codex polling runs.
+  #   - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       issue_number:
@@ -73,6 +75,9 @@ permissions:
   actions: read
 
 env:
+  # Temporary: classify issues only. Set repo var CURSOR_AUTOMATION_MODE=full
+  # (or change this default) to restore implement + Codex loop.
+  CURSOR_AUTOMATION_MODE: ${{ vars.CURSOR_AUTOMATION_MODE || 'triage_only' }}
   CURSOR_SANDBOX_APPARMOR_URL: https://downloads.cursor.com/lab/enterprise/cursor-sandbox-apparmor_0.6.0_all.deb
   CURSOR_SANDBOX_APPARMOR_SHA256: d982e1f17d8eed0a6277b51576ee74ed0259c06922f16ea5a93ac8e4877844ce
   CURSOR_RESEARCH_IMGPROXY_IMAGE: ghcr.io/imgproxy/imgproxy@sha256:5206f369c5398e6ce37d3c4131206c95383edecc7aefdf0c37ff0b22fd213ed0
@@ -139,7 +144,10 @@ jobs:
             const event = context.eventName;
             const ownActors = process.env.OWN_ACTORS;
             const set = (kind, extra = {}) => {
-              core.setOutput('kind', kind);
+              const gated = auto.gateAutomationRoute(kind, {
+                reason: extra.reason || kind,
+              });
+              core.setOutput('kind', gated.kind);
               core.setOutput('issue_number', extra.issue_number || '');
               core.setOutput('pull_number', extra.pull_number || '');
               core.setOutput('trigger_comment_id', extra.trigger_comment_id || '');
@@ -147,7 +155,7 @@ jobs:
                 'head_ref',
                 extra.head_ref || context.payload.pull_request?.head?.ref || '',
               );
-              core.setOutput('reason', extra.reason || kind);
+              core.setOutput('reason', gated.reason);
             };
 
             if (event === 'schedule') {

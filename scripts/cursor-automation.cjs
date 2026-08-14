@@ -119,6 +119,67 @@ const PROTECTED_PATH_BASENAMES = Object.freeze([
 
 const IMPLEMENT_CATEGORIES = new Set(['bug_ready', 'feature_quick_win']);
 
+const AUTOMATION_MODE_FULL = 'full';
+const AUTOMATION_MODE_TRIAGE_ONLY = 'triage_only';
+
+/** Routes that write code or drive the Cursor ↔ Codex review loop. */
+const TRIAGE_ONLY_SKIP_KINDS = new Set([
+  'codex_loop',
+  'own_rerequest_codex',
+  'external_rerequest_codex',
+  'codex_poll',
+  'issue_followup',
+]);
+
+function resolveAutomationMode(explicit) {
+  const raw = explicit == null ? process.env.CURSOR_AUTOMATION_MODE : explicit;
+  const mode = String(raw || AUTOMATION_MODE_FULL).trim().toLowerCase();
+  return mode === AUTOMATION_MODE_TRIAGE_ONLY
+    ? AUTOMATION_MODE_TRIAGE_ONLY
+    : AUTOMATION_MODE_FULL;
+}
+
+function isTriageOnlyMode(explicit) {
+  return resolveAutomationMode(explicit) === AUTOMATION_MODE_TRIAGE_ONLY;
+}
+
+/**
+ * Temporary choke point: Cursor classifies issues, but does not implement
+ * or run the Codex loop. Restore by setting CURSOR_AUTOMATION_MODE=full.
+ */
+function gateAutomationRoute(kind, { mode, reason } = {}) {
+  const resolvedKind = String(kind || 'skip');
+  const resolvedReason = reason || resolvedKind;
+  if (!isTriageOnlyMode(mode) || !TRIAGE_ONLY_SKIP_KINDS.has(resolvedKind)) {
+    return { kind: resolvedKind, reason: resolvedReason };
+  }
+  return {
+    kind: 'skip',
+    reason:
+      resolvedReason && resolvedReason !== resolvedKind
+        ? `triage-only: skipped ${resolvedKind} (${resolvedReason})`
+        : `triage-only: skipped ${resolvedKind}`,
+  };
+}
+
+function applyTriageOnlyClassificationPolicy(classification, labels = []) {
+  if (!isTriageOnlyMode()) {
+    return { classification, labels };
+  }
+  const nextLabels = Array.isArray(labels) ? [...labels] : [];
+  const remapped = nextLabels.filter((name) => name !== 'ready-for-agent');
+  if (
+    nextLabels.includes('ready-for-agent') &&
+    !remapped.includes('ready-for-human')
+  ) {
+    remapped.push('ready-for-human');
+  }
+  return {
+    classification: { ...classification, should_implement: false },
+    labels: remapped,
+  };
+}
+
 function sanitizeUntrustedText(value, maxLength = 12_000) {
   const text = String(value || '')
     .replace(/<!--[^]*?-->/g, '')
@@ -3172,7 +3233,13 @@ async function applyClassification({
     typeof label === 'string' ? label : label.name,
   );
   const nextLabels = labelsForCategory(classification.category, existingLabels);
-  const closeReason = CLOSE_REASONS[classification.category] || null;
+  const triageOnly = applyTriageOnlyClassificationPolicy(
+    classification,
+    nextLabels,
+  );
+  const appliedClassification = triageOnly.classification;
+  const appliedLabels = triageOnly.labels;
+  const closeReason = CLOSE_REASONS[appliedClassification.category] || null;
   const shouldClose = Boolean(closeReason);
 
   // Publish the reply only after the state transition succeeds. If the update
@@ -3182,7 +3249,7 @@ async function applyClassification({
     owner,
     repo,
     issue_number: issue.number,
-    labels: nextLabels,
+    labels: appliedLabels,
     ...(shouldClose
       ? { state: 'closed', state_reason: closeReason }
       : { state: issue.state }),
@@ -3193,7 +3260,7 @@ async function applyClassification({
       owner,
       repo,
       issue_number: issue.number,
-      body: buildTriageComment(classification, {
+      body: buildTriageComment(appliedClassification, {
         issueCommentWatermark,
         processedCommentIds,
       }),
@@ -3213,12 +3280,12 @@ async function applyClassification({
     throw error;
   }
 
-  setOutput(core, 'category', classification.category);
-  setOutput(core, 'summary', classification.summary || classification.category);
-  setOutput(core, 'should_implement', classification.should_implement);
-  setOutput(core, 'confidence', classification.confidence);
+  setOutput(core, 'category', appliedClassification.category);
+  setOutput(core, 'summary', appliedClassification.summary || appliedClassification.category);
+  setOutput(core, 'should_implement', appliedClassification.should_implement);
+  setOutput(core, 'confidence', appliedClassification.confidence);
   setOutput(core, 'should_close', shouldClose);
-  return classification;
+  return appliedClassification;
 }
 
 async function markNeedsHuman({
@@ -3893,6 +3960,13 @@ module.exports = {
   PROTECTED_PATH_PREFIXES,
   PROTECTED_PATH_BASENAMES,
   IMPLEMENT_CATEGORIES,
+  AUTOMATION_MODE_FULL,
+  AUTOMATION_MODE_TRIAGE_ONLY,
+  TRIAGE_ONLY_SKIP_KINDS,
+  resolveAutomationMode,
+  isTriageOnlyMode,
+  gateAutomationRoute,
+  applyTriageOnlyClassificationPolicy,
   ISSUE_TEMPLATE_MARKERS,
   CODEX_LOOP_LABEL,
   CODEX_CLEAN_LABEL,

@@ -4,6 +4,12 @@ GitHub Actions orchestration that uses **Cursor CLI** for issue triage and
 implementation of high-confidence bugs / small features. Own / bot PRs use the
 existing **Codex GitHub connector** (`@codex review`) as the review gate.
 
+**Current mode: `triage_only`.** Cursor still classifies new issues. Implement,
+issue follow-up coding, and the Codex review loop are paused. Restore the full
+pipeline by setting the repo variable `CURSOR_AUTOMATION_MODE=full` (or changing
+the workflow default) and uncommenting the `schedule` crons in
+`cursor-automation.yml`.
+
 Third-party / fork PRs are **not** reviewed by Cursor CLI. Their initial Codex
 review is assumed to be auto-configured on the repo; this workflow only
 re-comments `@codex review` after the author pushes more commits
