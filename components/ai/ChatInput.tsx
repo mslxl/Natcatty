@@ -762,8 +762,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
         onSteer?.();
         return;
       }
+      // Do not empty the box here. handleSend awaits provider sync and may
+      // abort; the parent clears value only after the user message is accepted.
       onSend();
-      commitComposerText('');
     },
     [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onSend, onSteer, onStop, readComposerText],
   );
