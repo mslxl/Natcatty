@@ -139,17 +139,14 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
     source,
     /const handleTerminalInputData = \(\s+data: string,\s+options\?: \{ source\?: "terminal" \| "shift-enter" \| "kitty" \},\s+\) => \{/s,
   );
+  // Remap must run before baseline Kitty encoding consumes Shift+Enter as "\r".
   assert.match(
     source,
-    /const shiftEnterPayload = resolveShiftEnterPayload\(\s*ctx\.terminalSettingsRef\.current,\s*\{\s*alternateScreen:\s*term\.buffer\.active\.type === "alternate"\s*\},\s*\);/s,
+    /if \(\s*!isKittyKeyboardModeActive\(kittyKeyboardMode\) &&\s*shouldSendShiftEnterText\([\s\S]*?\) \{\s*const id = ctx\.sessionRef\.current;[\s\S]*?const shiftEnterPayload = resolveShiftEnterPayload\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
   );
   assert.match(
     source,
-    /if \(shiftEnterPayload\.data\) \{\s+handleTerminalInputData\(shiftEnterPayload\.data, \{ source: "shift-enter" \}\);/s,
-  );
-  assert.match(
-    source,
-    /!isKittyKeyboardModeActive\(kittyKeyboardMode\) &&\s+shouldSendShiftEnterText/,
+    /if \(shiftEnterPayload\.kind === "key"\) \{\s*const kittyEvent = toKittyKeyboardEvent\(e\);[\s\S]*?handleTerminalInputData\(shiftEnterPayload\.data, \{ source: "kitty" \}\);[\s\S]*?broadcastKittyInput\(\{\s*kind: "key",\s*event: kittyEvent,\s*fallbackToLegacy: true,\s*\}\);[\s\S]*?\} else \{\s*handleTerminalInputData\(shiftEnterPayload\.data, \{ source: "shift-enter" \}\);/s,
   );
   assert.match(source, /getShiftEnterSubmittedInput\(data\)/);
   assert.match(source, /inputSource !== "shift-enter"/);

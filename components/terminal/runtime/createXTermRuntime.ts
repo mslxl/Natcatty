@@ -1720,6 +1720,48 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       return false;
     }
 
+    // Before baseline Kitty encoding: with protocol enabled but no enhancement
+    // flags, encodeKittyKeyEvent(Shift+Enter) is "\r" while mode stays inactive.
+    // Remap first so alternate-screen TUIs still receive CSI-u Shift+Enter.
+    if (
+      !isKittyKeyboardModeActive(kittyKeyboardMode) &&
+      shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current)
+    ) {
+      const id = ctx.sessionRef.current;
+      if (id) {
+        e.preventDefault();
+        e.stopPropagation();
+        const shiftEnterPayload = resolveShiftEnterPayload(
+          ctx.terminalSettingsRef.current,
+          { alternateScreen: term.buffer.active.type === "alternate" },
+        );
+        if (shiftEnterPayload.data) {
+          if (shiftEnterPayload.kind === "key") {
+            const kittyEvent = toKittyKeyboardEvent(e);
+            // Local CSI-u as kitty-sourced input so raw bytes are not broadcast.
+            // Peers re-encode the chord from their own keyboard mode.
+            handleTerminalInputData(shiftEnterPayload.data, { source: "kitty" });
+            const forwarded = broadcastKittyInput({
+              kind: "key",
+              event: kittyEvent,
+              fallbackToLegacy: true,
+            });
+            if (forwarded) {
+              upsertKittyKeyboardForwardedPress(
+                broadcastForwardedKeys,
+                kittyKeyIdentity(e),
+                kittyEvent,
+                forwarded.targetSessionIds,
+              );
+            }
+          } else {
+            handleTerminalInputData(shiftEnterPayload.data, { source: "shift-enter" });
+          }
+        }
+        return false;
+      }
+    }
+
     if (kittySequenceForKeyDown) {
       e.preventDefault();
       e.stopPropagation();
@@ -1748,25 +1790,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         );
       }
       return false;
-    }
-
-    if (
-      !isKittyKeyboardModeActive(kittyKeyboardMode) &&
-      shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current)
-    ) {
-      const id = ctx.sessionRef.current;
-      if (id) {
-        e.preventDefault();
-        e.stopPropagation();
-        const shiftEnterPayload = resolveShiftEnterPayload(
-          ctx.terminalSettingsRef.current,
-          { alternateScreen: term.buffer.active.type === "alternate" },
-        );
-        if (shiftEnterPayload.data) {
-          handleTerminalInputData(shiftEnterPayload.data, { source: "shift-enter" });
-        }
-        return false;
-      }
     }
 
     // macOS Option+←/→ → Meta-b / Meta-f so the shell jumps by word (discussion
