@@ -590,9 +590,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       if (activeSessionId) {
         lastSourceSessionIdRef.current = activeSessionId;
       }
-      // Drop the stable-endpoint cursor so a stale healthy tab cannot skip
-      // rebind once SSH is back.
-      connectedKeyRef.current = null;
       return;
     }
     const sessionChanged = shouldRebindSftpSidePanelSourceSession({
@@ -811,7 +808,6 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     });
     if (!update) return;
     lastSourceSessionStatusRef.current = update.status;
-    connectedKeyRef.current = null;
   }, [isVisible, sessions]);
 
   useEffect(() => {

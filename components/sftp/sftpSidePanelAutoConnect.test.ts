@@ -229,13 +229,13 @@ test("shouldRebindSftpSidePanelSourceSession treats SSH start-over as a transpor
   );
 });
 
-test("shouldDeferSftpSidePanelAutoConnectForSession waits for the linked SSH session", () => {
+test("shouldDeferSftpSidePanelAutoConnectForSession only waits during an active reconnect", () => {
   assert.equal(
     shouldDeferSftpSidePanelAutoConnectForSession({
       activeSessionId: "sess-a",
       sessionStatus: "disconnected",
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldDeferSftpSidePanelAutoConnectForSession({
@@ -288,6 +288,36 @@ test("resolveSftpSidePanelHiddenSourceStatusUpdate remembers background disconne
       sessionStatus: "disconnected",
     }),
     null,
+  );
+});
+
+test("failed terminal reconnect keeps a healthy standalone SFTP tab", () => {
+  const tab = remoteConnectedTab();
+  const sessionChanged = shouldRebindSftpSidePanelSourceSession({
+    previousSessionId: "sess-a",
+    nextSessionId: "sess-a",
+    previousStatus: "connecting",
+    nextStatus: "disconnected",
+  });
+  assert.equal(sessionChanged, false);
+  assert.equal(
+    !sessionChanged && shouldSkipSftpSidePanelAutoConnect(
+      "host-1:key",
+      "host-1:key",
+      tab,
+      true,
+      "host-1:key",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "connecting",
+      nextStatus: "connected",
+    }),
+    true,
   );
 });
 

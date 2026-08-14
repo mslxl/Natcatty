@@ -158,16 +158,16 @@ export function shouldRebindSftpSidePanelSourceSession(params: {
 }
 
 /**
- * When the panel is tied to a live terminal session, wait until that SSH
- * session is connected before dialing SFTP (avoids racing 重新开始).
+ * While the linked terminal is actively connecting, wait for its transport so
+ * SFTP can reuse it. A terminal left disconnected must not block standalone
+ * SFTP fallback.
  */
 export function shouldDeferSftpSidePanelAutoConnectForSession(params: {
   activeSessionId?: string | null;
   sessionStatus?: string | null;
 }): boolean {
   if (!params.activeSessionId) return false;
-  if (!params.sessionStatus) return false;
-  return params.sessionStatus !== "connected";
+  return params.sessionStatus === "connecting";
 }
 
 /**
