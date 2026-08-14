@@ -143,7 +143,7 @@ export function scheduleWhenAiComposerIdle(
 ): () => void {
   return scheduleAiMarkdownWarmup({
     load: task,
-    initialDelayMs: options?.initialDelayMs ?? 0,
+    initialDelayMs: options?.initialDelayMs ?? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS,
     resumeDelayMs: options?.resumeDelayMs ?? AI_COMPOSER_IDLE_MS,
   });
 }

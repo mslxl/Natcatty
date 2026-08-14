@@ -177,6 +177,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               externalAgents={externalAgents}
               discoveredAgents={discoveredAgents}
               isDiscovering={isDiscovering}
+              parked={parked}
               onSelectAgent={handleAgentChange}
               onEnableDiscoveredAgent={handleEnableDiscoveredAgent}
               onRediscover={rediscover}
@@ -294,6 +295,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   </div>
                 ) : null}
                 <ChatInput
+                  parked={parked}
                   value={inputValue}
                   onChange={setInputValue}
                   onSend={handleSend}

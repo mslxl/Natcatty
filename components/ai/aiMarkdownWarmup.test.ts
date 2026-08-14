@@ -32,6 +32,11 @@ test('recognizes the chat composer as a busy warmup target', () => {
   assert.equal(isAiComposerTarget(null), false);
 });
 
+test('composer-idle IPC waits the same expand grace as history markdown', () => {
+  const warmup = readFileSync(new URL('./aiMarkdownWarmup.ts', import.meta.url), 'utf8');
+  assert.match(warmup, /initialDelayMs:\s*options\?\.initialDelayMs \?\? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
+});
+
 test('history markdown waits after expand, then resumes quickly after blur', () => {
   assert.equal(AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS, 4000);
   assert.equal(AI_MARKDOWN_WARMUP_RESUME_DELAY_MS, 600);

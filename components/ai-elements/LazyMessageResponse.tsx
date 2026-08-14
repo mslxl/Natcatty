@@ -4,6 +4,7 @@ import { cn } from '../../lib/utils';
 import {
   enqueueChatMarkdownHydrate,
   isAiMarkdownRendererReady,
+  scheduleWhenAiComposerIdle,
   subscribeAiMarkdownRendererReady,
   warmAiMarkdownRenderer,
 } from '../ai/aiMarkdownWarmup';
@@ -39,8 +40,14 @@ export function LazyMessageResponse(props: LazyMessageResponseProps) {
     if (ready) return undefined;
     if (!deferUntilWarm) {
       const unsubscribe = subscribeAiMarkdownRendererReady(() => setReady(true));
-      void warmAiMarkdownRenderer();
-      return unsubscribe;
+      if (isAiMarkdownRendererReady()) return unsubscribe;
+      const cancelIdle = scheduleWhenAiComposerIdle(() => {
+        void warmAiMarkdownRenderer();
+      });
+      return () => {
+        unsubscribe();
+        cancelIdle();
+      };
     }
     return enqueueChatMarkdownHydrate(() => setReady(true));
   }, [deferUntilWarm, ready]);

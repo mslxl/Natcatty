@@ -526,9 +526,18 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     showSessionView(scopeKey, sessionId);
   }, [scopeKey, showSessionView]);
 
+  const discardPendingComposerText = useCallback(() => {
+    if (draftTextFlushTimerRef.current != null) {
+      window.clearTimeout(draftTextFlushTimerRef.current);
+      draftTextFlushTimerRef.current = null;
+    }
+    pendingComposerTextRef.current = null;
+  }, []);
+
   const clearScopeDraft = useCallback(() => {
+    discardPendingComposerText();
     clearDraftForScope(scopeKey);
-  }, [clearDraftForScope, scopeKey]);
+  }, [clearDraftForScope, discardPendingComposerText, scopeKey]);
 
   const enterScopeDraftMode = useCallback((agentId: string, preserveSessionView = false) => {
     applyDraftEntrySelection({
@@ -592,8 +601,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   }, [flushDraftText, scopeKey]);
 
   useEffect(() => {
-    pendingComposerTextRef.current = null;
-  }, [scopeKey, activeSessionId]);
+    flushDraftText();
+  }, [activeSessionId, flushDraftText]);
 
   useEffect(() => {
     if (!isVisible) return;

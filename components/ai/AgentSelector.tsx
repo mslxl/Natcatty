@@ -6,7 +6,7 @@
  */
 
 import { ChevronDown, RefreshCw, Plus, Settings } from 'lucide-react';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { cn } from '../../lib/utils';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
@@ -32,6 +32,7 @@ interface AgentSelectorProps {
   onEnableDiscoveredAgent?: (agent: DiscoveredAgent) => void;
   onRediscover?: () => void;
   onManageAgents?: () => void;
+  parked?: boolean;
 }
 
 const BUILTIN_AGENTS: AgentInfo[] = [
@@ -125,9 +126,14 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   onEnableDiscoveredAgent,
   onRediscover,
   onManageAgents,
+  parked = false,
 }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (parked) setOpen(false);
+  }, [parked]);
 
   const enabledExternalAgents = useMemo(
     () =>

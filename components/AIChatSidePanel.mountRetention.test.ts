@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -108,6 +109,12 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   ...overrides,
 });
 
+test('send and new chat discard pending composer text', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.match(source, /discardPendingComposerText/);
+  assert.match(source, /const clearScopeDraft = useCallback\(\(\) => \{\s*discardPendingComposerText\(\);/s);
+});
+
 test('hidden empty AI side panel can release its subtree', () => {
   const props = baseProps();
 
@@ -212,6 +219,8 @@ test('hidden retained AI side panel keeps the composer and skips message content
   );
 
   assert.match(markup, /data-section="ai-chat-panel-retained"/);
+  assert.match(markup, /inert/);
+  assert.match(markup, /aria-hidden/);
   assert.match(markup, /textarea/);
   assert.doesNotMatch(markup, /hidden-user-message/);
   assert.doesNotMatch(markup, /hidden-assistant-message/);

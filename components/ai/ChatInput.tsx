@@ -142,6 +142,8 @@ interface ChatInputProps {
    * `modelPresets` dropdown because their provider is wired inside the CLI.
    */
   providerSwitcher?: ProviderSwitcherConfig;
+  /** Hidden retained panels must not leave body-portaled menus open. */
+  parked?: boolean;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -177,6 +179,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   permissionMode,
   onPermissionModeChange,
   providerSwitcher,
+  parked = false,
 }) => {
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
@@ -212,6 +215,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
     setSlashQuery('');
     setSlashRange(null);
   }, []);
+
+  useEffect(() => {
+    if (parked) closeAllMenus();
+  }, [closeAllMenus, parked]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputShellRef = useRef<HTMLDivElement>(null);
   const resizeStartRef = useRef<{
