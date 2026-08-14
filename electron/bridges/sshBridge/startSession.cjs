@@ -420,9 +420,12 @@ function createStartSessionApi(ctx) {
         },
         waitForTransportDrain(drainOpts = {}) {
           // ssh2 buffers up to its 2 MiB channel window before write() returns
-          // false. A fixed short timeout would reject healthy slow links; close,
-          // error, and the per-transfer cancel signal still end this wait.
-          return waitForWritableDrain(stream, { ...drainOpts, timeoutMs: 0 });
+          // false. Watch writableLength progress so healthy slow links can take
+          // longer than one timeout window while a fully stalled peer is bounded.
+          return waitForWritableDrain(stream, {
+            ...drainOpts,
+            progressIntervalMs: 1000,
+          });
         },
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }

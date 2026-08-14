@@ -722,13 +722,13 @@ function createZmodemCancelledError() {
  * so a dead transport stops the upload loop instead of looking like a successful
  * drain (wrappers that catch write failures and return true would otherwise keep
  * scanning the file until a later handshake timeout). When timeoutMs is greater
- * than zero, races against that timeout so a peer that stays connected but never
- * drains cannot block handleUpload forever. When `signal` aborts (user cancel),
- * rejects with NETCATTY_ZMODEM_CANCELLED so an unbounded SSH drain wait cannot
- * retain the open upload file after cancel.
+ * than zero, rejects after that long without writableLength progress; slow SSH
+ * links may take longer overall while a fully stalled peer stays bounded. When
+ * `signal` aborts (user cancel), rejects with NETCATTY_ZMODEM_CANCELLED so a
+ * blocked drain wait cannot retain the open upload file after cancel.
  *
  * @param {NodeJS.WritableStream | null | undefined} stream
- * @param {{ timeoutMs?: number, signal?: AbortSignal }} [opts]
+ * @param {{ timeoutMs?: number, progressIntervalMs?: number, signal?: AbortSignal }} [opts]
  * @returns {Promise<void>}
  */
 function waitForWritableDrain(stream, opts = {}) {
@@ -748,6 +748,10 @@ function waitForWritableDrain(stream, opts = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
+    let lastProgressAt = Date.now();
+    let lastWritableLength = Number.isFinite(stream.writableLength)
+      ? Number(stream.writableLength)
+      : null;
     const onDrain = () => finish();
     const onAbort = () => finish(createZmodemCancelledError());
     const onTransportGone = (cause) => {
@@ -782,13 +786,31 @@ function waitForWritableDrain(stream, opts = {}) {
       signal.addEventListener("abort", onAbort, { once: true });
     }
 
-    if (timeoutMs > 0) {
+    const scheduleTimeoutCheck = () => {
+      if (timeoutMs <= 0 || settled) return;
+      const configuredInterval = Number(opts.progressIntervalMs);
+      const intervalMs = Number.isFinite(configuredInterval) && configuredInterval > 0
+        ? Math.min(configuredInterval, timeoutMs)
+        : timeoutMs;
+      const idleMs = Date.now() - lastProgressAt;
       timer = setTimeout(() => {
+        const currentLength = Number.isFinite(stream.writableLength)
+          ? Number(stream.writableLength)
+          : null;
+        if (lastWritableLength !== null && currentLength !== null && currentLength < lastWritableLength) {
+          lastProgressAt = Date.now();
+        }
+        lastWritableLength = currentLength;
+        if (Date.now() - lastProgressAt < timeoutMs) {
+          scheduleTimeoutCheck();
+          return;
+        }
         const err = new Error("Transport drain timeout");
         err.code = "NETCATTY_ZMODEM_TIMEOUT";
         finish(err);
-      }, timeoutMs);
-    }
+      }, Math.max(1, Math.min(intervalMs, timeoutMs - idleMs)));
+    };
+    scheduleTimeoutCheck();
 
     // Drain may have cleared between write(false) and listener attach.
     if (stream.writableNeedDrain === false) finish();

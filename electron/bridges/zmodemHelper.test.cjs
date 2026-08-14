@@ -934,10 +934,11 @@ test("waitForWritableDrain rejects when the transport never drains", async () =>
   assert.equal((listeners.get("drain") || []).length, 0);
 });
 
-test("waitForWritableDrain allows a healthy slow SSH channel to drain without a deadline", async () => {
+test("waitForWritableDrain keeps waiting while a slow SSH channel makes progress", async () => {
   const listeners = new Map();
   const stream = {
     writableNeedDrain: true,
+    writableLength: 2 * 1024 * 1024,
     once(event, cb) {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(cb);
@@ -949,16 +950,43 @@ test("waitForWritableDrain allows a healthy slow SSH channel to drain without a 
   };
 
   let settled = false;
-  const pending = waitForWritableDrain(stream, { timeoutMs: 0 }).then(() => {
+  const pending = waitForWritableDrain(stream, {
+    timeoutMs: 20,
+    progressIntervalMs: 5,
+  }).then(() => {
     settled = true;
   });
-  await new Promise((resolve) => setTimeout(resolve, 30));
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    stream.writableLength -= 64 * 1024;
+  }
   assert.equal(settled, false);
 
   stream.writableNeedDrain = false;
   for (const cb of listeners.get("drain") || []) cb();
   await pending;
   assert.equal(settled, true);
+});
+
+test("waitForWritableDrain rejects when an SSH channel stops making progress", async () => {
+  const listeners = new Map();
+  const stream = {
+    writableNeedDrain: true,
+    writableLength: 2 * 1024 * 1024,
+    once(event, cb) {
+      if (!listeners.has(event)) listeners.set(event, []);
+      listeners.get(event).push(cb);
+    },
+    off(event, cb) {
+      const list = listeners.get(event) || [];
+      listeners.set(event, list.filter((fn) => fn !== cb));
+    },
+  };
+
+  await assert.rejects(
+    () => waitForWritableDrain(stream, { timeoutMs: 20, progressIntervalMs: 5 }),
+    (err) => err && err.code === "NETCATTY_ZMODEM_TIMEOUT",
+  );
 });
 
 test("waitForWritableDrain rejects when the transport closes before drain", async () => {
