@@ -143,6 +143,7 @@ export function scheduleWhenAiComposerIdle(
 ): () => void {
   return scheduleAiMarkdownWarmup({
     load: task,
+    isBusy: isAiComposerRecentlyActive,
     initialDelayMs: options?.initialDelayMs ?? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS,
     resumeDelayMs: options?.resumeDelayMs ?? AI_COMPOSER_IDLE_MS,
   });
@@ -223,7 +224,7 @@ export function scheduleAiMarkdownWarmup(options?: {
   const onFocusIn = (event: FocusEvent) => {
     if (isAiComposerTarget(event.target)) {
       markAiComposerActivity();
-      clearTimers();
+      arm();
     }
   };
   const onFocusOut = (event: FocusEvent) => {
@@ -232,7 +233,7 @@ export function scheduleAiMarkdownWarmup(options?: {
   const onComposerEvent = (event: Event) => {
     if (!isAiComposerTarget(event.target)) return;
     markAiComposerActivity();
-    clearTimers();
+    arm();
   };
 
   if (typeof window !== 'undefined') {
