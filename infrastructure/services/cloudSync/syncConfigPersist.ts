@@ -4,39 +4,44 @@ import {
   type CloudSyncStrategy,
 } from '../../../domain/syncStrategy';
 
-export type SyncConfigPersistFields = {
+export type SyncPreferencePersistFields = {
   autoSync: boolean;
   interval: number;
+  syncStrategy: CloudSyncStrategy;
+};
+
+export type SyncVersionPersistFields = {
   localVersion: number;
   localUpdatedAt: number;
   remoteVersion: number;
   remoteUpdatedAt: number;
-  syncStrategy: CloudSyncStrategy;
 };
 
-export type SyncConfigPersistInput = {
-  memory: SyncConfigPersistFields;
-  stored: Partial<SyncConfigPersistFields> | null | undefined;
-  /**
-   * When true, preference fields (autoSync / interval / syncStrategy) come from
-   * this window's memory — used by setAutoSync / setSyncStrategy.
-   * When false (default), preference fields are taken from storage so a
-   * version-only save in one window cannot clobber another window's toggle.
-   */
-  preferencesFromMemory?: boolean;
-};
+export type SyncConfigPersistFields = SyncPreferencePersistFields & SyncVersionPersistFields;
 
 /**
- * Build the SYNC_CONFIG object to persist.
- *
- * Cross-window hazard: upload/download paths call saveSyncConfig to bump
- * versions. If another window just disabled auto-sync in storage, writing
- * this window's stale in-memory autoSync=true would re-enable it and keep
- * auto-pushing after local edits (#2976).
+ * Prefer the dedicated preferences key; fall back to legacy fields still
+ * embedded in SYNC_CONFIG from older builds.
  */
-export function resolveSyncConfigForPersist(
-  input: SyncConfigPersistInput,
-): SyncConfigPersistFields {
+export function coalesceStoredSyncPreferences(
+  preferences: Partial<SyncPreferencePersistFields> | null | undefined,
+  legacyConfig: Partial<SyncPreferencePersistFields> | null | undefined,
+): Partial<SyncPreferencePersistFields> | null {
+  if (preferences && typeof preferences === 'object') return preferences;
+  if (legacyConfig && typeof legacyConfig === 'object') return legacyConfig;
+  return null;
+}
+
+export function resolveSyncPreferencesForPersist(input: {
+  memory: SyncPreferencePersistFields;
+  stored: Partial<SyncPreferencePersistFields> | null | undefined;
+  /**
+   * When true, preference fields come from this window's memory — used by
+   * setAutoSync / setSyncStrategy. When false (default), preference fields
+   * are taken from storage so a version-only save cannot invent prefs.
+   */
+  preferencesFromMemory?: boolean;
+}): SyncPreferencePersistFields {
   const { memory, stored, preferencesFromMemory = false } = input;
   const fromStorage = stored && typeof stored === 'object' ? stored : null;
 
@@ -44,10 +49,6 @@ export function resolveSyncConfigForPersist(
     return {
       autoSync: Boolean(memory.autoSync),
       interval: Number(memory.interval),
-      localVersion: Number(memory.localVersion),
-      localUpdatedAt: Number(memory.localUpdatedAt),
-      remoteVersion: Number(memory.remoteVersion),
-      remoteUpdatedAt: Number(memory.remoteUpdatedAt),
       syncStrategy: normalizeCloudSyncStrategy(memory.syncStrategy),
     };
   }
@@ -59,14 +60,44 @@ export function resolveSyncConfigForPersist(
     interval: Number(
       fromStorage.interval !== undefined ? fromStorage.interval : memory.interval,
     ),
-    localVersion: Number(memory.localVersion),
-    localUpdatedAt: Number(memory.localUpdatedAt),
-    remoteVersion: Number(memory.remoteVersion),
-    remoteUpdatedAt: Number(memory.remoteUpdatedAt),
     syncStrategy: normalizeCloudSyncStrategy(
       fromStorage.syncStrategy !== undefined
         ? fromStorage.syncStrategy
         : memory.syncStrategy ?? DEFAULT_CLOUD_SYNC_STRATEGY,
     ),
+  };
+}
+
+export function resolveSyncVersionsForPersist(
+  memory: SyncVersionPersistFields,
+): SyncVersionPersistFields {
+  return {
+    localVersion: Number(memory.localVersion),
+    localUpdatedAt: Number(memory.localUpdatedAt),
+    remoteVersion: Number(memory.remoteVersion),
+    remoteUpdatedAt: Number(memory.remoteUpdatedAt),
+  };
+}
+
+/**
+ * @deprecated Prefer resolveSyncPreferencesForPersist + resolveSyncVersionsForPersist.
+ * Kept for unit tests that assert the combined legacy shape.
+ */
+export function resolveSyncConfigForPersist(input: {
+  memory: SyncConfigPersistFields;
+  stored: Partial<SyncConfigPersistFields> | null | undefined;
+  preferencesFromMemory?: boolean;
+}): SyncConfigPersistFields {
+  return {
+    ...resolveSyncPreferencesForPersist({
+      memory: {
+        autoSync: input.memory.autoSync,
+        interval: input.memory.interval,
+        syncStrategy: input.memory.syncStrategy,
+      },
+      stored: input.stored,
+      preferencesFromMemory: input.preferencesFromMemory,
+    }),
+    ...resolveSyncVersionsForPersist(input.memory),
   };
 }

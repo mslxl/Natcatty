@@ -51,8 +51,14 @@ import {
 import { resolveAutoSyncHashDecision } from './autoSyncHashDecision';
 import { getNotesSnapshot, subscribeNotes } from './notesStore';
 
-/** Prefer persisted SYNC_CONFIG so cross-window disables win over stale snapshots. */
+/** Prefer dedicated SYNC_PREFERENCES; fall back to legacy SYNC_CONFIG fields. */
 function isPersistedAutoSyncEnabled(fallback: boolean): boolean {
+  const preferences = localStorageAdapter.read<{ autoSync?: boolean }>(
+    SYNC_STORAGE_KEYS.SYNC_PREFERENCES,
+  );
+  if (preferences && typeof preferences === 'object' && preferences.autoSync !== undefined) {
+    return Boolean(preferences.autoSync);
+  }
   const stored = localStorageAdapter.read<{ autoSync?: boolean }>(SYNC_STORAGE_KEYS.SYNC_CONFIG);
   if (!stored || typeof stored !== 'object') return fallback;
   return Boolean(stored.autoSync);

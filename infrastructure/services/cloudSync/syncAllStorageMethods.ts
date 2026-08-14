@@ -14,11 +14,15 @@ import {
   withSyncReliabilityMeta,
 } from '../../../domain/syncReliability';
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
-import { resolveCloudSyncConflictAction, type CloudSyncConflictAction } from '../../../domain/syncStrategy';
+import { resolveCloudSyncConflictAction, type CloudSyncConflictAction, type CloudSyncStrategy } from '../../../domain/syncStrategy';
 import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
 import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
 import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
-import { resolveSyncConfigForPersist } from './syncConfigPersist';
+import {
+  coalesceStoredSyncPreferences,
+  resolveSyncPreferencesForPersist,
+  resolveSyncVersionsForPersist,
+} from './syncConfigPersist';
 import type { CloudAdapter } from '../adapters';
 import type {
   CloudProvider,
@@ -711,54 +715,102 @@ export function saveSyncConfigImpl(
     opts?: { preferencesFromMemory?: boolean },
   ): void {
     const preferencesFromMemory = opts?.preferencesFromMemory === true;
-    const stored = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as
-      | {
-          autoSync?: boolean;
-          interval?: number;
-          localVersion?: number;
-          localUpdatedAt?: number;
-          remoteVersion?: number;
-          remoteUpdatedAt?: number;
-          syncStrategy?: unknown;
-        }
-      | null
-      | undefined;
+    type StoredPrefs = {
+      autoSync?: boolean;
+      interval?: number;
+      syncStrategy?: unknown;
+    };
+    type StoredConfig = StoredPrefs & {
+      localVersion?: number;
+      localUpdatedAt?: number;
+      remoteVersion?: number;
+      remoteUpdatedAt?: number;
+    };
 
-    const next = resolveSyncConfigForPersist({
-      memory: {
-        autoSync: this.state.autoSyncEnabled,
-        interval: this.state.autoSyncInterval,
-        localVersion: this.state.localVersion,
-        localUpdatedAt: this.state.localUpdatedAt,
-        remoteVersion: this.state.remoteVersion,
-        remoteUpdatedAt: this.state.remoteUpdatedAt,
-        syncStrategy: this.state.syncStrategy,
-      },
-      stored,
-      preferencesFromMemory,
-    });
-
-    // Adopt storage preferences into memory on version-only saves so this
-    // window stops auto-pushing even if the storage event is delayed (#2976).
-    let shouldNotifyPreferenceAdopt = false;
-    if (!preferencesFromMemory) {
-      const autoSyncChanged = this.state.autoSyncEnabled !== next.autoSync;
-      const intervalChanged = this.state.autoSyncInterval !== next.interval;
-      const strategyChanged = this.state.syncStrategy !== next.syncStrategy;
-      this.state.autoSyncEnabled = next.autoSync;
-      this.state.autoSyncInterval = next.interval;
-      this.state.syncStrategy = next.syncStrategy;
+    const adoptPreferences = (nextPrefs: {
+      autoSync: boolean;
+      interval: number;
+      syncStrategy: CloudSyncStrategy;
+    }): boolean => {
+      const autoSyncChanged = this.state.autoSyncEnabled !== nextPrefs.autoSync;
+      const intervalChanged = this.state.autoSyncInterval !== nextPrefs.interval;
+      const strategyChanged = this.state.syncStrategy !== nextPrefs.syncStrategy;
+      this.state.autoSyncEnabled = nextPrefs.autoSync;
+      this.state.autoSyncInterval = nextPrefs.interval;
+      this.state.syncStrategy = nextPrefs.syncStrategy;
       if (autoSyncChanged) {
-        if (next.autoSync && this.state.securityState === 'UNLOCKED') {
+        if (nextPrefs.autoSync && this.state.securityState === 'UNLOCKED') {
           this.startAutoSync?.();
         } else {
           this.stopAutoSync?.();
         }
       }
-      shouldNotifyPreferenceAdopt = autoSyncChanged || intervalChanged || strategyChanged;
+      return autoSyncChanged || intervalChanged || strategyChanged;
+    };
+
+    const memoryPreferences = {
+      autoSync: this.state.autoSyncEnabled,
+      interval: this.state.autoSyncInterval,
+      syncStrategy: this.state.syncStrategy,
+    };
+
+    // Preference writers only touch SYNC_PREFERENCES so a concurrent
+    // version bump cannot re-enable auto-sync via a shared RMW blob (#2976).
+    if (preferencesFromMemory) {
+      const nextPreferences = resolveSyncPreferencesForPersist({
+        memory: memoryPreferences,
+        stored: null,
+        preferencesFromMemory: true,
+      });
+      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, nextPreferences);
+      return;
     }
 
-    this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, next);
+    const storedPreferences = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as
+      | StoredPrefs
+      | null
+      | undefined;
+    const storedConfig = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as
+      | StoredConfig
+      | null
+      | undefined;
+    const hasSeparatePreferences = Boolean(
+      storedPreferences && typeof storedPreferences === 'object',
+    );
+
+    // Migrate legacy combined SYNC_CONFIG prefs once, without overwriting an
+    // already-written SYNC_PREFERENCES key from another window.
+    if (!hasSeparatePreferences) {
+      const legacyPreferences = resolveSyncPreferencesForPersist({
+        memory: memoryPreferences,
+        stored: coalesceStoredSyncPreferences(null, storedConfig),
+        preferencesFromMemory: false,
+      });
+      if (!this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES)) {
+        this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, legacyPreferences);
+      }
+    }
+
+    const nextVersions = resolveSyncVersionsForPersist({
+      localVersion: this.state.localVersion,
+      localUpdatedAt: this.state.localUpdatedAt,
+      remoteVersion: this.state.remoteVersion,
+      remoteUpdatedAt: this.state.remoteUpdatedAt,
+    });
+    // Version-only writes never include preference fields.
+    this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, nextVersions);
+
+    // Re-read preferences after the version write so a toggle that landed
+    // during the version persist window is adopted into this process.
+    const latestPreferences = resolveSyncPreferencesForPersist({
+      memory: memoryPreferences,
+      stored: coalesceStoredSyncPreferences(
+        this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as StoredPrefs | null | undefined,
+        this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as StoredConfig | null | undefined,
+      ),
+      preferencesFromMemory: false,
+    });
+    const shouldNotifyPreferenceAdopt = adoptPreferences(latestPreferences);
     if (shouldNotifyPreferenceAdopt) {
       this.notifyStateChange?.();
     }
