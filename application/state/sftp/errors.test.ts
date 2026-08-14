@@ -11,6 +11,19 @@ test("isMissingStatError accepts only true path absence codes", () => {
   assert.equal(isMissingStatError(new Error("ENOENT")), true);
 });
 
+test("isMissingStatError treats Electron-wrapped SFTP absence as missing", () => {
+  // ipcRenderer.invoke strips custom `code` and wraps the ssh2 message.
+  // New-file uploads lstat the destination first; this is the toast users see.
+  assert.equal(
+    isMissingStatError(
+      new Error("Error invoking remote method 'netcatty:sftp:lstat': Error: No such file"),
+    ),
+    true,
+  );
+  assert.equal(isMissingStatError(new Error("No such file")), true);
+  assert.equal(isMissingStatError(new Error("No such file or directory")), true);
+});
+
 test("isMissingStatError rejects unsupported LSTAT and other failures", () => {
   const enotsup = new Error("Remote server does not support LSTAT") as Error & {
     code: string;
@@ -24,4 +37,10 @@ test("isMissingStatError rejects unsupported LSTAT and other failures", () => {
   eperm.code = "EPERM";
   assert.equal(isMissingStatError(eperm), false);
   assert.equal(isMissingStatError(new Error("channel closed")), false);
+  assert.equal(
+    isMissingStatError(
+      new Error("Error invoking remote method 'netcatty:sftp:lstat': Error: Permission denied"),
+    ),
+    false,
+  );
 });
