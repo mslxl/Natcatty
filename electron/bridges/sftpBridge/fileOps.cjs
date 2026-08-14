@@ -819,13 +819,14 @@ function createFileOpsApi(ctx) {
       // Non-UTF-8: keep protocol walk (shell path encoding is unsafe).
       const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const normalizedPath = await normalizeRemotePathString(client, payload.path);
+      const encodedNormalizedPath = encodePath(normalizedPath, encoding);
       if (payload.expectedType) {
         if (typeof sftp?.lstat !== "function") {
           const error = new Error("Remote server cannot safely verify the target type before replace");
           error.code = "ENOTSUP";
           throw error;
         }
-        const stat = statResultFromAttrs(await lstatAsync(sftp, encodePath(payload.path, encoding)));
+        const stat = statResultFromAttrs(await lstatAsync(sftp, encodedNormalizedPath));
         const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
         if (actualType !== payload.expectedType) {
           const error = new Error(
@@ -836,7 +837,11 @@ function createFileOpsApi(ctx) {
         }
       }
       throwIfAborted(signal);
-      await removeRemotePathInternal(sftp, normalizedPath, encoding, signal);
+      if (payload.expectedType === "symlink") {
+        await unlinkAsync(sftp, encodedNormalizedPath);
+      } else {
+        await removeRemotePathInternal(sftp, normalizedPath, encoding, signal);
+      }
       return true;
     }
     

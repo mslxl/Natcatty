@@ -30,6 +30,7 @@ const {
   buildStatCommand,
   buildMkdirCommand,
   buildDeleteCommand,
+  buildUnlinkCommand,
   buildRenameCommand,
   buildChmodCommand,
   buildHomeCommand,
@@ -221,7 +222,7 @@ function createScpBackend(deps = {}) {
   async function unlink(remotePath, options = {}) {
     const signal = options.signal || null;
     const encoding = options.encoding || "utf-8";
-    await runOrThrow(buildDeleteCommand(remotePath, { recursive: false, encoding }), { signal });
+    await runOrThrow(buildUnlinkCommand(remotePath, encoding), { signal });
     return true;
   }
 

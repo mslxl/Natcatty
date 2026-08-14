@@ -164,6 +164,7 @@ describe("scpBackend browse/manage with fake exec", () => {
     assert.equal(matching.length, 1);
     assert.match(matching[0].command, /rm -f -- '\/tmp\/a b\/link'/);
     assert.doesNotMatch(matching[0].command, /rm -rf/);
+    assert.doesNotMatch(matching[0].command, /rmdir/);
   });
 
   it("stats a remote path", async () => {

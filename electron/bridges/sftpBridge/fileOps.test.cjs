@@ -372,3 +372,46 @@ test("non-UTF-8 expected symlink delete refuses a replacement file", async () =>
   );
   assert.equal(removeCalls, 0);
 });
+
+test("non-UTF-8 expected symlink delete stays non-recursive after the type check", async () => {
+  const channel = { lstat() {} };
+  let unlinkCalls = 0;
+  let removeCalls = 0;
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    throwIfAborted() {},
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "gb18030",
+    normalizeRemotePathString: async (_client, remotePath) => remotePath,
+    encodePath: (remotePath) => Buffer.from(remotePath),
+    lstatAsync: async () => ({
+      size: 4,
+      mode: 0o120777,
+      mtime: 20,
+      isDirectory: () => false,
+      isSymbolicLink: () => true,
+    }),
+    statResultFromAttrs: (attrs) => ({
+      size: attrs.size,
+      modifyTime: attrs.mtime * 1000,
+      mode: attrs.mode,
+      isDirectory: attrs.isDirectory(),
+      isSymbolicLink: attrs.isSymbolicLink(),
+    }),
+    unlinkAsync: async (_sftp, encodedPath) => {
+      unlinkCalls += 1;
+      assert.equal(encodedPath.toString(), "/remote/tool");
+    },
+    removeRemotePathInternal: async () => { removeCalls += 1; },
+  });
+
+  await api.deleteSftp(null, {
+    sftpId: "sftp-1",
+    path: "/remote/tool",
+    encoding: "gb18030",
+    expectedType: "symlink",
+  });
+
+  assert.equal(unlinkCalls, 1);
+  assert.equal(removeCalls, 0);
+});
