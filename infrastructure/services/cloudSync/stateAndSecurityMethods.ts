@@ -92,20 +92,36 @@ export function loadInitialStateImpl(this: any): SyncManagerState {
       interval?: number;
       syncStrategy?: unknown;
     }>(SYNC_STORAGE_KEYS.SYNC_PREFERENCES);
-    const syncPreferences = resolveSyncPreferencesForPersist({
-      memory: {
-        autoSync: false,
-        interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
-        syncStrategy: DEFAULT_CLOUD_SYNC_STRATEGY,
-      },
+    const defaultPreferences = {
+      autoSync: false,
+      interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
+      syncStrategy: DEFAULT_CLOUD_SYNC_STRATEGY,
+    };
+    let syncPreferences = resolveSyncPreferencesForPersist({
+      memory: defaultPreferences,
       stored: coalesceStoredSyncPreferences(syncPreferencesStored, syncConfig),
       preferencesFromMemory: false,
     });
     // Split prefs out of the version blob so later version writes cannot
-    // clobber cross-window toggles (#2976).
+    // clobber cross-window toggles (#2976). Recheck before writing so a
+    // concurrent window that already migrated or toggled is not overwritten.
     if (!syncPreferencesStored || typeof syncPreferencesStored !== 'object') {
-      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, syncPreferences);
+      if (!this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES)) {
+        this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, syncPreferences);
+      }
     }
+    // Adopt whatever is actually on disk after the migration attempt.
+    syncPreferences = resolveSyncPreferencesForPersist({
+      memory: defaultPreferences,
+      stored: coalesceStoredSyncPreferences(
+        this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as
+          | { autoSync?: boolean; interval?: number; syncStrategy?: unknown }
+          | null
+          | undefined,
+        syncConfig,
+      ),
+      preferencesFromMemory: false,
+    });
 
     // Load sync history
     const syncHistory = this.loadFromStorage<SyncHistoryEntry[]>(SYNC_HISTORY_STORAGE_KEY) || [];
