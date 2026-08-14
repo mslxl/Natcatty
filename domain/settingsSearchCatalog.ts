@@ -814,6 +814,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     descriptionKey: "settings.system.crashLogs.description",
   },
   {
+    id: "system-startup-landing",
+    tab: "system",
+    labelKey: "settings.sessionRestore.startupLanding",
+    descriptionKey: "settings.sessionRestore.startupLandingDesc",
+    sectionKey: "settings.sessionRestore.title",
+    keywords: ["startup", "launch", "local terminal", "home"],
+  },
+  {
     id: "system-session-restore",
     tab: "system",
     labelKey: "settings.sessionRestore.restorePreviousSession",

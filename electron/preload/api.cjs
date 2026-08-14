@@ -1205,6 +1205,11 @@ function createPreloadApi(ctx) {
     ipcRenderer.on("netcatty:openTerminalPath", handler);
     return () => ipcRenderer.removeListener("netcatty:openTerminalPath", handler);
   },
+  onColdStartIntentsSettled: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("netcatty:startup:coldStartIntentsSettled", handler);
+    return () => ipcRenderer.removeListener("netcatty:startup:coldStartIntentsSettled", handler);
+  },
   setSshDeepLinkEnabled: (enabled) =>
     ipcRenderer.invoke("netcatty:deepLink:ssh:setEnabled", { enabled }),
   getSshDeepLinkEnabled: () =>

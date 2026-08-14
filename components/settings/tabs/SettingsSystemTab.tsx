@@ -98,6 +98,8 @@ interface SettingsSystemTabProps {
   setRestorePreviousSession: (enabled: boolean) => void;
   restoreTerminalCwd: boolean;
   setRestoreTerminalCwd: (enabled: boolean) => void;
+  startupLanding: "vault" | "local-terminal";
+  setStartupLanding: (landing: "vault" | "local-terminal") => void;
   toggleWindowHotkey: string;
   setToggleWindowHotkey: (hotkey: string) => void;
   closeToTray: boolean;
@@ -139,6 +141,8 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setRestorePreviousSession,
   restoreTerminalCwd,
   setRestoreTerminalCwd,
+  startupLanding,
+  setStartupLanding,
   toggleWindowHotkey,
   setToggleWindowHotkey,
   closeToTray,
@@ -918,6 +922,24 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 
           <SectionHeader title={t("settings.sessionRestore.title")} />
             <SettingCard className="space-y-4 py-4">
+              <SettingRow
+                anchorId="system-startup-landing"
+                label={t("settings.sessionRestore.startupLanding")}
+                description={t("settings.sessionRestore.startupLandingDesc")}
+              >
+                <Select
+                  value={startupLanding}
+                  onChange={(value) => {
+                    if (value === "vault" || value === "local-terminal") {
+                      setStartupLanding(value);
+                    }
+                  }}
+                  options={[
+                    { value: "vault", label: t("settings.sessionRestore.startupLanding.vault") },
+                    { value: "local-terminal", label: t("settings.sessionRestore.startupLanding.localTerminal") },
+                  ]}
+                />
+              </SettingRow>
               <SettingRow
                 anchorId="system-session-restore"
                 label={t("settings.sessionRestore.restorePreviousSession")}

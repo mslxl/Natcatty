@@ -170,6 +170,10 @@ export const zhCNCoreMessages: Messages = {
 
   // Settings > Session Restore
   'settings.sessionRestore.title': '会话恢复',
+  'settings.sessionRestore.startupLanding': '启动时打开',
+  'settings.sessionRestore.startupLandingDesc': '当没有可恢复的会话时，选择启动后进入主机主页还是直接打开本地终端。',
+  'settings.sessionRestore.startupLanding.vault': '主页（主机）',
+  'settings.sessionRestore.startupLanding.localTerminal': '本地终端',
   'settings.sessionRestore.restorePreviousSession': '恢复上次的标签页和工作区',
   'settings.sessionRestore.restorePreviousSessionDesc': '启动时重新打开上次的终端标签页和工作区布局。',
   'settings.sessionRestore.restoreTerminalCwd': '恢复终端工作目录',
