@@ -212,6 +212,51 @@ test("lstatSftp refuses followed STAT when LSTAT is unsupported", async () => {
   assert.equal(statCalls, 0, "must not classify via followed STAT");
 });
 
+test("lstatSftp returns null for SSH_FX_NO_SUCH_FILE even with a localized message", async () => {
+  const channel = { lstat() {} };
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "utf-8",
+    encodePath: (remotePath) => remotePath,
+    lstatAsync: async () => {
+      const error = new Error("File not found");
+      error.code = 2;
+      throw error;
+    },
+  });
+
+  const result = await api.lstatSftp(null, {
+    sftpId: "sftp-1",
+    path: "/usr/local/bin/new-file.sh",
+  });
+  assert.equal(result, null);
+});
+
+test("lstatSftp still throws permission errors on an existing path", async () => {
+  const channel = { lstat() {} };
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "utf-8",
+    encodePath: (remotePath) => remotePath,
+    lstatAsync: async () => {
+      const error = new Error("Permission denied");
+      error.code = "EACCES";
+      throw error;
+    },
+  });
+
+  await assert.rejects(
+    () => api.lstatSftp(null, { sftpId: "sftp-1", path: "/root/secret" }),
+    (error) => {
+      assert.equal(error.code, "EACCES");
+      assert.match(String(error.message), /Permission denied/);
+      return true;
+    },
+  );
+});
+
 test("lstatSftp refuses a channel without native LSTAT", async () => {
   const channel = { stat() {} };
   let lstatCalls = 0;
