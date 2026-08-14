@@ -34,12 +34,16 @@ const SEARCH_OPTIONS = {
  */
 export const SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS = 250;
 
+/**
+ * Delayed re-clear for addon decoration revival only. Do not clearSelection
+ * here: reset already cleared the search selection, and a user may have made
+ * a new manual selection during the guard window.
+ */
 export const clearTerminalSearchHighlights = (
   searchAddon: Pick<SearchAddon, "clearDecorations"> | null,
-  term?: TerminalSearchResetTarget,
+  term?: Pick<XTerm, "refresh" | "rows"> | null,
 ): void => {
   searchAddon?.clearDecorations();
-  term?.clearSelection();
   if (term && term.rows > 0) {
     term.refresh(0, term.rows - 1);
   }
@@ -84,7 +88,7 @@ export const armSearchHighlightRevivalGuard = ({
   clearTimeoutFn = clearTimeout,
 }: {
   getSearchAddon: () => Pick<SearchAddon, "clearDecorations"> | null;
-  getTerm: () => TerminalSearchResetTarget;
+  getTerm: () => Pick<XTerm, "refresh" | "rows"> | null;
   delayMs?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
@@ -108,6 +112,10 @@ export const armSearchHighlightRevivalGuard = ({
 
   return { arm, dispose };
 };
+
+/** True when this terminal has a local query that shared search-close must clear. */
+export const shouldResetOnSharedSearchClose = (localSearchTerm: string): boolean =>
+  localSearchTerm !== "";
 
 export const useTerminalSearch = ({
   searchAddonRef,
@@ -147,10 +155,13 @@ export const useTerminalSearch = ({
 
   // Search open state is shared via localStorage across terminal sessions. When
   // another session closes search, this session's bar unmounts without going
-  // through handleCloseSearch — still clear leftover decorations here.
+  // through handleCloseSearch — clear leftover decorations only when this
+  // terminal actually searched (otherwise shared false would wipe unrelated
+  // manual selections in other splits).
   useEffect(() => {
     if (isSearchOpen) return;
     setSearchMatchCount(null);
+    if (!shouldResetOnSharedSearchClose(searchTermRef.current)) return;
     runReset();
   }, [isSearchOpen, runReset]);
 

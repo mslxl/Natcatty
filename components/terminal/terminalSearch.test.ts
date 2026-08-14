@@ -6,6 +6,7 @@ import {
   armSearchHighlightRevivalGuard,
   resetTerminalSearch,
   SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS,
+  shouldResetOnSharedSearchClose,
 } from "./hooks/useTerminalSearch.ts";
 
 test("clearing the search input notifies the terminal search handler", () => {
@@ -111,7 +112,7 @@ test("resetting terminal search clears cache before empty find and refreshes", (
   assert.equal(findNextArgs[0], undefined);
 });
 
-test("search highlight revival guard re-clears after the addon update window", () => {
+test("search highlight revival guard re-clears decorations without touching selection", () => {
   assert.ok(SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS > 200);
 
   const calls: string[] = [];
@@ -147,15 +148,20 @@ test("search highlight revival guard re-clears after the addon update window", (
   assert.deepEqual(calls, []);
 
   // Simulate SearchAddon._updateMatches reviving decorations, then the guard.
+  // Manual selections made during the guard window must survive.
   calls.push("revived");
   scheduled?.cb();
 
   assert.deepEqual(calls, [
     "revived",
     "clearDecorations",
-    "clearSelection",
     "refresh:0:9",
   ]);
 
   guard.dispose();
+});
+
+test("shared search close only resets terminals that have a local query", () => {
+  assert.equal(shouldResetOnSharedSearchClose(""), false);
+  assert.equal(shouldResetOnSharedSearchClose("needle"), true);
 });
