@@ -87,6 +87,7 @@ import {
   connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
   isPendingSameEndpointSshSession,
+  resolveSftpSidePanelHiddenSourceStatusUpdate,
   shouldAcceptPendingSftpUpload,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
@@ -797,6 +798,21 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       cancelAnimationFrame(frameId);
     };
   }, [activeHost, activeSessionId, interactiveWorkActive, isVisible, runAutoConnect]);
+
+  useEffect(() => {
+    if (isVisible) return;
+    const trackedSessionId = lastSourceSessionIdRef.current;
+    const trackedSession = trackedSessionId
+      ? sessions.find((candidate) => candidate.id === trackedSessionId) ?? null
+      : null;
+    const update = resolveSftpSidePanelHiddenSourceStatusUpdate({
+      trackedSessionId,
+      sessionStatus: trackedSession?.status ?? null,
+    });
+    if (!update) return;
+    lastSourceSessionStatusRef.current = update.status;
+    connectedKeyRef.current = null;
+  }, [isVisible, sessions]);
 
   useEffect(() => {
     const connection = sftp.leftPane.connection;

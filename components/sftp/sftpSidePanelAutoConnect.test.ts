@@ -6,6 +6,7 @@ import {
   findReusableSftpSidePanelTab,
   isPendingSameEndpointSshSession,
   isRemoteSftpTabHealthy,
+  resolveSftpSidePanelHiddenSourceStatusUpdate,
   shouldAcceptPendingSftpUpload,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
@@ -256,6 +257,37 @@ test("shouldDeferSftpSidePanelAutoConnectForSession waits for the linked SSH ses
       sessionStatus: "connecting",
     }),
     false,
+  );
+});
+
+test("resolveSftpSidePanelHiddenSourceStatusUpdate remembers background disconnects", () => {
+  assert.deepEqual(
+    resolveSftpSidePanelHiddenSourceStatusUpdate({
+      trackedSessionId: "sess-a",
+      sessionStatus: "disconnected",
+    }),
+    { sessionId: "sess-a", status: "disconnected" },
+  );
+  assert.deepEqual(
+    resolveSftpSidePanelHiddenSourceStatusUpdate({
+      trackedSessionId: "sess-a",
+      sessionStatus: "connecting",
+    }),
+    { sessionId: "sess-a", status: "connecting" },
+  );
+  assert.equal(
+    resolveSftpSidePanelHiddenSourceStatusUpdate({
+      trackedSessionId: "sess-a",
+      sessionStatus: "connected",
+    }),
+    null,
+  );
+  assert.equal(
+    resolveSftpSidePanelHiddenSourceStatusUpdate({
+      trackedSessionId: null,
+      sessionStatus: "disconnected",
+    }),
+    null,
   );
 });
 
