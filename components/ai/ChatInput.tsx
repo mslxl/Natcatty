@@ -385,9 +385,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
     commitComposerText(readComposerText());
   }, [commitComposerText, parked, readComposerText]);
 
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   useEffect(() => () => {
-    onChange(textareaRef.current?.value ?? composerTextRef.current);
-  }, [onChange]);
+    onChangeRef.current(textareaRef.current?.value ?? composerTextRef.current);
+  }, []);
 
   const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
     const beforeCaret = text.slice(0, caretPosition);
@@ -760,6 +762,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
         return;
       }
       onSend();
+      commitComposerText('');
     },
     [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onSend, onSteer, onStop, readComposerText],
   );
