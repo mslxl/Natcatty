@@ -671,9 +671,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (!isVisible) return;
     const bridge = getNetcattyBridge();
     if (!bridge?.aiSyncProviders || providers.length === 0) return;
-    return scheduleWhenAiComposerIdle(() => {
-      void bridge.aiSyncProviders(providers);
-    });
+    void bridge.aiSyncProviders(providers);
   }, [isVisible, providers]);
 
   useEffect(() => {
@@ -1128,6 +1126,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const isDraftMode = currentPanelView.mode === 'draft';
 
     flushDraftText();
+    const sendBridge = getNetcattyBridge();
+    if (sendBridge?.aiSyncProviders && providers.length > 0) {
+      await sendBridge.aiSyncProviders(providers);
+    }
     void warmAiMarkdownRenderer();
 
     const sendGateKey = currentSessionView?.id ?? `draft:${scopeKey}`;

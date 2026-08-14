@@ -109,6 +109,12 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   ...overrides,
 });
 
+test('first send awaits provider sync instead of idle-deferring it', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.match(source, /await sendBridge\.aiSyncProviders\(providers\)/);
+  assert.doesNotMatch(source, /scheduleWhenAiComposerIdle\(\(\) => \{\s*void bridge\.aiSyncProviders/);
+});
+
 test('send and new chat discard pending composer text', () => {
   const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
   assert.match(source, /discardPendingComposerText/);
