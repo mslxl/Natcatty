@@ -155,18 +155,6 @@ test("renders changed host key warning in the same connection dialog", () => {
   assert.match(markup, /Update and continue/);
 });
 
-test("shimmers the connecting progress fill and not the error state", () => {
-  const connecting = renderDialog({ status: "connecting", error: null, progressValue: 20 });
-  assert.match(connecting, /connection-progress-shimmer/);
-
-  const failed = renderDialog({
-    status: "disconnected",
-    error: "Connection timed out.",
-    progressValue: 5,
-  });
-  assert.doesNotMatch(failed, /connection-progress-shimmer/);
-});
-
 test("keeps the second progress segment parked until the first segment finishes", () => {
   const markup = renderDialog({ progressValue: 75 });
 

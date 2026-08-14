@@ -614,49 +614,6 @@ html[data-theme-transition] *::after {
   }
 }
 
-@keyframes connection-progress-shimmer {
-  0% {
-    transform: translateX(-120%);
-    opacity: 0;
-  }
-
-  18% {
-    opacity: 1;
-  }
-
-  82% {
-    opacity: 1;
-  }
-
-  100% {
-    transform: translateX(280%);
-    opacity: 0;
-  }
-}
-
-.connection-progress-shimmer {
-  pointer-events: none;
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 46%;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, white 18%, transparent) 28%,
-    color-mix(in srgb, white 72%, transparent) 50%,
-    color-mix(in srgb, white 18%, transparent) 72%,
-    transparent 100%
-  );
-  animation: connection-progress-shimmer 1.7s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .connection-progress-shimmer {
-    animation: none;
-    opacity: 0;
-  }
-}
-
 .glass-panel {
   background: hsl(var(--secondary) / 0.95);
   border: 1px solid hsl(var(--border) / 0.8);
