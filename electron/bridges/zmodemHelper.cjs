@@ -672,68 +672,11 @@ const UPLOAD_BACKPRESSURE_FILE_END_TIMEOUT_MS = 120000;
 const UPLOAD_SESSION_CLOSE_TIMEOUT_MS = 15000;
 /** Max wait for a single transport drain after write() returned false. */
 const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
-/** Upload read/send chunk size (must stay aligned with drain timeout sizing). */
+/** Upload read/send chunk size. */
 const UPLOAD_CHUNK_SIZE = 64 * 1024;
-/** Extra headroom beyond pure wire time for serial drain waits. */
-const SERIAL_DRAIN_MARGIN_MS = 15000;
-/**
- * Worst-case ZDLE wire expansion when zmodem.js FORCE_ESCAPE_CTRL_CHARS is on:
- * every control octet becomes ZDLE + (octet XOR 0x40), so one input byte can
- * occupy two serial bytes. Budget drain waits from this ceiling, not raw chunk
- * size — otherwise control-heavy (or even typical binary) data exceeds the
- * timeout at low baud while the link is still transferring.
- */
-const SERIAL_ZDLE_WORST_CASE_EXPANSION = 2;
 
 function resolveTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
-}
-
-/**
- * Bits on the wire per payload byte for common serial framing (start + data +
- * optional parity + stop). Defaults to 8N1 => 10 bits/byte.
- *
- * @param {{ dataBits?: number, stopBits?: number, parity?: string }} [opts]
- * @returns {number}
- */
-function bitsPerSerialByte(opts = {}) {
-  const dataBits = Number(opts.dataBits);
-  const stopBits = Number(opts.stopBits);
-  const data = Number.isFinite(dataBits) && dataBits > 0 ? dataBits : 8;
-  const stop = Number.isFinite(stopBits) && stopBits > 0 ? stopBits : 1;
-  const parity = String(opts.parity || "none").toLowerCase();
-  const parityBits = parity && parity !== "none" ? 1 : 0;
-  return 1 + data + parityBits + stop;
-}
-
-/**
- * Drain timeout for ZMODEM uploads over a serial link. A fixed TCP/SSH-style
- * 60s budget rejects valid transfers once backpressure applies at low baud
- * (e.g. a ZDLE-expanded 64 KiB chunk @ 9600 8N1 needs ~137s on the wire).
- *
- * @param {{
- *   baudRate?: number,
- *   byteCount?: number,
- *   dataBits?: number,
- *   stopBits?: number,
- *   parity?: string,
- *   marginMs?: number,
- *   minTimeoutMs?: number,
- * }} [opts]
- * @returns {number}
- */
-function resolveSerialUploadDrainTimeoutMs(opts = {}) {
-  const baudRate = Number(opts.baudRate);
-  const byteCount = Number(opts.byteCount);
-  const marginMs = resolveTimeoutMs(opts.marginMs, SERIAL_DRAIN_MARGIN_MS);
-  const minTimeoutMs = resolveTimeoutMs(opts.minTimeoutMs, UPLOAD_DRAIN_TIMEOUT_MS);
-  if (!Number.isFinite(baudRate) || baudRate <= 0) {
-    return minTimeoutMs;
-  }
-  const bytes = Number.isFinite(byteCount) && byteCount > 0 ? byteCount : UPLOAD_CHUNK_SIZE;
-  const wireBytes = bytes * SERIAL_ZDLE_WORST_CASE_EXPANSION;
-  const transmitMs = Math.ceil((wireBytes * bitsPerSerialByte(opts) * 1000) / baudRate);
-  return Math.max(minTimeoutMs, transmitMs + marginMs);
 }
 
 /**
@@ -1411,7 +1354,6 @@ module.exports = {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
-  resolveSerialUploadDrainTimeoutMs,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_DRAIN_TIMEOUT_MS,
 };

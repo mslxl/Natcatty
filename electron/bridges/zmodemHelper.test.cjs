@@ -11,7 +11,6 @@ const {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
-  resolveSerialUploadDrainTimeoutMs,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_DRAIN_TIMEOUT_MS,
 } = require("./zmodemHelper.cjs");
@@ -277,6 +276,61 @@ test("handleUpload completes when the remote confirms after progress reaches 100
     events.some((event) => event.channel === "netcatty:zmodem:progress" && event.data.finalizing === true),
     true,
   );
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("handleUpload does not read the next chunk until transport backpressure clears", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-drain-"));
+  const filePath = path.join(tempDir, "large-upload.bin");
+  fs.writeFileSync(filePath, Buffer.alloc(UPLOAD_CHUNK_SIZE + 1, 0x5a));
+  const sentChunkSizes = [];
+  const progress = [];
+  let releaseFirstDrain;
+  const firstDrain = new Promise((resolve) => {
+    releaseFirstDrain = resolve;
+  });
+  let drainCalls = 0;
+
+  const zsession = {
+    async send_offer() {
+      return {
+        send(chunk) {
+          sentChunkSizes.push(chunk.byteLength);
+        },
+        async end() {},
+      };
+    },
+    async close() {},
+  };
+
+  const upload = handleUpload(zsession, {
+    sessionId: "session-1",
+    getWebContents: () => ({
+      isDestroyed: () => false,
+      send(channel, data) {
+        if (channel === "netcatty:zmodem:progress") progress.push(data);
+      },
+    }),
+    takeDragDropUpload: () => ({
+      filePaths: [filePath],
+      remoteNames: ["large-upload.bin"],
+    }),
+    async waitForDrain() {
+      drainCalls += 1;
+      if (drainCalls === 1) await firstDrain;
+    },
+  });
+
+  while (drainCalls === 0) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.deepEqual(sentChunkSizes, [UPLOAD_CHUNK_SIZE]);
+  assert.equal(progress.at(-1).transferred, UPLOAD_CHUNK_SIZE);
+
+  releaseFirstDrain();
+  await upload;
+  assert.deepEqual(sentChunkSizes, [UPLOAD_CHUNK_SIZE, 1]);
+  assert.equal(progress.at(-1).finalizing, true);
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -957,48 +1011,6 @@ test("waitForWritableDrain rejects promptly when the transfer AbortSignal aborts
     (err) => err && err.code === "NETCATTY_ZMODEM_CANCELLED",
   );
   assert.equal((listeners.get("drain") || []).length, 0);
-});
-
-test("resolveSerialUploadDrainTimeoutMs scales above the TCP default for slow baud", () => {
-  const at9600 = resolveSerialUploadDrainTimeoutMs({ baudRate: 9600 });
-  // ZDLE worst-case 2x * 64 KiB * 10 bits @ 9600 ≈ 136.5s + margin.
-  assert.ok(at9600 > UPLOAD_DRAIN_TIMEOUT_MS);
-  assert.equal(
-    at9600,
-    Math.max(
-      UPLOAD_DRAIN_TIMEOUT_MS,
-      Math.ceil((UPLOAD_CHUNK_SIZE * 2 * 10 * 1000) / 9600) + 15_000,
-    ),
-  );
-
-  const at115200 = resolveSerialUploadDrainTimeoutMs({ baudRate: 115200 });
-  assert.equal(at115200, UPLOAD_DRAIN_TIMEOUT_MS);
-
-  assert.equal(
-    resolveSerialUploadDrainTimeoutMs({ baudRate: Number.NaN }),
-    UPLOAD_DRAIN_TIMEOUT_MS,
-  );
-});
-
-test("resolveSerialUploadDrainTimeoutMs accounts for parity and stop bits", () => {
-  const eightN1 = resolveSerialUploadDrainTimeoutMs({
-    baudRate: 300,
-    byteCount: 1024,
-    marginMs: 0,
-    minTimeoutMs: 0,
-  });
-  const eightE2 = resolveSerialUploadDrainTimeoutMs({
-    baudRate: 300,
-    byteCount: 1024,
-    dataBits: 8,
-    stopBits: 2,
-    parity: "even",
-    marginMs: 0,
-    minTimeoutMs: 0,
-  });
-  assert.equal(eightN1, Math.ceil((1024 * 2 * 10 * 1000) / 300));
-  assert.equal(eightE2, Math.ceil((1024 * 2 * 12 * 1000) / 300));
-  assert.ok(eightE2 > eightN1);
 });
 
 test("createZmodemUploadDrainWaiter waits on transport drain after backpressure", async () => {

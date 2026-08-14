@@ -57,11 +57,7 @@ const ptyProcessTree = require("./ptyProcessTree.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { detectShellKind } = require("./ai/ptyExec.cjs");
 const { stripAnsi, trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
-const {
-  createZmodemSentry,
-  waitForWritableDrain,
-  resolveSerialUploadDrainTimeoutMs,
-} = require("./zmodemHelper.cjs");
+const { createZmodemSentry } = require("./zmodemHelper.cjs");
 const { discoverShells } = require("./shellDiscovery.cjs");
 const moshHandshake = require("./moshHandshake.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
@@ -1097,7 +1093,7 @@ const telnetSessionApi = createTelnetSessionApi({
   get electronModule() { return electronModule; },
   net, randomUUID, StringDecoder, iconv, Buffer, console, setTimeout, clearTimeout,
   normalizeTerminalEncoding, encodeTerminalInput, createTelnetAutoLogin, telnetProtocol,
-  createPtyOutputBuffer, sessionLogStreamManager, createZmodemSentry, waitForWritableDrain, ptyProcessTree,
+  createPtyOutputBuffer, sessionLogStreamManager, createZmodemSentry, ptyProcessTree,
   enableTcpNoDelay, trackSessionIdlePrompt, stripAnsi, clearPendingAutomatedWrites,
   openTerminalOutputSession, closeTerminalOutputSession,
   get selectZmodemUploadFiles() { return selectZmodemUploadFiles; },
@@ -1327,20 +1323,6 @@ async function startSerialSession(event, options) {
           },
           writeToRemote(buf) {
             try { return serialPort.write(buf); } catch { return true; }
-          },
-          waitForTransportDrain(drainOpts = {}) {
-            // Low-baud serial needs longer than the generic SSH/TCP drain
-            // budget: ZDLE can roughly double wire bytes, so one 64 KiB
-            // upload chunk at 9600 8N1 can need ~137s on the wire.
-            return waitForWritableDrain(serialPort, {
-              timeoutMs: resolveSerialUploadDrainTimeoutMs({
-                baudRate,
-                dataBits,
-                stopBits,
-                parity,
-              }),
-              signal: drainOpts.signal,
-            });
           },
           getWebContents() {
             return electronModule.webContents.fromId(session.webContentsId);

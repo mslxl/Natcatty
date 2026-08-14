@@ -320,9 +320,6 @@ function createTelnetSessionApi(ctx) {
               }
             } catch { return true; }
           },
-          waitForTransportDrain(drainOpts) {
-            return waitForWritableDrain(socket, drainOpts);
-          },
           getWebContents() {
             return getCurrentTelnetWebContents();
           },
