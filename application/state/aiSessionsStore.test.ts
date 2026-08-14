@@ -33,6 +33,19 @@ test('AI sessions store does not notify listeners when only composer text change
 
     aiSessionsStore.setSnapshot({
       ...base,
+      draftsByScope: {},
+    });
+    notified = 0;
+    aiSessionsStore.setSnapshot({
+      ...base,
+      draftsByScope: {
+        'terminal:1': { ...draft, text: '你好' },
+      },
+    });
+    assert.equal(notified, 0);
+
+    aiSessionsStore.setSnapshot({
+      ...base,
       draftsByScope: {
         'terminal:1': { ...draft, text: 'hello', attachments: [{ id: 'a' } as never] },
       },

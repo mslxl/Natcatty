@@ -66,6 +66,20 @@ test('parked composer closes body-portaled menus', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
   assert.match(source, /parked = false/);
   assert.match(source, /if \(parked\) closeAllMenus\(\)/);
+  assert.match(source, /becameParked/);
+});
+
+test('first keystrokes stay local so IME and Chromium spellcheck cannot stall the composer', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /spellCheck=\{false\}/);
+  assert.match(source, /autoCorrect="off"/);
+  assert.match(source, /autoCapitalize="off"/);
+  assert.match(source, /nativeEvent\.isComposing/);
+  assert.match(source, /onCompositionEnd=/);
+  assert.match(source, /onBlur=\{\(\) => commitComposerText\(readComposerText\(\)\)\}/);
+  assert.match(source, /defaultValue=\{value\}/);
+  assert.doesNotMatch(source, /value=\{composerText\}/);
+  assert.match(source, /hasComposerText/);
 });
 
 test('composer resizing also ends when pointer capture is unexpectedly lost', () => {
