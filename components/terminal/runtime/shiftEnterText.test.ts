@@ -159,6 +159,10 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
+    /const canBroadcastInput = !sensitive &&[\s\S]*?const willBroadcastInput = canBroadcastInput && options\?\.skipBroadcast !== true;[\s\S]*?if \(!canBroadcastInput\) \{\s*prepareSudoAutofillInput/s,
+  );
+  assert.match(
+    source,
     /alternateScreen: term\.buffer\.active\.type === "alternate",\s*shiftEnterSettings: ctx\.terminalSettingsRef\.current,/s,
   );
   assert.match(source, /getShiftEnterSubmittedInput\(data\)/);

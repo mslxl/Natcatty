@@ -1005,15 +1005,17 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const broadcastDataBeforeSudo = mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior);
     const suppressTerminalBroadcast = inputSource === "terminal" && suppressNextTerminalDataBroadcast;
     if (suppressTerminalBroadcast) suppressNextTerminalDataBroadcast = false;
-    const willBroadcastInput = !sensitive &&
+    // skipBroadcast only suppresses the raw-string fan-out. Peers still receive
+    // the Shift+Enter chord, so sudo autofill must treat this as a broadcast.
+    const canBroadcastInput = !sensitive &&
       inputSource !== "kitty" &&
-      options?.skipBroadcast !== true &&
       !handlingKittyBroadcast &&
       !suppressTerminalBroadcast &&
       !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
       isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
+    const willBroadcastInput = canBroadcastInput && options?.skipBroadcast !== true;
     if (ctx.statusRef.current === "connected" && submittedInput) {
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
@@ -1032,7 +1034,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
       );
       handledSubmittedInput = true;
-      if (!willBroadcastInput) {
+      if (!canBroadcastInput) {
         prepareSudoAutofillInput(
           submittedInput.lineEnding === "\r\n" ? "\n" : submittedInput.lineEnding,
           recordedCommand,
@@ -1041,7 +1043,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
     } else if (
       ctx.statusRef.current === "connected" &&
-      !willBroadcastInput &&
+      !canBroadcastInput &&
       inputSource !== "shift-enter"
     ) {
       const pastedCommand = getSinglePastedCommand(data);
@@ -1738,6 +1740,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         e.preventDefault();
         e.stopPropagation();
         const kittyEvent = toKittyKeyboardEvent(e);
+        // Local payload uses this session's buffer. Broadcast targets re-resolve
+        // from the key chord via resolveKittyKeyboardBroadcastInput.
         const shiftEnterPayload = resolveShiftEnterPayload(
           ctx.terminalSettingsRef.current,
           { alternateScreen: term.buffer.active.type === "alternate" },
