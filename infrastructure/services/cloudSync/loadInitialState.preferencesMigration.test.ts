@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { SYNC_STORAGE_KEYS } from '../../../domain/sync.ts';
 import { loadInitialStateImpl, loadProviderConnectionImpl } from './stateAndSecurityMethods.ts';
 
-test('startup preference migration does not clobber a concurrent autoSync=false', () => {
+test('startup does not eagerly write SYNC_PREFERENCES over a concurrent autoSync=false', () => {
   const storage = new Map<string, unknown>();
   storage.set(SYNC_STORAGE_KEYS.DEVICE_ID, 'test-device');
   storage.set(SYNC_STORAGE_KEYS.DEVICE_NAME, 'Test Device');
@@ -29,9 +29,8 @@ test('startup preference migration does not clobber a concurrent autoSync=false'
     loadFromStorage(key: string) {
       if (key === SYNC_STORAGE_KEYS.SYNC_PREFERENCES) {
         preferenceReads += 1;
-        // Initial load: absent. Recheck + post-adopt: concurrent window
-        // already wrote autoSync=false.
-        if (preferenceReads === 1) return null;
+        // Concurrent window already wrote autoSync=false before this
+        // process's preference read.
         return {
           autoSync: false,
           interval: 5,
@@ -54,12 +53,13 @@ test('startup preference migration does not clobber a concurrent autoSync=false'
   assert.equal(
     storage.has(SYNC_STORAGE_KEYS.SYNC_PREFERENCES),
     false,
-    'must not write over a concurrent preference key',
+    'must not eagerly write SYNC_PREFERENCES on startup',
   );
+  assert.equal(preferenceReads, 1);
   assert.equal(state.autoSyncEnabled, false);
 });
 
-test('startup preference migration writes once when key stays absent', () => {
+test('startup adopts legacy SYNC_CONFIG prefs without writing SYNC_PREFERENCES', () => {
   const storage = new Map<string, unknown>();
   storage.set(SYNC_STORAGE_KEYS.DEVICE_ID, 'test-device');
   storage.set(SYNC_STORAGE_KEYS.DEVICE_NAME, 'Test Device');
@@ -92,13 +92,13 @@ test('startup preference migration writes once when key stays absent', () => {
   };
 
   const state = loadInitialStateImpl.call(manager);
-  const saved = storage.get(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as {
-    autoSync: boolean;
-    interval: number;
-  };
 
-  assert.equal(saved.autoSync, true);
-  assert.equal(saved.interval, 15);
+  assert.equal(
+    storage.has(SYNC_STORAGE_KEYS.SYNC_PREFERENCES),
+    false,
+    'startup must not eagerly migrate preferences to disk',
+  );
   assert.equal(state.autoSyncEnabled, true);
   assert.equal(state.autoSyncInterval, 15);
+  assert.equal(state.syncStrategy, 'preferCloud');
 });

@@ -87,37 +87,24 @@ export function loadInitialStateImpl(this: any): SyncManagerState {
       remoteUpdatedAt?: number;
       syncStrategy?: unknown;
     }>(SYNC_STORAGE_KEYS.SYNC_CONFIG);
-    const syncPreferencesStored = this.loadFromStorage<{
-      autoSync?: boolean;
-      interval?: number;
-      syncStrategy?: unknown;
-    }>(SYNC_STORAGE_KEYS.SYNC_PREFERENCES);
     const defaultPreferences = {
       autoSync: false,
       interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
       syncStrategy: DEFAULT_CLOUD_SYNC_STRATEGY,
     };
-    let syncPreferences = resolveSyncPreferencesForPersist({
-      memory: defaultPreferences,
-      stored: coalesceStoredSyncPreferences(syncPreferencesStored, syncConfig),
-      preferencesFromMemory: false,
-    });
-    // Split prefs out of the version blob so later version writes cannot
-    // clobber cross-window toggles (#2976). Recheck before writing so a
-    // concurrent window that already migrated or toggled is not overwritten.
-    if (!syncPreferencesStored || typeof syncPreferencesStored !== 'object') {
-      if (!this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES)) {
-        this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, syncPreferences);
-      }
-    }
-    // Adopt whatever is actually on disk after the migration attempt.
-    syncPreferences = resolveSyncPreferencesForPersist({
+    // Prefer SYNC_PREFERENCES; fall back to legacy fields still embedded in
+    // SYNC_CONFIG. Do not eagerly persist the split key on startup: localStorage
+    // check-then-write is not atomic across renderer windows, so a peer that
+    // already migrated or toggled can still be overwritten (#2976). Migration
+    // writes happen in preference writers / saveSyncConfig instead.
+    const syncPreferences = resolveSyncPreferencesForPersist({
       memory: defaultPreferences,
       stored: coalesceStoredSyncPreferences(
-        this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as
-          | { autoSync?: boolean; interval?: number; syncStrategy?: unknown }
-          | null
-          | undefined,
+        this.loadFromStorage<{
+          autoSync?: boolean;
+          interval?: number;
+          syncStrategy?: unknown;
+        }>(SYNC_STORAGE_KEYS.SYNC_PREFERENCES),
         syncConfig,
       ),
       preferencesFromMemory: false,
