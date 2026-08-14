@@ -496,6 +496,7 @@ test("file replace leaves the remote destination so upload can restore mode bits
   const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
   Object.defineProperty(file, "path", { value: "/local/tool.sh" });
   const deletedPaths: string[] = [];
+  const deletedTypes: Array<string | undefined> = [];
   const uploadedPaths: string[] = [];
 
   const results = await uploadFromFileList(
@@ -510,8 +511,9 @@ test("file replace leaves the remote destination so upload can restore mode bits
           path === "/usr/local/bin/tool.sh"
             ? { type: "file", size: 9, lastModified: 1000 }
             : null,
-        deleteSftp: async (_sftpId, path) => {
+        deleteSftp: async (_sftpId, path, expectedType) => {
           deletedPaths.push(path);
+          deletedTypes.push(expectedType);
         },
         startStreamTransfer: async ({ targetPath: path }) => {
           uploadedPaths.push(path);
@@ -536,6 +538,7 @@ test("file replace unlinks an existing symlink before upload", async () => {
   const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
   Object.defineProperty(file, "path", { value: "/local/tool.sh" });
   const deletedPaths: string[] = [];
+  const deletedTypes: Array<string | undefined> = [];
   const uploadedPaths: string[] = [];
 
   const results = await uploadFromFileList(
@@ -552,8 +555,9 @@ test("file replace unlinks an existing symlink before upload", async () => {
           path === "/usr/local/bin/tool.sh"
             ? { type: "symlink", size: 12, lastModified: 1000 }
             : null,
-        deleteSftp: async (_sftpId, path) => {
+        deleteSftp: async (_sftpId, path, expectedType) => {
           deletedPaths.push(path);
+          deletedTypes.push(expectedType);
         },
         startStreamTransfer: async ({ targetPath: path }) => {
           uploadedPaths.push(path);
@@ -566,6 +570,7 @@ test("file replace unlinks an existing symlink before upload", async () => {
   );
 
   assert.deepEqual(deletedPaths, ["/usr/local/bin/tool.sh"]);
+  assert.deepEqual(deletedTypes, ["symlink"]);
   assert.deepEqual(uploadedPaths, ["/usr/local/bin/tool.sh"]);
   assert.equal(results.length, 1);
   assert.equal(results[0].success, true);
@@ -705,6 +710,7 @@ test("directory replace unlinks an existing symlink before mkdir", async () => {
   Object.defineProperty(file, "path", { value: "/local/docs/file.txt" });
   Object.defineProperty(file, "webkitRelativePath", { value: "docs/file.txt" });
   const deletedPaths: string[] = [];
+  const deletedTypes: Array<string | undefined> = [];
   const madeDirs: string[] = [];
   const uploadedPaths: string[] = [];
 
@@ -722,8 +728,9 @@ test("directory replace unlinks an existing symlink before mkdir", async () => {
           path === "/remote/docs"
             ? { type: "symlink", size: 8, lastModified: 1000 }
             : null,
-        deleteSftp: async (_sftpId, path) => {
+        deleteSftp: async (_sftpId, path, expectedType) => {
           deletedPaths.push(path);
+          deletedTypes.push(expectedType);
         },
         startStreamTransfer: async ({ targetPath: path }) => {
           uploadedPaths.push(path);
@@ -736,6 +743,7 @@ test("directory replace unlinks an existing symlink before mkdir", async () => {
   );
 
   assert.deepEqual(deletedPaths, ["/remote/docs"]);
+  assert.deepEqual(deletedTypes, ["symlink"]);
   assert.ok(madeDirs.includes("/remote/docs"), `expected mkdir after unlink, got ${JSON.stringify(madeDirs)}`);
   assert.deepEqual(uploadedPaths, ["/remote/docs/file.txt"]);
   assert.equal(results.some((r) => r.success), true);
@@ -746,6 +754,7 @@ test("local file replace unlinks an existing symlink before writeLocalFile", asy
   // Conflict checks use lstatLocal so Replace unlinks the link first.
   const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
   const deletedPaths: string[] = [];
+  const deletedTypes: Array<string | undefined> = [];
   const writtenPaths: string[] = [];
 
   const results = await uploadFromFileList(
@@ -760,8 +769,9 @@ test("local file replace unlinks an existing symlink before writeLocalFile", asy
           path === "/Users/me/bin/tool.sh"
             ? { type: "symlink", size: 12, lastModified: 1000 }
             : null,
-        deleteLocalFile: async (path) => {
+        deleteLocalFile: async (path, expectedType) => {
           deletedPaths.push(path);
+          deletedTypes.push(expectedType);
         },
         writeLocalFile: async (path) => {
           writtenPaths.push(path);
@@ -773,6 +783,7 @@ test("local file replace unlinks an existing symlink before writeLocalFile", asy
   );
 
   assert.deepEqual(deletedPaths, ["/Users/me/bin/tool.sh"]);
+  assert.deepEqual(deletedTypes, ["symlink"]);
   assert.deepEqual(writtenPaths, ["/Users/me/bin/tool.sh"]);
   assert.equal(results.length, 1);
   assert.equal(results[0].success, true);

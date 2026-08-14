@@ -211,3 +211,128 @@ test("lstatSftp refuses followed STAT when LSTAT is unsupported", async () => {
   );
   assert.equal(statCalls, 0, "must not classify via followed STAT");
 });
+
+test("lstatSftp refuses a channel without native LSTAT", async () => {
+  const channel = { stat() {} };
+  let lstatCalls = 0;
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    requireSftpChannel: async () => channel,
+    lstatAsync: async () => { lstatCalls += 1; },
+  });
+
+  await assert.rejects(
+    () => api.lstatSftp(null, { sftpId: "sftp-1", path: "/usr/local/bin/tool" }),
+    (error) => {
+      assert.equal(error.code, "ENOTSUP");
+      assert.equal(error.lstatUnavailable, true);
+      return true;
+    },
+  );
+  assert.equal(lstatCalls, 0, "must not call the followed-stat fallback");
+});
+
+test("expected symlink delete refuses a replacement file", async () => {
+  const channel = { lstat() {} };
+  let unlinkCalls = 0;
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    throwIfAborted() {},
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "utf-8",
+    encodePath: (remotePath) => remotePath,
+    lstatAsync: async () => ({
+      size: 4,
+      mode: 0o100644,
+      mtime: 20,
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    }),
+    statResultFromAttrs: (attrs) => ({
+      size: attrs.size,
+      modifyTime: attrs.mtime * 1000,
+      mode: attrs.mode,
+      isDirectory: attrs.isDirectory(),
+      isSymbolicLink: attrs.isSymbolicLink(),
+    }),
+    unlinkAsync: async () => { unlinkCalls += 1; },
+  });
+
+  await assert.rejects(
+    () => api.deleteSftp(null, {
+      sftpId: "sftp-1",
+      path: "/usr/local/bin/tool",
+      expectedType: "symlink",
+    }),
+    (error) => {
+      assert.equal(error.code, "ESTALE");
+      return true;
+    },
+  );
+  assert.equal(unlinkCalls, 0);
+});
+
+test("expected symlink delete refuses a channel without native LSTAT", async () => {
+  const channel = { stat() {} };
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    throwIfAborted() {},
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "utf-8",
+    encodePath: (remotePath) => remotePath,
+  });
+
+  await assert.rejects(
+    () => api.deleteSftp(null, {
+      sftpId: "sftp-1",
+      path: "/usr/local/bin/tool",
+      expectedType: "symlink",
+    }),
+    (error) => {
+      assert.equal(error.code, "ENOTSUP");
+      return true;
+    },
+  );
+});
+
+test("non-UTF-8 expected symlink delete refuses a replacement file", async () => {
+  const channel = { lstat() {} };
+  let removeCalls = 0;
+  const api = createFileOpsApi({
+    sftpClients: new Map([["sftp-1", { sftp: channel }]]),
+    throwIfAborted() {},
+    requireSftpChannel: async () => channel,
+    resolveEncodingForRequest: () => "gb18030",
+    normalizeRemotePathString: async (_client, remotePath) => remotePath,
+    encodePath: (remotePath) => Buffer.from(remotePath),
+    lstatAsync: async () => ({
+      size: 4,
+      mode: 0o100644,
+      mtime: 20,
+      isDirectory: () => false,
+      isSymbolicLink: () => false,
+    }),
+    statResultFromAttrs: (attrs) => ({
+      size: attrs.size,
+      modifyTime: attrs.mtime * 1000,
+      mode: attrs.mode,
+      isDirectory: attrs.isDirectory(),
+      isSymbolicLink: attrs.isSymbolicLink(),
+    }),
+    removeRemotePathInternal: async () => { removeCalls += 1; },
+  });
+
+  await assert.rejects(
+    () => api.deleteSftp(null, {
+      sftpId: "sftp-1",
+      path: "/remote/tool",
+      encoding: "gb18030",
+      expectedType: "symlink",
+    }),
+    (error) => {
+      assert.equal(error.code, "ESTALE");
+      return true;
+    },
+  );
+  assert.equal(removeCalls, 0);
+});

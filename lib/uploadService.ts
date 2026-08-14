@@ -467,11 +467,14 @@ async function uploadEntries(
     return null;
   };
 
-  const deleteTarget = async (path: string) => {
+  const deleteTarget = async (
+    path: string,
+    expectedType?: "file" | "directory" | "symlink",
+  ) => {
     if (isLocal) {
-      await bridge.deleteLocalFile?.(path);
+      await bridge.deleteLocalFile?.(path, expectedType);
     } else if (sftpId) {
-      await bridge.deleteSftp?.(sftpId, path);
+      await bridge.deleteSftp?.(sftpId, path, expectedType);
     }
   };
 
@@ -604,7 +607,7 @@ async function uploadEntries(
         // merge with stale children. Symlinks must be unlinked so upload does
         // not write through the link and overwrite an out-of-directory target.
         if (existing.type !== "file") {
-          await deleteTarget(rootTargetPath);
+          await deleteTarget(rootTargetPath, existing.type);
         }
         resolved.push(...groupEntries);
         continue;

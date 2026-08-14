@@ -877,17 +877,6 @@ async function reconcileRemoteUploadBackup(options) {
   });
 }
 
-function isRemotePermissionError(err) {
-  // Codes only — do not match message substrings (filenames may contain
-  // "permission"/"access"/"denied" and must not trigger in-place fallback).
-  const code = err?.code;
-  return code === 3
-    || code === "EACCES"
-    || code === "EPERM"
-    || code === "ERR_PERMISSION"
-    || code === "SSH_FX_PERMISSION_DENIED";
-}
-
 function isRemoteMissingError(err) {
   const code = err?.code;
   return code === 2
@@ -1445,7 +1434,6 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   const runCancelablePreflight = typeof options?.runCancelablePreflight === "function"
     ? options.runCancelablePreflight
     : (operation) => operation();
-  const allowInPlaceFallback = options?.allowInPlaceFallback !== false;
   const preserveStageOnUploadError = options?.preserveStageOnUploadError === true;
   const { isScpModeClient, getScpBackendForClient } = require("./sftpBridge/scpBackend.cjs");
   const scpMode = isScpModeClient(client);
@@ -1535,7 +1523,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     // otherwise swallow the failure and leave umask defaults).
     if (Number.isFinite(plan.existingMode)) {
       await restoreRemoteMode(client, encodedPath, plan.existingMode, {
-        bestEffort: true,
+        bestEffort: false,
         remotePath,
         encoding,
       });
@@ -1578,15 +1566,6 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   try {
     await uploadTo(stagedLogical, encodedStagedPath, true);
   } catch (err) {
-    // Only stage creation/write permission errors may fall back to in-place.
-    if (allowInPlaceFallback && isRemotePermissionError(err)) {
-      await cleanupStage();
-      console.warn(
-        "[SFTP] Staged upload unavailable (permission); falling back to in-place overwrite:",
-        err?.message || String(err),
-      );
-      return uploadDirect();
-    }
     if (!preserveStageOnUploadError) {
       await cleanupStage();
     }

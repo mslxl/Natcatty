@@ -16,6 +16,10 @@ export const canReplaceSftpConflict = (
   return (existingType === "directory") === isDirectory;
 };
 
+export const shouldUnlinkSftpConflictBeforeReplace = (
+  existingType?: SftpConflictExistingType,
+): boolean => existingType === "symlink";
+
 export const describeSftpIncomingKind = (isDirectory: boolean): string =>
   isDirectory ? "directory" : "file";
 

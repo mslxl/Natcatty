@@ -71,7 +71,7 @@ export interface UploadBridge {
   statLocal?: (path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
   /** No-follow local metadata so Replace can unlink symlinks before writeLocalFile. */
   lstatLocal?: (path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
-  deleteLocalFile?: (path: string) => Promise<void>;
+  deleteLocalFile?: (path: string, expectedType?: 'file' | 'directory' | 'symlink') => Promise<void>;
   stageUploadFile?: (file: File, taskId: string) => Promise<string>;
   cancelStagedUploadFile?: (taskId: string) => Promise<unknown>;
   deleteTempFile?: (path: string) => Promise<unknown>;
@@ -80,7 +80,7 @@ export interface UploadBridge {
   statSftp?: (sftpId: string, path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
   /** No-follow remote metadata so Replace can unlink symlinks before in-place upload. */
   lstatSftp?: (sftpId: string, path: string) => Promise<{ type: 'file' | 'directory' | 'symlink'; size: number; lastModified: number } | null>;
-  deleteSftp?: (sftpId: string, path: string) => Promise<void>;
+  deleteSftp?: (sftpId: string, path: string, expectedType?: 'file' | 'directory' | 'symlink') => Promise<void>;
   /** Stream transfer using local file path (avoids loading file into memory) */
   startStreamTransfer?: (
     options: {

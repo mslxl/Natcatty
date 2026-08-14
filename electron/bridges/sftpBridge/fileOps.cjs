@@ -733,6 +733,20 @@ function createFileOpsApi(ctx) {
       if (isScpModeClient(client)) {
         throwIfAborted(payload?.abortSignal || null);
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+        if (payload.expectedType) {
+          const stat = await getScpBackendForClient(client).stat(payload.path, {
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+          const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
+          if (actualType !== payload.expectedType) {
+            const error = new Error(
+              `Remote target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+            );
+            error.code = "ESTALE";
+            throw error;
+          }
+        }
         await getScpBackendForClient(client).remove(payload.path, {
           recursive: true,
           encoding,
@@ -747,7 +761,20 @@ function createFileOpsApi(ctx) {
         throwIfAborted(signal);
         const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
         const encodedPath = encodePath(payload.path, encoding);
+        if (payload.expectedType && typeof sftp?.lstat !== "function") {
+          const error = new Error("Remote server cannot safely verify the target type before replace");
+          error.code = "ENOTSUP";
+          throw error;
+        }
         const stat = statResultFromAttrs(await lstatAsync(sftp, encodedPath));
+        const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
+        if (payload.expectedType && actualType !== payload.expectedType) {
+          const error = new Error(
+            `Remote target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+          );
+          error.code = "ESTALE";
+          throw error;
+        }
         throwIfAborted(signal);
         if (stat.isSymbolicLink) {
           await unlinkAsync(sftp, encodedPath);
@@ -781,6 +808,22 @@ function createFileOpsApi(ctx) {
       // Non-UTF-8: keep protocol walk (shell path encoding is unsafe).
       const sftp = await requireSftpChannel(client, { signal, timeoutMs: payload?.timeoutMs });
       const normalizedPath = await normalizeRemotePathString(client, payload.path);
+      if (payload.expectedType) {
+        if (typeof sftp?.lstat !== "function") {
+          const error = new Error("Remote server cannot safely verify the target type before replace");
+          error.code = "ENOTSUP";
+          throw error;
+        }
+        const stat = statResultFromAttrs(await lstatAsync(sftp, encodePath(payload.path, encoding)));
+        const actualType = stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file";
+        if (actualType !== payload.expectedType) {
+          const error = new Error(
+            `Remote target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+          );
+          error.code = "ESTALE";
+          throw error;
+        }
+      }
       throwIfAborted(signal);
       await removeRemotePathInternal(sftp, normalizedPath, encoding, signal);
       return true;
@@ -876,6 +919,14 @@ function createFileOpsApi(ctx) {
       }
 
       const sftp = await requireSftpChannel(client);
+      if (typeof sftp?.lstat !== "function") {
+        const unavailable = new Error(
+          "Remote server does not support LSTAT; cannot classify path without following symlinks",
+        );
+        unavailable.code = "ENOTSUP";
+        unavailable.lstatUnavailable = true;
+        throw unavailable;
+      }
       const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
       const encodedPath = encodePath(payload.path, encoding);
       let attrs;

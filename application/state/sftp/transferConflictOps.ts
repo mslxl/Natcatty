@@ -90,18 +90,19 @@ export function useSftpTransferConflictOps() {
       targetPane: SftpPane,
       targetSftpId: string | null,
       targetEncoding: SftpFilenameEncoding,
+      expectedType?: "file" | "directory" | "symlink",
     ) => {
       if (!targetPane.connection) return;
       if (targetPane.connection.isLocal) {
         const deleteLocalFile = netcattyBridge.get()?.deleteLocalFile;
         if (!deleteLocalFile) throw new Error("Local delete unavailable");
-        await deleteLocalFile(task.targetPath);
+        await deleteLocalFile(task.targetPath, expectedType);
         return;
       }
       if (!targetSftpId) throw new Error("Target SFTP session not found");
       const deleteSftp = netcattyBridge.get()?.deleteSftp;
       if (!deleteSftp) throw new Error("SFTP delete unavailable");
-      await deleteSftp(targetSftpId, task.targetPath, targetEncoding);
+      await deleteSftp(targetSftpId, task.targetPath, targetEncoding, expectedType);
     },
     [],
   );

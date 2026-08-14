@@ -14,11 +14,28 @@ const {
   listWindowsHiddenBasenames,
   statLocal,
   lstatLocal,
+  deleteLocalFile,
 } = require("./localFsBridge.cjs");
 
 test("local tree traversal defaults match the remote traversal safety budget", () => {
   assert.equal(MAX_LOCAL_TREE_DIRECTORIES, 50_000);
   assert.equal(MAX_LOCAL_TREE_ENTRIES, 200_000);
+});
+
+test("expected symlink delete refuses a replacement file", async (t) => {
+  const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-delete-type-"));
+  const target = path.join(root, "target");
+  t.after(async () => fs.promises.rm(root, { recursive: true, force: true }));
+  await fs.promises.writeFile(target, "new owner");
+
+  await assert.rejects(
+    () => deleteLocalFile(null, { path: target, expectedType: "symlink" }),
+    (error) => {
+      assert.equal(error.code, "ESTALE");
+      return true;
+    },
+  );
+  assert.equal(await fs.promises.readFile(target, "utf8"), "new owner");
 });
 
 test("parseAttribOutput returns an empty set for empty input", () => {

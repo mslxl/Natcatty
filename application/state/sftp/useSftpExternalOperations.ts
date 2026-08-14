@@ -868,10 +868,10 @@ export const useSftpExternalOperations = (
             return b.lstatSftp(sftpId, path);
           }
         : undefined,
-      deleteSftp: async (sftpId: string, path: string) => {
+      deleteSftp: async (sftpId: string, path: string, expectedType) => {
         const b = netcattyBridge.get();
         if (b?.deleteSftp) {
-          await b.deleteSftp(sftpId, path);
+          await b.deleteSftp(sftpId, path, undefined, expectedType);
         }
       },
       // Stream transfer for large files (avoids loading into memory).

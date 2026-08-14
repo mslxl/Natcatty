@@ -259,8 +259,16 @@ async function writeLocalFile(event, payload) {
  * Delete a local file or directory
  */
 async function deleteLocalFile(event, payload) {
-  const stat = await fs.promises.stat(payload.path);
-  if (stat.isDirectory()) {
+  const stat = await fs.promises.lstat(payload.path);
+  const actualType = stat.isDirectory() ? "directory" : stat.isSymbolicLink() ? "symlink" : "file";
+  if (payload.expectedType && actualType !== payload.expectedType) {
+    const error = new Error(
+      `Local target changed before replace: expected ${payload.expectedType}, found ${actualType}`,
+    );
+    error.code = "ESTALE";
+    throw error;
+  }
+  if (actualType === "directory") {
     await fs.promises.rm(payload.path, { recursive: true, force: true });
   } else {
     await fs.promises.unlink(payload.path);
