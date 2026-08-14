@@ -27,6 +27,15 @@ function createSftpReadTimeoutError(timeoutMs) {
   return error;
 }
 
+/** ssh2 / SCP absence — classify here so IPC cannot strip `code`. */
+function isMissingRemotePathError(error) {
+  const code = error?.code;
+  return code === 2
+    || code === "ENOENT"
+    || code === "NO_SUCH_FILE"
+    || code === "SSH_FX_NO_SUCH_FILE";
+}
+
 async function runBoundedSftpMemoryRead(payload, operation) {
   const requestedTimeout = Number(payload?.timeoutMs);
   const timeoutMs = Number.isFinite(requestedTimeout) && requestedTimeout > 0
@@ -923,15 +932,20 @@ function createFileOpsApi(ctx) {
       if (isScpModeClient(client)) {
         // SCP shell stat already reports the link node (no follow).
         const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
-        const st = await getScpBackendForClient(client).stat(payload.path, {
-          encoding,
-          signal: payload?.abortSignal || null,
-        });
-        return formatSftpStatResult(
-          payload.path,
-          st,
-          st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
-        );
+        try {
+          const st = await getScpBackendForClient(client).stat(payload.path, {
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+          return formatSftpStatResult(
+            payload.path,
+            st,
+            st.mode ? (st.mode & 0o777).toString(8) : st.permissions,
+          );
+        } catch (error) {
+          if (isMissingRemotePathError(error)) return null;
+          throw error;
+        }
       }
 
       const sftp = await requireSftpChannel(client);
@@ -949,6 +963,9 @@ function createFileOpsApi(ctx) {
       try {
         attrs = await lstatAsync(sftp, encodedPath);
       } catch (error) {
+        // Return null before throw so ipcRenderer.invoke cannot strip code 2
+        // and leave a localized "File not found" as a hard upload error.
+        if (isMissingRemotePathError(error)) return null;
         const code = error?.code;
         const lstatUnsupported = code === 8
           || code === "ENOTSUP"
