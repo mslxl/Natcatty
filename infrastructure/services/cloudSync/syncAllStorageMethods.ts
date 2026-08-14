@@ -18,6 +18,7 @@ import { resolveCloudSyncConflictAction, type CloudSyncConflictAction } from '..
 import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
 import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
 import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
+import { resolveSyncConfigForPersist } from './syncConfigPersist';
 import type { CloudAdapter } from '../adapters';
 import type {
   CloudProvider,
@@ -673,7 +674,8 @@ export function setAutoSyncImpl(this: any,enabled: boolean, intervalMinutes?: nu
         Math.min(SYNC_CONSTANTS.MAX_SYNC_INTERVAL, intervalMinutes)
       );
     }
-    this.saveSyncConfig();
+    // Preference write: take autoSync/interval from this window's memory.
+    this.saveSyncConfig({ preferencesFromMemory: true });
     this.notifyStateChange(); // Notify UI of state change
 
     if (enabled && this.state.securityState === 'UNLOCKED') {
@@ -704,16 +706,62 @@ export function stopAutoSyncImpl(this: any): void {
     }
   }
 
-export function saveSyncConfigImpl(this: any): void {
-    this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, {
-      autoSync: this.state.autoSyncEnabled,
-      interval: this.state.autoSyncInterval,
-      localVersion: this.state.localVersion,
-      localUpdatedAt: this.state.localUpdatedAt,
-      remoteVersion: this.state.remoteVersion,
-      remoteUpdatedAt: this.state.remoteUpdatedAt,
-      syncStrategy: this.state.syncStrategy,
+export function saveSyncConfigImpl(
+    this: any,
+    opts?: { preferencesFromMemory?: boolean },
+  ): void {
+    const preferencesFromMemory = opts?.preferencesFromMemory === true;
+    const stored = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as
+      | {
+          autoSync?: boolean;
+          interval?: number;
+          localVersion?: number;
+          localUpdatedAt?: number;
+          remoteVersion?: number;
+          remoteUpdatedAt?: number;
+          syncStrategy?: unknown;
+        }
+      | null
+      | undefined;
+
+    const next = resolveSyncConfigForPersist({
+      memory: {
+        autoSync: this.state.autoSyncEnabled,
+        interval: this.state.autoSyncInterval,
+        localVersion: this.state.localVersion,
+        localUpdatedAt: this.state.localUpdatedAt,
+        remoteVersion: this.state.remoteVersion,
+        remoteUpdatedAt: this.state.remoteUpdatedAt,
+        syncStrategy: this.state.syncStrategy,
+      },
+      stored,
+      preferencesFromMemory,
     });
+
+    // Adopt storage preferences into memory on version-only saves so this
+    // window stops auto-pushing even if the storage event is delayed (#2976).
+    let shouldNotifyPreferenceAdopt = false;
+    if (!preferencesFromMemory) {
+      const autoSyncChanged = this.state.autoSyncEnabled !== next.autoSync;
+      const intervalChanged = this.state.autoSyncInterval !== next.interval;
+      const strategyChanged = this.state.syncStrategy !== next.syncStrategy;
+      this.state.autoSyncEnabled = next.autoSync;
+      this.state.autoSyncInterval = next.interval;
+      this.state.syncStrategy = next.syncStrategy;
+      if (autoSyncChanged) {
+        if (next.autoSync && this.state.securityState === 'UNLOCKED') {
+          this.startAutoSync?.();
+        } else {
+          this.stopAutoSync?.();
+        }
+      }
+      shouldNotifyPreferenceAdopt = autoSyncChanged || intervalChanged || strategyChanged;
+    }
+
+    this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, next);
+    if (shouldNotifyPreferenceAdopt) {
+      this.notifyStateChange?.();
+    }
   }
 
 export function syncBaseKeyImpl(this: any,provider?: CloudProvider): string {

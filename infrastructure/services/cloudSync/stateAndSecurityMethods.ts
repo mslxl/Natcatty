@@ -502,6 +502,14 @@ export function handleStorageEventImpl(this: any, event: StorageEvent): void {
       this.state.remoteUpdatedAt = Number(next.remoteUpdatedAt ?? 0);
       this.state.syncStrategy = normalizeCloudSyncStrategy(next.syncStrategy);
 
+      // Mirror setAutoSyncImpl: keep the interval timer aligned with the
+      // preference written by another window (#2976).
+      if (this.state.autoSyncEnabled && this.state.securityState === 'UNLOCKED') {
+        this.startAutoSync?.();
+      } else {
+        this.stopAutoSync?.();
+      }
+
       this.notifyStateChange();
       return;
     }

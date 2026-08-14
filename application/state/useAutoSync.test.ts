@@ -192,6 +192,38 @@ test("auto-sync skips only the exact remote-applied data hash", () => {
   );
 });
 
+test("auto syncNow and debounce re-check manager autoSyncEnabled before pushing", () => {
+  const source = readFileSync(new URL("./useAutoSync.ts", import.meta.url), "utf8");
+  const helperIndex = source.indexOf("function isPersistedAutoSyncEnabled");
+  const syncNowIndex = source.indexOf("const syncNow = useCallback");
+  const autoGateIndex = source.indexOf(
+    "if (trigger === 'auto' && !isPersistedAutoSyncEnabled(manager.getState().autoSyncEnabled))",
+    syncNowIndex,
+  );
+  const debounceIndex = source.indexOf("// Debounced auto-sync when data changes");
+  const fireTimeGateIndex = source.indexOf(
+    "if (!isPersistedAutoSyncEnabled(manager.getState().autoSyncEnabled))",
+    debounceIndex,
+  );
+  const clearTimerIndex = source.indexOf(
+    "if (syncTimeoutRef.current) {\n        clearTimeout(syncTimeoutRef.current);\n        syncTimeoutRef.current = null;\n      }\n      return;",
+    debounceIndex,
+  );
+
+  assert.notEqual(helperIndex, -1);
+  assert.notEqual(syncNowIndex, -1);
+  assert.notEqual(autoGateIndex, -1);
+  assert.notEqual(fireTimeGateIndex, -1);
+  assert.notEqual(clearTimerIndex, -1);
+  assert.ok(
+    helperIndex < syncNowIndex
+      && syncNowIndex < autoGateIndex
+      && debounceIndex < fireTimeGateIndex
+      && debounceIndex < clearTimerIndex,
+    "auto-sync off must gate both syncNow(auto) and the debounced timer path",
+  );
+});
+
 test("startup local-wins and merge round-trips refuse device-bound credential placeholders", () => {
   const source = readFileSync(new URL("./useAutoSync.ts", import.meta.url), "utf8");
   const uploadLocalIndex = source.indexOf("if (conflictAction === 'upload-local')");

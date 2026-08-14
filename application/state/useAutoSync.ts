@@ -17,7 +17,7 @@ import {
   healPoisonedSecretsForMerge,
   stripSyncPayloadEncryptedCredentials,
 } from '../../domain/credentials';
-import { isProviderReadyForSync, type CloudProvider, type SyncPayload } from '../../domain/sync';
+import { isProviderReadyForSync, SYNC_STORAGE_KEYS, type CloudProvider, type SyncPayload } from '../../domain/sync';
 import { mergeSyncPayloads } from '../../domain/syncMerge';
 import { materializeSyncPayloadFromConvergentState } from '../../domain/convergentSync';
 import {
@@ -50,6 +50,13 @@ import {
 } from './autoSyncRemoteSchedule';
 import { resolveAutoSyncHashDecision } from './autoSyncHashDecision';
 import { getNotesSnapshot, subscribeNotes } from './notesStore';
+
+/** Prefer persisted SYNC_CONFIG so cross-window disables win over stale snapshots. */
+function isPersistedAutoSyncEnabled(fallback: boolean): boolean {
+  const stored = localStorageAdapter.read<{ autoSync?: boolean }>(SYNC_STORAGE_KEYS.SYNC_CONFIG);
+  if (!stored || typeof stored !== 'object') return fallback;
+  return Boolean(stored.autoSync);
+}
 
 interface AutoSyncConfig {
   enabled?: boolean;
@@ -311,6 +318,13 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       return false;
     }
     const trigger: SyncTrigger = options?.trigger ?? 'auto';
+
+    // Defense for #2976: auto pushes must honor the persisted preference even
+    // when this window's React/manager snapshot is briefly stale after another
+    // window disables auto-sync.
+    if (trigger === 'auto' && !isPersistedAutoSyncEnabled(manager.getState().autoSyncEnabled)) {
+      return false;
+    }
 
     isSyncRunningRef.current = true;
     try {
@@ -973,6 +987,12 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     }
     // Skip if not ready
     if (!sync.hasAnyConnectedProvider || !sync.autoSyncEnabled || !sync.isUnlocked) {
+      // Drop any pending debounce when auto-sync (or readiness) turns off so a
+      // timer scheduled while enabled cannot fire after the toggle (#2976).
+      if (syncTimeoutRef.current) {
+        clearTimeout(syncTimeoutRef.current);
+        syncTimeoutRef.current = null;
+      }
       return;
     }
 
@@ -1027,6 +1047,12 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           return;
         }
         if (hashDecision === 'unchanged') {
+          return;
+        }
+
+        // Re-check at fire time: auto-sync may have been disabled in another
+        // window during the debounce window (#2976).
+        if (!isPersistedAutoSyncEnabled(manager.getState().autoSyncEnabled)) {
           return;
         }
 
