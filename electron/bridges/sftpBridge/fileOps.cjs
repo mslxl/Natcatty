@@ -747,11 +747,22 @@ function createFileOpsApi(ctx) {
             throw error;
           }
         }
-        await getScpBackendForClient(client).remove(payload.path, {
-          recursive: true,
-          encoding,
-          signal: payload?.abortSignal || null,
-        });
+        const backend = getScpBackendForClient(client);
+        if (payload.expectedType === "symlink") {
+          // Keep the final operation non-recursive. If another client replaces
+          // the link with a directory after the check above, rm -f must fail
+          // instead of recursively deleting the new directory.
+          await backend.unlink(payload.path, {
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+        } else {
+          await backend.remove(payload.path, {
+            recursive: true,
+            encoding,
+            signal: payload?.abortSignal || null,
+          });
+        }
         return true;
       }
     

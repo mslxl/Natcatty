@@ -218,6 +218,13 @@ function createScpBackend(deps = {}) {
     return true;
   }
 
+  async function unlink(remotePath, options = {}) {
+    const signal = options.signal || null;
+    const encoding = options.encoding || "utf-8";
+    await runOrThrow(buildDeleteCommand(remotePath, { recursive: false, encoding }), { signal });
+    return true;
+  }
+
   async function rename(oldPath, newPath, options = {}) {
     const signal = options.signal || null;
     const encoding = options.encoding || "utf-8";
@@ -979,6 +986,7 @@ function createScpBackend(deps = {}) {
     stat,
     mkdir,
     remove,
+    unlink,
     rename,
     chmod,
     homeDir,

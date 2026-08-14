@@ -272,6 +272,42 @@ test("expected symlink delete refuses a replacement file", async () => {
   assert.equal(unlinkCalls, 0);
 });
 
+test("SCP expected symlink delete stays non-recursive after the type check", async () => {
+  let unlinkCalls = 0;
+  let removeCalls = 0;
+  const backend = {
+    async stat() {
+      return { isDirectory: false, isSymbolicLink: true };
+    },
+    async unlink(remotePath, options) {
+      unlinkCalls += 1;
+      assert.equal(remotePath, "/usr/local/bin/tool");
+      assert.equal(options.encoding, "utf-8");
+    },
+    async remove() {
+      removeCalls += 1;
+    },
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+  const api = createFileOpsApi({
+    sftpClients: new Map([["scp-1", client]]),
+    throwIfAborted() {},
+    resolveEncodingForRequest: () => "utf-8",
+  });
+
+  await api.deleteSftp(null, {
+    sftpId: "scp-1",
+    path: "/usr/local/bin/tool",
+    expectedType: "symlink",
+  });
+
+  assert.equal(unlinkCalls, 1);
+  assert.equal(removeCalls, 0);
+});
+
 test("expected symlink delete refuses a channel without native LSTAT", async () => {
   const channel = { stat() {} };
   const api = createFileOpsApi({
