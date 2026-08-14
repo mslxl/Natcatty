@@ -69,6 +69,7 @@ test('chat history defers Streamdown until warmup is already done', () => {
   assert.match(list, /deferUntilWarm/);
   assert.match(list, /scheduleAiMarkdownWarmup/);
   assert.match(list, /isAiComposerTyping/);
+  assert.match(list, /AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
   assert.match(list, /AI_MARKDOWN_WARMUP_RESUME_DELAY_MS/);
 });
 

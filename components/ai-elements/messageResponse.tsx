@@ -37,9 +37,16 @@ function MessageResponseView({ className, children, ...props }: MessageResponseP
 
   useEffect(() => {
     if (!wantsCode || codePlugin) return undefined;
-    return scheduleWhenAiComposerIdle(() => {
-      void warmAiCodeHighlighter().then(setCodePlugin);
+    let cancelled = false;
+    const cancelIdle = scheduleWhenAiComposerIdle(() => {
+      void warmAiCodeHighlighter().then((plugin) => {
+        if (!cancelled) setCodePlugin(plugin);
+      });
     });
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
   }, [codePlugin, wantsCode]);
 
   const plugins = useMemo(
