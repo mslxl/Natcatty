@@ -61,6 +61,7 @@ test('AI panel no longer starts Streamdown just because it became visible', () =
   assert.match(panel, /warmAiMarkdownRenderer/);
   assert.doesNotMatch(panel, /timeout:\s*2500/);
   assert.doesNotMatch(panel, /import\('\.\/ai-elements\/messageResponse'\)/);
+  assert.doesNotMatch(panel, /@streamdown\/code/);
 });
 
 test('chat history defers Streamdown until warmup is already done', () => {
