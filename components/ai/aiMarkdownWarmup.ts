@@ -6,7 +6,8 @@ export const AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS = 4000;
 /** After the composer blurs, a short pause is enough to know typing stopped. */
 export const AI_MARKDOWN_WARMUP_RESUME_DELAY_MS = 600;
 /** Treat recent keystrokes as busy even if focus already moved. */
-export const AI_COMPOSER_IDLE_MS = 800;
+export const AI_COMPOSER_IDLE_MS = 2000;
+let composerComposing = false;
 const CHAT_MARKDOWN_HYDRATE_BATCH = 2;
 
 let markdownWarmupPromise: Promise<unknown> | null = null;
@@ -32,6 +33,11 @@ export function markAiComposerActivity(): void {
   lastComposerActivityAt = Date.now();
 }
 
+export function setAiComposerComposing(next: boolean): void {
+  composerComposing = next;
+  if (next) markAiComposerActivity();
+}
+
 export function isAiComposerRecentlyActive(now = Date.now()): boolean {
   return lastComposerActivityAt > 0 && now - lastComposerActivityAt < AI_COMPOSER_IDLE_MS;
 }
@@ -44,10 +50,18 @@ export function shouldDeferAiMarkdownWarmup(input: {
   return Boolean(input.composerFocused || input.isComposing || input.recentlyActive);
 }
 
+export function isAiComposerTyping(): boolean {
+  return shouldDeferAiMarkdownWarmup({
+    isComposing: composerComposing,
+    recentlyActive: isAiComposerRecentlyActive(),
+  });
+}
+
 export function isAiComposerBusy(): boolean {
   const active = typeof document === 'undefined' ? null : document.activeElement;
   return shouldDeferAiMarkdownWarmup({
     composerFocused: isAiComposerTarget(active),
+    isComposing: composerComposing,
     recentlyActive: isAiComposerRecentlyActive(),
   });
 }
@@ -94,7 +108,9 @@ function pumpChatMarkdownHydrate(): void {
     hydrateScheduled = false;
     if (hydrateQueue.length === 0) return;
     if (!markdownWarmupResolved) return;
-    if (isAiComposerRecentlyActive()) {
+    // Focused but idle is fine: Streamdown+CJK is light. Only pause while
+    // the user is actually typing so history does not stay raw forever.
+    if (isAiComposerTyping()) {
       hydrateScheduled = true;
       window.setTimeout(() => {
         hydrateScheduled = false;
@@ -143,7 +159,7 @@ export function scheduleWhenAiComposerIdle(
 ): () => void {
   return scheduleAiMarkdownWarmup({
     load: task,
-    isBusy: isAiComposerRecentlyActive,
+    isBusy: isAiComposerBusy,
     initialDelayMs: options?.initialDelayMs ?? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS,
     resumeDelayMs: options?.resumeDelayMs ?? AI_COMPOSER_IDLE_MS,
   });

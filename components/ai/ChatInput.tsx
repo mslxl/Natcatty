@@ -20,7 +20,7 @@ import {
   type UserSkillSlashOption,
 } from '../../infrastructure/ai/quickMessages';
 import { SlashCommandPicker } from './SlashCommandPicker';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { createPortal } from 'react-dom';
 import type { FormEvent } from 'react';
@@ -38,7 +38,7 @@ import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import type { AgentContextUsage } from '../../application/state/useAgentCompactionUi';
-import { markAiComposerActivity } from './aiMarkdownWarmup';
+import { markAiComposerActivity, setAiComposerComposing } from './aiMarkdownWarmup';
 import {
   CHAT_INPUT_DEFAULT_HEIGHT,
   CHAT_INPUT_MAX_HEIGHT,
@@ -87,6 +87,87 @@ export interface ProviderSwitcherConfig {
   /** Fires when the user picks a (providerId, modelId) pair. */
   onSelect: (providerId: string, modelId: string) => void;
 }
+
+type ComposerHasTextStore = {
+  subscribe: (listener: () => void) => () => void;
+  get: () => boolean;
+  set: (next: boolean) => void;
+};
+
+function createComposerHasTextStore(initial: boolean): ComposerHasTextStore {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    get: () => value,
+    set: (next) => {
+      if (value === next) return;
+      value = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
+
+const ComposerSendUi = React.memo(function ComposerSendUi({
+  hasTextStore,
+  hasTerminalSelectionAttachment,
+  composerDisabled,
+  disabled,
+  isStreaming,
+  canSteer,
+  isSteering,
+  status,
+  onStop,
+  steerSendingLabel,
+  steerLabel,
+}: {
+  hasTextStore: ComposerHasTextStore;
+  hasTerminalSelectionAttachment: boolean;
+  composerDisabled: boolean;
+  disabled: boolean;
+  isStreaming: boolean;
+  canSteer: boolean;
+  isSteering: boolean;
+  status: PromptInputStatus;
+  onStop?: () => void;
+  steerSendingLabel: string;
+  steerLabel: string;
+}) {
+  const hasComposerText = useSyncExternalStore(hasTextStore.subscribe, hasTextStore.get, hasTextStore.get);
+  const sendDisabled = (!hasComposerText && !hasTerminalSelectionAttachment) || disabled;
+  if (isStreaming && canSteer) {
+    return (
+      <>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="submit"
+              disabled={(!hasComposerText && !hasTerminalSelectionAttachment) || composerDisabled}
+              aria-label={isSteering ? steerSendingLabel : steerLabel}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-foreground/20 bg-foreground text-background shadow-sm transition-colors hover:bg-foreground/90 disabled:border-border/80 disabled:bg-muted/52 disabled:text-foreground/72"
+            >
+              {isSteering ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{isSteering ? steerSendingLabel : steerLabel}</TooltipContent>
+        </Tooltip>
+        <PromptInputSubmit status="streaming" onStop={onStop} />
+      </>
+    );
+  }
+  return (
+    <PromptInputSubmit
+      status={status}
+      onStop={onStop}
+      disabled={sendDisabled}
+    />
+  );
+});
 
 interface ChatInputProps {
   value: string;
@@ -185,7 +266,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
   const composerDisabled = disabled || isSteering;
   const composerTextRef = useRef(value);
-  const [hasComposerText, setHasComposerText] = useState(() => value.trim().length > 0);
+  const hasTextStoreRef = useRef<ComposerHasTextStore | null>(null);
+  if (hasTextStoreRef.current == null) {
+    hasTextStoreRef.current = createComposerHasTextStore(value.trim().length > 0);
+  }
+  const hasTextStore = hasTextStoreRef.current;
   const pushedParentTextRef = useRef(value);
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
@@ -350,9 +435,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, []);
 
   const syncHasComposerText = useCallback((text: string) => {
-    const next = text.trim().length > 0;
-    setHasComposerText((prev) => (prev === next ? prev : next));
-  }, []);
+    hasTextStore.set(text.trim().length > 0);
+  }, [hasTextStore]);
 
   const readComposerText = useCallback(() => (
     textareaRef.current?.value ?? composerTextRef.current
@@ -987,9 +1071,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
             autoComplete="off"
             onChange={(e) => handleInputChange(e.target.value, e.nativeEvent.isComposing)}
             onFocus={() => markAiComposerActivity()}
-            onCompositionStart={() => markAiComposerActivity()}
+            onCompositionStart={() => setAiComposerComposing(true)}
             onCompositionUpdate={() => markAiComposerActivity()}
-            onCompositionEnd={(e) => handleInputChange(e.currentTarget.value)}
+            onCompositionEnd={(e) => {
+              setAiComposerComposing(false);
+              handleInputChange(e.currentTarget.value);
+            }}
             onBlur={() => commitComposerText(readComposerText())}
             onKeyDown={handleTextareaKeyDown}
             placeholder={placeholder || (isStreaming && canSteer ? t('ai.codex.steer.placeholder') : defaultPlaceholder)}
@@ -1498,30 +1585,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
           <div className="flex-1 min-w-0" />
 
           <div className="flex items-center gap-1">
-            {isStreaming && canSteer ? (
-              <>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="submit"
-                      disabled={(!hasComposerText && !hasTerminalSelectionAttachment) || composerDisabled}
-                      aria-label={isSteering ? t('ai.codex.steer.sending') : t('ai.codex.steer.addInstruction')}
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-foreground/20 bg-foreground text-background shadow-sm transition-colors hover:bg-foreground/90 disabled:border-border/80 disabled:bg-muted/52 disabled:text-foreground/72"
-                    >
-                      {isSteering ? <Loader2 size={14} className="animate-spin" /> : <ArrowUp size={14} />}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>{isSteering ? t('ai.codex.steer.sending') : t('ai.codex.steer.addInstruction')}</TooltipContent>
-                </Tooltip>
-                <PromptInputSubmit status="streaming" onStop={onStop} />
-              </>
-            ) : (
-              <PromptInputSubmit
-                status={status}
-                onStop={onStop}
-                disabled={(!hasComposerText && !hasTerminalSelectionAttachment) || disabled}
-              />
-            )}
+            <ComposerSendUi
+              hasTextStore={hasTextStore}
+              hasTerminalSelectionAttachment={hasTerminalSelectionAttachment}
+              composerDisabled={composerDisabled}
+              disabled={disabled}
+              isStreaming={isStreaming}
+              canSteer={canSteer}
+              isSteering={isSteering}
+              status={status}
+              onStop={onStop}
+              steerSendingLabel={t('ai.codex.steer.sending')}
+              steerLabel={t('ai.codex.steer.addInstruction')}
+            />
           </div>
         </PromptInputFooter>
       </PromptInput>
@@ -1530,4 +1606,56 @@ const ChatInput: React.FC<ChatInputProps> = ({
   );
 };
 
-export default React.memo(ChatInput);
+function contextUsageEqual(
+  prev: AgentContextUsage | null | undefined,
+  next: AgentContextUsage | null | undefined,
+): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  return (
+    prev.sessionId === next.sessionId
+    && prev.inputTokens === next.inputTokens
+    && prev.contextWindow === next.contextWindow
+    && prev.estimated === next.estimated
+  );
+}
+
+function chatInputPropsAreEqual(prev: ChatInputProps, next: ChatInputProps): boolean {
+  return (
+    prev.value === next.value
+    && prev.onChange === next.onChange
+    && prev.onSend === next.onSend
+    && prev.onCompact === next.onCompact
+    && prev.canCompact === next.canCompact
+    && contextUsageEqual(prev.contextUsage, next.contextUsage)
+    && prev.onSteer === next.onSteer
+    && prev.onStop === next.onStop
+    && prev.isStreaming === next.isStreaming
+    && prev.canSteer === next.canSteer
+    && prev.isSteering === next.isSteering
+    && prev.lockTurnConfiguration === next.lockTurnConfiguration
+    && prev.disabled === next.disabled
+    && prev.providerName === next.providerName
+    && prev.modelName === next.modelName
+    && prev.agentName === next.agentName
+    && prev.placeholder === next.placeholder
+    && prev.modelPresets === next.modelPresets
+    && prev.selectedModelId === next.selectedModelId
+    && prev.onModelSelect === next.onModelSelect
+    && prev.files === next.files
+    && prev.onAddFiles === next.onAddFiles
+    && prev.onRemoveFile === next.onRemoveFile
+    && prev.hosts === next.hosts
+    && prev.selectedUserSkills === next.selectedUserSkills
+    && prev.userSkills === next.userSkills
+    && prev.quickMessages === next.quickMessages
+    && prev.onAddUserSkill === next.onAddUserSkill
+    && prev.onRemoveUserSkill === next.onRemoveUserSkill
+    && prev.permissionMode === next.permissionMode
+    && prev.onPermissionModeChange === next.onPermissionModeChange
+    && prev.providerSwitcher === next.providerSwitcher
+    && prev.parked === next.parked
+  );
+}
+
+export default React.memo(ChatInput, chatInputPropsAreEqual);

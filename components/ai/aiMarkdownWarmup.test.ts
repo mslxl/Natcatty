@@ -23,7 +23,7 @@ test('defers markdown warmup while the composer is focused, composing, or recent
 test('recent composer activity counts as busy', () => {
   markAiComposerActivity();
   assert.equal(isAiComposerBusy(), true);
-  assert.ok(AI_COMPOSER_IDLE_MS >= 600);
+  assert.ok(AI_COMPOSER_IDLE_MS >= 2000);
 });
 
 test('recognizes the chat composer as a busy warmup target', () => {
@@ -35,9 +35,9 @@ test('recognizes the chat composer as a busy warmup target', () => {
 test('composer-idle IPC waits the same expand grace as history markdown', () => {
   const warmup = readFileSync(new URL('./aiMarkdownWarmup.ts', import.meta.url), 'utf8');
   assert.match(warmup, /initialDelayMs:\s*options\?\.initialDelayMs \?\? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
-  assert.match(warmup, /isBusy: isAiComposerRecentlyActive/);
+  assert.match(warmup, /isBusy: isAiComposerBusy/);
   assert.match(warmup, /markAiComposerActivity\(\);\n\s*arm\(\);/);
-  assert.match(warmup, /if \(isAiComposerRecentlyActive\(\)\) \{\s*hydrateScheduled = true;/s);
+  assert.match(warmup, /if \(isAiComposerTyping\(\)\) \{\s*hydrateScheduled = true;/s);
 });
 
 test('history markdown waits after expand, then resumes quickly after blur', () => {
@@ -61,14 +61,22 @@ test('AI panel no longer starts Streamdown just because it became visible', () =
   assert.match(panel, /warmAiMarkdownRenderer/);
   assert.doesNotMatch(panel, /timeout:\s*2500/);
   assert.doesNotMatch(panel, /import\('\.\/ai-elements\/messageResponse'\)/);
+  assert.doesNotMatch(panel, /@streamdown\/code/);
 });
 
 test('chat history defers Streamdown until warmup is already done', () => {
   const list = readFileSync(new URL('./ChatMessageList.tsx', import.meta.url), 'utf8');
   assert.match(list, /deferUntilWarm/);
   assert.match(list, /scheduleAiMarkdownWarmup/);
+  assert.match(list, /isAiComposerTyping/);
   assert.match(list, /AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
   assert.match(list, /AI_MARKDOWN_WARMUP_RESUME_DELAY_MS/);
+});
+
+test('composer focus alone does not count as typing', () => {
+  assert.equal(shouldDeferAiMarkdownWarmup({ composerFocused: true }), true);
+  assert.equal(shouldDeferAiMarkdownWarmup({ composerFocused: true, isComposing: false, recentlyActive: false }), true);
+  assert.equal(shouldDeferAiMarkdownWarmup({ isComposing: false, recentlyActive: false }), false);
 });
 
 test('LazyMessageResponse keeps plaintext while chat asks to defer', () => {
