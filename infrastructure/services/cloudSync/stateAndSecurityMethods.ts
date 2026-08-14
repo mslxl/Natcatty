@@ -26,6 +26,11 @@ import {
   DEFAULT_CLOUD_SYNC_STRATEGY,
   normalizeCloudSyncStrategy,
 } from '../../../domain/syncStrategy';
+import {
+  coalesceStoredSyncPreferences,
+  hasSyncPreferenceFields,
+  resolveSyncPreferencesForPersist,
+} from './syncConfigPersist';
 import { EncryptionService } from '../EncryptionService';
 import { createAdapter } from '../adapters';
 import { localStorageAdapter } from '../../persistence/localStorageAdapter';
@@ -75,14 +80,36 @@ export function loadInitialStateImpl(this: any): SyncManagerState {
       || getDefaultDeviceName();
 
     const syncConfig = this.loadFromStorage<{
-      autoSync: boolean;
-      interval: number;
-      localVersion: number;
-      localUpdatedAt: number;
-      remoteVersion: number;
-      remoteUpdatedAt: number;
+      autoSync?: boolean;
+      interval?: number;
+      localVersion?: number;
+      localUpdatedAt?: number;
+      remoteVersion?: number;
+      remoteUpdatedAt?: number;
       syncStrategy?: unknown;
     }>(SYNC_STORAGE_KEYS.SYNC_CONFIG);
+    const defaultPreferences = {
+      autoSync: false,
+      interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
+      syncStrategy: DEFAULT_CLOUD_SYNC_STRATEGY,
+    };
+    // Prefer SYNC_PREFERENCES; fall back to legacy fields still embedded in
+    // SYNC_CONFIG. Do not eagerly persist the split key on startup: localStorage
+    // check-then-write is not atomic across renderer windows, so a peer that
+    // already migrated or toggled can still be overwritten (#2976). Migration
+    // writes happen in preference writers / saveSyncConfig instead.
+    const syncPreferences = resolveSyncPreferencesForPersist({
+      memory: defaultPreferences,
+      stored: coalesceStoredSyncPreferences(
+        this.loadFromStorage<{
+          autoSync?: boolean;
+          interval?: number;
+          syncStrategy?: unknown;
+        }>(SYNC_STORAGE_KEYS.SYNC_PREFERENCES),
+        syncConfig,
+      ),
+      preferencesFromMemory: false,
+    });
 
     // Load sync history
     const syncHistory = this.loadFromStorage<SyncHistoryEntry[]>(SYNC_HISTORY_STORAGE_KEY) || [];
@@ -128,9 +155,12 @@ export function loadInitialStateImpl(this: any): SyncManagerState {
       remoteUpdatedAt: syncConfig?.remoteUpdatedAt || 0,
       currentConflict: null,
       lastError: null,
-      autoSyncEnabled: syncConfig?.autoSync || false,
-      autoSyncInterval: syncConfig?.interval || SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
-      syncStrategy: normalizeCloudSyncStrategy(syncConfig?.syncStrategy ?? DEFAULT_CLOUD_SYNC_STRATEGY),
+      autoSyncEnabled: syncPreferences.autoSync,
+      autoSyncInterval: Math.max(
+        SYNC_CONSTANTS.MIN_SYNC_INTERVAL,
+        Math.min(SYNC_CONSTANTS.MAX_SYNC_INTERVAL, syncPreferences.interval),
+      ),
+      syncStrategy: syncPreferences.syncStrategy,
       syncHistory,
       pendingLocalSync: false,
       convergentConflicts: [],
@@ -428,6 +458,33 @@ export function safeJsonParseImpl<T>(this: any,value: string | null): T | null {
     }
   }
 
+function applySyncPreferencesFromStorage(
+  this: any,
+  next: {
+    autoSync?: boolean;
+    interval?: number;
+    syncStrategy?: unknown;
+  },
+): void {
+  this.state.autoSyncEnabled = Boolean(next.autoSync);
+  this.state.autoSyncInterval = Math.max(
+    SYNC_CONSTANTS.MIN_SYNC_INTERVAL,
+    Math.min(
+      SYNC_CONSTANTS.MAX_SYNC_INTERVAL,
+      Number(next.interval ?? SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL),
+    ),
+  );
+  this.state.syncStrategy = normalizeCloudSyncStrategy(next.syncStrategy);
+
+  // Mirror setAutoSyncImpl: keep the interval timer aligned with the
+  // preference written by another window (#2976).
+  if (this.state.autoSyncEnabled && this.state.securityState === 'UNLOCKED') {
+    this.startAutoSync?.();
+  } else {
+    this.stopAutoSync?.();
+  }
+}
+
 export function handleStorageEventImpl(this: any, event: StorageEvent): void {
     if (event.storageArea !== window.localStorage) return;
     const key = event.key;
@@ -468,7 +525,7 @@ export function handleStorageEventImpl(this: any, event: StorageEvent): void {
       return;
     }
 
-    // Sync versions + auto-sync settings
+    // Sync version stamps (preferences live in SYNC_PREFERENCES).
     if (key === SYNC_STORAGE_KEYS.SYNC_CONFIG) {
       const next = this.safeJsonParse<{
         autoSync?: boolean;
@@ -479,29 +536,40 @@ export function handleStorageEventImpl(this: any, event: StorageEvent): void {
         remoteUpdatedAt?: number;
         syncStrategy?: unknown;
       }>(event.newValue) || {
-        autoSync: false,
-        interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
         localVersion: 0,
         localUpdatedAt: 0,
         remoteVersion: 0,
         remoteUpdatedAt: 0,
-        syncStrategy: DEFAULT_CLOUD_SYNC_STRATEGY,
       };
 
-      this.state.autoSyncEnabled = Boolean(next.autoSync);
-      this.state.autoSyncInterval = Math.max(
-        SYNC_CONSTANTS.MIN_SYNC_INTERVAL,
-        Math.min(
-          SYNC_CONSTANTS.MAX_SYNC_INTERVAL,
-          Number(next.interval ?? SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL)
-        )
-      );
       this.state.localVersion = Number(next.localVersion ?? 0);
       this.state.localUpdatedAt = Number(next.localUpdatedAt ?? 0);
       this.state.remoteVersion = Number(next.remoteVersion ?? 0);
       this.state.remoteUpdatedAt = Number(next.remoteUpdatedAt ?? 0);
-      this.state.syncStrategy = normalizeCloudSyncStrategy(next.syncStrategy);
 
+      // Legacy combined blobs from older builds may still carry preferences.
+      if (hasSyncPreferenceFields(next)) {
+        const separatePreferences = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES);
+        if (!separatePreferences || typeof separatePreferences !== 'object') {
+          applySyncPreferencesFromStorage.call(this, next);
+        }
+      }
+
+      this.notifyStateChange();
+      return;
+    }
+
+    if (key === SYNC_STORAGE_KEYS.SYNC_PREFERENCES) {
+      const next = this.safeJsonParse<{
+        autoSync?: boolean;
+        interval?: number;
+        syncStrategy?: unknown;
+      }>(event.newValue) || {
+        autoSync: false,
+        interval: SYNC_CONSTANTS.DEFAULT_AUTO_SYNC_INTERVAL,
+        syncStrategy: DEFAULT_CLOUD_SYNC_STRATEGY,
+      };
+      applySyncPreferencesFromStorage.call(this, next);
       this.notifyStateChange();
       return;
     }
