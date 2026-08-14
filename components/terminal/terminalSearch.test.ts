@@ -326,6 +326,40 @@ test("stripStaleSearchDecorationNodes removes both result and active overlays", 
   assert.equal(activeNode.removed, true);
 });
 
+test("settling search after layout skips terminals that never searched", () => {
+  const leftover = leftoverDecoration("xterm-find-result-decoration");
+  const calls: string[] = [];
+  const term = {
+    rows: 12,
+    registerDecoration() {
+      return undefined;
+    },
+    refresh() {
+      calls.push("refresh");
+    },
+    clearSelection() {
+      calls.push("clearSelection");
+    },
+    element: {
+      querySelectorAll() {
+        return [leftover];
+      },
+    },
+  };
+  installSearchDecorationTracker(term);
+  settleTerminalSearchAfterLayout(
+    {
+      clearDecorations() {
+        calls.push("clearDecorations");
+      },
+    },
+    term,
+    () => calls.push("atlas"),
+  );
+  assert.deepEqual(calls, []);
+  assert.equal(leftover.removed, false);
+});
+
 test("settling search after layout re-clears decorations, selection, leftover nodes, and repaints", () => {
   const leftover = leftoverDecoration("xterm-find-result-decoration");
   const calls: string[] = [];
@@ -479,6 +513,8 @@ test("search decoration tracker disposes leaked incremental matches", () => {
   assert.deepEqual(registeredBackgrounds, [undefined, undefined, "#1e293b"]);
   assert.equal(match?.overlayBackground, "#FFFF0044");
   assert.equal(tracker.size(), 2);
+  tracker.markSearched();
+  assert.equal(tracker.hasSearched(), true);
   assert.equal(tracker.disposeAll(), 2);
   assert.equal(live.filter((item) => item.disposed).length, 2);
   assert.equal(live.some((item) => item.registeredBackground === "#1e293b" && !item.disposed), true);

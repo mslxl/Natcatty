@@ -67,6 +67,9 @@ export const SEARCH_DECORATION_TRACKER_KEY = "__netcattySearchDecorationTracker"
 export type SearchDecorationTracker = {
   disposeAll: () => number;
   size: () => number;
+  markSearched: () => void;
+  hasSearched: () => boolean;
+  consumeSearched: () => boolean;
 };
 
 type TrackableTerminal = Pick<XTerm, "registerDecoration"> & {
@@ -118,6 +121,7 @@ export const installSearchDecorationTracker = (
   if (existing) return existing;
 
   const tracked = new Set<{ dispose: () => void }>();
+  let searched = false;
   const originalRegister = term.registerDecoration.bind(term);
   term.registerDecoration = (options) => {
     // Keep search fill on the HTML overlay only. Passing backgroundColor into
@@ -149,6 +153,15 @@ export const installSearchDecorationTracker = (
       return leftover.length;
     },
     size: () => tracked.size,
+    markSearched: () => {
+      searched = true;
+    },
+    hasSearched: () => searched,
+    consumeSearched: () => {
+      const value = searched;
+      searched = false;
+      return value;
+    },
   };
   term[SEARCH_DECORATION_TRACKER_KEY] = tracker;
   return tracker;
@@ -274,6 +287,12 @@ export const settleTerminalSearchAfterLayout = (
   term?: TerminalSearchResetTarget,
   onRepaint?: () => void,
 ): void => {
+  // Search-open state is shared across terminals. A sibling that never
+  // searched still sees the bar close and would otherwise lose a manual
+  // selection via clearSelection().
+  const tracker = getSearchDecorationTracker(term);
+  if (tracker && !tracker.hasSearched()) return;
+  tracker?.consumeSearched();
   clearTerminalSearchHighlights(searchAddon, term);
   term?.clearSelection();
   term?.clearTextureAtlas?.();
@@ -489,6 +508,8 @@ export const useTerminalSearch = ({
       // Incremental typing (ro -> root) can leave the previous term's
       // decorations in xterm even after clearDecorations(). Drop our tracked
       // leftovers before painting the new matches.
+      if (termRef.current) installSearchDecorationTracker(termRef.current);
+      getSearchDecorationTracker(termRef.current)?.markSearched();
       disposeStaleSearchDecorations(termRef.current);
       searchAddon.clearDecorations();
 
