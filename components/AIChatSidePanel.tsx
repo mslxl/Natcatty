@@ -404,6 +404,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const files = currentDraft?.attachments ?? [];
   const panelViewRef = useRef(normalizedPanelView);
   panelViewRef.current = normalizedPanelView;
+  const permissionModeRef = useRef(globalPermissionMode);
+  permissionModeRef.current = globalPermissionMode;
   const currentDraftRef = useRef(currentDraft);
   if (pendingComposerTextRef.current != null) {
     const pending = pendingComposerTextRef.current;
@@ -1149,15 +1151,30 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       if (sendBridge?.aiSyncWebSearch) {
         await sendBridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
       }
+      let sendSelectedAgentModel = selectedAgentModel;
       if (currentAgentConfig && shouldLoadSdkRuntimeModels(currentAgentConfig)) {
         const runtimeTarget = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
         if (runtimeTarget) {
           const catalog = await loadSdkRuntimeModelCatalog(runtimeTarget);
           if (catalog) {
             applySdkRuntimeModelCatalog(runtimeTarget.agentId, catalog, { adoptCurrentModel: true });
+            const runtimePresets = normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId);
+            const storedModelId = agentModelMapRef.current[sendAgentId];
+            if (
+              catalog.currentModelId
+              && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets)
+            ) {
+              sendSelectedAgentModel = catalog.currentModelId;
+            } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets)) {
+              sendSelectedAgentModel = storedModelId ?? sendSelectedAgentModel;
+            } else if (runtimePresets[0]) {
+              sendSelectedAgentModel = runtimePresets[0].id;
+            }
           }
         }
       }
+      setIsSending(false);
+      const sendPermissionMode = permissionModeRef.current;
       void warmAiMarkdownRenderer();
       let sessionId = currentSessionView?.id ?? null;
       let currentSession = currentSessionView ?? null;
@@ -1230,7 +1247,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       addMessageToSession(sessionId, {
         id: assistantMsgId, role: 'assistant', content: '', timestamp: Date.now(),
         model: isExternalAgent
-          ? (selectedAgentModel || agentConfig?.name || 'external')
+          ? (sendSelectedAgentModel || agentConfig?.name || 'external')
           : (sendActiveModelId || sendActiveProvider?.defaultModel || ''),
         providerId: isExternalAgent ? undefined : sendActiveProvider?.providerId,
       });
@@ -1254,10 +1271,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
             terminalSessions,
             defaultTargetSession,
             providers,
-            selectedAgentModel,
+            selectedAgentModel: sendSelectedAgentModel,
             toolIntegrationMode,
             selectedUserSkillSlugs: selectedSkillSlugs,
-            permissionMode: globalPermissionMode,
+            permissionMode: sendPermissionMode,
           });
         } catch (err) {
           reportStreamError(sessionId, abortController.signal, err);
@@ -1278,7 +1295,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           scopeType,
           scopeTargetId,
           scopeLabel,
-          globalPermissionMode,
+          globalPermissionMode: sendPermissionMode,
           commandBlocklist,
           commandTimeout,
           terminalSessions,
@@ -1303,7 +1320,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     setStreamingForScope,
     sendToExternalAgent, sendToCattyAgent, reportStreamError, autoTitleSession, t,
     abortControllersRef, terminalSessions, defaultTargetSession, providers, selectedAgentModel, updateSessionExternalSessionId,
-    scopeType, scopeTargetId, scopeHostIds, scopeLabel, globalPermissionMode, commandBlocklist, commandTimeout, webSearchConfig, buildExecutorContextForScope,
+    scopeType, scopeTargetId, scopeHostIds, scopeLabel, commandBlocklist, commandTimeout, webSearchConfig, buildExecutorContextForScope,
     toolIntegrationMode,
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
     flushDraftText, currentAgentConfig, buildExternalAgentRuntimeModelTarget,
@@ -1611,7 +1628,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         canSteer={canSteerCurrentTurn}
         isSteering={isSteering}
         steerWarning={steerWarning}
-        lockTurnConfiguration={Boolean(isStreaming && isCodexAppServer)}
+        lockTurnConfiguration={Boolean(isSending || (isStreaming && isCodexAppServer))}
         canSendCurrentAgent={canSendCurrentAgent}
         providerDisplayName={providerDisplayName}
         modelDisplayName={modelDisplayName}
