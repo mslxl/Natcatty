@@ -37,6 +37,7 @@ test('composer-idle IPC waits the same expand grace as history markdown', () => 
   assert.match(warmup, /initialDelayMs:\s*options\?\.initialDelayMs \?\? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
   assert.match(warmup, /isBusy: isAiComposerRecentlyActive/);
   assert.match(warmup, /markAiComposerActivity\(\);\n\s*arm\(\);/);
+  assert.match(warmup, /if \(isAiComposerRecentlyActive\(\)\) \{\s*hydrateScheduled = true;/s);
 });
 
 test('history markdown waits after expand, then resumes quickly after blur', () => {

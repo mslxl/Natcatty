@@ -405,18 +405,25 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   panelViewRef.current = normalizedPanelView;
   const currentDraftRef = useRef(currentDraft);
   if (pendingComposerTextRef.current != null) {
-    const base = currentDraft ?? currentDraftRef.current ?? {
-      text: '',
-      agentId: currentAgentId,
-      attachments: [],
-      selectedUserSkillSlugs: [],
-      updatedAt: Date.now(),
-    };
-    if (currentDraft && currentDraft.text === pendingComposerTextRef.current) {
+    const pending = pendingComposerTextRef.current;
+    if (currentDraft && currentDraft.text === pending) {
       pendingComposerTextRef.current = null;
       currentDraftRef.current = currentDraft;
+    } else if (currentDraftRef.current?.text === pending) {
+      if (currentDraft && currentDraftRef.current) {
+        currentDraftRef.current.attachments = currentDraft.attachments;
+        currentDraftRef.current.selectedUserSkillSlugs = currentDraft.selectedUserSkillSlugs;
+        currentDraftRef.current.agentId = currentDraft.agentId;
+      }
     } else {
-      currentDraftRef.current = { ...base, text: pendingComposerTextRef.current };
+      const base = currentDraft ?? currentDraftRef.current ?? {
+        text: '',
+        agentId: currentAgentId,
+        attachments: [],
+        selectedUserSkillSlugs: [],
+        updatedAt: Date.now(),
+      };
+      currentDraftRef.current = { ...base, text: pending };
     }
   } else {
     currentDraftRef.current = currentDraft;
@@ -1126,12 +1133,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const isDraftMode = currentPanelView.mode === 'draft';
 
     flushDraftText();
-    const sendBridge = getNetcattyBridge();
-    if (sendBridge?.aiSyncProviders && providers.length > 0) {
-      await sendBridge.aiSyncProviders(providers);
-    }
-    void warmAiMarkdownRenderer();
-
     const sendGateKey = currentSessionView?.id ?? `draft:${scopeKey}`;
     if (!tryBeginSendForKey(sendGateKey)) {
       return;
@@ -1139,6 +1140,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     let sessionSendGateKey: string | null = null;
 
     try {
+      const sendBridge = getNetcattyBridge();
+      if (sendBridge?.aiSyncProviders && providers.length > 0) {
+        await sendBridge.aiSyncProviders(providers);
+      }
+      void warmAiMarkdownRenderer();
       let sessionId = currentSessionView?.id ?? null;
       let currentSession = currentSessionView ?? null;
       if (isDraftMode) {

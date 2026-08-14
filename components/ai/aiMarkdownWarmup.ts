@@ -94,7 +94,7 @@ function pumpChatMarkdownHydrate(): void {
     hydrateScheduled = false;
     if (hydrateQueue.length === 0) return;
     if (!markdownWarmupResolved) return;
-    if (isAiComposerBusy()) {
+    if (isAiComposerRecentlyActive()) {
       hydrateScheduled = true;
       window.setTimeout(() => {
         hydrateScheduled = false;
