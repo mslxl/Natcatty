@@ -5,8 +5,11 @@ import { readFileSync } from "node:fs";
 import {
   decodeTerminalTextEscapes,
   getShiftEnterSubmittedInput,
+  isBareShiftEnterLineEnding,
   isShiftEnterLineContinuationText,
+  resolveShiftEnterPayload,
   resolveShiftEnterText,
+  SHIFT_ENTER_CSI_U_SEQUENCE,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 
@@ -79,6 +82,53 @@ test("shift enter handler respects the terminal setting toggle", () => {
   );
 });
 
+test("bare line-ending Shift+Enter text is detected for TUI passthrough", () => {
+  assert.equal(isBareShiftEnterLineEnding("\n"), true);
+  assert.equal(isBareShiftEnterLineEnding("\r"), true);
+  assert.equal(isBareShiftEnterLineEnding("\r\n"), true);
+  assert.equal(isBareShiftEnterLineEnding(" \\\n"), false);
+  assert.equal(isBareShiftEnterLineEnding("sudo whoami\n"), false);
+  assert.equal(isBareShiftEnterLineEnding(""), false);
+});
+
+test("main-buffer Shift+Enter keeps configured send text", () => {
+  assert.deepEqual(resolveShiftEnterPayload(), {
+    kind: "text",
+    data: "\n",
+  });
+  assert.deepEqual(
+    resolveShiftEnterPayload(
+      { shiftEnterNewlineText: " \\\\\\n" },
+      { alternateScreen: false },
+    ),
+    { kind: "text", data: " \\\n" },
+  );
+});
+
+test("alternate-screen Shift+Enter sends CSI-u when configured text is a bare line ending", () => {
+  assert.deepEqual(
+    resolveShiftEnterPayload(undefined, { alternateScreen: true }),
+    { kind: "key", data: SHIFT_ENTER_CSI_U_SEQUENCE },
+  );
+  assert.deepEqual(
+    resolveShiftEnterPayload(
+      { shiftEnterNewlineText: "\\r\\n" },
+      { alternateScreen: true },
+    ),
+    { kind: "key", data: SHIFT_ENTER_CSI_U_SEQUENCE },
+  );
+});
+
+test("alternate-screen Shift+Enter keeps custom non-line-ending send text", () => {
+  assert.deepEqual(
+    resolveShiftEnterPayload(
+      { shiftEnterNewlineText: " \\\\\\n" },
+      { alternateScreen: true },
+    ),
+    { kind: "text", data: " \\\n" },
+  );
+});
+
 test("runtime routes Shift+Enter text through the shared input handler", () => {
   const source = readFileSync(
     new URL("./createXTermRuntime.ts", import.meta.url),
@@ -91,7 +141,11 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /if \(textToSend\) \{\s+handleTerminalInputData\(textToSend, \{ source: "shift-enter" \}\);/s,
+    /const shiftEnterPayload = resolveShiftEnterPayload\(\s*ctx\.terminalSettingsRef\.current,\s*\{\s*alternateScreen:\s*term\.buffer\.active\.type === "alternate"\s*\},\s*\);/s,
+  );
+  assert.match(
+    source,
+    /if \(shiftEnterPayload\.data\) \{\s+handleTerminalInputData\(shiftEnterPayload\.data, \{ source: "shift-enter" \}\);/s,
   );
   assert.match(
     source,

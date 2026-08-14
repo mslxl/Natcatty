@@ -92,7 +92,7 @@ import {
 import { handleSerialLineModeInput } from "./serialLineInput";
 import {
   getShiftEnterSubmittedInput,
-  resolveShiftEnterText,
+  resolveShiftEnterPayload,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 import {
@@ -1758,9 +1758,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       if (id) {
         e.preventDefault();
         e.stopPropagation();
-        const textToSend = resolveShiftEnterText(ctx.terminalSettingsRef.current);
-        if (textToSend) {
-          handleTerminalInputData(textToSend, { source: "shift-enter" });
+        const shiftEnterPayload = resolveShiftEnterPayload(
+          ctx.terminalSettingsRef.current,
+          { alternateScreen: term.buffer.active.type === "alternate" },
+        );
+        if (shiftEnterPayload.data) {
+          handleTerminalInputData(shiftEnterPayload.data, { source: "shift-enter" });
         }
         return false;
       }
