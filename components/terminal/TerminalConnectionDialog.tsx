@@ -90,6 +90,28 @@ const getProtocolInfo = (host: Host): { i18nKey: string; showPort: boolean; port
     }
 };
 
+const ConnectionProgressTrack = ({
+    widthPercent,
+    hasError,
+    shimmer,
+}: {
+    widthPercent: number;
+    hasError: boolean;
+    shimmer: boolean;
+}) => (
+    <div className="flex-1 h-1.5 rounded-full bg-border/60 overflow-hidden relative">
+        <div
+            className={cn(
+                "absolute inset-y-0 left-0 rounded-full transition-all duration-300 overflow-hidden",
+                hasError ? "bg-destructive" : "bg-primary"
+            )}
+            style={{ width: `${widthPercent}%` }}
+        >
+            {shimmer ? <span aria-hidden className="connection-progress-shimmer" /> : null}
+        </div>
+    </div>
+);
+
 export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> = ({
     host,
     status,
@@ -370,15 +392,11 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                         )}>
                             <Plug size={13} />
                         </div>
-                        <div className="flex-1 h-1.5 rounded-full bg-border/60 overflow-hidden relative">
-                            <div
-                                className={cn(
-                                    "absolute inset-y-0 left-0 rounded-full transition-all duration-300",
-                                    error ? "bg-destructive" : "bg-primary"
-                                )}
-                                style={{ width: needsAuth ? '0%' : `${firstSegmentWidth}%` }}
-                            />
-                        </div>
+                        <ConnectionProgressTrack
+                            widthPercent={needsAuth ? 0 : firstSegmentWidth}
+                            hasError={hasError}
+                            shimmer={isConnecting && !hasError && !needsAuth}
+                        />
                         <div className={cn(
                             "h-7 w-7 rounded-md flex items-center justify-center flex-shrink-0 transition-all duration-200",
                             isHostKeyChanged
@@ -393,15 +411,11 @@ export const TerminalConnectionDialog: React.FC<TerminalConnectionDialogProps> =
                         )}>
                             <Fingerprint size={13} />
                         </div>
-                        <div className="flex-1 h-1.5 rounded-full bg-border/60 overflow-hidden relative">
-                            <div
-                                className={cn(
-                                    "absolute inset-y-0 left-0 rounded-full transition-all duration-300",
-                                    error ? "bg-destructive" : "bg-primary"
-                                )}
-                                style={{ width: needsAuth || isVerifyingHostKey ? '0%' : `${secondSegmentWidth}%` }}
-                            />
-                        </div>
+                        <ConnectionProgressTrack
+                            widthPercent={needsAuth || isVerifyingHostKey ? 0 : secondSegmentWidth}
+                            hasError={hasError}
+                            shimmer={isConnecting && !hasError && !needsAuth && !isVerifyingHostKey}
+                        />
                         <div className={cn(
                             "h-7 w-7 rounded-md flex items-center justify-center flex-shrink-0",
                             hasError ? "bg-destructive/20 text-destructive" : "bg-muted text-muted-foreground"
