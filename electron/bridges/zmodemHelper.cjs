@@ -576,6 +576,11 @@ function createZmodemSentry(opts) {
           try { writeToRemote(Buffer.from("\x03")); } catch { /* ignore */ }
         }, 150);
 
+        // If the upload loop is parked on SSH backpressure, wake it now.
+        // The ZMODEM session is already aborted and must not resume on a late
+        // drain event from the still-connected transport.
+        try { transferAbortController?.abort(); } catch { /* ignore */ }
+        transferAbortController = null;
         active = false;
         currentZSession = null;
         // Enter cooldown: discard incoming data briefly while the remote
