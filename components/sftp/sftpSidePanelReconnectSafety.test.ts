@@ -21,11 +21,12 @@ test("SFTP side panel rebinds after same-tab SSH start-over", () => {
     sidePanelSource,
     /sourceSessionId:\s*activeSessionStatus === "connected"/,
   );
-  assert.match(sidePanelSource, /resolveSftpSidePanelHiddenSourceStatusUpdate\(/);
+  assert.match(sidePanelSource, /resolveSftpSidePanelTrackedSourceStatusUpdate\(/);
   assert.match(
     sidePanelSource,
     /trackedSessionId = lastSourceSessionIdRef\.current/,
   );
+  assert.match(sidePanelSource, /if \(activeSessionId\) return;/);
 });
 
 test("terminal layer keeps the linked SFTP session id while SSH reconnects", () => {

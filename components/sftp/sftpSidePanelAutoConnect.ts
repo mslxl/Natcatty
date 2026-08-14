@@ -171,11 +171,11 @@ export function shouldDeferSftpSidePanelAutoConnectForSession(params: {
 }
 
 /**
- * While the SFTP surface is hidden, remember a non-connected status for its
- * last linked SSH session so reconnecting in the background still rebinds when
- * the panel becomes visible again.
+ * While the last linked SSH session is not the active reusable source,
+ * remember its non-connected status so a background reconnect still rebinds
+ * when that session becomes active again.
  */
-export function resolveSftpSidePanelHiddenSourceStatusUpdate(params: {
+export function resolveSftpSidePanelTrackedSourceStatusUpdate(params: {
   trackedSessionId?: string | null;
   sessionStatus?: string | null;
 }): { sessionId: string; status: string } | null {
@@ -185,4 +185,16 @@ export function resolveSftpSidePanelHiddenSourceStatusUpdate(params: {
     sessionId: params.trackedSessionId,
     status: params.sessionStatus,
   };
+}
+
+/** Keep the tracked source status when focus temporarily has no reusable SSH. */
+export function rememberSftpSidePanelSourceStatus(params: {
+  previousStatus?: string | null;
+  activeSessionId?: string | null;
+  activeSessionStatus?: string | null;
+}): string | null {
+  if (params.activeSessionId && params.activeSessionStatus) {
+    return params.activeSessionStatus;
+  }
+  return params.previousStatus ?? null;
 }

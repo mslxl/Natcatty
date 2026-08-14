@@ -6,7 +6,8 @@ import {
   findReusableSftpSidePanelTab,
   isPendingSameEndpointSshSession,
   isRemoteSftpTabHealthy,
-  resolveSftpSidePanelHiddenSourceStatusUpdate,
+  rememberSftpSidePanelSourceStatus,
+  resolveSftpSidePanelTrackedSourceStatusUpdate,
   shouldAcceptPendingSftpUpload,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
@@ -260,34 +261,61 @@ test("shouldDeferSftpSidePanelAutoConnectForSession only waits during an active 
   );
 });
 
-test("resolveSftpSidePanelHiddenSourceStatusUpdate remembers background disconnects", () => {
+test("resolveSftpSidePanelTrackedSourceStatusUpdate remembers background disconnects", () => {
   assert.deepEqual(
-    resolveSftpSidePanelHiddenSourceStatusUpdate({
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
       trackedSessionId: "sess-a",
       sessionStatus: "disconnected",
     }),
     { sessionId: "sess-a", status: "disconnected" },
   );
   assert.deepEqual(
-    resolveSftpSidePanelHiddenSourceStatusUpdate({
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
       trackedSessionId: "sess-a",
       sessionStatus: "connecting",
     }),
     { sessionId: "sess-a", status: "connecting" },
   );
   assert.equal(
-    resolveSftpSidePanelHiddenSourceStatusUpdate({
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
       trackedSessionId: "sess-a",
       sessionStatus: "connected",
     }),
     null,
   );
   assert.equal(
-    resolveSftpSidePanelHiddenSourceStatusUpdate({
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
       trackedSessionId: null,
       sessionStatus: "disconnected",
     }),
     null,
+  );
+});
+
+test("rememberSftpSidePanelSourceStatus keeps the linked SSH status across non-SSH focus", () => {
+  assert.equal(
+    rememberSftpSidePanelSourceStatus({
+      previousStatus: "connecting",
+      activeSessionId: null,
+      activeSessionStatus: null,
+    }),
+    "connecting",
+  );
+  assert.equal(
+    rememberSftpSidePanelSourceStatus({
+      previousStatus: "disconnected",
+      activeSessionId: null,
+      activeSessionStatus: null,
+    }),
+    "disconnected",
+  );
+  assert.equal(
+    rememberSftpSidePanelSourceStatus({
+      previousStatus: "disconnected",
+      activeSessionId: "sess-a",
+      activeSessionStatus: "connected",
+    }),
+    "connected",
   );
 });
 

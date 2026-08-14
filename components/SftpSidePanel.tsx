@@ -87,7 +87,8 @@ import {
   connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
   isPendingSameEndpointSshSession,
-  resolveSftpSidePanelHiddenSourceStatusUpdate,
+  rememberSftpSidePanelSourceStatus,
+  resolveSftpSidePanelTrackedSourceStatusUpdate,
   shouldAcceptPendingSftpUpload,
   shouldDeferSftpSidePanelAutoConnectForSession,
   shouldRebindSftpSidePanelSourceSession,
@@ -626,9 +627,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       if (activeSessionId) {
         lastSourceSessionIdRef.current = activeSessionId;
       }
-      if (activeSessionStatus) {
-        lastSourceSessionStatusRef.current = activeSessionStatus;
-      }
+      lastSourceSessionStatusRef.current = rememberSftpSidePanelSourceStatus({
+        previousStatus: lastSourceSessionStatusRef.current,
+        activeSessionId,
+        activeSessionStatus,
+      });
       return;
     }
     // Defer advancing the session cursor while interactive work blocks rebind,
@@ -637,11 +640,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     if (activeSessionId) {
       lastSourceSessionIdRef.current = activeSessionId;
     }
-    if (activeSessionStatus) {
-      lastSourceSessionStatusRef.current = activeSessionStatus;
-    } else if (!activeSessionId) {
-      lastSourceSessionStatusRef.current = null;
-    }
+    lastSourceSessionStatusRef.current = rememberSftpSidePanelSourceStatus({
+      previousStatus: lastSourceSessionStatusRef.current,
+      activeSessionId,
+      activeSessionStatus,
+    });
 
     logger.info("[SftpSidePanel] Auto-connect triggered", {
       hostId: activeHost.id,
@@ -797,18 +800,18 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }, [activeHost, activeSessionId, interactiveWorkActive, isVisible, runAutoConnect]);
 
   useEffect(() => {
-    if (isVisible) return;
+    if (activeSessionId) return;
     const trackedSessionId = lastSourceSessionIdRef.current;
     const trackedSession = trackedSessionId
       ? sessions.find((candidate) => candidate.id === trackedSessionId) ?? null
       : null;
-    const update = resolveSftpSidePanelHiddenSourceStatusUpdate({
+    const update = resolveSftpSidePanelTrackedSourceStatusUpdate({
       trackedSessionId,
       sessionStatus: trackedSession?.status ?? null,
     });
     if (!update) return;
     lastSourceSessionStatusRef.current = update.status;
-  }, [isVisible, sessions]);
+  }, [activeSessionId, sessions]);
 
   useEffect(() => {
     const connection = sftp.leftPane.connection;
