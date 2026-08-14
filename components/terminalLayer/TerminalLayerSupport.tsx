@@ -56,6 +56,12 @@ const LazyAIChatSidePanel = lazy(() =>
   import('../AIChatSidePanel').then((module) => ({ default: module.AIChatSidePanel })),
 );
 
+if (typeof requestIdleCallback === 'function') {
+  requestIdleCallback(() => {
+    void import('../AIChatSidePanel');
+  });
+}
+
 const AIChatSidePanelFallback = memo(function AIChatSidePanelFallback() {
   return (
     <div className="netcatty-lazy-fade-in h-full min-h-0 bg-background" aria-hidden="true" />

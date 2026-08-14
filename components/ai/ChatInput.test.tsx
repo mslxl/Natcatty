@@ -62,6 +62,12 @@ test('expanded composer grows the text area while keeping controls at the bottom
   assert.doesNotMatch(source, /setExpanded/);
 });
 
+test('parked composer closes body-portaled menus', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /parked = false/);
+  assert.match(source, /if \(parked\) closeAllMenus\(\)/);
+});
+
 test('composer resizing also ends when pointer capture is unexpectedly lost', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
 
@@ -190,6 +196,11 @@ test('renders the Catty context usage ring after the model chip', () => {
   assert.match(html, /class="h-4 w-4"/);
   assert.doesNotMatch(html, /text-\[7px\]/);
   assert.match(html, /aria-valuenow="50"/);
+});
+
+test('slash picker system commands clear the local composer', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(command === 'stop'\) onStop\?\.\(\);\s*commitComposerText\(''\);/s);
 });
 
 test('ChatInput wires /compact through getSystemSlashCommand and canCompact', () => {
