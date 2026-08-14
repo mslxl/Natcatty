@@ -159,6 +159,34 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   parked = false,
   sending = false,
 }) => {
+  const mentionHosts = React.useMemo(
+    () => terminalSessions.map((session) => ({
+      sessionId: session.sessionId,
+      hostname: session.hostname,
+      label: session.label,
+      connected: session.connected,
+    })),
+    [terminalSessions],
+  );
+  const providerSwitcher = React.useMemo(
+    () => (
+      currentAgentId === 'catty' && cattyConfiguredProviders.length > 0
+        ? {
+            providers: cattyConfiguredProviders,
+            selectedProviderId: effectiveActiveProvider?.id,
+            selectedModelId: effectiveActiveModelId || undefined,
+            onSelect: handleAgentProviderModelSelect,
+          }
+        : undefined
+    ),
+    [
+      cattyConfiguredProviders,
+      currentAgentId,
+      effectiveActiveModelId,
+      effectiveActiveProvider?.id,
+      handleAgentProviderModelSelect,
+    ],
+  );
   const hiddenParts = getAIPanelDiagnosticHiddenParts();
   const hideHeader = isAIPanelDiagnosticPartHidden('header', hiddenParts);
   const hideHistory = isAIPanelDiagnosticPartHidden('history', hiddenParts);
@@ -321,20 +349,11 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   modelPresets={agentModelPresets}
                   selectedModelId={selectedAgentModel}
                   onModelSelect={handleAgentModelSelect}
-                  providerSwitcher={
-                    currentAgentId === 'catty' && cattyConfiguredProviders.length > 0
-                      ? {
-                          providers: cattyConfiguredProviders,
-                          selectedProviderId: effectiveActiveProvider?.id,
-                          selectedModelId: effectiveActiveModelId || undefined,
-                          onSelect: handleAgentProviderModelSelect,
-                        }
-                      : undefined
-                  }
+                  providerSwitcher={providerSwitcher}
                   files={files}
                   onAddFiles={addFiles}
                   onRemoveFile={removeFile}
-                  hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
+                  hosts={mentionHosts}
                   selectedUserSkills={selectedUserSkills}
                   userSkills={userSkillOptions}
                   quickMessages={quickMessages}

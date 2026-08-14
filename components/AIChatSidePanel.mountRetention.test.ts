@@ -151,6 +151,7 @@ test('first composer keystroke does not create a store draft synchronously', () 
   );
   assert.match(setter, /pendingComposerTextRef\.current = value/);
   assert.doesNotMatch(setter, /enterScopeDraftMode/);
+  assert.doesNotMatch(setter, /setTimeout/);
 });
 
 test('hidden empty AI side panel can release its subtree', () => {

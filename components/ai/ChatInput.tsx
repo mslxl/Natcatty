@@ -331,11 +331,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     const observer = new ResizeObserver(() => {
       const maxHeight = resolveVisibleChatInputMaxHeight(panel.clientHeight);
       if (maxHeight == null) return;
-      setComposerMaxHeight(maxHeight);
-      setComposerHeight(resolveVisibleChatInputHeight(
+      const nextHeight = resolveVisibleChatInputHeight(
         composerDesiredHeightRef.current,
         maxHeight,
-      ));
+      );
+      setComposerMaxHeight((current) => (current === maxHeight ? current : maxHeight));
+      setComposerHeight((current) => (current === nextHeight ? current : nextHeight));
     });
     observer.observe(panel);
     return () => observer.disconnect();
@@ -385,9 +386,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
     commitComposerText(readComposerText());
   }, [commitComposerText, parked, readComposerText]);
 
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   useEffect(() => () => {
-    onChange(textareaRef.current?.value ?? composerTextRef.current);
-  }, [onChange]);
+    onChangeRef.current(textareaRef.current?.value ?? composerTextRef.current);
+  }, []);
 
   const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
     const beforeCaret = text.slice(0, caretPosition);
@@ -759,6 +762,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
         onSteer?.();
         return;
       }
+      // Do not empty the box here. handleSend awaits provider sync and may
+      // abort; the parent clears value only after the user message is accepted.
       onSend();
     },
     [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onSend, onSteer, onStop, readComposerText],
@@ -990,6 +995,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
             placeholder={placeholder || (isStreaming && canSteer ? t('ai.codex.steer.placeholder') : defaultPlaceholder)}
             disabled={composerDisabled}
             className={[
+              'field-sizing-fixed',
               selectedUserSkills.length > 0 ? 'pt-1.5' : undefined,
               composerHeight != null ? 'min-h-0 max-h-none flex-1' : undefined,
             ].filter(Boolean).join(' ')}
