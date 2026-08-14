@@ -18,7 +18,7 @@ test("SSH ZMODEM uploads wire stream backpressure to a real drain wait", () => {
   );
   assert.match(
     startSessionSource,
-    /waitForTransportDrain\(drainOpts\)\s*{\s*return waitForWritableDrain\(stream, drainOpts\);\s*}/,
-    "SSH ZMODEM must wait on the active shell stream after write() returns false",
+    /waitForTransportDrain\(drainOpts = {}\)[\s\S]*?waitForWritableDrain\(stream, { \.\.\.drainOpts, timeoutMs: 0 }\)/,
+    "SSH ZMODEM must wait on the active shell stream without rejecting healthy slow links",
   );
 });

@@ -607,8 +607,8 @@ function createZmodemSentry(opts) {
         currentZSession = null;
         cooldownUntil = Date.now() + COOLDOWN_MS;
         scheduleRemoteInterruptAfterCancel(transferRole);
-        // Unblock any upload loop parked on transport drain (serial can wait
-        // tens of minutes at low baud) so open fds / drag-drop temps release.
+        // Unblock an SSH upload parked on transport drain so open file
+        // descriptors and drag-drop temporary files release promptly.
         try { transferAbortController?.abort(); } catch { /* ignore */ }
         transferAbortController = null;
         safeSend(getWebContents(), "netcatty:zmodem:error", {
@@ -721,11 +721,11 @@ function createZmodemCancelledError() {
  * have fired between write(false) and this call). Rejects on close/end/error
  * so a dead transport stops the upload loop instead of looking like a successful
  * drain (wrappers that catch write failures and return true would otherwise keep
- * scanning the file until a later handshake timeout). Races against a timeout so
- * a peer that stays connected but never drains (stuck SSH window / unread TCP
- * buffer) cannot block handleUpload forever. When `signal` aborts (user cancel),
- * rejects with NETCATTY_ZMODEM_CANCELLED so a slow serial drain timeout cannot
- * hold the open upload fd for tens of minutes after cancel.
+ * scanning the file until a later handshake timeout). When timeoutMs is greater
+ * than zero, races against that timeout so a peer that stays connected but never
+ * drains cannot block handleUpload forever. When `signal` aborts (user cancel),
+ * rejects with NETCATTY_ZMODEM_CANCELLED so an unbounded SSH drain wait cannot
+ * retain the open upload file after cancel.
  *
  * @param {NodeJS.WritableStream | null | undefined} stream
  * @param {{ timeoutMs?: number, signal?: AbortSignal }} [opts]

@@ -418,8 +418,11 @@ function createStartSessionApi(ctx) {
         writeToRemote(buf) {
           try { return stream.write(buf); } catch { return true; /* ignore */ }
         },
-        waitForTransportDrain(drainOpts) {
-          return waitForWritableDrain(stream, drainOpts);
+        waitForTransportDrain(drainOpts = {}) {
+          // ssh2 buffers up to its 2 MiB channel window before write() returns
+          // false. A fixed short timeout would reject healthy slow links; close,
+          // error, and the per-transfer cancel signal still end this wait.
+          return waitForWritableDrain(stream, { ...drainOpts, timeoutMs: 0 });
         },
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }
