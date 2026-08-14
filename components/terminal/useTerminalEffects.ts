@@ -56,6 +56,10 @@ import {
   serializeTerminalCloseFallback,
 } from './runtime/terminalCloseCapture';
 import {
+  CONNECTION_PROGRESS_START,
+  advanceIndeterminateConnectionProgress,
+} from './connectionProgress';
+import {
   getConnectionTimeoutMs,
   resolveActiveConnectionTimeoutHost,
   shouldRunConnectionTimeout,
@@ -1004,14 +1008,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       setProgressLogs((prev) => [...prev, "Connection timed out."]);
     }, connectionTimeout);
 
-    setProgressValue(5);
     const prog = setInterval(() => {
-      setProgressValue((prev) => {
-        if (prev >= 95) return prev;
-        const remaining = 95 - prev;
-        const increment = Math.max(1, remaining * 0.15);
-        return Math.min(95, prev + increment);
-      });
+      setProgressValue(advanceIndeterminateConnectionProgress);
     }, 200);
 
     return () => {
@@ -1026,6 +1024,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     if (status === "connecting") {
       setIsDisconnectedDialogDismissed(false);
+      setProgressValue(CONNECTION_PROGRESS_START);
     }
   }, [status]);
 

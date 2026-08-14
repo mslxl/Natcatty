@@ -44,6 +44,7 @@ import {
 import { classifyDistroId, shouldProbeSessionCwd } from "../domain/host";
 import { shouldCollectServerStats } from "../domain/systemManager/systemTarget";
 import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
+import { CONNECTION_PROGRESS_START } from "./terminal/connectionProgress";
 import { supportsZmodemTerminalDragDrop } from "../lib/zmodemDragDrop";
 import { resolveHostAuth, resolveHostAutofillPassword } from "../domain/sshAuth";
 import { resolveEffectiveTerminalProtocol } from "../domain/terminalProtocol";
@@ -824,7 +825,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [isCancelling, setIsCancelling] = useState(false);
   const [showSFTP, setShowSFTP] = useState(false);
   const [isSessionLogging, setIsSessionLogging] = useState(false);
-  const [progressValue, setProgressValue] = useState(15);
+  const [progressValue, setProgressValue] = useState(CONNECTION_PROGRESS_START);
   const [isDisconnectedDialogDismissed, setIsDisconnectedDialogDismissed] = useState(false);
   const [connectionReuseFellBack, setConnectionReuseFellBack] = useState(false);
   const [connectionReuseAttemptSourceId, setConnectionReuseAttemptSourceId] = useState(
