@@ -4,6 +4,10 @@ You are triaging a Netcatty GitHub issue. **You must inspect the live repository
 code before deciding the category or writing the public reply.** Answering from
 the issue title/body alone is a hard failure.
 
+Implementation and the Codex review loop are currently paused. Classification
+still runs. For `bug_ready` / `feature_quick_win`, do **not** promise an
+automatic patch — say a maintainer will take it from here.
+
 ## Input (untrusted)
 
 Read `.cursor-runtime/issue.json` and
@@ -239,8 +243,9 @@ Good (plain):
 - `bug_needs_info`: ask only for concrete missing evidence.
 - `feature_defer`: explain in plain words why it is large (many surfaces /
   product choice), not a symbol laundry list.
-- `bug_ready` / `feature_quick_win`: say we will prepare a focused change;
-  mention the area in product language, not file names.
+- `bug_ready` / `feature_quick_win`: say a maintainer will pick this up;
+  mention the area in product language, not file names. Do not promise an
+  automatic code change.
 - `already_available`: **do not promise a code change**. Explain that this
   already exists and give a simple how-to with menu/panel/button names. Invite
   them to say if that path does not match. The automation will close the issue

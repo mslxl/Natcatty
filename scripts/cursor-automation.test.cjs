@@ -133,6 +133,73 @@ test('scheduled Codex polls share one concurrency group', () => {
   );
 });
 
+test('workflow defaults to Cursor triage-only and gates coding routes', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
+    'utf8',
+  );
+
+  assert.match(
+    workflow,
+    /CURSOR_AUTOMATION_MODE: \$\{\{ vars\.CURSOR_AUTOMATION_MODE \|\| 'triage_only' \}\}/,
+  );
+  assert.match(workflow, /auto\.gateAutomationRoute\(kind,/);
+  assert.match(workflow, /# Temporarily disabled: Cursor is triage-only/);
+  assert.match(workflow, /# schedule:/);
+  assert.match(workflow, /#   - cron: '\*\/5 \* \* \* \*'/);
+});
+
+test('gateAutomationRoute skips implement and Codex loop kinds in triage-only', () => {
+  for (const kind of [
+    'codex_loop',
+    'own_rerequest_codex',
+    'external_rerequest_codex',
+    'codex_poll',
+    'issue_followup',
+  ]) {
+    const gated = auto.gateAutomationRoute(kind, {
+      mode: 'triage_only',
+      reason: `manual ${kind}`,
+    });
+    assert.equal(gated.kind, 'skip', kind);
+    assert.match(gated.reason, new RegExp(`triage-only: skipped ${kind}`));
+  }
+
+  const classify = auto.gateAutomationRoute('issue_classify', {
+    mode: 'triage_only',
+    reason: 'issues:opened',
+  });
+  assert.equal(classify.kind, 'issue_classify');
+  assert.equal(classify.reason, 'issues:opened');
+
+  const full = auto.gateAutomationRoute('codex_loop', { mode: 'full' });
+  assert.equal(full.kind, 'codex_loop');
+});
+
+test('applyTriageOnlyClassificationPolicy blocks implement and remaps agent labels', () => {
+  const previous = process.env.CURSOR_AUTOMATION_MODE;
+  process.env.CURSOR_AUTOMATION_MODE = 'triage_only';
+  try {
+    const { classification, labels } = auto.applyTriageOnlyClassificationPolicy(
+      { category: 'bug_ready', should_implement: true, reply: 'Will fix.' },
+      ['bug', 'triage', 'triage:bug-ready', 'ready-for-agent'],
+    );
+    assert.equal(classification.should_implement, false);
+    assert.ok(labels.includes('ready-for-human'));
+    assert.ok(!labels.includes('ready-for-agent'));
+  } finally {
+    if (previous == null) delete process.env.CURSOR_AUTOMATION_MODE;
+    else process.env.CURSOR_AUTOMATION_MODE = previous;
+  }
+
+  const unchanged = auto.applyTriageOnlyClassificationPolicy(
+    { category: 'bug_ready', should_implement: true },
+    ['ready-for-agent'],
+  );
+  assert.equal(unchanged.classification.should_implement, true);
+  assert.ok(unchanged.labels.includes('ready-for-agent'));
+});
+
 test('no-PR follow-ups use a writable Cursor agent mode', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'cursor-automation.yml'),
@@ -4572,6 +4639,76 @@ test('applyClassification updates state before posting the final reply', async (
   assert.ok(calls[0][1].labels.includes('triage:already-available'));
   assert.equal(calls[1][0], 'createComment');
   assert.match(calls[1][1].body, /AsidePanel/);
+});
+
+test('applyClassification in triage-only never starts implement', async () => {
+  const previous = process.env.CURSOR_AUTOMATION_MODE;
+  process.env.CURSOR_AUTOMATION_MODE = 'triage_only';
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-auto-triage-only-'));
+  const classificationPath = path.join(dir, 'classification.json');
+  fs.writeFileSync(
+    classificationPath,
+    JSON.stringify(
+      grounded({
+        category: 'bug_ready',
+        confidence: 0.92,
+        summary: 'clear local bug',
+        reasoning: 'KeychainManager.tsx drops the selected key on refresh.',
+        reply: '维护者会接着看这个密钥刷新的问题。',
+      }),
+    ),
+  );
+
+  const calls = [];
+  const github = {
+    rest: {
+      issues: {
+        async get() {
+          return {
+            data: {
+              number: 99,
+              state: 'open',
+              labels: [{ name: 'bug' }, { name: 'triage' }],
+            },
+          };
+        },
+        async createComment(args) {
+          calls.push(['createComment', args]);
+          return { data: { id: 1 } };
+        },
+        async update(args) {
+          calls.push(['update', args]);
+          return { data: {} };
+        },
+      },
+    },
+  };
+  const outputs = {};
+  const core = {
+    setOutput(key, value) {
+      outputs[key] = value;
+    },
+  };
+
+  try {
+    const classification = await auto.applyClassification({
+      github,
+      context: { repo: { owner: 'binaricat', repo: 'Netcatty' } },
+      core,
+      issueNumber: 99,
+      classificationPath,
+    });
+
+    assert.equal(classification.category, 'bug_ready');
+    assert.equal(classification.should_implement, false);
+    assert.equal(outputs.should_implement, 'false');
+    assert.ok(calls[0][1].labels.includes('ready-for-human'));
+    assert.ok(!calls[0][1].labels.includes('ready-for-agent'));
+  } finally {
+    if (previous == null) delete process.env.CURSOR_AUTOMATION_MODE;
+    else process.env.CURSOR_AUTOMATION_MODE = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('applyClassification restores the original issue when its reply fails', async () => {
