@@ -19,8 +19,8 @@ test("SSH ZMODEM uploads wire stream backpressure to a real drain wait", () => {
   );
   assert.match(
     startSessionSource,
-    /waitForTransportDrain\(drainOpts = {}\)[\s\S]*?waitForWritableDrain\(stream, {[\s\S]*?progressIntervalMs: 1000/,
-    "SSH ZMODEM must bound stalls while allowing healthy slow-link progress",
+    /waitForTransportDrain\(drainOpts = {}\)[\s\S]*?waitForWritableDrain\(stream, {[\s\S]*?progressIntervalMs: 1000[\s\S]*?stream\._chunk\?\.length/,
+    "SSH ZMODEM must count partial ssh2 channel-window delivery as progress",
   );
   assert.match(
     zmodemSource,

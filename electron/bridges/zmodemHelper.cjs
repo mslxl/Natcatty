@@ -733,7 +733,12 @@ function createZmodemCancelledError() {
  * blocked drain wait cannot retain the open upload file after cancel.
  *
  * @param {NodeJS.WritableStream | null | undefined} stream
- * @param {{ timeoutMs?: number, progressIntervalMs?: number, signal?: AbortSignal }} [opts]
+ * @param {{
+ *   timeoutMs?: number,
+ *   progressIntervalMs?: number,
+ *   getProgressValue?: () => unknown,
+ *   signal?: AbortSignal,
+ * }} [opts]
  * @returns {Promise<void>}
  */
 function waitForWritableDrain(stream, opts = {}) {
@@ -753,10 +758,11 @@ function waitForWritableDrain(stream, opts = {}) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer = null;
+    const readProgressValue = typeof opts.getProgressValue === "function"
+      ? opts.getProgressValue
+      : () => Number.isFinite(stream.writableLength) ? Number(stream.writableLength) : null;
     let lastProgressAt = Date.now();
-    let lastWritableLength = Number.isFinite(stream.writableLength)
-      ? Number(stream.writableLength)
-      : null;
+    let lastProgressValue = readProgressValue();
     const onDrain = () => finish();
     const onAbort = () => finish(createZmodemCancelledError());
     const onTransportGone = (cause) => {
@@ -799,13 +805,11 @@ function waitForWritableDrain(stream, opts = {}) {
         : timeoutMs;
       const idleMs = Date.now() - lastProgressAt;
       timer = setTimeout(() => {
-        const currentLength = Number.isFinite(stream.writableLength)
-          ? Number(stream.writableLength)
-          : null;
-        if (lastWritableLength !== null && currentLength !== null && currentLength < lastWritableLength) {
+        const currentProgressValue = readProgressValue();
+        if (!Object.is(currentProgressValue, lastProgressValue)) {
           lastProgressAt = Date.now();
         }
-        lastWritableLength = currentLength;
+        lastProgressValue = currentProgressValue;
         if (Date.now() - lastProgressAt < timeoutMs) {
           scheduleTimeoutCheck();
           return;

@@ -939,6 +939,7 @@ test("waitForWritableDrain keeps waiting while a slow SSH channel makes progress
   const stream = {
     writableNeedDrain: true,
     writableLength: 2 * 1024 * 1024,
+    pendingChunkLength: 8 * 1024,
     once(event, cb) {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(cb);
@@ -953,12 +954,15 @@ test("waitForWritableDrain keeps waiting while a slow SSH channel makes progress
   const pending = waitForWritableDrain(stream, {
     timeoutMs: 20,
     progressIntervalMs: 5,
+    getProgressValue: () => stream.writableLength + stream.pendingChunkLength,
   }).then(() => {
     settled = true;
   });
   for (let i = 0; i < 5; i++) {
     await new Promise((resolve) => setTimeout(resolve, 10));
-    stream.writableLength -= 64 * 1024;
+    // ssh2 can advance part of its current frame without completing the
+    // corresponding Node write, so writableLength remains unchanged.
+    stream.pendingChunkLength -= 1024;
   }
   assert.equal(settled, false);
 

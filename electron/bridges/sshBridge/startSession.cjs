@@ -425,6 +425,12 @@ function createStartSessionApi(ctx) {
           return waitForWritableDrain(stream, {
             ...drainOpts,
             progressIntervalMs: 1000,
+            // ssh2 keeps writableLength unchanged until one queued write fully
+            // completes, but shrinks _chunk on each channel-window adjustment.
+            // Include both so partial frame delivery counts as progress.
+            getProgressValue: () => (
+              (Number(stream.writableLength) || 0) + (stream._chunk?.length || 0)
+            ),
           });
         },
         interruptRemote() {
