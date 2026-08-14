@@ -48,7 +48,7 @@ const {
 } = require("./sshAuthHelper.cjs");
 const sessionLogStreamManager = require("./sessionLogStreamManager.cjs");
 const { trackSessionIdlePrompt, looksLikeIdleAutoLogout } = require("./ai/shellUtils.cjs");
-const { createZmodemSentry } = require("./zmodemHelper.cjs");
+const { createZmodemSentry, waitForWritableDrain } = require("./zmodemHelper.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 const {
   buildAlgorithms,
@@ -968,7 +968,7 @@ const startSessionApi = createStartSessionApi({
   quoteShellArg,
   fs, path, os, net, crypto, Buffer, process, console, setTimeout, clearTimeout,
   createProxySocket, attachX11Forwarding, createPtyOutputBuffer, sessionLogStreamManager,
-  trackSessionIdlePrompt, looksLikeIdleAutoLogout, createZmodemSentry, enableSshNoDelay, enableTcpNoDelay,
+  trackSessionIdlePrompt, looksLikeIdleAutoLogout, createZmodemSentry, waitForWritableDrain, enableSshNoDelay, enableTcpNoDelay,
   iconv, getSessionDecoder, resetSessionDecoders, sessionEncodings, sessionDecoders, encodeTerminalInput,
   normalizeTerminalEncoding,
   connectThroughChain, getAvailableAgentSocket, getAvailableForwardingAgentSocket, getCachedAuthMethod, setCachedAuthMethod, clearCachedAuthMethod,

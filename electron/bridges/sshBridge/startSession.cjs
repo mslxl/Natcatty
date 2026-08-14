@@ -418,6 +418,21 @@ function createStartSessionApi(ctx) {
         writeToRemote(buf) {
           try { return stream.write(buf); } catch { return true; /* ignore */ }
         },
+        waitForTransportDrain(drainOpts = {}) {
+          // ssh2 buffers up to its 2 MiB channel window before write() returns
+          // false. Watch writableLength progress so healthy slow links can take
+          // longer than one timeout window while a fully stalled peer is bounded.
+          return waitForWritableDrain(stream, {
+            ...drainOpts,
+            progressIntervalMs: 1000,
+            // ssh2 keeps writableLength unchanged until one queued write fully
+            // completes, but shrinks _chunk on each channel-window adjustment.
+            // Include both so partial frame delivery counts as progress.
+            getProgressValue: () => (
+              (Number(stream.writableLength) || 0) + (stream._chunk?.length || 0)
+            ),
+          });
+        },
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }
         },
