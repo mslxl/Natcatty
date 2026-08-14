@@ -89,6 +89,8 @@ interface AIChatPanelContentProps {
   onOpenVaultNote?: (noteId: string) => void;
   onOpenVaultHost?: (hostId: string) => void;
   onOpenVaultSection?: (section: 'notes' | 'hosts') => void;
+  /** Hidden retained panels keep the composer warm without the message tree. */
+  parked?: boolean;
 }
 
 export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
@@ -152,6 +154,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   onOpenVaultNote,
   onOpenVaultHost,
   onOpenVaultSection,
+  parked = false,
 }) => {
   const hiddenParts = getAIPanelDiagnosticHiddenParts();
   const hideHeader = isAIPanelDiagnosticPartHidden('header', hiddenParts);
@@ -217,7 +220,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
       )}
 
       {/* ── Main content ── */}
-      {showHistory && !hideHistory ? (
+      {!parked && showHistory && !hideHistory ? (
         <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.History')}>
           <SessionHistoryDrawer
             sessions={historySessions}
@@ -230,7 +233,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
       ) : (
         <>
           {/* Chat messages */}
-          {!hideMessages && (
+          {!parked && !hideMessages && (
             <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Messages')}>
               <ChatMessageList
                 messages={messages}
@@ -247,7 +250,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
           )}
 
           {/* Recent sessions (Zed-style, shown when no messages) */}
-          {messages.length === 0 && historySessions.length > 0 && !hideRecent && (
+          {!parked && messages.length === 0 && historySessions.length > 0 && !hideRecent && (
             <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Recent')}>
               <div className="shrink-0 px-4 pb-1">
                 <div className="flex items-baseline justify-between mb-2">

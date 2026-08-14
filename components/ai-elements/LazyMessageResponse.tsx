@@ -1,12 +1,23 @@
-import React, { lazy, Suspense } from 'react';
+import React, { lazy, Suspense, useEffect, useState } from 'react';
 
 import { cn } from '../../lib/utils';
+import {
+  enqueueChatMarkdownHydrate,
+  isAiMarkdownRendererReady,
+  subscribeAiMarkdownRendererReady,
+  warmAiMarkdownRenderer,
+} from '../ai/aiMarkdownWarmup';
 import { LazyLoadBoundary } from '../ui/lazy-load-boundary';
 
 type LazyMessageResponseProps = {
   children?: React.ReactNode;
   className?: string;
   isAnimating?: boolean;
+  /**
+   * Keep plaintext until Streamdown is already warmed. Chat history uses this
+   * so expanding the panel cannot start the ~350KB parse during first typing.
+   */
+  deferUntilWarm?: boolean;
 };
 
 const MessageResponse = lazy(() =>
@@ -20,11 +31,28 @@ const PlainTextFallback = ({ children, className }: LazyMessageResponseProps) =>
 );
 
 export function LazyMessageResponse(props: LazyMessageResponseProps) {
-  const resetKey = typeof props.children === 'string' ? props.children : undefined;
+  const { deferUntilWarm = false, ...rendererProps } = props;
+  const [ready, setReady] = useState(() => !deferUntilWarm && isAiMarkdownRendererReady());
+  const resetKey = typeof rendererProps.children === 'string' ? rendererProps.children : undefined;
+
+  useEffect(() => {
+    if (ready) return undefined;
+    if (!deferUntilWarm) {
+      const unsubscribe = subscribeAiMarkdownRendererReady(() => setReady(true));
+      void warmAiMarkdownRenderer();
+      return unsubscribe;
+    }
+    return enqueueChatMarkdownHydrate(() => setReady(true));
+  }, [deferUntilWarm, ready]);
+
+  if (deferUntilWarm && !ready) {
+    return <PlainTextFallback {...rendererProps} />;
+  }
+
   return (
-    <LazyLoadBoundary fallback={<PlainTextFallback {...props} />} resetKey={resetKey}>
-      <Suspense fallback={<PlainTextFallback {...props} />}>
-        <MessageResponse {...props} />
+    <LazyLoadBoundary fallback={<PlainTextFallback {...rendererProps} />} resetKey={resetKey}>
+      <Suspense fallback={<PlainTextFallback {...rendererProps} />}>
+        <MessageResponse {...rendererProps} />
       </Suspense>
     </LazyLoadBoundary>
   );

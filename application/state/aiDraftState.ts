@@ -11,6 +11,49 @@ type DraftUploadGenerationByScope = Record<string, number>;
 
 const DEFAULT_PANEL_VIEW: AIPanelView = { mode: 'draft' };
 
+/** Typing only changes text/updatedAt. Panel chrome can ignore that identity churn. */
+export function draftsByScopeEqualIgnoringComposerText(
+  prev: DraftsByScope,
+  next: DraftsByScope,
+  scopeKey: string,
+): boolean {
+  if (prev === next) return true;
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    const left = prev[key];
+    const right = next[key];
+    if (key !== scopeKey) {
+      if (left !== right) return false;
+      continue;
+    }
+    if (left === right) continue;
+    if (!left || !right) return false;
+    if (left.agentId !== right.agentId) return false;
+    if (left.attachments !== right.attachments) return false;
+    if (left.selectedUserSkillSlugs !== right.selectedUserSkillSlugs) return false;
+  }
+  return true;
+}
+
+/** True when every scope is unchanged except composer text/updatedAt. */
+export function draftsByScopeEqualIgnoringAllComposerText(
+  prev: DraftsByScope,
+  next: DraftsByScope,
+): boolean {
+  if (prev === next) return true;
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    const left = prev[key];
+    const right = next[key];
+    if (left === right) continue;
+    if (!left || !right) return false;
+    if (left.agentId !== right.agentId) return false;
+    if (left.attachments !== right.attachments) return false;
+    if (left.selectedUserSkillSlugs !== right.selectedUserSkillSlugs) return false;
+  }
+  return true;
+}
+
 export function createEmptyDraft(agentId: string): AIDraft {
   return {
     text: '',
@@ -142,6 +185,9 @@ export function updateDraftForScope(
 ): DraftsByScope {
   const currentDraft = draftsByScope[scopeKey] ?? createEmptyDraft(fallbackAgentId);
   const nextDraft = updater(currentDraft);
+  if (nextDraft === currentDraft && draftsByScope[scopeKey] === currentDraft) {
+    return draftsByScope;
+  }
 
   return {
     ...draftsByScope,

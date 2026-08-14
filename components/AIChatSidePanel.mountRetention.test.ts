@@ -184,7 +184,7 @@ test('AI side panel re-renders when retained content becomes visible again', () 
   ), false);
 });
 
-test('hidden retained AI side panel skips chat input and message content', () => {
+test('hidden retained AI side panel keeps the composer and skips message content', () => {
   const markup = renderToStaticMarkup(
     React.createElement(
       I18nProvider,
@@ -212,10 +212,9 @@ test('hidden retained AI side panel skips chat input and message content', () =>
   );
 
   assert.match(markup, /data-section="ai-chat-panel-retained"/);
-  assert.doesNotMatch(markup, /textarea/);
+  assert.match(markup, /textarea/);
   assert.doesNotMatch(markup, /hidden-user-message/);
   assert.doesNotMatch(markup, /hidden-assistant-message/);
-  assert.doesNotMatch(markup, /draft still retained/);
 });
 
 test('AI side panel re-renders when command timeout changes', () => {
@@ -251,6 +250,25 @@ test('AI side panel skips re-render when only a sibling scope session object cha
     aiChatSidePanelPropsAreEqual(prev, { ...prev, sessions: [ownStreamed, siblingA] }),
     false,
   );
+});
+
+test('AI side panel skips re-render when only the composer draft text changes', () => {
+  const empty = draft({ text: '' });
+  const prev = baseProps({
+    isVisible: true,
+    scopeType: 'terminal',
+    scopeTargetId: 'terminal-1',
+    draftsByScope: {
+      'terminal:terminal-1': empty,
+    },
+  });
+  const next = {
+    ...prev,
+    draftsByScope: {
+      'terminal:terminal-1': { ...empty, text: '你好', updatedAt: 2 },
+    },
+  };
+  assert.equal(aiChatSidePanelPropsAreEqual(prev, next), true);
 });
 
 test('workspace AI panel memo follows visible inherited session, not hidden terminal maps', () => {

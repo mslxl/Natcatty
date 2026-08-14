@@ -38,7 +38,7 @@ import {
   endSendForKey,
   tryBeginSendForKey,
 } from './ai/draftSendGate';
-import { selectDraftForAgentSwitch } from '../application/state/aiDraftState';
+import { draftsByScopeEqualIgnoringComposerText, selectDraftForAgentSwitch } from '../application/state/aiDraftState';
 import {
   buildPromptWithTerminalSelectionAttachments,
   isTerminalSelectionAttachment,
@@ -79,6 +79,7 @@ import {
   getAIPanelProfilerProps,
   profileAIPanelCalculation,
 } from './ai/aiPanelDiagnostics';
+import { scheduleWhenAiComposerIdle, warmAiMarkdownRenderer } from './ai/aiMarkdownWarmup';
 
 type UserSkillsStatusResult = { ok: boolean; skills?: Array<{
   id: string;
@@ -198,15 +199,9 @@ export function shouldKeepAIChatSidePanelMounted(props: AIChatSidePanelProps): b
   return isAIChatSessionStreaming(sessionId);
 }
 
-function shouldDelayAIChatSidePanelActivation(props: AIChatSidePanelProps): boolean {
-  if (!(props.isVisible ?? true)) return false;
-  const scopeKey = `${props.scopeType}:${props.scopeTargetId ?? ''}`;
-  if (props.draftsByScope[scopeKey] || props.panelViewByScope[scopeKey]?.mode === 'draft') {
-    return false;
-  }
-  const sessionId = props.activeSessionIdMap[scopeKey] ?? null;
-  if (isAIChatSessionStreaming(sessionId)) return false;
-  return !hasAIChatSidePanelRetainedContent(props);
+function shouldDelayAIChatSidePanelActivation(_props: AIChatSidePanelProps): boolean {
+  // Empty-panel activation delay used to land in the expand → first-type window.
+  return false;
 }
 
 function schedulePanelActivation(callback: () => void): () => void {
@@ -377,6 +372,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const explicitPanelView = panelViewByScope[scopeKey];
   const currentDraft = draftsByScope[scopeKey] ?? null;
+  const pendingComposerTextRef = useRef<string | null>(null);
+  const draftTextFlushTimerRef = useRef<number | null>(null);
   const visibleHistorySessionIds = useMemo(
     () => new Set(historySessions.map((session) => session.id)),
     [historySessions],
@@ -402,12 +399,28 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const isSteering = activeSessionId != null && steeringSessionId === activeSessionId;
   const currentAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? defaultAgentId;
   const observedContextUsage = useAgentContextUsage(activeSessionId);
-  const inputValue = currentDraft?.text ?? '';
+  const inputValue = pendingComposerTextRef.current ?? currentDraft?.text ?? '';
   const files = currentDraft?.attachments ?? [];
   const panelViewRef = useRef(normalizedPanelView);
   panelViewRef.current = normalizedPanelView;
   const currentDraftRef = useRef(currentDraft);
-  currentDraftRef.current = currentDraft;
+  if (pendingComposerTextRef.current != null) {
+    const base = currentDraft ?? currentDraftRef.current ?? {
+      text: '',
+      agentId: currentAgentId,
+      attachments: [],
+      selectedUserSkillSlugs: [],
+      updatedAt: Date.now(),
+    };
+    if (currentDraft && currentDraft.text === pendingComposerTextRef.current) {
+      pendingComposerTextRef.current = null;
+      currentDraftRef.current = currentDraft;
+    } else {
+      currentDraftRef.current = { ...base, text: pendingComposerTextRef.current };
+    }
+  } else {
+    currentDraftRef.current = currentDraft;
+  }
   const activeSessionRef = useRef(activeSession);
   activeSessionRef.current = activeSession;
 
@@ -439,13 +452,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const bridge = getNetcattyBridge();
     if (!bridge?.aiMcpUpdateSessions) return;
 
-    const timeoutId = window.setTimeout(() => {
+    return scheduleWhenAiComposerIdle(() => {
       void bridge.aiMcpUpdateSessions(terminalSessions, activeSessionId ?? undefined);
-    }, 250);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
+    }, { initialDelayMs: 250 });
   }, [isVisible, terminalSessions, activeSessionId]);
 
   useEffect(() => {
@@ -529,13 +538,39 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     });
   }, [ensureScopeDraft, showScopeDraftView]);
 
+  const flushDraftText = useCallback(() => {
+    if (draftTextFlushTimerRef.current != null) {
+      window.clearTimeout(draftTextFlushTimerRef.current);
+      draftTextFlushTimerRef.current = null;
+    }
+    const pending = pendingComposerTextRef.current;
+    if (pending == null) return;
+    updateScopeDraft(currentAgentId, (current) => (
+      current.text === pending ? current : { ...current, text: pending }
+    ));
+  }, [currentAgentId, updateScopeDraft]);
+
   const setInputValue = useCallback((value: string) => {
-    enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
-    updateScopeDraft(currentAgentId, (draft) => ({
-      ...draft,
-      text: value,
-    }));
-  }, [currentAgentId, enterScopeDraftMode, updateScopeDraft]);
+    if (panelViewRef.current.mode !== 'draft' || !currentDraftRef.current) {
+      enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
+    }
+    const base = currentDraftRef.current ?? {
+      text: '',
+      agentId: currentAgentId,
+      attachments: [],
+      selectedUserSkillSlugs: [],
+      updatedAt: Date.now(),
+    };
+    pendingComposerTextRef.current = value;
+    currentDraftRef.current = { ...base, text: value, updatedAt: Date.now() };
+    if (draftTextFlushTimerRef.current != null) {
+      window.clearTimeout(draftTextFlushTimerRef.current);
+    }
+    draftTextFlushTimerRef.current = window.setTimeout(() => {
+      draftTextFlushTimerRef.current = null;
+      flushDraftText();
+    }, 120);
+  }, [currentAgentId, enterScopeDraftMode, flushDraftText]);
 
   const addFiles = useCallback(async (inputFiles: File[]) => {
     enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
@@ -545,6 +580,20 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const removeFile = useCallback((fileId: string) => {
     removeDraftFile(scopeKey, currentAgentId, fileId);
   }, [removeDraftFile, scopeKey, currentAgentId]);
+
+  useEffect(() => {
+    if (isVisible) return undefined;
+    flushDraftText();
+    return undefined;
+  }, [flushDraftText, isVisible]);
+
+  useEffect(() => () => {
+    flushDraftText();
+  }, [flushDraftText, scopeKey]);
+
+  useEffect(() => {
+    pendingComposerTextRef.current = null;
+  }, [scopeKey, activeSessionId]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -586,16 +635,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     };
 
     const bridge = getNetcattyBridge();
-    void loadUserSkillsStatus(bridge)
-      .then((result) => {
-        if (cancelled) return;
-        if (result === undefined) return;
-        applyUserSkillsStatus(result);
-      })
-      .catch(() => {});
+    const cancelIdle = scheduleWhenAiComposerIdle(() => {
+      void loadUserSkillsStatus(bridge)
+        .then((result) => {
+          if (cancelled) return;
+          if (result === undefined) return;
+          applyUserSkillsStatus(result);
+        })
+        .catch(() => {});
+    });
 
     return () => {
       cancelled = true;
+      cancelIdle();
     };
   }, [isVisible, scopeKey, toolIntegrationMode, updateScopeDraft, userSkillsStatusVersion]);
 
@@ -609,17 +661,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   useEffect(() => {
     if (!isVisible) return;
     const bridge = getNetcattyBridge();
-    if (bridge?.aiSyncProviders && providers.length > 0) {
+    if (!bridge?.aiSyncProviders || providers.length === 0) return;
+    return scheduleWhenAiComposerIdle(() => {
       void bridge.aiSyncProviders(providers);
-    }
+    });
   }, [isVisible, providers]);
 
   useEffect(() => {
     if (!isVisible) return;
     const bridge = getNetcattyBridge();
-    if (bridge?.aiSyncWebSearch) {
+    if (!bridge?.aiSyncWebSearch) return;
+    return scheduleWhenAiComposerIdle(() => {
       void bridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
-    }
+    });
   }, [isVisible, webSearchConfig?.apiHost, webSearchConfig?.apiKey, webSearchConfig?.enabled]);
 
   const {
@@ -627,7 +681,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     isDiscovering,
     rediscover,
     enableAgent,
-  } = useAgentDiscovery(externalAgents, setExternalAgents, { enabled: isVisible });
+  } = useAgentDiscovery(externalAgents, setExternalAgents, {
+    enabled: isVisible,
+    schedule: scheduleWhenAiComposerIdle,
+  });
 
   const handleEnableDiscoveredAgent = useCallback(
     (agent: DiscoveredAgent) => {
@@ -732,20 +789,25 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const bridge = getNetcattyBridge();
     if (!bridge?.aiCodexGetIntegration) return;
     let cancelled = false;
-    void Promise.resolve(
-      bridge.aiCodexGetIntegration({ codexPath: getManualAgentCommand(currentAgentConfig) }) as Promise<CodexIntegrationStatus>,
-    ).then((info) => {
-      if (cancelled) return;
-      const hasCustom = info?.state === 'connected_custom_config';
-      setCodexConfigModel(info?.customConfig?.model ?? null);
-      setCodexCustomConfigResolved(hasCustom);
-    }).catch(() => {
-      if (!cancelled) {
-        setCodexConfigModel(null);
-        setCodexCustomConfigResolved(false);
-      }
+    const cancelIdle = scheduleWhenAiComposerIdle(() => {
+      void Promise.resolve(
+        bridge.aiCodexGetIntegration({ codexPath: getManualAgentCommand(currentAgentConfig) }) as Promise<CodexIntegrationStatus>,
+      ).then((info) => {
+        if (cancelled) return;
+        const hasCustom = info?.state === 'connected_custom_config';
+        setCodexConfigModel(info?.customConfig?.model ?? null);
+        setCodexCustomConfigResolved(hasCustom);
+      }).catch(() => {
+        if (!cancelled) {
+          setCodexConfigModel(null);
+          setCodexCustomConfigResolved(false);
+        }
+      });
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      cancelIdle();
+    };
   }, [isVisible, isCodexManagedAgent, currentAgentId, currentAgentConfig]);
 
   const agentModelMapRef = useRef(agentModelMap);
@@ -868,15 +930,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     // Respect renderer TTL / in-flight coalescing for all SDK agents including
     // OpenCode. Forced refresh used to re-spawn opencode on every effect re-run
     // even when the user never selected OpenCode (#2184). Manual refresh still
-    // passes force via the model selector path.
+    // passes force via the model selector path. Defer the network refresh so
+    // expand → first type does not wait on CLI model listing.
     let cancelled = false;
-    void loadSdkRuntimeModelCatalog(target).then((catalog) => {
-      if (cancelled || !catalog) return;
-      applySdkRuntimeModelCatalog(target.agentId, catalog, { adoptCurrentModel: true });
+    const cancelIdle = scheduleWhenAiComposerIdle(() => {
+      void loadSdkRuntimeModelCatalog(target).then((catalog) => {
+        if (cancelled || !catalog) return;
+        applySdkRuntimeModelCatalog(target.agentId, catalog, { adoptCurrentModel: true });
+      });
     });
 
     return () => {
       cancelled = true;
+      cancelIdle();
     };
   }, [
     isVisible,
@@ -1052,6 +1118,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
     const isDraftMode = currentPanelView.mode === 'draft';
 
+    flushDraftText();
+    void warmAiMarkdownRenderer();
+
     const sendGateKey = currentSessionView?.id ?? `draft:${scopeKey}`;
     if (!tryBeginSendForKey(sendGateKey)) {
       return;
@@ -1205,6 +1274,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     scopeType, scopeTargetId, scopeHostIds, scopeLabel, globalPermissionMode, commandBlocklist, commandTimeout, webSearchConfig, buildExecutorContextForScope,
     toolIntegrationMode,
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
+    flushDraftText,
   ]);
 
   const handleCompact = useCallback(async () => {
@@ -1462,45 +1532,18 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     setShowHistory(false);
   }, [ensureScopeDraft, showScopeDraftView, updateScopeDraft]);
 
-  // Warm the Streamdown/markdown chunk while the panel is visible but idle, so
-  // the first completed assistant reply does not pay the full parse cost mid-interaction.
-  useEffect(() => {
-    if (!isVisible) return;
-    let cancelled = false;
-    const loadMarkdown = () => {
-      if (cancelled) return;
-      void import('./ai-elements/messageResponse');
-    };
-    if (typeof requestIdleCallback === 'function') {
-      const idleId = requestIdleCallback(loadMarkdown, { timeout: 2500 });
-      return () => {
-        cancelled = true;
-        cancelIdleCallback(idleId);
-      };
-    }
-    const timeoutId = window.setTimeout(loadMarkdown, 0);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [isVisible]);
-
-  // Keep streaming/session hooks alive for retained hidden panels, but do not
-  // mount ChatMessageList / Streamdown / ChatInput while CSS-hidden — those trees
-  // are the main tab-switch and cross-tab re-render cost.
-  if (!isVisible) {
-    return (
-      <div
-        className="h-full min-h-0 bg-background"
-        data-section="ai-chat-panel-retained"
-        aria-hidden="true"
-      />
-    );
-  }
-
+  // Hidden retained panels keep the composer mounted (parent is `hidden` +
+  // inert) so reopen does not remount ChatInput. Skip the message list.
   return (
     <React.Profiler {...getAIPanelProfilerProps('AIChatSidePanel.Active')}>
+      <div
+        className="h-full min-h-0"
+        data-section={isVisible ? undefined : 'ai-chat-panel-retained'}
+        aria-hidden={isVisible ? undefined : true}
+        inert={isVisible ? undefined : true}
+      >
       <AIChatPanelContent
+        parked={!isVisible}
         t={t}
         currentAgentId={currentAgentId}
         externalAgents={externalAgents}
@@ -1566,6 +1609,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         onOpenVaultSnippet={onOpenVaultSnippet}
         onOpenVaultSection={onOpenVaultSection}
       />
+      </div>
     </React.Profiler>
   );
 };
@@ -1641,6 +1685,22 @@ export function aiChatSidePanelPropsAreEqual(
   if (prev.onOpenVaultSnippet !== next.onOpenVaultSnippet) return false;
   if (prev.onOpenVaultSection !== next.onOpenVaultSection) return false;
 
+  const scopeKey = `${prev.scopeType}:${prev.scopeTargetId ?? ''}`;
+  if (
+    prev.sessions === next.sessions
+    && draftsByScopeEqualIgnoringComposerText(prev.draftsByScope, next.draftsByScope, scopeKey)
+  ) {
+    let restEqual = true;
+    for (const key of AI_CHAT_SIDE_PANEL_AI_STATE_KEYS) {
+      if (key === 'sessions' || key === 'draftsByScope') continue;
+      if (prev[key] !== next[key]) {
+        restEqual = false;
+        break;
+      }
+    }
+    if (restEqual) return true;
+  }
+
   // Sibling stream thrash: full sessions array identity always changes. Only
   // exact-scope session object refs matter for this panel's active chat —
   // plus the currently selected session, which may be a host-matched history
@@ -1706,6 +1766,12 @@ export function aiChatSidePanelPropsAreEqual(
 
   for (const key of AI_CHAT_SIDE_PANEL_AI_STATE_KEYS) {
     if (key === 'sessions') continue;
+    if (key === 'draftsByScope') {
+      if (!draftsByScopeEqualIgnoringComposerText(prev.draftsByScope, next.draftsByScope, scopeKey)) {
+        return false;
+      }
+      continue;
+    }
     if (prev[key] !== next[key]) return false;
   }
   return true;

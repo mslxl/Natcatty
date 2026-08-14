@@ -812,12 +812,15 @@ export function useAIState() {
         scopeKey,
         fallbackAgentId,
         (draft) => {
+          const updated = updater(draft);
+          if (updated === draft) return draft;
           return {
-            ...updater(draft),
+            ...updated,
             updatedAt: Date.now(),
           };
         },
       );
+      if (next === prev) return prev;
       setLatestAIDraftsByScopeSnapshot(next);
       emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
       return next;
