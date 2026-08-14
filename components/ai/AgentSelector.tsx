@@ -33,6 +33,7 @@ interface AgentSelectorProps {
   onRediscover?: () => void;
   onManageAgents?: () => void;
   parked?: boolean;
+  disabled?: boolean;
 }
 
 const BUILTIN_AGENTS: AgentInfo[] = [
@@ -127,13 +128,14 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
   onRediscover,
   onManageAgents,
   parked = false,
+  disabled = false,
 }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    if (parked) setOpen(false);
-  }, [parked]);
+    if (parked || disabled) setOpen(false);
+  }, [disabled, parked]);
 
   const enabledExternalAgents = useMemo(
     () =>
@@ -206,7 +208,8 @@ const AgentSelector: React.FC<AgentSelectorProps> = ({
       <DropdownTrigger asChild>
         <button
           type="button"
-          className="group flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28"
+          disabled={disabled}
+          className="group flex h-6 min-w-0 max-w-[170px] items-center gap-1.5 rounded-md px-1.5 text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/28 disabled:pointer-events-none disabled:opacity-50"
         >
           <AgentIconBadge
             agent={currentAgent}

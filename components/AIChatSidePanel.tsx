@@ -1175,6 +1175,16 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
       setIsSending(false);
       const sendPermissionMode = permissionModeRef.current;
+      if (currentAgentId !== sendAgentId) return;
+      const liveView = panelViewRef.current;
+      if (liveView.mode !== currentPanelView.mode) return;
+      if (
+        currentPanelView.mode === 'session'
+        && liveView.mode === 'session'
+        && liveView.sessionId !== currentPanelView.sessionId
+      ) {
+        return;
+      }
       void warmAiMarkdownRenderer();
       let sessionId = currentSessionView?.id ?? null;
       let currentSession = currentSessionView ?? null;
@@ -1594,6 +1604,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       >
       <AIChatPanelContent
         parked={!isVisible}
+        sending={isSending}
         t={t}
         currentAgentId={currentAgentId}
         externalAgents={externalAgents}

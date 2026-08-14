@@ -91,6 +91,8 @@ interface AIChatPanelContentProps {
   onOpenVaultSection?: (section: 'notes' | 'hosts') => void;
   /** Hidden retained panels keep the composer warm without the message tree. */
   parked?: boolean;
+  /** Disable header transitions while send preflight is in flight. */
+  sending?: boolean;
 }
 
 export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
@@ -155,6 +157,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   onOpenVaultHost,
   onOpenVaultSection,
   parked = false,
+  sending = false,
 }) => {
   const hiddenParts = getAIPanelDiagnosticHiddenParts();
   const hideHeader = isAIPanelDiagnosticPartHidden('header', hiddenParts);
@@ -178,6 +181,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               discoveredAgents={discoveredAgents}
               isDiscovering={isDiscovering}
               parked={parked}
+              disabled={sending}
               onSelectAgent={handleAgentChange}
               onEnableDiscoveredAgent={handleEnableDiscoveredAgent}
               onRediscover={rediscover}
@@ -195,6 +199,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
+                    disabled={sending}
                     onClick={() => setShowHistory(!showHistory)}
                   >
                     <History size={12} />
@@ -208,6 +213,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                     variant="ghost"
                     size="icon"
                     className="h-6 w-6 rounded-md text-primary/82 hover:bg-primary/[0.10] hover:text-primary"
+                    disabled={sending}
                     onClick={handleNewChat}
                   >
                     <Plus size={13} />
@@ -226,7 +232,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
           <SessionHistoryDrawer
             sessions={historySessions}
             activeSessionId={activeSessionId}
-            onSelect={handleSelectSession}
+            onSelect={sending ? () => undefined : handleSelectSession}
             onDelete={handleDeleteSession}
             onClose={() => setShowHistory(false)}
           />
@@ -266,8 +272,9 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                 {historySessions.slice(0, 3).map((session) => (
                   <button
                     key={session.id}
+                    disabled={sending}
                     onClick={() => handleSelectSession(session.id)}
-                    className="w-full flex items-baseline justify-between py-1.5 text-left hover:text-foreground transition-colors cursor-pointer"
+                    className="w-full flex items-baseline justify-between py-1.5 text-left hover:text-foreground transition-colors cursor-pointer disabled:pointer-events-none disabled:opacity-50"
                   >
                     <span className="text-[13px] text-foreground/60 truncate pr-4">
                       {session.title || t('ai.chat.untitled')}

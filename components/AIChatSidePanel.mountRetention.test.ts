@@ -109,6 +109,15 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   ...overrides,
 });
 
+test('send preflight locks header agent and new-chat controls', () => {
+  const panel = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  const content = readFileSync(new URL('./AIChatPanelContent.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /sending=\{isSending\}/);
+  assert.match(content, /disabled=\{sending\}/);
+  const selector = readFileSync(new URL('./ai/AgentSelector.tsx', import.meta.url), 'utf8');
+  assert.match(selector, /if \(parked \|\| disabled\) setOpen\(false\)/);
+});
+
 test('first send awaits provider sync instead of idle-deferring it', () => {
   const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
   assert.match(source, /await sendBridge\.aiSyncProviders\(providers\)/);
