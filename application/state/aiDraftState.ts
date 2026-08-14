@@ -29,7 +29,7 @@ function draftsEquivalentIgnoringComposerText(
   right: AIDraft | undefined,
 ): boolean {
   if (left === right) return true;
-  if (!left) return isComposerOnlyDraft(right);
+  if (!left) return Boolean(isComposerOnlyDraft(right) && right.text.trim().length > 0);
   if (!right) return false;
   if (left.agentId !== right.agentId) return false;
   if (left.attachments !== right.attachments) return false;
@@ -53,13 +53,21 @@ export function draftsByScopeEqualIgnoringAllComposerText(
   return true;
 }
 
-/** Typing only changes text/updatedAt. The scope key is kept for call-site compatibility. */
+/** Typing only changes text/updatedAt. Sibling empty-draft creates stay ignored. */
 export function draftsByScopeEqualIgnoringComposerText(
   prev: DraftsByScope,
   next: DraftsByScope,
-  _scopeKey?: string,
+  scopeKey: string,
 ): boolean {
-  return draftsByScopeEqualIgnoringAllComposerText(prev, next);
+  if (prev === next) return true;
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
+    const left = prev[key];
+    const right = next[key];
+    if (key !== scopeKey && !left && isComposerOnlyDraft(right)) continue;
+    if (!draftsEquivalentIgnoringComposerText(left, right)) return false;
+  }
+  return true;
 }
 
 export function createEmptyDraft(agentId: string): AIDraft {

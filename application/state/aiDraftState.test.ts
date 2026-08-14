@@ -59,6 +59,7 @@ test("draftsByScopeEqualIgnoringComposerText ignores typing in the active scope"
 test("first composer draft is treated as text-only identity churn", () => {
   const empty = createEmptyDraft("catty");
   const created = { ...empty, text: "你" };
+  assert.equal(draftsByScopeEqualIgnoringAllComposerText({}, { "terminal:1": empty }), false);
   assert.equal(draftsByScopeEqualIgnoringAllComposerText({}, { "terminal:1": created }), true);
   assert.equal(
     draftsByScopeEqualIgnoringComposerText({}, { "terminal:1": created }, "terminal:1"),
