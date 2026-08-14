@@ -23,7 +23,7 @@ test('defers markdown warmup while the composer is focused, composing, or recent
 test('recent composer activity counts as busy', () => {
   markAiComposerActivity();
   assert.equal(isAiComposerBusy(), true);
-  assert.ok(AI_COMPOSER_IDLE_MS >= 600);
+  assert.ok(AI_COMPOSER_IDLE_MS >= 2000);
 });
 
 test('recognizes the chat composer as a busy warmup target', () => {
@@ -35,9 +35,9 @@ test('recognizes the chat composer as a busy warmup target', () => {
 test('composer-idle IPC waits the same expand grace as history markdown', () => {
   const warmup = readFileSync(new URL('./aiMarkdownWarmup.ts', import.meta.url), 'utf8');
   assert.match(warmup, /initialDelayMs:\s*options\?\.initialDelayMs \?\? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
-  assert.match(warmup, /isBusy: isAiComposerRecentlyActive/);
+  assert.match(warmup, /isBusy: isAiComposerBusy/);
   assert.match(warmup, /markAiComposerActivity\(\);\n\s*arm\(\);/);
-  assert.match(warmup, /if \(isAiComposerRecentlyActive\(\)\) \{\s*hydrateScheduled = true;/s);
+  assert.match(warmup, /if \(isAiComposerBusy\(\)\) \{\s*hydrateScheduled = true;/s);
 });
 
 test('history markdown waits after expand, then resumes quickly after blur', () => {

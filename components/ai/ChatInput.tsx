@@ -38,7 +38,7 @@ import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import type { AgentContextUsage } from '../../application/state/useAgentCompactionUi';
-import { markAiComposerActivity } from './aiMarkdownWarmup';
+import { markAiComposerActivity, setAiComposerComposing } from './aiMarkdownWarmup';
 import {
   CHAT_INPUT_DEFAULT_HEIGHT,
   CHAT_INPUT_MAX_HEIGHT,
@@ -1071,9 +1071,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
             autoComplete="off"
             onChange={(e) => handleInputChange(e.target.value, e.nativeEvent.isComposing)}
             onFocus={() => markAiComposerActivity()}
-            onCompositionStart={() => markAiComposerActivity()}
+            onCompositionStart={() => setAiComposerComposing(true)}
             onCompositionUpdate={() => markAiComposerActivity()}
-            onCompositionEnd={(e) => handleInputChange(e.currentTarget.value)}
+            onCompositionEnd={(e) => {
+              setAiComposerComposing(false);
+              handleInputChange(e.currentTarget.value);
+            }}
             onBlur={() => commitComposerText(readComposerText())}
             onKeyDown={handleTextareaKeyDown}
             placeholder={placeholder || (isStreaming && canSteer ? t('ai.codex.steer.placeholder') : defaultPlaceholder)}
