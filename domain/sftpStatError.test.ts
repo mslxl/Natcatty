@@ -11,3 +11,12 @@ test("isMissingStatError recognizes ssh2 and Electron-wrapped absence", () => {
     true,
   );
 });
+
+test("isMissingStatError does not treat path substrings as absence", () => {
+  assert.equal(
+    isMissingStatError(
+      new Error("EACCES: permission denied, lstat '/private/enoent/report.txt'"),
+    ),
+    false,
+  );
+});

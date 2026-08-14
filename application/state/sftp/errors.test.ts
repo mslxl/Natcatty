@@ -22,6 +22,11 @@ test("isMissingStatError treats Electron-wrapped SFTP absence as missing", () =>
   );
   assert.equal(isMissingStatError(new Error("No such file")), true);
   assert.equal(isMissingStatError(new Error("No such file or directory")), true);
+  assert.equal(isMissingStatError(new Error("No such file: /tmp/tool.sh")), true);
+  assert.equal(
+    isMissingStatError(new Error("ENOENT: no such file or directory, lstat '/tmp/tool.sh'")),
+    true,
+  );
 });
 
 test("isMissingStatError rejects unsupported LSTAT and other failures", () => {
@@ -40,6 +45,21 @@ test("isMissingStatError rejects unsupported LSTAT and other failures", () => {
   assert.equal(
     isMissingStatError(
       new Error("Error invoking remote method 'netcatty:sftp:lstat': Error: Permission denied"),
+    ),
+    false,
+  );
+  // Path names are user-controlled; do not treat a substring hit as absence.
+  assert.equal(
+    isMissingStatError(
+      new Error("EACCES: permission denied, lstat '/private/enoent/report.txt'"),
+    ),
+    false,
+  );
+  assert.equal(
+    isMissingStatError(
+      new Error(
+        "Error invoking remote method 'netcatty:sftp:lstat': Error: EACCES: permission denied, lstat '/private/enoent/report.txt'",
+      ),
     ),
     false,
   );
