@@ -28,6 +28,7 @@ import {
 } from '../../../domain/syncStrategy';
 import {
   coalesceStoredSyncPreferences,
+  hasSyncPreferenceFields,
   resolveSyncPreferencesForPersist,
 } from './syncConfigPersist';
 import { EncryptionService } from '../EncryptionService';
@@ -547,11 +548,7 @@ export function handleStorageEventImpl(this: any, event: StorageEvent): void {
       this.state.remoteUpdatedAt = Number(next.remoteUpdatedAt ?? 0);
 
       // Legacy combined blobs from older builds may still carry preferences.
-      const hasLegacyPreferenceFields =
-        next.autoSync !== undefined
-        || next.interval !== undefined
-        || next.syncStrategy !== undefined;
-      if (hasLegacyPreferenceFields) {
+      if (hasSyncPreferenceFields(next)) {
         const separatePreferences = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES);
         if (!separatePreferences || typeof separatePreferences !== 'object') {
           applySyncPreferencesFromStorage.call(this, next);

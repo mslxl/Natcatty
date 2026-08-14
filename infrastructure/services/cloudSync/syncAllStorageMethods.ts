@@ -20,6 +20,7 @@ import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
 import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
 import {
   coalesceStoredSyncPreferences,
+  hasSyncPreferenceFields,
   resolveSyncPreferencesForPersist,
   resolveSyncVersionsForPersist,
 } from './syncConfigPersist';
@@ -797,27 +798,33 @@ export function saveSyncConfigImpl(
       storedPreferences && typeof storedPreferences === 'object',
     );
 
-    // Migrate legacy combined SYNC_CONFIG prefs once, without overwriting an
-    // already-written SYNC_PREFERENCES key from another window.
-    if (!hasSeparatePreferences) {
-      const legacyPreferences = resolveSyncPreferencesForPersist({
-        memory: memoryPreferences,
-        stored: coalesceStoredSyncPreferences(null, storedConfig),
-        preferencesFromMemory: false,
-      });
-      if (!this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES)) {
-        this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, legacyPreferences);
-      }
-    }
-
     const nextVersions = resolveSyncVersionsForPersist({
       localVersion: this.state.localVersion,
       localUpdatedAt: this.state.localUpdatedAt,
       remoteVersion: this.state.remoteVersion,
       remoteUpdatedAt: this.state.remoteUpdatedAt,
     });
-    // Version-only writes never include preference fields.
-    this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, nextVersions);
+
+    // Version-only saves never write SYNC_PREFERENCES. The dedicated key is
+    // created only by preference writers (setAutoSync / setSyncStrategy).
+    // A check-then-write migrate here can overwrite a concurrent
+    // autoSync=false from another window (#2976).
+    if (hasSeparatePreferences || !hasSyncPreferenceFields(storedConfig)) {
+      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, nextVersions);
+    } else {
+      // Keep legacy preference fields in SYNC_CONFIG until a preference
+      // writer splits them out. Take those fields from storage, never
+      // from this window's possibly stale memory.
+      const preservedPreferences = resolveSyncPreferencesForPersist({
+        memory: memoryPreferences,
+        stored: coalesceStoredSyncPreferences(null, storedConfig),
+        preferencesFromMemory: false,
+      });
+      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, {
+        ...preservedPreferences,
+        ...nextVersions,
+      });
+    }
 
     // Re-read preferences after the version write so a toggle that landed
     // during the version persist window is adopted into this process.

@@ -34,6 +34,15 @@ export function coalesceStoredSyncPreferences(
   return null;
 }
 
+export function hasSyncPreferenceFields(
+  value: Partial<SyncPreferencePersistFields> | null | undefined,
+): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return value.autoSync !== undefined
+    || value.interval !== undefined
+    || value.syncStrategy !== undefined;
+}
+
 export function resolveSyncPreferencesForPersist(input: {
   memory: SyncPreferencePersistFields;
   stored: Partial<SyncPreferencePersistFields> | null | undefined;

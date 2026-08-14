@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   coalesceStoredSyncPreferences,
+  hasSyncPreferenceFields,
   resolveSyncConfigForPersist,
   resolveSyncPreferencesForPersist,
   resolveSyncVersionsForPersist,
@@ -121,6 +122,14 @@ test('coalesce prefers dedicated preferences over legacy SYNC_CONFIG fields', ()
   );
   assert.equal(coalesced?.autoSync, false);
   assert.equal(coalesced?.interval, 15);
+});
+
+test('hasSyncPreferenceFields ignores version-only blobs', () => {
+  assert.equal(hasSyncPreferenceFields(null), false);
+  assert.equal(hasSyncPreferenceFields({}), false);
+  assert.equal(hasSyncPreferenceFields({ autoSync: false }), true);
+  assert.equal(hasSyncPreferenceFields({ interval: 15 }), true);
+  assert.equal(hasSyncPreferenceFields({ syncStrategy: 'preferCloud' }), true);
 });
 
 test('preference and version resolvers stay independent', () => {
