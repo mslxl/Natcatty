@@ -159,7 +159,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /const canBroadcastInput = !sensitive &&[\s\S]*?const willBroadcastInput = canBroadcastInput && options\?\.skipBroadcast !== true;[\s\S]*?if \(!canBroadcastInput\) \{\s*prepareSudoAutofillInput/s,
+    /const canBroadcastInput = !sensitive &&[\s\S]*?const willBroadcastInput = canBroadcastInput && options\?\.skipBroadcast !== true;[\s\S]*?if \(!canBroadcastInput && !handlingKittyBroadcast\) \{\s*prepareSudoAutofillInput/s,
   );
   assert.match(
     source,

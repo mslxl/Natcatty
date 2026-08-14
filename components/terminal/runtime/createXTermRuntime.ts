@@ -1034,7 +1034,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
       );
       handledSubmittedInput = true;
-      if (!canBroadcastInput) {
+      // Recipients of a key-chord broadcast must not arm password assistance.
+      // handlingKittyBroadcast already blocks re-fan-out via canBroadcastInput.
+      if (!canBroadcastInput && !handlingKittyBroadcast) {
         prepareSudoAutofillInput(
           submittedInput.lineEnding === "\r\n" ? "\n" : submittedInput.lineEnding,
           recordedCommand,
@@ -1044,6 +1046,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     } else if (
       ctx.statusRef.current === "connected" &&
       !canBroadcastInput &&
+      !handlingKittyBroadcast &&
       inputSource !== "shift-enter"
     ) {
       const pastedCommand = getSinglePastedCommand(data);
