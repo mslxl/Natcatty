@@ -184,7 +184,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
   const composerDisabled = disabled || isSteering;
-  const [composerText, setComposerText] = useState(value);
+  const composerTextRef = useRef(value);
+  const [hasComposerText, setHasComposerText] = useState(() => value.trim().length > 0);
   const pushedParentTextRef = useRef(value);
   const [composerHeight, setComposerHeight] = useState<number | null>(null);
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
@@ -347,16 +348,45 @@ const ChatInput: React.FC<ChatInputProps> = ({
     document.body.style.userSelect = resizeStart.previousUserSelect;
   }, []);
 
+  const syncHasComposerText = useCallback((text: string) => {
+    const next = text.trim().length > 0;
+    setHasComposerText((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const readComposerText = useCallback(() => (
+    textareaRef.current?.value ?? composerTextRef.current
+  ), []);
+
   useEffect(() => {
     if (value === pushedParentTextRef.current) return;
     pushedParentTextRef.current = value;
-    setComposerText(value);
-  }, [value]);
+    composerTextRef.current = value;
+    if (textareaRef.current && textareaRef.current.value !== value) {
+      textareaRef.current.value = value;
+    }
+    syncHasComposerText(value);
+  }, [syncHasComposerText, value]);
 
   const commitComposerText = useCallback((next: string) => {
+    composerTextRef.current = next;
     pushedParentTextRef.current = next;
-    setComposerText(next);
+    if (textareaRef.current && textareaRef.current.value !== next) {
+      textareaRef.current.value = next;
+    }
+    syncHasComposerText(next);
     onChange(next);
+  }, [onChange, syncHasComposerText]);
+
+  const parkedRef = useRef(parked);
+  useEffect(() => {
+    const becameParked = parked && !parkedRef.current;
+    parkedRef.current = parked;
+    if (!becameParked) return;
+    commitComposerText(readComposerText());
+  }, [commitComposerText, parked, readComposerText]);
+
+  useEffect(() => () => {
+    onChange(textareaRef.current?.value ?? composerTextRef.current);
   }, [onChange]);
 
   const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
@@ -384,14 +414,18 @@ const ChatInput: React.FC<ChatInputProps> = ({
     };
   }, []);
 
-  const handleInputChange = useCallback((newValue: string) => {
+  const handleInputChange = useCallback((newValue: string, composing = false) => {
     markAiComposerActivity();
+    const previousText = composerTextRef.current;
+    composerTextRef.current = newValue;
+    syncHasComposerText(newValue);
+    if (composing) return;
     commitComposerText(newValue);
     const caretPosition = textareaRef.current?.selectionStart ?? newValue.length;
     // Detect if user just typed @
     if (
       hosts.length > 0 &&
-      newValue.length > composerText.length &&
+      newValue.length > previousText.length &&
       newValue.endsWith('@')
     ) {
       // Position the popover near the textarea
@@ -419,18 +453,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
     } else if (showSlashCommandPicker) {
       closeAllMenus();
     }
-  }, [commitComposerText, composerText, hosts.length, showAtMention, findSlashTrigger, showSlashCommandPicker, closeAllMenus, getInputPanelMenuPos]);
+  }, [commitComposerText, hosts.length, showAtMention, findSlashTrigger, showSlashCommandPicker, closeAllMenus, getInputPanelMenuPos, syncHasComposerText]);
 
   const handleSelectAtMention = useCallback((host: { label: string; hostname: string }) => {
     // Replace the trailing @ with @hostname
     const name = host.label || host.hostname;
-    const lastAt = composerText.lastIndexOf('@');
+    const currentText = readComposerText();
+    const lastAt = currentText.lastIndexOf('@');
     const newValue = lastAt >= 0
-      ? composerText.slice(0, lastAt) + `@${name} `
-      : composerText + `@${name} `;
+      ? currentText.slice(0, lastAt) + `@${name} `
+      : currentText + `@${name} `;
     commitComposerText(newValue);
     closeAllMenus();
-  }, [composerText, commitComposerText, closeAllMenus]);
+  }, [readComposerText, commitComposerText, closeAllMenus]);
 
   const openInputPanelMenu = useCallback((menu: 'atMention' | 'slashCommand') => {
     const pos = getInputPanelMenuPos();
@@ -438,8 +473,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
     setMenuPos(null);
     setInputPanelPos(pos);
     if (menu === 'slashCommand') {
-      const caret = textareaRef.current?.selectionStart ?? composerText.length;
-      const trigger = findSlashTrigger(composerText, caret);
+      const currentText = readComposerText();
+      const caret = textareaRef.current?.selectionStart ?? currentText.length;
+      const trigger = findSlashTrigger(currentText, caret);
       if (trigger) {
         setSlashQuery(trigger.query);
         setSlashRange({ start: trigger.start, end: trigger.end });
@@ -449,7 +485,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
     }
     setActiveMenu(menu);
-  }, [findSlashTrigger, getInputPanelMenuPos, composerText]);
+  }, [findSlashTrigger, getInputPanelMenuPos, readComposerText]);
 
   const userSkillOptions = useMemo<UserSkillSlashOption[]>(
     () => (lockTurnConfiguration ? [] : userSkills).map((skill) => ({
@@ -515,14 +551,15 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const showSlashPickerUI = showSlashCommandPicker && (inputPanelPos != null || menuPos != null);
 
   const removeSlashQueryFromInput = useCallback(() => {
-    if (!slashRange) return composerText;
-    const before = composerText.slice(0, slashRange.start);
-    const after = composerText.slice(slashRange.end);
+    const currentText = readComposerText();
+    if (!slashRange) return currentText;
+    const before = currentText.slice(0, slashRange.start);
+    const after = currentText.slice(slashRange.end);
     if (/\s$/.test(before) && /^\s/.test(after)) {
       return `${before}${after.slice(1)}`;
     }
     return `${before}${after}`;
-  }, [slashRange, composerText]);
+  }, [slashRange, readComposerText]);
 
   const insertUserSkillToken = useCallback((skill: { slug: string }) => {
     if (lockTurnConfiguration) return;
@@ -534,18 +571,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, [closeAllMenus, lockTurnConfiguration, onAddUserSkill, commitComposerText, removeSlashQueryFromInput, slashRange]);
 
   const insertQuickMessage = useCallback((message: AIQuickMessage) => {
+    const currentText = readComposerText();
     if (slashRange) {
-      const before = composerText.slice(0, slashRange.start);
-      const after = composerText.slice(slashRange.end);
+      const before = currentText.slice(0, slashRange.start);
+      const after = currentText.slice(slashRange.end);
       const spacerBefore = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
       const spacerAfter = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
       commitComposerText(`${before}${spacerBefore}${message.content}${spacerAfter}${after}`);
     } else {
-      const spacer = composerText.length > 0 && !/\s$/.test(composerText) ? ' ' : '';
-      commitComposerText(`${composerText}${spacer}${message.content}`);
+      const spacer = currentText.length > 0 && !/\s$/.test(currentText) ? ' ' : '';
+      commitComposerText(`${currentText}${spacer}${message.content}`);
     }
     closeAllMenus();
-  }, [closeAllMenus, commitComposerText, composerText, slashRange]);
+  }, [closeAllMenus, commitComposerText, readComposerText, slashRange]);
 
   const handleSelectSlashCommandItem = useCallback((item: SlashCommandItem) => {
     if (item.kind === 'system') {
@@ -700,7 +738,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   const handleSubmit = useCallback(
     (_text: string, _event: FormEvent<HTMLFormElement>) => {
-      const systemCommand = getSystemSlashCommand(composerText);
+      const submittedText = readComposerText();
+      commitComposerText(submittedText);
+      const systemCommand = getSystemSlashCommand(submittedText);
       if (systemCommand) {
         if (systemCommand === 'compact') {
           if (!canCompact) return;
@@ -721,7 +761,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       onSend();
     },
-    [canCompact, canSteer, commitComposerText, composerText, isStreaming, onCompact, onSend, onSteer, onStop],
+    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onSend, onSteer, onStop, readComposerText],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';
@@ -935,11 +975,17 @@ const ChatInput: React.FC<ChatInputProps> = ({
           )}
           <PromptInputTextarea
             ref={textareaRef}
-            value={composerText}
-            onChange={(e) => handleInputChange(e.target.value)}
+            defaultValue={value}
+            spellCheck={false}
+            autoCorrect="off"
+            autoCapitalize="off"
+            autoComplete="off"
+            onChange={(e) => handleInputChange(e.target.value, e.nativeEvent.isComposing)}
             onFocus={() => markAiComposerActivity()}
             onCompositionStart={() => markAiComposerActivity()}
             onCompositionUpdate={() => markAiComposerActivity()}
+            onCompositionEnd={(e) => handleInputChange(e.currentTarget.value)}
+            onBlur={() => commitComposerText(readComposerText())}
             onKeyDown={handleTextareaKeyDown}
             placeholder={placeholder || (isStreaming && canSteer ? t('ai.codex.steer.placeholder') : defaultPlaceholder)}
             disabled={composerDisabled}
@@ -1452,7 +1498,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   <TooltipTrigger asChild>
                     <button
                       type="submit"
-                      disabled={(!composerText.trim() && !hasTerminalSelectionAttachment) || composerDisabled}
+                      disabled={(!hasComposerText && !hasTerminalSelectionAttachment) || composerDisabled}
                       aria-label={isSteering ? t('ai.codex.steer.sending') : t('ai.codex.steer.addInstruction')}
                       className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-foreground/20 bg-foreground text-background shadow-sm transition-colors hover:bg-foreground/90 disabled:border-border/80 disabled:bg-muted/52 disabled:text-foreground/72"
                     >
@@ -1467,7 +1513,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <PromptInputSubmit
                 status={status}
                 onStop={onStop}
-                disabled={(!composerText.trim() && !hasTerminalSelectionAttachment) || disabled}
+                disabled={(!hasComposerText && !hasTerminalSelectionAttachment) || disabled}
               />
             )}
           </div>

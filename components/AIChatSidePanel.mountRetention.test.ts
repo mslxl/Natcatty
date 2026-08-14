@@ -137,6 +137,22 @@ test('send and new chat discard pending composer text', () => {
   assert.match(source, /if \(!options\?\.keepPendingText\) discardPendingComposerText\(\)/);
 });
 
+test('text-only draft writes do not emit AI state changes', () => {
+  const source = readFileSync(new URL('../application/state/useAIState.ts', import.meta.url), 'utf8');
+  assert.match(source, /draftsByScopeEqualIgnoringAllComposerText/);
+  assert.match(source, /if \(textOnly\) return;/);
+});
+
+test('first composer keystroke does not create a store draft synchronously', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  const setter = source.slice(
+    source.indexOf('const setInputValue = useCallback'),
+    source.indexOf('const addFiles = useCallback'),
+  );
+  assert.match(setter, /pendingComposerTextRef\.current = value/);
+  assert.doesNotMatch(setter, /enterScopeDraftMode/);
+});
+
 test('hidden empty AI side panel can release its subtree', () => {
   const props = baseProps();
 

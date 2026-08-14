@@ -42,6 +42,7 @@ import {
 import {
   activateDraftView,
   clearScopeDraftState,
+  draftsByScopeEqualIgnoringAllComposerText,
   ensureDraftForScopeState,
   pruneStaleSessionPanelViews,
   setDraftView,
@@ -786,18 +787,21 @@ export function useAIState() {
 
   const ensureDraftForScope = useCallback((scopeKey: string, agentId: string): void => {
     let nextDraftsByScope: DraftsByScope | null = null;
+    let textOnly = false;
 
     setDraftsByScopeRaw((prev) => {
       const next = ensureDraftForScopeState(prev, scopeKey, agentId);
       if (next === prev) return prev;
       nextDraftsByScope = next;
+      textOnly = draftsByScopeEqualIgnoringAllComposerText(prev, next);
       return next;
     });
 
     if (!nextDraftsByScope) return;
 
-    bumpDraftMutationVersion(scopeKey);
     setLatestAIDraftsByScopeSnapshot(nextDraftsByScope);
+    if (textOnly) return;
+    bumpDraftMutationVersion(scopeKey);
     emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
   }, []);
 
@@ -806,6 +810,9 @@ export function useAIState() {
     fallbackAgentId: string,
     updater: (draft: AIDraft) => AIDraft,
   ): void => {
+    let nextDraftsByScope: DraftsByScope | null = null;
+    let textOnly = false;
+
     setDraftsByScopeRaw((prev) => {
       const next = updateDraftForScope(
         prev,
@@ -821,40 +828,51 @@ export function useAIState() {
         },
       );
       if (next === prev) return prev;
-      setLatestAIDraftsByScopeSnapshot(next);
-      emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
+      nextDraftsByScope = next;
+      textOnly = draftsByScopeEqualIgnoringAllComposerText(prev, next);
       return next;
     });
+
+    if (!nextDraftsByScope) return;
+    setLatestAIDraftsByScopeSnapshot(nextDraftsByScope);
+    if (textOnly) return;
     bumpDraftMutationVersion(scopeKey);
+    emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
   }, []);
 
   const updateDraftIfPresent = useCallback((
     scopeKey: string,
     updater: (draft: AIDraft) => AIDraft,
   ): void => {
-    let updated = false;
+    let nextDraftsByScope: DraftsByScope | null = null;
+    let textOnly = false;
 
     setDraftsByScopeRaw((prev) => {
       const currentDraft = prev[scopeKey];
       if (!currentDraft) return prev;
 
-      const nextDraft = {
-        ...updater(currentDraft),
-        updatedAt: Date.now(),
-      };
+      const updated = updater(currentDraft);
+      const nextDraft = updated === currentDraft
+        ? currentDraft
+        : {
+          ...updated,
+          updatedAt: Date.now(),
+        };
+      if (nextDraft === currentDraft) return prev;
       const next = {
         ...prev,
         [scopeKey]: nextDraft,
       };
-      updated = true;
-      setLatestAIDraftsByScopeSnapshot(next);
-      emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
+      nextDraftsByScope = next;
+      textOnly = draftsByScopeEqualIgnoringAllComposerText(prev, next);
       return next;
     });
 
-    if (updated) {
-      bumpDraftMutationVersion(scopeKey);
-    }
+    if (!nextDraftsByScope) return;
+    setLatestAIDraftsByScopeSnapshot(nextDraftsByScope);
+    if (textOnly) return;
+    bumpDraftMutationVersion(scopeKey);
+    emitAIStateChanged(AI_STATE_CHANGED_DRAFTS_BY_SCOPE);
   }, []);
 
   const showDraftView = useCallback((scopeKey: string) => {

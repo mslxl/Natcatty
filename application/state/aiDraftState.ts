@@ -11,27 +11,32 @@ type DraftUploadGenerationByScope = Record<string, number>;
 
 const DEFAULT_PANEL_VIEW: AIPanelView = { mode: 'draft' };
 
-/** Typing only changes text/updatedAt. Panel chrome can ignore that identity churn. */
-export function draftsByScopeEqualIgnoringComposerText(
-  prev: DraftsByScope,
-  next: DraftsByScope,
-  scopeKey: string,
+function isComposerOnlyDraft(draft: AIDraft | undefined): boolean {
+  return Boolean(
+    draft
+    && draft.attachments.length === 0
+    && draft.selectedUserSkillSlugs.length === 0,
+  );
+}
+
+/**
+ * First keystroke creates a missing → composer-only draft. That is still just
+ * typing. Clearing a draft (`right` missing or emptied) is a real lifecycle
+ * change so New Chat / send can reset the uncontrolled composer.
+ */
+function draftsEquivalentIgnoringComposerText(
+  left: AIDraft | undefined,
+  right: AIDraft | undefined,
 ): boolean {
-  if (prev === next) return true;
-  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
-  for (const key of keys) {
-    const left = prev[key];
-    const right = next[key];
-    if (key !== scopeKey) {
-      if (left !== right) return false;
-      continue;
-    }
-    if (left === right) continue;
-    if (!left || !right) return false;
-    if (left.agentId !== right.agentId) return false;
-    if (left.attachments !== right.attachments) return false;
-    if (left.selectedUserSkillSlugs !== right.selectedUserSkillSlugs) return false;
-  }
+  if (left === right) return true;
+  if (!left) return Boolean(isComposerOnlyDraft(right) && right.text.trim().length > 0);
+  if (!right) return false;
+  if (left.agentId !== right.agentId) return false;
+  if (left.attachments !== right.attachments) return false;
+  if (left.selectedUserSkillSlugs !== right.selectedUserSkillSlugs) return false;
+  const leftEmpty = left.text.trim().length === 0;
+  const rightEmpty = right.text.trim().length === 0;
+  if (leftEmpty !== rightEmpty) return leftEmpty;
   return true;
 }
 
@@ -43,13 +48,24 @@ export function draftsByScopeEqualIgnoringAllComposerText(
   if (prev === next) return true;
   const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
   for (const key of keys) {
+    if (!draftsEquivalentIgnoringComposerText(prev[key], next[key])) return false;
+  }
+  return true;
+}
+
+/** Typing only changes text/updatedAt. Sibling empty-draft creates stay ignored. */
+export function draftsByScopeEqualIgnoringComposerText(
+  prev: DraftsByScope,
+  next: DraftsByScope,
+  scopeKey: string,
+): boolean {
+  if (prev === next) return true;
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]);
+  for (const key of keys) {
     const left = prev[key];
     const right = next[key];
-    if (left === right) continue;
-    if (!left || !right) return false;
-    if (left.agentId !== right.agentId) return false;
-    if (left.attachments !== right.attachments) return false;
-    if (left.selectedUserSkillSlugs !== right.selectedUserSkillSlugs) return false;
+    if (key !== scopeKey && !left && isComposerOnlyDraft(right)) continue;
+    if (!draftsEquivalentIgnoringComposerText(left, right)) return false;
   }
   return true;
 }

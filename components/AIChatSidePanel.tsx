@@ -568,15 +568,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     }
     const pending = pendingComposerTextRef.current;
     if (pending == null) return;
+    if (panelViewRef.current.mode !== 'draft') {
+      enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
+    }
     updateScopeDraft(currentAgentId, (current) => (
       current.text === pending ? current : { ...current, text: pending }
     ));
-  }, [currentAgentId, updateScopeDraft]);
+  }, [currentAgentId, enterScopeDraftMode, updateScopeDraft]);
 
   const setInputValue = useCallback((value: string) => {
-    if (panelViewRef.current.mode !== 'draft' || !currentDraftRef.current) {
-      enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
-    }
     const base = currentDraftRef.current ?? {
       text: '',
       agentId: currentAgentId,
@@ -593,7 +593,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       draftTextFlushTimerRef.current = null;
       flushDraftText();
     }, 120);
-  }, [currentAgentId, enterScopeDraftMode, flushDraftText]);
+  }, [currentAgentId, flushDraftText]);
 
   const addFiles = useCallback(async (inputFiles: File[]) => {
     enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');

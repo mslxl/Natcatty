@@ -41,6 +41,49 @@ test("draftsByScopeEqualIgnoringComposerText ignores typing in the active scope"
       { "terminal:1": prev["terminal:1"], "workspace:2": base },
       "terminal:1",
     ),
+    true,
+  );
+  assert.equal(
+    draftsByScopeEqualIgnoringComposerText(
+      prev,
+      {
+        "terminal:1": prev["terminal:1"],
+        "workspace:2": { ...base, attachments: [{ id: "a" } as never] },
+      },
+      "terminal:1",
+    ),
+    false,
+  );
+});
+
+test("first composer draft is treated as text-only identity churn", () => {
+  const empty = createEmptyDraft("catty");
+  const created = { ...empty, text: "你" };
+  assert.equal(draftsByScopeEqualIgnoringAllComposerText({}, { "terminal:1": empty }), false);
+  assert.equal(draftsByScopeEqualIgnoringAllComposerText({}, { "terminal:1": created }), true);
+  assert.equal(
+    draftsByScopeEqualIgnoringComposerText({}, { "terminal:1": created }, "terminal:1"),
+    true,
+  );
+  assert.equal(
+    draftsByScopeEqualIgnoringAllComposerText(
+      { "terminal:1": empty },
+      { "terminal:1": created },
+    ),
+    true,
+  );
+  assert.equal(
+    draftsByScopeEqualIgnoringAllComposerText(
+      { "terminal:1": created },
+      { "terminal:1": empty },
+    ),
+    false,
+  );
+  assert.equal(
+    draftsByScopeEqualIgnoringAllComposerText(
+      {},
+      { "terminal:1": { ...created, attachments: [{ id: "a" } as never] } },
+    ),
     false,
   );
 });
