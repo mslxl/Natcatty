@@ -492,6 +492,28 @@ test("wrapped matches stay on the same logical line", async () => {
   term.dispose();
 });
 
+test("quiet catch-up refreshes a tall viewport once", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 40, scrollback: 80 });
+  let refreshCount = 0;
+  const originalRefresh = term.refresh.bind(term);
+  term.refresh = (start, end) => {
+    refreshCount += 1;
+    return originalRefresh(start, end);
+  };
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  const line = "2026-08-13 INFO worker=1 WARN ERROR failed from 10.2.0.1 payload=xxxxxxxx";
+  const flood = Array.from({ length: 60 }, () => line).join("\r\n");
+  noteTerminalOutputPressureData(term, flood);
+  await write(term, flood);
+  await new Promise((resolve) => setTimeout(resolve, 650));
+  await highlighter.whenSettled();
+  assert.equal(refreshCount, 1);
+  assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), []);
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("identical flood lines are all colored after quiet catch-up", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 12, scrollback: 40 });
   const highlighter = new KeywordHighlighter(term);

@@ -590,10 +590,7 @@ export class KeywordHighlighter implements IDisposable {
           break;
         }
         const sliceEnd = Math.min(buffer.length - 1, nextY + RECOLOR_SLICE_LINES - 1);
-        const viewportStart = buffer.viewportY;
-        const viewportEnd = viewportStart + this.term.rows - 1;
-        const refresh = sliceEnd >= viewportStart && nextY <= viewportEnd;
-        this.recolorRange(nextY, sliceEnd, refresh, false);
+        this.recolorRange(nextY, sliceEnd, false, false);
         nextY = sliceEnd + 1;
         if (nextY >= buffer.length) {
           this.catchUpFrom = null;
@@ -616,6 +613,7 @@ export class KeywordHighlighter implements IDisposable {
         this.resolveCatchUp = null;
       } else if (this.resolveCatchUpY() === null) {
         this.catchUpCounted = false;
+        this.recolorVisible();
         this.resolveCatchUp?.();
         this.resolveCatchUp = null;
       } else if (pausedOnAlternate) {
