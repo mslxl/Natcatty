@@ -10,6 +10,8 @@ export type SyncPreferencePersistFields = {
   syncStrategy: CloudSyncStrategy;
 };
 
+export type SyncPreferenceKey = keyof SyncPreferencePersistFields;
+
 export type SyncVersionPersistFields = {
   localVersion: number;
   localUpdatedAt: number;
@@ -41,29 +43,45 @@ export function resolveSyncPreferencesForPersist(input: {
    * are taken from storage so a version-only save cannot invent prefs.
    */
   preferencesFromMemory?: boolean;
+  /**
+   * When preferencesFromMemory is true, only these keys are taken from
+   * memory; other preference fields keep the stored value so a setter in
+   * one window cannot clobber a concurrent preference edit from another.
+   * Omit to take every preference field from memory (full snapshot).
+   */
+  memoryKeys?: readonly SyncPreferenceKey[];
 }): SyncPreferencePersistFields {
-  const { memory, stored, preferencesFromMemory = false } = input;
+  const { memory, stored, preferencesFromMemory = false, memoryKeys } = input;
   const fromStorage = stored && typeof stored === 'object' ? stored : null;
 
-  if (preferencesFromMemory || !fromStorage) {
-    return {
-      autoSync: Boolean(memory.autoSync),
-      interval: Number(memory.interval),
-      syncStrategy: normalizeCloudSyncStrategy(memory.syncStrategy),
-    };
-  }
+  const takeFromMemory = (key: SyncPreferenceKey): boolean => {
+    if (!fromStorage) return true;
+    if (!preferencesFromMemory) return false;
+    if (!memoryKeys) return true;
+    return memoryKeys.includes(key);
+  };
 
   return {
     autoSync: Boolean(
-      fromStorage.autoSync !== undefined ? fromStorage.autoSync : memory.autoSync,
+      takeFromMemory('autoSync')
+        ? memory.autoSync
+        : fromStorage?.autoSync !== undefined
+          ? fromStorage.autoSync
+          : memory.autoSync,
     ),
     interval: Number(
-      fromStorage.interval !== undefined ? fromStorage.interval : memory.interval,
+      takeFromMemory('interval')
+        ? memory.interval
+        : fromStorage?.interval !== undefined
+          ? fromStorage.interval
+          : memory.interval,
     ),
     syncStrategy: normalizeCloudSyncStrategy(
-      fromStorage.syncStrategy !== undefined
-        ? fromStorage.syncStrategy
-        : memory.syncStrategy ?? DEFAULT_CLOUD_SYNC_STRATEGY,
+      takeFromMemory('syncStrategy')
+        ? memory.syncStrategy
+        : fromStorage?.syncStrategy !== undefined
+          ? fromStorage.syncStrategy
+          : memory.syncStrategy ?? DEFAULT_CLOUD_SYNC_STRATEGY,
     ),
   };
 }
@@ -87,6 +105,7 @@ export function resolveSyncConfigForPersist(input: {
   memory: SyncConfigPersistFields;
   stored: Partial<SyncConfigPersistFields> | null | undefined;
   preferencesFromMemory?: boolean;
+  memoryKeys?: readonly SyncPreferenceKey[];
 }): SyncConfigPersistFields {
   return {
     ...resolveSyncPreferencesForPersist({
@@ -97,6 +116,7 @@ export function resolveSyncConfigForPersist(input: {
       },
       stored: input.stored,
       preferencesFromMemory: input.preferencesFromMemory,
+      memoryKeys: input.memoryKeys,
     }),
     ...resolveSyncVersionsForPersist(input.memory),
   };

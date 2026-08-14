@@ -691,7 +691,10 @@ export const useAutoSync = (config: AutoSyncConfig) => {
           if (recoveryPayload && shouldPromptCloudVaultRecovery(localPayload, recoveryPayload)) {
             const userAction = await requestEmptyVaultRecovery(recoveryPayload);
             if (userAction === 'restore') {
+              // Explicit recovery must not honor the auto-sync preference gate:
+              // the user already confirmed Restore in the dialog.
               const restored = await syncNowRef.current({
+                trigger: 'manual',
                 notifyOnFailure,
                 conflictActionOverride: 'download-remote',
               });

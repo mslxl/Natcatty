@@ -162,7 +162,10 @@ test('setAutoSync still persists the explicit preference from memory', () => {
       storage.set(key, value);
       return true;
     },
-    saveSyncConfig(opts?: { preferencesFromMemory?: boolean }) {
+    saveSyncConfig(opts?: {
+      preferencesFromMemory?: boolean;
+      memoryKeys?: ReadonlyArray<'autoSync' | 'interval' | 'syncStrategy'>;
+    }) {
       saveSyncConfigImpl.call(this, opts);
     },
     notifyStateChange() {},
@@ -177,4 +180,63 @@ test('setAutoSync still persists the explicit preference from memory', () => {
   assert.equal(savedPrefs.autoSync, false);
   assert.equal(savedConfig.autoSync, undefined);
   assert.equal(manager.state.autoSyncEnabled, false);
+});
+
+test('strategy preference write does not re-enable stale autoSync from memory', () => {
+  const storage = new Map<string, unknown>();
+  storage.set(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, {
+    autoSync: false,
+    interval: 15,
+    syncStrategy: 'smartMerge',
+  });
+  storage.set(SYNC_STORAGE_KEYS.SYNC_CONFIG, {
+    localVersion: 2,
+    localUpdatedAt: 20,
+    remoteVersion: 2,
+    remoteUpdatedAt: 20,
+  });
+
+  const manager = {
+    state: {
+      // Stale: another window already disabled auto-sync in storage.
+      autoSyncEnabled: true,
+      autoSyncInterval: 5,
+      localVersion: 2,
+      localUpdatedAt: 20,
+      remoteVersion: 2,
+      remoteUpdatedAt: 20,
+      syncStrategy: 'preferLocal',
+      securityState: 'UNLOCKED',
+    },
+    loadFromStorage(key: string) {
+      return storage.get(key) ?? null;
+    },
+    saveToStorage(key: string, value: unknown) {
+      storage.set(key, value);
+      return true;
+    },
+    saveSyncConfig(opts?: {
+      preferencesFromMemory?: boolean;
+      memoryKeys?: ReadonlyArray<'autoSync' | 'interval' | 'syncStrategy'>;
+    }) {
+      saveSyncConfigImpl.call(this, opts);
+    },
+    notifyStateChange() {},
+    startAutoSync() {},
+    stopAutoSync() {},
+  };
+
+  saveSyncConfigImpl.call(manager, {
+    preferencesFromMemory: true,
+    memoryKeys: ['syncStrategy'],
+  });
+
+  const savedPrefs = storage.get(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as {
+    autoSync: boolean;
+    interval: number;
+    syncStrategy: string;
+  };
+  assert.equal(savedPrefs.autoSync, false);
+  assert.equal(savedPrefs.interval, 15);
+  assert.equal(savedPrefs.syncStrategy, 'preferLocal');
 });

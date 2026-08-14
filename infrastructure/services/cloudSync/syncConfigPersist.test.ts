@@ -57,6 +57,48 @@ test('explicit preference persist writes memory autoSync', () => {
   assert.equal(next.localVersion, 12);
 });
 
+test('strategy-only preference persist keeps stored autoSync', () => {
+  const next = resolveSyncPreferencesForPersist({
+    memory: {
+      autoSync: true,
+      interval: 5,
+      syncStrategy: 'preferLocal',
+    },
+    stored: {
+      autoSync: false,
+      interval: 15,
+      syncStrategy: 'smartMerge',
+    },
+    preferencesFromMemory: true,
+    memoryKeys: ['syncStrategy'],
+  });
+
+  assert.equal(next.autoSync, false);
+  assert.equal(next.interval, 15);
+  assert.equal(next.syncStrategy, 'preferLocal');
+});
+
+test('autoSync-only preference persist keeps stored syncStrategy', () => {
+  const next = resolveSyncPreferencesForPersist({
+    memory: {
+      autoSync: false,
+      interval: 5,
+      syncStrategy: 'smartMerge',
+    },
+    stored: {
+      autoSync: true,
+      interval: 15,
+      syncStrategy: 'preferCloud',
+    },
+    preferencesFromMemory: true,
+    memoryKeys: ['autoSync'],
+  });
+
+  assert.equal(next.autoSync, false);
+  assert.equal(next.interval, 15);
+  assert.equal(next.syncStrategy, 'preferCloud');
+});
+
 test('version-only persist keeps stored syncStrategy when memory differs', () => {
   const next = resolveSyncConfigForPersist({
     memory: { ...memoryBase, syncStrategy: 'preferLocal' },

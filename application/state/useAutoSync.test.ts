@@ -109,6 +109,7 @@ test("enabled convergent startup checks preview empty-vault recovery before sync
     "conflictActionOverride: 'download-remote'",
     recoveryPromptIndex,
   );
+  const manualTriggerIndex = source.indexOf("trigger: 'manual'", recoveryPromptIndex);
   const normalSyncIndex = source.indexOf(
     "syncNowRef.current({ notifyOnFailure, allowEmptyConvergentSync })",
     cloudWinsIndex,
@@ -118,13 +119,38 @@ test("enabled convergent startup checks preview empty-vault recovery before sync
   assert.notEqual(previewIndex, -1);
   assert.notEqual(recoveryPromptIndex, -1);
   assert.notEqual(cloudWinsIndex, -1);
+  assert.notEqual(manualTriggerIndex, -1);
   assert.notEqual(normalSyncIndex, -1);
   assert.ok(
     convergentGuardIndex < previewIndex
       && previewIndex < recoveryPromptIndex
-      && recoveryPromptIndex < cloudWinsIndex
+      && recoveryPromptIndex < manualTriggerIndex
+      && manualTriggerIndex < cloudWinsIndex
       && cloudWinsIndex < normalSyncIndex,
     "v2 startup must offer recovery and use cloud-wins before the normal CRDT sync path",
+  );
+});
+
+test("empty-vault recovery restore bypasses the auto-sync preference gate", () => {
+  const source = readFileSync(new URL("./useAutoSync.ts", import.meta.url), "utf8");
+  const recoveryPromptIndex = source.indexOf("requestEmptyVaultRecovery(recoveryPayload)");
+  const restoreCallIndex = source.indexOf("syncNowRef.current({", recoveryPromptIndex);
+  const triggerIndex = source.indexOf("trigger: 'manual'", restoreCallIndex);
+  const conflictIndex = source.indexOf(
+    "conflictActionOverride: 'download-remote'",
+    restoreCallIndex,
+  );
+  const callEndIndex = source.indexOf("});", conflictIndex);
+
+  assert.notEqual(recoveryPromptIndex, -1);
+  assert.notEqual(restoreCallIndex, -1);
+  assert.notEqual(triggerIndex, -1);
+  assert.notEqual(conflictIndex, -1);
+  assert.ok(
+    restoreCallIndex < triggerIndex
+      && triggerIndex < conflictIndex
+      && conflictIndex < callEndIndex,
+    "recovery Restore must pass trigger:manual so disabled auto-sync cannot block it",
   );
 });
 

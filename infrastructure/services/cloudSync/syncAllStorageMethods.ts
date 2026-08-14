@@ -672,14 +672,18 @@ export function setDeviceNameImpl(this: any,name: string): void {
 
 export function setAutoSyncImpl(this: any,enabled: boolean, intervalMinutes?: number): void {
     this.state.autoSyncEnabled = enabled;
+    const memoryKeys: Array<'autoSync' | 'interval'> = ['autoSync'];
     if (intervalMinutes) {
       this.state.autoSyncInterval = Math.max(
         SYNC_CONSTANTS.MIN_SYNC_INTERVAL,
         Math.min(SYNC_CONSTANTS.MAX_SYNC_INTERVAL, intervalMinutes)
       );
+      memoryKeys.push('interval');
     }
-    // Preference write: take autoSync/interval from this window's memory.
-    this.saveSyncConfig({ preferencesFromMemory: true });
+    // Preference write: only the fields this setter owns — leave syncStrategy
+    // (and interval when unchanged) to whatever is already persisted so another
+    // window's concurrent edit is not overwritten by stale memory.
+    this.saveSyncConfig({ preferencesFromMemory: true, memoryKeys });
     this.notifyStateChange(); // Notify UI of state change
 
     if (enabled && this.state.securityState === 'UNLOCKED') {
@@ -712,9 +716,13 @@ export function stopAutoSyncImpl(this: any): void {
 
 export function saveSyncConfigImpl(
     this: any,
-    opts?: { preferencesFromMemory?: boolean },
+    opts?: {
+      preferencesFromMemory?: boolean;
+      memoryKeys?: ReadonlyArray<'autoSync' | 'interval' | 'syncStrategy'>;
+    },
   ): void {
     const preferencesFromMemory = opts?.preferencesFromMemory === true;
+    const memoryKeys = opts?.memoryKeys;
     type StoredPrefs = {
       autoSync?: boolean;
       interval?: number;
@@ -756,11 +764,22 @@ export function saveSyncConfigImpl(
 
     // Preference writers only touch SYNC_PREFERENCES so a concurrent
     // version bump cannot re-enable auto-sync via a shared RMW blob (#2976).
+    // When memoryKeys is set, merge owned fields onto the stored snapshot so
+    // a strategy-only write cannot revive a stale autoSync from memory.
     if (preferencesFromMemory) {
+      const storedPreferences = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as
+        | StoredPrefs
+        | null
+        | undefined;
+      const storedConfig = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as
+        | StoredConfig
+        | null
+        | undefined;
       const nextPreferences = resolveSyncPreferencesForPersist({
         memory: memoryPreferences,
-        stored: null,
+        stored: coalesceStoredSyncPreferences(storedPreferences, storedConfig),
         preferencesFromMemory: true,
+        memoryKeys,
       });
       this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, nextPreferences);
       return;

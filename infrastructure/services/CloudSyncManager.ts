@@ -848,7 +848,7 @@ export class CloudSyncManager {
 
   setSyncStrategy(strategy: CloudSyncStrategy): void {
     this.state.syncStrategy = strategy;
-    this.saveSyncConfig({ preferencesFromMemory: true });
+    this.saveSyncConfig({ preferencesFromMemory: true, memoryKeys: ['syncStrategy'] });
     this.notifyStateChange();
   }
 
@@ -868,7 +868,10 @@ export class CloudSyncManager {
     return stopAutoSyncImpl.call(this);
   }
 
-  private saveSyncConfig(opts?: { preferencesFromMemory?: boolean }): void {
+  private saveSyncConfig(opts?: {
+    preferencesFromMemory?: boolean;
+    memoryKeys?: ReadonlyArray<'autoSync' | 'interval' | 'syncStrategy'>;
+  }): void {
     return saveSyncConfigImpl.call(this, opts);
   }
 
