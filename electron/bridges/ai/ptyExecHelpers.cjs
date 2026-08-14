@@ -178,6 +178,24 @@ function resolveEffectiveShellKind(shellKind, expectedPrompt, options = {}) {
   return "posix";
 }
 
+// Discard unfinished prompt-line input before the agent wrapper so typed-but-
+// not-entered text is not concatenated onto the injected command (#2962).
+// Raw/serial devices have no portable line-kill binding; leave them alone.
+function buildPendingInputClearPrefix(shellKind) {
+  switch (shellKind) {
+    case "raw":
+      return "";
+    case "cmd":
+      return "\x1b";
+    case "powershell":
+      // Escape = Windows-mode PSReadLine RevertLine (issue reporter default).
+      // Ctrl+U/Ctrl+K also fire for Emacs/Vi when those bindings exist.
+      return "\x1b\x15\x0b";
+    default:
+      return "\x15\x0b";
+  }
+}
+
 function buildPosixWrapperBody(command, marker) {
   const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
   const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
@@ -430,6 +448,7 @@ module.exports = {
   subscribeToPtyData,
   hasExpectedPromptSuffix,
   resolveEffectiveShellKind,
+  buildPendingInputClearPrefix,
   buildWrappedCommand,
   findEndMarker,
   normalizePtyOutput,

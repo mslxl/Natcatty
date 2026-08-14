@@ -12,15 +12,18 @@ const {
   DEFAULT_FOREGROUND_PTY_CAPTURE_CHARS,
   resolveEffectiveShellKind,
   execViaChannel,
+  execViaRawPty,
 } = require("./ptyExec.cjs");
 const {
+  buildPendingInputClearPrefix,
   buildWrappedCommand,
 } = require("./ptyExecHelpers.cjs");
 
 class ShellBackedPty extends EventEmitter {
   write(data) {
     if (data === "\x03") return;
-    const result = spawnSync("sh", ["-c", String(data)], { encoding: "utf8" });
+    const script = String(data).replace(/^\x15\x0b/, "");
+    const result = spawnSync("sh", ["-c", script], { encoding: "utf8" });
     queueMicrotask(() => {
       this.emit("data", Buffer.from(result.stdout));
     });
@@ -322,6 +325,53 @@ test("loginShellHint selects fish/posix/powershell/cmd without pinning confirmed
     resolveEffectiveShellKind("posix", "user@host:~$", { loginShellHint: "fish" }),
     "posix",
   );
+});
+
+test("pending-input clear prefix covers interactive shells and skips raw devices", () => {
+  assert.equal(buildPendingInputClearPrefix("posix"), "\x15\x0b");
+  assert.equal(buildPendingInputClearPrefix("fish"), "\x15\x0b");
+  assert.equal(buildPendingInputClearPrefix("powershell"), "\x1b\x15\x0b");
+  assert.equal(buildPendingInputClearPrefix("cmd"), "\x1b");
+  assert.equal(buildPendingInputClearPrefix("raw"), "");
+});
+
+test("startPtyJob writes the clear prefix before the wrapper", async () => {
+  const writes = [];
+  class CapturePty extends EventEmitter {
+    write(data) {
+      writes.push(String(data));
+    }
+  }
+  const pty = new CapturePty();
+  const job = startPtyJob(pty, "echo hi", {
+    shellKind: "posix",
+    timeoutMs: 50,
+    expectedPrompt: "$ ",
+  });
+  assert.equal(writes.length, 1);
+  assert.ok(writes[0].startsWith("\x15\x0b"));
+  assert.match(writes[0], /__NCMCP_/);
+  job.cancel();
+  pty.emit("data", Buffer.from("$ "));
+  await job.resultPromise;
+});
+
+test("execViaRawPty does not prepend a line-clear before device commands", async () => {
+  const writes = [];
+  const port = new EventEmitter();
+  port.write = (data) => {
+    writes.push(String(data));
+  };
+  const abort = new AbortController();
+  const resultPromise = execViaRawPty(port, "show version", {
+    timeoutMs: 200,
+    idleMs: 20,
+    abortSignal: abort.signal,
+  });
+  assert.deepEqual(writes, ["show version\r"]);
+  abort.abort();
+  const result = await resultPromise;
+  assert.equal(result.ok, false);
 });
 
 test("cmd wrapper uses interactive cmd variable expansion", () => {
