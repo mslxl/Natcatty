@@ -789,6 +789,42 @@ test("local file replace unlinks an existing symlink before writeLocalFile", asy
   assert.equal(results[0].success, true);
 });
 
+test("local file replace unlinks a regular file before writeLocalFile", async () => {
+  const file = new File(["new-bytes"], "tool.sh", { lastModified: 1234 });
+  const operations: string[] = [];
+
+  const results = await uploadFromFileList(
+    [file],
+    {
+      targetPath: "/Users/me/bin",
+      sftpId: null,
+      isLocal: true,
+      bridge: {
+        mkdirSftp: async () => {},
+        lstatLocal: async (path) =>
+          path === "/Users/me/bin/tool.sh"
+            ? { type: "file", size: 12, lastModified: 1000 }
+            : null,
+        deleteLocalFile: async (path, expectedType) => {
+          operations.push(`delete:${path}:${expectedType}`);
+        },
+        writeLocalFile: async (path) => {
+          operations.push(`write:${path}`);
+        },
+      },
+      joinPath: (base, name) => `${base}/${name}`,
+      resolveConflict: async () => "replace",
+    },
+  );
+
+  assert.deepEqual(operations, [
+    "delete:/Users/me/bin/tool.sh:file",
+    "write:/Users/me/bin/tool.sh",
+  ]);
+  assert.equal(results.length, 1);
+  assert.equal(results[0].success, true);
+});
+
 test("counts apply-to-all upload conflicts by incoming and existing type", async () => {
   const files = [
     new File(["local"], "existing-file", { lastModified: 1234 }),

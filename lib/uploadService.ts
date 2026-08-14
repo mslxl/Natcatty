@@ -602,11 +602,11 @@ async function uploadEntries(
           });
           continue;
         }
-        // Preserve only confirmed regular files so stage+rename can restore
-        // mode bits (#2954). Directories must be cleared so replace does not
-        // merge with stale children. Symlinks must be unlinked so upload does
-        // not write through the link and overwrite an out-of-directory target.
-        if (existing.type !== "file") {
+        // Preserve confirmed remote regular files so stage+rename can restore
+        // mode bits (#2954). Local writes do not use that transaction, so
+        // unlink local files first to avoid truncating every alias of a hard
+        // linked inode. Directories and symlinks must always be cleared.
+        if (isLocal || existing.type !== "file") {
           await deleteTarget(rootTargetPath, existing.type);
         }
         resolved.push(...groupEntries);
