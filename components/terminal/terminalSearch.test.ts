@@ -326,6 +326,44 @@ test("stripStaleSearchDecorationNodes removes both result and active overlays", 
   assert.equal(activeNode.removed, true);
 });
 
+test("settling search after an emptied query keeps a later manual selection", () => {
+  const leftover = leftoverDecoration("xterm-find-result-decoration");
+  const calls: string[] = [];
+  const term = {
+    rows: 12,
+    registerDecoration() {
+      return undefined;
+    },
+    refresh() {
+      calls.push("refresh");
+    },
+    clearSelection() {
+      calls.push("clearSelection");
+    },
+    element: {
+      querySelectorAll() {
+        return [leftover];
+      },
+    },
+  };
+  const tracker = installSearchDecorationTracker(term);
+  tracker.markSearched();
+  tracker.noteEmptyQueryReset();
+  settleTerminalSearchAfterLayout(
+    {
+      clearDecorations() {
+        calls.push("clearDecorations");
+      },
+    },
+    term,
+    () => calls.push("atlas"),
+  );
+  assert.equal(calls.includes("clearSelection"), false);
+  assert.ok(calls.includes("clearDecorations"));
+  assert.ok(calls.includes("atlas"));
+  assert.equal(leftover.removed, true);
+});
+
 test("settling search after layout skips terminals that never searched", () => {
   const leftover = leftoverDecoration("xterm-find-result-decoration");
   const calls: string[] = [];

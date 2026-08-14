@@ -70,6 +70,8 @@ export type SearchDecorationTracker = {
   markSearched: () => void;
   hasSearched: () => boolean;
   consumeSearched: () => boolean;
+  noteEmptyQueryReset: () => void;
+  consumeCloseSweep: () => boolean;
 };
 
 type TrackableTerminal = Pick<XTerm, "registerDecoration"> & {
@@ -122,6 +124,7 @@ export const installSearchDecorationTracker = (
 
   const tracked = new Set<{ dispose: () => void }>();
   let searched = false;
+  let pendingCloseSweep = false;
   const originalRegister = term.registerDecoration.bind(term);
   term.registerDecoration = (options) => {
     // Keep search fill on the HTML overlay only. Passing backgroundColor into
@@ -155,11 +158,20 @@ export const installSearchDecorationTracker = (
     size: () => tracked.size,
     markSearched: () => {
       searched = true;
+      pendingCloseSweep = true;
     },
     hasSearched: () => searched,
     consumeSearched: () => {
       const value = searched;
       searched = false;
+      return value;
+    },
+    noteEmptyQueryReset: () => {
+      searched = false;
+    },
+    consumeCloseSweep: () => {
+      const value = pendingCloseSweep;
+      pendingCloseSweep = false;
       return value;
     },
   };
@@ -289,12 +301,16 @@ export const settleTerminalSearchAfterLayout = (
 ): void => {
   // Search-open state is shared across terminals. A sibling that never
   // searched still sees the bar close and would otherwise lose a manual
-  // selection via clearSelection().
+  // selection via clearSelection(). Emptying the query resets highlights
+  // while the bar stays open; keep the close-time repaint, but do not
+  // treat that stale search as a reason to wipe a later manual selection.
   const tracker = getSearchDecorationTracker(term);
-  if (tracker && !tracker.hasSearched()) return;
-  tracker?.consumeSearched();
+  const shouldClearSelection = tracker ? tracker.consumeSearched() : true;
+  const shouldSweepLeftovers = tracker ? tracker.consumeCloseSweep() : true;
+  const shouldSweep = !tracker || shouldClearSelection || shouldSweepLeftovers;
+  if (!shouldSweep) return;
   clearTerminalSearchHighlights(searchAddon, term);
-  term?.clearSelection();
+  if (shouldClearSelection) term?.clearSelection();
   term?.clearTextureAtlas?.();
   onRepaint?.();
 };
@@ -499,6 +515,8 @@ export const useTerminalSearch = ({
       const searchAddon = searchAddonRef.current;
       if (!searchAddon || !term) {
         runReset();
+        if (termRef.current) installSearchDecorationTracker(termRef.current);
+        getSearchDecorationTracker(termRef.current)?.noteEmptyQueryReset();
         setSearchMatchCount(null);
         return false;
       }
