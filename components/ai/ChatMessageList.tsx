@@ -19,8 +19,8 @@ import {
 import { LazyMessageResponse } from '../ai-elements/LazyMessageResponse';
 import { Message, MessageContent } from '../ai-elements/messageShell';
 import {
-  AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS,
   AI_MARKDOWN_WARMUP_RESUME_DELAY_MS,
+  isAiComposerTyping,
   scheduleAiMarkdownWarmup,
 } from './aiMarkdownWarmup';
 import { ToolCall } from '../ai-elements/tool-call';
@@ -387,7 +387,8 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
   useEffect(() => {
     if (!hasAssistantMarkdown) return undefined;
     return scheduleAiMarkdownWarmup({
-      initialDelayMs: AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS,
+      isBusy: isAiComposerTyping,
+      initialDelayMs: 300,
       resumeDelayMs: AI_MARKDOWN_WARMUP_RESUME_DELAY_MS,
     });
   }, [hasAssistantMarkdown]);

@@ -50,6 +50,13 @@ export function shouldDeferAiMarkdownWarmup(input: {
   return Boolean(input.composerFocused || input.isComposing || input.recentlyActive);
 }
 
+export function isAiComposerTyping(): boolean {
+  return shouldDeferAiMarkdownWarmup({
+    isComposing: composerComposing,
+    recentlyActive: isAiComposerRecentlyActive(),
+  });
+}
+
 export function isAiComposerBusy(): boolean {
   const active = typeof document === 'undefined' ? null : document.activeElement;
   return shouldDeferAiMarkdownWarmup({
@@ -101,7 +108,9 @@ function pumpChatMarkdownHydrate(): void {
     hydrateScheduled = false;
     if (hydrateQueue.length === 0) return;
     if (!markdownWarmupResolved) return;
-    if (isAiComposerBusy()) {
+    // Focused but idle is fine: Streamdown+CJK is light. Only pause while
+    // the user is actually typing so history does not stay raw forever.
+    if (isAiComposerTyping()) {
       hydrateScheduled = true;
       window.setTimeout(() => {
         hydrateScheduled = false;

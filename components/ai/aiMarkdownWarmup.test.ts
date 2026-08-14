@@ -37,7 +37,7 @@ test('composer-idle IPC waits the same expand grace as history markdown', () => 
   assert.match(warmup, /initialDelayMs:\s*options\?\.initialDelayMs \?\? AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
   assert.match(warmup, /isBusy: isAiComposerBusy/);
   assert.match(warmup, /markAiComposerActivity\(\);\n\s*arm\(\);/);
-  assert.match(warmup, /if \(isAiComposerBusy\(\)\) \{\s*hydrateScheduled = true;/s);
+  assert.match(warmup, /if \(isAiComposerTyping\(\)\) \{\s*hydrateScheduled = true;/s);
 });
 
 test('history markdown waits after expand, then resumes quickly after blur', () => {
@@ -68,8 +68,14 @@ test('chat history defers Streamdown until warmup is already done', () => {
   const list = readFileSync(new URL('./ChatMessageList.tsx', import.meta.url), 'utf8');
   assert.match(list, /deferUntilWarm/);
   assert.match(list, /scheduleAiMarkdownWarmup/);
-  assert.match(list, /AI_MARKDOWN_WARMUP_INITIAL_DELAY_MS/);
+  assert.match(list, /isAiComposerTyping/);
   assert.match(list, /AI_MARKDOWN_WARMUP_RESUME_DELAY_MS/);
+});
+
+test('composer focus alone does not count as typing', () => {
+  assert.equal(shouldDeferAiMarkdownWarmup({ composerFocused: true }), true);
+  assert.equal(shouldDeferAiMarkdownWarmup({ composerFocused: true, isComposing: false, recentlyActive: false }), true);
+  assert.equal(shouldDeferAiMarkdownWarmup({ isComposing: false, recentlyActive: false }), false);
 });
 
 test('LazyMessageResponse keeps plaintext while chat asks to defer', () => {
