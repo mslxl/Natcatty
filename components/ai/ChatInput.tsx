@@ -385,6 +385,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
     commitComposerText(readComposerText());
   }, [commitComposerText, parked, readComposerText]);
 
+  useEffect(() => () => {
+    onChange(textareaRef.current?.value ?? composerTextRef.current);
+  }, [onChange]);
+
   const findSlashTrigger = useCallback((text: string, caretPosition: number) => {
     const beforeCaret = text.slice(0, caretPosition);
     const match = /(^|\s)\/([a-z0-9-]*)$/i.exec(beforeCaret);

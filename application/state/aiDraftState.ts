@@ -21,7 +21,8 @@ function isComposerOnlyDraft(draft: AIDraft | undefined): boolean {
 
 /**
  * First keystroke creates a missing → composer-only draft. That is still just
- * typing. Clearing a draft (`right` missing) is a real lifecycle change.
+ * typing. Clearing a draft (`right` missing or emptied) is a real lifecycle
+ * change so New Chat / send can reset the uncontrolled composer.
  */
 function draftsEquivalentIgnoringComposerText(
   left: AIDraft | undefined,
@@ -33,6 +34,9 @@ function draftsEquivalentIgnoringComposerText(
   if (left.agentId !== right.agentId) return false;
   if (left.attachments !== right.attachments) return false;
   if (left.selectedUserSkillSlugs !== right.selectedUserSkillSlugs) return false;
+  const leftEmpty = left.text.trim().length === 0;
+  const rightEmpty = right.text.trim().length === 0;
+  if (leftEmpty !== rightEmpty) return leftEmpty;
   return true;
 }
 

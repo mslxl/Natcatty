@@ -44,6 +44,16 @@ test('AI sessions store does not notify listeners when only composer text change
     });
     assert.equal(notified, 0);
 
+    notified = 0;
+    aiSessionsStore.setSnapshot({
+      ...base,
+      draftsByScope: {
+        'terminal:1': { ...draft, text: '' },
+      },
+    });
+    assert.equal(notified, 1);
+
+    notified = 0;
     aiSessionsStore.setSnapshot({
       ...base,
       draftsByScope: {
