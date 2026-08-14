@@ -9,6 +9,7 @@ type SearchMatchCount = { current: number; total: number } | null;
 
 type SearchAddonResetTarget = Pick<SearchAddon, "findNext" | "clearDecorations"> | null;
 type TerminalSearchResetTarget = Pick<XTerm, "refresh" | "rows" | "clearSelection"> | null;
+type TerminalSearchGuardTarget = Pick<XTerm, "refresh" | "rows" | "clearSelection"> | null;
 
 const SEARCH_DECORATIONS = {
   matchBackground: "#FFFF0044",
@@ -80,37 +81,79 @@ export const resetTerminalSearch = (
   }
 };
 
+/**
+ * Pointer listeners used to tell a user-created selection apart from the
+ * addon's delayed findPrevious re-select. Keyboard selections in this 250ms
+ * window are rare enough that treating them as addon revival is acceptable.
+ */
+export const subscribeTerminalUserSelection = (
+  term: Pick<XTerm, "element"> | null | undefined,
+  mark: () => void,
+): (() => void) => {
+  const el = term?.element;
+  if (!el) return () => {};
+  const onPointer = () => mark();
+  el.addEventListener("mousedown", onPointer);
+  el.addEventListener("touchstart", onPointer);
+  return () => {
+    el.removeEventListener("mousedown", onPointer);
+    el.removeEventListener("touchstart", onPointer);
+  };
+};
+
 export const armSearchHighlightRevivalGuard = ({
   getSearchAddon,
   getTerm,
+  subscribeUserSelection,
   delayMs = SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
 }: {
   getSearchAddon: () => Pick<SearchAddon, "clearDecorations"> | null;
-  getTerm: () => Pick<XTerm, "refresh" | "rows"> | null;
+  getTerm: () => TerminalSearchGuardTarget;
+  subscribeUserSelection?: (mark: () => void) => () => void;
   delayMs?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
-}): { arm: () => void; dispose: () => void } => {
+}): { arm: () => void; dispose: () => void; markUserSelection: () => void } => {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let userTouchedSelection = false;
+  let unsubscribeUserSelection: (() => void) | null = null;
+
+  const markUserSelection = () => {
+    userTouchedSelection = true;
+  };
 
   const dispose = () => {
     if (timer !== null) {
       clearTimeoutFn(timer);
       timer = null;
     }
+    unsubscribeUserSelection?.();
+    unsubscribeUserSelection = null;
   };
 
   const arm = () => {
     dispose();
+    userTouchedSelection = false;
+    if (subscribeUserSelection) {
+      unsubscribeUserSelection = subscribeUserSelection(markUserSelection);
+    }
     timer = setTimeoutFn(() => {
       timer = null;
-      clearTerminalSearchHighlights(getSearchAddon(), getTerm());
+      unsubscribeUserSelection?.();
+      unsubscribeUserSelection = null;
+      const term = getTerm();
+      clearTerminalSearchHighlights(getSearchAddon(), term);
+      // Addon findPrevious re-selects the prior active match. Clear that
+      // revived selection unless the user started a new one in this window.
+      if (!userTouchedSelection) {
+        term?.clearSelection();
+      }
     }, delayMs);
   };
 
-  return { arm, dispose };
+  return { arm, dispose, markUserSelection };
 };
 
 /** True when this terminal has a local query that shared search-close must clear. */
@@ -141,6 +184,7 @@ export const useTerminalSearch = ({
     revivalGuardRef.current = armSearchHighlightRevivalGuard({
       getSearchAddon: () => searchAddonRef.current,
       getTerm: () => termRef.current,
+      subscribeUserSelection: (mark) => subscribeTerminalUserSelection(termRef.current, mark),
     });
   }
 

@@ -7,6 +7,7 @@ import {
   resetTerminalSearch,
   SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS,
   shouldResetOnSharedSearchClose,
+  subscribeTerminalUserSelection,
 } from "./hooks/useTerminalSearch.ts";
 
 test("clearing the search input notifies the terminal search handler", () => {
@@ -112,7 +113,7 @@ test("resetting terminal search clears cache before empty find and refreshes", (
   assert.equal(findNextArgs[0], undefined);
 });
 
-test("search highlight revival guard re-clears decorations without touching selection", () => {
+test("search highlight revival guard re-clears decorations and the addon selection", () => {
   assert.ok(SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS > 200);
 
   const calls: string[] = [];
@@ -147,8 +148,8 @@ test("search highlight revival guard re-clears decorations without touching sele
   assert.equal(scheduled?.ms, SEARCH_HIGHLIGHT_REVIVAL_GUARD_MS);
   assert.deepEqual(calls, []);
 
-  // Simulate SearchAddon._updateMatches reviving decorations, then the guard.
-  // Manual selections made during the guard window must survive.
+  // SearchAddon._updateMatches can revive decorations and re-select the
+  // previous active match. With no user selection in the window, clear both.
   calls.push("revived");
   scheduled?.cb();
 
@@ -156,7 +157,108 @@ test("search highlight revival guard re-clears decorations without touching sele
     "revived",
     "clearDecorations",
     "refresh:0:9",
+    "clearSelection",
   ]);
+
+  guard.dispose();
+});
+
+test("search highlight revival guard keeps a user selection made during the window", () => {
+  const calls: string[] = [];
+  let scheduled: { cb: () => void; ms: number } | null = null;
+  const searchAddon = {
+    clearDecorations() {
+      calls.push("clearDecorations");
+    },
+  };
+  const term = {
+    rows: 10,
+    refresh(start: number, end: number) {
+      calls.push(`refresh:${start}:${end}`);
+    },
+    clearSelection() {
+      calls.push("clearSelection");
+    },
+  };
+
+  const guard = armSearchHighlightRevivalGuard({
+    getSearchAddon: () => searchAddon,
+    getTerm: () => term,
+    setTimeoutFn: ((cb: () => void, ms: number) => {
+      scheduled = { cb, ms };
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => {}) as typeof clearTimeout,
+  });
+
+  guard.arm();
+  guard.markUserSelection();
+  scheduled?.cb();
+
+  assert.deepEqual(calls, [
+    "clearDecorations",
+    "refresh:0:9",
+  ]);
+
+  guard.dispose();
+});
+
+test("subscribeTerminalUserSelection marks on pointer down and unsubscribes", () => {
+  const marks: string[] = [];
+  const listeners = new Map<string, EventListener>();
+  const element = {
+    addEventListener(type: string, listener: EventListener) {
+      listeners.set(type, listener);
+    },
+    removeEventListener(type: string) {
+      listeners.delete(type);
+    },
+  };
+  const unsubscribe = subscribeTerminalUserSelection(
+    { element: element as unknown as HTMLElement },
+    () => marks.push("mark"),
+  );
+
+  listeners.get("mousedown")?.(new Event("mousedown"));
+  listeners.get("touchstart")?.(new Event("touchstart"));
+  assert.deepEqual(marks, ["mark", "mark"]);
+
+  unsubscribe();
+  assert.equal(listeners.size, 0);
+});
+
+test("revival guard subscribes to user selection only while armed", () => {
+  let subscribed = 0;
+  let unsubscribed = 0;
+  let scheduled: { cb: () => void } | null = null;
+  const guard = armSearchHighlightRevivalGuard({
+    getSearchAddon: () => ({
+      clearDecorations() {},
+    }),
+    getTerm: () => ({
+      rows: 1,
+      refresh() {},
+      clearSelection() {},
+    }),
+    subscribeUserSelection: () => {
+      subscribed += 1;
+      return () => {
+        unsubscribed += 1;
+      };
+    },
+    setTimeoutFn: ((cb: () => void) => {
+      scheduled = { cb };
+      return 1 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => {}) as typeof clearTimeout,
+  });
+
+  guard.arm();
+  assert.equal(subscribed, 1);
+  assert.equal(unsubscribed, 0);
+
+  scheduled?.cb();
+  assert.equal(unsubscribed, 1);
 
   guard.dispose();
 });
