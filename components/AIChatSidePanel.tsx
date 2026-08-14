@@ -374,7 +374,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const explicitPanelView = panelViewByScope[scopeKey];
   const currentDraft = draftsByScope[scopeKey] ?? null;
   const pendingComposerTextRef = useRef<string | null>(null);
-  const draftTextFlushTimerRef = useRef<number | null>(null);
   const visibleHistorySessionIds = useMemo(
     () => new Set(historySessions.map((session) => session.id)),
     [historySessions],
@@ -541,10 +540,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   }, [scopeKey, showSessionView]);
 
   const discardPendingComposerText = useCallback(() => {
-    if (draftTextFlushTimerRef.current != null) {
-      window.clearTimeout(draftTextFlushTimerRef.current);
-      draftTextFlushTimerRef.current = null;
-    }
     pendingComposerTextRef.current = null;
   }, []);
 
@@ -562,10 +557,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   }, [ensureScopeDraft, showScopeDraftView]);
 
   const flushDraftText = useCallback(() => {
-    if (draftTextFlushTimerRef.current != null) {
-      window.clearTimeout(draftTextFlushTimerRef.current);
-      draftTextFlushTimerRef.current = null;
-    }
     const pending = pendingComposerTextRef.current;
     if (pending == null) return;
     if (panelViewRef.current.mode !== 'draft') {
@@ -586,14 +577,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     };
     pendingComposerTextRef.current = value;
     currentDraftRef.current = { ...base, text: value, updatedAt: Date.now() };
-    if (draftTextFlushTimerRef.current != null) {
-      window.clearTimeout(draftTextFlushTimerRef.current);
-    }
-    draftTextFlushTimerRef.current = window.setTimeout(() => {
-      draftTextFlushTimerRef.current = null;
-      flushDraftText();
-    }, 120);
-  }, [currentAgentId, flushDraftText]);
+  }, [currentAgentId]);
 
   const addFiles = useCallback(async (inputFiles: File[]) => {
     enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');

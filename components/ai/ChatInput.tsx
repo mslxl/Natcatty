@@ -331,11 +331,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     const observer = new ResizeObserver(() => {
       const maxHeight = resolveVisibleChatInputMaxHeight(panel.clientHeight);
       if (maxHeight == null) return;
-      setComposerMaxHeight(maxHeight);
-      setComposerHeight(resolveVisibleChatInputHeight(
+      const nextHeight = resolveVisibleChatInputHeight(
         composerDesiredHeightRef.current,
         maxHeight,
-      ));
+      );
+      setComposerMaxHeight((current) => (current === maxHeight ? current : maxHeight));
+      setComposerHeight((current) => (current === nextHeight ? current : nextHeight));
     });
     observer.observe(panel);
     return () => observer.disconnect();
@@ -993,6 +994,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
             placeholder={placeholder || (isStreaming && canSteer ? t('ai.codex.steer.placeholder') : defaultPlaceholder)}
             disabled={composerDisabled}
             className={[
+              'field-sizing-fixed',
               selectedUserSkills.length > 0 ? 'pt-1.5' : undefined,
               composerHeight != null ? 'min-h-0 max-h-none flex-1' : undefined,
             ].filter(Boolean).join(' ')}

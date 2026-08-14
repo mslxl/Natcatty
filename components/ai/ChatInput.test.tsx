@@ -80,6 +80,7 @@ test('first keystrokes stay local so IME and Chromium spellcheck cannot stall th
   assert.match(source, /onChangeRef\.current\(textareaRef\.current\?\.value \?\? composerTextRef\.current\)/);
   assert.match(source, /onSend\(\);\s*commitComposerText\(''\);/);
   assert.match(source, /defaultValue=\{value\}/);
+  assert.match(source, /field-sizing-fixed/);
   assert.doesNotMatch(source, /value=\{composerText\}/);
   assert.match(source, /hasComposerText/);
 });
