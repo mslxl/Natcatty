@@ -298,6 +298,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const scopeKey = `${scopeType}:${scopeTargetId ?? ''}`;
 
   const [showHistory, setShowHistory] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, AgentModelPreset[]>>({});
   const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, string>>({});
   const [steerWarnings, setSteerWarnings] = useState<Record<string, SteerWarning>>({});
@@ -1014,8 +1015,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const inputAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? currentAgentId;
   const canSendCurrentAgent = useMemo(
-    () => canSendWithAgent(inputAgentId, externalAgents),
-    [inputAgentId, externalAgents],
+    () => !isSending && canSendWithAgent(inputAgentId, externalAgents),
+    [inputAgentId, externalAgents, isSending],
   );
 
   const handleAgentModelSelect = useCallback((modelId: string) => {
@@ -1138,6 +1139,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       return;
     }
     let sessionSendGateKey: string | null = null;
+    setIsSending(true);
 
     try {
       const sendBridge = getNetcattyBridge();
@@ -1146,6 +1148,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
       if (sendBridge?.aiSyncWebSearch) {
         await sendBridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
+      }
+      if (currentAgentConfig && shouldLoadSdkRuntimeModels(currentAgentConfig)) {
+        const runtimeTarget = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
+        if (runtimeTarget) {
+          const catalog = await loadSdkRuntimeModelCatalog(runtimeTarget);
+          if (catalog) {
+            applySdkRuntimeModelCatalog(runtimeTarget.agentId, catalog, { adoptCurrentModel: true });
+          }
+        }
       }
       void warmAiMarkdownRenderer();
       let sessionId = currentSessionView?.id ?? null;
@@ -1279,6 +1290,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         }, modelAttachments.length > 0 ? modelAttachments : undefined);
       }
     } finally {
+      setIsSending(false);
       endSendForKey(sendGateKey);
       if (sessionSendGateKey && sessionSendGateKey !== sendGateKey) {
         endSendForKey(sessionSendGateKey);
@@ -1294,7 +1306,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     scopeType, scopeTargetId, scopeHostIds, scopeLabel, globalPermissionMode, commandBlocklist, commandTimeout, webSearchConfig, buildExecutorContextForScope,
     toolIntegrationMode,
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
-    flushDraftText,
+    flushDraftText, currentAgentConfig, buildExternalAgentRuntimeModelTarget,
+    loadSdkRuntimeModelCatalog, applySdkRuntimeModelCatalog,
   ]);
 
   const handleCompact = useCallback(async () => {
