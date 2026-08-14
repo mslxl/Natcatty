@@ -91,8 +91,9 @@ import {
 } from "./middleClickBehavior";
 import { handleSerialLineModeInput } from "./serialLineInput";
 import {
+  doesKittyEncodingPreserveShiftEnter,
   getShiftEnterSubmittedInput,
-  resolveShiftEnterText,
+  resolveShiftEnterPayload,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 import {
@@ -978,7 +979,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const handleTerminalInputData = (
     data: string,
-    options?: { source?: "terminal" | "shift-enter" | "kitty" },
+    options?: {
+      source?: "terminal" | "shift-enter" | "kitty";
+      /** Skip string broadcast when peers will re-resolve from a key chord. */
+      skipBroadcast?: boolean;
+    },
   ) => {
     // Clipboard paste / typed password while assist is open must dismiss the
     // hint first. Otherwise Enter is still hijacked for confirmFill and can
@@ -1000,7 +1005,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const broadcastDataBeforeSudo = mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior);
     const suppressTerminalBroadcast = inputSource === "terminal" && suppressNextTerminalDataBroadcast;
     if (suppressTerminalBroadcast) suppressNextTerminalDataBroadcast = false;
-    const willBroadcastInput = !sensitive &&
+    // skipBroadcast only suppresses the raw-string fan-out. Peers still receive
+    // the Shift+Enter chord, so sudo autofill must treat this as a broadcast.
+    const canBroadcastInput = !sensitive &&
       inputSource !== "kitty" &&
       !handlingKittyBroadcast &&
       !suppressTerminalBroadcast &&
@@ -1008,6 +1015,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
+    const willBroadcastInput = canBroadcastInput && options?.skipBroadcast !== true;
     if (ctx.statusRef.current === "connected" && submittedInput) {
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
@@ -1026,7 +1034,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
       );
       handledSubmittedInput = true;
-      if (!willBroadcastInput) {
+      // Recipients of a key-chord broadcast must not arm password assistance.
+      // handlingKittyBroadcast already blocks re-fan-out via canBroadcastInput.
+      if (!canBroadcastInput && !handlingKittyBroadcast) {
         prepareSudoAutofillInput(
           submittedInput.lineEnding === "\r\n" ? "\n" : submittedInput.lineEnding,
           recordedCommand,
@@ -1035,7 +1045,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
     } else if (
       ctx.statusRef.current === "connected" &&
-      !willBroadcastInput &&
+      !canBroadcastInput &&
+      !handlingKittyBroadcast &&
       inputSource !== "shift-enter"
     ) {
       const pastedCommand = getSinglePastedCommand(data);
@@ -1720,6 +1731,54 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       return false;
     }
 
+    // Before Kitty encoding that collapses Shift+Enter to bare CR/LF (flags=0,
+    // or non-preserving sets like alternate-key / associated-text alone). Remap
+    // first so alternate-screen TUIs still receive CSI-u Shift+Enter.
+    if (
+      shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current) &&
+      !doesKittyEncodingPreserveShiftEnter(kittySequenceForKeyDown)
+    ) {
+      const id = ctx.sessionRef.current;
+      if (id) {
+        e.preventDefault();
+        e.stopPropagation();
+        const kittyEvent = toKittyKeyboardEvent(e);
+        // Local payload uses this session's buffer. Broadcast targets re-resolve
+        // from the key chord via resolveKittyKeyboardBroadcastInput.
+        const shiftEnterPayload = resolveShiftEnterPayload(
+          ctx.terminalSettingsRef.current,
+          { alternateScreen: term.buffer.active.type === "alternate" },
+        );
+        if (shiftEnterPayload.data) {
+          if (shiftEnterPayload.kind === "key") {
+            // Local CSI-u as kitty-sourced input so raw bytes are not broadcast.
+            handleTerminalInputData(shiftEnterPayload.data, { source: "kitty" });
+          } else {
+            // Skip string broadcast: peers resolve Shift+Enter from their own
+            // buffer + keyboard mode via the key chord below.
+            handleTerminalInputData(shiftEnterPayload.data, {
+              source: "shift-enter",
+              skipBroadcast: true,
+            });
+          }
+          const forwarded = broadcastKittyInput({
+            kind: "key",
+            event: kittyEvent,
+            fallbackToLegacy: true,
+          });
+          if (forwarded) {
+            upsertKittyKeyboardForwardedPress(
+              broadcastForwardedKeys,
+              kittyKeyIdentity(e),
+              kittyEvent,
+              forwarded.targetSessionIds,
+            );
+          }
+        }
+        return false;
+      }
+    }
+
     if (kittySequenceForKeyDown) {
       e.preventDefault();
       e.stopPropagation();
@@ -1748,22 +1807,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         );
       }
       return false;
-    }
-
-    if (
-      !isKittyKeyboardModeActive(kittyKeyboardMode) &&
-      shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current)
-    ) {
-      const id = ctx.sessionRef.current;
-      if (id) {
-        e.preventDefault();
-        e.stopPropagation();
-        const textToSend = resolveShiftEnterText(ctx.terminalSettingsRef.current);
-        if (textToSend) {
-          handleTerminalInputData(textToSend, { source: "shift-enter" });
-        }
-        return false;
-      }
     }
 
     // macOS Option+←/→ → Meta-b / Meta-f so the shell jumps by word (discussion
@@ -1984,6 +2027,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       applicationCursorMode: term.modes.applicationCursorKeysMode,
       encodedKeys: broadcastEncodedKeys,
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
+      alternateScreen: term.buffer.active.type === "alternate",
+      shiftEnterSettings: ctx.terminalSettingsRef.current,
     }),
     getSessionId: () => ctx.sessionRef.current,
     isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
