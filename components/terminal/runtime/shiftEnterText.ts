@@ -78,6 +78,19 @@ export function isBareShiftEnterLineEnding(text: string): boolean {
   return text === "\n" || text === "\r" || text === "\r\n";
 }
 
+/**
+ * True when Kitty encoding already keeps Shift+Enter distinct from plain Enter.
+ * Non-preserving flag sets (e.g. alternate-key or associated-text alone) still
+ * encode Shift+Enter as a bare CR/LF, so the alternate-screen remap must run.
+ */
+export function doesKittyEncodingPreserveShiftEnter(
+  encoded: string | null | undefined,
+): boolean {
+  return typeof encoded === "string"
+    && encoded.length > 0
+    && !isBareShiftEnterLineEnding(encoded);
+}
+
 export type ShiftEnterPayload =
   | { kind: "text"; data: string }
   | { kind: "key"; data: string };
