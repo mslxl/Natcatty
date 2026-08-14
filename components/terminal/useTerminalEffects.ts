@@ -48,6 +48,7 @@ import {
   type XTermFontRemeasureTarget,
 } from './runtime/terminalFontRemeasure';
 import { shouldClaimTerminalKeyboardFocus } from '../../domain/terminalKeyboardFocus';
+import { settleTerminalSearchAfterLayout } from './hooks/useTerminalSearch';
 import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
@@ -172,6 +173,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     effectiveTerminalProtocol,
   ) && !kittyKeyboardProtocolEnabledForSession;
   ctx.pluginDecorationRulesRef.current = pluginDecorationRules;
+  const prevIsSearchOpenRef = useRef(isSearchOpen);
   const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
     markTerminalCommandCompletionPending(promptLineBreakStateRef);
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
@@ -1583,13 +1585,29 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   // When search bar opens/closes, re-fit terminal and maintain scroll position
   useEffect(() => {
     const term = termRef.current;
+    const wasSearchOpen = prevIsSearchOpenRef.current;
+    prevIsSearchOpenRef.current = isSearchOpen;
     if (!term || !fitAddonRef.current) return;
     const buffer = term.buffer.active;
     const wasAtBottom = buffer.viewportY >= buffer.baseY;
     const prevViewportY = buffer.viewportY;
+    const closingSearch = wasSearchOpen && !isSearchOpen;
+    let raf = 0;
+    const settleClosedSearch = () => {
+      // A later open flips prevIsSearchOpenRef before this stale frame runs.
+      if (!closingSearch || prevIsSearchOpenRef.current) return;
+      settleTerminalSearchAfterLayout(
+        searchAddonRef.current,
+        term,
+        () => xtermRuntimeRef.current?.clearTextureAtlas(),
+      );
+    };
     const timer = setTimeout(() => {
       safeFit({ force: true, requireVisible: true });
-      requestAnimationFrame(() => {
+      settleClosedSearch();
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        settleClosedSearch();
         if (wasAtBottom) {
           term.scrollToBottom();
         } else {
@@ -1597,7 +1615,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         }
       });
     }, 0);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [isSearchOpen]);
 
   // When compose bar opens/closes, re-fit terminal and maintain scroll position

@@ -14,6 +14,7 @@ import {
 } from "../../../application/state/useGlobalHotkeys";
 import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
+import { installSearchDecorationTracker } from "../hooks/useTerminalSearch";
 import { CursorLineHighlighter } from "./cursorLineHighlight";
 import { resolveCursorLineHighlightBackground } from "../../../domain/cursorLineHighlight";
 import {
@@ -558,6 +559,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       scrollbarSliderActiveBackground: ctx.terminalTheme.colors.foreground + '80', // 50% opacity
     },
   });
+  installSearchDecorationTracker(term);
 
   type MaybeRenderer = {
     constructor?: { name?: string };
