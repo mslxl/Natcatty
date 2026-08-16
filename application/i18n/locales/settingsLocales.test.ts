@@ -5,10 +5,12 @@ import { DEFAULT_KEY_BINDINGS } from "../../../domain/models/keyBindings.ts";
 import { HOST_ICON_COLORS, HOST_ICON_IDS } from "../../../domain/hostIcon.ts";
 import zhCN from "./zh-CN.ts";
 import ru from "./ru.ts";
+import es from "./es.ts";
 
 const LOCALIZED_SETTINGS_LOCALES = [
   { name: "zh-CN", messages: zhCN },
   { name: "ru", messages: ru },
+  { name: "es", messages: es },
 ];
 
 test("localized settings include names for every default shortcut", () => {
