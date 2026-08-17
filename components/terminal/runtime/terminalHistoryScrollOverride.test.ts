@@ -247,6 +247,36 @@ test("select-all overlay ranges still join soft-wrapped preview rows", () => {
   assert.match(copied, /long-command-name\s*--flag/);
 });
 
+test("history preview copy keeps a selected hard line break", () => {
+  assert.equal(
+    joinHistoryPreviewSelectionText({
+      text: "abc\ndef",
+      startOffset: 0,
+      endOffset: 4,
+      wrapFlags: [false, false],
+    }),
+    "abc\n",
+  );
+  assert.equal(
+    joinHistoryPreviewSelectionText({
+      text: "abc\ndef",
+      startOffset: 3,
+      endOffset: 4,
+      wrapFlags: [false, false],
+    }),
+    "\n",
+  );
+  assert.equal(
+    joinHistoryPreviewSelectionText({
+      text: "abc\ndef",
+      startOffset: 0,
+      endOffset: 4,
+      wrapFlags: [false, true],
+    }),
+    "abc",
+  );
+});
+
 test("history preview copy joins soft-wrapped buffer rows", () => {
   const text = "ssh user@host tail -f /var/log/very-long-name.log\n | grep error";
   const joined = joinHistoryPreviewSelectionText({

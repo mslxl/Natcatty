@@ -952,4 +952,5 @@ test("alternate-screen history preview stays selectable and copyable", async () 
   assert.match(source, /isHistoryPreviewDismissClick/);
   assert.match(source, /HISTORY_PREVIEW_WRAP_ATTR/);
   assert.match(source, /HISTORY_PREVIEW_HIDE_EVENT/);
+  assert.match(source, /document\.addEventListener\("copy", handlePreviewNativeCopy, true\)/);
 });

@@ -705,18 +705,26 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   // Intercept native copy (Edit > Copy, browser/Electron copy event) before
   // xterm's built-in handler writes selectionText, so normalizeTextOnCopy applies.
+  const writePreviewSelectionToClipboard = (event: ClipboardEvent, previewSelection: string) => {
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", previewSelection);
+    } else {
+      void navigator.clipboard.writeText(previewSelection).catch((err) => {
+        logger.warn("[XTerm] History preview copy failed:", err);
+      });
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const handlePreviewNativeCopy = (event: ClipboardEvent) => {
+    const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    if (!previewSelection) return;
+    writePreviewSelectionToClipboard(event, previewSelection);
+  };
   const handleNativeCopy = (event: ClipboardEvent) => {
     const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
     if (previewSelection) {
-      if (event.clipboardData) {
-        event.clipboardData.setData("text/plain", previewSelection);
-      } else {
-        void navigator.clipboard.writeText(previewSelection).catch((err) => {
-          logger.warn("[XTerm] History preview copy failed:", err);
-        });
-      }
-      event.preventDefault();
-      event.stopImmediatePropagation();
+      writePreviewSelectionToClipboard(event, previewSelection);
       return;
     }
     if (!term.hasSelection()) return;
@@ -926,12 +934,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const hideHistoryPreview = () => {
     if (!historyPreviewOverlay) {
       historyPreviewPointerDown = null;
+      document.removeEventListener("copy", handlePreviewNativeCopy, true);
       return;
     }
     historyPreviewOverlay.remove();
     historyPreviewOverlay = null;
     historyPreviewTop = null;
     historyPreviewPointerDown = null;
+    document.removeEventListener("copy", handlePreviewNativeCopy, true);
     term.focus();
   };
   const copyHistoryPreviewSelectionIfEnabled = () => {
@@ -950,6 +960,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     overlay.setAttribute(HISTORY_PREVIEW_OVERLAY_ATTR, "");
     overlay.setAttribute("role", "document");
     overlay.addEventListener(HISTORY_PREVIEW_HIDE_EVENT, hideHistoryPreview);
+    document.addEventListener("copy", handlePreviewNativeCopy, true);
     Object.assign(overlay.style, {
       position: "absolute",
       inset: "0",

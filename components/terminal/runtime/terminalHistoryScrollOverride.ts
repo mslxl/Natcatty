@@ -239,6 +239,8 @@ export const joinHistoryPreviewSelectionText = ({
   };
   const startLine = lineIndexAt(start);
   const endLine = lineIndexAt(Math.max(start, end - 1));
+  const boundaryLine = lineStarts.indexOf(end);
+  const includesTrailingHardBreak = boundaryLine > 0 && !wrapFlags[boundaryLine];
   const sliceLine = (line: number, from: number, to: number): string => {
     const lineStart = lineStarts[line] ?? 0;
     const lineEnd = line + 1 < lineStarts.length ? lineStarts[line + 1]! - 1 : text.length;
@@ -257,7 +259,8 @@ export const joinHistoryPreviewSelectionText = ({
     current = row;
   }
   logical.push(current);
-  return logical.join("\n");
+  const joined = logical.join("\n");
+  return includesTrailingHardBreak ? `${joined}\n` : joined;
 };
 
 const resolveOverlayTextOffset = (
@@ -307,7 +310,7 @@ export const getHistoryPreviewSelectionText = (
     startOffset: offsets.start,
     endOffset: offsets.end,
     wrapFlags: [...wrapAttr].map((flag) => flag === "1"),
-  });
+  }) || raw;
 };
 
 export const findHistoryPreviewOverlay = (
