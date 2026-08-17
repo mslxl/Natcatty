@@ -115,12 +115,16 @@ import {
 } from "./terminalFontZoom";
 import {
   HISTORY_PREVIEW_OVERLAY_ATTR,
-  getHistoryPreviewLines,
+  HISTORY_PREVIEW_WRAP_ATTR,
+  encodeHistoryPreviewWrapFlags,
+  getHistoryPreviewRows,
   getHistoryPreviewSelectionFromRoot,
   forcedHistoryScrollLinesForWheel,
   forcedHistoryScrollPageToLines,
   forcedHistoryScrollPagesForKey,
   forcedHistoryScrollWheelListenerOptions,
+  isHistoryPreviewDismissClick,
+  isHistoryPreviewPointerTarget,
   nextHistoryPreviewTop,
   selectHistoryPreviewAll,
   shouldHideHistoryPreviewOnMouseDown,
@@ -917,10 +921,17 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   };
   let historyPreviewOverlay: HTMLPreElement | null = null;
   let historyPreviewTop: number | null = null;
+  let historyPreviewPointerDown: { clientX: number; clientY: number } | null = null;
   const hideHistoryPreview = () => {
-    historyPreviewOverlay?.remove();
+    if (!historyPreviewOverlay) {
+      historyPreviewPointerDown = null;
+      return;
+    }
+    historyPreviewOverlay.remove();
     historyPreviewOverlay = null;
     historyPreviewTop = null;
+    historyPreviewPointerDown = null;
+    term.focus();
   };
   const copyHistoryPreviewSelectionIfEnabled = () => {
     if (!ctx.terminalSettingsRef.current?.copyOnSelect) return;
@@ -955,7 +966,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       color: ctx.terminalTheme.colors.foreground,
       background: ctx.terminalTheme.colors.background,
     } satisfies Partial<CSSStyleDeclaration>);
-    overlay.addEventListener("mouseup", copyHistoryPreviewSelectionIfEnabled);
     ctx.container.appendChild(overlay);
     historyPreviewOverlay = overlay;
     return overlay;
@@ -972,11 +982,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     overlay.style.fontSize = `${currentTerminalFontSize()}px`;
     overlay.style.fontFamily = String(term.options.fontFamily ?? fontFamily);
     overlay.style.lineHeight = String(term.options.lineHeight ?? lineHeight);
-    overlay.textContent = getHistoryPreviewLines({
+    const previewRows = getHistoryPreviewRows({
       buffer: normalBuffer,
       rows: term.rows,
       top: historyPreviewTop,
-    }).join("\n");
+    });
+    overlay.textContent = previewRows.map((row) => row.text).join("\n");
+    overlay.setAttribute(HISTORY_PREVIEW_WRAP_ATTR, encodeHistoryPreviewWrapFlags(previewRows));
     return true;
   };
   const scrollForcedHistoryLines = (lines: number) => {
@@ -1958,12 +1970,29 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   };
 
   const handleHistoryPreviewMouseDown = (event: MouseEvent) => {
+    if (isHistoryPreviewPointerTarget(event.target, historyPreviewOverlay)) {
+      if (event.button === 0) {
+        historyPreviewPointerDown = { clientX: event.clientX, clientY: event.clientY };
+      }
+      return;
+    }
     if (!shouldHideHistoryPreviewOnMouseDown(event.target, historyPreviewOverlay)) return;
     hideHistoryPreview();
+  };
+  const handleHistoryPreviewMouseUp = (event: MouseEvent) => {
+    const down = historyPreviewPointerDown;
+    historyPreviewPointerDown = null;
+    if (!down || !isHistoryPreviewPointerTarget(event.target, historyPreviewOverlay)) return;
+    if (isHistoryPreviewDismissClick(down, event)) {
+      hideHistoryPreview();
+      return;
+    }
+    copyHistoryPreviewSelectionIfEnabled();
   };
   ctx.container.addEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
   ctx.container.addEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
   ctx.container.addEventListener("mousedown", handleHistoryPreviewMouseDown, true);
+  ctx.container.addEventListener("mouseup", handleHistoryPreviewMouseUp, true);
   ctx.container.addEventListener("auxclick", handleMiddleClick);
 
   fitAddon.fit();
@@ -2383,6 +2412,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ctx.container.removeEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
       ctx.container.removeEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
       ctx.container.removeEventListener("mousedown", handleHistoryPreviewMouseDown, true);
+      ctx.container.removeEventListener("mouseup", handleHistoryPreviewMouseUp, true);
       hideHistoryPreview();
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();

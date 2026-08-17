@@ -949,4 +949,6 @@ test("alternate-screen history preview stays selectable and copyable", async () 
   assert.match(source, /previewSelection \|\| getTerminalSelectionForClipboard/);
   assert.match(source, /hasCopyableSelection = term\.hasSelection\(\) \|\| Boolean\(previewSelection\)/);
   assert.match(source, /shouldUseUrgentTerminalInterrupt\(e, \{ hasSelection: hasCopyableSelection \}\)/);
+  assert.match(source, /isHistoryPreviewDismissClick/);
+  assert.match(source, /HISTORY_PREVIEW_WRAP_ATTR/);
 });

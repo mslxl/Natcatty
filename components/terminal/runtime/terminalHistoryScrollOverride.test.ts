@@ -3,13 +3,17 @@ import test from "node:test";
 
 import {
   HISTORY_PREVIEW_OVERLAY_ATTR,
+  encodeHistoryPreviewWrapFlags,
   getHistoryPreviewLines,
+  getHistoryPreviewRows,
   getHistoryPreviewSelectionText,
   forcedHistoryScrollLinesForWheel,
   forcedHistoryScrollPageToLines,
   forcedHistoryScrollPagesForKey,
   forcedHistoryScrollWheelListenerOptions,
   isHistoryPreviewContextMenuTarget,
+  isHistoryPreviewDismissClick,
+  joinHistoryPreviewSelectionText,
   nextHistoryPreviewTop,
   shouldHideHistoryPreviewOnMouseDown,
   shouldKeepHistoryPreviewOnKey,
@@ -192,6 +196,70 @@ test("history preview copy uses only overlay-owned DOM selection", () => {
     }),
     "",
   );
+});
+
+test("history preview click dismisses and a drag keeps the overlay", () => {
+  assert.equal(
+    isHistoryPreviewDismissClick(
+      { clientX: 10, clientY: 10 },
+      { button: 0, clientX: 11, clientY: 12 },
+    ),
+    true,
+  );
+  assert.equal(
+    isHistoryPreviewDismissClick(
+      { clientX: 10, clientY: 10 },
+      { button: 0, clientX: 40, clientY: 30 },
+    ),
+    false,
+  );
+  assert.equal(
+    isHistoryPreviewDismissClick(
+      { clientX: 10, clientY: 10 },
+      { button: 2, clientX: 10, clientY: 10 },
+    ),
+    false,
+  );
+});
+
+test("history preview copy joins soft-wrapped buffer rows", () => {
+  const text = "ssh user@host tail -f /var/log/very-long-name.log\n | grep error";
+  const joined = joinHistoryPreviewSelectionText({
+    text,
+    startOffset: 0,
+    endOffset: text.length,
+    wrapFlags: [false, true],
+  });
+  assert.equal(joined.includes("\n"), false);
+  assert.match(joined, /very-long-name\.log\s*\| grep error/);
+
+  const rows = getHistoryPreviewRows({
+    buffer: {
+      baseY: 1,
+      length: 2,
+      type: "normal",
+      viewportY: 1,
+      getLine(y: number) {
+        if (y === 0) {
+          return {
+            isWrapped: false,
+            translateToString() {
+              return "ssh user@host tail -f /var/log/very-long-name.log";
+            },
+          };
+        }
+        return {
+          isWrapped: true,
+          translateToString() {
+            return " | grep error";
+          },
+        };
+      },
+    },
+    rows: 2,
+    top: 0,
+  });
+  assert.equal(encodeHistoryPreviewWrapFlags(rows), "01");
 });
 
 test("history preview right-click is recognized as an app-menu target", () => {

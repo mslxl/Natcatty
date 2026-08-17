@@ -1,3 +1,5 @@
+import { joinSoftWrappedRows } from "../normalizeTerminalSelection";
+
 type WheelLike = Pick<
   WheelEvent,
   "altKey" | "ctrlKey" | "deltaMode" | "deltaY" | "metaKey" | "shiftKey"
@@ -9,6 +11,7 @@ type KeyLike = Pick<
 >;
 
 type BufferLineLike = {
+  isWrapped?: boolean;
   translateToString(trimRight?: boolean): string;
 };
 
@@ -79,6 +82,33 @@ export const nextHistoryPreviewTop = ({
   buffer,
 );
 
+export type HistoryPreviewRow = {
+  isWrapped: boolean;
+  text: string;
+};
+
+export const getHistoryPreviewRows = ({
+  buffer,
+  rows,
+  top,
+}: {
+  buffer: BufferLike;
+  rows: number;
+  top: number;
+}): HistoryPreviewRow[] => {
+  const clampedTop = clampHistoryPreviewTop(top, buffer);
+  const visibleRows = Math.max(1, rows);
+  const lines: HistoryPreviewRow[] = [];
+  for (let row = 0; row < visibleRows; row += 1) {
+    const line = buffer.getLine(clampedTop + row);
+    lines.push({
+      isWrapped: Boolean(line?.isWrapped),
+      text: line?.translateToString(true) ?? "",
+    });
+  }
+  return lines;
+};
+
 export const getHistoryPreviewLines = ({
   buffer,
   rows,
@@ -87,17 +117,14 @@ export const getHistoryPreviewLines = ({
   buffer: BufferLike;
   rows: number;
   top: number;
-}): string[] => {
-  const clampedTop = clampHistoryPreviewTop(top, buffer);
-  const visibleRows = Math.max(1, rows);
-  const lines: string[] = [];
-  for (let row = 0; row < visibleRows; row += 1) {
-    lines.push(buffer.getLine(clampedTop + row)?.translateToString(true) ?? "");
-  }
-  return lines;
-};
+}): string[] => getHistoryPreviewRows({ buffer, rows, top }).map((row) => row.text);
+
+export const encodeHistoryPreviewWrapFlags = (rows: Array<Pick<HistoryPreviewRow, "isWrapped">>): string =>
+  rows.map((row) => (row.isWrapped ? "1" : "0")).join("");
 
 export const HISTORY_PREVIEW_OVERLAY_ATTR = "data-terminal-history-preview";
+export const HISTORY_PREVIEW_WRAP_ATTR = "data-terminal-history-preview-wraps";
+export const HISTORY_PREVIEW_CLICK_SLOP_PX = 4;
 
 const MODIFIER_ONLY_KEYS = new Set(["Shift", "Control", "Meta", "Alt"]);
 
@@ -106,11 +133,16 @@ export type HistoryPreviewSelectionLike = {
   isCollapsed?: boolean;
   anchorNode: { nodeType?: number } | null;
   focusNode: { nodeType?: number } | null;
+  anchorOffset?: number;
+  focusOffset?: number;
   toString(): string;
 };
 
 export type HistoryPreviewNodeLike = {
   contains(node: { nodeType?: number } | null): boolean;
+  firstChild?: { nodeType?: number } | null;
+  getAttribute?(name: string): string | null;
+  textContent?: string | null;
 };
 
 export const isHistoryPreviewPointerTarget = (
@@ -165,6 +197,84 @@ export const shouldKeepHistoryPreviewOnKey = (
   );
 };
 
+export const isHistoryPreviewDismissClick = (
+  down: Pick<MouseEvent, "clientX" | "clientY">,
+  up: Pick<MouseEvent, "button" | "clientX" | "clientY">,
+  slop = HISTORY_PREVIEW_CLICK_SLOP_PX,
+): boolean => {
+  if (up.button !== 0) return false;
+  return Math.hypot(up.clientX - down.clientX, up.clientY - down.clientY) <= slop;
+};
+
+const lineOffsetsForPreviewText = (text: string): number[] => {
+  const offsets = [0];
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) === 10) offsets.push(index + 1);
+  }
+  return offsets;
+};
+
+export const joinHistoryPreviewSelectionText = ({
+  text,
+  startOffset,
+  endOffset,
+  wrapFlags,
+}: {
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  wrapFlags: boolean[];
+}): string => {
+  const start = Math.max(0, Math.min(startOffset, endOffset));
+  const end = Math.max(0, Math.max(startOffset, endOffset));
+  if (end <= start) return "";
+
+  const lineStarts = lineOffsetsForPreviewText(text);
+  const lineIndexAt = (offset: number): number => {
+    let index = 0;
+    while (index + 1 < lineStarts.length && lineStarts[index + 1]! <= offset) {
+      index += 1;
+    }
+    return index;
+  };
+  const startLine = lineIndexAt(start);
+  const endLine = lineIndexAt(Math.max(start, end - 1));
+  const sliceLine = (line: number, from: number, to: number): string => {
+    const lineStart = lineStarts[line] ?? 0;
+    const lineEnd = line + 1 < lineStarts.length ? lineStarts[line + 1]! - 1 : text.length;
+    return text.slice(Math.max(lineStart, from), Math.min(lineEnd, to));
+  };
+
+  let current = sliceLine(startLine, start, startLine === endLine ? end : Number.POSITIVE_INFINITY);
+  const logical: string[] = [];
+  for (let line = startLine + 1; line <= endLine; line += 1) {
+    const row = sliceLine(line, 0, line === endLine ? end : Number.POSITIVE_INFINITY);
+    if (wrapFlags[line]) {
+      current = joinSoftWrappedRows(current, row);
+      continue;
+    }
+    logical.push(current);
+    current = row;
+  }
+  logical.push(current);
+  return logical.join("\n");
+};
+
+const selectionOffsetsInOverlay = (
+  overlay: HistoryPreviewNodeLike,
+  selection: HistoryPreviewSelectionLike,
+): { start: number; end: number } | null => {
+  const textNode = overlay.firstChild;
+  if (!textNode) return null;
+  const { anchorNode, focusNode, anchorOffset, focusOffset } = selection;
+  if (anchorOffset == null || focusOffset == null) return null;
+  if (anchorNode !== textNode || focusNode !== textNode) return null;
+  return {
+    start: Math.min(anchorOffset, focusOffset),
+    end: Math.max(anchorOffset, focusOffset),
+  };
+};
+
 export const getHistoryPreviewSelectionText = (
   overlay: HistoryPreviewNodeLike | null | undefined,
   selection: HistoryPreviewSelectionLike | null | undefined,
@@ -175,7 +285,16 @@ export const getHistoryPreviewSelectionText = (
   const { anchorNode, focusNode } = selection;
   if (!anchorNode || !focusNode) return "";
   if (!overlay.contains(anchorNode) || !overlay.contains(focusNode)) return "";
-  return selection.toString();
+  const raw = selection.toString();
+  const wrapAttr = overlay.getAttribute?.(HISTORY_PREVIEW_WRAP_ATTR);
+  const offsets = selectionOffsetsInOverlay(overlay, selection);
+  if (!wrapAttr || !offsets) return raw;
+  return joinHistoryPreviewSelectionText({
+    text: overlay.textContent ?? "",
+    startOffset: offsets.start,
+    endOffset: offsets.end,
+    wrapFlags: [...wrapAttr].map((flag) => flag === "1"),
+  });
 };
 
 export const findHistoryPreviewOverlay = (
