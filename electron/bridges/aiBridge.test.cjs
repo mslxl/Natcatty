@@ -481,6 +481,148 @@ test("streaming AI responses preserve UTF-8 characters split across network chun
   }
 });
 
+test("streaming AI responses accept SSE data: lines without a space after the colon", { timeout: 5_000 }, async (t) => {
+  const sentEvents = [];
+  let handleStreamEvent = () => {};
+  const { bridge, restore } = loadBridgeWithMocks({
+    safeSend: (_sender, channel, payload) => {
+      sentEvents.push({ channel, payload });
+      handleStreamEvent(channel, payload);
+    },
+  });
+  const ipcMain = createIpcMainStub();
+  const server = require("node:http").createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      // Older AxonHub 0.9 emits `data:{json}` with no space (issue #3020).
+      res.end('data:{"choices":[{"delta":{"content":"hello"}}]}\ndata:[DONE]\n\n');
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseURL = `http://127.0.0.1:${address.port}`;
+    const sender = { id: 1 };
+    await ipcMain.handlers.get("netcatty:ai:sync-providers")(
+      { sender },
+      { providers: [{ id: "axonhub-legacy", baseURL }] },
+    );
+
+    const streamFinished = new Promise((resolve, reject) => {
+      handleStreamEvent = (channel, payload) => {
+        if (channel === "netcatty:ai:stream:end") resolve();
+        else if (channel === "netcatty:ai:stream:error") reject(new Error(payload.error));
+      };
+    });
+
+    const result = await ipcMain.handlers.get("netcatty:ai:chat:stream")(
+      { sender },
+      {
+        requestId: "axonhub-legacy-request",
+        url: `${baseURL}/v1/chat/completions`,
+        headers: { "content-type": "application/json" },
+        body: '{"stream":true}',
+        providerId: "axonhub-legacy",
+      },
+    );
+    await streamFinished;
+
+    assert.equal(result.ok, true);
+    const dataEvents = sentEvents
+      .filter(({ channel }) => channel === "netcatty:ai:stream:data")
+      .map(({ payload }) => payload.data);
+    assert.deepEqual(dataEvents, [
+      '{"choices":[{"delta":{"content":"hello"}}]}',
+      "[DONE]",
+    ]);
+  } finally {
+    restore();
+  }
+});
+
+test("streaming AI responses flush a trailing data: line that has no space and no newline", { timeout: 5_000 }, async (t) => {
+  const sentEvents = [];
+  let handleStreamEvent = () => {};
+  const { bridge, restore } = loadBridgeWithMocks({
+    safeSend: (_sender, channel, payload) => {
+      sentEvents.push({ channel, payload });
+      handleStreamEvent(channel, payload);
+    },
+  });
+  const ipcMain = createIpcMainStub();
+  const server = require("node:http").createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end('data:{"choices":[{"delta":{"content":"tail"}}]}');
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    const baseURL = `http://127.0.0.1:${address.port}`;
+    const sender = { id: 1 };
+    await ipcMain.handlers.get("netcatty:ai:sync-providers")(
+      { sender },
+      { providers: [{ id: "flush-no-space", baseURL }] },
+    );
+
+    const streamFinished = new Promise((resolve, reject) => {
+      handleStreamEvent = (channel, payload) => {
+        if (channel === "netcatty:ai:stream:end") resolve();
+        else if (channel === "netcatty:ai:stream:error") reject(new Error(payload.error));
+      };
+    });
+
+    const result = await ipcMain.handlers.get("netcatty:ai:chat:stream")(
+      { sender },
+      {
+        requestId: "flush-no-space-request",
+        url: `${baseURL}/v1/chat/completions`,
+        headers: { "content-type": "application/json" },
+        body: '{"stream":true}',
+        providerId: "flush-no-space",
+      },
+    );
+    await streamFinished;
+
+    assert.equal(result.ok, true);
+    const dataEvent = sentEvents.find(({ channel }) => channel === "netcatty:ai:stream:data");
+    assert.equal(dataEvent?.payload.data, '{"choices":[{"delta":{"content":"tail"}}]}');
+  } finally {
+    restore();
+  }
+});
+
 test("discover returns the 3-layer contract for an installed, authenticated agent", async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-discover-contract-"));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
