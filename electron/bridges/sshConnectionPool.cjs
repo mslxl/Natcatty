@@ -954,6 +954,7 @@ function createTransport({
       normalized,
       typeof conn?._remoteVer === "string" ? conn._remoteVer : "",
     ),
+    allowShellReuse: true,
     meta: meta || null,
     endedReason: null,
     _poolOnConnectionClose: null,
@@ -1116,6 +1117,13 @@ function returnTransport(leaseIdOrHolder) {
       };
       transport.closedShellPids.clear();
       transport.closedShellPidUnknown = false;
+      // TERM-SSHD cannot host a later interactive shell on this connection
+      // even while SFTP/forward leases keep the socket live (#2923).
+      if (!remoteAllowsIdleParkedShellReuse(
+        typeof transport.conn?._remoteVer === "string" ? transport.conn._remoteVer : "",
+      )) {
+        transport.allowShellReuse = false;
+      }
     }
   }
 
@@ -1208,6 +1216,9 @@ function findTransportByEndpoint(endpoint, opts = {}) {
       continue;
     }
     if (transport.state !== "live" && transport.state !== "idle") continue;
+    // A previous reused shell on this conn died immediately (齐治 TERM-SSHD).
+    // SFTP/forward can keep using the socket; new shells must dial fresh.
+    if (kind === "shell" && transport.allowShellReuse === false) continue;
     // Same route key can still fail agent-forwarding policy.
     if (endpoint && transport.endpoint && !endpointAllowsReuse(endpoint, transport.endpoint, kind)) {
       continue;

@@ -18,7 +18,7 @@ const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
 const { listInteractiveShellPids: listInteractiveShellPidsShared } = require("../sshInteractiveShells.cjs");
 const {
-  remoteNeedsReusedShellLivenessCheck,
+  shouldConfirmReusedShellLiveness,
   resolveReusedShellLivenessMs,
   waitForReusedShellLiveness,
 } = require("../sshIdleParkPolicy.cjs");
@@ -989,6 +989,7 @@ function createStartSessionApi(ctx) {
                   });
                   if (connRef) {
                     connRef.allowIdlePark = false;
+                    connRef.allowShellReuse = false;
                     if (typeof markEndpointNoIdlePark === "function") {
                       markEndpointNoIdlePark(connRef.endpoint || connRef.endpointKey);
                     }
@@ -1138,8 +1139,11 @@ function createStartSessionApi(ctx) {
               transportId: parked.id,
               transportState: parked.state,
             });
-            const confirmReusedShellLiveness = parked.state === "idle"
-              && remoteNeedsReusedShellLivenessCheck(parked.conn?._remoteVer);
+            const confirmReusedShellLiveness = shouldConfirmReusedShellLiveness({
+              state: parked.state,
+              pendingShellReconnectRisk: parked.pendingShellReconnectRisk,
+              remoteSshVersion: parked.conn?._remoteVer,
+            });
             return await reuseShellSession(
               event,
               options,

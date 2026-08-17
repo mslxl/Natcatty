@@ -308,6 +308,85 @@ test("idle-park reconnect falls back to a fresh dial when the reused shell exits
   assert.equal(secondTransport.state, "dead", "endpoint is denylisted so the next close does not park");
 });
 
+test("TERM-SSHD last shell with SFTP still open dials a fresh shell", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, {
+    connectReady: true,
+    remoteVer: "TERM-SSHD",
+  });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "blj.yd.com.cn",
+    username: "test",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const firstTransport = first.connRef;
+  acquireConnectionRef({ id: "sftp-holder", __sshLeaseKind: "sftp" }, firstTransport);
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "live");
+  assert.equal(firstTransport.allowShellReuse, false);
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("second").conn, first.conn);
+});
+
+test("SFTP-held reconnect falls back when the reused shell exits immediately", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, {
+    connectReady: true,
+    remoteVer: "CustomBastion_1.0",
+  });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "bastion.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+    sshReusedShellLivenessMs: 25,
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+  const first = sessions.get("first");
+  const parkedConn = first.conn;
+  const firstTransport = first.connRef;
+  acquireConnectionRef({ id: "sftp-holder", __sshLeaseKind: "sftp" }, firstTransport);
+  first.stream.emit("close");
+  assert.equal(firstTransport.state, "live");
+  assert.ok(firstTransport.pendingShellReconnectRisk);
+
+  parkedConn.shell = (_pty, _shellOpts, callback) => {
+    const stream = makeStream();
+    parkedConn.openedShells.push(stream);
+    setImmediate(() => {
+      callback(null, stream);
+      setImmediate(() => {
+        stream.emit("exit", 0);
+        stream.emit("close");
+      });
+    });
+  };
+
+  await start({ sender: makeSender() }, { ...options, sessionId: "second" });
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("second").conn, parkedConn);
+  assert.equal(firstTransport.allowShellReuse, false);
+});
+
 test("idle-park reconnect after last shell closes skips post-open PID discovery", async (t) => {
   // After the sole interactive shell returns its lease, the next open reuses the
   // parked transport. Post-open discovery exec has no sibling PIDs to

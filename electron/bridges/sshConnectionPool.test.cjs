@@ -286,6 +286,21 @@ test("TERM-SSHD last lease ends the transport instead of idle-parking", () => {
   assert.equal(connRef.endedReason, "no-idle-park");
 });
 
+test("TERM-SSHD last shell with an SFTP lease refuses later shell reuse", () => {
+  const conn = makeConn();
+  conn._remoteVer = "TERM-SSHD";
+  const endpoint = { hostname: "blj.yd.com.cn", username: "test", port: 22 };
+  const owner = { stream: {}, remoteSshVersion: "TERM-SSHD", _reuseEndpoint: endpoint };
+  const sftp = { id: "sftp", __sshLeaseKind: "sftp" };
+  const transport = createConnectionRef(owner, conn, []);
+  acquireConnectionRef(sftp, transport);
+  assert.equal(releaseConnectionRef(owner), false);
+  assert.equal(transport.state, "live");
+  assert.equal(transport.allowShellReuse, false);
+  assert.equal(findTransportByEndpoint(transport.endpoint, { kind: "shell" }), null);
+  assert.equal(findTransportByEndpoint(transport.endpoint, { kind: "channel" }), transport);
+});
+
 test("an endpoint denylisted after a dead parked shell does not idle-park later transports", () => {
   const endpoint = { hostname: "bastion.example", username: "alice", port: 22 };
   markEndpointNoIdlePark(endpoint);

@@ -6,6 +6,7 @@ const {
   DEFAULT_REUSED_SHELL_LIVENESS_MS,
   remoteAllowsIdleParkedShellReuse,
   remoteNeedsReusedShellLivenessCheck,
+  shouldConfirmReusedShellLiveness,
   resolveReusedShellLivenessMs,
   waitForReusedShellLiveness,
 } = require("./sshIdleParkPolicy.cjs");
@@ -21,6 +22,26 @@ test("OpenSSH and Dropbear still allow idle-park shell reuse", () => {
   assert.equal(remoteAllowsIdleParkedShellReuse("SSH-2.0-OpenSSH_9.6"), true);
   assert.equal(remoteAllowsIdleParkedShellReuse("dropbear_2024.85"), true);
   assert.equal(remoteAllowsIdleParkedShellReuse(""), true);
+});
+
+test("shouldConfirmReusedShellLiveness covers idle park and SFTP-held last-shell close", () => {
+  assert.equal(shouldConfirmReusedShellLiveness({
+    state: "idle",
+    remoteSshVersion: "CustomBastion_1.0",
+  }), true);
+  assert.equal(shouldConfirmReusedShellLiveness({
+    state: "live",
+    pendingShellReconnectRisk: { oldShellPids: [], hasUnknownOldShell: true },
+    remoteSshVersion: "TERM-SSHD",
+  }), true);
+  assert.equal(shouldConfirmReusedShellLiveness({
+    state: "live",
+    remoteSshVersion: "CustomBastion_1.0",
+  }), false);
+  assert.equal(shouldConfirmReusedShellLiveness({
+    state: "idle",
+    remoteSshVersion: "OpenSSH_9.0",
+  }), false);
 });
 
 test("unknown banners get a reused-shell liveness check; OpenSSH does not", () => {

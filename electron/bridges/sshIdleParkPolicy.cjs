@@ -41,6 +41,21 @@ function remoteNeedsReusedShellLivenessCheck(remoteSshVersion) {
   return true;
 }
 
+/**
+ * Idle park is not the only "last shell already left" state. An SFTP or
+ * forward lease can keep the transport `live` after the interactive shell
+ * returns; `pendingShellReconnectRisk` is recorded in that case. Those
+ * reconnects need the same settle check as a parked transport.
+ */
+function shouldConfirmReusedShellLiveness({
+  state,
+  pendingShellReconnectRisk,
+  remoteSshVersion,
+} = {}) {
+  if (!remoteNeedsReusedShellLivenessCheck(remoteSshVersion)) return false;
+  return state === "idle" || Boolean(pendingShellReconnectRisk);
+}
+
 function resolveReusedShellLivenessMs(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return DEFAULT_REUSED_SHELL_LIVENESS_MS;
@@ -95,7 +110,6 @@ function waitForReusedShellLiveness(stream, opts = {}) {
     const timer = schedule(() => {
       finish({ alive: true, reason: "settle" });
     }, settleMs);
-    timer?.unref?.();
 
     function cleanup() {
       cancel(timer);
@@ -111,6 +125,7 @@ module.exports = {
   DEFAULT_REUSED_SHELL_LIVENESS_MS,
   remoteAllowsIdleParkedShellReuse,
   remoteNeedsReusedShellLivenessCheck,
+  shouldConfirmReusedShellLiveness,
   resolveReusedShellLivenessMs,
   waitForReusedShellLiveness,
 };
