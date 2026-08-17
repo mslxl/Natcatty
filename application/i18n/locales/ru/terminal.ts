@@ -765,7 +765,7 @@ export const ruTerminalMessages: Messages = {
   'snippets.shortkey.recording': 'Нажмите сочетание клавиш...',
   'snippets.shortkey.hint': 'Нажмите это сочетание в терминале, чтобы быстро отправить команду.',
   'snippets.shortkey.clear': 'Очистить сочетание',
-  'snippets.shortkey.error.systemConflict': 'Это сочетание конфликтует с системным сочетанием',
+  'snippets.shortkey.error.systemConflict': 'Это сочетание конфликтует с «{name}»',
   'snippets.shortkey.error.snippetConflict': 'Это сочетание уже используется сниппетом: {name}',
 
   // Serial Port

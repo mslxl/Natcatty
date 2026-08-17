@@ -748,7 +748,7 @@ export const esTerminalMessages: Messages = {
   'snippets.shortkey.recording': 'Presiona una combinación de teclas...',
   'snippets.shortkey.hint': 'Presiona este atajo en la terminal para enviar el comando rápidamente.',
   'snippets.shortkey.clear': 'Borrar atajo',
-  'snippets.shortkey.error.systemConflict': 'Este atajo entra en conflicto con un atajo del sistema',
+  'snippets.shortkey.error.systemConflict': 'Este atajo entra en conflicto con {name}',
   'snippets.shortkey.error.snippetConflict': 'Este atajo ya lo usa el snippet: {name}',
 
   'snippets.variables.dialogTitle': 'Variables del snippet',

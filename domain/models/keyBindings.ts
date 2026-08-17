@@ -21,6 +21,38 @@ export const parseKeyCombo = (keyStr: string): { modifiers: string[]; key: strin
   return { modifiers: parts, key };
 };
 
+const KEY_STRING_TO_EVENT_KEY: Record<string, string> = {
+  Space: ' ',
+  '↑': 'ArrowUp',
+  '↓': 'ArrowDown',
+  '←': 'ArrowLeft',
+  '→': 'ArrowRight',
+  Esc: 'Escape',
+  '⌫': 'Backspace',
+  Del: 'Delete',
+  '↵': 'Enter',
+  '⇥': 'Tab',
+};
+
+/** Rebuild a keydown-like event from a stored shortcut string for matching. */
+export const keyStringToKeyboardEvent = (keyString: string): KeyboardEvent | null => {
+  const parsed = parseKeyCombo(keyString);
+  if (!parsed) return null;
+
+  const modifiers = new Set(parsed.modifiers);
+  const mappedKey = KEY_STRING_TO_EVENT_KEY[parsed.key];
+  const key = mappedKey ?? (parsed.key.length === 1 ? parsed.key.toLowerCase() : parsed.key);
+
+  return {
+    key,
+    code: '',
+    metaKey: modifiers.has('⌘') || modifiers.has('Win'),
+    ctrlKey: modifiers.has('⌃') || modifiers.has('Ctrl'),
+    altKey: modifiers.has('⌥') || modifiers.has('Alt'),
+    shiftKey: modifiers.has('Shift'),
+  } as KeyboardEvent;
+};
+
 const PHYSICAL_SHORTCUT_KEY_NAMES: Record<string, string> = {
   Backquote: '`',
   Minus: '-',

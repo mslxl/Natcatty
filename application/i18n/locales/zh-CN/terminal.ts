@@ -833,7 +833,7 @@ export const zhCNTerminalMessages: Messages = {
   'snippets.shortkey.recording': '请按下快捷键组合...',
   'snippets.shortkey.hint': '在终端中按下此快捷键可快速发送命令。',
   'snippets.shortkey.clear': '清除快捷键',
-  'snippets.shortkey.error.systemConflict': '此快捷键与系统快捷键冲突',
+  'snippets.shortkey.error.systemConflict': '此快捷键与「{name}」冲突',
   'snippets.shortkey.error.snippetConflict': '此快捷键已被代码片段使用：{name}',
 
   'snippets.variables.dialogTitle': '填写变量',
