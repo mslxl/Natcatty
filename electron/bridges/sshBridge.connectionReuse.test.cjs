@@ -1667,6 +1667,39 @@ test("source closed while reused shell is pending keeps the connection alive", a
   assert.equal(connRef.state, "idle");
 });
 
+test("Copy Tab after TERM-SSHD source close falls back to a fresh dial", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, {
+    connectReady: true,
+    remoteVer: "TERM-SSHD",
+  });
+  const terminalBridge = require("./terminalBridge.cjs");
+  const sessions = new Map();
+  const conn = makeDeferredShellConn();
+  conn._remoteVer = "TERM-SSHD";
+  const source = makeSourceSession(conn, { hostname: "blj.yd.com.cn", username: "test" });
+  const connRef = source.connRef;
+  sessions.set("source", source);
+  terminalBridge.init({ sessions, electronModule: {} });
+  const start = registerStartHandler(bridge, sessions);
+
+  const startPromise = start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy",
+      hostname: "blj.yd.com.cn",
+      username: "test",
+      sourceSessionId: "source",
+    },
+  );
+  await new Promise((r) => setImmediate(r));
+  terminalBridge.closeSession({ sender: {} }, { sessionId: "source" });
+  assert.equal(connRef.allowShellReuse, false);
+  conn.flushShell();
+  await startPromise;
+  assert.equal(getClientConstructCount(), 1, "must not keep the TERM-SSHD source transport");
+  assert.notEqual(sessions.get("copy").conn, conn);
+});
+
 test("does not reuse when the source endpoint differs from the requested target", async (t) => {
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();

@@ -732,6 +732,12 @@ function createStartSessionApi(ctx) {
         };
         conn.once("error", onConnError);
 
+        if (connRef.allowShellReuse === false) {
+          conn.removeListener("error", onConnError);
+          failReuse(new Error("Transport is no longer reusable for shells"));
+          return;
+        }
+
         try {
           const rateLimitBackoffMs = Number(options.sshChannelOpenRateLimitBackoffMs);
           openBoundedSshShellCallback(
@@ -755,6 +761,11 @@ function createStartSessionApi(ctx) {
                 log("reused shell open failed", { sessionId, hostname: options.hostname, error: err.message });
                 sendProgress('error', `Failed to open shell: ${err.message}`);
                 failReuse(err);
+                return;
+              }
+              if (connRef.allowShellReuse === false) {
+                if (stream) { try { stream.close(); } catch { /* ignore */ } }
+                failReuse(new Error("Transport is no longer reusable for shells"));
                 return;
               }
 
@@ -960,7 +971,15 @@ function createStartSessionApi(ctx) {
                 });
               };
 
-              const confirmReusedShellLiveness = reuseOpts.confirmReusedShellLiveness === true;
+              // Decide at channel-open time, not when start() was queued.
+              // Copy Tab can lose its source shell while this open is still
+              // pinned; pendingShellReconnectRisk is recorded then (#2923).
+              const confirmReusedShellLiveness = reuseOpts.confirmReusedShellLiveness === true
+                || shouldConfirmReusedShellLiveness({
+                  state: connRef?.state,
+                  pendingShellReconnectRisk: connRef?.pendingShellReconnectRisk,
+                  remoteSshVersion: conn?._remoteVer,
+                });
               if (!confirmReusedShellLiveness) {
                 finishReusedShellOpen();
                 return;

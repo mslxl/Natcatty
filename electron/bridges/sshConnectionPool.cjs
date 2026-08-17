@@ -1450,6 +1450,11 @@ function findReusableSession(sessions, sourceSessionId, requestedTarget) {
   if (!source.conn || !source.stream || !source.connRef) return null;
   // Registry-managed transports: refuse dead/closing.
   if (source.connRef.state === "dead" || source.connRef.state === "closing") return null;
+  // Last interactive shell already left this conn and the daemon cannot host
+  // another one (TERM-SSHD). The captured Copy Tab pin can still keep the
+  // transport live; refuse so start() dials fresh instead of opening a
+  // channel that will exit 0 immediately.
+  if (source.connRef.allowShellReuse === false) return null;
   // ssh2 Client exposes no public "is connected" flag; rely on the descriptor
   // still being attached (it is nulled out on teardown) plus a non-destroyed
   // underlying socket when ssh2 exposes one.
