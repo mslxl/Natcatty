@@ -134,6 +134,7 @@ import { createConnectionLogBuffer } from "./terminal/connectionLogBuffer";
 import { createProgrammaticCommandLogRewriter, type ProgrammaticCommandLogRewrite } from "./terminal/programmaticCommandLog";
 import { getSessionLogInitialLine } from "./terminal/sessionLogInitialLine";
 import { getTerminalSelectionForClipboard } from "./terminal/normalizeTerminalSelection";
+import { getHistoryPreviewSelectionFromRoot } from "./terminal/runtime/terminalHistoryScrollOverride";
 import { useZmodemTransfer } from "./terminal/hooks/useZmodemTransfer";
 import {
   createTerminalSessionStarters,
@@ -3147,10 +3148,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const handleAddSelectionToAI = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = getTerminalSelectionForClipboard(
-      term,
-      terminalSettings?.normalizeTextOnCopy ?? true,
-    );
+    const selection = getHistoryPreviewSelectionFromRoot(term.element?.parentElement)
+      || getTerminalSelectionForClipboard(
+        term,
+        terminalSettings?.normalizeTextOnCopy ?? true,
+      );
     if (!selection.trim()) return;
     onAddSelectionToAI?.(sessionId, selection);
   }, [onAddSelectionToAI, sessionId, terminalSettings?.normalizeTextOnCopy]);
