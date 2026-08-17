@@ -51,6 +51,7 @@ const {
 } = require("./ai/shellUtils.cjs");
 
 const { detectClaudeAuthPresence, expandHomePath } = require("./ai/claudeAuth.cjs");
+const { extractSseDataPayload } = require("./ai/sseDataLine.cjs");
 
 const CLAUDE_AUTH_HELP_MESSAGE =
   "Claude Code has no usable authentication. Open Settings -> AI -> Claude Code and set a Config directory (point it at a folder where you've run `claude` login) or add an ANTHROPIC_API_KEY under Environment variables. Alternatively, run `claude` in a terminal to log in.";
@@ -731,14 +732,11 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
             const line = buffer.slice(consumedUntil, newlineIndex);
             consumedUntil = newlineIndex + 1;
             searchFrom = consumedUntil;
-            const trimmed = line.trim();
-            if (!trimmed) continue;
-
-            // Forward raw SSE data line to renderer
-            if (trimmed.startsWith("data: ")) {
+            const payload = extractSseDataPayload(line);
+            if (payload != null) {
               safeSend(event.sender, "netcatty:ai:stream:data", {
                 requestId,
-                data: trimmed.slice(6),
+                data: payload,
               });
             }
           }
@@ -748,10 +746,11 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
         res.on("end", () => {
           if (streamFinished) return;
           // Flush any remaining buffer
-          if (buffer.trim().startsWith("data: ")) {
+          const trailingPayload = extractSseDataPayload(buffer);
+          if (trailingPayload != null) {
             safeSend(event.sender, "netcatty:ai:stream:data", {
               requestId,
-              data: buffer.trim().slice(6),
+              data: trailingPayload,
             });
           }
           safeSend(event.sender, "netcatty:ai:stream:end", { requestId });
