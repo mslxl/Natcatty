@@ -116,6 +116,8 @@ export const useTerminalContextActions = ({
   const onPaste = useCallback(async () => {
     const term = termRef.current;
     if (!term) return;
+    requestHistoryPreviewHide(term.element?.parentElement);
+    term.focus();
     try {
       const bridge = netcattyBridge.get();
       await handleTerminalClipboardPaste({

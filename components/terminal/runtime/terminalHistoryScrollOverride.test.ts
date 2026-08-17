@@ -147,6 +147,20 @@ test("history preview stays up for pointer selection and copy chords", () => {
   assert.equal(
     shouldKeepHistoryPreviewOnKey(key({ key: "c", ctrlKey: true, shiftKey: false }), {
       action: "copy",
+      hasPreviewSelection: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldKeepHistoryPreviewOnKey(key({ key: "c", ctrlKey: true, shiftKey: false }), {
+      action: "copy",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldKeepHistoryPreviewOnKey(key({ key: "a", metaKey: true, shiftKey: false }), {
+      action: "selectAll",
+      overlayVisible: true,
     }),
     true,
   );
@@ -154,7 +168,7 @@ test("history preview stays up for pointer selection and copy chords", () => {
     shouldKeepHistoryPreviewOnKey(key({ key: "a", metaKey: true, shiftKey: false }), {
       overlayVisible: true,
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldKeepHistoryPreviewOnKey(key({ key: "j", shiftKey: false })),

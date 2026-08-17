@@ -180,17 +180,11 @@ export const shouldKeepHistoryPreviewOnKey = (
 ): boolean => {
   if (forcedHistoryScrollPagesForKey(event) !== null) return true;
   if (MODIFIER_ONLY_KEYS.has(event.key)) return true;
-  if (options.action === "copy" || options.action === "selectAll") return true;
-  if (
-    options.overlayVisible
-    && event.key.toLowerCase() === "a"
-    && (event.metaKey || event.ctrlKey)
-    && !event.altKey
-  ) {
-    return true;
-  }
+  if (options.action === "selectAll" && options.overlayVisible) return true;
+  if (options.action === "copy" && options.hasPreviewSelection) return true;
   return Boolean(
     options.hasPreviewSelection
+    && options.action == null
     && (event.metaKey || event.ctrlKey)
     && !event.altKey
     && event.key.toLowerCase() === "c",
