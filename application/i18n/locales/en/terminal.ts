@@ -748,7 +748,7 @@ export const enTerminalMessages: Messages = {
   'snippets.shortkey.recording': 'Press a key combination...',
   'snippets.shortkey.hint': 'Press this shortcut in terminal to quickly send the command.',
   'snippets.shortkey.clear': 'Clear shortcut',
-  'snippets.shortkey.error.systemConflict': 'This shortcut conflicts with a system shortcut',
+  'snippets.shortkey.error.systemConflict': 'This shortcut conflicts with {name}',
   'snippets.shortkey.error.snippetConflict': 'This shortcut is already used by snippet: {name}',
 
   'snippets.variables.dialogTitle': 'Snippet variables',

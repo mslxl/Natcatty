@@ -21,6 +21,17 @@ test('snippet bulk-delete copy exists in every locale', () => {
   }
 });
 
+test('snippet shortkey system-conflict copy names the conflicting action', () => {
+  for (const [locale, messages] of Object.entries({ en, ru, es, zhCN, zhTW })) {
+    const text = messages['snippets.shortkey.error.systemConflict'];
+    assert.match(
+      text ?? '',
+      /\{name\}/,
+      `${locale} system-conflict copy should include {name}`,
+    );
+  }
+});
+
 test('English bulk-delete copy is entity-neutral and grammatical for one item', () => {
   assert.equal(
     en['snippets.selection.deleteConfirmTitle'].replace('{count}', '1'),

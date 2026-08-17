@@ -833,7 +833,7 @@ export const zhTWTerminalMessages: Messages = {
   'snippets.shortkey.recording': '請按下快捷鍵組合...',
   'snippets.shortkey.hint': '在終端中按下此快捷鍵可快速傳送指令。',
   'snippets.shortkey.clear': '清除快捷鍵',
-  'snippets.shortkey.error.systemConflict': '此快捷鍵與系統快捷鍵衝突',
+  'snippets.shortkey.error.systemConflict': '此快捷鍵與「{name}」衝突',
   'snippets.shortkey.error.snippetConflict': '此快捷鍵已被程式碼片段使用：{name}',
 
   'snippets.variables.dialogTitle': '填寫變數',
