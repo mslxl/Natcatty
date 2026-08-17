@@ -18,6 +18,11 @@ const { getAttachHomeWebContentsId } = require("../terminalAttachRestore.cjs");
 const { openBoundedSshShellCallback } = require("../boundedSshChannelOpen.cjs");
 const { listInteractiveShellPids: listInteractiveShellPidsShared } = require("../sshInteractiveShells.cjs");
 const {
+  remoteNeedsReusedShellLivenessCheck,
+  resolveReusedShellLivenessMs,
+  waitForReusedShellLiveness,
+} = require("../sshIdleParkPolicy.cjs");
+const {
   annotateMacLocalNetworkErrorMessage,
   resolveFirstTcpEndpoint,
 } = require("../macLocalNetworkAccess.cjs");
@@ -657,6 +662,7 @@ function createStartSessionApi(ctx) {
       log,
       connRef,
       refHolder,
+      reuseOpts = {},
     ) {
       const cols = options.cols || 80;
       const rows = options.rows || 24;
@@ -754,47 +760,70 @@ function createStartSessionApi(ctx) {
 
               sendProgress('connected');
 
-              // Hand the up-front lease over to the real session without changing
-              // the lease count (transferConnectionRef). setupShellSession still
-              // records connRef; transfer rebinds _sshTransportLeaseId so a later
-              // releaseConnectionRef(session) returns the right lease.
-              try {
-                setupShellSession({
-                  conn,
-                  stream,
-                  options: { ...options, _connRef: connRef },
-                  sessionId,
-                  event,
-                  log,
-                  detachX11Forwarding: null,
-                  chainConnections: [],
-                  isReused: true,
-                });
-              } catch (setupErr) {
-                // openBoundedSshShellCallback delivers this from a Promise .then
-                // without catching callback throws — reject via failReuse.
-                failReuse(setupErr);
-                return;
-              }
-              const reconnectAfterLastShellClose =
-                consumePendingShellReconnectRisk(connRef);
-              const copiedSession = sessions.get(sessionId);
-              if (copiedSession && reconnectAfterLastShellClose) {
-                copiedSession.blockUntargetedCwdProbe = true;
-                copiedSession.parkedReconnectRisk = reconnectAfterLastShellClose;
-              }
-              if (copiedSession) {
-                if (typeof transferConnectionRef === "function") {
-                  transferConnectionRef(refHolder, copiedSession);
+              const finishReusedShellOpen = (prefetchedChunks = []) => {
+                if (settled) {
+                  if (stream) { try { stream.close(); } catch { /* ignore */ } }
+                  return;
+                }
+
+                // Hand the up-front lease over to the real session without changing
+                // the lease count (transferConnectionRef). setupShellSession still
+                // records connRef; transfer rebinds _sshTransportLeaseId so a later
+                // releaseConnectionRef(session) returns the right lease.
+                try {
+                  setupShellSession({
+                    conn,
+                    stream,
+                    options: { ...options, _connRef: connRef },
+                    sessionId,
+                    event,
+                    log,
+                    detachX11Forwarding: null,
+                    chainConnections: [],
+                    isReused: true,
+                  });
+                } catch (setupErr) {
+                  // openBoundedSshShellCallback delivers this from a Promise .then
+                  // without catching callback throws — reject via failReuse.
+                  failReuse(setupErr);
+                  return;
+                }
+                if (prefetchedChunks.length > 0) {
+                  for (const chunk of prefetchedChunks) {
+                    stream.emit("data", chunk);
+                  }
+                }
+                const reconnectAfterLastShellClose =
+                  consumePendingShellReconnectRisk(connRef);
+                const copiedSession = sessions.get(sessionId);
+                if (copiedSession && reconnectAfterLastShellClose) {
+                  copiedSession.blockUntargetedCwdProbe = true;
+                  copiedSession.parkedReconnectRisk = reconnectAfterLastShellClose;
+                }
+                if (copiedSession) {
+                  if (typeof transferConnectionRef === "function") {
+                    transferConnectionRef(refHolder, copiedSession);
+                  } else {
+                    // Legacy count model: detach holder without decrement.
+                    refHolder.connRef = null;
+                  }
                 } else {
-                  // Legacy count model: detach holder without decrement.
                   refHolder.connRef = null;
                 }
-              } else {
-                refHolder.connRef = null;
-              }
 
-              const discoverCopiedShellPid = async () => {
+                void discoverCopiedShellPid(copiedSession).then((newShellPid) => {
+                  // Bind PID only to the session this reuse opened. A higher
+                  // bootEpoch reconnect may already own sessionId in the map.
+                  const liveSession = sessions.get(sessionId);
+                  if (liveSession && liveSession === copiedSession && newShellPid) {
+                    liveSession.shellPid = newShellPid;
+                  }
+                  settled = true;
+                  resolve({ sessionId });
+                });
+              };
+
+              const discoverCopiedShellPid = async (copiedSession) => {
                 if (options.skipShellPidDiscovery) return null;
                 const liveBaseline = () => [...sessions.values()]
                   .filter((candidate) => (
@@ -931,15 +960,46 @@ function createStartSessionApi(ctx) {
                 });
               };
 
-              void discoverCopiedShellPid().then((newShellPid) => {
-                // Bind PID only to the session this reuse opened. A higher
-                // bootEpoch reconnect may already own sessionId in the map.
-                const liveSession = sessions.get(sessionId);
-                if (liveSession && liveSession === copiedSession && newShellPid) {
-                  liveSession.shellPid = newShellPid;
+              const confirmReusedShellLiveness = reuseOpts.confirmReusedShellLiveness === true;
+              if (!confirmReusedShellLiveness) {
+                finishReusedShellOpen();
+                return;
+              }
+
+              // Idle-park reconnect on an unknown / non-multiplex banner: the
+              // channel can open and then immediately exit 0 (齐治 TERM-SSHD,
+              // issue #2923). Fail reuse before setupShellSession so start()
+              // can discard the parked transport and dial fresh.
+              void waitForReusedShellLiveness(stream, {
+                settleMs: resolveReusedShellLivenessMs(options.sshReusedShellLivenessMs),
+                setTimeout,
+                clearTimeout,
+              }).then((liveness) => {
+                if (settled) {
+                  if (stream) { try { stream.close(); } catch { /* ignore */ } }
+                  return;
                 }
-                settled = true;
-                resolve({ sessionId });
+                if (!liveness.alive) {
+                  log("reused parked shell closed immediately, discarding transport", {
+                    sessionId,
+                    hostname: options.hostname,
+                    reason: liveness.reason,
+                    code: liveness.code,
+                    transportId: connRef?.id,
+                  });
+                  if (connRef) {
+                    connRef.allowIdlePark = false;
+                    if (typeof markEndpointNoIdlePark === "function") {
+                      markEndpointNoIdlePark(connRef.endpoint || connRef.endpointKey);
+                    }
+                  }
+                  try { stream.close(); } catch { /* ignore */ }
+                  failReuse(new Error("Reused parked shell closed immediately"));
+                  return;
+                }
+                finishReusedShellOpen(liveness.buffered);
+              }).catch((livenessErr) => {
+                failReuse(livenessErr);
               });
             },
             Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
@@ -958,7 +1018,7 @@ function createStartSessionApi(ctx) {
       });
     }
 
-    function reuseShellSession(event, options, sourceSession, sessionId, log) {
+    function reuseShellSession(event, options, sourceSession, sessionId, log, reuseOpts = {}) {
       const connRef = sourceSession.connRef;
       const refHolder = {};
       // Pin while queued as well as while opening: the source tab may close
@@ -976,6 +1036,7 @@ function createStartSessionApi(ctx) {
           log,
           connRef,
           refHolder,
+          reuseOpts,
         ));
       const tail = operation.then(() => undefined, () => undefined);
       connRef.shellOpenQueue = tail;
@@ -1077,6 +1138,8 @@ function createStartSessionApi(ctx) {
               transportId: parked.id,
               transportState: parked.state,
             });
+            const confirmReusedShellLiveness = parked.state === "idle"
+              && remoteNeedsReusedShellLivenessCheck(parked.conn?._remoteVer);
             return await reuseShellSession(
               event,
               options,
@@ -1089,6 +1152,7 @@ function createStartSessionApi(ctx) {
               },
               sessionId,
               log,
+              { confirmReusedShellLiveness },
             );
           } catch (parkErr) {
             log("parked transport reuse failed, falling back to fresh connection", {

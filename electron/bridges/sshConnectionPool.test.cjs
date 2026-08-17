@@ -32,6 +32,8 @@ const {
   endpointAllowsReuse,
   fingerprintAuth,
   resetSshTransportRegistryForTests,
+  markEndpointNoIdlePark,
+  endpointAllowsIdlePark,
   DEFAULT_SSH_TRANSPORT_IDLE_TTL_MS,
   DEFAULT_MAX_IDLE_SSH_TRANSPORTS,
   LEASE_KINDS,
@@ -267,6 +269,38 @@ test("failed in-flight dial releases the slot so a later open can retry", async 
 
   const retry = beginTransportDial(endpoint, { kind: "shell" });
   assert.equal(retry.role, "leader");
+});
+
+test("TERM-SSHD last lease ends the transport instead of idle-parking", () => {
+  const conn = makeConn();
+  conn._remoteVer = "TERM-SSHD";
+  const owner = { remoteSshVersion: "TERM-SSHD" };
+  const connRef = createConnectionRef(owner, conn, []);
+  assert.equal(connRef.allowIdlePark, false);
+  assert.equal(endpointAllowsIdlePark(connRef.endpoint, "TERM-SSHD"), false);
+
+  const ended = releaseConnectionRef(owner);
+  assert.equal(ended, true);
+  assert.equal(conn.ended, 1);
+  assert.equal(connRef.state, "dead");
+  assert.equal(connRef.endedReason, "no-idle-park");
+});
+
+test("an endpoint denylisted after a dead parked shell does not idle-park later transports", () => {
+  const endpoint = { hostname: "bastion.example", username: "alice", port: 22 };
+  markEndpointNoIdlePark(endpoint);
+  assert.equal(endpointAllowsIdlePark(endpoint, "OpenSSH_9.0"), false);
+
+  const conn = makeConn();
+  conn._remoteVer = "OpenSSH_9.0";
+  const transport = createTransport({ conn, endpoint });
+  assert.equal(transport.allowIdlePark, false);
+
+  const holder = {};
+  borrowTransport(transport, { kind: "shell", holder });
+  assert.equal(releaseConnectionRef(holder), true);
+  assert.equal(transport.state, "dead");
+  assert.equal(conn.ended, 1);
 });
 
 test("releaseConnectionRef parks on last channel when TTL is 0 (until quit)", () => {

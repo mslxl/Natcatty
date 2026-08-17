@@ -30,6 +30,7 @@ const { randomUUID, createHash } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { remoteAllowsIdleParkedShellReuse } = require("./sshIdleParkPolicy.cjs");
 
 /**
  * Default idle park after last lease returns (5 minutes).
@@ -73,6 +74,38 @@ let timerApi = {
 };
 let nowFn = () => Date.now();
 let nextLeaseSeq = 0;
+/** Endpoint keys whose parked transports cannot host a later interactive shell. */
+const noIdleParkEndpointKeys = new Set();
+
+function markEndpointNoIdlePark(endpointOrKey) {
+  const key = typeof endpointOrKey === "string"
+    ? endpointOrKey
+    : buildEndpointKey(endpointOrKey);
+  if (!key) return false;
+  noIdleParkEndpointKeys.add(key);
+  return true;
+}
+
+function endpointAllowsIdlePark(endpointOrKey, remoteSshVersion) {
+  if (!remoteAllowsIdleParkedShellReuse(remoteSshVersion)) return false;
+  const key = typeof endpointOrKey === "string"
+    ? endpointOrKey
+    : buildEndpointKey(endpointOrKey);
+  if (key && noIdleParkEndpointKeys.has(key)) return false;
+  return true;
+}
+
+function applyIdleParkPolicy(transport, remoteSshVersion) {
+  if (!transport) return false;
+  const remoteVer = remoteSshVersion
+    || (typeof transport.conn?._remoteVer === "string" ? transport.conn._remoteVer : "");
+  const allowed = endpointAllowsIdlePark(transport.endpointKey || transport.endpoint, remoteVer);
+  transport.allowIdlePark = allowed;
+  if (!allowed && transport.endpointKey) {
+    noIdleParkEndpointKeys.add(transport.endpointKey);
+  }
+  return allowed;
+}
 
 function removePendingDial(record) {
   if (!record?.endpointKey) return;
@@ -809,6 +842,12 @@ function scheduleIdleEnd(transport, opts = {}) {
     endTransport(transport, "unhealthy-last-lease");
     return { ended: true, idle: false };
   }
+  // Bastions such as 齐治 TERM-SSHD accept a later session channel on a parked
+  // transport and then immediately exit 0 (#2923). End instead of parking.
+  if (transport.allowIdlePark === false) {
+    endTransport(transport, "no-idle-park");
+    return { ended: true, idle: false };
+  }
   const ttl = Number.isFinite(transport.idleTtlMs) ? transport.idleTtlMs : defaultIdleTtlMs;
   const now = nowFn();
 
@@ -911,11 +950,18 @@ function createTransport({
     closedShellPids: new Set(),
     closedShellPidUnknown: false,
     shellCloseGeneration: 0,
+    allowIdlePark: endpointAllowsIdlePark(
+      normalized,
+      typeof conn?._remoteVer === "string" ? conn._remoteVer : "",
+    ),
     meta: meta || null,
     endedReason: null,
     _poolOnConnectionClose: null,
     _poolOnConnectionError: null,
   };
+  if (transport.allowIdlePark === false && transport.endpointKey) {
+    noIdleParkEndpointKeys.add(transport.endpointKey);
+  }
 
   transportsById.set(transport.id, transport);
   attachEndpointIndex(transport);
@@ -1232,6 +1278,7 @@ function resetSshTransportRegistryForTests(options = {}) {
   leasesById.clear();
   pendingDialsByEndpoint.clear();
   idleTransportsLru.clear();
+  noIdleParkEndpointKeys.clear();
   nextLeaseSeq = 0;
   defaultIdleTtlMs = Number.isFinite(options.defaultIdleTtlMs)
     ? options.defaultIdleTtlMs
@@ -1295,6 +1342,10 @@ function createConnectionRef(session, conn, chainConnections) {
     endpoint,
     idleTtlMs: defaultIdleTtlMs,
   });
+  applyIdleParkPolicy(
+    transport,
+    session?.remoteSshVersion || (typeof conn?._remoteVer === "string" ? conn._remoteVer : ""),
+  );
 
   borrowTransport(transport, {
     kind: LEASE_KINDS.shell,
@@ -1473,4 +1524,7 @@ module.exports = {
   transferConnectionRef,
   consumePendingShellReconnectRisk,
   findReusableSession,
+  markEndpointNoIdlePark,
+  endpointAllowsIdlePark,
+  applyIdleParkPolicy,
 };
