@@ -1458,6 +1458,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
 
     const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    const hasCopyableSelection = term.hasSelection() || Boolean(previewSelection);
     const forcedHistoryScrollPages = forcedHistoryScrollPagesForKey(e);
     if (forcedHistoryScrollPages !== null) {
       e.preventDefault();
@@ -1541,7 +1542,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       // the interrupt path hard-aborts instead (#2191).
       if (
         e.key.length === 1
-        && !shouldUseUrgentTerminalInterrupt(e, { hasSelection: term.hasSelection() })
+        && !shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection })
       ) {
         sudoAutofill.cancelHint();
         // fall through: key becomes the first char of the manually typed password
@@ -1574,7 +1575,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         : null;
     if (
       (!kittySequenceForKeyDown || kittySequenceForKeyDown === "\x03") &&
-      shouldUseUrgentTerminalInterrupt(e, { hasSelection: term.hasSelection() })
+      shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection })
     ) {
       const id = ctx.sessionRef.current;
       if (id && ctx.statusRef.current === "connected") {
@@ -1704,7 +1705,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           const shouldForwardCopyToTerminal =
             shouldPassThroughCopyShortcut(
               action,
-              term.hasSelection() || Boolean(previewSelection),
+              hasCopyableSelection,
               e,
             );
           if (shouldForwardCopyToTerminal && !kittySequenceForKeyDown) return true;
@@ -1857,7 +1858,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         event: kittyEvent,
         fallbackToLegacy: true,
         urgentInterrupt: shouldUseUrgentTerminalInterrupt(e, {
-          hasSelection: term.hasSelection(),
+          hasSelection: hasCopyableSelection,
         }),
       });
       if (forwarded) {
