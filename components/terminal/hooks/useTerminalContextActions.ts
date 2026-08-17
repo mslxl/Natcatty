@@ -13,6 +13,7 @@ import { handleTerminalClipboardPaste } from "../terminalClipboardPaste";
 import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 import {
   getHistoryPreviewSelectionFromRoot,
+  requestHistoryPreviewHide,
   selectHistoryPreviewAll,
   findHistoryPreviewOverlay,
 } from "../runtime/terminalHistoryScrollOverride";
@@ -191,6 +192,8 @@ export const useTerminalContextActions = ({
         normalizeTextOnCopyRef?.current ?? true,
       );
     if (!selection || !sessionRef.current) return;
+    requestHistoryPreviewHide(term.element?.parentElement);
+    term.focus();
     pasteTextIntoTerminal(term, selection, {
       scrollOnPaste: scrollOnPasteRef?.current ?? false,
       onPasteData: broadcastUserPasteData,

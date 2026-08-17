@@ -260,6 +260,17 @@ export const joinHistoryPreviewSelectionText = ({
   return logical.join("\n");
 };
 
+const resolveOverlayTextOffset = (
+  overlay: HistoryPreviewNodeLike,
+  textNode: { nodeType?: number },
+  node: { nodeType?: number } | null,
+  offset: number,
+): number | null => {
+  if (node === textNode) return offset;
+  if (node === overlay) return offset <= 0 ? 0 : overlay.textContent?.length ?? 0;
+  return null;
+};
+
 const selectionOffsetsInOverlay = (
   overlay: HistoryPreviewNodeLike,
   selection: HistoryPreviewSelectionLike,
@@ -268,10 +279,12 @@ const selectionOffsetsInOverlay = (
   if (!textNode) return null;
   const { anchorNode, focusNode, anchorOffset, focusOffset } = selection;
   if (anchorOffset == null || focusOffset == null) return null;
-  if (anchorNode !== textNode || focusNode !== textNode) return null;
+  const start = resolveOverlayTextOffset(overlay, textNode, anchorNode, anchorOffset);
+  const end = resolveOverlayTextOffset(overlay, textNode, focusNode, focusOffset);
+  if (start == null || end == null) return null;
   return {
-    start: Math.min(anchorOffset, focusOffset),
-    end: Math.max(anchorOffset, focusOffset),
+    start: Math.min(start, end),
+    end: Math.max(start, end),
   };
 };
 
@@ -313,12 +326,25 @@ export const getHistoryPreviewSelectionFromRoot = (
   return getHistoryPreviewSelectionText(overlay, activeSelection);
 };
 
+export const HISTORY_PREVIEW_HIDE_EVENT = "netcatty-history-preview-hide";
+
+export const requestHistoryPreviewHide = (
+  root: ParentNode | Element | null | undefined,
+): boolean => {
+  const overlay = findHistoryPreviewOverlay(root);
+  if (!overlay) return false;
+  overlay.dispatchEvent(new Event(HISTORY_PREVIEW_HIDE_EVENT, { bubbles: true }));
+  return true;
+};
+
 export const selectHistoryPreviewAll = (overlay: HTMLElement | null | undefined): boolean => {
   if (!overlay) return false;
   const selection = overlay.ownerDocument.getSelection();
   if (!selection) return false;
   const range = overlay.ownerDocument.createRange();
-  range.selectNodeContents(overlay);
+  const textNode = overlay.firstChild;
+  if (textNode) range.selectNodeContents(textNode);
+  else range.selectNodeContents(overlay);
   selection.removeAllRanges();
   selection.addRange(range);
   return !selection.isCollapsed;

@@ -114,6 +114,7 @@ import {
   terminalFontSizeWheelListenerOptions,
 } from "./terminalFontZoom";
 import {
+  HISTORY_PREVIEW_HIDE_EVENT,
   HISTORY_PREVIEW_OVERLAY_ATTR,
   HISTORY_PREVIEW_WRAP_ATTR,
   encodeHistoryPreviewWrapFlags,
@@ -948,6 +949,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const overlay = document.createElement("pre");
     overlay.setAttribute(HISTORY_PREVIEW_OVERLAY_ATTR, "");
     overlay.setAttribute("role", "document");
+    overlay.addEventListener(HISTORY_PREVIEW_HIDE_EVENT, hideHistoryPreview);
     Object.assign(overlay.style, {
       position: "absolute",
       inset: "0",

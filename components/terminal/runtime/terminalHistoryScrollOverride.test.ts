@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   HISTORY_PREVIEW_OVERLAY_ATTR,
+  HISTORY_PREVIEW_WRAP_ATTR,
   encodeHistoryPreviewWrapFlags,
   getHistoryPreviewLines,
   getHistoryPreviewRows,
@@ -220,6 +221,30 @@ test("history preview click dismisses and a drag keeps the overlay", () => {
     ),
     false,
   );
+});
+
+test("select-all overlay ranges still join soft-wrapped preview rows", () => {
+  const text = "ssh host long-command-name\n --flag";
+  const overlay = {
+    firstChild: "text",
+    textContent: text,
+    contains() {
+      return true;
+    },
+    getAttribute(name: string) {
+      return name === HISTORY_PREVIEW_WRAP_ATTR ? "01" : null;
+    },
+  };
+  const copied = getHistoryPreviewSelectionText(overlay, {
+    rangeCount: 1,
+    anchorNode: overlay,
+    focusNode: overlay,
+    anchorOffset: 0,
+    focusOffset: 1,
+    toString: () => text,
+  });
+  assert.equal(copied.includes("\n"), false);
+  assert.match(copied, /long-command-name\s*--flag/);
 });
 
 test("history preview copy joins soft-wrapped buffer rows", () => {
