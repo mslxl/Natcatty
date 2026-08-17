@@ -937,3 +937,15 @@ test("command execution records direct sends from host-style greater-than prompt
     assert.equal(commandBufferRef.current, "", lineText);
   }
 });
+
+test("alternate-screen history preview stays selectable and copyable", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./createXTermRuntime.ts", import.meta.url), "utf8");
+
+  assert.match(source, /pointerEvents:\s*"auto"/);
+  assert.match(source, /userSelect:\s*"text"/);
+  assert.match(source, /shouldHideHistoryPreviewOnMouseDown/);
+  assert.match(source, /shouldKeepHistoryPreviewOnKey/);
+  assert.match(source, /previewSelection \|\| getTerminalSelectionForClipboard/);
+  assert.match(source, /term\.hasSelection\(\) \|\| Boolean\(previewSelection\)/);
+});

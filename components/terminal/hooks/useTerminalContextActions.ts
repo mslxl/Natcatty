@@ -11,6 +11,11 @@ import {
 } from "../clipboardImagePaste";
 import { handleTerminalClipboardPaste } from "../terminalClipboardPaste";
 import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
+import {
+  getHistoryPreviewSelectionFromRoot,
+  selectHistoryPreviewAll,
+  findHistoryPreviewOverlay,
+} from "../runtime/terminalHistoryScrollOverride";
 
 type BroadcastPasteRefs = {
   sourceSessionId: string;
@@ -97,10 +102,11 @@ export const useTerminalContextActions = ({
   const onCopy = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = getTerminalSelectionForClipboard(
-      term,
-      normalizeTextOnCopyRef?.current ?? true,
-    );
+    const selection = getHistoryPreviewSelectionFromRoot(term.element?.parentElement)
+      || getTerminalSelectionForClipboard(
+        term,
+        normalizeTextOnCopyRef?.current ?? true,
+      );
     if (selection) {
       navigator.clipboard.writeText(selection);
     }
@@ -179,10 +185,11 @@ export const useTerminalContextActions = ({
   const onPasteSelection = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    const selection = getTerminalSelectionForClipboard(
-      term,
-      normalizeTextOnCopyRef?.current ?? true,
-    );
+    const selection = getHistoryPreviewSelectionFromRoot(term.element?.parentElement)
+      || getTerminalSelectionForClipboard(
+        term,
+        normalizeTextOnCopyRef?.current ?? true,
+      );
     if (!selection || !sessionRef.current) return;
     pasteTextIntoTerminal(term, selection, {
       scrollOnPaste: scrollOnPasteRef?.current ?? false,
@@ -193,6 +200,11 @@ export const useTerminalContextActions = ({
   const onSelectAll = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
+    const previewOverlay = findHistoryPreviewOverlay(term.element?.parentElement);
+    if (previewOverlay && selectHistoryPreviewAll(previewOverlay)) {
+      onHasSelectionChange?.(true);
+      return;
+    }
     term.selectAll();
     onHasSelectionChange?.(true);
   }, [onHasSelectionChange, termRef]);

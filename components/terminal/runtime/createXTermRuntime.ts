@@ -114,12 +114,17 @@ import {
   terminalFontSizeWheelListenerOptions,
 } from "./terminalFontZoom";
 import {
+  HISTORY_PREVIEW_OVERLAY_ATTR,
   getHistoryPreviewLines,
+  getHistoryPreviewSelectionFromRoot,
   forcedHistoryScrollLinesForWheel,
   forcedHistoryScrollPageToLines,
   forcedHistoryScrollPagesForKey,
   forcedHistoryScrollWheelListenerOptions,
   nextHistoryPreviewTop,
+  selectHistoryPreviewAll,
+  shouldHideHistoryPreviewOnMouseDown,
+  shouldKeepHistoryPreviewOnKey,
 } from "./terminalHistoryScrollOverride";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
 import { shouldUseUrgentTerminalInterrupt } from "./terminalInterruptShortcut";
@@ -696,6 +701,19 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // Intercept native copy (Edit > Copy, browser/Electron copy event) before
   // xterm's built-in handler writes selectionText, so normalizeTextOnCopy applies.
   const handleNativeCopy = (event: ClipboardEvent) => {
+    const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    if (previewSelection) {
+      if (event.clipboardData) {
+        event.clipboardData.setData("text/plain", previewSelection);
+      } else {
+        void navigator.clipboard.writeText(previewSelection).catch((err) => {
+          logger.warn("[XTerm] History preview copy failed:", err);
+        });
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     if (!term.hasSelection()) return;
     const normalize = ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true;
     if (!normalize) return; // let xterm write raw selectionText
@@ -712,6 +730,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     event.stopImmediatePropagation();
   };
   term.element?.addEventListener("copy", handleNativeCopy, true);
+  ctx.container.addEventListener("copy", handleNativeCopy, true);
 
   let webglLoaded = false;
   let runtimeDisposed = false;
@@ -903,10 +922,21 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     historyPreviewOverlay = null;
     historyPreviewTop = null;
   };
+  const copyHistoryPreviewSelectionIfEnabled = () => {
+    if (!ctx.terminalSettingsRef.current?.copyOnSelect) return;
+    if (ctx.isRestoringSelectionRef?.current) return;
+    const selection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    if (selection) {
+      void navigator.clipboard.writeText(selection).catch((err) => {
+        logger.warn("[XTerm] History preview copy-on-select failed:", err);
+      });
+    }
+  };
   const ensureHistoryPreviewOverlay = () => {
     if (historyPreviewOverlay) return historyPreviewOverlay;
     const overlay = document.createElement("pre");
-    overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute(HISTORY_PREVIEW_OVERLAY_ATTR, "");
+    overlay.setAttribute("role", "document");
     Object.assign(overlay.style, {
       position: "absolute",
       inset: "0",
@@ -914,7 +944,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       margin: "0",
       padding: "0 6px",
       overflow: "hidden",
-      pointerEvents: "none",
+      pointerEvents: "auto",
+      userSelect: "text",
+      webkitUserSelect: "text",
+      cursor: "text",
       whiteSpace: "pre",
       fontFamily: String(term.options.fontFamily ?? fontFamily),
       fontSize: `${currentTerminalFontSize()}px`,
@@ -922,6 +955,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       color: ctx.terminalTheme.colors.foreground,
       background: ctx.terminalTheme.colors.background,
     } satisfies Partial<CSSStyleDeclaration>);
+    overlay.addEventListener("mouseup", copyHistoryPreviewSelectionIfEnabled);
     ctx.container.appendChild(overlay);
     historyPreviewOverlay = overlay;
     return overlay;
@@ -1423,6 +1457,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       markKittyCompositionPending(true);
     }
 
+    const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
     const forcedHistoryScrollPages = forcedHistoryScrollPagesForKey(e);
     if (forcedHistoryScrollPages !== null) {
       e.preventDefault();
@@ -1435,7 +1470,24 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       term.scrollPages(forcedHistoryScrollPages);
       return false;
     }
-    hideHistoryPreview();
+    const previewKeepAliveScheme = ctx.hotkeySchemeRef.current;
+    const previewKeepAliveIsMac =
+      previewKeepAliveScheme === "mac"
+      || (previewKeepAliveScheme === "disabled" && isMacPlatform());
+    const previewKeepAliveBindings = ctx.keyBindingsRef.current;
+    const previewKeepAliveAction =
+      previewKeepAliveScheme !== "disabled" && previewKeepAliveBindings.length > 0
+        ? checkAppShortcut(e, previewKeepAliveBindings, previewKeepAliveIsMac)?.action
+        : undefined;
+    if (
+      !shouldKeepHistoryPreviewOnKey(e, {
+        action: previewKeepAliveAction,
+        hasPreviewSelection: Boolean(previewSelection),
+        overlayVisible: Boolean(historyPreviewOverlay),
+      })
+    ) {
+      hideHistoryPreview();
+    }
 
     // Password prompt assist (sudo/su): while pending, Enter confirms the
     // selected/host password; arrows move the picker; Esc soft-dismisses (keeps
@@ -1650,14 +1702,18 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           // No xterm selection: pass Ctrl+C through for SIGINT, and Cmd+C for
           // Kitty Super+C (nested TUIs). Other copy chords stay a safe no-op.
           const shouldForwardCopyToTerminal =
-            shouldPassThroughCopyShortcut(action, term.hasSelection(), e);
+            shouldPassThroughCopyShortcut(
+              action,
+              term.hasSelection() || Boolean(previewSelection),
+              e,
+            );
           if (shouldForwardCopyToTerminal && !kittySequenceForKeyDown) return true;
           if (!shouldForwardCopyToTerminal) {
             e.preventDefault();
             e.stopPropagation();
             switch (action) {
             case "copy": {
-              const selection = getTerminalSelectionForClipboard(
+              const selection = previewSelection || getTerminalSelectionForClipboard(
                 term,
                 ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
               );
@@ -1672,12 +1728,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "pasteSelection": {
-              const selection = getTerminalSelectionForClipboard(
+              const selection = previewSelection || getTerminalSelectionForClipboard(
                 term,
                 ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
               );
               const id = ctx.sessionRef.current;
               if (selection && id) {
+                hideHistoryPreview();
                 pasteTextIntoTerminal(term, selection, {
                   scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
                   onPasteData: broadcastUserPasteData,
@@ -1686,6 +1743,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "selectAll": {
+              if (historyPreviewOverlay && selectHistoryPreviewAll(historyPreviewOverlay)) {
+                break;
+              }
               term.selectAll();
               break;
             }
@@ -1896,9 +1956,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ctx.container.dispatchEvent(contextMenuEvent);
   };
 
+  const handleHistoryPreviewMouseDown = (event: MouseEvent) => {
+    if (!shouldHideHistoryPreviewOnMouseDown(event.target, historyPreviewOverlay)) return;
+    hideHistoryPreview();
+  };
   ctx.container.addEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
   ctx.container.addEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
-  ctx.container.addEventListener("mousedown", hideHistoryPreview, true);
+  ctx.container.addEventListener("mousedown", handleHistoryPreviewMouseDown, true);
   ctx.container.addEventListener("auxclick", handleMiddleClick);
 
   fitAddon.fit();
@@ -2303,6 +2367,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       resizeScheduler.dispose();
       webglController.dispose();
       term.element?.removeEventListener("copy", handleNativeCopy, true);
+      ctx.container.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
         "wheel",
         handleForcedHistoryScrollWheel,
@@ -2316,7 +2381,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ctx.container.removeEventListener("auxclick", handleMiddleClick);
       ctx.container.removeEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
       ctx.container.removeEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
-      ctx.container.removeEventListener("mousedown", hideHistoryPreview, true);
+      ctx.container.removeEventListener("mousedown", handleHistoryPreviewMouseDown, true);
       hideHistoryPreview();
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();

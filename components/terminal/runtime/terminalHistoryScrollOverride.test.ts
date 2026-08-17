@@ -2,12 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  HISTORY_PREVIEW_OVERLAY_ATTR,
   getHistoryPreviewLines,
+  getHistoryPreviewSelectionText,
   forcedHistoryScrollLinesForWheel,
   forcedHistoryScrollPageToLines,
   forcedHistoryScrollPagesForKey,
   forcedHistoryScrollWheelListenerOptions,
+  isHistoryPreviewContextMenuTarget,
   nextHistoryPreviewTop,
+  shouldHideHistoryPreviewOnMouseDown,
+  shouldKeepHistoryPreviewOnKey,
 } from "./terminalHistoryScrollOverride.ts";
 
 const wheel = (
@@ -117,4 +122,89 @@ test("alternate-screen history preview reads normal-buffer history", () => {
     alternateBuffer.getLine(0)?.translateToString(),
     alternateBuffer.getLine(1)?.translateToString(),
   ]);
+});
+
+test("history preview stays up for pointer selection and copy chords", () => {
+  const overlay = { contains: (node: unknown) => node === "inside" };
+
+  assert.equal(shouldHideHistoryPreviewOnMouseDown("inside", overlay), false);
+  assert.equal(shouldHideHistoryPreviewOnMouseDown("outside", overlay), true);
+  assert.equal(shouldHideHistoryPreviewOnMouseDown("inside", null), false);
+
+  assert.equal(shouldKeepHistoryPreviewOnKey(key({ key: "Shift" })), true);
+  assert.equal(shouldKeepHistoryPreviewOnKey(key({ key: "Meta" })), true);
+  assert.equal(
+    shouldKeepHistoryPreviewOnKey(key({ key: "c", metaKey: true, shiftKey: false }), {
+      hasPreviewSelection: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldKeepHistoryPreviewOnKey(key({ key: "c", ctrlKey: true, shiftKey: false }), {
+      action: "copy",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldKeepHistoryPreviewOnKey(key({ key: "a", metaKey: true, shiftKey: false }), {
+      overlayVisible: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldKeepHistoryPreviewOnKey(key({ key: "j", shiftKey: false })),
+    false,
+  );
+});
+
+test("history preview copy uses only overlay-owned DOM selection", () => {
+  const overlay = {
+    contains(node: unknown) {
+      return node === "preview";
+    },
+  };
+
+  assert.equal(
+    getHistoryPreviewSelectionText(overlay, {
+      rangeCount: 1,
+      anchorNode: "preview",
+      focusNode: "preview",
+      toString: () => "old prompt output",
+    }),
+    "old prompt output",
+  );
+  assert.equal(
+    getHistoryPreviewSelectionText(overlay, {
+      rangeCount: 1,
+      anchorNode: "xterm",
+      focusNode: "xterm",
+      toString: () => "vim buffer",
+    }),
+    "",
+  );
+  assert.equal(
+    getHistoryPreviewSelectionText(overlay, {
+      rangeCount: 1,
+      isCollapsed: true,
+      anchorNode: "preview",
+      focusNode: "preview",
+      toString: () => "old prompt output",
+    }),
+    "",
+  );
+});
+
+test("history preview right-click is recognized as an app-menu target", () => {
+  assert.equal(
+    isHistoryPreviewContextMenuTarget({
+      closest: (selector: string) => selector === `[${HISTORY_PREVIEW_OVERLAY_ATTR}]` ? {} as Element : null,
+    }),
+    true,
+  );
+  assert.equal(
+    isHistoryPreviewContextMenuTarget({
+      closest: () => null,
+    }),
+    false,
+  );
 });

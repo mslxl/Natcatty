@@ -241,6 +241,26 @@ test("forceMenuInAlternateScreen opts out of alternate-screen suppression", () =
     }),
     true,
   );
+
+  assert.equal(
+    shouldSuppressMouseTrackingContextMenu({
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      forceMenuInAlternateScreen: false,
+      isHistoryPreviewTarget: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOpenTerminalContextMenu({
+      event: { shiftKey: false, nativeEvent: {} as MouseEvent },
+      rightClickBehavior: "paste",
+      isAlternateScreen: true,
+      showReconnectAction: false,
+      isHistoryPreviewTarget: true,
+    }),
+    true,
+  );
 });
 
 test("opens a middle-click menu even when right-click is configured to paste", () => {

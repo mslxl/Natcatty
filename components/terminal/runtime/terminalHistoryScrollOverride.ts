@@ -96,3 +96,111 @@ export const getHistoryPreviewLines = ({
   }
   return lines;
 };
+
+export const HISTORY_PREVIEW_OVERLAY_ATTR = "data-terminal-history-preview";
+
+const MODIFIER_ONLY_KEYS = new Set(["Shift", "Control", "Meta", "Alt"]);
+
+export type HistoryPreviewSelectionLike = {
+  rangeCount: number;
+  isCollapsed?: boolean;
+  anchorNode: { nodeType?: number } | null;
+  focusNode: { nodeType?: number } | null;
+  toString(): string;
+};
+
+export type HistoryPreviewNodeLike = {
+  contains(node: { nodeType?: number } | null): boolean;
+};
+
+export const isHistoryPreviewPointerTarget = (
+  target: EventTarget | null | undefined,
+  overlay: EventTarget | null | undefined,
+): boolean => {
+  if (!target || !overlay) return false;
+  if (target === overlay) return true;
+  if (typeof (overlay as HistoryPreviewNodeLike).contains === "function") {
+    return (overlay as HistoryPreviewNodeLike).contains(target as HistoryPreviewNodeLike);
+  }
+  return false;
+};
+
+export const shouldHideHistoryPreviewOnMouseDown = (
+  target: EventTarget | null | undefined,
+  overlay: EventTarget | null | undefined,
+): boolean => Boolean(overlay) && !isHistoryPreviewPointerTarget(target, overlay);
+
+export const isHistoryPreviewContextMenuTarget = (
+  target: EventTarget | null | undefined,
+): boolean => {
+  if (!target || typeof target !== "object") return false;
+  const element = target as { closest?: (selector: string) => Element | null };
+  return Boolean(element.closest?.(`[${HISTORY_PREVIEW_OVERLAY_ATTR}]`));
+};
+
+export const shouldKeepHistoryPreviewOnKey = (
+  event: KeyLike,
+  options: {
+    action?: string | null;
+    hasPreviewSelection?: boolean;
+    overlayVisible?: boolean;
+  } = {},
+): boolean => {
+  if (forcedHistoryScrollPagesForKey(event) !== null) return true;
+  if (MODIFIER_ONLY_KEYS.has(event.key)) return true;
+  if (options.action === "copy" || options.action === "selectAll") return true;
+  if (
+    options.overlayVisible
+    && event.key.toLowerCase() === "a"
+    && (event.metaKey || event.ctrlKey)
+    && !event.altKey
+  ) {
+    return true;
+  }
+  return Boolean(
+    options.hasPreviewSelection
+    && (event.metaKey || event.ctrlKey)
+    && !event.altKey
+    && event.key.toLowerCase() === "c",
+  );
+};
+
+export const getHistoryPreviewSelectionText = (
+  overlay: HistoryPreviewNodeLike | null | undefined,
+  selection: HistoryPreviewSelectionLike | null | undefined,
+): string => {
+  if (!overlay || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return "";
+  }
+  const { anchorNode, focusNode } = selection;
+  if (!anchorNode || !focusNode) return "";
+  if (!overlay.contains(anchorNode) || !overlay.contains(focusNode)) return "";
+  return selection.toString();
+};
+
+export const findHistoryPreviewOverlay = (
+  root: ParentNode | Element | null | undefined,
+): HTMLElement | null => {
+  if (!root || !("querySelector" in root)) return null;
+  return root.querySelector<HTMLElement>(`[${HISTORY_PREVIEW_OVERLAY_ATTR}]`);
+};
+
+export const getHistoryPreviewSelectionFromRoot = (
+  root: ParentNode | Element | null | undefined,
+  selection?: HistoryPreviewSelectionLike | null,
+): string => {
+  const overlay = findHistoryPreviewOverlay(root);
+  const activeSelection = selection ?? overlay?.ownerDocument.getSelection() ?? null;
+  return getHistoryPreviewSelectionText(overlay, activeSelection);
+};
+
+export const selectHistoryPreviewAll = (overlay: HTMLElement | null | undefined): boolean => {
+  if (!overlay) return false;
+  const selection = overlay.ownerDocument.getSelection();
+  if (!selection) return false;
+  const range = overlay.ownerDocument.createRange();
+  range.selectNodeContents(overlay);
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return !selection.isCollapsed;
+};
