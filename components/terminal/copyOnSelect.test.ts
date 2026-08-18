@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   COPY_ON_SELECT_USER_GESTURE_RELEASE_MS,
   createCopyOnSelectUserGestureTracker,
+  pulseCopyOnSelectUserCommand,
   shouldWriteCopyOnSelect,
+  subscribeCopyOnSelectUserCommand,
   subscribeCopyOnSelectUserGesture,
 } from "./copyOnSelect.ts";
 
@@ -174,15 +176,17 @@ test("pointer listeners mark on capture down and release on document up", () => 
   root.dispatch("mousedown", eventOn("mousedown", el), "capture");
   root.dispatch("mouseup", eventOn("mouseup", el), "bubble");
   root.dispatch("contextmenu", eventOn("contextmenu", el), "capture");
+  root.dispatch("touchcancel", eventOn("touchcancel", el), "bubble");
   assert.equal(marked, 1);
-  assert.equal(released, 1);
+  assert.equal(released, 2);
   assert.equal(pulsed, 1);
 
   unsubscribe();
   root.dispatch("mousedown", eventOn("mousedown", el), "capture");
   root.dispatch("mouseup", eventOn("mouseup", el), "bubble");
+  root.dispatch("touchcancel", eventOn("touchcancel", el), "bubble");
   assert.equal(marked, 1);
-  assert.equal(released, 1);
+  assert.equal(released, 2);
   assert.equal(pulsed, 1);
 });
 
@@ -228,6 +232,20 @@ test("document-capture contextmenu still counts when the terminal never sees the
   // term.element bubble listeners would run.
   root.dispatch("contextmenu", eventOn("contextmenu", el), "capture");
   root.dispatch("contextmenu", eventOn("contextmenu", outside), "capture");
+  assert.equal(pulsed, 1);
+});
+
+test("user-invoked Select All pulses copy-on-select without a pointer gesture", () => {
+  let pulsed = 0;
+  const unsubscribe = subscribeCopyOnSelectUserCommand(() => {
+    pulsed += 1;
+  });
+
+  pulseCopyOnSelectUserCommand();
+  assert.equal(pulsed, 1);
+
+  unsubscribe();
+  pulseCopyOnSelectUserCommand();
   assert.equal(pulsed, 1);
 });
 

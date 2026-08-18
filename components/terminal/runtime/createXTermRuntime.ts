@@ -51,6 +51,7 @@ import {
   clearTerminalViewportAndSyncPty,
   installEraseInDisplayHandlers,
 } from "../clearTerminalViewport";
+import { pulseCopyOnSelectUserCommand } from "../copyOnSelect";
 import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 import {
   createKittyKeyboardSessionStateStore,
@@ -1769,6 +1770,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "selectAll": {
+              pulseCopyOnSelectUserCommand();
               if (historyPreviewOverlay && selectHistoryPreviewAll(historyPreviewOverlay)) {
                 break;
               }

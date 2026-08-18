@@ -9,6 +9,7 @@ import { useI18n } from '../../application/i18n/I18nProvider';
 import {
   createCopyOnSelectUserGestureTracker,
   shouldWriteCopyOnSelect,
+  subscribeCopyOnSelectUserCommand,
   subscribeCopyOnSelectUserGesture,
 } from './copyOnSelect';
 import { getTerminalSelectionForClipboard } from './normalizeTerminalSelection';
@@ -105,7 +106,14 @@ function TerminalSelectionAIOverlayInner({
     const attach = (term: XTerm) => {
       cleanupListeners();
       userGestureTracker = createCopyOnSelectUserGestureTracker();
-      userGestureUnsubscribe = subscribeCopyOnSelectUserGesture(term, userGestureTracker);
+      const unsubscribePointer = subscribeCopyOnSelectUserGesture(term, userGestureTracker);
+      const unsubscribeCommand = subscribeCopyOnSelectUserCommand(() => {
+        userGestureTracker?.pulse();
+      });
+      userGestureUnsubscribe = () => {
+        unsubscribePointer();
+        unsubscribeCommand();
+      };
 
       const publishSelectionOverlayPosition = () => {
         overlayRafId = null;

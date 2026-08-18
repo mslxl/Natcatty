@@ -110,6 +110,7 @@ export const subscribeCopyOnSelectUserGesture = (
   root.addEventListener("contextmenu", onContextMenu, CAPTURE);
   root.addEventListener("mouseup", onPointerUp);
   root.addEventListener("touchend", onPointerUp);
+  root.addEventListener("touchcancel", onPointerUp);
 
   return () => {
     root.removeEventListener("mousedown", onPointerDown, CAPTURE);
@@ -117,7 +118,24 @@ export const subscribeCopyOnSelectUserGesture = (
     root.removeEventListener("contextmenu", onContextMenu, CAPTURE);
     root.removeEventListener("mouseup", onPointerUp);
     root.removeEventListener("touchend", onPointerUp);
+    root.removeEventListener("touchcancel", onPointerUp);
   };
+};
+
+const userCommandPulses = new Set<() => void>();
+
+/** Select All / Select Word from a shortcut or menu — not SearchAddon. */
+export const subscribeCopyOnSelectUserCommand = (
+  pulse: () => void,
+): (() => void) => {
+  userCommandPulses.add(pulse);
+  return () => {
+    userCommandPulses.delete(pulse);
+  };
+};
+
+export const pulseCopyOnSelectUserCommand = (): void => {
+  for (const pulse of userCommandPulses) pulse();
 };
 
 export const shouldWriteCopyOnSelect = ({
