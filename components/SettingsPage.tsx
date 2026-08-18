@@ -4,7 +4,6 @@
  */
 import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Puzzle, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { useSettingsState } from "../application/state/useSettingsState";
 import { useAISettingsState } from "../application/state/useAISettingsState";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
@@ -13,6 +12,7 @@ import { useWindowControls } from "../application/state/useWindowControls";
 import { useUpdateCheck } from "../application/state/useUpdateCheck";
 import { I18nProvider, useI18n } from "../application/i18n/I18nProvider";
 import { sanitizePortForwardingRulesForSync } from "../application/syncPayload";
+import type { AppLockGateRenderContext } from "./AppLockGate";
 import { toast } from "./ui/toast";
 import { SettingsTabContent } from "./settings/settings-ui";
 import { SettingsFocusProvider, useSettingsFocus } from "./settings/SettingsFocusContext";
@@ -64,7 +64,8 @@ class AITabErrorBoundary extends React.Component<
   }
 }
 
-type SettingsState = ReturnType<typeof useSettingsState>;
+type SettingsState = AppLockGateRenderContext["settings"];
+type AppLockState = AppLockGateRenderContext["appLock"];
 
 const settingsTabTriggerClassName =
     "w-full justify-start gap-2 px-3 py-2 text-sm data-[state=active]:bg-background hover:bg-background/60 rounded-md transition-colors overflow-hidden";
@@ -298,7 +299,7 @@ const SettingsSyncTabWithVault: React.FC<{ onSettingsApplied?: () => void }> = (
     );
 };
 
-const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }) => {
+const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLockState }> = ({ settings, appLock }) => {
     const { t } = useI18n();
     const { request, clearFocus, openSearch } = useSettingsFocus();
     const { notifyRendererReady, closeSettingsWindow, onWindowCommandCloseRequested } = useWindowControls();
@@ -606,6 +607,12 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
                     {mountedTabs.has("system") && (
                         <SettingsLazyTab value="system">
                             <LazySettingsSystemTab
+                                appLockSettings={settings.appLockSettings}
+                                setAppLockTimeoutMinutes={settings.setAppLockTimeoutMinutes}
+                                requestAppLockDisable={settings.requestAppLockDisable}
+                                requestAppLockPasswordChange={settings.requestAppLockPasswordChange}
+                                appLockSystemUnlockStatus={appLock?.systemUnlockStatus}
+                                setAppLockSystemUnlockEnabled={settings.setAppLockSystemUnlockEnabled}
                                 sessionLogsEnabled={settings.sessionLogsEnabled}
                                 setSessionLogsEnabled={settings.setSessionLogsEnabled}
                                 sessionLogsDir={settings.sessionLogsDir}
@@ -662,13 +669,17 @@ const SettingsPageContent: React.FC<{ settings: SettingsState }> = ({ settings }
     );
 };
 
-export default function SettingsPage() {
-    const settings = useSettingsState();
-
+export default function SettingsPage({
+    settings,
+    appLock,
+}: {
+    settings: SettingsState;
+    appLock: AppLockState;
+}) {
     return (
         <I18nProvider locale={settings.uiLanguage}>
             <SettingsFocusProvider>
-                <SettingsPageContent settings={settings} />
+                <SettingsPageContent settings={settings} appLock={appLock} />
             </SettingsFocusProvider>
         </I18nProvider>
     );

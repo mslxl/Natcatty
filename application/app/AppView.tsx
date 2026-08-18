@@ -29,6 +29,7 @@ import {
   useSettingsChromeActions,
   useSettingsChromeStore,
 } from '../state/settingsChromeStore';
+import { getAppAppLockRuntime, useAppLockChrome } from '../state/appRuntimeBridge';
 import { useAppThemeStyle } from './useAppThemeStyle';
 import { useMainWindowInputFocusRecovery } from '../state/useMainWindowInputFocusRecovery';
 import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
@@ -301,6 +302,14 @@ function AppViewInner({ domains }: AppViewProps) {
   } = useSettingsChromeStore();
   const { setTheme, setWindowOpacity } = useSettingsChromeActions();
 
+  // App Lock chrome: narrow slice published by AppLockRuntimePublisher; the
+  // lock action reads the full runtime imperatively so the callback stays
+  // stable across gate re-renders.
+  const { appLockEnabled } = useAppLockChrome();
+  const handleLockApp = useCallback(() => {
+    getAppAppLockRuntime()?.lockNow('manual');
+  }, []);
+
   const handleTerminalCommandExecuted = useCallback((
     command: string,
     hostId: string,
@@ -485,6 +494,8 @@ function AppViewInner({ domains }: AppViewProps) {
         onOpenQuickSwitcher={handleOpenQuickSwitcher}
         onThemeChange={setTheme}
         onOpenSettings={handleOpenSettings}
+        onLockApp={handleLockApp}
+        appLockEnabled={appLockEnabled}
         externalMcpEnabled={externalMcpToggle.enabled}
         onToggleExternalMcp={externalMcpToggle.setEnabled}
         showExternalMcpToggle={!isPeerSessionWindow}

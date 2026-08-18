@@ -115,6 +115,7 @@ coverage
 !/build/icons
 !/build/installer.nsh
 /electron/native/**/build
+/electron/bridges/windowsHelloHelper/build/
 /release
 /out
 /public/monaco

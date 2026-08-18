@@ -53,6 +53,7 @@ import {
   vaultPrimaryIconClass,
   vaultSnippetIconClass,
 } from './vault/VaultEntityIcon';
+import { isAppLockOverlayActive } from '../infrastructure/appLockOverlayDom';
 import { VaultDeleteConfirmDialog } from './vault/VaultDeleteConfirmDialog';
 import {
   clearVaultDropIndicator as clearSnippetDropIndicator,
@@ -622,6 +623,9 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     if (!isRecordingShortkey) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      // App lock overlay installs later; skip while locked so password keys
+      // never mutate shortkeys (Codex P2).
+      if (isAppLockOverlayActive()) return;
       e.preventDefault();
       e.stopPropagation();
 
@@ -774,6 +778,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      if (isAppLockOverlayActive()) return;
       if (rightPanelMode !== 'edit-snippet') return;
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 's') return;
       event.preventDefault();

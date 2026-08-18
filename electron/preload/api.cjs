@@ -456,7 +456,8 @@ function createPreloadApi(ctx) {
     const replay = terminalPopupConfigState.pending ?? terminalPopupConfigState.lastPayload;
     if (replay) {
       // Drain the one-shot pending slot once a live subscriber exists, but keep
-      // lastPayload so StrictMode remount can resubscribe and still setConfig.
+      // lastPayload so remounts (AppLockGate delay, StrictMode) can resubscribe
+      // and still receive the one-shot main post-loadURL payload.
       terminalPopupConfigState.pending = null;
       queueMicrotask(() => {
         try {
@@ -1123,6 +1124,39 @@ function createPreloadApi(ctx) {
     ipcRenderer.on("netcatty:settings:changed", handler);
     return () => ipcRenderer.removeListener("netcatty:settings:changed", handler);
   },
+  getAppLockRuntimeState: () => ipcRenderer.invoke("netcatty:appLock:getRuntimeState"),
+  getAppLockSettings: () => ipcRenderer.invoke("netcatty:appLock:getSettings"),
+  setAppLockTimeoutMinutes: (timeoutMinutes) =>
+    ipcRenderer.invoke("netcatty:appLock:setTimeoutMinutes", timeoutMinutes),
+  requestAppLockEnable: () => ipcRenderer.invoke("netcatty:appLock:requestEnable"),
+  requestAppLockDisable: (currentPassword) =>
+    ipcRenderer.invoke("netcatty:appLock:requestDisable", currentPassword),
+  requestAppLockReset: (currentPassword) =>
+    ipcRenderer.invoke("netcatty:appLock:requestReset", currentPassword),
+  requestAppLockPasswordChange: (input) =>
+    ipcRenderer.invoke("netcatty:appLock:requestPasswordChange", input),
+  setAppLockRuntimeLocked: (reason) =>
+    ipcRenderer.invoke("netcatty:appLock:setLocked", reason),
+  requestAppLockUnlock: (password) =>
+    ipcRenderer.invoke("netcatty:appLock:requestUnlock", password),
+  getAppLockSystemUnlockStatus: () =>
+    ipcRenderer.invoke("netcatty:appLock:getSystemUnlockStatus"),
+  setAppLockSystemUnlockEnabled: (input) =>
+    ipcRenderer.invoke("netcatty:appLock:setSystemUnlockEnabled", input),
+  requestAppLockSystemUnlock: () =>
+    ipcRenderer.invoke("netcatty:appLock:requestSystemUnlock"),
+  reportAppLockActivity: () =>
+    ipcRenderer.invoke("netcatty:appLock:reportActivity"),
+  onAppLockSettingsChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:appLock:settingsChanged", handler);
+    return () => ipcRenderer.removeListener("netcatty:appLock:settingsChanged", handler);
+  },
+  onAppLockRuntimeStateChanged: (callback) => {
+    const handler = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:appLock:runtimeStateChanged", handler);
+    return () => ipcRenderer.removeListener("netcatty:appLock:runtimeStateChanged", handler);
+  },
   getSshDebugLogInfo: () => ipcRenderer.invoke("netcatty:sshDebugLog:info"),
   openSshDebugLogDir: () => ipcRenderer.invoke("netcatty:sshDebugLog:openDir"),
 
@@ -1496,6 +1530,11 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:networkProxy:get"),
   updateTrayMenuData: (data) =>
     ipcRenderer.invoke("netcatty:tray:updateMenuData", data),
+  onAppLockReopen: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on("netcatty:app-lock:reopen", handler);
+    return () => ipcRenderer.removeListener("netcatty:app-lock:reopen", handler);
+  },
   // Listen for tray menu actions
   onTrayFocusSession: (callback) => {
     const handler = (_event, sessionId) => callback(sessionId);

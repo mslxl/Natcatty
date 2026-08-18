@@ -37,6 +37,7 @@ import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile }
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import { isAppLockOverlayActive } from '../../infrastructure/appLockOverlayDom';
 import type { AgentContextUsage } from '../../application/state/useAgentCompactionUi';
 import { markAiComposerActivity, setAiComposerComposing } from './aiMarkdownWarmup';
 import {
@@ -761,7 +762,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   useEffect(() => {
     if (!showSlashCommandPicker || !menuPos) return;
-    const onKeyDown = (event: KeyboardEvent) => handleSlashCommandKeyDown(event);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (isAppLockOverlayActive()) return;
+      handleSlashCommandKeyDown(event);
+    };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
   }, [handleSlashCommandKeyDown, menuPos, showSlashCommandPicker]);

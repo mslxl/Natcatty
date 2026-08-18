@@ -8,7 +8,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "../lib/utils";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { I18nProvider } from "../application/i18n/I18nProvider";
-import { useSettingsState } from "../application/state/useSettingsState";
 import { useTrayPanelBackend } from "../application/state/useTrayPanelBackend";
 import { useActiveTabId } from "../application/state/activeTabStore";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
@@ -19,6 +18,7 @@ import { getEffectiveKnownHosts } from "../infrastructure/syncHelpers";
 import { PortForwardHostKeyTrayPrompt } from "./port-forwarding";
 import { X, Maximize2, ChevronRight, ChevronDown, Power } from "lucide-react";
 import { AppLogo } from "./AppLogo";
+import type { AppLockGateRenderContext } from "./AppLockGate";
 
 const StatusDot: React.FC<{ status: "success" | "warning" | "error" | "neutral"; spinning?: boolean }> = ({
   status,
@@ -514,8 +514,9 @@ const TrayPanelContent: React.FC<TrayPanelContentProps> = ({ terminalSettings })
   );
 };
 
-const TrayPanel: React.FC = () => {
-  const settings = useSettingsState();
+type SettingsState = AppLockGateRenderContext["settings"];
+
+const TrayPanel: React.FC<{ settings: SettingsState }> = ({ settings }) => {
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <TrayPanelContent terminalSettings={settings.terminalSettings} />

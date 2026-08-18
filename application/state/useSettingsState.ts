@@ -12,6 +12,11 @@ import {
 } from './terminalSettingsStore';
 import { SyncConfig, TerminalSettings, HotkeyScheme, CustomKeyBindings, DEFAULT_KEY_BINDINGS, KeyBinding, UILanguage, SessionLogFormat, normalizeTerminalSettings } from '../../domain/models';
 import {
+  normalizeAppLockTimeoutMinutes,
+  type AppLockSettings,
+  type AppLockTimeoutMinutes,
+} from '../../domain/appLock';
+import {
   DEFAULT_HTTP_NETWORK_PROXY,
   areHttpNetworkProxySettingsEqual,
   normalizeHttpNetworkProxySettings,
@@ -337,6 +342,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [uiLanguage, setUiLanguage] = useState<UILanguage>(() => {
     const stored = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     return resolveSupportedLocale(stored || DEFAULT_UI_LOCALE);
+  });
+  const [appLockSettings, setAppLockSettingsState] = useState<AppLockSettings>({
+    enabled: false,
+    timeoutMinutes: 15,
+    systemUnlockEnabled: false,
+    systemUnlockAutoPromptEnabled: false,
+    passwordVerifier: null,
   });
   const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
@@ -787,6 +799,53 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     notifySettingsChanged(STORAGE_KEY_WORKSPACE_FOCUS_STYLE, style);
   }, [notifySettingsChanged]);
 
+  const setAppLockTimeoutMinutes = useCallback((timeoutMinutes: AppLockTimeoutMinutes) => {
+    void netcattyBridge.get()?.setAppLockTimeoutMinutes?.(normalizeAppLockTimeoutMinutes(timeoutMinutes))
+      ?.then((next) => {
+        if (next) setAppLockSettingsState(next);
+      })
+      .catch(() => {});
+  }, []);
+
+  const requestAppLockEnable = useCallback(async () => {
+    const next = await netcattyBridge.get()?.requestAppLockEnable?.();
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
+
+  const requestAppLockDisable = useCallback(async (currentPassword: string) => {
+    const next = await netcattyBridge.get()?.requestAppLockDisable?.(currentPassword);
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
+
+  const requestAppLockPasswordChange = useCallback(async (input: {
+    currentPassword?: string;
+    nextPassword: string;
+  }) => {
+    const next = await netcattyBridge.get()?.requestAppLockPasswordChange?.(input);
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
+
+  const setAppLockSystemUnlockEnabled = useCallback(async (input: {
+    enabled: boolean;
+    currentPassword?: string;
+    autoPromptEnabled?: boolean;
+  }) => {
+    const next = await netcattyBridge.get()?.setAppLockSystemUnlockEnabled?.(input);
+    if (next && !('ok' in next)) {
+      setAppLockSettingsState(next);
+    }
+    return next ?? appLockSettings;
+  }, [appLockSettings]);
+
   const syncAppearanceFromStorage = useCallback((incoming?: AppearanceSyncEvent) => {
     const current = appearanceStateRef.current;
     const nextAppearance = resolveAppearanceSyncState(
@@ -862,6 +921,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     // Language
     const storedLang = readStoredString(STORAGE_KEY_UI_LANGUAGE);
     if (storedLang) setUiLanguage(storedLang as UILanguage);
+
+    void netcattyBridge.get()?.getAppLockSettings?.().then((next) => {
+      if (next) setAppLockSettingsState(next);
+    }).catch(() => {});
 
     // Terminal
     const storedTermTheme = readStoredString(STORAGE_KEY_TERM_THEME);
@@ -1154,6 +1217,25 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       }
     };
   }, [enableSettingsSync]);
+
+  useEffect(() => {
+    const bridge = netcattyBridge.get();
+    let sawPushedSettings = false;
+
+    const unsubscribe = bridge?.onAppLockSettingsChanged?.((next) => {
+      sawPushedSettings = true;
+      setAppLockSettingsState(next);
+    }) ?? (() => {});
+
+    void bridge?.getAppLockSettings?.().then((next) => {
+      if (!next || sawPushedSettings) return;
+      setAppLockSettingsState(next);
+    }).catch(() => {});
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   useSettingsStorageSync({
     enabled: enableSettingsSync,
@@ -1914,6 +1996,12 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     updateSyncConfig,
     uiLanguage,
     setUiLanguage,
+    appLockSettings,
+    setAppLockTimeoutMinutes,
+    requestAppLockEnable,
+    requestAppLockDisable,
+    requestAppLockPasswordChange,
+    setAppLockSystemUnlockEnabled,
     terminalThemeId,
     setTerminalThemeId,
     followAppTerminalTheme,
