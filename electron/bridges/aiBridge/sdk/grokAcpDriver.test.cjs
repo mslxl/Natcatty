@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 const path = require("node:path");
 const {
   ACP_PROTOCOL_VERSION,
@@ -179,16 +180,121 @@ test("listGrokAcpModels reads reasoning metadata from the initialize response", 
     binPath: "/usr/bin/grok",
     spawnImpl: (bin, args) => {
       assert.equal(bin, "/usr/bin/grok");
-      assert.deepEqual(args, ["agent", "stdio"]);
+      assert.deepEqual(args, ["--no-auto-update", "agent", "stdio"]);
       return child;
     },
-    forceKillImpl: (_child, signal) => signals.push(signal),
+    forceKillImpl: (_child, signal) => {
+      signals.push(signal);
+      if (signal === "SIGTERM") {
+        queueMicrotask(() => {
+          child.exitCode = 0;
+          child.emit("close", 0);
+        });
+      }
+    },
   });
 
   assert.equal(catalog.currentModelId, "grok-4.6");
   assert.deepEqual(catalog.models[0].thinkingLevels, ["high", "low"]);
   assert.equal(catalog.models[0].defaultThinkingLevel, "high");
   assert.deepEqual(signals, ["SIGTERM"]);
+});
+
+test("listGrokAcpModels force-kills a model probe that ignores timeout shutdown", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.write = () => true;
+  child.stdin.end = () => {};
+  child.exitCode = null;
+  child.killed = false;
+  child.pid = 43;
+  const signals = [];
+
+  const catalog = await listGrokAcpModels({
+    binPath: "/usr/bin/grok",
+    spawnImpl: () => child,
+    timeoutMs: 2,
+    abortGraceMs: 2,
+    forceKillImpl: (_child, signal) => signals.push(signal),
+  });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(catalog, { currentModelId: null, models: [] });
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("listGrokAcpModels force-kills a model probe that ignores abort shutdown", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.write = () => true;
+  child.stdin.end = () => {};
+  child.exitCode = null;
+  child.killed = false;
+  child.pid = 44;
+  const signals = [];
+  const controller = new AbortController();
+
+  const pending = listGrokAcpModels({
+    binPath: "/usr/bin/grok",
+    spawnImpl: () => child,
+    signal: controller.signal,
+    timeoutMs: 100,
+    abortGraceMs: 2,
+    forceKillImpl: (_child, signal) => signals.push(signal),
+  });
+  controller.abort();
+  const catalog = await pending;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(catalog, { currentModelId: null, models: [] });
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("registry Grok model discovery enriches legacy fallback reasoning levels", async () => {
+  const grokModule = require("./grokDriver.cjs");
+  const grokAcpModule = require("./grokAcpDriver.cjs");
+  const originalAcp = grokAcpModule.listGrokAcpModels;
+  const originalLegacy = grokModule.listGrokModels;
+  grokAcpModule.listGrokAcpModels = async () => ({ currentModelId: null, models: [] });
+  grokModule.listGrokModels = async () => ({
+    currentModelId: "grok-4.6",
+    models: [grokModule.applyGrokReasoningFallback({ id: "grok-4.6", name: "Grok 4.6" })],
+  });
+  try {
+    const catalog = await getDriver("grok").listModels({});
+    assert.equal(catalog.currentModelId, "grok-4.6");
+    assert.deepEqual(catalog.models[0].thinkingLevels, ["xhigh", "high", "medium", "low"]);
+    assert.equal(catalog.models[0].defaultThinkingLevel, "high");
+  } finally {
+    grokAcpModule.listGrokAcpModels = originalAcp;
+    grokModule.listGrokModels = originalLegacy;
+  }
+});
+
+test("registry Grok model discovery keeps ACP current model when its list is incomplete", async () => {
+  const grokModule = require("./grokDriver.cjs");
+  const grokAcpModule = require("./grokAcpDriver.cjs");
+  const originalAcp = grokAcpModule.listGrokAcpModels;
+  const originalLegacy = grokModule.listGrokModels;
+  grokAcpModule.listGrokAcpModels = async () => ({ currentModelId: "grok-4.6", models: [] });
+  grokModule.listGrokModels = async () => ({ currentModelId: "grok-4.5", models: [] });
+  try {
+    const catalog = await getDriver("grok").listModels({});
+    assert.equal(catalog.currentModelId, "grok-4.6");
+    assert.deepEqual(catalog.models, [{
+      id: "grok-4.6",
+      name: "grok-4.6",
+      thinkingLevels: ["xhigh", "high", "medium", "low"],
+      defaultThinkingLevel: "high",
+    }]);
+  } finally {
+    grokAcpModule.listGrokAcpModels = originalAcp;
+    grokModule.listGrokModels = originalLegacy;
+  }
 });
 
 test("buildGrokAcpSpawnArgs places global MCP lockdown before agent subcommand", () => {

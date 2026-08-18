@@ -712,7 +712,13 @@ export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
     id: 'grok-4.5',
     name: 'Grok 4.5',
     description: 'Default',
-    thinkingLevels: ['low', 'medium', 'high'],
+    thinkingLevels: ['high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  },
+  {
+    id: 'grok-4.6',
+    name: 'Grok 4.6',
+    thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
     defaultThinkingLevel: 'high',
   },
 ];

@@ -467,7 +467,12 @@ test("parseGrokModelsOutput reads default and bullet list", () => {
   ].join("\n"));
   assert.equal(parsed.currentModelId, "grok-4.5");
   assert.deepEqual(parsed.models, [
-    { id: "grok-4.5", name: "grok-4.5" },
+    {
+      id: "grok-4.5",
+      name: "grok-4.5",
+      thinkingLevels: ["high", "medium", "low"],
+      defaultThinkingLevel: "high",
+    },
     { id: "grok-code-fast", name: "grok-code-fast" },
   ]);
 });
@@ -743,7 +748,8 @@ test("listGrokModels parses spawn stdout", async () => {
   child.pid = 1;
   child.kill = () => {};
 
-  const spawnImpl = () => {
+  const spawnImpl = (_bin, args) => {
+    assert.deepEqual(args, ["--no-auto-update", "models"]);
     queueMicrotask(() => {
       child.stdout.emit("data", Buffer.from("Default model: grok-4.5\n* grok-4.5 (default)\n"));
       child.emit("close", 0);

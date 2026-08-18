@@ -31,6 +31,18 @@ const GROK_REASONING_EFFORTS = new Set([
   "xhigh",
   "max",
 ]);
+const GROK_REASONING_FALLBACKS = Object.freeze({
+  "grok-4.5": {
+    name: "Grok 4.5",
+    thinkingLevels: ["high", "medium", "low"],
+    defaultThinkingLevel: "high",
+  },
+  "grok-4.6": {
+    name: "Grok 4.6",
+    thinkingLevels: ["xhigh", "high", "medium", "low"],
+    defaultThinkingLevel: "high",
+  },
+});
 
 /**
  * Resolve Grok CLI spawn target for Windows .cmd/.bat shims.
@@ -935,7 +947,21 @@ function parseGrokModelsOutput(stdout) {
     }
   }
 
-  return { currentModelId, models };
+  return { currentModelId, models: models.map(applyGrokReasoningFallback) };
+}
+
+function applyGrokReasoningFallback(model) {
+  const id = String(model?.id || "").trim();
+  const fallback = GROK_REASONING_FALLBACKS[id];
+  if (!fallback || (Array.isArray(model?.thinkingLevels) && model.thinkingLevels.length > 0)) {
+    return model;
+  }
+  return {
+    ...model,
+    name: String(model?.name || fallback.name),
+    thinkingLevels: [...fallback.thinkingLevels],
+    defaultThinkingLevel: fallback.defaultThinkingLevel,
+  };
 }
 
 async function listGrokModels({
@@ -975,7 +1001,7 @@ async function listGrokModels({
 
     let child;
     try {
-      child = spawnGrokProcess(spawnImpl, cliPath, ["models"], {
+      child = spawnGrokProcess(spawnImpl, cliPath, ["--no-auto-update", "models"], {
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -1025,6 +1051,7 @@ module.exports = {
   NETCATTY_MCP_NAME,
   MAX_GROK_LINE_BYTES,
   GROK_MCP_MODE_DISALLOWED_LOCAL_TOOLS,
+  applyGrokReasoningFallback,
   buildGrokCliArgs,
   buildGrokMcpServerTomlSection,
   createLineBuffer,

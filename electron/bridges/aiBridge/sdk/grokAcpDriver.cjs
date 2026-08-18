@@ -301,6 +301,7 @@ async function listGrokAcpModels({
   abortController,
   signal,
   timeoutMs = GROK_ACP_MODEL_LIST_TIMEOUT_MS,
+  abortGraceMs = GROK_ACP_ABORT_GRACE_MS,
   forceKillImpl,
 } = {}) {
   const cliPath = String(binPath || "").trim();
@@ -312,8 +313,23 @@ async function listGrokAcpModels({
     let child;
     let settled = false;
     let timer = null;
+    let forceKillTimer = null;
     let abortHandler = null;
+    let childClosed = false;
+    let terminationStarted = false;
     const empty = { currentModelId: null, models: [] };
+
+    const terminateChild = () => {
+      if (terminationStarted || childClosed || !child || child.exitCode != null) return;
+      terminationStarted = true;
+      signalProcessTree(child, "SIGTERM", forceKillImpl);
+      forceKillTimer = setTimeout(() => {
+        if (!childClosed && child?.exitCode == null) {
+          signalProcessTree(child, "SIGKILL", forceKillImpl);
+        }
+      }, Math.max(1, abortGraceMs));
+      forceKillTimer.unref?.();
+    };
 
     const finish = (value, terminate = true) => {
       if (settled) return;
@@ -322,15 +338,13 @@ async function listGrokAcpModels({
       if (abortSignal && abortHandler) {
         abortSignal.removeEventListener("abort", abortHandler);
       }
-      if (terminate && child && child.exitCode == null && !child.killed) {
-        signalProcessTree(child, "SIGTERM", forceKillImpl);
-      }
+      if (terminate) terminateChild();
       try { child?.stdin?.end?.(); } catch { /* ignore */ }
       resolve(value);
     };
 
     try {
-      child = spawnGrokProcess(spawnImpl, cliPath, ["agent", "stdio"], {
+      child = spawnGrokProcess(spawnImpl, cliPath, ["--no-auto-update", "agent", "stdio"], {
         env: { ...(env || process.env) },
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
@@ -367,6 +381,8 @@ async function listGrokAcpModels({
     child.stdin?.on?.("error", () => finish(empty));
     child.on("error", () => finish(empty, false));
     child.on("close", () => {
+      childClosed = true;
+      clearTimeout(forceKillTimer);
       if (!settled) {
         try { lineBuffer.flush(); } catch { /* ignore */ }
       }
