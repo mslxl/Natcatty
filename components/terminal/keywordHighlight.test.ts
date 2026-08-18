@@ -302,6 +302,25 @@ test("newline-prefixed chunks that climb back up do not leave stale highlight co
   term.dispose();
 });
 
+test("VPA jumps back to an earlier row without leaving stale highlight colors", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // Absolute vertical positioning (CSI Ps d) can also target the earlier row.
+  await write(term, "\r\n\x1b[1d\rOK\x1b[2d");
+
+  assert.equal(term.buffer.active.getLine(0)?.translateToString(true), "OKROR");
+  const line = term.buffer.active.getLine(0);
+  for (let x = 0; x < 5; x += 1) {
+    assert.notEqual(line?.getCell(x)?.getFgColor(), RED, `cell ${x} must not keep the injected color`);
+  }
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("carriage-return rewrites rematch the current line", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 5, scrollback: 20 });
   const highlighter = new KeywordHighlighter(term);

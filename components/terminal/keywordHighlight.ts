@@ -385,10 +385,10 @@ export class KeywordHighlighter implements IDisposable {
     // In-place CR / backspace / EL / ICH / DCH rewrite the current row.
     // `\r\n` is a line advance and must not restore/repaint the previous prompt.
     const startsWithLineAdvance = typeof data === "string" && /^(?:\r\n|\n)/.test(data);
-    // CUU / CPL / CUP / restore-cursor / RI / DECRC can move back onto rows the
-    // leading newline already left (multi-line progress redraws).
+    // CUU / CPL / CUP / VPA / restore-cursor / RI / DECRC can move back onto
+    // rows the leading newline already left (multi-line progress redraws).
     const movesCursorUp = typeof data === "string"
-      && (/\x1b(?:\[[\d;]*[AFHfu]|M|8)/.test(data)); // eslint-disable-line no-control-regex
+      && (/\x1b(?:\[[\d;]*[AFHfud]|M|8)/.test(data)); // eslint-disable-line no-control-regex
     const eraseInLine = typeof data === "string" && /\x1b\[[\d;]*[K@PMLGHf]/.test(data); // eslint-disable-line no-control-regex
     // A chunk that starts with a line advance leaves the cursor row before any
     // later CR/EL can touch it (bash's bracketed-paste `\x1b[?2004l\r` arrives
