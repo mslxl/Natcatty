@@ -30,19 +30,6 @@ interface AppLockOverlayProps {
   reopenSignal?: number;
 }
 
-export function getAppLockReasonMessageKey(reason: AppLockReason | null): string {
-  switch (reason) {
-    case 'startup':
-      return 'appLock.reason.startup';
-    case 'idle':
-      return 'appLock.reason.idle';
-    case 'manual':
-      return 'appLock.reason.manual';
-    default:
-      return 'appLock.reason.default';
-  }
-}
-
 export function getAppLockErrorMessageKey(error: AppLockUnlockResult['error'] | null): string | null {
   switch (error) {
     case 'empty':
@@ -287,7 +274,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       >
         <button
           type="button"
-          className="flex h-16 w-16 items-center justify-center rounded-[22px] border border-border/70 bg-card p-2 shadow-sm transition hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-24 w-24 items-center justify-center border-0 bg-transparent p-0 shadow-none transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={t('appLock.logoLabel')}
           data-testid="app-lock-logo-easter-egg"
           onClick={handleLogoClick}
@@ -295,14 +282,9 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
           <AppLogo className="h-full w-full" />
         </button>
 
-        <div className="space-y-2 text-center">
-          <h1 id="app-lock-title" className="text-xl font-semibold tracking-normal">
-            {t('appLock.title')}
-          </h1>
-          <p className="text-sm leading-6 text-muted-foreground">
-            {t(getAppLockReasonMessageKey(reason))}
-          </p>
-        </div>
+        <h1 id="app-lock-title" className="text-center text-xl font-semibold tracking-normal">
+          {t('appLock.title')}
+        </h1>
 
         <div className="w-full space-y-2">
           <Label htmlFor="app-lock-password">{t('appLock.passwordLabel')}</Label>

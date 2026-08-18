@@ -6,19 +6,17 @@ import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import type { AppLockSystemUnlockStatus } from "../../../application/state/useAppLockState";
 import type { AppLockSettings, AppLockSettingsChangeError, AppLockTimeoutMinutes } from "../../../domain/appLock";
-import { APP_LOCK_TIMEOUT_OPTIONS_MINUTES } from "../../../domain/appLock";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import type { UpdateState } from '../../../application/state/useUpdateCheck';
 import { SessionLogFormat, keyEventToString } from "../../../domain/models";
 import type { HttpNetworkProxyMode, HttpNetworkProxySettings } from "../../../domain/httpNetworkProxy";
 import { Button } from "../../ui/button";
-import { Input } from "../../ui/input";
-import { Label } from "../../ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import { Toggle, Select, SettingRow, SectionHeader, SettingCard, SettingHint, SettingsAnchor, SettingsTabContent } from "../settings-ui";
 import { cn } from "../../../lib/utils";
 import { isAppLockOverlayActive } from '../../../infrastructure/appLockOverlayDom';
+import { AppLockSettingsSection } from './AppLockSettingsSection';
 
 interface CrashLogFile {
   fileName: string;
@@ -187,22 +185,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
 }) => {
   const { t } = useI18n();
   const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
-
-  const [appLockCurrentPassword, setAppLockCurrentPassword] = useState("");
-  const [appLockDisablePassword, setAppLockDisablePassword] = useState("");
-  const [appLockNewPassword, setAppLockNewPassword] = useState("");
-  const [appLockConfirmPassword, setAppLockConfirmPassword] = useState("");
-  const [appLockError, setAppLockError] = useState<string | null>(null);
-  const [isDisablingAppLock, setIsDisablingAppLock] = useState(false);
-  const [isSavingAppLock, setIsSavingAppLock] = useState(false);
-  const [isSavingAppLockSystemUnlock, setIsSavingAppLockSystemUnlock] = useState(false);
-  const hasAppLockPassword = Boolean(appLockSettings.passwordVerifier);
-  const showAppLockSystemUnlock = Boolean(
-    hasAppLockPassword &&
-    appLockSystemUnlockStatus?.supported &&
-    appLockSystemUnlockStatus.label &&
-    (appLockSystemUnlockStatus?.available || appLockSettings.systemUnlockEnabled)
-  );
 
   const [tempDirInfo, setTempDirInfo] = useState<TempDirInfo | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -427,142 +409,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     await bridge.openSshDebugLogDir();
   }, []);
 
-  const mapAppLockChangeError = useCallback((error: AppLockSettingsChangeError | 'locked' | 'unsupported' | 'unavailable'): string => {
-    switch (error) {
-      case 'empty-current':
-        return t('settings.appLock.validation.currentRequired');
-      case 'empty-next':
-        return t('settings.appLock.validation.newRequired');
-      case 'incorrect':
-        return t('settings.appLock.validation.incorrect');
-      case 'locked':
-        return t('settings.appLock.systemUnlock.locked');
-      case 'unsupported':
-      case 'unavailable':
-        return t('settings.appLock.systemUnlock.unavailable');
-    }
-  }, [t]);
-
-  const handleAppLockTimeoutChange = useCallback((value: string) => {
-    const timeoutMinutes = Number(value) as AppLockTimeoutMinutes;
-    if (!APP_LOCK_TIMEOUT_OPTIONS_MINUTES.includes(timeoutMinutes)) return;
-    setAppLockTimeoutMinutes(timeoutMinutes);
-  }, [setAppLockTimeoutMinutes]);
-
-  const handleDisableAppLock = useCallback(async () => {
-    setAppLockError(null);
-    setIsDisablingAppLock(true);
-    try {
-      const result = await requestAppLockDisable(appLockDisablePassword);
-      if ('ok' in result && result.ok === false) {
-        setAppLockError(mapAppLockChangeError(result.error));
-        return;
-      }
-      setAppLockDisablePassword("");
-      setAppLockCurrentPassword("");
-      setAppLockNewPassword("");
-      setAppLockConfirmPassword("");
-    } finally {
-      setIsDisablingAppLock(false);
-    }
-  }, [
-    appLockDisablePassword,
-    mapAppLockChangeError,
-    requestAppLockDisable,
-  ]);
-
-  const handleSaveAppLockPassword = useCallback(async () => {
-    setAppLockError(null);
-    if (!appLockNewPassword.trim()) {
-      setAppLockError(t('settings.appLock.validation.newRequired'));
-      return;
-    }
-    if (!appLockConfirmPassword.trim()) {
-      setAppLockError(t('settings.appLock.validation.confirmRequired'));
-      return;
-    }
-    if (appLockNewPassword !== appLockConfirmPassword) {
-      setAppLockError(t('settings.appLock.validation.mismatch'));
-      return;
-    }
-
-    setIsSavingAppLock(true);
-    try {
-      const result = await requestAppLockPasswordChange({
-        currentPassword: appLockCurrentPassword,
-        nextPassword: appLockNewPassword,
-      });
-      if ('ok' in result && result.ok === false) {
-        setAppLockError(mapAppLockChangeError(result.error));
-        return;
-      }
-      setAppLockCurrentPassword("");
-      setAppLockNewPassword("");
-      setAppLockConfirmPassword("");
-    } finally {
-      setIsSavingAppLock(false);
-    }
-  }, [
-    appLockConfirmPassword,
-    appLockCurrentPassword,
-    appLockNewPassword,
-    mapAppLockChangeError,
-    requestAppLockPasswordChange,
-    t,
-  ]);
-
-  const handleAppLockSystemUnlockChange = useCallback(async (enabled: boolean) => {
-    if (!setAppLockSystemUnlockEnabled || !appLockSystemUnlockStatus?.label) return;
-    setAppLockError(null);
-
-    setIsSavingAppLockSystemUnlock(true);
-    try {
-      const result = await setAppLockSystemUnlockEnabled({
-        enabled,
-        autoPromptEnabled: enabled && appLockSettings.systemUnlockEnabled
-          ? appLockSettings.systemUnlockAutoPromptEnabled
-          : false,
-      });
-      if ('ok' in result && result.ok === false) {
-        setAppLockError(mapAppLockChangeError(result.error));
-        return;
-      }
-    } finally {
-      setIsSavingAppLockSystemUnlock(false);
-    }
-  }, [
-    appLockSettings.systemUnlockEnabled,
-    appLockSettings.systemUnlockAutoPromptEnabled,
-    appLockSystemUnlockStatus?.label,
-    mapAppLockChangeError,
-    setAppLockSystemUnlockEnabled,
-  ]);
-
-  const handleAppLockSystemUnlockAutoPromptChange = useCallback(async (autoPromptEnabled: boolean) => {
-    if (!setAppLockSystemUnlockEnabled || !appLockSystemUnlockStatus?.label) return;
-    if (!appLockSettings.systemUnlockEnabled) return;
-    setAppLockError(null);
-
-    setIsSavingAppLockSystemUnlock(true);
-    try {
-      const result = await setAppLockSystemUnlockEnabled({
-        enabled: true,
-        autoPromptEnabled,
-      });
-      if ('ok' in result && result.ok === false) {
-        setAppLockError(mapAppLockChangeError(result.error));
-        return;
-      }
-    } finally {
-      setIsSavingAppLockSystemUnlock(false);
-    }
-  }, [
-    appLockSettings.systemUnlockEnabled,
-    appLockSystemUnlockStatus?.label,
-    mapAppLockChangeError,
-    setAppLockSystemUnlockEnabled,
-  ]);
-
   // Handle global toggle hotkey recording
   const cancelHotkeyRecording = useCallback(() => {
     setIsRecordingHotkey(false);
@@ -619,11 +465,6 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
     { value: "raw", label: t("settings.sessionLogs.formatRaw") },
     { value: "html", label: t("settings.sessionLogs.formatHtml") },
   ];
-  const appLockTimeoutOptions = APP_LOCK_TIMEOUT_OPTIONS_MINUTES.map((minutes) => ({
-    value: String(minutes),
-    label: t(`settings.appLock.timeout.${minutes}`),
-  }));
-
   return (
     <SettingsTabContent value="system">
           <SectionHeader title={t('settings.update.title')} anchorId="system-update" />
@@ -825,224 +666,14 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               {t("settings.system.networkProxy.hint")}
             </SettingHint>
 
-          <SectionHeader title={t("settings.appLock.title")} />
-            <SettingCard className="space-y-4 py-4">
-              <p className="text-sm text-muted-foreground">
-                {t("settings.appLock.description")}
-              </p>
-
-              {!hasAppLockPassword ? (
-                <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                  <p className="text-sm font-medium text-foreground">
-                    {t("settings.appLock.setupTitle")}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t("settings.appLock.setupDescription")}
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <div className="rounded-xl border border-border/60 bg-muted/30 p-4">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-foreground">
-                        {t("settings.appLock.manageTitle")}
-                      </p>
-                      <p className="text-sm text-muted-foreground">
-                        {appLockSettings.enabled
-                          ? t("settings.appLock.enabledStatus")
-                          : t("settings.appLock.disabledStatus")}
-                      </p>
-                    </div>
-                  </div>
-
-                  <SettingRow
-                    label={t("settings.appLock.timeout")}
-                    description={t("settings.appLock.timeoutDesc")}
-                  >
-                    <Select
-                      value={String(appLockSettings.timeoutMinutes)}
-                      options={appLockTimeoutOptions}
-                      onChange={handleAppLockTimeoutChange}
-                      className="w-36"
-                    />
-                  </SettingRow>
-
-                  {showAppLockSystemUnlock && appLockSystemUnlockStatus?.label && (
-                    <div className="space-y-3">
-                      <SettingRow
-                        label={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
-                        description={
-                          appLockSystemUnlockStatus.available
-                            ? t("settings.appLock.systemUnlock.desc").replace("{label}", appLockSystemUnlockStatus.label)
-                            : t("settings.appLock.systemUnlock.unavailableDesc").replace("{label}", appLockSystemUnlockStatus.label)
-                        }
-                      >
-                        <div className="flex flex-col items-end gap-2">
-                          <Toggle
-                            checked={appLockSettings.systemUnlockEnabled}
-                            // Only block enabling when unavailable; an already-on
-                            // toggle must stay clickable so the user can disable
-                            // system unlock after Touch ID/Hello disappears (Codex P2).
-                            disabled={
-                              isSavingAppLockSystemUnlock
-                              || (!appLockSystemUnlockStatus.available && !appLockSettings.systemUnlockEnabled)
-                            }
-                            ariaLabel={t("settings.appLock.systemUnlock.label").replace("{label}", appLockSystemUnlockStatus.label)}
-                            onChange={(enabled) => void handleAppLockSystemUnlockChange(enabled)}
-                          />
-                        </div>
-                      </SettingRow>
-                      <div className="border-l border-border/60 pl-4">
-                        <SettingRow
-                          label={t("settings.appLock.systemUnlock.autoPrompt.label").replace("{label}", appLockSystemUnlockStatus.label)}
-                          description={t("settings.appLock.systemUnlock.autoPrompt.desc").replace("{label}", appLockSystemUnlockStatus.label)}
-                        >
-                          <Toggle
-                            checked={appLockSettings.systemUnlockAutoPromptEnabled}
-                            disabled={isSavingAppLockSystemUnlock || !appLockSettings.systemUnlockEnabled || !appLockSystemUnlockStatus.available}
-                            ariaLabel={t("settings.appLock.systemUnlock.autoPrompt.label").replace("{label}", appLockSystemUnlockStatus.label)}
-                            onChange={(enabled) => void handleAppLockSystemUnlockAutoPromptChange(enabled)}
-                          />
-                        </SettingRow>
-                      </div>
-                    </div>
-                  )}
-
-                  {appLockSettings.enabled && (
-                    <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
-                      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                        <div className="space-y-2">
-                          <p className="text-sm font-medium text-foreground">
-                            {t("settings.appLock.disableTitle")}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {t("settings.appLock.disableDescription")}
-                          </p>
-                          <Input
-                            type="password"
-                            value={appLockDisablePassword}
-                            autoComplete="current-password"
-                            placeholder={t("settings.appLock.currentPasswordForDisablePlaceholder")}
-                            onChange={(event) => {
-                              setAppLockDisablePassword(event.target.value);
-                              setAppLockError(null);
-                            }}
-                            className="max-w-sm"
-                          />
-                        </div>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => void handleDisableAppLock()}
-                          disabled={isDisablingAppLock}
-                        >
-                          {isDisablingAppLock
-                            ? t("settings.appLock.disabling")
-                            : t("settings.appLock.disable")}
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div className="space-y-3 rounded-xl border border-border/60 p-4">
-                <div className="space-y-1">
-                  <p className="text-sm font-medium text-foreground">
-                    {hasAppLockPassword
-                      ? t("settings.appLock.changePasswordTitle")
-                      : t("settings.appLock.setupPasswordTitle")}
-                  </p>
-                  <p className="text-sm text-muted-foreground">
-                    {hasAppLockPassword
-                      ? t("settings.appLock.changePasswordDescription")
-                      : t("settings.appLock.setupPasswordDescription")}
-                  </p>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {hasAppLockPassword && (
-                    <div className="space-y-2">
-                      <Label htmlFor="app-lock-current-password">
-                        {t("settings.appLock.currentPassword")}
-                      </Label>
-                      <Input
-                        id="app-lock-current-password"
-                        type="password"
-                        value={appLockCurrentPassword}
-                        autoComplete="current-password"
-                        placeholder={t("settings.appLock.currentPasswordForChangePlaceholder")}
-                        onChange={(event) => {
-                          setAppLockCurrentPassword(event.target.value);
-                          setAppLockError(null);
-                        }}
-                      />
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <Label htmlFor="app-lock-new-password">
-                      {t("settings.appLock.newPassword")}
-                    </Label>
-                    <Input
-                      id="app-lock-new-password"
-                      type="password"
-                      value={appLockNewPassword}
-                      autoComplete="new-password"
-                      placeholder={t("settings.appLock.newPasswordPlaceholder")}
-                      onChange={(event) => {
-                        setAppLockNewPassword(event.target.value);
-                        setAppLockError(null);
-                      }}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="app-lock-confirm-password">
-                      {t("settings.appLock.confirmPassword")}
-                    </Label>
-                    <Input
-                      id="app-lock-confirm-password"
-                      type="password"
-                      value={appLockConfirmPassword}
-                      autoComplete="new-password"
-                      placeholder={t("settings.appLock.confirmPasswordPlaceholder")}
-                      onChange={(event) => {
-                        setAppLockConfirmPassword(event.target.value);
-                        setAppLockError(null);
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {appLockError && (
-                <p className="text-sm text-destructive">{appLockError}</p>
-              )}
-
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-1">
-                  {hasAppLockPassword && (
-                    <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                      {t("settings.appLock.passwordSet")}
-                    </p>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    {t("settings.appLock.localOnlyHint")}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={() => void handleSaveAppLockPassword()}
-                  disabled={isSavingAppLock}
-                >
-                  {isSavingAppLock
-                    ? t("settings.appLock.savingPassword")
-                    : hasAppLockPassword
-                      ? t("settings.appLock.replacePassword")
-                      : t("settings.appLock.savePassword")}
-                </Button>
-              </div>
-            </SettingCard>
+          <AppLockSettingsSection
+            appLockSettings={appLockSettings}
+            setAppLockTimeoutMinutes={setAppLockTimeoutMinutes}
+            requestAppLockDisable={requestAppLockDisable}
+            requestAppLockPasswordChange={requestAppLockPasswordChange}
+            appLockSystemUnlockStatus={appLockSystemUnlockStatus}
+            setAppLockSystemUnlockEnabled={setAppLockSystemUnlockEnabled}
+          />
 
           <SectionHeader title={t("settings.system.credentials.title")} />
             <SettingsAnchor anchorId="system-credentials">
