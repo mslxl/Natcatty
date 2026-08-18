@@ -81,6 +81,16 @@ test("Osc99Assembler assembles chunked title and body", () => {
   });
 });
 
+test("Osc99Assembler preserves whitespace across chunk boundaries", () => {
+  const assembler = new Osc99Assembler();
+  assert.equal(assembler.consume("i=1:d=0;Hello "), null);
+  assert.deepEqual(assembler.consume("i=1;world"), {
+    title: "Hello world",
+    body: "",
+    protocol: "osc99",
+  });
+});
+
 test("Osc99Assembler decodes base64 payloads", () => {
   const assembler = new Osc99Assembler();
   assert.deepEqual(assembler.consume("p=body:e=1;SGVsbG8="), {
@@ -177,6 +187,13 @@ test("OscNotificationStreamScanner flushes an unfinished prefix", () => {
   scanner.consume("\x1b]9;pending");
   assert.equal(scanner.flush(), "\x1b]9;pending");
   assert.equal(scanner.flush(), "");
+});
+
+test("OscNotificationStreamScanner aborts a notification OSC at a non-ST escape", () => {
+  const scanner = new OscNotificationStreamScanner();
+  const result = scanner.consume("hello\x1b]9;bad\x1b[31mRED\x07world");
+  assert.deepEqual(result.notifications, []);
+  assert.equal(result.remainder, "hello\x1b[31mRED\x07world");
 });
 
 test("OscNotificationLimiter rate-limits a noisy session", () => {

@@ -125,7 +125,7 @@ export class Osc99Assembler {
       return null;
     }
 
-    const payload = decodeOsc99Payload(rawPayload, fields.encoded).trim();
+    const payload = decodeOsc99Payload(rawPayload, fields.encoded);
     const current = this.pending.get(fields.id) ?? { title: '', body: '', updatedAt: now };
     if (fields.part === 'body') current.body += payload;
     else current.title += payload;
@@ -193,7 +193,7 @@ function parseOsc99Metadata(metadata: string): {
 
 type OscScanResult =
   | { incomplete: true }
-  | { incomplete: false; notification: boolean; id: number; payload: string; end: number };
+  | { incomplete: false; notification: boolean; aborted?: boolean; id: number; payload: string; end: number };
 
 const isNotificationOscId = (id: number): boolean => id === 9 || id === 777 || id === 99;
 
@@ -256,9 +256,8 @@ const readOscAt = (input: string, start: number): OscScanResult => {
           end: index + 2,
         };
       }
-      if (!isNotificationOscId(id)) {
-        return { incomplete: false, notification: false, id, payload: '', end: index };
-      }
+      // xterm aborts an OSC at a non-ST ESC and then processes that ESC.
+      return { incomplete: false, notification: false, aborted: isNotificationOscId(id), id, payload: '', end: index };
     }
     index += 1;
   }
@@ -307,7 +306,7 @@ export class OscNotificationStreamScanner {
             ? parseOsc777Payload(scanned.payload)
             : this.assembler.consume(scanned.payload);
         if (notification) notifications.push(notification);
-      } else {
+      } else if (!scanned.aborted) {
         remainder += input.slice(esc, scanned.end);
       }
       index = scanned.end;
