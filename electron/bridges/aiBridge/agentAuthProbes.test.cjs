@@ -5,6 +5,7 @@ const {
   parseCursorStatusJson, resolveCursorCliSpawnSpec,
 } = require("./agentAuthProbes.cjs");
 const { prepareCommandForSpawn } = require("../ai/shellUtils.cjs");
+const { resolveCursorCliSpawnSpec: resolveSharedCursorCliSpawnSpec } = require("./cursorCliSpawn.cjs");
 
 test("probeClaudeAuth: env ANTHROPIC_API_KEY -> authenticated env", () => {
   const r = probeClaudeAuth({
@@ -295,19 +296,18 @@ test("parseCursorStatusJson accepts BOM and surrounding text", () => {
   assert.equal(parsed.status, "authenticated");
 });
 
-test("resolveCursorCliSpawnSpec does not unwrap cursor-agent.cmd to node.exe", () => {
+test("resolveCursorCliSpawnSpec re-exports the shared native launch helper", () => {
   const shim = "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
   const args = ["status", "--format", "json"];
-  const actual = resolveCursorCliSpawnSpec(shim, args);
-  assert.deepEqual(actual, prepareCommandForSpawn(shim, args, { unwrapNativeExe: false }));
-  if (process.platform === "win32") {
-    assert.equal(actual.shell, true);
-    assert.equal(actual.args.length, 0);
-    assert.match(actual.command, /cursor-agent\.cmd/i);
-    assert.match(actual.command, /status/);
-  } else {
-    assert.equal(actual.shell, false);
-    assert.equal(actual.command, shim);
-    assert.deepEqual(actual.args, args);
-  }
+  assert.deepEqual(
+    resolveCursorCliSpawnSpec(shim, args),
+    resolveSharedCursorCliSpawnSpec(shim, args),
+  );
+  assert.deepEqual(
+    resolveSharedCursorCliSpawnSpec(shim, args, {
+      exists: () => false,
+      readFile: () => { throw new Error("missing"); },
+    }),
+    prepareCommandForSpawn(shim, args, { unwrapNativeExe: false }),
+  );
 });

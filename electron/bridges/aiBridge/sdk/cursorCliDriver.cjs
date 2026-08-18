@@ -10,7 +10,7 @@ const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
 const fs = require("node:fs");
 const path = require("node:path");
-const { prepareCommandForSpawn } = require("../../ai/shellUtils.cjs");
+const { resolveCursorCliSpawnSpec } = require("../cursorCliSpawn.cjs");
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 
 const DEFAULT_CURSOR_CLI_MODEL = "auto";
@@ -55,17 +55,6 @@ function stripCursorApiKeyFromEnv(env) {
   const out = { ...(env || {}) };
   delete out.CURSOR_API_KEY;
   return out;
-}
-
-/**
- * Resolve Cursor CLI spawn target for Windows installer .cmd/.bat shims.
- * Unlike Codex/Claude, cursor-agent.cmd launches node.exe + index.js — do not
- * unwrap to the first quoted .exe or the script args are dropped.
- */
-function resolveCursorCliSpawnSpec(cliPath, args) {
-  return prepareCommandForSpawn(String(cliPath || "").trim(), Array.isArray(args) ? args : [], {
-    unwrapNativeExe: false,
-  });
 }
 
 function spawnCursorCliProcess(spawnImpl, cliPath, args, options = {}) {

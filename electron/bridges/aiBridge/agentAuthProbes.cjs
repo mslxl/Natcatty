@@ -11,7 +11,7 @@ const { existsSync, readFileSync } = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
-const { prepareCommandForSpawn } = require("../ai/shellUtils.cjs");
+const { resolveCursorCliSpawnSpec } = require("./cursorCliSpawn.cjs");
 
 function defaultFileExists(p) {
   try { return existsSync(p); } catch { return false; }
@@ -154,14 +154,6 @@ function defaultResolveCursorCliBinary(name, env) {
   } catch {
     return null;
   }
-}
-
-function resolveCursorCliSpawnSpec(binPath, args) {
-  // Do not unwrap .cmd to the first .exe: cursor-agent.cmd launches
-  // node.exe + index.js, and dropping the script makes status/login fail.
-  return prepareCommandForSpawn(String(binPath || "").trim(), Array.isArray(args) ? args : [], {
-    unwrapNativeExe: false,
-  });
 }
 
 function defaultRunCursorStatus(binPath, env) {

@@ -589,27 +589,53 @@ test("runCursorCliTurn closes open reasoning before done", async () => {
   ]);
 });
 
-test("resolveCursorCliSpawnSpec wraps Windows cmd shims without unwrapping node.exe", () => {
-  const { prepareCommandForSpawn } = require("../../ai/shellUtils.cjs");
-  const shim = "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
-  const args = ["--print", "--trust"];
-  const actual = resolveCursorCliSpawnSpec(shim, args);
-  assert.deepEqual(actual, prepareCommandForSpawn(shim, args, { unwrapNativeExe: false }));
-  if (process.platform === "win32") {
-    assert.equal(actual.shell, true);
-    assert.equal(actual.args.length, 0);
-  } else {
-    assert.equal(actual.shell, false);
-    assert.deepEqual(actual.args, args);
-  }
-
+test("resolveCursorCliSpawnSpec keeps a native exe on argv without a shell", () => {
   const exePath = process.platform === "win32"
     ? "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.exe"
     : "/usr/local/bin/cursor-agent";
+  const args = ["--print", "--trust"];
   const exe = resolveCursorCliSpawnSpec(exePath, args);
   assert.equal(exe.shell, false);
   assert.equal(exe.command, exePath);
   assert.deepEqual(exe.args, args);
+});
+
+test("spawnCursorCliProcess launches the installer node+script with the prompt on argv", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-cursor-turn-spawn-"));
+  try {
+    const versionDir = path.join(tmp, "versions", "2026.06.01-abc");
+    fs.mkdirSync(versionDir, { recursive: true });
+    const nodeExe = path.join(versionDir, "node.exe");
+    const script = path.join(versionDir, "index.js");
+    fs.writeFileSync(nodeExe, "", "utf8");
+    fs.writeFileSync(script, "", "utf8");
+    const shimPath = path.join(tmp, "cursor-agent.cmd");
+    fs.writeFileSync(
+      shimPath,
+      `@ECHO off\r\n"%~dp0\\versions\\2026.06.01-abc\\node.exe" "%~dp0\\versions\\2026.06.01-abc\\index.js" %*\r\n`,
+      "utf8",
+    );
+
+    const prompt = 'review "%TEMP%" then run whoami';
+    const calls = [];
+    spawnCursorCliProcess(
+      (command, args, options) => {
+        calls.push({ command, args, options });
+        return { stdout: { on() {} }, stderr: { on() {} }, on() {}, kill() {} };
+      },
+      shimPath,
+      ["--print", "--trust", prompt],
+      { windowsHide: true },
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].command, nodeExe);
+    assert.deepEqual(calls[0].args, [script, "--print", "--trust", prompt]);
+    assert.equal(calls[0].options.shell, false);
+    assert.equal(String(calls[0].command).includes("cmd.exe"), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("spawnCursorCliProcess forwards shell from resolveCursorCliSpawnSpec", () => {
@@ -621,21 +647,23 @@ test("spawnCursorCliProcess forwards shell from resolveCursorCliSpawnSpec", () =
     on() {},
     kill() {},
   };
-  const shim = "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
+  const cliPath = "/usr/local/bin/cursor-agent";
   const child = spawnCursorCliProcess(
     (command, args, options) => {
       calls.push({ command, args, options });
       return fakeChild;
     },
-    shim,
+    cliPath,
     ["models"],
-    { cwd: "D:\\repo", windowsHide: true },
+    { cwd: "/repo", windowsHide: true },
   );
   assert.equal(child, fakeChild);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].options.cwd, "D:\\repo");
+  assert.equal(calls[0].command, cliPath);
+  assert.deepEqual(calls[0].args, ["models"]);
+  assert.equal(calls[0].options.cwd, "/repo");
   assert.equal(calls[0].options.windowsHide, true);
-  assert.equal(calls[0].options.shell, process.platform === "win32");
+  assert.equal(calls[0].options.shell, false);
 });
 
 test("listCursorCliModels parses agent models output and prefers auto", async () => {
