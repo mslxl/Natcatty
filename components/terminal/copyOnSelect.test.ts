@@ -154,6 +154,7 @@ const eventOn = (type: string, target: EventTarget): Event => {
 test("pointer listeners mark on capture down and release on document up", () => {
   const el = createEventTargetStub();
   const root = createEventTargetStub();
+  const view = createEventTargetStub();
   let marked = 0;
   let pulsed = 0;
   let released = 0;
@@ -171,22 +172,25 @@ test("pointer listeners mark on capture down and release on document up", () => 
       },
     },
     root,
+    view,
   );
 
   root.dispatch("mousedown", eventOn("mousedown", el), "capture");
   root.dispatch("mouseup", eventOn("mouseup", el), "bubble");
   root.dispatch("contextmenu", eventOn("contextmenu", el), "capture");
   root.dispatch("touchcancel", eventOn("touchcancel", el), "bubble");
+  view.dispatch("blur", eventOn("blur", el), "bubble");
   assert.equal(marked, 1);
-  assert.equal(released, 2);
+  assert.equal(released, 3);
   assert.equal(pulsed, 1);
 
   unsubscribe();
   root.dispatch("mousedown", eventOn("mousedown", el), "capture");
   root.dispatch("mouseup", eventOn("mouseup", el), "bubble");
   root.dispatch("touchcancel", eventOn("touchcancel", el), "bubble");
+  view.dispatch("blur", eventOn("blur", el), "bubble");
   assert.equal(marked, 1);
-  assert.equal(released, 2);
+  assert.equal(released, 3);
   assert.equal(pulsed, 1);
 });
 

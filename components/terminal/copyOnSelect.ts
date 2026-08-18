@@ -87,6 +87,9 @@ export const subscribeCopyOnSelectUserGesture = (
   root: Pick<EventTarget, "addEventListener" | "removeEventListener"> | null = (
     typeof document === "undefined" ? null : document
   ),
+  view: Pick<EventTarget, "addEventListener" | "removeEventListener"> | null = (
+    typeof window === "undefined" ? null : window
+  ),
 ): (() => void) => {
   const el = term?.element;
   if (!el || !root) return () => {};
@@ -111,6 +114,8 @@ export const subscribeCopyOnSelectUserGesture = (
   root.addEventListener("mouseup", onPointerUp);
   root.addEventListener("touchend", onPointerUp);
   root.addEventListener("touchcancel", onPointerUp);
+  // Alt-tab / window blur drops the matching mouseup in Electron.
+  view?.addEventListener("blur", onPointerUp);
 
   return () => {
     root.removeEventListener("mousedown", onPointerDown, CAPTURE);
@@ -119,6 +124,7 @@ export const subscribeCopyOnSelectUserGesture = (
     root.removeEventListener("mouseup", onPointerUp);
     root.removeEventListener("touchend", onPointerUp);
     root.removeEventListener("touchcancel", onPointerUp);
+    view?.removeEventListener("blur", onPointerUp);
   };
 };
 
