@@ -387,8 +387,8 @@ export class KeywordHighlighter implements IDisposable {
     const startsWithLineAdvance = typeof data === "string" && /^(?:\r\n|\n)/.test(data);
     // CUU / CPL / CUP / VPA / DECSTBM (homes the cursor) / restore-cursor /
     // RI / DECRC can move back onto rows the leading newline already left
-    // (multi-line progress redraws). Exotic mutations this heuristic misses
-    // are corrected by the quiet catch-up pass.
+    // (multi-line progress redraws). Controls this heuristic misses are caught
+    // by the start-row fingerprint safety net below.
     const movesCursorUp = typeof data === "string"
       && (/\x1b(?:\[[\d;]*[AFHfudr]|M|8)/.test(data)); // eslint-disable-line no-control-regex
     const eraseInLine = typeof data === "string" && /\x1b\[[\d;]*[K@PMLGHf]/.test(data); // eslint-disable-line no-control-regex
@@ -403,6 +403,13 @@ export class KeywordHighlighter implements IDisposable {
     if (this.compiledPatterns.length > 0 && rewritesCurrentLine) {
       this.restorePhysicalLine(startY);
     }
+    const skipStartRow = startsWithLineAdvance && !movesCursorUp;
+    // Safety net for controls the backtracking heuristic does not enumerate
+    // (DECOM, DECCOLM, ...): if the skipped start row's text changed during
+    // the write, something climbed back onto it and it must be repainted.
+    const startRowTextBefore = skipStartRow
+      ? this.term.buffer.active.getLine(startY)?.translateToString(false)
+      : undefined;
     const writeMarker = this.term.registerMarker(0);
     return this.originalWrite(data, () => {
       const active = this.term.buffer.active;
@@ -414,7 +421,9 @@ export class KeywordHighlighter implements IDisposable {
             this.scheduleCatchUp();
           }
         } else {
-          const fromY = startsWithLineAdvance && !movesCursorUp
+          const startRowMutated = startRowTextBefore !== undefined
+            && active.getLine(writeMarker.line)?.translateToString(false) !== startRowTextBefore;
+          const fromY = skipStartRow && !startRowMutated
             ? Math.min(endY, writeMarker.line + 1)
             : writeMarker.line;
           if (this.compiledPatterns.length === 0) {
