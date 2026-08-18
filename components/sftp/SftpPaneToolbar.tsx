@@ -251,14 +251,16 @@ export const SftpBookmarkList: React.FC<SftpBookmarkListProps> = ({
           )}
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="flex-1 text-left text-xs truncate font-mono"
-                onClick={() => onNavigateToBookmark(bm.path)}
-              >
-                {bm.label}
-                <span className="ml-1.5 text-muted-foreground text-[10px]">{bm.path}</span>
-              </button>
+              <PopoverClose asChild>
+                <button
+                  type="button"
+                  className="flex-1 text-left text-xs truncate font-mono"
+                  onClick={() => onNavigateToBookmark(bm.path)}
+                >
+                  {bm.label}
+                  <span className="ml-1.5 text-muted-foreground text-[10px]">{bm.path}</span>
+                </button>
+              </PopoverClose>
             </TooltipTrigger>
             <TooltipContent>{bm.path}</TooltipContent>
           </Tooltip>
