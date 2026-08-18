@@ -6,6 +6,7 @@ import {
   buildSdkRuntimeModelCacheKey,
   createSdkRuntimeModelCache,
   modelPresetsContainId,
+  normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
@@ -123,6 +124,28 @@ test('shouldAdoptSdkCurrentModel keeps SDK defaults when no runtime list is retu
     false,
   );
   assert.equal(shouldAdoptSdkCurrentModel(null, undefined, []), false);
+});
+
+test('legacy plain model selections keep their model and gain its default reasoning effort', () => {
+  const presets: AgentModelPreset[] = [{
+    id: 'grok-4.5',
+    name: 'Grok 4.5',
+    thinkingLevels: ['high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  }, {
+    id: 'grok-4.6',
+    name: 'Grok 4.6',
+    thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  }];
+
+  assert.equal(modelPresetsContainId(presets, 'grok-4.5'), true);
+  assert.equal(normalizeStoredAgentModelSelection('grok-4.5', presets), 'grok-4.5/high');
+  assert.equal(normalizeStoredAgentModelSelection('grok-4.5/medium', presets), 'grok-4.5/medium');
+  assert.equal(
+    shouldAdoptSdkCurrentModel('grok-4.6/high', 'grok-4.5', presets),
+    false,
+  );
 });
 
 test('normalizeSdkRuntimeModelPresets preserves SDK current model without a catalog', () => {
