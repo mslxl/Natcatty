@@ -521,6 +521,13 @@ function safeReadJson(filePath) {
   }
 }
 
+// Hard cap for a single model HTTP stream. Matches Catty's 30-minute floor so
+// long reasoning can finish; runaway bodies are still bounded by time + size.
+const DEFAULT_AI_STREAM_TOTAL_TIMEOUT_MS = 30 * 60 * 1000;
+// Abort only after this much silence. Thinking tokens re-arm the timer, so an
+// active reasoning stream is not cut off at two minutes (issue #3051).
+const DEFAULT_AI_STREAM_IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+
 /**
  * Start a streaming HTTP request. The returned promise resolves as soon as
  * the HTTP response headers arrive (with { statusCode, statusText }) so the
@@ -558,18 +565,29 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
   const parsedUrl = new URL(url);
   // Register cancellation before any await so Stop during PAC/proxy lookup works.
   const controller = new AbortController();
-  const totalTimeoutMs = Math.max(1, Number(options.totalTimeoutMs) || 120_000);
+  const totalTimeoutMs = Math.max(1, Number(options.totalTimeoutMs) || DEFAULT_AI_STREAM_TOTAL_TIMEOUT_MS);
+  const idleTimeoutMs = Math.max(1, Number(options.idleTimeoutMs) || DEFAULT_AI_STREAM_IDLE_TIMEOUT_MS);
   const maxErrorBodyBytes = Math.max(1, Number(options.maxErrorBodyBytes) || 64 * 1024);
   let lifecycleFinished = false;
+  let idleTimer;
   const finishLifecycle = () => {
     if (lifecycleFinished) return;
     lifecycleFinished = true;
     clearTimeout(totalTimer);
+    clearTimeout(idleTimer);
     activeStreams.delete(requestId);
+  };
+  const noteStreamActivity = () => {
+    if (lifecycleFinished) return;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      controller.abort(new Error(`AI stream idle deadline exceeded after ${idleTimeoutMs} ms`));
+    }, idleTimeoutMs);
   };
   const totalTimer = setTimeout(() => {
     controller.abort(new Error(`AI stream total deadline exceeded after ${totalTimeoutMs} ms`));
   }, totalTimeoutMs);
+  noteStreamActivity();
   activeStreams.set(requestId, controller);
   if (controller.signal.aborted) {
     finishLifecycle();
@@ -665,6 +683,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
           res.destroy?.();
           return;
         }
+        noteStreamActivity();
         // Decode the response as one continuous UTF-8 stream. Calling
         // Buffer#toString() on each network chunk corrupts multi-byte
         // characters when a chunk boundary falls in the middle of one.
@@ -678,6 +697,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
           let errorBodyBytes = 0;
           res.on("data", (chunk) => {
             if (streamFinished) return;
+            noteStreamActivity();
             const text = chunk.toString();
             errorBodyBytes += Buffer.byteLength(text);
             if (errorBodyBytes > maxErrorBodyBytes) {
@@ -718,6 +738,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
         const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB safety limit
 
         res.on("data", (chunk) => {
+          noteStreamActivity();
           const previousBufferLength = buffer.length;
           buffer += chunk.toString();
           // Guard against unbounded buffer growth
@@ -986,5 +1007,7 @@ module.exports = {
   buildExternalAgentContextualPrompt,
   _streamRequestForTests: streamRequest,
   _getActiveStreamCountForTests: () => activeStreams.size,
+  DEFAULT_AI_STREAM_TOTAL_TIMEOUT_MS,
+  DEFAULT_AI_STREAM_IDLE_TIMEOUT_MS,
   getExternalMcpController: () => externalMcpController,
 };

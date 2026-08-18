@@ -298,6 +298,17 @@ test("non-2xx streaming responses are bounded and actively terminated", async ()
   }
 });
 
+test("AI stream default total timeout is long enough for extended reasoning", () => {
+  const { bridge, restore } = loadBridgeWithMocks();
+  try {
+    assert.equal(bridge.DEFAULT_AI_STREAM_IDLE_TIMEOUT_MS, 120_000);
+    assert.equal(bridge.DEFAULT_AI_STREAM_TOTAL_TIMEOUT_MS, 30 * 60 * 1000);
+    assert.ok(bridge.DEFAULT_AI_STREAM_TOTAL_TIMEOUT_MS > bridge.DEFAULT_AI_STREAM_IDLE_TIMEOUT_MS);
+  } finally {
+    restore();
+  }
+});
+
 test("streaming requests enforce a total deadline even while bytes keep arriving", async () => {
   let requestClosed = false;
   let resolveRequestClosed;
@@ -335,6 +346,163 @@ test("streaming requests enforce a total deadline even while bytes keep arriving
       ),
       /total deadline exceeded/i,
     );
+    await Promise.race([
+      requestClosedPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server request stayed open")), 500)),
+    ]);
+    assert.equal(requestClosed, true);
+    assert.equal(bridge._getActiveStreamCountForTests(), 0);
+  } finally {
+    restore();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("streaming requests do not abort active thinking output at the idle deadline", async () => {
+  let requestClosed = false;
+  let resolveRequestClosed;
+  const requestClosedPromise = new Promise((resolve) => { resolveRequestClosed = resolve; });
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    let n = 0;
+    const interval = setInterval(() => {
+      n += 1;
+      response.write(`data:{"choices":[{"delta":{"reasoning_content":"${n}"}}]}\n`);
+      if (n >= 6) {
+        clearInterval(interval);
+        response.end("data:[DONE]\n\n");
+      }
+    }, 25);
+    response.on("close", () => {
+      clearInterval(interval);
+      requestClosed = true;
+      resolveRequestClosed();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const sentEvents = [];
+  const { bridge, restore } = loadBridgeWithMocks({
+    safeSend: (_sender, channel, payload) => {
+      sentEvents.push({ channel, payload });
+    },
+  });
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() }, session: {} },
+  });
+
+  try {
+    const result = await bridge._streamRequestForTests(
+      `http://127.0.0.1:${address.port}/thinking`,
+      {
+        method: "GET",
+        idleTimeoutMs: 80,
+        totalTimeoutMs: 2_000,
+      },
+      { sender: { id: 1 } },
+      "thinking",
+      false,
+    );
+    assert.equal(result.statusCode, 200);
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        const started = Date.now();
+        const poll = () => {
+          if (sentEvents.some(({ channel }) => channel === "netcatty:ai:stream:end")) {
+            resolve();
+            return;
+          }
+          const errorEvent = sentEvents.find(({ channel }) => channel === "netcatty:ai:stream:error");
+          if (errorEvent) {
+            reject(new Error(errorEvent.payload.error));
+            return;
+          }
+          if (Date.now() - started > 1_500) {
+            reject(new Error("thinking stream never finished"));
+            return;
+          }
+          setTimeout(poll, 10);
+        };
+        poll();
+      }),
+    ]);
+    await Promise.race([
+      requestClosedPromise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("server request stayed open")), 500)),
+    ]);
+    assert.equal(requestClosed, true);
+    assert.equal(bridge._getActiveStreamCountForTests(), 0);
+    assert.equal(
+      sentEvents.some(({ channel }) => channel === "netcatty:ai:stream:error"),
+      false,
+    );
+  } finally {
+    restore();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("streaming requests abort after the idle deadline when no more bytes arrive", async () => {
+  let requestClosed = false;
+  let resolveRequestClosed;
+  const requestClosedPromise = new Promise((resolve) => { resolveRequestClosed = resolve; });
+  const server = http.createServer((_request, response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write('data:{"choices":[{"delta":{"reasoning_content":"start"}}]}\n');
+    response.on("close", () => {
+      requestClosed = true;
+      resolveRequestClosed();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const sentEvents = [];
+  const { bridge, restore } = loadBridgeWithMocks({
+    safeSend: (_sender, channel, payload) => {
+      sentEvents.push({ channel, payload });
+    },
+  });
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() }, session: {} },
+  });
+
+  try {
+    const result = await bridge._streamRequestForTests(
+      `http://127.0.0.1:${address.port}/stalled`,
+      {
+        method: "GET",
+        idleTimeoutMs: 40,
+        totalTimeoutMs: 2_000,
+      },
+      { sender: { id: 1 } },
+      "stalled",
+      false,
+    );
+    assert.equal(result.statusCode, 200);
+    await Promise.race([
+      new Promise((resolve, reject) => {
+        const started = Date.now();
+        const poll = () => {
+          const errorEvent = sentEvents.find(({ channel }) => channel === "netcatty:ai:stream:error");
+          if (errorEvent) {
+            resolve(errorEvent.payload.error);
+            return;
+          }
+          if (Date.now() - started > 1_000) {
+            reject(new Error("stalled stream was not aborted"));
+            return;
+          }
+          setTimeout(poll, 10);
+        };
+        poll();
+      }).then((error) => {
+        assert.match(error, /idle deadline exceeded/i);
+      }),
+    ]);
     await Promise.race([
       requestClosedPromise,
       new Promise((_, reject) => setTimeout(() => reject(new Error("server request stayed open")), 500)),
