@@ -6,19 +6,34 @@ import {
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
+  STORAGE_KEY_HTTP_NETWORK_PROXY,
 } from '../../infrastructure/config/storageKeys';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
+import {
+  normalizeHttpNetworkProxySettings,
+  type HttpNetworkProxySettings,
+} from '../../domain/httpNetworkProxy';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+import {
+  parseWindowOpacityRecord,
+  serializeWindowOpacityRecord,
+  shouldApplyWindowOpacityRecord,
+  shouldBroadcastWindowOpacityChange,
+  type WindowOpacityMutationSource,
+  type WindowOpacityRecord,
+} from './windowOpacitySync';
 
 interface UseSystemSettingsEffectsParams {
   enabled?: boolean;
   toggleWindowHotkey: string;
   globalHotkeyEnabled: boolean;
   closeToTray: boolean;
-  windowOpacity: number;
+  windowOpacityRecord: WindowOpacityRecord;
+  windowOpacityMutationSourceRef: MutableRefObject<WindowOpacityMutationSource>;
   appIconVariant: AppIconVariant;
   autoUpdateEnabled: boolean;
+  httpNetworkProxy: HttpNetworkProxySettings;
   persistMountedRef: MutableRefObject<boolean>;
   setHotkeyRegistrationError: (error: string | null) => void;
   setAutoUpdateEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
@@ -31,9 +46,11 @@ export function useSystemSettingsEffects({
   toggleWindowHotkey,
   globalHotkeyEnabled,
   closeToTray,
-  windowOpacity,
+  windowOpacityRecord,
+  windowOpacityMutationSourceRef,
   appIconVariant,
   autoUpdateEnabled,
+  httpNetworkProxy,
   persistMountedRef,
   setHotkeyRegistrationError,
   setAutoUpdateEnabled,
@@ -45,20 +62,25 @@ export function useSystemSettingsEffects({
   // Persist and sync toggle window hotkey setting
   useEffect(() => {
     if (!enabled) return;
+    let cancelled = false;
+    let didRegister = false;
     // Register/unregister the global hotkey in main process (needed on mount)
     const bridge = netcattyBridge.get();
     if (bridge?.registerGlobalHotkey) {
       if (toggleWindowHotkey && globalHotkeyEnabled) {
         setHotkeyRegistrationError(null);
+        didRegister = true;
         bridge
           .registerGlobalHotkey(toggleWindowHotkey)
           .then((result) => {
+            if (cancelled) return;
             if (result?.success === false) {
               console.warn('[GlobalHotkey] Hotkey registration failed:', result.error);
               setHotkeyRegistrationError(result.error || 'Failed to register hotkey');
             }
           })
           .catch((err) => {
+            if (cancelled) return;
             console.warn('[GlobalHotkey] Failed to register hotkey:', err);
             setHotkeyRegistrationError(err?.message || 'Failed to register hotkey');
           });
@@ -70,9 +92,20 @@ export function useSystemSettingsEffects({
       }
     }
     localStorageAdapter.writeString(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
-    // Skip IPC on initial mount
-    if (!persistMountedRef.current) return;
-    notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    // Skip settings-sync IPC on initial mount; still return cleanup below.
+    if (persistMountedRef.current) {
+      notifySettingsChanged(STORAGE_KEY_TOGGLE_WINDOW_HOTKEY, toggleWindowHotkey);
+    }
+    return () => {
+      cancelled = true;
+      // Drop Mount1's registration before Mount2 re-registers (StrictMode), and
+      // release the accelerator on real unmount / disable transitions.
+      if (didRegister) {
+        bridge?.unregisterGlobalHotkey?.().catch((err) => {
+          console.warn('[GlobalHotkey] Failed to unregister hotkey on cleanup', err);
+        });
+      }
+    };
   }, [
     toggleWindowHotkey,
     enabled,
@@ -106,17 +139,57 @@ export function useSystemSettingsEffects({
     notifySettingsChanged(STORAGE_KEY_CLOSE_TO_TRAY, closeToTray);
   }, [enabled, closeToTray, notifySettingsChanged, persistMountedRef]);
 
+  // Persist and apply app-level HTTP(S) network proxy (cloud sync / AI)
+  useEffect(() => {
+    if (!enabled) return;
+    const normalized = normalizeHttpNetworkProxySettings(httpNetworkProxy);
+    localStorageAdapter.write(STORAGE_KEY_HTTP_NETWORK_PROXY, normalized);
+    const bridge = netcattyBridge.get();
+    if (bridge?.setHttpNetworkProxy) {
+      // Apply to main process; empty custom is treated as system there.
+      // Persist draft custom+empty so the URL field remains visible.
+      bridge.setHttpNetworkProxy(normalized).catch((err) => {
+        console.warn('[NetworkProxy] Failed to apply HTTP network proxy:', err);
+      });
+    }
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_HTTP_NETWORK_PROXY, normalized);
+  }, [enabled, httpNetworkProxy, notifySettingsChanged, persistMountedRef]);
+
   // Persist and sync window opacity
   useEffect(() => {
     if (!enabled) return;
     const bridge = netcattyBridge.get();
-    bridge?.setWindowOpacity?.(windowOpacity).catch((err) => {
+    bridge?.setWindowOpacity?.(windowOpacityRecord.opacity).catch((err) => {
       console.warn('[WindowOpacity] Failed to apply window opacity:', err);
     });
-    localStorageAdapter.writeString(STORAGE_KEY_WINDOW_OPACITY, String(windowOpacity));
-    if (!persistMountedRef.current) return;
-    notifySettingsChanged(STORAGE_KEY_WINDOW_OPACITY, windowOpacity);
-  }, [enabled, windowOpacity, notifySettingsChanged, persistMountedRef]);
+    // Never let a stale effect overwrite a newer revision already on disk.
+    const stored = parseWindowOpacityRecord(
+      localStorageAdapter.readString(STORAGE_KEY_WINDOW_OPACITY),
+    );
+    if (
+      shouldApplyWindowOpacityRecord(stored, windowOpacityRecord)
+      || stored.version === windowOpacityRecord.version
+    ) {
+      localStorageAdapter.writeString(
+        STORAGE_KEY_WINDOW_OPACITY,
+        serializeWindowOpacityRecord(windowOpacityRecord),
+      );
+    }
+    const decision = shouldBroadcastWindowOpacityChange(
+      windowOpacityMutationSourceRef.current,
+      persistMountedRef.current,
+    );
+    windowOpacityMutationSourceRef.current = decision.nextSource;
+    if (!decision.shouldBroadcast) return;
+    notifySettingsChanged(STORAGE_KEY_WINDOW_OPACITY, windowOpacityRecord);
+  }, [
+    enabled,
+    windowOpacityRecord,
+    windowOpacityMutationSourceRef,
+    notifySettingsChanged,
+    persistMountedRef,
+  ]);
 
   // Persist and sync app icon variant
   useEffect(() => {

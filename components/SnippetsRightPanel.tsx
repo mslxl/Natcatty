@@ -3,6 +3,7 @@ import { parseSnippetVariables } from '../domain/snippetVariables';
 import { Check, Clock, Keyboard, Loader2, Package, RotateCcw, Trash2 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import SelectHostPanel from './SelectHostPanel';
+import { SelectGroupDialog } from './SelectGroupDialog';
 import { AsidePanel, AsidePanelContent, AsidePanelFooter } from './ui/aside-panel';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -14,9 +15,13 @@ import { ScriptEditorModal } from './scripts/ScriptEditorModal';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { Combobox } from './ui/combobox';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { HistoryItem } from './SnippetsHistoryItem';
 import type { Snippet } from '@/domain/models';
-import { getRunnableHostsForSnippet } from '@/domain/snippetTargets.ts';
+import {
+  getRunnableHostsForSnippet,
+  resolveSnippetTargetGroupsForSave,
+} from '@/domain/snippetTargets.ts';
 import { STORAGE_KEY_SNIPPETS_PANEL_WIDTH } from '@/infrastructure/config/storageKeys.ts';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -28,7 +33,10 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   customGroups,
   targetSelection,
   setTargetSelection,
+  targetGroupSelection,
+  setTargetGroupSelection,
   handleTargetSelect,
+  handleTargetSelectionChange,
   handleTargetPickerBack,
   availableKeys,
   proxyProfiles,
@@ -69,6 +77,7 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
     [editingSnippet?.command],
   );
   const [scriptEditorModalOpen, setScriptEditorModalOpen] = useState(false);
+  const [groupPickerOpen, setGroupPickerOpen] = useState(false);
   const isEditingScript = isScriptSnippet(editingSnippet as import('../types').Snippet);
   const snippetsPanelResizeProps = {
     resizable: true as const,
@@ -79,8 +88,12 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   const runnableEditingSnippet = useMemo(() => ({
     ...(editingSnippet as Snippet),
     targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
+    targetGroups: resolveSnippetTargetGroupsForSave(
+      editingSnippet,
+      targetGroupSelection,
+    ),
     targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
-  }), [editingSnippet, targetSelection]);
+  }), [editingSnippet, targetGroupSelection, targetSelection]);
 
   const runTargets = useMemo(
     () => getRunnableHostsForSnippet(runnableEditingSnippet, hosts),
@@ -97,10 +110,12 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
   const handleTargetsAllHostsChange = (checked: boolean) => {
     if (checked) {
       setTargetSelection([]);
+      setTargetGroupSelection([]);
       setEditingSnippet({
         ...editingSnippet,
         targetsAllHosts: true,
         targets: [],
+        targetGroups: undefined,
       });
       return;
     }
@@ -118,6 +133,7 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
           selectedHostIds={targetSelection}
           multiSelect={true}
           onSelect={handleTargetSelect}
+          onSelectionChange={handleTargetSelectionChange}
           onBack={handleTargetPickerBack}
           onContinue={handleTargetPickerBack}
           availableKeys={availableKeys}
@@ -134,6 +150,7 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
 
     if (rightPanelMode === 'edit-snippet') {
       return (
+        <>
         <AsidePanel
           open={true}
           onClose={handleClosePanel}
@@ -155,7 +172,6 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
                         const id = editingSnippet.id;
                         if (!id) return;
                         onDelete(id);
-                        handleClosePanel();
                       }}
                       aria-label={t('common.delete')}
                     >
@@ -264,7 +280,9 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
             <SnippetTargetsSection
               t={t}
               targetHosts={targetHosts}
+              targetGroups={isEditingScript ? targetGroupSelection : []}
               onEditTargets={openTargetPicker}
+              onEditGroups={isEditingScript ? () => setGroupPickerOpen(true) : undefined}
               hint={isEditingScript
                 ? (editingSnippet.trigger === 'onConnect'
                   ? t('scripts.targets.connectOrderHint')
@@ -285,6 +303,28 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
               />
               <span className="text-xs text-muted-foreground">{t('snippets.field.noAutoRun')}</span>
             </label>
+
+            <Card className="p-3 space-y-2 bg-card border-border/80">
+              <p className="text-xs font-semibold text-muted-foreground">{t('snippets.field.multiLineRunMode')}</p>
+              <Select
+                value={editingSnippet.multiLineRunMode ?? 'paste'}
+                onValueChange={(value) => setEditingSnippet({
+                  ...editingSnippet,
+                  multiLineRunMode: value === 'lineDelay' ? 'lineDelay' : undefined,
+                })}
+              >
+                <SelectTrigger className="h-10">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="paste">{t('snippets.field.multiLineRunMode.paste')}</SelectItem>
+                  <SelectItem value="lineDelay">{t('snippets.field.multiLineRunMode.lineDelay')}</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {t('snippets.field.multiLineRunModeHint')}
+              </p>
+            </Card>
 
             {/* Shortkey */}
             <Card className="p-3 space-y-2 bg-card border-border/80">
@@ -361,11 +401,30 @@ export const SnippetsRightPanel: React.FC<SnippetsRightPanelProps> = ({
               customGroups={customGroups}
               selectedHostIds={targetSelection}
               onSelectHost={handleTargetSelect}
+              onSelectionChange={handleTargetSelectionChange}
+              selectedGroupPaths={targetGroupSelection}
+              onGroupSelectionChange={setTargetGroupSelection}
               targetsAllHosts={Boolean(editingSnippet.targetsAllHosts)}
               onTargetsAllHostsChange={handleTargetsAllHostsChange}
             />
           ) : null}
         </AsidePanel>
+        <SelectGroupDialog
+          open={groupPickerOpen}
+          onOpenChange={setGroupPickerOpen}
+          hosts={hosts}
+          customGroups={customGroups}
+          selectedGroupPaths={targetGroupSelection}
+          onSelectionChange={(nextGroups) => {
+            setTargetGroupSelection(nextGroups);
+            setEditingSnippet({
+              ...editingSnippet,
+              targetGroups: nextGroups,
+              targetsAllHosts: undefined,
+            });
+          }}
+        />
+        </>
       );
     }
 

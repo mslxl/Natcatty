@@ -38,6 +38,17 @@ function stripAnsi(input) {
   return String(input || "").replace(ANSI_OSC_REGEX, "").replace(ANSI_ESCAPE_REGEX, "");
 }
 
+// ── Synthetic command echo ──
+//
+// The agent's typed command is not echoed by the PTY as-is (the wrapper
+// line is filtered out in preload), so exec bridges emit a synthetic echo
+// for the user to see. xterm.js treats a bare \n as "move down, keep
+// column", which renders multi-line commands as a staircase. Normalize
+// every line break to \r\n so each line starts at column 0.
+function formatSyntheticEcho(command) {
+  return `${String(command ?? "").replace(/\r?\n/g, "\r\n")}\r\n`;
+}
+
 // Default PowerShell prompt (e.g. `PS C:\Users\alice>`, `PS>`,
 // `PS /home/alice>`). Anchored so command output that merely starts with
 // `PS` (e.g. `PSO>`) doesn't match. The `\S` after `\s+` rejects literal
@@ -45,8 +56,26 @@ function stripAnsi(input) {
 // such a line can't trick prompt-driven shell-kind selection.
 const POWERSHELL_PROMPT_PATTERN = /^PS(?:\s+\S.*)?>$/;
 
+// Default cmd.exe prompt (e.g. `C:\>`, `C:\Users\alice>`, `D:\data>`).
+// Drive letter + optional path + `>`. Rejects `C: >` (space before `>`) and
+// PowerShell's `PS C:\...>` (handled by POWERSHELL_PROMPT_PATTERN first).
+const CMD_PROMPT_PATTERN = /^[A-Za-z]:(?:\\[^<>"|]*)?>$/;
+
+// Classic `user@host:...$` / `user@host:...#` login prompt (bash/zsh in WSL,
+// remote Linux, etc.). Intentionally narrow so custom / fish prompts do not
+// flip a Windows DefaultShell soft hint.
+const POSIX_PROMPT_PATTERN = /^[^\s@]+@[^\s:]+(?::[^\n\r]*)?[#$]$/;
+
 function isDefaultPowerShellPromptLine(line) {
   return POWERSHELL_PROMPT_PATTERN.test(String(line || ""));
+}
+
+function isDefaultCmdPromptLine(line) {
+  return CMD_PROMPT_PATTERN.test(String(line || "").replace(/\s+$/, ""));
+}
+
+function isDefaultPosixPromptLine(line) {
+  return POSIX_PROMPT_PATTERN.test(String(line || "").replace(/\s+$/, ""));
 }
 
 function extractTrailingIdlePrompt(output) {
@@ -65,7 +94,11 @@ function extractTrailingIdlePrompt(output) {
     return lastLine;
   }
 
-  if (/^[^\s@]+@[^\s:]+(?::[^\n\r]*)?[#$]$/.test(rightTrimmed)) {
+  if (isDefaultPosixPromptLine(rightTrimmed)) {
+    return lastLine;
+  }
+
+  if (isDefaultCmdPromptLine(rightTrimmed)) {
     return lastLine;
   }
 
@@ -115,8 +148,8 @@ function trackSessionIdlePrompt(session, chunk) {
 
 // Return `session.lastIdlePrompt` only if the PTY's recent rolling tail
 // still ends with it. The cached prompt is updated only when
-// extractTrailingIdlePrompt recognizes a known shape (PowerShell or
-// `user@host[:path][#$]`); a remote shell switch into cmd.exe, an
+// extractTrailingIdlePrompt recognizes a known shape (PowerShell, cmd.exe,
+// or `user@host[:path][#$]`); a remote shell switch into another shell, an
 // oh-my-posh / starship / custom PS1, or any unrecognized prompt would
 // otherwise leave a stale value behind, which `resolveEffectiveShellKind`
 // would then keep using to coerce future commands into a PowerShell
@@ -239,15 +272,19 @@ function resolveWindowsShimToNativeExe(command, platform = process.platform) {
   return null;
 }
 
-function prepareCommandForSpawn(command, args) {
+function prepareCommandForSpawn(command, args, options = {}) {
   const spawnArgs = Array.isArray(args) ? args : [];
   if (!shouldUseShellForCommand(command)) {
     return { command, args: spawnArgs, shell: false };
   }
 
-  const nativeExePath = resolveWindowsShimToNativeExe(command);
-  if (nativeExePath) {
-    return { command: nativeExePath, args: spawnArgs, shell: false };
+  // Cursor's Windows installer .cmd launches node.exe + index.js. Unwrapping
+  // to the first quoted .exe would drop the script and run node with CLI args.
+  if (options.unwrapNativeExe !== false) {
+    const nativeExePath = resolveWindowsShimToNativeExe(command);
+    if (nativeExePath) {
+      return { command: nativeExePath, args: spawnArgs, shell: false };
+    }
   }
 
   return {
@@ -338,6 +375,74 @@ function resolveCodexNativeExecutableWin32(moduleSearchDirs, arch = process.arch
   return null;
 }
 
+function getNvmdHomeFromShimDir(shimDir) {
+  const normalized = String(shimDir || "").trim();
+  if (!normalized) return null;
+  if (path.basename(normalized).toLowerCase() !== "bin") return null;
+  const home = path.dirname(normalized);
+  // nvm-desktop / nvmd-command layout: $NVMD_HOME/{bin,versions,default,packages.json}
+  if (
+    existsSync(path.join(home, "versions")) ||
+    existsSync(path.join(home, "packages.json")) ||
+    existsSync(path.join(home, "default"))
+  ) {
+    return home;
+  }
+  return null;
+}
+
+function readNvmdDefaultVersion(nvmdHome) {
+  try {
+    const raw = readFileSync(path.join(nvmdHome, "default"), "utf8").trim();
+    return raw || null;
+  } catch {
+    return null;
+  }
+}
+
+function readNvmdPackageVersions(nvmdHome, packageBinName) {
+  try {
+    const raw = readFileSync(path.join(nvmdHome, "packages.json"), "utf8");
+    const data = JSON.parse(raw);
+    const versions = data && data[packageBinName];
+    if (!Array.isArray(versions)) return [];
+    return versions.map((v) => String(v || "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function getNvmdVersionsDirectory(nvmdHome) {
+  try {
+    const raw = readFileSync(path.join(nvmdHome, "setting.json"), "utf8");
+    const data = JSON.parse(raw);
+    const custom = data && typeof data.directory === "string" ? data.directory.trim() : "";
+    if (custom) return custom;
+  } catch {
+    // Fall back to the default versions/ directory.
+  }
+  return path.join(nvmdHome, "versions");
+}
+
+function getNvmdCodexVersionRoots(nvmdHome) {
+  if (!nvmdHome) return [];
+  const versionsDir = getNvmdVersionsDirectory(nvmdHome);
+  const candidates = [
+    ...readNvmdPackageVersions(nvmdHome, "codex").reverse(),
+    readNvmdDefaultVersion(nvmdHome),
+  ].filter(Boolean);
+
+  const roots = [];
+  const seen = new Set();
+  for (const version of candidates) {
+    const root = path.join(versionsDir, version);
+    if (seen.has(root) || !existsSync(root)) continue;
+    seen.add(root);
+    roots.push(root);
+  }
+  return roots;
+}
+
 function getCodexNativeSearchDirsForShim(shimDir) {
   const dirs = [shimDir];
   const parentDir = path.dirname(shimDir);
@@ -348,6 +453,17 @@ function getCodexNativeSearchDirsForShim(shimDir) {
     dirs.push(path.dirname(parentDir));
   }
   dirs.push(path.join(shimDir, "node_modules", "@openai", "codex"));
+
+  // nvm-desktop installs global CLIs under $NVMD_HOME/versions/<ver>/, while
+  // $NVMD_HOME/bin/codex{.cmd,.exe} are only nvmd router shims. Expand search
+  // into the active/recorded Node version roots so the SDK can spawn the real
+  // native codex.exe (codexPathOverride) instead of falling back to bundled
+  // optional deps that Netcatty deliberately does not ship.
+  const nvmdHome = getNvmdHomeFromShimDir(shimDir);
+  for (const versionRoot of getNvmdCodexVersionRoots(nvmdHome)) {
+    dirs.push(versionRoot);
+    dirs.push(path.join(versionRoot, "node_modules", "@openai", "codex"));
+  }
   return dirs;
 }
 
@@ -400,10 +516,19 @@ function resolveCodexExecutableForSdk(codexExecutablePath, platform = process.pl
   if (platform !== "win32") return normalized;
 
   const ext = path.extname(normalized).toLowerCase();
-  if (ext === ".exe") return normalized;
-
   const baseDir = path.dirname(normalized);
   const moduleSearchDirs = getCodexNativeSearchDirsForShim(baseDir);
+  const nvmdHome = getNvmdHomeFromShimDir(baseDir);
+
+  // nvmd's Windows package shim is a copy of nvmd.exe named codex.exe. Prefer
+  // the real native binary under versions/<ver>/ when that layout is present.
+  if (ext === ".exe") {
+    if (nvmdHome) {
+      const nativeExe = resolveCodexNativeExecutableWin32(moduleSearchDirs);
+      if (nativeExe) return nativeExe;
+    }
+    return normalized;
+  }
 
   if (ext === ".js" && /[\\/]codex\.js$/i.test(normalized)) {
     const codexPackageRoot = path.dirname(path.dirname(normalized));
@@ -838,9 +963,12 @@ function invalidateShellEnvCache() {
 
 module.exports = {
   stripAnsi,
+  formatSyntheticEcho,
   extractTrailingIdlePrompt,
   getFreshIdlePrompt,
   isDefaultPowerShellPromptLine,
+  isDefaultCmdPromptLine,
+  isDefaultPosixPromptLine,
   trackSessionIdlePrompt,
   looksLikeIdleAutoLogout,
   isLocalhostHostname,

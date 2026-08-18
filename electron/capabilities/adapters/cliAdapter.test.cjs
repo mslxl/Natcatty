@@ -18,6 +18,7 @@ function fakeCreateError(code, message) {
 
 test("getCliRpcMethod resolves implemented cli commands to rpc methods", () => {
   assert.equal(getCliRpcMethod(["exec"]), "netcatty/exec");
+  assert.equal(getCliRpcMethod(["attachment", "read"]), "netcatty/readAttachment");
   assert.equal(getCliRpcMethod(["sftp", "list"]), "netcatty/sftp/list");
   assert.equal(getCliRpcMethod(["vault", "host", "get"]), "vault/host/get");
   assert.equal(getCliRpcMethod(["portforward", "rules", "list"]), "portforward/rules/list");
@@ -27,6 +28,8 @@ test("getCliRpcMethod resolves implemented cli commands to rpc methods", () => {
 test("listCliCapabilities returns implemented commands by default", () => {
   const entries = listCliCapabilities();
   assert.ok(entries.some((entry) => entry.id === "terminal.execute"));
+  assert.ok(entries.some((entry) => entry.id === "attachment.list"));
+  assert.ok(entries.some((entry) => entry.id === "attachment.read"));
   assert.ok(entries.some((entry) => entry.id === "vault.host.get"));
   assert.ok(entries.every((entry) => entry.status === CAPABILITY_STATUS.IMPLEMENTED));
   assert.ok(entries.every((entry) => entry.rpcMethod));
@@ -42,6 +45,15 @@ test("buildCatalogCliParams maps vault host get flags", () => {
   assert.deepEqual(params, { hostId: "host-1" });
 });
 
+test("buildCatalogCliParams maps attachment filename", () => {
+  const params = buildCatalogCliParams(
+    "attachment.read",
+    { filename: "hosts.csv" },
+    fakeCreateError,
+  );
+  assert.deepEqual(params, { filename: "hosts.csv" });
+});
+
 test("buildCatalogCliParams parses snippet variables JSON", () => {
   const params = buildCatalogCliParams("vault.snippets.run", {
     snippetId: "snip-1",
@@ -51,6 +63,24 @@ test("buildCatalogCliParams parses snippet variables JSON", () => {
   assert.equal(params.snippetId, "snip-1");
   assert.equal(params.sessionId, "sess-1");
   assert.deepEqual(params.variables, { name: "prod" });
+});
+
+test("buildCatalogCliParams maps snippet multi-line run mode", () => {
+  const params = buildCatalogCliParams("vault.snippets.create", {
+    label: "login",
+    content: "user\npass",
+    multiLineRunMode: "lineDelay",
+  }, fakeCreateError);
+  assert.equal(params.multiLineRunMode, "lineDelay");
+});
+
+test("buildCatalogCliParams maps dynamic script group targets", () => {
+  const params = buildCatalogCliParams("vault.scripts.targets.set", {
+    scriptId: "script-1",
+    targetGroups: '["Production","Staging/Web"]',
+  }, fakeCreateError);
+  assert.equal(params.scriptId, "script-1");
+  assert.equal(params.targetGroups, '["Production","Staging/Web"]');
 });
 
 test("buildCatalogCliParams throws for missing required fields", () => {

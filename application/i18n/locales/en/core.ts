@@ -40,6 +40,14 @@ export const enCoreMessages: Messages = {
   'common.left': 'Left',
   'common.right': 'Right',
   'common.more': 'More',
+  // Dense toolbar customize (show / collapse / hide)
+  'toolbar.layout.customize': 'Customize toolbar',
+  'toolbar.layout.show': 'Show',
+  'toolbar.layout.collapse': 'Collapse',
+  'toolbar.layout.hide': 'Hide',
+  'toolbar.layout.moveEarlier': 'Move earlier',
+  'toolbar.layout.moveLater': 'Move later',
+  'toolbar.layout.reset': 'Reset to default',
   'common.selectAHost': 'Select a host',
   'common.selectAHostPlaceholder': 'Select a host...',
   'sort.manual': 'Manual order',
@@ -104,8 +112,12 @@ export const enCoreMessages: Messages = {
   'settings.tab.appearance': 'Appearance',
   'settings.tab.terminal': 'Terminal',
   'settings.tab.shortcuts': 'Shortcuts',
+  'settings.tab.ai': 'AI',
   'settings.tab.syncCloud': 'Sync & Cloud',
   'settings.tab.system': 'System',
+  'settings.search.open': 'Search settings',
+  'settings.search.placeholder': 'Search settings…',
+  'settings.search.noResults': 'No matching settings',
 
   // Settings > System
   'settings.system.title': 'System',
@@ -182,6 +194,21 @@ export const enCoreMessages: Messages = {
   'settings.appLock.validation.mismatch': 'The new passwords do not match.',
   'settings.appLock.validation.incorrect': 'The current lock password is incorrect.',
 
+  // Settings > System > Network Proxy
+  'settings.system.networkProxy.title': 'Network Proxy',
+  'settings.system.networkProxy.description': 'HTTP(S) proxy for cloud sync and AI providers. This is separate from SSH ProxyJump / ProxyCommand profiles.',
+  'settings.system.networkProxy.mode': 'Proxy mode',
+  'settings.system.networkProxy.mode.system': 'Use system proxy',
+  'settings.system.networkProxy.mode.direct': 'Direct (no proxy)',
+  'settings.system.networkProxy.mode.custom': 'Custom proxy',
+  'settings.system.networkProxy.url': 'Proxy URL',
+  'settings.system.networkProxy.url.placeholder': 'http://127.0.0.1:7890',
+  'settings.system.networkProxy.url.desc': 'Supports http://, https://, and socks5:// host:port URLs. Proxy credentials in the URL are not supported.',
+  'settings.system.networkProxy.bypass': 'Bypass list',
+  'settings.system.networkProxy.bypass.placeholder': '<local>,localhost,127.0.0.1',
+  'settings.system.networkProxy.bypass.desc': 'Comma-separated hosts that skip the proxy. Use <local> for loopback and LAN names.',
+  'settings.system.networkProxy.hint': 'Affects Google Drive / OneDrive / GitHub sync login and AI provider requests. Does not change SSH connections.',
+
   // Settings > System > Crash Logs
   'settings.system.crashLogs.title': 'Crash Logs',
   'settings.system.crashLogs.description': 'View error logs from the main process to help diagnose unexpected behavior.',
@@ -222,6 +249,10 @@ export const enCoreMessages: Messages = {
 
   // Settings > Session Restore
   'settings.sessionRestore.title': 'Session Restore',
+  'settings.sessionRestore.startupLanding': 'On launch',
+  'settings.sessionRestore.startupLandingDesc': 'Choose whether to open the host home page or a local terminal when Netcatty starts with no restored sessions.',
+  'settings.sessionRestore.startupLanding.vault': 'Home (hosts)',
+  'settings.sessionRestore.startupLanding.localTerminal': 'Local terminal',
   'settings.sessionRestore.restorePreviousSession': 'Restore previous tabs and workspaces',
   'settings.sessionRestore.restorePreviousSessionDesc': 'Reopen terminal tabs and workspace layouts from the last app session.',
   'settings.sessionRestore.restoreTerminalCwd': 'Restore terminal working directory',
@@ -250,6 +281,9 @@ export const enCoreMessages: Messages = {
   'settings.sessionLogs.timestamps': 'Add timestamps',
   'settings.sessionLogs.timestampsDesc': 'Prefix each line in plain text and HTML logs with the local time.',
   'settings.sessionLogs.hint': 'Session logs capture all terminal output for troubleshooting and auditing purposes.',
+  'settings.sessionLogs.clearAll': 'Clear all logs',
+  'settings.sessionLogs.clearAllDesc': 'Delete all saved session log files and host subdirectories from the save directory.',
+  'settings.sessionLogs.clearConfirm': 'This will permanently delete all session log files in the save directory. This cannot be undone. Continue?',
 
   // Settings > SSH Debug Logs
   'settings.sshDebugLogs.title': 'SSH Debug Logs',
@@ -284,10 +318,12 @@ export const enCoreMessages: Messages = {
   'tray.status.active': 'Active',
   'tray.status.inactive': 'Inactive',
   'tray.status.error': 'Error',
+  'tray.status.unknown': 'Unknown',
   'tray.recentHosts': 'Recent Hosts',
   'tray.empty.title': 'Nothing here yet',
   'tray.empty.subtitle': 'Go connect to a server, they miss you 🚀',
   'tray.quit': 'Quit Netcatty',
+  'tray.closeSession': 'Close session',
 
   // Vault Sidebar
   'vault.sidebar.collapse': 'Collapse sidebar',
@@ -309,12 +345,16 @@ export const enCoreMessages: Messages = {
   'settings.vault.title': 'Vault',
   'settings.vault.showRecentHosts': 'Show recently connected hosts',
   'settings.vault.showRecentHostsDesc': 'Display a section of recently connected hosts at the top of the vault',
+  'settings.vault.selectBeforeConnect': 'Select host before connecting',
+  'settings.vault.selectBeforeConnectDesc': 'Click once to select a host (accent highlight in grid view), click again to connect. Groups work the same way. Default remains single-click connect.',
   'settings.vault.showOnlyUngroupedHostsInRoot': 'Only show ungrouped hosts at root',
   'settings.vault.showOnlyUngroupedHostsInRootDesc': 'When enabled, the root host list only shows hosts without a group. Open a group from the sidebar to see grouped hosts.',
   'settings.vault.showSftpTab': 'Show SFTP tab',
   'settings.vault.showSftpTabDesc': 'Display the standalone SFTP view in the top tab bar. When hidden, use the in-session SFTP side panel instead.',
   'settings.vault.showHostTreeSidebar': 'Show host list sidebar',
   'settings.vault.showHostTreeSidebarDesc': 'Display the host list sidebar and its top-bar toggle on terminal and editor tabs.',
+  'settings.vault.autoImportSystemKnownHosts': 'Auto-import system known_hosts',
+  'settings.vault.autoImportSystemKnownHostsDesc': 'When Vault loads, silently import entries from the OpenSSH known_hosts file. Turn this off to keep Netcatty known hosts separate; Scan System still imports on demand.',
 
   // Update notifications
   'update.available.title': 'Update Available',
@@ -354,7 +394,125 @@ export const enCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': 'Dark palette',
   'settings.appearance.customCss': 'Custom CSS',
   'settings.appearance.customCss.desc':
-    'Add custom CSS to personalize the app appearance. Changes apply immediately. Major UI regions expose a [data-section="..."] attribute you can target — e.g. snippets-panel, host-details-panel, group-details-panel, serial-host-details-panel, ai-chat-panel, vault-sidebar, vault-main, vault-hosts-header, vault-host-list, vault-view, terminal-workspace, terminal-workspace-sidebar (focus-mode terminal list), terminal-host-tree-sidebar, terminal-host-tree-sidebar-content, terminal-host-tree-sidebar-row, terminal-side-panel (SFTP/Scripts/Theme/AI panel, available while open), terminal-side-panel-tabs, terminal-side-panel-content, terminal-sftp-panel, terminal-sftp-host-header, terminal-sftp-pane, terminal-sftp-toolbar, terminal-sftp-path, terminal-sftp-filter-bar, terminal-sftp-list, terminal-sftp-list-header, terminal-sftp-list-row, terminal-sftp-tree, terminal-sftp-tree-row, terminal-sftp-transfer-queue, terminal-sftp-transfer-row, terminal-split-pane, terminal-split-resizer, top-tabs, top-tabs-host-tree-toggle, top-tabs-quick-switcher-toggle.',
+    'Add custom CSS to personalize the app appearance. Changes apply immediately.',
+  'settings.appearance.customCss.help.ariaLabel': 'Custom CSS help',
+  'settings.appearance.customCss.help.title': 'Custom CSS guide',
+  'settings.appearance.customCss.help.body': `Major UI regions expose a \`data-section\` attribute you can target. Changes apply as soon as you edit the CSS.
+
+### How to select
+
+Use attribute selectors:
+
+\`\`\`css
+[data-section="terminal-side-panel"] {
+  border: 2px solid #00c851 !important;
+  border-radius: 6px !important;
+}
+\`\`\`
+
+Some rows and panes also support state hooks such as \`[data-selected="true"]\` or \`[data-focused="true"]\`.
+
+Because many styles come from Tailwind utilities, you often need \`!important\` to override them.
+
+### Top tabs
+
+- \`top-tabs\`
+- \`top-tabs-toolbar-actions\` — Right-side menu and utility toolbar
+- \`top-tabs-host-tree-toggle\`
+- \`top-tabs-quick-switcher-toggle\`
+
+### Vault
+
+- \`vault-view\`
+- \`vault-sidebar\`
+- \`vault-main\`
+- \`vault-hosts-header\`
+- \`vault-host-list\`
+
+### Terminal workspace
+
+- \`terminal-workspace\`
+- \`terminal-toolbar\` — Terminal action toolbar
+- \`terminal-toolbar-menu\` — Terminal toolbar overflow and submenu
+- \`terminal-workspace-sidebar\` — Focus-mode terminal list
+- \`terminal-host-tree-sidebar\`
+- \`terminal-host-tree-sidebar-content\`
+- \`terminal-host-tree-sidebar-row\`
+- \`terminal-split-pane\`
+- \`terminal-split-resizer\`
+
+### Terminal side panel
+
+- \`terminal-side-panel\` — SFTP / Scripts / Theme / AI panel (only present while open)
+- \`terminal-side-panel-tabs\`
+- \`terminal-side-panel-content\`
+
+### SFTP
+
+- \`terminal-sftp-panel\`
+- \`terminal-sftp-host-header\`
+- \`terminal-sftp-pane\`
+- \`terminal-sftp-toolbar\`
+- \`terminal-sftp-path\`
+- \`terminal-sftp-filter-bar\`
+- \`terminal-sftp-list\`
+- \`terminal-sftp-list-header\`
+- \`terminal-sftp-list-row\`
+- \`terminal-sftp-tree\`
+- \`terminal-sftp-tree-row\`
+- \`terminal-sftp-transfer-queue\`
+- \`terminal-sftp-transfer-row\`
+
+### Detail / tool panels
+
+- \`snippets-panel\`
+- \`host-details-panel\`
+- \`group-details-panel\`
+- \`serial-host-details-panel\`
+- \`ai-chat-panel\`
+
+### Examples
+
+Increase menu and toolbar icon sizes:
+
+\`\`\`css
+[data-section="top-tabs-toolbar-actions"] button > svg,
+[data-section="terminal-toolbar"] button > svg,
+[data-section="terminal-toolbar-menu"] button > svg,
+[data-section="terminal-toolbar"] button [data-plugin-icon-kind="package"] {
+  width: 20px !important;
+  height: 20px !important;
+}
+\`\`\`
+
+Hide the host-list toggle in the top tab bar:
+
+\`\`\`css
+[data-section="top-tabs-host-tree-toggle"] {
+  width: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+\`\`\`
+
+Style selected SFTP file rows:
+
+\`\`\`css
+[data-section="terminal-sftp-list-row"][data-selected="true"] {
+  background-color: #00c851 !important;
+  color: #001b10 !important;
+}
+\`\`\`
+
+Highlight the focused split pane:
+
+\`\`\`css
+[data-section="terminal-split-pane"][data-focused="true"] {
+  outline: 2px solid hsl(var(--primary)) !important;
+  outline-offset: -2px;
+}
+\`\`\`
+`,
   'settings.appearance.customCss.placeholder':
     '/* Examples — use !important to beat Tailwind utility specificity */\n\n/* Hide the host-list toggle in the top tab bar */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* Hide the plus button that opens the quick switcher */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* Border around the SFTP / side panel (does not linger after closing) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Change the whole side panel background, not only the top tabs */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* Style selected SFTP file rows */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* Thicker split dividers */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Highlight the focused split pane */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* Or use Settings → Terminal → Workspace Focus Indicator → Border on focused pane */',
   'settings.appearance.language': 'Language',
@@ -413,6 +571,16 @@ export const enCoreMessages: Messages = {
   'settings.terminal.font.cjk.option.lxgwWenkai': 'LXGW WenKai Mono',
   'settings.terminal.font.cjk.option.simSun': 'SimSun',
   'settings.terminal.font.cjk.option.legacy': '{font} · not recommended (proportional font)',
+  'settings.terminal.font.cjk.option.recommended': 'Recommended for terminal alignment',
+  'settings.terminal.font.cjk.option.installed': 'Installed font',
+  'settings.terminal.font.cjk.option.unverified': 'Availability could not be checked',
+  'settings.terminal.font.cjk.option.unavailable': 'Not installed on this device',
+  'settings.terminal.font.cjk.searchPlaceholder': 'Search installed fonts…',
+  'settings.terminal.font.cjk.empty': 'No matching installed fonts',
+  'settings.terminal.font.cjk.useCustom': 'Use font',
+  'settings.terminal.font.cjk.refresh': 'Refresh installed fonts',
+  'settings.terminal.font.cjk.alignmentWarning': 'This font is not verified as monospaced. Check the preview for column alignment.',
+  'settings.terminal.font.cjk.unavailableWarning': 'This font is not installed on this device. Netcatty will keep the setting and use a safe fallback.',
   'settings.terminal.font.size': 'Font size',
   'settings.terminal.font.size.desc': 'Terminal text size',
   'settings.terminal.font.weight': 'Font weight',
@@ -438,12 +606,18 @@ export const enCoreMessages: Messages = {
   'settings.terminal.cursor.style.bar': 'Bar',
   'settings.terminal.cursor.style.underline': 'Underline',
   'settings.terminal.cursor.blink': 'Cursor blink',
+  'settings.terminal.cursor.highlightLine': 'Highlight current line',
+  'settings.terminal.cursor.highlightLine.desc':
+    'Shade the row under the cursor so the active line is easier to find',
   'settings.terminal.keyboard.altAsMeta': 'Use Option as Meta key',
   'settings.terminal.keyboard.altAsMeta.desc':
     'Use Option (Alt) as the Meta key instead of for special characters',
   'settings.terminal.keyboard.optionArrowWordJump': 'Option+←/→ jumps by word',
   'settings.terminal.keyboard.optionArrowWordJump.desc':
     'Send Meta-b / Meta-f on Option+Left/Right so the shell moves by word, instead of the default ^[[1;3D / ^[[1;3C',
+  'settings.terminal.keyboard.kittyProtocol': 'Kitty keyboard protocol',
+  'settings.terminal.keyboard.kittyProtocol.desc':
+    'Enable Kitty keyboard protocol support.',
   'settings.terminal.accessibility.minimumContrastRatio': 'Minimum contrast ratio',
   'settings.terminal.sidePanel.autoOpen': 'Open side panel with terminal',
   'settings.terminal.sidePanel.autoOpen.desc': 'Automatically open a side panel when a terminal connects.',
@@ -460,11 +634,20 @@ export const enCoreMessages: Messages = {
     'Adjust colors to meet contrast requirements (1 = disabled, 21 = max)',
   'settings.terminal.behavior.rightClick': 'Right-click behavior',
   'settings.terminal.behavior.rightClick.desc': 'Action when right-clicking in terminal',
+  'settings.terminal.behavior.rightClick.fullscreenMenu': 'Show menu over fullscreen apps',
+  'settings.terminal.behavior.rightClick.fullscreenMenu.desc':
+    'Show the context menu even when tmux, vim or other fullscreen apps take over the mouse. When off, right-click is passed to the app (Shift+Right-Click still opens the menu).',
+  'settings.terminal.behavior.autoCloseOnExit': 'Auto-close terminal on exit',
+  'settings.terminal.behavior.autoCloseOnExit.desc':
+    'Allow terminal tabs and windows to close automatically after session exit. Turn this off to keep them open after every exit.',
   'settings.terminal.behavior.rightClick.menu': 'Show menu',
   'settings.terminal.behavior.rightClick.paste': 'Paste',
   'settings.terminal.behavior.rightClick.selectWord': 'Select word',
   'settings.terminal.behavior.copyOnSelect': 'Copy on select',
   'settings.terminal.behavior.copyOnSelect.desc': 'Automatically copy selected text. In tmux/vim with mouse mode, hold Option on macOS or Shift on Windows/Linux to select',
+  'settings.terminal.behavior.normalizeTextOnCopy': 'Normalize terminal text on copy',
+  'settings.terminal.behavior.normalizeTextOnCopy.desc':
+    'When copying from the terminal, strip display-only trailing padding and join soft-wrapped rows so pasted text matches logical output. Turn off to copy the raw screen selection (including TUI padding and visual wraps).',
   'settings.terminal.behavior.middleClickPaste': 'Middle-click paste',
   'settings.terminal.behavior.middleClickPaste.desc':
     'Paste clipboard content on middle-click',
@@ -473,9 +656,21 @@ export const enCoreMessages: Messages = {
   'settings.terminal.behavior.middleClick.menu': 'Show menu',
   'settings.terminal.behavior.middleClick.paste': 'Paste',
   'settings.terminal.behavior.middleClick.disabled': 'Do nothing',
+  'settings.terminal.behavior.wordSeparators': 'Word separators',
+  'settings.terminal.behavior.wordSeparators.desc':
+    'Characters treated as word boundaries for double-click selection. Spaces count too; add =, comma, or : for strings like uid=name.',
   'settings.terminal.behavior.bracketedPaste': 'Bracketed paste mode',
   'settings.terminal.behavior.bracketedPaste.desc':
     'Wrap pasted text with escape sequences so the shell can distinguish paste from typed input. Disable if you see ^[[200~ artifacts.',
+  'settings.terminal.behavior.autoUploadClipboardImage': 'Auto-upload clipboard images on paste',
+  'settings.terminal.behavior.autoUploadClipboardImage.desc':
+    'When the clipboard holds an image, pasting in a remote session uploads it via SFTP to .netcatty-paste-images/ under the remote working directory and inserts the remote path instead of pasting text.',
+  'settings.terminal.behavior.shiftEnterNewline': 'Shift+Enter text',
+  'settings.terminal.behavior.shiftEnterNewline.desc':
+    'Send configured text instead of normal Enter when pressing Shift+Enter in the terminal.',
+  'settings.terminal.behavior.shiftEnterNewlineText': 'Text to send',
+  'settings.terminal.behavior.shiftEnterNewlineText.desc':
+    'Use \\n for newline, \\t for tab, and \\\\ for backslash.',
   'settings.terminal.behavior.clearWipesScrollback': '`clear` wipes scrollback',
   'settings.terminal.behavior.clearWipesScrollback.desc':
     'Make `clear` also wipe the scrollback buffer (POSIX default). Disable to keep history visible after `clear`.',
@@ -487,10 +682,16 @@ export const enCoreMessages: Messages = {
     'When the final line of command output is not terminated by a newline, move the recognized shell prompt to the next visual line.',
   'settings.terminal.behavior.dynamicTabTitle': 'Dynamic tab title',
   'settings.terminal.behavior.dynamicTabTitle.desc':
-    'Choose when session tabs should follow shell-reported window titles.',
+    'Choose when session tabs should follow shell-reported window titles and update coding-CLI icons. Disabled also stops live icon detection.',
   'settings.terminal.behavior.dynamicTabTitle.off': 'Disabled',
   'settings.terminal.behavior.dynamicTabTitle.agent': 'Agents only',
   'settings.terminal.behavior.dynamicTabTitle.all': 'All sessions',
+  'settings.terminal.behavior.oscNotifications': 'OSC desktop notifications',
+  'settings.terminal.behavior.oscNotifications.desc':
+    'Show a system notification when a program emits OSC 9, OSC 777 notify, or kitty OSC 99. Used by Codex and other agents for turn-complete and approval alerts.',
+  'settings.terminal.behavior.oscNotifications.off': 'Disabled',
+  'settings.terminal.behavior.oscNotifications.unfocused': 'When unfocused',
+  'settings.terminal.behavior.oscNotifications.always': 'Always',
   'settings.terminal.behavior.osc52Clipboard': 'OSC-52 clipboard',
   'settings.terminal.behavior.osc52Clipboard.desc':
     'Allow remote programs (tmux, vim, etc.) to access the local clipboard via OSC-52 escape sequences.',
@@ -564,6 +765,8 @@ export const enCoreMessages: Messages = {
   'settings.terminal.section.connection': 'Connection',
   'settings.terminal.connection.verifyHostKeys': 'Verify SSH host keys',
   'settings.terminal.connection.verifyHostKeys.desc': 'Ask before connecting to a new or changed SSH host key. Turn this off only for trusted private networks.',
+  'settings.terminal.connection.sshAutoReconnectEnabled': 'Automatically reconnect SSH sessions',
+  'settings.terminal.connection.sshAutoReconnectEnabled.desc': 'When turned on, established SSH sessions that drop unexpectedly try to reconnect every 5 seconds until the tab is closed or the connection succeeds.',
   'settings.terminal.connection.keepaliveInterval': 'Keepalive Interval',
   'settings.terminal.connection.keepaliveInterval.desc': 'How often (in seconds) to send SSH-level keepalive packets. Set to 0 to disable globally — note that individual hosts can override this in their own settings.',
   'settings.terminal.connection.keepaliveCountMax': 'Max unanswered keepalives',
@@ -572,6 +775,12 @@ export const enCoreMessages: Messages = {
   'settings.terminal.connection.x11Display.desc': 'Optional local display address for X11 forwarding. Leave empty to use the system default.',
   'settings.terminal.connection.x11Display.placeholder': 'Auto (:0 or DISPLAY)',
   'settings.terminal.section.serverStats': 'Server Stats (Linux)',
+  'settings.terminal.hostInfoBar.show': 'Show host information bar',
+  'settings.terminal.hostInfoBar.show.desc': 'Show the host address and server information above the terminal. Action buttons remain available when hidden.',
+  'settings.terminal.hostInfoBar.titleMode': 'Host information title',
+  'settings.terminal.hostInfoBar.titleMode.desc': 'Choose whether the bar shows the connection address (user@host) or the vault host label.',
+  'settings.terminal.hostInfoBar.titleMode.address': 'Connection address',
+  'settings.terminal.hostInfoBar.titleMode.label': 'Host label',
   'settings.terminal.section.systemManager': 'System Manager',
   'settings.terminal.systemManager.processRefreshInterval': 'Process list refresh',
   'settings.terminal.systemManager.processRefreshInterval.desc': 'How often to refresh the process list in the system manager side panel.',
@@ -605,6 +814,26 @@ export const enCoreMessages: Messages = {
   'settings.terminal.rendering.hibernatePreferWasmSerialize': 'Prefer WASM serialize',
   'settings.terminal.rendering.hibernatePreferWasmSerialize.desc': 'Use WASM terminal serialization when available; falls back to the JS serializer.',
 
+  // Settings > Terminal > Inline Images
+  'settings.terminal.section.inlineImages': 'Inline Images',
+  'settings.terminal.inlineImages.enabled': 'Render inline images',
+  'settings.terminal.inlineImages.enabled.desc': 'Draw real images sent by remote programs (kitten icat, chafa, image previews in file managers and TUIs). Changes take effect on new terminal sessions.',
+  'settings.terminal.inlineImages.kitty': 'Kitty graphics protocol',
+  'settings.terminal.inlineImages.kitty.desc': 'Accept Kitty graphics sequences, including direct/stream transmission over SSH.',
+  'settings.terminal.inlineImages.sixel': 'SIXEL',
+  'settings.terminal.inlineImages.sixel.desc': 'Accept SIXEL graphics, used by img2sixel, mpv, gnuplot and older DEC-style tools.',
+  'settings.terminal.inlineImages.iip': 'iTerm inline image protocol',
+  'settings.terminal.inlineImages.iip.desc': "Accept iTerm2's OSC 1337 inline image sequences (PNG, JPEG, first frame of GIF).",
+  'settings.terminal.inlineImages.storageLimit': 'Image cache per terminal',
+  'settings.terminal.inlineImages.storageLimit.desc': 'Memory each terminal may keep for decoded images before the oldest ones are evicted (8–512 MB).',
+  'settings.terminal.inlineImages.maxMegapixels': 'Maximum image size',
+  'settings.terminal.inlineImages.maxMegapixels.desc': 'Largest single image that will be decoded; bigger images are discarded without touching the terminal buffer (1–64 MP, 16 MP is 4096 × 4096).',
+  'settings.terminal.inlineImages.sequenceLimit': 'Maximum sequence size',
+  'settings.terminal.inlineImages.sequenceLimit.desc': 'Largest single image escape sequence accepted before decoding starts (1–64 MB).',
+  'settings.terminal.inlineImages.unit.mb': 'MB',
+  'settings.terminal.inlineImages.unit.megapixels': 'MP',
+  'settings.terminal.inlineImages.hibernateNote': 'Tabs that have drawn an inline image keep their renderer instead of hibernating, because hibernation restores text only.',
+
   // Settings > Terminal > Workspace Focus Indicator
   'settings.terminal.section.workspaceFocus': 'Workspace Focus Indicator',
   'settings.terminal.workspaceFocus.style': 'Focus indicator style',
@@ -620,6 +849,20 @@ export const enCoreMessages: Messages = {
   'settings.terminal.autocomplete.ghostText.desc': 'Show inline gray suggestion text after the cursor (like fish shell).',
   'settings.terminal.autocomplete.popupMenu': 'Popup menu',
   'settings.terminal.autocomplete.popupMenu.desc': 'Show a floating list of multiple suggestions.',
+  'settings.terminal.autocomplete.historyScope': 'History suggestion scope',
+  'settings.terminal.autocomplete.historyScope.desc':
+    'Choose whether autocomplete history suggestions come from the current host only, or from commands recorded on all hosts.',
+  'settings.terminal.autocomplete.historyScope.host': 'Current host',
+  'settings.terminal.autocomplete.historyScope.global': 'All hosts',
+
+  // Settings > Terminal > Password prompt assist (sudo/su)
+  'settings.terminal.section.passwordPromptAssist': 'Password prompt assist',
+  'settings.terminal.passwordPromptAssist.mode': 'Assist mode',
+  'settings.terminal.passwordPromptAssist.mode.desc':
+    'When sudo or su asks for a password, offer a saved credential. Never auto-sends without confirmation.',
+  'settings.terminal.passwordPromptAssist.off': 'Off',
+  'settings.terminal.passwordPromptAssist.hint': 'Quick fill (Enter)',
+  'settings.terminal.passwordPromptAssist.picker': 'Credential picker',
 
   // Settings > Shortcuts
   'settings.shortcuts.section.scheme': 'Hotkey Scheme',
@@ -632,6 +875,8 @@ export const enCoreMessages: Messages = {
   'settings.shortcuts.disableTerminalFontZoom.desc': 'Turn off terminal font zoom shortcuts, including Cmd/Ctrl + mouse wheel.',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.label': 'Tab shortcuts skip pinned tabs',
   'settings.shortcuts.shellOnlyTabNumberShortcuts.desc': 'When enabled, Cmd/Ctrl+[1...9] and Ctrl+Tab switch only work tabs (terminals, workspaces, editors), not the pinned Vault or SFTP tabs.',
+  'settings.shortcuts.showTabNumberBadges.label': 'Show tab number badges',
+  'settings.shortcuts.showTabNumberBadges.desc': 'While holding Cmd/Ctrl, show 1-9 on tabs that match Cmd/Ctrl+[1...9], so you can jump accurately.',
   'settings.shortcuts.section.custom': 'Custom Shortcuts',
   'settings.shortcuts.resetAll': 'Reset All',
   'settings.shortcuts.recording': 'Press keys...',
@@ -773,6 +1018,11 @@ export const enCoreMessages: Messages = {
   'vault.groups.deleteDialog.desc': 'This will permanently delete the group and move all hosts to the root level.',
   'vault.groups.deleteDialog.managedDesc': 'This is a managed SSH config group. Deleting it will also delete all hosts and unlink from the source file.',
   'vault.groups.deleteDialog.deleteHosts': 'Also delete all hosts in this group',
+  'vault.groups.deleteDialog.bulkTitle': 'Delete Selected Groups',
+  'vault.groups.deleteDialog.bulkDesc': 'This will permanently delete the selected groups and move their hosts to the root level.',
+  'vault.groups.deleteDialog.bulkDeleteHosts': 'Also delete all hosts in the selected groups',
+  'vault.groups.selectedCount': '{count} groups selected',
+  'vault.groups.deleteMultiple.success': 'Deleted {count} selected items',
   'vault.groups.ungrouped': 'Ungrouped',
   'vault.groups.field.name': 'Group Name',
   'vault.groups.placeholder.example': 'e.g. Production',
@@ -797,6 +1047,12 @@ export const enCoreMessages: Messages = {
   'vault.groups.errors.invalidChars': "Group name cannot include '/' or '\\\\'.",
   'vault.groups.errors.duplicatePath': 'A group with this name already exists at this location.',
 
+  'vault.deleteConfirm.title': 'Delete "{name}"?',
+  'vault.deleteConfirm.desc': 'This action cannot be undone.',
+  'vault.deleteConfirm.packageDesc': 'This will remove the script package. Scripts inside it will stay saved and move out of the package.',
+  'vault.deleteConfirm.noteGroupDesc': 'This will remove the folder. Notes inside it will stay saved and move out of the folder.',
+  'vault.deleteConfirm.portForwardingDesc': 'This will delete the port forwarding rule.',
+
   'vault.managedSource.unmanage': 'Unmanage',
   'vault.managedSource.unmanageSuccess': 'Successfully unmanaged group',
 
@@ -817,6 +1073,7 @@ export const enCoreMessages: Messages = {
   'vault.hosts.export': 'Export',
   'vault.hosts.export.toast.success': 'Exported {count} hosts to CSV',
   'vault.hosts.export.toast.successWithSkipped': 'Exported {count} hosts to CSV ({skipped} unsupported hosts skipped)',
+  'vault.hosts.export.toast.passphrasesSkipped': '{count} saved key passphrases could not be read and were left blank',
   'vault.hosts.export.toast.noHosts': 'No hosts to export',
   'vault.hosts.allHosts': 'All hosts',
   'vault.hosts.pinned': 'Pinned',
@@ -828,6 +1085,7 @@ export const enCoreMessages: Messages = {
   'vault.hosts.copyCredentials.toast.noPassword': 'No password saved for this host',
   'vault.hosts.multiSelect': 'Multi-select',
   'vault.hosts.selected': '{count} selected',
+  'vault.hosts.selectedSummary': '{hosts} hosts and {groups} groups selected',
   'vault.hosts.selectAll': 'Select All',
   'vault.hosts.deselectAll': 'Deselect All',
   'vault.hosts.deleteSelected': 'Delete ({count})',
@@ -839,5 +1097,39 @@ export const enCoreMessages: Messages = {
   'vault.hosts.empty.title': 'Set up your hosts',
   'vault.hosts.empty.desc': 'Save hosts to quickly connect to your servers, VMs, and containers.',
   'deepLink.ssh.invalid': 'Invalid ssh:// link',
+  'deepLink.telnet.invalid': 'Invalid telnet:// link',
+  'deepLink.jms.invalid': 'Invalid JumpServer link',
+  'deepLink.jms.unsupported': 'Unsupported JumpServer protocol: {{protocol}}',
+  'settings.tab.plugins': 'Plugins',
+  'settings.plugins.title': 'Plugin settings',
+  'settings.plugins.description': 'Native, validated settings contributed by development plugins.',
+  'settings.plugins.loading': 'Loading plugin settings…',
+  'settings.plugins.empty': 'No enabled plugin contributes settings.',
+  'settings.plugins.scopeContext': 'Open this setting in its {scope} context.',
+  'settings.plugins.pressKeybinding': 'Press a key combination',
+  'settings.plugins.validJsonArray': 'Enter a valid JSON array.',
+  'settings.plugins.browse': 'Browse',
+  'settings.plugins.restartRequired': 'Restart required',
+  'settings.plugins.saving': 'Saving…',
+  'settings.plugins.storedSecurely': 'Stored securely',
+  'settings.plugins.configuredReplacement': 'Configured — enter a replacement',
+  'settings.plugins.moveItemUp': 'Move {label} item {index} up',
+  'settings.plugins.moveItemDown': 'Move {label} item {index} down',
+  'settings.plugins.addItem': 'Add item',
+  'settings.plugins.removeItem': 'Remove item',
+  'settings.plugins.scopeTargets': 'Plugin setting scopes',
+  'settings.plugins.scopeTarget': '{scope} target',
+  'settings.plugins.noScopeTargets': 'No available targets',
+  'settings.plugins.thisDevice': 'This device',
+  'plugins.authentication.description': 'Complete the authentication request in this Netcatty dialog.',
+  'plugins.authentication.value': 'Value',
+  'plugins.authentication.password': 'Password',
+  'plugins.authentication.code': 'One-time code',
+  'plugins.authentication.deviceCode': 'Device code',
+  'plugins.authentication.openBrowser': 'Open browser',
+  'plugins.authentication.invalidUrl': 'The authentication provider returned an unsafe or invalid URL.',
+  'plugins.authentication.responseFailed': 'Could not send the authentication response. Try again or cancel the request.',
+  'plugins.authentication.responseFailedWithMessage': 'Could not send the authentication response: {message}. Try again or cancel the request.',
+  'plugins.authentication.continue': 'Continue',
 
 };

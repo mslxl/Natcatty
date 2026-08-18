@@ -1,4 +1,5 @@
 import { Workspace,WorkspaceNode,WorkspaceViewMode } from './models';
+import { DEFAULT_WORKSPACE_TITLE } from './sessionTabTitle';
 
 export type SplitDirection = 'horizontal' | 'vertical';
 type SplitPosition = 'left' | 'right' | 'top' | 'bottom';
@@ -64,6 +65,8 @@ export const appendPaneToWorkspaceRoot = (
   sessionId: string,
   direction: SplitDirection = 'vertical',
 ): WorkspaceNode => {
+  if (collectSessionIds(root).includes(sessionId)) return root;
+
   const newPane: WorkspaceNode = { id: crypto.randomUUID(), type: 'pane', sessionId };
 
   if (root.type === 'split' && root.direction === direction) {
@@ -105,6 +108,8 @@ export const insertPaneIntoWorkspace = (
   sessionId: string,
   hint: SplitHint
 ): WorkspaceNode => {
+  if (collectSessionIds(root).includes(sessionId)) return root;
+
   const pane: WorkspaceNode = { id: crypto.randomUUID(), type: 'pane', sessionId };
 
   if (!hint.targetSessionId) {
@@ -142,7 +147,7 @@ export const createWorkspaceFromSessions = (
 
   return {
     id: `ws-${crypto.randomUUID()}`,
-    title: 'Workspace',
+    title: DEFAULT_WORKSPACE_TITLE,
     focusedSessionId: baseSessionId, // Initialize with the base session focused
     focusSessionOrder: [baseSessionId, joiningSessionId],
     root: {
@@ -223,6 +228,8 @@ export const createWorkspaceFromSessionIds = (
     title: string;
     viewMode?: WorkspaceViewMode;
     snippetId?: string;
+    /** false = the title is an explicit name; omit for an auto default title. */
+    autoTitle?: boolean;
   }
 ): Workspace => {
   if (sessionIds.length === 0) {
@@ -234,6 +241,7 @@ export const createWorkspaceFromSessionIds = (
     return {
       id: `ws-${crypto.randomUUID()}`,
       title: options.title,
+      autoTitle: options.autoTitle,
       viewMode: options.viewMode,
       snippetId: options.snippetId,
       focusedSessionId: sessionIds[0],
@@ -256,6 +264,7 @@ export const createWorkspaceFromSessionIds = (
   return {
     id: `ws-${crypto.randomUUID()}`,
     title: options.title,
+    autoTitle: options.autoTitle,
     viewMode: options.viewMode,
     snippetId: options.snippetId,
     focusedSessionId: sessionIds[0],
@@ -267,6 +276,33 @@ export const createWorkspaceFromSessionIds = (
       children,
       sizes: children.map(() => 1),
     },
+  };
+};
+
+/**
+ * Deep-clone a workspace layout tree, minting fresh node ids and remapping
+ * every pane's sessionId via `sessionIdMap` (old id -> new id). Split
+ * `direction` and `sizes` are preserved. A sessionId absent from the map is
+ * kept as-is. Pure; does not mutate `node`.
+ */
+export const cloneWorkspaceTree = (
+  node: WorkspaceNode,
+  sessionIdMap: ReadonlyMap<string, string>,
+  nodeIdMap?: ReadonlyMap<string, string>,
+): WorkspaceNode => {
+  if (node.type === 'pane') {
+    return {
+      id: nodeIdMap?.get(node.id) ?? crypto.randomUUID(),
+      type: 'pane',
+      sessionId: sessionIdMap.get(node.sessionId) ?? node.sessionId,
+    };
+  }
+  return {
+    id: nodeIdMap?.get(node.id) ?? crypto.randomUUID(),
+    type: 'split',
+    direction: node.direction,
+    children: node.children.map(child => cloneWorkspaceTree(child, sessionIdMap, nodeIdMap)),
+    ...(node.sizes ? { sizes: [...node.sizes] } : {}),
   };
 };
 

@@ -10,6 +10,7 @@ const { TOOL_INPUT_FIELDS } = require("../schemas/toolInputs.cjs");
 /** Maps TOOL_INPUT_FIELDS keys to CLI flag names and opts property names. */
 const CLI_FIELD_BINDINGS = Object.freeze({
   hostId: { flag: "--host-id", optKey: "hostId" },
+  filename: { flag: "--filename", optKey: "filename" },
   snippetId: { flag: "--snippet-id", optKey: "snippetId" },
   scriptId: { flag: "--script-id", optKey: "scriptId" },
   runId: { flag: "--run-id", optKey: "runId" },
@@ -24,12 +25,14 @@ const CLI_FIELD_BINDINGS = Object.freeze({
   trigger: { flag: "--trigger", optKey: "trigger" },
   triggerPattern: { flag: "--trigger-pattern", optKey: "triggerPattern" },
   targets: { flag: "--targets", optKey: "targets" },
+  targetGroups: { flag: "--target-groups", optKey: "targetGroups" },
   targetsAllHosts: { flag: "--targets-all-hosts", optKey: "targetsAllHosts" },
   description: { flag: "--description", optKey: "description" },
   language: { flag: "--language", optKey: "language" },
   package: { flag: "--package", optKey: "package" },
   shortkey: { flag: "--shortkey", optKey: "shortkey" },
   noAutoRun: { flag: "--no-auto-run", optKey: "noAutoRun" },
+  multiLineRunMode: { flag: "--multi-line-run-mode", optKey: "multiLineRunMode" },
   path: { flag: "--remote-path", optKey: "remotePath" },
   remotePath: { flag: "--remote-path", optKey: "remotePath" },
   localPath: { flag: "--local-path", optKey: "localPath" },

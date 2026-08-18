@@ -2,9 +2,8 @@
  * Settings Page - Standalone settings window content
  * This component is rendered in a separate Electron window
  */
-import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Sparkles, TerminalSquare, X } from "lucide-react";
+import { AppWindow, Cloud, FileType, HardDrive, Keyboard, Palette, Puzzle, Sparkles, TerminalSquare, X } from "lucide-react";
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import type { useSettingsState } from "../application/state/useSettingsState";
 import { useAISettingsState } from "../application/state/useAISettingsState";
 import { useAvailableFonts } from "../application/state/fontStore";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
@@ -16,9 +15,16 @@ import { sanitizePortForwardingRulesForSync } from "../application/syncPayload";
 import type { AppLockGateRenderContext } from "./AppLockGate";
 import { toast } from "./ui/toast";
 import { SettingsTabContent } from "./settings/settings-ui";
+import { SettingsFocusProvider, useSettingsFocus } from "./settings/SettingsFocusContext";
+import { SettingsSearchControl } from "./settings/SettingsSearchControl";
+import { cancelSettingsFocus, focusSettingsAnchor } from "./settings/settingsFocus";
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { LazyLoadBoundary } from "./ui/lazy-load-boundary";
+import { ExternalMcpApprovalsHost } from "./ai/ExternalMcpApprovalsHost";
+import { useExternalMcpGrantPersister } from "./ai/useExternalMcpGrantPersister";
+import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate";
+import { usePluginContributions } from "../application/state/usePluginContributions";
+import { PluginContributionHost } from "./plugins/PluginContributionHost";
 
 const LazySettingsApplicationTab = lazy(() => import("./SettingsApplicationTab"));
 const LazySettingsAppearanceTab = lazy(() => import("./settings/tabs/SettingsAppearanceTab"));
@@ -28,6 +34,7 @@ const LazySettingsAITab = lazy(() => import("./settings/tabs/SettingsAITab"));
 const LazySettingsSyncTab = lazy(() => import("./settings/tabs/SettingsSyncTab"));
 const LazySettingsTerminalTab = lazy(() => import("./settings/tabs/SettingsTerminalTab"));
 const LazySettingsSystemTab = lazy(() => import("./settings/tabs/SettingsSystemTab"));
+const LazySettingsPluginsTab = lazy(() => import("./settings/tabs/SettingsPluginsTab"));
 
 const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
@@ -294,6 +301,7 @@ const SettingsSyncTabWithVault: React.FC<{ onSettingsApplied?: () => void }> = (
 
 const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLockState }> = ({ settings, appLock }) => {
     const { t } = useI18n();
+    const { request, clearFocus, openSearch } = useSettingsFocus();
     const { notifyRendererReady, closeSettingsWindow, onWindowCommandCloseRequested } = useWindowControls();
     const { updateState, checkNow, installUpdate, openReleasePage, startDownload, isUpdateDemoMode } = useUpdateCheck({
         autoUpdateEnabled: settings.autoUpdateEnabled,
@@ -303,10 +311,28 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
     });
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
+    const { available: pluginRuntimeAvailable } = usePluginContributions();
 
     useEffect(() => {
         notifyRendererReady();
     }, [notifyRendererReady]);
+
+    useEffect(() => {
+        const onKeyDown = (event: KeyboardEvent) => {
+            const isFind = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f";
+            if (!isFind) return;
+            event.preventDefault();
+            openSearch();
+        };
+        window.addEventListener("keydown", onKeyDown);
+        return () => window.removeEventListener("keydown", onKeyDown);
+    }, [openSearch]);
+
+    useEffect(() => {
+        return setupMcpApprovalBridge();
+    }, []);
+
+    useExternalMcpGrantPersister();
 
     useEffect(() => {
         const unsubscribe = onWindowCommandCloseRequested(() => {
@@ -324,11 +350,44 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
         });
     }, [activeTab]);
 
+    useEffect(() => {
+        if (!request) return;
+        if (activeTab !== request.tab) {
+            setActiveTab(request.tab);
+            return;
+        }
+        // Nested tabs (AI / Sync) read `request` to switch sub-tabs. Keep it until
+        // scroll succeeds (or retries are exhausted) so lazy mounts still see it.
+        let cancelled = false;
+        const nestedDelayMs = (request.aiSubTab || request.syncSubTab) ? 80 : 40;
+        const focusHandle = window.setTimeout(() => {
+            void focusSettingsAnchor(request.anchorId, {
+                attempts: 48,
+                delayMs: 50,
+            }).finally(() => {
+                if (!cancelled) clearFocus();
+            });
+        }, nestedDelayMs);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(focusHandle);
+            cancelSettingsFocus();
+        };
+    }, [request, activeTab, clearFocus]);
+
+    const handleTabChange = useCallback((tab: string) => {
+        // Manual sidebar navigation should cancel any pending search jump.
+        cancelSettingsFocus();
+        clearFocus();
+        setActiveTab(tab);
+    }, [clearFocus]);
+
     const handleClose = useCallback(() => {
         closeSettingsWindow();
     }, [closeSettingsWindow]);
 
     return (
+        <>
         <div className="settings-window h-screen flex flex-col bg-background text-foreground font-sans">
             <div className="shrink-0 border-b border-border app-drag">
                 <div className="flex items-center justify-between px-4 pt-3">
@@ -337,28 +396,28 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                 <div className="flex items-center justify-between px-4 py-2">
                     <h1 className="text-lg font-semibold">{t("settings.title")}</h1>
                     {!isMac && (
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <button
-                                    onClick={handleClose}
-                                    className="app-no-drag w-8 h-8 flex items-center justify-center rounded-md hover:bg-destructive/20 hover:text-destructive transition-colors text-muted-foreground"
-                                >
-                                    <X size={16} />
-                                </button>
-                            </TooltipTrigger>
-                            <TooltipContent>{t("common.close")}</TooltipContent>
-                        </Tooltip>
+                        // No tooltip: on Windows the primary-colored tooltip sits in a
+                        // drag titlebar region, can stick open, and blocks the real X.
+                        <button
+                            type="button"
+                            onClick={handleClose}
+                            aria-label={t("common.close")}
+                            className="app-no-drag w-8 h-8 flex items-center justify-center rounded-md hover:bg-destructive/20 hover:text-destructive transition-colors text-muted-foreground"
+                        >
+                            <X size={16} />
+                        </button>
                     )}
                 </div>
             </div>
 
             <Tabs
                 value={activeTab}
-                onValueChange={setActiveTab}
+                onValueChange={handleTabChange}
                 orientation="vertical"
                 className="flex-1 flex overflow-hidden"
             >
                 <div className="w-56 border-r border-border flex flex-col shrink-0 px-3 py-3">
+                    <SettingsSearchControl includePlugins={pluginRuntimeAvailable} />
                     <TabsList className="flex flex-col h-auto bg-transparent gap-1 p-0 justify-start">
                         <TabsTrigger
                             value="application"
@@ -367,6 +426,12 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                             <AppWindow size={14} className={settingsTabIconClassName} />
                             <span className={settingsTabLabelClassName}>{t("settings.tab.application")}</span>
                         </TabsTrigger>
+                        {pluginRuntimeAvailable && (
+                            <TabsTrigger value="plugins" className={settingsTabTriggerClassName}>
+                                <Puzzle size={14} className={settingsTabIconClassName} />
+                                <span className={settingsTabLabelClassName}>{t("settings.tab.plugins")}</span>
+                            </TabsTrigger>
+                        )}
                         <TabsTrigger
                             value="appearance"
                             className={settingsTabTriggerClassName}
@@ -400,7 +465,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                             className={settingsTabTriggerClassName}
                         >
                             <Sparkles size={14} className={settingsTabIconClassName} />
-                            <span className={settingsTabLabelClassName}>AI</span>
+                            <span className={settingsTabLabelClassName}>{t("settings.tab.ai")}</span>
                         </TabsTrigger>
                         <TabsTrigger
                             value="sync"
@@ -455,6 +520,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setCustomCSS={settings.setCustomCSS}
                                 showRecentHosts={settings.showRecentHosts}
                                 setShowRecentHosts={settings.setShowRecentHosts}
+                                hostClickBehavior={settings.hostClickBehavior}
+                                setHostClickBehavior={settings.setHostClickBehavior}
                                 showOnlyUngroupedHostsInRoot={settings.showOnlyUngroupedHostsInRoot}
                                 setShowOnlyUngroupedHostsInRoot={settings.setShowOnlyUngroupedHostsInRoot}
                                 showSftpTab={settings.showSftpTab}
@@ -506,6 +573,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setHotkeyScheme={settings.setHotkeyScheme}
                                 shellOnlyTabNumberShortcuts={settings.shellOnlyTabNumberShortcuts}
                                 setShellOnlyTabNumberShortcuts={settings.setShellOnlyTabNumberShortcuts}
+                                showTabNumberBadges={settings.showTabNumberBadges}
+                                setShowTabNumberBadges={settings.setShowTabNumberBadges}
                                 disableTerminalFontZoom={settings.disableTerminalFontZoom}
                                 setDisableTerminalFontZoom={settings.setDisableTerminalFontZoom}
                                 keyBindings={settings.keyBindings}
@@ -556,14 +625,23 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setSshDebugLogsEnabled={settings.setSshDebugLogsEnabled}
                                 sshDeepLinkEnabled={settings.sshDeepLinkEnabled}
                                 setSshDeepLinkEnabled={settings.setSshDeepLinkEnabled}
+                                jmsDeepLinkEnabled={settings.jmsDeepLinkEnabled}
+                                setJmsDeepLinkEnabled={settings.setJmsDeepLinkEnabled}
+                                explorerContextMenuEnabled={settings.explorerContextMenuEnabled}
+                                setExplorerContextMenuEnabled={settings.setExplorerContextMenuEnabled}
+                                explorerContextMenuSupported={settings.explorerContextMenuSupported}
                                 restorePreviousSession={settings.restorePreviousSession}
                                 setRestorePreviousSession={settings.setRestorePreviousSession}
                                 restoreTerminalCwd={settings.restoreTerminalCwd}
                                 setRestoreTerminalCwd={settings.setRestoreTerminalCwd}
+                                startupLanding={settings.startupLanding}
+                                setStartupLanding={settings.setStartupLanding}
                                 toggleWindowHotkey={settings.toggleWindowHotkey}
                                 setToggleWindowHotkey={settings.setToggleWindowHotkey}
                                 closeToTray={settings.closeToTray}
                                 setCloseToTray={settings.setCloseToTray}
+                                httpNetworkProxy={settings.httpNetworkProxy}
+                                setHttpNetworkProxy={settings.setHttpNetworkProxy}
                                 hotkeyRegistrationError={settings.hotkeyRegistrationError}
                                 globalHotkeyEnabled={settings.globalHotkeyEnabled}
                                 setGlobalHotkeyEnabled={settings.setGlobalHotkeyEnabled}
@@ -577,9 +655,17 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                             />
                         </SettingsLazyTab>
                     )}
+                    {mountedTabs.has("plugins") && pluginRuntimeAvailable && (
+                        <SettingsLazyTab value="plugins">
+                            <LazySettingsPluginsTab />
+                        </SettingsLazyTab>
+                    )}
                 </div>
             </Tabs>
         </div>
+        <ExternalMcpApprovalsHost />
+        <PluginContributionHost locale={settings.uiLanguage} theme={settings.resolvedTheme} />
+        </>
     );
 };
 
@@ -592,7 +678,9 @@ export default function SettingsPage({
 }) {
     return (
         <I18nProvider locale={settings.uiLanguage}>
-            <SettingsPageContent settings={settings} appLock={appLock} />
+            <SettingsFocusProvider>
+                <SettingsPageContent settings={settings} appLock={appLock} />
+            </SettingsFocusProvider>
         </I18nProvider>
     );
 }

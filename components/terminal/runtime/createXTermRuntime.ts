@@ -1,4 +1,5 @@
 import { FitAddon } from "@xterm/addon-fit";
+import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
@@ -13,6 +14,15 @@ import {
 } from "../../../application/state/useGlobalHotkeys";
 import { fontStore } from "../../../application/state/fontStore";
 import { KeywordHighlighter } from "../keywordHighlight";
+import { installSearchDecorationTracker } from "../hooks/useTerminalSearch";
+import { CursorLineHighlighter } from "./cursorLineHighlight";
+import { resolveCursorLineHighlightBackground } from "../../../domain/cursorLineHighlight";
+import {
+  registerPluginTerminalLinkProvider,
+  type PluginTerminalLinkProviderHost,
+  type RequestPluginTerminalProviders,
+} from "../pluginTerminalLinkProvider";
+import { PluginTerminalVisualProviderHost } from "../pluginTerminalVisualProviderHost";
 import {
   XTERM_PERFORMANCE_CONFIG,
   resolveXTermScrollback,
@@ -20,43 +30,89 @@ import {
   resolveXTermPerformanceConfig,
 } from "../../../infrastructure/config/xtermPerformance";
 import {
+  scrollTerminalToBottomAfterInputIfEnabled,
   shouldEnableNativeUserInputAutoScroll,
-  shouldScrollOnTerminalInput,
   shouldScrollOnTerminalPaste,
 } from "../../../domain/terminalScroll";
+import { resolveTerminalInlineImageAddonOptions } from "../../../domain/terminalInlineImages";
 import {
   resolveHostTerminalFontFamilyId,
   resolveHostTerminalFontSize,
   resolveHostTerminalFontWeight,
 } from "../../../domain/terminalAppearance";
+import { DEFAULT_TERMINAL_SCROLLBACK } from "../../../domain/models/terminal";
+import {
+  Osc99Assembler,
+  parseOsc777Payload,
+  parseOsc9Payload,
+  type OscNotification,
+} from "../../../domain/terminalOscNotifications";
 import { resolveFontWeightBold } from "../../../lib/fontWeightAvailability";
+import { isPluginHostProtocol } from "../../../domain/pluginConnection";
 import { resolveTerminalFontFamilyId } from "../../../infrastructure/config/fonts";
 import { logger } from "../../../lib/logger";
 import { isMacPlatform } from "../../../lib/utils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import {
-  clearTerminalViewport,
-  isEraseScrollbackSequence,
-  isEraseViewportSequence,
-  preserveTerminalViewportInScrollback,
-  shouldPreserveViewportBeforeFullErase,
+  clearTerminalViewportAndSyncPty,
+  installEraseInDisplayHandlers,
 } from "../clearTerminalViewport";
+import { pulseCopyOnSelectUserCommand } from "../copyOnSelect";
+import { getTerminalSelectionForClipboard } from "../normalizeTerminalSelection";
 import {
-  createKittyKeyboardModeState,
-  encodeKittyControlKey,
+  createKittyKeyboardSessionStateStore,
+  encodeKittyCompositionText,
+  encodeKittyKeyEvent,
+  isKittyKeyboardModeActive,
+  restoreKittyKeyboardModeState,
+  shouldEncodeKittyCompositionText,
+  shouldDeferKittyKeyEvent,
+  shouldExpectLegacyKeyboardData,
+  shouldMarkKittyTextInputEvent,
+  shouldTrackKittyKeyRelease,
+  shouldTreatKittyAltAsText,
+  snapshotKittyKeyboardModeState,
+  type KittyKeyboardEvent,
+  type KittyKeyboardModeState,
 } from "./kittyKeyboardProtocol";
-import { installKittyKeyboardProtocolHandlers } from "./kittyKeyboardRuntime";
+import { installKittyKeyboardProtocolHandlersIfEnabled } from "./kittyKeyboardRuntime";
+import {
+  clearKittyKeyboardBroadcastPairingState,
+  createKittyKeyboardBroadcastForwarder,
+  createKittyKeyboardBroadcastHandler,
+  flushKittyKeyboardBroadcastReleases,
+  registerKittyKeyboardBroadcastHandler,
+  upsertKittyKeyboardForwardedPress,
+  type KittyKeyboardBroadcastInput,
+  type KittyKeyboardForwardedPress,
+} from "./kittyKeyboardBroadcast";
 import { installUserCursorPreferenceGuard } from "./cursorPreference";
 import { terminalAltKeyOptions } from "./altKeyOptions";
 import { optionArrowWordJumpSequence } from "./optionArrowWordJump";
+import { optionYankLastArgSequence } from "./optionYankLastArg";
 import { watchDevicePixelRatio } from "./rendererDprWatch";
 import { shouldDeferWebglUntilVisible } from "./webglRendererPolicy";
+import { createWebglRendererController } from "./webglRendererController";
 import {
   captureMiddleClickTerminalMouseEvent,
   markMiddleClickContextMenuEvent,
   resolveMiddleClickBehavior,
 } from "./middleClickBehavior";
 import { handleSerialLineModeInput } from "./serialLineInput";
+import {
+  doesKittyEncodingPreserveShiftEnter,
+  getShiftEnterSubmittedInput,
+  resolveShiftEnterPayload,
+  shouldSendShiftEnterText,
+} from "./shiftEnterText";
+import {
+  isUnchangedDeferredImeTextInput,
+  shouldBlockKeyPressForImeTextInput,
+  shouldCommitDeferredImeTextInput,
+  shouldDeferKeyDownForImeTextInput,
+} from "./terminalImeTextInput";
+import { formatSerialLocalEcho } from "./serialLocalEcho";
+import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
 import { formatTelnetLocalEcho } from "./telnetLocalEcho";
 import {
   isTerminalFontSizeAction,
@@ -66,12 +122,22 @@ import {
   terminalFontSizeWheelListenerOptions,
 } from "./terminalFontZoom";
 import {
-  getHistoryPreviewLines,
+  HISTORY_PREVIEW_HIDE_EVENT,
+  HISTORY_PREVIEW_OVERLAY_ATTR,
+  HISTORY_PREVIEW_WRAP_ATTR,
+  encodeHistoryPreviewWrapFlags,
+  getHistoryPreviewRows,
+  getHistoryPreviewSelectionFromRoot,
   forcedHistoryScrollLinesForWheel,
   forcedHistoryScrollPageToLines,
   forcedHistoryScrollPagesForKey,
   forcedHistoryScrollWheelListenerOptions,
+  isHistoryPreviewDismissClick,
+  isHistoryPreviewPointerTarget,
   nextHistoryPreviewTop,
+  selectHistoryPreviewAll,
+  shouldHideHistoryPreviewOnMouseDown,
+  shouldKeepHistoryPreviewOnKey,
 } from "./terminalHistoryScrollOverride";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
 import { shouldUseUrgentTerminalInterrupt } from "./terminalInterruptShortcut";
@@ -81,6 +147,9 @@ import {
 } from "./terminalInterruptDiagnostics";
 import { clearTerminalInputStateForInterrupt } from "./terminalInterruptInputState";
 import { getFlowControllerForTerm } from "./terminalSessionAttachment";
+import { createTerminalResizeScheduler } from "./terminalResizeScheduler";
+import { createTerminalLinkHandler } from "./terminalLinkHandler";
+import { writeLocalTerminalDataInOrder } from "./terminalUnfocusedRepaint";
 import {
   prioritizeTerminalInput,
   shouldArmTerminalInterruptDisplayGateForProtocol,
@@ -92,6 +161,7 @@ import {
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
 import {
+  consumeOsc133CommandCompletion,
   type PromptLineBreakState,
 } from "./promptLineBreak";
 import { recordTerminalCommandExecution } from "./terminalCommandExecution";
@@ -108,15 +178,40 @@ import type {
   TerminalSettings,
   TerminalTheme,
 } from "../../../types";
-import { matchesKeyBinding, type Snippet } from "../../../domain/models";
+import {
+  DEFAULT_TERMINAL_WORD_SEPARATORS,
+  matchesKeyBinding,
+  type Snippet,
+} from "../../../domain/models";
 
 type TerminalBackendApi = {
   openExternalAvailable: () => boolean;
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
+  signalPluginConnection?: (
+    sessionId: string,
+    signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
+  ) => Promise<unknown>;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
+  clearSessionPtyBuffer?: (sessionId: string) => void;
   setSessionFlowPaused?: (sessionId: string, paused: boolean) => void;
+};
+
+// A TerminalSettings ref is owned by one mounted terminal session and survives
+// renderer hibernation. Weak ownership keeps negotiated keyboard state alive
+// for that session without introducing a process-wide session registry.
+const kittyKeyboardStates = createKittyKeyboardSessionStateStore();
+
+const resolveKittyKeyboardModeState = (
+  ctx: Pick<
+    CreateXTermRuntimeContext,
+    "terminalSettingsRef" | "kittyKeyboardModeState" | "deferWebglUntilReplayComplete"
+  >,
+): KittyKeyboardModeState => {
+  if (ctx.kittyKeyboardModeState) return ctx.kittyKeyboardModeState;
+  const owner = ctx.terminalSettingsRef as object;
+  return kittyKeyboardStates.resolve(owner, ctx.deferWebglUntilReplayComplete === true);
 };
 
 export type XTermRuntime = {
@@ -128,6 +223,9 @@ export type XTermRuntime = {
   /** Current working directory detected via OSC 7 */
   currentCwd: string | undefined;
   keywordHighlighter: KeywordHighlighter;
+  cursorLineHighlighter: CursorLineHighlighter;
+  pluginProviderHost: PluginTerminalVisualProviderHost | null;
+  pluginLinkProviderHost: PluginTerminalLinkProviderHost | null;
   /**
    * Clear the WebGL renderer's glyph texture atlas so glyphs re-rasterize on the
    * next frame. No-op when the DOM renderer is active. Used to recover from the
@@ -143,7 +241,28 @@ export type XTermRuntime = {
   ensureWebglRenderer: () => void;
   /** Drop the WebGL addon while keeping the terminal alive (soft-hide). */
   suspendWebglRenderer: () => void;
+  /**
+   * True while this terminal holds decoded inline images (Kitty / SIXEL / IIP).
+   * Hibernate snapshots are text-only, so a session that reports true must not
+   * be fully hibernated — the images would be gone on wake. Returns false when
+   * inline images are disabled, or once the image cache has been emptied by a
+   * terminal reset or FIFO eviction.
+   */
+  hasInlineImages: () => boolean;
+  /** Clear local/per-target keyboard state before reusing this runtime. */
+  resetKittyConnectionInputState: () => void;
+  /** Emit any owed releases before detaching or closing this renderer. */
+  flushKittyKeyboardReleases: () => void;
+  /** Transfer negotiated keyboard state across renderer attach handoffs. */
+  getKittyKeyboardModeState: () => KittyKeyboardModeState;
+  restoreKittyKeyboardModeState: (state: KittyKeyboardModeState) => void;
+  getKittyKeyboardProtocolEnabled: () => boolean;
+  setKittyKeyboardProtocolEnabled: (enabled: boolean) => void;
 };
+
+export const resetKittyKeyboardModeStateForSession = (
+  terminalSettingsRef: object,
+): void => kittyKeyboardStates.reset(terminalSettingsRef);
 
 export type CreateXTermRuntimeContext = {
   container: HTMLDivElement;
@@ -153,6 +272,8 @@ export type CreateXTermRuntimeContext = {
   fontSize: number;
   terminalTheme: TerminalTheme;
   terminalSettingsRef: RefObject<TerminalSettings | undefined>;
+  kittyKeyboardProtocolEnabled?: boolean;
+  kittyKeyboardModeState?: KittyKeyboardModeState;
   terminalBackend: TerminalBackendApi;
   sessionRef: RefObject<string | null>;
 
@@ -163,14 +284,19 @@ export type CreateXTermRuntimeContext = {
     ((action: string, event: KeyboardEvent) => void) | undefined
   >;
   onTerminalFontSizeChange?: (fontSize: number) => void;
+  onOpenExternalError?: (error: unknown) => void;
 
   isBroadcastEnabledRef: RefObject<boolean | undefined>;
   onBroadcastInputRef: RefObject<
-    ((data: string, sourceSessionId: string) => void) | undefined
+    ((
+      data: string,
+      sourceSessionId: string,
+      options?: { kittyKeyboardInput?: KittyKeyboardBroadcastInput },
+    ) => void) | undefined
   >;
 
   // Snippets for shortkey support
-  snippetsRef?: RefObject<{ id: string; command: string; shortkey?: string; noAutoRun?: boolean }[]>;
+  snippetsRef?: RefObject<Snippet[]>;
   onSnippetShortkeyRef?: RefObject<((snippet: Snippet) => void) | undefined>;
 
   sessionId: string;
@@ -187,6 +313,18 @@ export type CreateXTermRuntimeContext = {
     hostLabel: string,
     sessionId: string,
   ) => void;
+  onTrustedCommandSubmitted?: (
+    command: string,
+    hostId: string,
+    hostLabel: string,
+    sessionId: string,
+  ) => void;
+  onCommandCompleted?: () => void;
+  requestPluginTerminalProviders?: RequestPluginTerminalProviders;
+  pluginProviderVisible?: boolean;
+  isPluginTerminalProviderAvailable?: (kind: NetcattyTerminalProviderKind) => boolean;
+  onResize?: (cols: number, rows: number) => void;
+  onAlternateScreenChange?: (active: boolean) => void;
   commandBufferRef: RefObject<string>;
   promptLineBreakStateRef?: RefObject<PromptLineBreakState>;
   scriptRecorderRef?: RefObject<{
@@ -197,6 +335,7 @@ export type CreateXTermRuntimeContext = {
     recordEnter: (options?: { sensitive?: boolean }) => Promise<void>;
   } | undefined>;
   passwordPromptActiveRef?: RefObject<boolean>;
+  allowHostStyleGreaterThanPrompt?: boolean;
   onOutputTriggerUserInputRef?: RefObject<((data: string) => void) | undefined>;
   sudoAutofillRef?: RefObject<SudoPasswordAutofill | null>;
   // Opens the search bar, or refocuses its input if already open. Used by the
@@ -219,6 +358,9 @@ export type CreateXTermRuntimeContext = {
 
   // Callback when the shell rings the terminal bell
   onBell?: () => void;
+
+  // Callback when a remote program requests a desktop notification via OSC 9/777/99
+  onOscNotification?: (notification: OscNotification) => void;
 
   // Callback when remote requests clipboard read in 'prompt' mode; resolves to user's decision
   onOsc52ReadRequest?: () => Promise<boolean>;
@@ -321,7 +463,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const cursorStyle = settings?.cursorShape ?? "block";
   const cursorBlink = settings?.cursorBlink ?? true;
-  const rawScrollback = settings?.scrollback ?? 10000;
+  const rawScrollback = settings?.scrollback ?? DEFAULT_TERMINAL_SCROLLBACK;
   const scrollback = resolveXTermScrollback(rawScrollback);
   const drawBoldTextInBrightColors = settings?.drawBoldInBrightColors ?? true;
   const fontWeight = resolveHostTerminalFontWeight(ctx.host, settings?.fontWeight ?? 400);
@@ -333,16 +475,51 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ? performanceConfig.options.smoothScrollDuration
     : 0;
   const altIsMeta = settings?.altAsMeta ?? false;
-  const wordSeparator = settings?.wordSeparators ?? " ()[]{}'\"";
+  const wordSeparator = settings?.wordSeparators ?? DEFAULT_TERMINAL_WORD_SEPARATORS;
   const keywordHighlightRules = settings?.keywordHighlightRules ?? [];
   const keywordHighlightEnabled = settings?.keywordHighlightEnabled ?? false;
-  const kittyKeyboardMode = createKittyKeyboardModeState();
+  // The state may outlive this renderer while a connected session is hibernated.
+  // Keeping it in the owning Terminal prevents the remote app and a recreated
+  // xterm instance from disagreeing about the active protocol flags.
+  const kittyKeyboardMode = resolveKittyKeyboardModeState(ctx);
+  // Negotiation handlers and key encoding must use the same runtime snapshot.
+  // Settings changes take effect when Terminal recreates this runtime.
+  let kittyKeyboardProtocolEnabled =
+    ctx.kittyKeyboardProtocolEnabled ?? settings?.kittyKeyboardProtocolEnabled === true;
+  let kittyKeyboardDisposable: ReturnType<
+    typeof installKittyKeyboardProtocolHandlersIfEnabled
+  >;
 
   const resolvedFontWeightBold = resolveFontWeightBold({
     fontFamilyCss: fontFamily,
     normalWeight: fontWeight,
     desiredBoldWeight: fontWeightBold,
     fontSize: effectiveFontSize,
+  });
+
+  const canActivateTerminalLink = (event: MouseEvent): boolean => {
+    const currentLinkModifier = ctx.terminalSettingsRef.current?.linkModifier ?? "none";
+    switch (currentLinkModifier) {
+      case "none":
+        return true;
+      case "ctrl":
+        return event.ctrlKey;
+      case "alt":
+        return event.altKey;
+      case "meta":
+        return event.metaKey;
+    }
+    return false;
+  };
+  const terminalLinkHandler = createTerminalLinkHandler({
+    canActivate: canActivateTerminalLink,
+    openExternalAvailable: ctx.terminalBackend.openExternalAvailable,
+    openExternal: ctx.terminalBackend.openExternal,
+    confirmOscLink: (uri) => window.confirm(
+      `Do you want to navigate to ${uri}?\n\nWARNING: This link could potentially be dangerous`,
+    ),
+    onError: ctx.onOpenExternalError,
+    warn: (...args) => logger.warn(...args),
   });
 
   const term = new XTerm({
@@ -382,13 +559,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     cursorStyle,
     cursorBlink,
     scrollback,
-    // Decorations (keyword highlighting) use proposed APIs; enable globally so toggles work at runtime.
+    // Cursor-line rendering and Unicode width handling use proposed APIs.
     allowProposedApi: true,
     drawBoldTextInBrightColors,
     minimumContrastRatio,
     smoothScrollDuration,
     scrollOnUserInput,
     macOptionClickForcesSelection: true,
+    linkHandler: {
+      activate: terminalLinkHandler.activateOsc,
+    },
     ...terminalAltKeyOptions(altIsMeta),
     wordSeparator,
     theme: {
@@ -400,6 +580,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       scrollbarSliderActiveBackground: ctx.terminalTheme.colors.foreground + '80', // 50% opacity
     },
   });
+  installSearchDecorationTracker(term);
 
   type MaybeRenderer = {
     constructor?: { name?: string };
@@ -451,10 +632,132 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const searchAddon = new SearchAddon();
   term.loadAddon(searchAddon);
 
+  for (const orphan of Array.from(ctx.container.querySelectorAll(":scope > .xterm"))) {
+    orphan.remove();
+  }
+
   term.open(ctx.container);
 
-  let webglAddon: WebglAddon | null = null;
+  // Inline raster images (Kitty graphics / SIXEL / iTerm IIP). Loaded right after
+  // term.open so the addon can patch IRenderService.setRenderer before the WebGL
+  // renderer is created: on every renderer swap (WebGL create / suspend / context
+  // loss recovery) the addon detaches its canvas layers and re-inserts them on the
+  // next render, so images survive DOM <-> WebGL transitions. Options are resolved
+  // once per terminal; changing them takes effect on the next terminal, exactly
+  // like rendererType.
+  const inlineImageOptions = resolveTerminalInlineImageAddonOptions(settings);
+  let imageAddon: ImageAddon | null = null;
+  if (inlineImageOptions) {
+    try {
+      imageAddon = new ImageAddon(inlineImageOptions);
+      term.loadAddon(imageAddon);
+    } catch (err) {
+      logger.warn("[XTerm] Inline image addon failed to load", err);
+      imageAddon = null;
+    }
+  }
+  // Decoded bitmaps live outside the terminal buffer, so they are absent from the
+  // text snapshot a hibernated tab is rebuilt from. Terminal.tsx reads this to keep
+  // a session with images out of full hibernate (soft-hide is still fine).
+  const hasInlineImages = (): boolean => {
+    if (!imageAddon) return false;
+    try {
+      return imageAddon.storageUsage > 0;
+    } catch {
+      return false;
+    }
+  };
+
+  type KeyboardLayoutMapLike = { get: (code: string) => string | undefined };
+  type KeyboardApiLike = {
+    getLayoutMap?: () => Promise<KeyboardLayoutMapLike>;
+    addEventListener?: (type: "layoutchange", listener: () => void) => void;
+    removeEventListener?: (type: "layoutchange", listener: () => void) => void;
+  };
+  const keyboardApi = (navigator as Navigator & { keyboard?: KeyboardApiLike }).keyboard;
+  let kittyKeyboardLayoutMap: KeyboardLayoutMapLike | undefined;
+  const refreshKittyKeyboardLayout = () => {
+    void keyboardApi?.getLayoutMap?.().then((layoutMap) => {
+      kittyKeyboardLayoutMap = layoutMap;
+    }).catch(() => {
+      kittyKeyboardLayoutMap = undefined;
+    });
+  };
+  keyboardApi?.addEventListener?.("layoutchange", refreshKittyKeyboardLayout);
+  refreshKittyKeyboardLayout();
+
+  const kittyKeyboardLockState = { capsLock: false, numLock: false };
+  const toKittyKeyboardEvent = (event: KeyboardEvent): KittyKeyboardEvent => {
+    const unshiftedKey = kittyKeyboardLayoutMap?.get(event.code);
+    kittyKeyboardLockState.capsLock = event.getModifierState("CapsLock");
+    kittyKeyboardLockState.numLock = event.getModifierState("NumLock");
+    return {
+      type: event.type,
+      key: event.key,
+      code: event.code,
+      location: event.location,
+      repeat: event.repeat,
+      isComposing: event.isComposing,
+      keyCode: event.keyCode,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      getModifierState: (key) => event.getModifierState(key),
+      unshiftedKey,
+      altKeyProducesText: shouldTreatKittyAltAsText(
+        event,
+        isMacPlatform(),
+        ctx.terminalSettingsRef.current?.altAsMeta ?? altIsMeta,
+      ),
+      applicationCursorMode: term.modes.applicationCursorKeysMode,
+    };
+  };
+
+  // Intercept native copy (Edit > Copy, browser/Electron copy event) before
+  // xterm's built-in handler writes selectionText, so normalizeTextOnCopy applies.
+  const writePreviewSelectionToClipboard = (event: ClipboardEvent, previewSelection: string) => {
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", previewSelection);
+    } else {
+      void navigator.clipboard.writeText(previewSelection).catch((err) => {
+        logger.warn("[XTerm] History preview copy failed:", err);
+      });
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  const handlePreviewNativeCopy = (event: ClipboardEvent) => {
+    const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    if (!previewSelection) return;
+    writePreviewSelectionToClipboard(event, previewSelection);
+  };
+  const handleNativeCopy = (event: ClipboardEvent) => {
+    const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    if (previewSelection) {
+      writePreviewSelectionToClipboard(event, previewSelection);
+      return;
+    }
+    if (!term.hasSelection()) return;
+    const normalize = ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true;
+    if (!normalize) return; // let xterm write raw selectionText
+    const selection = getTerminalSelectionForClipboard(term, true);
+    if (!selection) return;
+    if (event.clipboardData) {
+      event.clipboardData.setData("text/plain", selection);
+    } else {
+      void navigator.clipboard.writeText(selection).catch((err) => {
+        logger.warn("[XTerm] Normalized native copy failed:", err);
+      });
+    }
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  };
+  term.element?.addEventListener("copy", handleNativeCopy, true);
+  ctx.container.addEventListener("copy", handleNativeCopy, true);
+
   let webglLoaded = false;
+  let runtimeDisposed = false;
   const scopedWindow = window as Window & {
     __xtermWebGLLoaded?: boolean;
     __xtermRendererPreference?: string;
@@ -464,45 +767,31 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // (or when WebGL is disabled for this device). Panes that mount hidden defer
   // this until they first become visible — see shouldDeferWebglUntilVisible —
   // so batch-connecting many hosts doesn't spin up every WebGL context at once.
-  const loadWebglRenderer = () => {
-    if (webglLoaded || !performanceConfig.useWebGLAddon) return;
+  const repaintTerminal = () => {
+    if (runtimeDisposed || term.rows < 1) return;
     try {
-      // WebglAddon constructor only accepts `preserveDrawingBuffer?: boolean`.
-      // Passing an object here (legacy API assumption) unintentionally enables
-      // preserveDrawingBuffer and can cause sporadic glyph artifacts/ghosting.
-      webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        logger.warn("[XTerm] WebGL context loss detected, disposing addon");
-        webglAddon?.dispose();
-        webglAddon = null;
-        webglLoaded = false;
-      });
-      term.loadAddon(webglAddon);
-      webglLoaded = true;
-    } catch (webglErr) {
-      logger.warn(
-        "[XTerm] WebGL addon failed, using DOM renderer. Error:",
-        webglErr instanceof Error ? webglErr.message : webglErr,
-      );
+      term.refresh(0, term.rows - 1);
+    } catch (err) {
+      logger.warn("[XTerm] renderer repaint failed", err);
     }
-    scopedWindow.__xtermWebGLLoaded = webglLoaded;
   };
 
-  const suspendWebglRenderer = () => {
-    if (!webglAddon) {
-      webglLoaded = false;
-      scopedWindow.__xtermWebGLLoaded = false;
-      return;
-    }
-    try {
-      webglAddon.dispose();
-    } catch (webglErr) {
-      logger.warn("[XTerm] Failed to suspend WebGL renderer", webglErr);
-    }
-    webglAddon = null;
-    webglLoaded = false;
-    scopedWindow.__xtermWebGLLoaded = false;
-  };
+  const webglController = createWebglRendererController({
+    enabled: performanceConfig.useWebGLAddon,
+    createAddon: () => new WebglAddon(),
+    loadAddon: (addon) => term.loadAddon(addon),
+    repaint: repaintTerminal,
+    setLoaded: (loaded) => {
+      webglLoaded = loaded;
+      scopedWindow.__xtermWebGLLoaded = loaded;
+    },
+    warn: (message, error) => {
+      if (error === undefined) logger.warn(message);
+      else logger.warn(message, error);
+    },
+  });
+  const loadWebglRenderer = webglController.ensure;
+  const suspendWebglRenderer = webglController.suspend;
 
   if (!performanceConfig.useWebGLAddon) {
     logger.info(
@@ -532,6 +821,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // the atlas forces glyphs to re-rasterize at the correct scale on the next
   // frame. No-op for the DOM renderer.
   const clearWebglTextureAtlas = () => {
+    const webglAddon = webglController.getAddon();
     if (!webglAddon) return;
     try {
       webglAddon.clearTextureAtlas();
@@ -564,36 +854,30 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   }
 
   const webLinksAddon = new WebLinksAddon((event, uri) => {
-    const currentLinkModifier = ctx.terminalSettingsRef.current?.linkModifier ?? "none";
-    let shouldOpen = false;
-    switch (currentLinkModifier) {
-      case "none":
-        shouldOpen = true;
-        break;
-      case "ctrl":
-        shouldOpen = event.ctrlKey;
-        break;
-      case "alt":
-        shouldOpen = event.altKey;
-        break;
-      case "meta":
-        shouldOpen = event.metaKey;
-        break;
-    }
-    if (!shouldOpen) return;
-
-    if (ctx.terminalBackend.openExternalAvailable()) {
-      void ctx.terminalBackend.openExternal(uri);
-    } else {
-      const safeUri = String(uri || "");
-      if (/^https?:\/\//i.test(safeUri)) {
-        window.open(safeUri, "_blank", "noopener,noreferrer");
-      } else {
-        logger.warn("[XTerm] Refusing to open non-http(s) link:", safeUri);
-      }
-    }
+    terminalLinkHandler.activate(event, uri);
   });
   term.loadAddon(webLinksAddon);
+  const pluginLinkProviderHost = ctx.requestPluginTerminalProviders
+    ? registerPluginTerminalLinkProvider({
+        term,
+        request: ctx.requestPluginTerminalProviders,
+        canActivate: canActivateTerminalLink,
+        openExternal: terminalLinkHandler.open,
+        isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+        active: ctx.statusRef.current === 'connected',
+        visible: ctx.pluginProviderVisible ?? true,
+      })
+    : null;
+  const pluginProviderHost = ctx.requestPluginTerminalProviders
+    ? new PluginTerminalVisualProviderHost({
+        term,
+        request: ctx.requestPluginTerminalProviders,
+        terminalBackground: ctx.terminalTheme.colors.background,
+        active: ctx.statusRef.current === 'connected',
+        visible: ctx.pluginProviderVisible ?? true,
+        isProviderAvailable: ctx.isPluginTerminalProviderAvailable,
+      })
+    : null;
 
   // Enable Unicode graphemes for accurate CJK / emoji / Nerd Font character width handling
   const unicodeGraphemes = new UnicodeGraphemesAddon();
@@ -605,16 +889,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
   const broadcastUserPasteData = (data: string) => {
-    if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+    if (
+      ctx.passwordPromptActiveRef?.current !== true
+      && ctx.isBroadcastEnabledRef.current
+      && ctx.onBroadcastInputRef.current
+    ) {
       ctx.onBroadcastInputRef.current(data, ctx.sessionId);
       return true;
     }
     return false;
   };
   const scrollToBottomAfterInput = (data: string) => {
-    if (shouldScrollOnTerminalInput(ctx.terminalSettingsRef.current, data)) {
-      term.scrollToBottom();
-    }
+    scrollTerminalToBottomAfterInputIfEnabled(
+      term,
+      ctx.terminalSettingsRef.current,
+      data,
+    );
   };
   const currentTerminalFontSize = () => {
     const optionFontSize = term.options.fontSize;
@@ -651,15 +941,37 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   };
   let historyPreviewOverlay: HTMLPreElement | null = null;
   let historyPreviewTop: number | null = null;
+  let historyPreviewPointerDown: { clientX: number; clientY: number } | null = null;
   const hideHistoryPreview = () => {
-    historyPreviewOverlay?.remove();
+    if (!historyPreviewOverlay) {
+      historyPreviewPointerDown = null;
+      document.removeEventListener("copy", handlePreviewNativeCopy, true);
+      return;
+    }
+    historyPreviewOverlay.remove();
     historyPreviewOverlay = null;
     historyPreviewTop = null;
+    historyPreviewPointerDown = null;
+    document.removeEventListener("copy", handlePreviewNativeCopy, true);
+    term.focus();
+  };
+  const copyHistoryPreviewSelectionIfEnabled = () => {
+    if (!ctx.terminalSettingsRef.current?.copyOnSelect) return;
+    if (ctx.isRestoringSelectionRef?.current) return;
+    const selection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    if (selection) {
+      void navigator.clipboard.writeText(selection).catch((err) => {
+        logger.warn("[XTerm] History preview copy-on-select failed:", err);
+      });
+    }
   };
   const ensureHistoryPreviewOverlay = () => {
     if (historyPreviewOverlay) return historyPreviewOverlay;
     const overlay = document.createElement("pre");
-    overlay.setAttribute("aria-hidden", "true");
+    overlay.setAttribute(HISTORY_PREVIEW_OVERLAY_ATTR, "");
+    overlay.setAttribute("role", "document");
+    overlay.addEventListener(HISTORY_PREVIEW_HIDE_EVENT, hideHistoryPreview);
+    document.addEventListener("copy", handlePreviewNativeCopy, true);
     Object.assign(overlay.style, {
       position: "absolute",
       inset: "0",
@@ -667,7 +979,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       margin: "0",
       padding: "0 6px",
       overflow: "hidden",
-      pointerEvents: "none",
+      pointerEvents: "auto",
+      userSelect: "text",
+      webkitUserSelect: "text",
+      cursor: "text",
       whiteSpace: "pre",
       fontFamily: String(term.options.fontFamily ?? fontFamily),
       fontSize: `${currentTerminalFontSize()}px`,
@@ -691,11 +1006,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     overlay.style.fontSize = `${currentTerminalFontSize()}px`;
     overlay.style.fontFamily = String(term.options.fontFamily ?? fontFamily);
     overlay.style.lineHeight = String(term.options.lineHeight ?? lineHeight);
-    overlay.textContent = getHistoryPreviewLines({
+    const previewRows = getHistoryPreviewRows({
       buffer: normalBuffer,
       rows: term.rows,
       top: historyPreviewTop,
-    }).join("\n");
+    });
+    overlay.textContent = previewRows.map((row) => row.text).join("\n");
+    overlay.setAttribute(HISTORY_PREVIEW_WRAP_ATTR, encodeHistoryPreviewWrapFlags(previewRows));
     return true;
   };
   const scrollForcedHistoryLines = (lines: number) => {
@@ -725,7 +1042,366 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   );
   const historyPreviewBufferChangeDisposable = term.buffer.onBufferChange(() => {
     hideHistoryPreview();
+    ctx.onAlternateScreenChange?.(term.buffer.active.type === "alternate");
   });
+
+  const writeLocalTerminalData = (nextData: string) => {
+    writeLocalTerminalDataInOrder(term, nextData, ctx.onTerminalLogData);
+  };
+
+  const handleTerminalInputData = (
+    data: string,
+    options?: {
+      source?: "terminal" | "shift-enter" | "kitty";
+      /** Skip string broadcast when peers will re-resolve from a key chord. */
+      skipBroadcast?: boolean;
+    },
+  ) => {
+    // Clipboard paste / typed password while assist is open must dismiss the
+    // hint first. Otherwise Enter is still hijacked for confirmFill and can
+    // append the host session password after the user's pasted secret (#2198).
+    ctx.sudoAutofillRef?.current?.dismissOnUserContentInput(data);
+
+    const inputSource = options?.source ?? "terminal";
+    const id = ctx.sessionRef.current;
+    const dataToWrite = data;
+    const sensitive = ctx.passwordPromptActiveRef?.current === true;
+    let handledSubmittedInput = false;
+    const submittedInput: { text: string; lineEnding: "\r\n" | "\r" | "\n" } | null =
+      inputSource === "shift-enter"
+        ? getShiftEnterSubmittedInput(data)
+        : data === "\r" || data === "\n"
+          ? { text: "", lineEnding: data as "\r" | "\n" }
+          : null;
+    const onBroadcastInput = ctx.onBroadcastInputRef.current;
+    const broadcastDataBeforeSudo = mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior);
+    const suppressTerminalBroadcast = inputSource === "terminal" && suppressNextTerminalDataBroadcast;
+    if (suppressTerminalBroadcast) suppressNextTerminalDataBroadcast = false;
+    // skipBroadcast only suppresses the raw-string fan-out. Peers still receive
+    // the Shift+Enter chord, so sudo autofill must treat this as a broadcast.
+    const canBroadcastInput = !sensitive &&
+      inputSource !== "kitty" &&
+      !handlingKittyBroadcast &&
+      !suppressTerminalBroadcast &&
+      !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
+      isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
+      hasBroadcastInputHandler: !!onBroadcastInput,
+    });
+    const willBroadcastInput = canBroadcastInput && options?.skipBroadcast !== true;
+    if (ctx.statusRef.current === "connected" && submittedInput) {
+      if (submittedInput.text) {
+        ctx.commandBufferRef.current += submittedInput.text;
+        ctx.scriptRecorderRef?.current?.recordInput(submittedInput.text);
+      }
+      if (ctx.scriptRecorderRef?.current?.isRecording) {
+        void ctx.scriptRecorderRef.current.recordEnter({
+          sensitive,
+        });
+      }
+      if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
+      const recordedCommand = recordTerminalCommandExecution(
+        ctx.commandBufferRef.current,
+        ctx,
+        term,
+        { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
+      );
+      handledSubmittedInput = true;
+      // Recipients of a key-chord broadcast must not arm password assistance.
+      // handlingKittyBroadcast already blocks re-fan-out via canBroadcastInput.
+      if (!canBroadcastInput && !handlingKittyBroadcast) {
+        prepareSudoAutofillInput(
+          submittedInput.lineEnding === "\r\n" ? "\n" : submittedInput.lineEnding,
+          recordedCommand,
+          ctx.sudoAutofillRef?.current,
+        );
+      }
+    } else if (
+      ctx.statusRef.current === "connected" &&
+      !canBroadcastInput &&
+      !handlingKittyBroadcast &&
+      inputSource !== "shift-enter"
+    ) {
+      const pastedCommand = getSinglePastedCommand(data);
+      if (pastedCommand) {
+        if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
+        const recordedCommand = recordTerminalCommandExecution(
+          `${ctx.commandBufferRef.current}${pastedCommand.command}`,
+          ctx,
+          term,
+          { sensitive, allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt },
+        );
+        handledSubmittedInput = true;
+        if (recordedCommand) {
+          prepareSudoAutofillInput(
+            `${recordedCommand}${pastedCommand.lineEnding}`,
+            null,
+            ctx.sudoAutofillRef?.current,
+          );
+        }
+      }
+    }
+
+    if (id) {
+      prioritizeTerminalInput(
+        term,
+        id,
+        getFlowControllerForTerm(term),
+        ctx.terminalBackend,
+      );
+
+      // Serial line mode: buffer input and send on Enter
+      if (
+        inputSource !== "kitty" &&
+        ctx.host.protocol === "serial" &&
+        ctx.serialLineMode &&
+        ctx.serialLineBufferRef
+      ) {
+        handleSerialLineModeInput(dataToWrite, {
+          bufferRef: ctx.serialLineBufferRef,
+          localEcho: ctx.serialLocalEcho,
+          writeToSession: (nextData) => {
+            ctx.onOutputTriggerUserInputRef?.current?.(nextData);
+            ctx.terminalBackend.writeToSession(id, nextData, { sensitive });
+          },
+          writeToTerminal: writeLocalTerminalData,
+        });
+      } else {
+        // Character mode (default): send immediately
+        // When backspaceBehavior is configured, remap the Backspace key output
+        const outData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
+        ctx.onOutputTriggerUserInputRef?.current?.(outData);
+        ctx.terminalBackend.writeToSession(id, outData, { sensitive });
+
+        // Local echo for serial connections only when explicitly enabled
+        if (inputSource !== "kitty" && ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
+          const localEcho = formatSerialLocalEcho(dataToWrite);
+          if (localEcho) writeLocalTerminalData(localEcho);
+        }
+        if (inputSource !== "kitty" && ctx.host.protocol === "telnet" && ctx.telnetLocalEchoRef?.current) {
+          const localEcho = formatTelnetLocalEcho(dataToWrite);
+          if (localEcho) writeLocalTerminalData(localEcho);
+        }
+      }
+
+      // Use remapped data so broadcast peers also receive the correct byte
+      const broadcastData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
+      if (willBroadcastInput) {
+        onBroadcastInput?.(broadcastData, ctx.sessionId);
+      }
+
+      if (!shouldSuppressTerminalInputScrollForUserPaste(term, data)) {
+        scrollToBottomAfterInput(data);
+      }
+
+      // Notify autocomplete of input
+      ctx.onAutocompleteInput?.(data);
+
+      if (ctx.statusRef.current === "connected") {
+        if (handledSubmittedInput || submittedInput) {
+          // Command recording and sudo command preparation happen before the
+          // input is written so sudo can receive a one-time prompt marker.
+        } else if (data === "\x7f" || data === "\b") {
+          ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(0, -1);
+          ctx.scriptRecorderRef?.current?.recordBackspace();
+        } else if (data === "\x03") {
+          ctx.commandBufferRef.current = "";
+          ctx.scriptRecorderRef?.current?.recordClearLine();
+          // Hard-abort password assist when Ctrl+C reaches the input path
+          // (e.g. broadcast peers) so a later su re-arms cleanly (#2191).
+          ctx.sudoAutofillRef?.current?.abort();
+        } else if (data === "\x15") {
+          ctx.commandBufferRef.current = "";
+          ctx.scriptRecorderRef?.current?.recordClearLine();
+        } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+          ctx.commandBufferRef.current += data;
+          ctx.scriptRecorderRef?.current?.recordInput(data);
+        } else if (data.length > 1 && !data.startsWith("\x1b")) {
+          ctx.commandBufferRef.current += data;
+          ctx.scriptRecorderRef?.current?.recordInput(data);
+        } else {
+          const pastedLine = getSingleBracketedPasteLine(data);
+          if (pastedLine) {
+            ctx.commandBufferRef.current += pastedLine;
+            ctx.scriptRecorderRef?.current?.recordInput(pastedLine);
+          }
+        }
+      }
+    }
+  };
+
+  let kittyCompositionPending = false;
+  let kittyCompositionClearTimer: number | undefined;
+  let imeTextInputDeferredKey: string | null = null;
+  let imeTextInputDeferredKittyEvent: KittyKeyboardEvent | null = null;
+  const kittyForwardedKeys = new Map<string, KittyKeyboardForwardedPress>();
+  const broadcastForwardedKeys = new Map<string, KittyKeyboardForwardedPress>();
+  const broadcastEncodedKeys = new Set<string>();
+  const broadcastLegacySuppressedKeys = new Set<string>();
+  const kittyKeyIdentity = (event: KeyboardEvent): string => event.code || event.key;
+  let handlingKittyBroadcast = false;
+  let suppressNextTerminalDataBroadcast = false;
+  let broadcastLegacyDataPending: string | null = null;
+  let broadcastLegacyDataClearTimer: number | undefined;
+  const clearImeTextInputDeferral = () => {
+    imeTextInputDeferredKey = null;
+    imeTextInputDeferredKittyEvent = null;
+  };
+  const clearBroadcastLegacyDataPending = () => {
+    broadcastLegacyDataPending = null;
+    suppressNextTerminalDataBroadcast = false;
+    if (broadcastLegacyDataClearTimer !== undefined) {
+      window.clearTimeout(broadcastLegacyDataClearTimer);
+      broadcastLegacyDataClearTimer = undefined;
+    }
+  };
+  const markBroadcastLegacyDataPending = (identity: string) => {
+    clearBroadcastLegacyDataPending();
+    broadcastLegacyDataPending = identity;
+    suppressNextTerminalDataBroadcast = true;
+    // xterm emits keyboard data synchronously from the keydown handler. Clear
+    // an unmatched key before a later paste or IME commit can be mistaken for it.
+    broadcastLegacyDataClearTimer = window.setTimeout(() => {
+      clearBroadcastLegacyDataPending();
+    }, 0);
+  };
+  const broadcastKittyInput = createKittyKeyboardBroadcastForwarder({
+    sourceSessionId: ctx.sessionId,
+    isHandlingBroadcast: () => handlingKittyBroadcast,
+    isBroadcastEnabled: () => ctx.isBroadcastEnabledRef.current,
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
+    getDispatcher: () => ctx.onBroadcastInputRef.current,
+  });
+
+  const commitImeTextInput = (text: string) => {
+    const deferredKey = imeTextInputDeferredKey;
+    const deferredKittyEvent = imeTextInputDeferredKittyEvent;
+    clearImeTextInputDeferral();
+    clearBroadcastLegacyDataPending();
+
+    // Deferred punctuation reaches the PTY via this manual commit instead of
+    // xterm's keydown → onUserInput pipeline, so SelectionService never clears.
+    // Match ordinary typed characters unless preserveSelectionOnInput is on.
+    if (
+      !ctx.terminalSettingsRef.current?.preserveSelectionOnInput &&
+      term.hasSelection()
+    ) {
+      term.clearSelection();
+    }
+
+    // Unchanged ASCII must keep the Kitty press/release path. Composition
+    // encoding under report-all emits unidentified CSI 0 u (or associated
+    // text without a physical key), so ordinary punctuation breaks in TUIs.
+    if (
+      isUnchangedDeferredImeTextInput(deferredKey, text) &&
+      deferredKittyEvent &&
+      kittyKeyboardProtocolEnabled
+    ) {
+      const pressEvent: KittyKeyboardEvent = {
+        ...deferredKittyEvent,
+        type: "keydown",
+      };
+      const sequence = encodeKittyKeyEvent(kittyKeyboardMode, pressEvent);
+      if (sequence) {
+        const identity = pressEvent.code || pressEvent.key;
+        upsertKittyKeyboardForwardedPress(
+          kittyForwardedKeys,
+          identity,
+          pressEvent,
+          [],
+        );
+        handleTerminalInputData(sequence, { source: "kitty" });
+        const forwarded = broadcastKittyInput({
+          kind: "key",
+          event: pressEvent,
+          fallbackToLegacy: true,
+        });
+        if (forwarded) {
+          upsertKittyKeyboardForwardedPress(
+            broadcastForwardedKeys,
+            identity,
+            pressEvent,
+            forwarded.targetSessionIds,
+          );
+        }
+        return;
+      }
+    }
+
+    if (isUnchangedDeferredImeTextInput(deferredKey, text)) {
+      // Source may write the literal glyph (Kitty off / no sequence), but
+      // broadcast peers still need the physical key + paired release so
+      // report-all/event-type targets do not receive composition text.
+      if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+        suppressNextTerminalDataBroadcast = true;
+      }
+      handleTerminalInputData(text);
+      if (deferredKittyEvent) {
+        const pressEvent: KittyKeyboardEvent = {
+          ...deferredKittyEvent,
+          type: "keydown",
+        };
+        const identity = pressEvent.code || pressEvent.key;
+        // Event-type mode (flag 2) without report-all leaves printable presses
+        // on the text path, but still emits a paired :3 release on keyup.
+        // Mirror the ordinary keydown handler so that release is not dropped.
+        if (
+          kittyKeyboardProtocolEnabled &&
+          shouldTrackKittyKeyRelease(kittyKeyboardMode, pressEvent)
+        ) {
+          upsertKittyKeyboardForwardedPress(
+            kittyForwardedKeys,
+            identity,
+            pressEvent,
+            [],
+          );
+        }
+        const forwarded = broadcastKittyInput({
+          kind: "key",
+          event: pressEvent,
+          fallbackToLegacy: true,
+        });
+        if (forwarded) {
+          upsertKittyKeyboardForwardedPress(
+            broadcastForwardedKeys,
+            identity,
+            pressEvent,
+            forwarded.targetSessionIds,
+          );
+        }
+      } else {
+        broadcastKittyInput({ kind: "text", text });
+      }
+      return;
+    }
+
+    // Actual IME remap — Kitty associated-text composition when negotiated;
+    // otherwise send the committed glyph (report-all alone cannot carry it).
+    const encoded = encodeKittyCompositionText(kittyKeyboardMode, text);
+    if (encoded) {
+      handleTerminalInputData(encoded, { source: "kitty" });
+    } else {
+      if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+        suppressNextTerminalDataBroadcast = true;
+      }
+      handleTerminalInputData(text);
+    }
+    broadcastKittyInput({ kind: "text", text });
+  };
+  const flushImeTextInputDeferral = () => {
+    const fallback = imeTextInputDeferredKey;
+    if (!fallback) return;
+    commitImeTextInput(fallback);
+  };
+  const armImeTextInputDeferral = (event: KeyboardEvent) => {
+    clearImeTextInputDeferral();
+    clearBroadcastLegacyDataPending();
+    // Wait for insertText (full-width) before keyup; keyup/blur flushes ASCII
+    // when the IME did not remap the key (English punctuation mode).
+    imeTextInputDeferredKey = event.key;
+    // Keep the physical key even when the source is not in Kitty mode so
+    // broadcast targets can still receive paired key events.
+    imeTextInputDeferredKittyEvent = toKittyKeyboardEvent(event);
+  };
 
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     // Preserve mouse selection across keystrokes when enabled. xterm.js
@@ -770,10 +1446,55 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
     }
 
+    if (e.type === "keyup") {
+      // insertText for this keystroke has already run when present; flush the
+      // deferred ASCII key only when the IME did not remap it.
+      if (imeTextInputDeferredKey !== null && e.key === imeTextInputDeferredKey) {
+        flushImeTextInputDeferral();
+      }
+      const identity = kittyKeyIdentity(e);
+      if (broadcastLegacyDataPending === identity) clearBroadcastLegacyDataPending();
+      const forwardedPress = broadcastForwardedKeys.get(identity);
+      if (forwardedPress) {
+        broadcastForwardedKeys.delete(identity);
+        broadcastKittyInput(
+          { kind: "key", event: toKittyKeyboardEvent(e) },
+          true,
+          forwardedPress.targetSessionIds,
+        );
+      }
+      if (!kittyForwardedKeys.delete(identity)) return true;
+      const kittyEvent = toKittyKeyboardEvent(e);
+      const sequence = kittyKeyboardProtocolEnabled
+        ? encodeKittyKeyEvent(kittyKeyboardMode, kittyEvent)
+        : null;
+      if (sequence) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleTerminalInputData(sequence, { source: "kitty" });
+        return false;
+      }
+      return true;
+    }
+
+    // Block keypress so xterm cannot re-emit the half-width ASCII char after we
+    // deferred the matching keydown for IME insertText (#2833).
+    if (shouldBlockKeyPressForImeTextInput(imeTextInputDeferredKey, e)) {
+      return false;
+    }
+
     if (e.type !== "keydown") {
       return true;
     }
 
+    if (handlingKittyBroadcast) return true;
+
+    if (e.keyCode === 229) {
+      markKittyCompositionPending(true);
+    }
+
+    const previewSelection = getHistoryPreviewSelectionFromRoot(ctx.container);
+    const hasCopyableSelection = term.hasSelection() || Boolean(previewSelection);
     const forcedHistoryScrollPages = forcedHistoryScrollPagesForKey(e);
     if (forcedHistoryScrollPages !== null) {
       e.preventDefault();
@@ -786,15 +1507,62 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       term.scrollPages(forcedHistoryScrollPages);
       return false;
     }
-    hideHistoryPreview();
+    const previewKeepAliveScheme = ctx.hotkeySchemeRef.current;
+    const previewKeepAliveIsMac =
+      previewKeepAliveScheme === "mac"
+      || (previewKeepAliveScheme === "disabled" && isMacPlatform());
+    const previewKeepAliveBindings = ctx.keyBindingsRef.current;
+    const previewKeepAliveAction =
+      previewKeepAliveScheme !== "disabled" && previewKeepAliveBindings.length > 0
+        ? checkAppShortcut(e, previewKeepAliveBindings, previewKeepAliveIsMac)?.action
+        : undefined;
+    if (
+      !shouldKeepHistoryPreviewOnKey(e, {
+        action: previewKeepAliveAction,
+        hasPreviewSelection: Boolean(previewSelection),
+        overlayVisible: Boolean(historyPreviewOverlay),
+      })
+    ) {
+      hideHistoryPreview();
+    }
 
-    // Sudo password hint: while a hint is pending, Enter confirms (paste the
-    // saved password + submit); any other visible key dismisses it so the user
-    // can type the password manually. Checked before autocomplete so Enter
-    // pastes the password instead of submitting an empty line.
+    // Password prompt assist (sudo/su): while pending, Enter confirms the
+    // selected/host password; arrows move the picker; Esc soft-dismisses (keeps
+    // arm so the list can re-open). Checked before autocomplete so Enter pastes
+    // the password instead of submitting an empty line.
+    // Paste is handled in handleTerminalInputData (dismissOnUserContentInput)
+    // because clipboard paste does not go through this key handler (#2198).
     const sudoAutofill = ctx.sudoAutofillRef?.current;
     if (sudoAutofill?.isPromptPending()) {
-      if (e.key === "Enter") {
+      if (shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current)) {
+        sudoAutofill.cancelHint();
+        // fall through: Shift+Enter sends the configured terminal text
+      } else if (
+        sudoAutofill.isPickerPending()
+        && e.key === "ArrowDown"
+        && !e.altKey
+        && !e.ctrlKey
+        && !e.metaKey
+      ) {
+        e.preventDefault();
+        sudoAutofill.moveSelection(1);
+        return false;
+      } else if (
+        sudoAutofill.isPickerPending()
+        && e.key === "ArrowUp"
+        && !e.altKey
+        && !e.ctrlKey
+        && !e.metaKey
+      ) {
+        e.preventDefault();
+        sudoAutofill.moveSelection(-1);
+        return false;
+      } else if (
+        e.key === "Enter" &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
         e.preventDefault();
         sudoAutofill.confirmFill();
         return false;
@@ -804,24 +1572,55 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         sudoAutofill.cancelHint();
         return false; // dismiss without forwarding the byte to the no-echo prompt
       }
-      if (e.key.length === 1) {
+      // Printable keys soft-dismiss so the user can type a password manually.
+      // Keep soft-dismiss for AltGr/Option-produced characters (they report
+      // Ctrl/Alt modifiers on Windows/macOS). Only plain Ctrl+C skips this —
+      // the interrupt path hard-aborts instead (#2191).
+      if (
+        e.key.length === 1
+        && !shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection })
+      ) {
         sudoAutofill.cancelHint();
         // fall through: key becomes the first char of the manually typed password
       }
+    } else if (
+      sudoAutofill?.canReshowAssist()
+      && !e.altKey
+      && !e.ctrlKey
+      && !e.metaKey
+      && (e.key === "Escape" || e.key === "ArrowDown" || e.key === "ArrowUp")
+    ) {
+      // Soft-dismissed but still on Password: — Esc/arrows re-open the assist.
+      e.preventDefault();
+      if (sudoAutofill.tryReshowAssist()) {
+        if (e.key === "ArrowDown") sudoAutofill.moveSelection(1);
+        if (e.key === "ArrowUp") sudoAutofill.moveSelection(-1);
+      }
+      return false;
     }
 
     // Autocomplete key handler (must be checked before other handlers)
-    if (ctx.onAutocompleteKeyEvent) {
+    if (ctx.onAutocompleteKeyEvent && !isKittyKeyboardModeActive(kittyKeyboardMode)) {
       const consumed = ctx.onAutocompleteKeyEvent(e);
       if (!consumed) return false; // Event was consumed by autocomplete
     }
 
-    if (shouldUseUrgentTerminalInterrupt(e, { hasSelection: term.hasSelection() })) {
+    const kittySequenceForKeyDown =
+      kittyKeyboardProtocolEnabled
+        ? encodeKittyKeyEvent(kittyKeyboardMode, toKittyKeyboardEvent(e))
+        : null;
+    if (
+      (!kittySequenceForKeyDown || kittySequenceForKeyDown === "\x03") &&
+      shouldUseUrgentTerminalInterrupt(e, { hasSelection: hasCopyableSelection })
+    ) {
       const id = ctx.sessionRef.current;
       if (id && ctx.statusRef.current === "connected") {
         const rendererKeyAt = Date.now();
         e.preventDefault();
         e.stopPropagation();
+        // Abort password assist: user is cancelling the remote command, not
+        // soft-dismissing the UI. A later su must re-arm cleanly (#2191).
+        sudoAutofill?.abort();
         const priority = prioritizeTerminalInput(
           term,
           id,
@@ -847,13 +1646,49 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           serialLineBufferRef: ctx.serialLineBufferRef,
           onAutocompleteInput: ctx.onAutocompleteInput,
         });
-        if (ctx.terminalBackend.interruptSession) {
+        if (ctx.passwordPromptActiveRef) {
+          ctx.passwordPromptActiveRef.current = false;
+        }
+        if (isPluginHostProtocol(ctx.host.protocol) && ctx.terminalBackend.signalPluginConnection) {
+          void ctx.terminalBackend.signalPluginConnection(id, "interrupt").catch(() => {
+            if (ctx.terminalBackend.interruptSession) {
+              ctx.terminalBackend.interruptSession(id, interruptTrace);
+            } else {
+              ctx.terminalBackend.writeToSession(id, "\x03");
+            }
+          });
+        } else if (ctx.terminalBackend.interruptSession) {
           ctx.terminalBackend.interruptSession(id, interruptTrace);
         } else {
           ctx.terminalBackend.writeToSession(id, "\x03");
         }
-        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-          ctx.onBroadcastInputRef.current("\x03", ctx.sessionId);
+        const kittyEvent = toKittyKeyboardEvent(e);
+        const identity = kittyKeyIdentity(e);
+        if (
+          kittyKeyboardProtocolEnabled &&
+          shouldTrackKittyKeyRelease(kittyKeyboardMode, kittyEvent)
+        ) {
+          upsertKittyKeyboardForwardedPress(
+            kittyForwardedKeys,
+            identity,
+            kittyEvent,
+            [],
+          );
+        }
+        const forwarded = broadcastKittyInput({ kind: "key", event: kittyEvent });
+        if (forwarded) {
+          upsertKittyKeyboardForwardedPress(
+            broadcastForwardedKeys,
+            identity,
+            kittyEvent,
+            forwarded.targetSessionIds,
+          );
+          broadcastKittyInput({
+            kind: "legacy",
+            data: "\x03",
+            keyIdentity: identity,
+            urgentInterrupt: true,
+          });
         }
         scrollToBottomAfterInput("\x03");
         return false;
@@ -875,7 +1710,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             e.stopPropagation();
             const runSnippet = ctx.onSnippetShortkeyRef?.current;
             if (runSnippet) {
-              void runSnippet(snippet as Snippet);
+              void runSnippet(snippet);
             }
             return false;
           }
@@ -901,35 +1736,42 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           ) {
             return true;
           }
-          // When copy is bound specifically to Ctrl+C and there is no text
-          // selected, pass the event through so xterm can send SIGINT.
-          if (shouldPassThroughCopyShortcut(action, term.hasSelection(), e)) {
-            return true;
-          }
-          e.preventDefault();
-          e.stopPropagation();
-          switch (action) {
+          // No xterm selection: pass Ctrl+C through for SIGINT, and Cmd+C for
+          // Kitty Super+C (nested TUIs). Other copy chords stay a safe no-op.
+          const shouldForwardCopyToTerminal =
+            shouldPassThroughCopyShortcut(
+              action,
+              hasCopyableSelection,
+              e,
+            );
+          if (shouldForwardCopyToTerminal && !kittySequenceForKeyDown) return true;
+          if (!shouldForwardCopyToTerminal) {
+            e.preventDefault();
+            e.stopPropagation();
+            switch (action) {
             case "copy": {
-              const selection = term.getSelection();
+              const selection = previewSelection || getTerminalSelectionForClipboard(
+                term,
+                ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
+              );
               if (selection) navigator.clipboard.writeText(selection);
               break;
             }
             case "paste": {
-              navigator.clipboard.readText().then((text) => {
-                const id = ctx.sessionRef.current;
-                if (id) {
-                  pasteTextIntoTerminal(term, text, {
-                    scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
-                    onPasteData: broadcastUserPasteData,
-                  });
-                }
-              });
+              // Always share the context-menu paste path so local image-only
+              // clipboard can forward Ctrl+V, and remote auto-upload stays
+              // gated inside handleTerminalClipboardPaste.
+              void ctx.terminalContextActionsRef?.current?.onPaste?.();
               break;
             }
             case "pasteSelection": {
-              const selection = term.getSelection();
+              const selection = previewSelection || getTerminalSelectionForClipboard(
+                term,
+                ctx.terminalSettingsRef.current?.normalizeTextOnCopy ?? true,
+              );
               const id = ctx.sessionRef.current;
               if (selection && id) {
+                hideHistoryPreview();
                 pasteTextIntoTerminal(term, selection, {
                   scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
                   onPasteData: broadcastUserPasteData,
@@ -938,12 +1780,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "selectAll": {
+              pulseCopyOnSelectUserCommand(term);
+              if (historyPreviewOverlay && selectHistoryPreviewAll(historyPreviewOverlay)) {
+                break;
+              }
               term.selectAll();
               break;
             }
             case "clearBuffer": {
-              clearTerminalViewport(term, {
+              clearTerminalViewportAndSyncPty(term, {
                 wipeScrollback: ctx.terminalSettingsRef.current?.clearWipesScrollback ?? true,
+                syncPty: () => {
+                  const clearId = ctx.sessionRef.current;
+                  if (clearId) {
+                    ctx.terminalBackend.clearSessionPtyBuffer?.(clearId);
+                  }
+                },
               });
               break;
             }
@@ -963,51 +1815,172 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               );
               break;
             }
+            }
+            return false;
           }
-          return false;
         }
       }
     }
 
-    const kittyControlSequence = encodeKittyControlKey(kittyKeyboardMode, e);
-    if (kittyControlSequence) {
+    // Sogou/macOS CJK punctuation: keydown still reports ASCII "," while the
+    // full-width "，" arrives on insertText. Returning false (without
+    // preventDefault) stops xterm/Kitty from sending the half-width key so the
+    // input listener can commit the real glyph (#2833).
+    if (shouldDeferKeyDownForImeTextInput(e)) {
+      armImeTextInputDeferral(e);
+      return false;
+    }
+
+    // Before Kitty encoding that collapses Shift+Enter to bare CR/LF (flags=0,
+    // or non-preserving sets like alternate-key / associated-text alone). Remap
+    // first so alternate-screen TUIs still receive CSI-u Shift+Enter.
+    if (
+      shouldSendShiftEnterText(e, ctx.terminalSettingsRef.current) &&
+      !doesKittyEncodingPreserveShiftEnter(kittySequenceForKeyDown)
+    ) {
       const id = ctx.sessionRef.current;
       if (id) {
         e.preventDefault();
         e.stopPropagation();
-        ctx.onAutocompleteInput?.(kittyControlSequence);
-        ctx.terminalBackend.writeToSession(id, kittyControlSequence);
-        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-          ctx.onBroadcastInputRef.current(kittyControlSequence, ctx.sessionId);
+        const kittyEvent = toKittyKeyboardEvent(e);
+        // Local payload uses this session's buffer. Broadcast targets re-resolve
+        // from the key chord via resolveKittyKeyboardBroadcastInput.
+        const shiftEnterPayload = resolveShiftEnterPayload(
+          ctx.terminalSettingsRef.current,
+          { alternateScreen: term.buffer.active.type === "alternate" },
+        );
+        if (shiftEnterPayload.data) {
+          if (shiftEnterPayload.kind === "key") {
+            // Local CSI-u as kitty-sourced input so raw bytes are not broadcast.
+            handleTerminalInputData(shiftEnterPayload.data, { source: "kitty" });
+          } else {
+            // Skip string broadcast: peers resolve Shift+Enter from their own
+            // buffer + keyboard mode via the key chord below.
+            handleTerminalInputData(shiftEnterPayload.data, {
+              source: "shift-enter",
+              skipBroadcast: true,
+            });
+          }
+          const forwarded = broadcastKittyInput({
+            kind: "key",
+            event: kittyEvent,
+            fallbackToLegacy: true,
+          });
+          if (forwarded) {
+            upsertKittyKeyboardForwardedPress(
+              broadcastForwardedKeys,
+              kittyKeyIdentity(e),
+              kittyEvent,
+              forwarded.targetSessionIds,
+            );
+          }
         }
-        scrollToBottomAfterInput(kittyControlSequence);
         return false;
       }
+    }
+
+    if (kittySequenceForKeyDown) {
+      e.preventDefault();
+      e.stopPropagation();
+      const kittyEvent = toKittyKeyboardEvent(e);
+      upsertKittyKeyboardForwardedPress(
+        kittyForwardedKeys,
+        kittyKeyIdentity(e),
+        kittyEvent,
+        [],
+      );
+      handleTerminalInputData(kittySequenceForKeyDown, { source: "kitty" });
+      const forwarded = broadcastKittyInput({
+        kind: "key",
+        event: kittyEvent,
+        fallbackToLegacy: true,
+        urgentInterrupt: shouldUseUrgentTerminalInterrupt(e, {
+          hasSelection: hasCopyableSelection,
+        }),
+      });
+      if (forwarded) {
+        upsertKittyKeyboardForwardedPress(
+          broadcastForwardedKeys,
+          kittyKeyIdentity(e),
+          kittyEvent,
+          forwarded.targetSessionIds,
+        );
+      }
+      return false;
     }
 
     // macOS Option+←/→ → Meta-b / Meta-f so the shell jumps by word (discussion
     // #826). After kitty mode so apps using the kitty protocol keep their own
     // arrow encoding; read live so the toggle applies without reconnecting.
-    const wordJumpSequence = optionArrowWordJumpSequence(
-      e,
-      ctx.terminalSettingsRef.current?.optionArrowWordJump ?? false,
-      isMacPlatform(),
-    );
+    const wordJumpSequence = isKittyKeyboardModeActive(kittyKeyboardMode)
+      ? null
+      : optionArrowWordJumpSequence(
+          e,
+          ctx.terminalSettingsRef.current?.optionArrowWordJump ?? false,
+          isMacPlatform(),
+        );
     if (wordJumpSequence) {
       const id = ctx.sessionRef.current;
       if (id) {
         e.preventDefault();
         e.stopPropagation();
-        ctx.onAutocompleteInput?.(wordJumpSequence);
-        ctx.terminalBackend.writeToSession(id, wordJumpSequence);
-        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
-          ctx.onBroadcastInputRef.current(wordJumpSequence, ctx.sessionId);
-        }
+        handleTerminalInputData(wordJumpSequence);
         scrollToBottomAfterInput(wordJumpSequence);
         return false;
       }
     }
 
+    // macOS Option+. / Option+_ → ESC+. / ESC+_ so readline yank-last-arg and
+    // zsh insert-last-word work without enabling Option-as-Meta (issue #2364).
+    const yankLastArgSequence = isKittyKeyboardModeActive(kittyKeyboardMode)
+      ? null
+      : optionYankLastArgSequence(e, isMacPlatform());
+    if (yankLastArgSequence) {
+      const id = ctx.sessionRef.current;
+      if (id) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleTerminalInputData(yankLastArgSequence);
+        scrollToBottomAfterInput(yankLastArgSequence);
+        return false;
+      }
+    }
+
+    const normalizedKittyEvent = toKittyKeyboardEvent(e);
+    if (!shouldDeferKittyKeyEvent(normalizedKittyEvent)) {
+      const identity = kittyKeyIdentity(e);
+      if (
+        kittyKeyboardProtocolEnabled &&
+        shouldTrackKittyKeyRelease(kittyKeyboardMode, normalizedKittyEvent)
+      ) {
+        upsertKittyKeyboardForwardedPress(
+          kittyForwardedKeys,
+          identity,
+          normalizedKittyEvent,
+          [],
+        );
+      }
+      const forwarded = broadcastKittyInput({
+        kind: "key",
+        event: normalizedKittyEvent,
+        fallbackToLegacy: true,
+      });
+      if (forwarded) {
+        upsertKittyKeyboardForwardedPress(
+          broadcastForwardedKeys,
+          identity,
+          normalizedKittyEvent,
+          forwarded.targetSessionIds,
+        );
+      }
+      if (
+        shouldExpectLegacyKeyboardData(normalizedKittyEvent) &&
+        ctx.isBroadcastEnabledRef.current &&
+        ctx.onBroadcastInputRef.current
+      ) {
+        markBroadcastLegacyDataPending(identity);
+      }
+    }
     return true;
   });
 
@@ -1037,151 +2010,188 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ctx.container.dispatchEvent(contextMenuEvent);
   };
 
+  const handleHistoryPreviewMouseDown = (event: MouseEvent) => {
+    if (isHistoryPreviewPointerTarget(event.target, historyPreviewOverlay)) {
+      if (event.button === 0) {
+        historyPreviewPointerDown = { clientX: event.clientX, clientY: event.clientY };
+      }
+      return;
+    }
+    if (!shouldHideHistoryPreviewOnMouseDown(event.target, historyPreviewOverlay)) return;
+    hideHistoryPreview();
+  };
+  const handleHistoryPreviewMouseUp = (event: MouseEvent) => {
+    const down = historyPreviewPointerDown;
+    historyPreviewPointerDown = null;
+    if (!down || !isHistoryPreviewPointerTarget(event.target, historyPreviewOverlay)) return;
+    if (isHistoryPreviewDismissClick(down, event)) {
+      hideHistoryPreview();
+      return;
+    }
+    copyHistoryPreviewSelectionIfEnabled();
+  };
   ctx.container.addEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
   ctx.container.addEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
-  ctx.container.addEventListener("mousedown", hideHistoryPreview, true);
+  ctx.container.addEventListener("mousedown", handleHistoryPreviewMouseDown, true);
+  ctx.container.addEventListener("mouseup", handleHistoryPreviewMouseUp, true);
   ctx.container.addEventListener("auxclick", handleMiddleClick);
 
   fitAddon.fit();
   term.focus();
 
-  const writeLocalTerminalData = (nextData: string) => {
-    ctx.onTerminalLogData?.(nextData);
-    term.write(nextData);
+  const markKittyCompositionPending = (autoClear = false) => {
+    clearBroadcastLegacyDataPending();
+    if (kittyCompositionClearTimer !== undefined) {
+      window.clearTimeout(kittyCompositionClearTimer);
+      kittyCompositionClearTimer = undefined;
+    }
+    if (
+      shouldEncodeKittyCompositionText(kittyKeyboardMode) ||
+      (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current)
+    ) {
+      kittyCompositionPending = true;
+      if (autoClear) {
+        kittyCompositionClearTimer = window.setTimeout(() => {
+          kittyCompositionPending = false;
+          kittyCompositionClearTimer = undefined;
+        }, 0);
+      }
+    }
   };
+  const finishKittyComposition = () => {
+    markKittyCompositionPending();
+    kittyCompositionClearTimer = window.setTimeout(() => {
+      kittyCompositionPending = false;
+      kittyCompositionClearTimer = undefined;
+    }, 0);
+  };
+  const clearKittyConnectionInputState = () => {
+    // Drop deferred IME punctuation on session reset; do not write into the
+    // next connection. Focus loss uses clearKittyTransientInputState instead.
+    clearImeTextInputDeferral();
+    kittyCompositionPending = false;
+    kittyForwardedKeys.clear();
+    clearKittyKeyboardBroadcastPairingState(
+      broadcastEncodedKeys,
+      broadcastLegacySuppressedKeys,
+    );
+    clearBroadcastLegacyDataPending();
+    if (kittyCompositionClearTimer !== undefined) {
+      window.clearTimeout(kittyCompositionClearTimer);
+      kittyCompositionClearTimer = undefined;
+    }
+  };
+  const clearKittyTransientInputState = () => {
+    flushImeTextInputDeferral();
+    flushKittyKeyboardBroadcastReleases(
+      kittyForwardedKeys,
+      (input) => {
+        if (input.kind !== "key" || !kittyKeyboardProtocolEnabled) return;
+        const sequence = encodeKittyKeyEvent(kittyKeyboardMode, input.event);
+        if (sequence) handleTerminalInputData(sequence, { source: "kitty" });
+      },
+      kittyKeyboardLockState,
+    );
+    flushKittyKeyboardBroadcastReleases(
+      broadcastForwardedKeys,
+      broadcastKittyInput,
+      kittyKeyboardLockState,
+    );
+    clearKittyConnectionInputState();
+  };
+  const textarea = term.textarea;
+  const startKittyComposition = () => markKittyCompositionPending();
+  const markKittyTextInput = (event: InputEvent) => {
+    if (shouldCommitDeferredImeTextInput(imeTextInputDeferredKey, event)) {
+      commitImeTextInput(event.data);
+      // Keep the helper textarea empty so the next composition does not treat
+      // the deferred punctuation as pre-existing suffix text.
+      try {
+        if (textarea) textarea.value = "";
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    if (shouldMarkKittyTextInputEvent(event)) markKittyCompositionPending(true);
+  };
+  textarea?.addEventListener("compositionstart", startKittyComposition);
+  textarea?.addEventListener("compositionend", finishKittyComposition);
+  // Capture on the ancestor so this runs before xterm's target listener, which
+  // can synchronously emit standalone emoji, speech, or mobile insertText data.
+  ctx.container.addEventListener("input", markKittyTextInput, true);
+  textarea?.addEventListener("blur", clearKittyTransientInputState);
 
   term.onData((data) => {
-    const id = ctx.sessionRef.current;
-    let dataToWrite = data;
-    let handledSubmittedInput = false;
-    const onBroadcastInput = ctx.onBroadcastInputRef.current;
-    const broadcastDataBeforeSudo = (data === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
-    const willBroadcastInput = !!id && shouldBroadcastTerminalUserInput(term, broadcastDataBeforeSudo, {
-      isBroadcastEnabled: ctx.isBroadcastEnabledRef.current,
-      hasBroadcastInputHandler: !!onBroadcastInput,
-    });
-    if (ctx.statusRef.current === "connected" && (data === "\r" || data === "\n")) {
-      if (ctx.scriptRecorderRef?.current?.isRecording) {
-        void ctx.scriptRecorderRef.current.recordEnter({
-          sensitive: ctx.passwordPromptActiveRef?.current,
-        });
-        if (ctx.passwordPromptActiveRef) {
-          ctx.passwordPromptActiveRef.current = false;
-        }
+    if (kittyCompositionPending && !data.startsWith("\u001b")) {
+      kittyCompositionPending = false;
+      if (kittyCompositionClearTimer !== undefined) {
+        window.clearTimeout(kittyCompositionClearTimer);
+        kittyCompositionClearTimer = undefined;
       }
-      const recordedCommand = recordTerminalCommandExecution(ctx.commandBufferRef.current, ctx, term);
-      handledSubmittedInput = true;
-      if (!willBroadcastInput) {
-        prepareSudoAutofillInput(data, recordedCommand, ctx.sudoAutofillRef?.current);
-      }
-    } else if (ctx.statusRef.current === "connected" && !willBroadcastInput) {
-      const pastedCommand = getSinglePastedCommand(data);
-      if (pastedCommand) {
-        const recordedCommand = recordTerminalCommandExecution(
-          `${ctx.commandBufferRef.current}${pastedCommand.command}`,
-          ctx,
-          term,
-        );
-        handledSubmittedInput = true;
-        if (recordedCommand) {
-          prepareSudoAutofillInput(
-            `${recordedCommand}${pastedCommand.lineEnding}`,
-            null,
-            ctx.sudoAutofillRef?.current,
-          );
-        }
-      }
-    }
-
-    if (id) {
-      prioritizeTerminalInput(
-        term,
-        id,
-        getFlowControllerForTerm(term),
-        ctx.terminalBackend,
-      );
-
-      // Serial line mode: buffer input and send on Enter
-      if (ctx.host.protocol === "serial" && ctx.serialLineMode && ctx.serialLineBufferRef) {
-        handleSerialLineModeInput(dataToWrite, {
-          bufferRef: ctx.serialLineBufferRef,
-          localEcho: ctx.serialLocalEcho,
-          writeToSession: (nextData) => {
-            ctx.onOutputTriggerUserInputRef?.current?.(nextData);
-            ctx.terminalBackend.writeToSession(id, nextData);
-          },
-          writeToTerminal: writeLocalTerminalData,
-        });
+      const encoded = encodeKittyCompositionText(kittyKeyboardMode, data);
+      if (encoded) {
+        handleTerminalInputData(encoded, { source: "kitty" });
       } else {
-        // Character mode (default): send immediately
-        // When backspaceBehavior is configured, remap the Backspace key output
-        let outData = dataToWrite;
-        if (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") {
-          outData = "\x08";
+        if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
+          suppressNextTerminalDataBroadcast = true;
         }
-        ctx.onOutputTriggerUserInputRef?.current?.(outData);
-        ctx.terminalBackend.writeToSession(id, outData);
-
-        // Local echo for serial connections only when explicitly enabled
-        if (ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
-          if (dataToWrite === "\r") {
-            writeLocalTerminalData("\r\n");
-          } else if (dataToWrite === "\x7f" || dataToWrite === "\b") {
-            writeLocalTerminalData("\b \b");
-          } else if (dataToWrite === "\x03") {
-            writeLocalTerminalData("^C");
-          } else if (dataToWrite.charCodeAt(0) >= 32 || dataToWrite.length > 1) {
-            writeLocalTerminalData(dataToWrite);
-          }
-        }
-        if (ctx.host.protocol === "telnet" && ctx.telnetLocalEchoRef?.current) {
-          const localEcho = formatTelnetLocalEcho(dataToWrite);
-          if (localEcho) writeLocalTerminalData(localEcho);
-        }
+        handleTerminalInputData(data);
       }
-
-      // Use remapped data so broadcast peers also receive the correct byte
-      const broadcastData = (dataToWrite === "\x7f" && ctx.host.backspaceBehavior === "ctrl-h") ? "\x08" : data;
-      if (willBroadcastInput) {
-        onBroadcastInput?.(broadcastData, ctx.sessionId);
-      }
-
-      if (!shouldSuppressTerminalInputScrollForUserPaste(term, data)) {
-        scrollToBottomAfterInput(data);
-      }
-
-      // Notify autocomplete of input
-      ctx.onAutocompleteInput?.(data);
-
-      if (ctx.statusRef.current === "connected") {
-        if (handledSubmittedInput || data === "\r" || data === "\n") {
-          // Command recording and sudo command preparation happen before the
-          // input is written so sudo can receive a one-time prompt marker.
-        } else if (data === "\x7f" || data === "\b") {
-          ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(0, -1);
-          ctx.scriptRecorderRef?.current?.recordBackspace();
-        } else if (data === "\x03") {
-          ctx.commandBufferRef.current = "";
-          ctx.scriptRecorderRef?.current?.recordClearLine();
-        } else if (data === "\x15") {
-          ctx.commandBufferRef.current = "";
-          ctx.scriptRecorderRef?.current?.recordClearLine();
-        } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
-          ctx.commandBufferRef.current += data;
-          ctx.scriptRecorderRef?.current?.recordInput(data);
-        } else if (data.length > 1 && !data.startsWith("\x1b")) {
-          ctx.commandBufferRef.current += data;
-          ctx.scriptRecorderRef?.current?.recordInput(data);
-        } else {
-          const pastedLine = getSingleBracketedPasteLine(data);
-          if (pastedLine) {
-            ctx.commandBufferRef.current += pastedLine;
-            ctx.scriptRecorderRef?.current?.recordInput(pastedLine);
-          }
-        }
-      }
+      broadcastKittyInput({ kind: "text", text: data });
+      return;
     }
+    if (broadcastLegacyDataPending) {
+      const keyIdentity = broadcastLegacyDataPending;
+      if (broadcastLegacyDataClearTimer !== undefined) {
+        window.clearTimeout(broadcastLegacyDataClearTimer);
+        broadcastLegacyDataClearTimer = undefined;
+      }
+      broadcastKittyInput({
+        kind: "legacy",
+        data,
+        keyIdentity,
+      });
+      broadcastLegacyDataPending = null;
+    }
+    handleTerminalInputData(data);
   });
+
+  const handleKittyKeyboardBroadcast = createKittyKeyboardBroadcastHandler({
+    resolveOptions: () => ({
+      kittyProtocolEnabled: kittyKeyboardProtocolEnabled,
+      kittyMode: kittyKeyboardMode,
+      applicationCursorMode: term.modes.applicationCursorKeysMode,
+      encodedKeys: broadcastEncodedKeys,
+      legacySuppressedKeys: broadcastLegacySuppressedKeys,
+      alternateScreen: term.buffer.active.type === "alternate",
+      shiftEnterSettings: ctx.terminalSettingsRef.current,
+    }),
+    getSessionId: () => ctx.sessionRef.current,
+    isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
+    isConnected: () => ctx.statusRef.current === "connected",
+    isRuntimeDisposed: () => runtimeDisposed,
+    interruptSession: ctx.terminalBackend.interruptSession
+      ? (id) => ctx.terminalBackend.interruptSession?.(id)
+      : undefined,
+    writeDisposed: (id, data) => ctx.terminalBackend.writeToSession(
+      id,
+      mapTerminalBackspaceInput(data, ctx.host.backspaceBehavior),
+      { sensitive: ctx.passwordPromptActiveRef?.current === true },
+    ),
+    writeActive: (data) => handleTerminalInputData(data, { source: "kitty" }),
+  });
+  registerKittyKeyboardBroadcastHandler(
+    ctx.sessionId,
+    (input) => {
+      handlingKittyBroadcast = true;
+      try {
+        handleKittyKeyboardBroadcast(input);
+      } finally {
+        handlingKittyBroadcast = false;
+      }
+    },
+  );
 
   // Track current working directory via OSC 7 escape sequences
   // OSC 7 format: \x1b]7;file://hostname/path\x07 or \x1b]7;file://hostname/path\x1b\\
@@ -1206,20 +2216,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     },
   );
 
-  const eraseScrollbackDisposable = term.parser.registerCsiHandler({ final: "J" }, (params) => {
-    const wipeAllowed = ctx.terminalSettingsRef.current?.clearWipesScrollback ?? true;
-    if (isEraseViewportSequence(params)) {
-      if (shouldPreserveViewportBeforeFullErase(term, inDec2026SyncBlock, wipeAllowed)) {
-        preserveTerminalViewportInScrollback(term);
-      }
-      return false;
-    }
-    if (!isEraseScrollbackSequence(params)) {
-      return false;
-    }
-    // CSI 3 J — POSIX/ncurses default `clear` emits this to wipe scrollback.
-    // Honor it unless the user opts into the legacy "preserve history" behavior.
-    return !wipeAllowed;
+  const eraseScrollbackDisposable = installEraseInDisplayHandlers(term, {
+    getClearWipesScrollback: () => ctx.terminalSettingsRef.current?.clearWipesScrollback ?? true,
+    isInDec2026SyncBlock: () => inDec2026SyncBlock,
   });
 
   const markCursorPositionReportRequest = (params: readonly (number | number[])[]): boolean => {
@@ -1240,7 +2239,21 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ctx.terminalBackend.writeToSession(id, payload);
   };
 
-  const kittyKeyboardDisposable = installKittyKeyboardProtocolHandlers(
+  const setKittyKeyboardProtocolEnabled = (enabled: boolean) => {
+    if (kittyKeyboardProtocolEnabled === enabled) return;
+    kittyKeyboardDisposable?.dispose();
+    kittyKeyboardDisposable = undefined;
+    kittyKeyboardProtocolEnabled = enabled;
+    kittyKeyboardDisposable = installKittyKeyboardProtocolHandlersIfEnabled(
+      enabled,
+      term.parser,
+      kittyKeyboardMode,
+      writeKittyKeyboardReply,
+    );
+  };
+
+  kittyKeyboardDisposable = installKittyKeyboardProtocolHandlersIfEnabled(
+    kittyKeyboardProtocolEnabled,
     term.parser,
     kittyKeyboardMode,
     writeKittyKeyboardReply,
@@ -1270,6 +2283,32 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       logger.warn('[XTerm] Failed to parse OSC 7:', err);
     }
     return true; // Indicate we handled the sequence
+  });
+
+  const osc133Disposable = term.parser.registerOscHandler(133, (data) => {
+    if (consumeOsc133CommandCompletion(data, ctx.promptLineBreakStateRef?.current)) {
+      ctx.onCommandCompleted?.();
+    }
+    return true;
+  });
+
+  // OSC 9 / 777 / 99 — desktop notifications (Codex, iTerm2, rxvt, kitty)
+  const osc99Assembler = new Osc99Assembler();
+  const emitOscNotification = (notification: OscNotification | null) => {
+    if (!notification) return;
+    ctx.onOscNotification?.(notification);
+  };
+  const osc9Disposable = term.parser.registerOscHandler(9, (data) => {
+    emitOscNotification(parseOsc9Payload(data));
+    return true;
+  });
+  const osc777Disposable = term.parser.registerOscHandler(777, (data) => {
+    emitOscNotification(parseOsc777Payload(data));
+    return true;
+  });
+  const osc99Disposable = term.parser.registerOscHandler(99, (data) => {
+    emitOscNotification(osc99Assembler.consume(data));
+    return true;
   });
 
   // OSC 52 — clipboard integration
@@ -1322,7 +2361,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
           }
           const b64 = btoa(binary);
-          ctx.terminalBackend.writeToSession(sessionId, `\x1b]52;${target};${b64}\x07`);
+          // This host-generated protocol reply contains clipboard contents. It
+          // must bypass plugin input interceptors just like password/OTP data;
+          // otherwise terminal interception would become an undeclared
+          // clipboard-read capability.
+          ctx.terminalBackend.writeToSession(
+            sessionId,
+            `\x1b]52;${target};${b64}\x07`,
+            { sensitive: true },
+          );
         };
         doRead().catch((err) => {
           logger.warn('[XTerm] OSC 52 clipboard read failed:', err);
@@ -1355,23 +2402,33 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     ctx.onBell?.();
   });
 
-  let resizeTimeout: NodeJS.Timeout | null = null;
   const resizeDebounceMs = XTERM_PERFORMANCE_CONFIG.resize.debounceMs;
+  const resizeScheduler = createTerminalResizeScheduler(
+    resizeDebounceMs,
+    ({ sessionId, cols, rows }) => {
+      ctx.terminalBackend.resizeSession(sessionId, cols, rows);
+      ctx.onResize?.(cols, rows);
+    },
+  );
   term.onResize(({ cols, rows }) => {
     // A reflow can leave stale glyphs in the WebGL atlas; clear it so the new
     // dimensions re-rasterize cleanly (issue #1049).
     clearWebglTextureAtlas();
     const id = ctx.sessionRef.current;
     if (!id) return;
-    if (resizeTimeout) clearTimeout(resizeTimeout);
-    resizeTimeout = setTimeout(() => {
-      ctx.terminalBackend.resizeSession(id, cols, rows);
-      resizeTimeout = null;
-    }, resizeDebounceMs);
+    resizeScheduler.schedule({ sessionId: id, cols, rows });
   });
 
-  const keywordHighlighter = new KeywordHighlighter(term);
+  const keywordHighlighter = new KeywordHighlighter(term, {
+    serializeAddon,
+  });
   keywordHighlighter.setRules(keywordHighlightRules, keywordHighlightEnabled);
+
+  const cursorLineHighlighter = new CursorLineHighlighter(term);
+  cursorLineHighlighter.setBackgroundColor(
+    resolveCursorLineHighlightBackground(ctx.terminalTheme.colors),
+  );
+  cursorLineHighlighter.setEnabled(settings?.highlightCursorLine ?? false);
 
   return {
     term,
@@ -1379,10 +2436,28 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     serializeAddon,
     searchAddon,
     keywordHighlighter,
+    cursorLineHighlighter,
+    pluginProviderHost,
+    pluginLinkProviderHost,
     clearTextureAtlas: clearWebglTextureAtlas,
     ensureWebglRenderer: loadWebglRenderer,
     suspendWebglRenderer,
+    hasInlineImages,
+    resetKittyConnectionInputState: clearKittyConnectionInputState,
+    flushKittyKeyboardReleases: clearKittyTransientInputState,
+    getKittyKeyboardModeState: () => snapshotKittyKeyboardModeState(kittyKeyboardMode),
+    restoreKittyKeyboardModeState: (state) => restoreKittyKeyboardModeState(
+      kittyKeyboardMode,
+      state,
+    ),
+    getKittyKeyboardProtocolEnabled: () => kittyKeyboardProtocolEnabled,
+    setKittyKeyboardProtocolEnabled,
     dispose: () => {
+      runtimeDisposed = true;
+      resizeScheduler.dispose();
+      webglController.dispose();
+      term.element?.removeEventListener("copy", handleNativeCopy, true);
+      ctx.container.removeEventListener("copy", handleNativeCopy, true);
       ctx.container.removeEventListener(
         "wheel",
         handleForcedHistoryScrollWheel,
@@ -1396,23 +2471,47 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ctx.container.removeEventListener("auxclick", handleMiddleClick);
       ctx.container.removeEventListener("mousedown", captureMiddleClickTerminalMouseEvent, true);
       ctx.container.removeEventListener("mouseup", captureMiddleClickTerminalMouseEvent, true);
-      ctx.container.removeEventListener("mousedown", hideHistoryPreview, true);
+      ctx.container.removeEventListener("mousedown", handleHistoryPreviewMouseDown, true);
+      ctx.container.removeEventListener("mouseup", handleHistoryPreviewMouseUp, true);
       hideHistoryPreview();
       historyPreviewBufferChangeDisposable.dispose();
       stopDprWatch();
       keywordHighlighter.dispose();
+      cursorLineHighlighter.dispose();
+      pluginLinkProviderHost?.dispose();
+      pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
       dec2026SyncStartDisposable.dispose();
       dec2026SyncEndDisposable.dispose();
       for (const disposable of cursorPositionReportRequestDisposables) {
         disposable.dispose();
       }
-      kittyKeyboardDisposable.dispose();
+      kittyKeyboardDisposable?.dispose();
+      keyboardApi?.removeEventListener?.("layoutchange", refreshKittyKeyboardLayout);
+      textarea?.removeEventListener("compositionstart", startKittyComposition);
+      textarea?.removeEventListener("compositionend", finishKittyComposition);
+      ctx.container.removeEventListener("input", markKittyTextInput, true);
+      textarea?.removeEventListener("blur", clearKittyTransientInputState);
+      clearKittyTransientInputState();
       osc7Disposable.dispose();
+      osc133Disposable.dispose();
+      osc9Disposable.dispose();
+      osc777Disposable.dispose();
+      osc99Disposable.dispose();
       osc52Disposable.dispose();
       titleChangeDisposable.dispose();
       bellDisposable.dispose();
       cursorPreferenceDisposable?.dispose();
+      // Release decoded bitmaps and the image canvas layers before xterm tears the
+      // screen element down, otherwise the storage would outlive its terminal.
+      if (imageAddon) {
+        try {
+          imageAddon.dispose();
+        } catch (err) {
+          logger.warn("[XTerm] imageAddon dispose failed", err);
+        }
+        imageAddon = null;
+      }
       try {
         term.dispose();
       } catch (err) {
@@ -1432,11 +2531,6 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         searchAddon.dispose();
       } catch (err) {
         logger.warn("[XTerm] searchAddon dispose failed", err);
-      }
-      try {
-        webglAddon?.dispose();
-      } catch (err) {
-        logger.warn("[XTerm] webglAddon dispose failed", err);
       }
     },
     get currentCwd() {

@@ -2,8 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { SftpPane } from "../../application/state/sftp/types";
 import {
+  connectionKeyMatchesHost,
   findReusableSftpSidePanelTab,
+  isPendingSameEndpointSshSession,
   isRemoteSftpTabHealthy,
+  rememberSftpSidePanelSourceStatus,
+  resolveSftpSidePanelTrackedSourceStatusUpdate,
+  shouldAcceptPendingSftpUpload,
+  shouldDeferSftpSidePanelAutoConnectForSession,
+  shouldRebindSftpSidePanelSourceSession,
   shouldResetSftpSidePanelSourceSession,
   shouldSkipSftpSidePanelAutoConnect,
 } from "./sftpSidePanelAutoConnect";
@@ -54,8 +61,97 @@ test("isRemoteSftpTabHealthy rejects connecting tabs", () => {
 test("shouldSkipSftpSidePanelAutoConnect returns false for stale connected keys", () => {
   const tab = remoteConnectedTab({ loading: true });
   assert.equal(
-    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true),
+    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true, "host-key"),
     false,
+  );
+});
+
+test("shouldSkipSftpSidePanelAutoConnect rejects a healthy tab mapped to another endpoint", () => {
+  const tab = remoteConnectedTab();
+  assert.equal(
+    shouldSkipSftpSidePanelAutoConnect("host-a-key", "host-a-key", tab, true, "host-b-key"),
+    false,
+  );
+});
+
+test("shouldSkipSftpSidePanelAutoConnect rejects when the active tab has no endpoint map", () => {
+  const tab = remoteConnectedTab();
+  assert.equal(
+    shouldSkipSftpSidePanelAutoConnect("host-a-key", "host-a-key", tab, true, null),
+    false,
+  );
+});
+
+test("isPendingSameEndpointSshSession only waits for actively connecting SSH sessions", () => {
+  const host = {
+    id: "host-1",
+    hostname: "server.example",
+    port: 22,
+    username: "root",
+  };
+  const baseSession = {
+    hostId: "host-1",
+    hostname: "server.example",
+    port: 22,
+    username: "root",
+    protocol: "ssh",
+  };
+
+  assert.equal(
+    isPendingSameEndpointSshSession({ ...baseSession, status: "connecting" }, host),
+    true,
+  );
+  assert.equal(
+    isPendingSameEndpointSshSession({ ...baseSession, status: "disconnected" }, host),
+    false,
+  );
+  assert.equal(
+    isPendingSameEndpointSshSession({ ...baseSession, status: "connected" }, host),
+    false,
+  );
+});
+
+test("connectionKeyMatchesHost accepts host-id prefix keys", () => {
+  assert.equal(connectionKeyMatchesHost("host-1:server:22:ssh::root", "host-1"), true);
+  assert.equal(connectionKeyMatchesHost("host-2:server:22:ssh::root", "host-1"), false);
+  assert.equal(connectionKeyMatchesHost(null, "host-1"), false);
+});
+
+test("shouldAcceptPendingSftpUpload waits until the pane endpoint matches the drop", () => {
+  const connected = {
+    hostId: "host-1",
+    isLocal: false,
+    status: "connected",
+  };
+  assert.equal(
+    shouldAcceptPendingSftpUpload({
+      pendingHostId: "host-1",
+      pendingConnectionKey: "host-1:b.example:22:ssh::root",
+      activeHostId: "host-1",
+      connection: connected,
+      paneConnectionKey: "host-1:a.example:22:ssh::root",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptPendingSftpUpload({
+      pendingHostId: "host-1",
+      pendingConnectionKey: "host-1:b.example:22:ssh::root",
+      activeHostId: "host-1",
+      connection: connected,
+      paneConnectionKey: null,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAcceptPendingSftpUpload({
+      pendingHostId: "host-1",
+      pendingConnectionKey: "host-1:b.example:22:ssh::root",
+      activeHostId: "host-1",
+      connection: connected,
+      paneConnectionKey: "host-1:b.example:22:ssh::root",
+    }),
+    true,
   );
 });
 
@@ -84,15 +180,195 @@ test("shouldResetSftpSidePanelSourceSession detects terminal session changes", (
   assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", null), false);
 });
 
-test("shouldSkipSftpSidePanelAutoConnect returns false after terminal session changes", () => {
-  const tab = remoteConnectedTab();
+test("shouldRebindSftpSidePanelSourceSession treats SSH start-over as a transport change", () => {
+  // Same terminal tab id after Start over - transport was replaced even though
+  // the session id did not change.
   assert.equal(
-    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true),
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "disconnected",
+      nextStatus: "connected",
+    }),
     true,
   );
-  // Caller gates on sessionChanged before invoking skip — stale reuse must not win.
   assert.equal(
-    shouldResetSftpSidePanelSourceSession("sess-a", "sess-b"),
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "connecting",
+      nextStatus: "connected",
+    }),
     true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "connected",
+      nextStatus: "connected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-b",
+      previousStatus: "connected",
+      nextStatus: "connected",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "disconnected",
+      nextStatus: "connecting",
+    }),
+    false,
+  );
+});
+
+test("shouldDeferSftpSidePanelAutoConnectForSession only waits during an active reconnect", () => {
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: "sess-a",
+      sessionStatus: "disconnected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: "sess-a",
+      sessionStatus: "connecting",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: "sess-a",
+      sessionStatus: "connected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldDeferSftpSidePanelAutoConnectForSession({
+      activeSessionId: null,
+      sessionStatus: "connecting",
+    }),
+    false,
+  );
+});
+
+test("resolveSftpSidePanelTrackedSourceStatusUpdate remembers background disconnects", () => {
+  assert.deepEqual(
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
+      trackedSessionId: "sess-a",
+      sessionStatus: "disconnected",
+    }),
+    { sessionId: "sess-a", status: "disconnected" },
+  );
+  assert.deepEqual(
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
+      trackedSessionId: "sess-a",
+      sessionStatus: "connecting",
+    }),
+    { sessionId: "sess-a", status: "connecting" },
+  );
+  assert.equal(
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
+      trackedSessionId: "sess-a",
+      sessionStatus: "connected",
+    }),
+    null,
+  );
+  assert.equal(
+    resolveSftpSidePanelTrackedSourceStatusUpdate({
+      trackedSessionId: null,
+      sessionStatus: "disconnected",
+    }),
+    null,
+  );
+});
+
+test("rememberSftpSidePanelSourceStatus keeps the linked SSH status across non-SSH focus", () => {
+  assert.equal(
+    rememberSftpSidePanelSourceStatus({
+      previousStatus: "connecting",
+      activeSessionId: null,
+      activeSessionStatus: null,
+    }),
+    "connecting",
+  );
+  assert.equal(
+    rememberSftpSidePanelSourceStatus({
+      previousStatus: "disconnected",
+      activeSessionId: null,
+      activeSessionStatus: null,
+    }),
+    "disconnected",
+  );
+  assert.equal(
+    rememberSftpSidePanelSourceStatus({
+      previousStatus: "disconnected",
+      activeSessionId: "sess-a",
+      activeSessionStatus: "connected",
+    }),
+    "connected",
+  );
+});
+
+test("failed terminal reconnect keeps a healthy standalone SFTP tab", () => {
+  const tab = remoteConnectedTab();
+  const sessionChanged = shouldRebindSftpSidePanelSourceSession({
+    previousSessionId: "sess-a",
+    nextSessionId: "sess-a",
+    previousStatus: "connecting",
+    nextStatus: "disconnected",
+  });
+  assert.equal(sessionChanged, false);
+  assert.equal(
+    !sessionChanged && shouldSkipSftpSidePanelAutoConnect(
+      "host-1:key",
+      "host-1:key",
+      tab,
+      true,
+      "host-1:key",
+    ),
+    true,
+  );
+  assert.equal(
+    shouldRebindSftpSidePanelSourceSession({
+      previousSessionId: "sess-a",
+      nextSessionId: "sess-a",
+      previousStatus: "connecting",
+      nextStatus: "connected",
+    }),
+    true,
+  );
+});
+
+test("session change still requires rebind even when the endpoint key matches", () => {
+  const tab = remoteConnectedTab();
+  // Callers must not skip auto-connect solely because the tab is healthy —
+  // a new focused terminal may share host/port/user while proxy/jump differs.
+  // Path stickiness is handled by remembered initialPath on reconnect.
+  assert.equal(shouldResetSftpSidePanelSourceSession("sess-a", "sess-b"), true);
+  assert.equal(
+    shouldSkipSftpSidePanelAutoConnect("host-key", "host-key", tab, true, "host-key"),
+    true,
+  );
+  // Reuse lookup still finds the tab, but callers pass sessionChanged and skip
+  // it so connect rebinds with the new sourceSessionId.
+  assert.equal(
+    findReusableSftpSidePanelTab(
+      [tab],
+      "host-1",
+      "host-key",
+      new Map([[tab.id, "host-key"]]),
+      () => true,
+    ),
+    tab,
   );
 });

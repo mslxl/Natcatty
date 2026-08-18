@@ -1,5 +1,17 @@
 "use strict";
 
+const { mergeTerminalDataMeta } = require("./terminalDataMeta.cjs");
+
+function hasPluginPipelineIngress(meta) {
+  return Number.isFinite(meta?.pluginPipelineIngressBytes)
+    && Number(meta.pluginPipelineIngressBytes) > 0;
+}
+
+function hasPluginPipelineIngressMarker(meta) {
+  return Number.isFinite(meta?.pluginPipelineIngressBytes)
+    && Number(meta.pluginPipelineIngressBytes) >= 0;
+}
+
 function createTerminalDataBacklog(options = {}) {
   const maxBytesPerSession = options.maxBytesPerSession ?? 64 * 1024;
   const pendingBySession = new Map();
@@ -9,16 +21,47 @@ function createTerminalDataBacklog(options = {}) {
     return value.slice(value.length - maxBytesPerSession);
   }
 
-  function append(sessionId, data) {
-    if (!sessionId || !data) return;
-    const previous = pendingBySession.get(sessionId) || "";
-    pendingBySession.set(sessionId, trimToLimit(previous + data));
+  function append(sessionId, data, meta) {
+    if (!sessionId || (!data && !hasPluginPipelineIngressMarker(meta))) return;
+    const previous = pendingBySession.get(sessionId) || { data: "", meta: undefined };
+    const nextData = trimToLimit(previous.data + data);
+    const preserveTerminalPerf = previous.data.length === 0 && nextData === data;
+    let previousMeta = previous.meta;
+    let nextChunkMeta = meta;
+    const previousHasIngress = Number.isFinite(previousMeta?.pluginPipelineIngressBytes);
+    const nextChunkHasIngress = Number.isFinite(nextChunkMeta?.pluginPipelineIngressBytes);
+    // Once one merged chunk carries explicit original-ingress accounting, the
+    // metadata must cover every raw flow unit in the same replay entry. Flow
+    // control is intentionally charged in JavaScript string length, not UTF-8
+    // bytes, throughout the terminal renderer/worker path. Otherwise a
+    // processed chunk followed or preceded by ordinary output would cause the
+    // renderer to acknowledge only the annotated subset.
+    if (previousHasIngress && !nextChunkHasIngress && data) {
+      nextChunkMeta = {
+        ...(nextChunkMeta || {}),
+        pluginPipelineIngressBytes: data.length,
+      };
+    } else if (!previousHasIngress && nextChunkHasIngress && previous.data) {
+      previousMeta = {
+        ...(previousMeta || {}),
+        pluginPipelineIngressBytes: previous.data.length,
+      };
+    }
+    const nextMeta = mergeTerminalDataMeta(previousMeta, nextChunkMeta, { preserveTerminalPerf });
+    pendingBySession.set(sessionId, {
+      data: nextData,
+      meta: nextMeta,
+    });
+  }
+
+  function takeEntry(sessionId) {
+    const entry = pendingBySession.get(sessionId) || { data: "", meta: undefined };
+    pendingBySession.delete(sessionId);
+    return entry;
   }
 
   function take(sessionId) {
-    const data = pendingBySession.get(sessionId) || "";
-    pendingBySession.delete(sessionId);
-    return data;
+    return takeEntry(sessionId).data;
   }
 
   function clear(sessionId) {
@@ -26,12 +69,13 @@ function createTerminalDataBacklog(options = {}) {
   }
 
   function size(sessionId) {
-    return pendingBySession.get(sessionId)?.length ?? 0;
+    return pendingBySession.get(sessionId)?.data.length ?? 0;
   }
 
   return {
     append,
     take,
+    takeEntry,
     clear,
     size,
   };
@@ -48,12 +92,12 @@ function createTerminalDataDispatcher({
   onCallbackError = console.error,
   shouldDropSession = () => false,
 }) {
-  return function deliverToListeners(sessionId, data) {
-    if (!data) return;
+  return function deliverToListeners(sessionId, data, meta) {
+    if (!data && !hasPluginPipelineIngressMarker(meta)) return;
     if (shouldDropSession(sessionId)) return;
 
     if (!hasSessionListeners(displayDataListeners, sessionId)) {
-      terminalDataBacklog?.append?.(sessionId, data);
+      terminalDataBacklog?.append?.(sessionId, data, meta);
     }
 
     const set = dataListeners.get(sessionId);
@@ -61,7 +105,7 @@ function createTerminalDataDispatcher({
 
     set.forEach((cb) => {
       try {
-        cb(data);
+        cb(data, meta);
       } catch (err) {
         onCallbackError("Data callback failed", err);
       }
@@ -90,4 +134,6 @@ module.exports = {
   createTerminalDataBacklog,
   createTerminalDataDispatcher,
   clearTerminalDataSession,
+  hasPluginPipelineIngress,
+  hasPluginPipelineIngressMarker,
 };

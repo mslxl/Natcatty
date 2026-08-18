@@ -5,13 +5,13 @@
 <h1 align="center">Netcatty</h1>
 
 <p align="center">
-  <strong>モダンな SSH クライアント、SFTP ブラウザ & ターミナルマネージャー</strong><br/>
+  <strong>🔥 AI 搭載の SSH クライアント、SFTP ブラウザ & ターミナルマネージャー 🚀</strong><br/>
   <a href="https://netcatty.app"><strong>netcatty.app</strong></a>
 </p>
 
 <p align="center">
   Electron、React、xterm.js で構築された機能豊富な SSH ワークスペース。<br/>
-  分割ターミナル、Vault ビュー、SFTP ワークフロー、カスタムテーマ、キーワードハイライト — すべてが一つに。
+  🔥 内蔵 AI Agent · 分割ターミナル · Vault ビュー · SFTP ワークフロー · カスタムテーマ — すべてが一つに。
 </p>
 
 <p align="center">
@@ -40,16 +40,45 @@
 
 ---
 
-[![Netcatty メインインターフェース](screenshots/main-window-dark.png)](screenshots/main-window-dark.png)
+<img width="3142" height="1764" alt="Screenshot 2026-07-02 at 22 51 24" src="https://github.com/user-attachments/assets/3116165d-623a-4d3a-a28a-914befb9b72d" />
+
+---
+
+<a name="catty-agent"></a>
+# 🔥 Catty Agent — あなたの IT 運用 AI パートナー
+
+> 🚀 **AI で日常の IT 運用作業を加速。** Catty Agent はサーバー環境を理解し、コマンドを実行し、自然な会話で複数ホストの複雑な操作をこなす内蔵 AI アシスタントです。
+
+### 🔥 Catty Agent にできること
+
+- 🚀 **自然言語でサーバー管理** — コマンドを暗記せず、必要なことを話しかけるだけ
+- 🔥 **リアルタイムサーバー診断** — 会話を通じてステータス確認、ログ調査、リソース監視
+- 🚀 **マルチホスト連携** — 複数サーバーのタスクを同時にコーディネート
+- 🔥 **インテリジェントなコンテキスト認識** — サーバー環境を理解し、的確な回答を提供
+- 🚀 **ワンステップで複雑な操作** — クラスター構築、サービスデプロイなど簡単な指示で実行
+
+### 🎬 AI の動作デモ
+
+#### 🔥 シングルホスト — インテリジェントなサーバー診断
+
+Catty Agent にサーバーの健全性チェックを依頼すると、適切なコマンドを実行し、出力を分析して数秒で明確なサマリーを提示します。
+
+<img width="1510" height="870" alt="ai-single" src="https://github.com/user-attachments/assets/d3f34e53-8476-4fab-8634-394b931d1ff1" />
+
+#### 🚀 マルチホスト — Docker Swarm クラスターのセットアップ
+
+1 つの会話で 2 台のサーバーをまたいで Docker Swarm クラスターをオーケストレーションする Catty Agent をご覧ください。初期化、トークン交換、ノード参加まですべてこなします — あなたは望む結果を伝えるだけ。
+
+<img width="1515" height="870" alt="ai-muti" src="https://github.com/user-attachments/assets/ca166fc5-65d9-4d7b-951a-962c2ef230d8" />
 
 ---
 
 # 目次 <!-- omit in toc -->
 
+- [🔥 Catty Agent — AI パートナー](#catty-agent)
 - [Netcatty とは](#netcatty-とは)
 - [なぜ Netcatty](#なぜ-netcatty)
 - [機能](#機能)
-- [デモ](#デモ)
 - [スクリーンショット](#スクリーンショット)
   - [メインウィンドウ](#メインウィンドウ)
   - [Vault ビュー](#vault-ビュー)
@@ -71,9 +100,10 @@
 **Netcatty** は、複数のリモートサーバーを効率的に管理する必要がある開発者、システム管理者、DevOps エンジニア向けに設計された、モダンなクロスプラットフォーム SSH クライアントおよびターミナルマネージャーです。
 
 - **Netcatty は** PuTTY、Termius、SecureCRT、macOS Terminal.app の代替となる SSH 接続ツール
-- **Netcatty は** 強力な SFTP クライアント（ドラッグ＆ドロップ + 内蔵エディタ）
+- **Netcatty は** デュアルペインのファイルブラウザを備えた強力な SFTP クライアント
 - **Netcatty は** 分割ペイン、タブ、セッション管理を備えたターミナルワークスペース
-- **Netcatty は** シェルの代替ではありません — SSH/Telnet/Mosh やローカル/シリアル経由でシェルに接続します（環境により異なります）
+- **Netcatty は** SSH、ローカルターミナル、Telnet、Mosh、シリアル接続をサポートします（利用可能な場合）
+- **Netcatty は** シェルの代替ではありません — SSH/Telnet/Mosh またはローカル/シリアルセッション経由でシェルに接続します
 
 ---
 
@@ -82,9 +112,9 @@
 
 複数サーバーを日常的に扱うなら、Netcatty は「スピード」と「流れ」を重視した作りになっています：
 
-- **ワークスペース中心** — 分割ペインで複数セッションを並行操作
-- **Vault の見やすさ** — グリッド/リスト/ツリーで状況に合わせて切り替え
-- **SFTP の作業感** — ドラッグ＆ドロップと内蔵エディタでサクッと編集
+- **ワークスペース中心** — 分割ペイン + タブ + セッション復元で常時使うワークフローに対応
+- **Vault の整理** — グリッド/リスト/ツリー表示、高速検索、ドラッグしやすいワークフロー
+- **本格的な SFTP** — 内蔵エディタ + ドラッグ＆ドロップ + スムーズなファイル操作
 
 ---
 
@@ -98,6 +128,7 @@
 ### 🖥️ ターミナルワークスペース
 - **分割ペイン** — 水平・垂直分割でマルチタスク
 - **セッション管理** — 複数の接続を並行して扱う
+- **インライン画像** — リモートプログラムが出力する Kitty グラフィックス、SIXEL、iTerm インライン画像を描画
 
 ### 📁 SFTP + 内蔵エディタ
 - **ファイル作業** — ドラッグ＆ドロップでアップロード/ダウンロード
@@ -109,43 +140,6 @@
 
 ---
 
-<a name="デモ"></a>
-# デモ
-
-動画で機能をさっと確認できます（素材は `screenshots/gifs/`）：
-
-### Vault ビュー：グリッド / リスト / ツリー
-状況に合わせて見え方を切り替え。グリッドで全体像、リストで密度、ツリーで階層を扱えます。
-
-https://github.com/user-attachments/assets/e2742987-3131-404d-bd4b-06423e5bfd99
-
-### 分割ターミナル + セッション管理
-複数セッションを分割ペインで並べて作業。関連タスクを横並びにしてコンテキストスイッチを減らします。
-
-https://github.com/user-attachments/assets/377d0c46-cc5a-4382-aa31-5acfd412ce62
-
-### SFTP：ドラッグ＆ドロップ + 内蔵エディタ
-ドラッグ＆ドロップでファイルを移動し、内蔵エディタでそのまま編集できます。
-
-https://github.com/user-attachments/assets/c6e06af4-b0d5-461c-b0c7-9d6f655af6c7
-
-### ドラッグでアップロード
-ファイルをそのままドロップしてアップロードを開始。ダイアログ操作を減らせます。
-
-https://github.com/user-attachments/assets/c8e0c4ff-f020-4e18-9b09-681ec97b003f
-
-### カスタムテーマ
-テーマを調整して自分の好みに合わせた見た目に。
-
-https://github.com/user-attachments/assets/77e2a693-4ef2-4823-8ca1-9bcbf14ed98b
-
-### キーワードハイライト
-重要な出力（エラー/警告/マーカーなど）を見つけやすくするために、ハイライトをカスタマイズできます。
-
-https://github.com/user-attachments/assets/e6516993-ad66-4594-8c28-57426082339b
-
----
-
 <a name="スクリーンショット"></a>
 # スクリーンショット
 
@@ -154,29 +148,25 @@ https://github.com/user-attachments/assets/e6516993-ad66-4594-8c28-57426082339b
 
 メインウィンドウは、長時間の SSH 作業を前提に設計されています。セッション、ナビゲーション、主要ツールへ素早くアクセスできます。
 
-![メインウィンドウ（ダーク）](screenshots/main-window-dark.png)
+<img width="1531" height="875" alt="black-grid" src="https://github.com/user-attachments/assets/004b80f6-5bbb-4f14-b8cd-33a0a5913b8c" />
 
-![メインウィンドウ（ライト）](screenshots/main-window-light.png)
+<img width="1550" height="876" alt="light" src="https://github.com/user-attachments/assets/2b59a999-a25e-4217-944c-9aef0a09f272" />
 
 <a name="vault-ビュー"></a>
 ## Vault ビュー
 
 作業に合わせて見え方を切り替え：グリッドで全体像、リストでスキャン、ツリーで整理と階層ナビゲーション。
 
-![Vault グリッドビュー](screenshots/vault_grid_view.png)
+<img width="1554" height="882" alt="list" src="https://github.com/user-attachments/assets/03249f15-b5f8-4770-a3c3-d5001636ea00" />
 
-![Vault リストビュー](screenshots/vault_list_view.png)
-
-![Vault ツリービュー（ダーク）](screenshots/treeview-dark.png)
-
-![Vault ツリービュー（ライト）](screenshots/treeview-light.png)
+<img width="1561" height="878" alt="tree" src="https://github.com/user-attachments/assets/739f7b66-3898-43d0-8dd3-b9b97fd8e8de" />
 
 <a name="分割ターミナル"></a>
 ## 分割ターミナル
 
 分割ペインで複数のサーバー/タスクを同時に扱えます（例：デプロイ + ログ + 監視）。
 
-![分割ウィンドウ](screenshots/split-window.png)
+<img width="1560" height="871" alt="split" src="https://github.com/user-attachments/assets/c93a8523-6256-4bb3-8b6e-d599831f2f9f" />
 
 ---
 
@@ -201,8 +191,6 @@ Netcatty は接続したホストの OS を検出し、ホスト一覧でアイ�
   <img src="public/distro/almalinux.svg" width="48" alt="AlmaLinux" title="AlmaLinux">
 </p>
 
----
-
 <a name="はじめに"></a>
 # はじめに
 
@@ -218,7 +206,29 @@ Netcatty は接続したホストの OS を検出し、ホスト一覧でアイ�
 
 または [GitHub Releases](https://github.com/binaricat/Netcatty/releases) ですべてのリリースを参照してください。
 
+### コード署名とプライバシー
+
+Netcatty は SignPath Foundation のオープンソースプログラムに申請中です。
+承認後、対象となる Windows リリース成果物には **Free code signing provided by SignPath.io, certificate by SignPath Foundation** が使用されます。詳細は
+[コード署名ポリシー](CODE_SIGNING_POLICY.md)と
+[プライバシーポリシー](PRIVACY.md)をご覧ください。申請と導入が完了するまで、
+Windows リリースは未署名の場合があります。
+
+> **Windows のポータブルデータ：** Netcatty を終了し、`Netcatty.exe`（zip 版）またはポータブル版ランチャーと同じ場所に `data` フォルダーを作成してください。次回起動時から、Netcatty はデータをこのフォルダーに保存します。保存済みのパスワードと秘密鍵は、作成した Windows ユーザーによって引き続き保護されます。別のコンピューターまたは Windows ユーザーへ移動した場合は、これらの機密情報を再入力する必要があります。
+
+> **Windows でフォルダーを Netcatty で開く：** インストール版では、エクスプローラーのフォルダーおよびフォルダー背景のコンテキストメニューに **Open in Netcatty** が追加されます。選択すると、そのフォルダーでローカルターミナルが開きます。Windows 11 では、先に **その他のオプションを表示** を選択してください。**設定 → システム → Windows Explorer** からメニューの表示／非表示を切り替えられます。ZIP 版とポータブル版では、既定ではこのメニューは追加されません。
+
 > **macOS ユーザーへ：** 現在のリリースはコード署名と notarization が行われている想定です。Gatekeeper の警告が出る場合は、GitHub Releases から最新版の公式ビルドを取得しているか確認してください。
+
+### Nix / NixOS
+
+Netcatty は Nix および NixOS ユーザー向けに、公式 Linux AppImage リリースをラップした flake を提供しています：
+
+```bash
+nix run github:binaricat/Netcatty
+```
+
+宣言型インストールには、Netcatty flake を input として追加し、NixOS または Home Manager のパッケージリストで `inputs.netcatty.packages.${pkgs.system}.default` を使用してください。
 
 ### 前提条件
 - Node.js 18+ と npm
@@ -236,25 +246,6 @@ npm install
 
 # 開発モードを起動（Vite + Electron）
 npm run dev
-```
-
-### プロジェクト構造
-
-```
-├── App.tsx                 # メイン React アプリケーション
-├── components/             # React コンポーネント
-│   ├── Terminal.tsx        # ターミナルコンポーネント
-│   ├── SftpView.tsx        # SFTP ブラウザ
-│   ├── VaultView.tsx       # ホスト管理
-│   ├── KeyManager.tsx      # SSH キー管理
-│   └── ...
-├── application/            # 状態管理 & 国際化
-├── domain/                 # ドメインモデル & ロジック
-├── infrastructure/         # サービス & アダプター
-├── electron/               # Electron メインプロセス
-│   ├── main.cjs            # メインエントリ
-│   └── bridges/            # IPC ブリッジ
-└── public/                 # 静的アセット & アイコン
 ```
 
 ---
@@ -329,11 +320,11 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 <a name="star-履歴"></a>
 # Star 履歴
 
-<a href="https://star-history.com/#binaricat/Netcatty&Date">
+<a href="https://www.star-history.com/#binaricat/Netcatty&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=binaricat/Netcatty&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/star-history/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/assets/star-history/star-history-light.svg" />
+   <img alt="Star History Chart" src="docs/assets/star-history/star-history-light.svg" />
  </picture>
 </a>
 

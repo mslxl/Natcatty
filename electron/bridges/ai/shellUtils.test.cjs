@@ -5,8 +5,11 @@ const {
   addCodexExecutableEnvForSdk,
   buildWindowsShellCommandLine,
   extractTrailingIdlePrompt,
+  formatSyntheticEcho,
   getFreshIdlePrompt,
   isDefaultPowerShellPromptLine,
+  isDefaultCmdPromptLine,
+  isDefaultPosixPromptLine,
   isPlausibleCliVersionOutput,
   looksLikeIdleAutoLogout,
   prepareCommandForSpawn,
@@ -23,6 +26,17 @@ const {
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+test("formatSyntheticEcho normalizes multi-line commands to CRLF so xterm doesn't staircase", () => {
+  assert.equal(
+    formatSyntheticEcho("set -e\ncd /tmp\necho done"),
+    "set -e\r\ncd /tmp\r\necho done\r\n",
+  );
+  // Already-CRLF input is not doubled.
+  assert.equal(formatSyntheticEcho("a\r\nb"), "a\r\nb\r\n");
+  // Single-line commands keep the original shape.
+  assert.equal(formatSyntheticEcho("npm test"), "npm test\r\n");
+});
 
 test("extracts a trailing PowerShell idle prompt", () => {
   assert.equal(
@@ -79,6 +93,37 @@ test("isDefaultPowerShellPromptLine matches default shapes and rejects look-alik
   assert.equal(isDefaultPowerShellPromptLine("ZIPS>"), false);
   assert.equal(isDefaultPowerShellPromptLine(""), false);
   assert.equal(isDefaultPowerShellPromptLine(null), false);
+});
+
+test("extracts a trailing cmd.exe idle prompt", () => {
+  // Windows OpenSSH default shell is cmd.exe; without capturing `C:\...>`
+  // AI exec cannot select the cmd wrapper when shellKind is still unset.
+  assert.equal(
+    extractTrailingIdlePrompt("Microsoft Windows...\r\nC:\\Users\\alice>"),
+    "C:\\Users\\alice>",
+  );
+  assert.equal(extractTrailingIdlePrompt("welcome\r\nC:\\>"), "C:\\>");
+  assert.equal(extractTrailingIdlePrompt("welcome\r\nD:\\data\\proj>"), "D:\\data\\proj>");
+});
+
+test("isDefaultCmdPromptLine matches drive-letter cmd prompts only", () => {
+  assert.equal(isDefaultCmdPromptLine("C:\\Users\\alice>"), true);
+  assert.equal(isDefaultCmdPromptLine("C:\\>"), true);
+  assert.equal(isDefaultCmdPromptLine("C:>"), true);
+  assert.equal(isDefaultCmdPromptLine("PS C:\\Users\\alice>"), false);
+  assert.equal(isDefaultCmdPromptLine("alice@host:~$"), false);
+  assert.equal(isDefaultCmdPromptLine("C: >"), false);
+  assert.equal(isDefaultCmdPromptLine(""), false);
+});
+
+test("isDefaultPosixPromptLine matches classic user@host prompts", () => {
+  assert.equal(isDefaultPosixPromptLine("alice@host:~$"), true);
+  assert.equal(isDefaultPosixPromptLine("alice@wsl:/mnt/c$"), true);
+  assert.equal(isDefaultPosixPromptLine("root@box:/#"), true);
+  assert.equal(isDefaultPosixPromptLine("root@host ~#"), false);
+  assert.equal(isDefaultPosixPromptLine("PS C:\\Users\\alice>"), false);
+  assert.equal(isDefaultPosixPromptLine("C:\\Users\\alice>"), false);
+  assert.equal(isDefaultPosixPromptLine(""), false);
 });
 
 test("isPlausibleCliVersionOutput rejects stack traces and file URLs", () => {
@@ -197,6 +242,45 @@ test("resolveWindowsShimToNativeExe resolves npm .cmd shim to native exe", () =>
   }
 });
 
+test("prepareCommandForSpawn can skip native exe unwrap for node+script shims", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-spawn-no-unwrap-"));
+  try {
+    const shimPath = path.join(tmp, "cursor-agent.cmd");
+    const nodeExe = path.join(tmp, "versions", "2026.06.01-abc", "node.exe");
+    fs.mkdirSync(path.dirname(nodeExe), { recursive: true });
+    fs.writeFileSync(nodeExe, "", "utf8");
+    fs.writeFileSync(
+      shimPath,
+      '@ECHO off\r\n"%~dp0\\versions\\2026.06.01-abc\\node.exe" "%~dp0\\versions\\2026.06.01-abc\\index.js" %*\r\n',
+      "utf8",
+    );
+
+    assert.equal(resolveWindowsShimToNativeExe(shimPath, "win32"), nodeExe);
+
+    const unwrapped = prepareCommandForSpawn(shimPath, ["status", "--format", "json"]);
+    const wrapped = prepareCommandForSpawn(shimPath, ["status", "--format", "json"], {
+      unwrapNativeExe: false,
+    });
+    if (process.platform === "win32") {
+      assert.deepEqual(unwrapped, {
+        command: nodeExe,
+        args: ["status", "--format", "json"],
+        shell: false,
+      });
+      assert.deepEqual(wrapped, {
+        command: buildWindowsShellCommandLine(shimPath, ["status", "--format", "json"]),
+        args: [],
+        shell: true,
+      });
+    } else {
+      assert.equal(unwrapped.shell, false);
+      assert.equal(wrapped.shell, false);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("prepareCommandForSpawn resolves Windows cmd shim to native exe with shell:false", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-spawn-native-"));
   try {
@@ -296,6 +380,55 @@ test("resolveCodexExecutableForSdk returns null for Windows cmd shim when native
     );
 
     assert.equal(resolveCodexExecutableForSdk(shimPath, "win32"), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolveCodexExecutableForSdk maps Windows nvmd bin shim to native codex.exe", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-codex-nvmd-shim-"));
+  try {
+    const nvmdHome = path.join(tmp, ".nvmd");
+    const binDir = path.join(nvmdHome, "bin");
+    const versionRoot = path.join(nvmdHome, "versions", "22.14.0");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(nvmdHome, "default"), "22.14.0\n", "utf8");
+    fs.writeFileSync(
+      path.join(nvmdHome, "packages.json"),
+      JSON.stringify({ codex: ["22.14.0"] }),
+      "utf8",
+    );
+
+    // nvmd Windows package shims are copies of npm.cmd / nvmd.exe, not npm's
+    // @openai/codex launcher. The real install lives under versions/<ver>/.
+    const shimPath = path.join(binDir, "codex.cmd");
+    fs.writeFileSync(shimPath, '@echo off\r\n"%~dpn0.exe" %*\r\n', "utf8");
+    fs.writeFileSync(path.join(binDir, "codex.exe"), "", "utf8");
+    fs.writeFileSync(path.join(binDir, "nvmd.exe"), "", "utf8");
+
+    const nativeExe = writeCodexWin32NativeLayout(versionRoot);
+
+    assert.equal(resolveCodexExecutableForSdk(shimPath, "win32"), nativeExe);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolveCodexExecutableForSdk maps Windows nvmd.exe package shim to native codex.exe", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-codex-nvmd-exe-"));
+  try {
+    const nvmdHome = path.join(tmp, ".nvmd");
+    const binDir = path.join(nvmdHome, "bin");
+    const versionRoot = path.join(nvmdHome, "versions", "20.18.0");
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.writeFileSync(path.join(nvmdHome, "default"), "20.18.0\n", "utf8");
+
+    const shimPath = path.join(binDir, "codex.exe");
+    fs.writeFileSync(shimPath, "", "utf8");
+    fs.writeFileSync(path.join(binDir, "nvmd.exe"), "", "utf8");
+    const nativeExe = writeCodexWin32NativeLayout(versionRoot);
+
+    assert.equal(resolveCodexExecutableForSdk(shimPath, "win32"), nativeExe);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

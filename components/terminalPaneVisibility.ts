@@ -11,6 +11,83 @@ export type TerminalPaneSnapshot =
 
 export type TerminalPaneFocusSnapshot = "na" | "focused" | "unfocused";
 
+export type TerminalPaneHiddenSize = {
+  width: number;
+  height: number;
+};
+
+export type TerminalPaneStyle = {
+  left?: string | number;
+  top?: string | number;
+  width?: string | number;
+  height?: string | number;
+  visibility?: string;
+  pointerEvents?: string;
+  zIndex?: number;
+};
+
+export function shouldUseTerminalPaneSplitLayout({
+  workspace,
+}: {
+  workspace: Workspace | undefined;
+  sessionId: string;
+  isVisible: boolean;
+  hibernateHiddenTabs: boolean;
+}): boolean {
+  if (!workspace) return false;
+  // Default viewMode is tiled split (including undefined from createWorkspaceFromSessions).
+  // Focus mode never uses split geometry: every pane is viewed full-size, so hidden
+  // panes must keep full-size geometry too. Laying continuously rendered background
+  // panes out at their split rects shrank the live xterm and the remote PTY to a
+  // 1/N-width fragment, so \r-refresh progress output (e.g. rsync --info=progress2)
+  // soft-wrapped and left one scrollback line per refresh (#3046).
+  return workspace.viewMode !== "focus";
+}
+
+export function shouldMeasureTerminalLayerLayout({
+  isTerminalLayerVisible,
+  keepHiddenLayoutActive,
+  workspaceArea,
+}: {
+  isTerminalLayerVisible: boolean;
+  keepHiddenLayoutActive: boolean;
+  workspaceArea: TerminalPaneHiddenSize;
+}): boolean {
+  return isTerminalLayerVisible
+    || (keepHiddenLayoutActive && (workspaceArea.width <= 0 || workspaceArea.height <= 0));
+}
+
+export function resolveInactiveTerminalPaneStyle<T extends TerminalPaneStyle>(
+  layoutStyle: T,
+  lastVisibleSize: TerminalPaneHiddenSize | null,
+  hibernateHiddenTabs: boolean,
+  preserveLastVisibleSize = false,
+): T {
+  return {
+    ...layoutStyle,
+    visibility: hibernateHiddenTabs ? "hidden" : "visible",
+    pointerEvents: "none",
+    zIndex: 0,
+    ...((hibernateHiddenTabs || preserveLastVisibleSize) && lastVisibleSize
+      ? {
+        width: `${lastVisibleSize.width}px`,
+        height: `${lastVisibleSize.height}px`,
+      }
+      : {}),
+  };
+}
+
+export function resolveTerminalLayerSurfaceStyle(
+  isActive: boolean,
+  hibernateHiddenTabs: boolean,
+): { visibility: "visible" | "hidden"; pointerEvents: "auto" | "none"; zIndex: number } {
+  return {
+    visibility: isActive || !hibernateHiddenTabs ? "visible" : "hidden",
+    pointerEvents: isActive ? "auto" : "none",
+    zIndex: isActive ? 10 : 0,
+  };
+}
+
 interface GetTerminalPaneSnapshotOptions {
   activeTabId: string | null;
   sessionId: string;

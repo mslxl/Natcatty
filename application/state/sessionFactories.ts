@@ -6,14 +6,24 @@ export interface LocalTerminalOptions {
   shellArgs?: string[];
   shellName?: string;
   shellIcon?: string;
+  localStartDir?: string;
 }
+
+/**
+ * Stable hostId for all Local Terminal sessions.
+ *
+ * Autocomplete command history is keyed by hostId. Using `local-${sessionId}`
+ * made every new Local Terminal look like a brand-new host, so history
+ * suggestions never accumulated across opens (issue #2037).
+ */
+export const LOCAL_TERMINAL_HOST_ID = "local-terminal";
 
 export const createLocalTerminalSession = (
   sessionId: string,
   options?: LocalTerminalOptions,
 ): TerminalSession => ({
   id: sessionId,
-  hostId: `local-${sessionId}`,
+  hostId: LOCAL_TERMINAL_HOST_ID,
   hostLabel: options?.shellName || "Local Terminal",
   hostname: "localhost",
   username: "local",
@@ -24,6 +34,16 @@ export const createLocalTerminalSession = (
   localShellArgs: options?.shellArgs,
   localShellName: options?.shellName,
   localShellIcon: options?.shellIcon,
+  localStartDir: options?.localStartDir,
+});
+
+export const snapshotSerialConfig = (
+  config: SerialConfig,
+  legacyBackspaceBehavior?: Host["backspaceBehavior"],
+): SerialConfig => ({
+  ...config,
+  backspaceBehavior: config.backspaceBehavior
+    ?? (legacyBackspaceBehavior === "ctrl-h" ? "ctrl-h" : "default"),
 });
 
 export const createSerialTerminalSession = (
@@ -31,16 +51,17 @@ export const createSerialTerminalSession = (
   config: SerialConfig,
   options?: { charset?: string },
 ): TerminalSession => {
-  const portName = config.path.split("/").pop() || config.path;
+  const serialConfig = snapshotSerialConfig(config);
+  const portName = serialConfig.path.split("/").pop() || serialConfig.path;
   return {
     id: sessionId,
     hostId: `serial-${sessionId}`,
     hostLabel: `Serial: ${portName}`,
-    hostname: config.path,
+    hostname: serialConfig.path,
     username: "",
     status: "connecting",
     protocol: "serial",
-    serialConfig: config,
+    serialConfig,
     charset: options?.charset,
   };
 };
@@ -50,16 +71,19 @@ export const createHostTerminalSession = (
   host: Host,
 ): TerminalSession => {
   if (host.protocol === "serial") {
-    const serialConfig: SerialConfig = host.serialConfig || {
-      path: host.hostname,
-      baudRate: host.port || 115200,
-      dataBits: 8,
-      stopBits: 1,
-      parity: "none",
-      flowControl: "none",
-      localEcho: false,
-      lineMode: false,
-    };
+    const serialConfig = snapshotSerialConfig(
+      host.serialConfig || {
+        path: host.hostname,
+        baudRate: host.port || 115200,
+        dataBits: 8,
+        stopBits: 1,
+        parity: "none",
+        flowControl: "none",
+        localEcho: false,
+        lineMode: false,
+      },
+      host.backspaceBehavior,
+    );
     const portName = serialConfig.path.split("/").pop() || serialConfig.path;
     return {
       id: sessionId,
@@ -82,9 +106,23 @@ export const createHostTerminalSession = (
     username: host.username,
     status: "connecting",
     protocol: host.protocol,
+    pluginConnection: host.pluginConnection == null
+      ? undefined
+      : structuredClone(host.pluginConnection),
     port: host.port,
     moshEnabled: host.moshEnabled,
     etEnabled: host.etEnabled,
     charset: host.charset,
+    ...(host.ephemeral ? { ephemeralHost: true } : {}),
+    ...(host.autoOpenSftpPanel ? { autoOpenSidePanel: "sftp" as const } : {}),
   };
 };
+
+export const createWorkspaceHostTerminalSession = (
+  sessionId: string,
+  host: Host,
+  workspaceId: string,
+): TerminalSession => ({
+  ...createHostTerminalSession(sessionId, host),
+  workspaceId,
+});

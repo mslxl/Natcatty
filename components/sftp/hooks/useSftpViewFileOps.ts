@@ -1,14 +1,30 @@
 import { useCallback, useRef, useState } from "react";
 import type { SftpFileEntry } from "../../../types";
+import type { TransferStatus } from "../../../domain/models";
 import { getParentPath, joinPath as joinFsPath } from "../../../application/state/sftp/utils";
+import {
+  DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY,
+  runBoundedConcurrency,
+} from "../../../application/state/sftp/transferConcurrency";
 import { logger } from "../../../lib/logger";
 import { toast } from "../../ui/toast";
+import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { getFileExtension, getLanguageId, FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { isNavigableDirectory } from "../utils";
+import { reportSftpUploadResults } from "../reportSftpUploadResults";
 import { editorTabStore } from "../../../application/state/editorTabStore";
 import { toEditorTabId, activeTabStore } from "../../../application/state/activeTabStore";
 import type { TextEditorModalSnapshot } from "../../TextEditorModal";
 import type { UseSftpViewFileOpsParams, UseSftpViewFileOpsResult } from "./useSftpViewFileOps.types";
+import { assertSftpFileFitsBuiltinEditor } from "../sftpEditorFileLimits";
+
+/** Local multi-select blob downloads read whole files into ArrayBuffers. */
+const LOCAL_BLOB_DOWNLOAD_CONCURRENCY = 1;
+/**
+ * Multi-select roots each start their own interleaved folder walk / session
+ * work. Bound them so many selected directories cannot stampede the scheduler.
+ */
+const MULTI_SELECT_ROOT_DOWNLOAD_CONCURRENCY = DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY;
 
 export const useSftpViewFileOps = ({
   sftpRef,
@@ -19,7 +35,6 @@ export const useSftpViewFileOps = ({
   t,
   showSaveDialog,
   selectDirectory,
-  startStreamTransfer,
   getSftpIdForConnection,
 }: UseSftpViewFileOpsParams): UseSftpViewFileOpsResult => {
   const [permissionsState, setPermissionsState] = useState<{
@@ -87,6 +102,7 @@ export const useSftpViewFileOps = ({
       const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
 
       try {
+        assertSftpFileFitsBuiltinEditor(file.size);
         setLoadingTextContent(true);
         setTextEditorTarget({ file, side, fullPath: resolvedFullPath, hostId: pane.connection.hostId });
 
@@ -215,6 +231,7 @@ export const useSftpViewFileOps = ({
 
     const editorId = editorTabStore.promoteFromModal({
       sessionId: connection.id,
+      sftpTabId: pane.id,
       hostId: target.hostId,
       remotePath: target.fullPath,
       fileName: target.file.name,
@@ -293,32 +310,7 @@ export const useSftpViewFileOps = ({
     async (side: "left" | "right", dataTransfer: DataTransfer, targetPath?: string) => {
       try {
         const results = await sftpRef.current.uploadExternalFiles(side, dataTransfer, targetPath);
-
-        // Check if upload was cancelled
-        if (results.some((r) => r.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
-        const successCount = results.filter((r) => r.success).length;
-
-        if (failCount === 0) {
-          const message =
-            successCount === 1
-              ? `${t("sftp.upload")}: ${results[0].fileName}`
-              : `${t("sftp.uploadFiles")}: ${successCount}`;
-          toast.success(message, "SFTP");
-        } else {
-          const failedFiles = results.filter((r) => !r.success && !r.cancelled);
-          failedFiles.forEach((failed) => {
-            const errorMsg = failed.error ? ` - ${failed.error}` : "";
-            toast.error(
-              `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-              "SFTP",
-            );
-          });
-        }
+        reportSftpUploadResults({ results, t, toast });
       } catch (error) {
         logger.error("[SftpView] Failed to upload external files:", error);
         toast.error(
@@ -344,31 +336,7 @@ export const useSftpViewFileOps = ({
     async (side: "left" | "right", fileList: FileList, targetPath?: string) => {
       try {
         const results = await sftpRef.current.uploadExternalFileList(side, fileList, targetPath);
-
-        if (results.some((r) => r.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
-        const successCount = results.filter((r) => r.success).length;
-
-        if (failCount === 0) {
-          const message =
-            successCount === 1
-              ? `${t("sftp.upload")}: ${results[0].fileName}`
-              : `${t("sftp.uploadFiles")}: ${successCount}`;
-          toast.success(message, "SFTP");
-        } else {
-          const failedFiles = results.filter((r) => !r.success && !r.cancelled);
-          failedFiles.forEach((failed) => {
-            const errorMsg = failed.error ? ` - ${failed.error}` : "";
-            toast.error(
-              `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-              "SFTP",
-            );
-          });
-        }
+        reportSftpUploadResults({ results, t, toast });
       } catch (error) {
         logger.error("[SftpView] Failed to upload picked files:", error);
         toast.error(
@@ -402,26 +370,12 @@ export const useSftpViewFileOps = ({
 
       try {
         const results = await sftpRef.current.uploadExternalFolderPath(side, selectedDirectory, targetPath);
-
-        if (results.some((r) => r.cancelled)) {
-          toast.info(t("sftp.upload.cancelled"), "SFTP");
-          return;
-        }
-
-        const failCount = results.filter((r) => !r.success && !r.cancelled).length;
-        if (failCount === 0) {
-          const folderName = selectedDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedDirectory;
-          toast.success(`${t("sftp.uploadFolder")}: ${folderName}`, "SFTP");
-          return;
-        }
-
-        const failedFiles = results.filter((r) => !r.success && !r.cancelled);
-        failedFiles.forEach((failed) => {
-          const errorMsg = failed.error ? ` - ${failed.error}` : "";
-          toast.error(
-            `${t("sftp.error.uploadFailed")}: ${failed.fileName}${errorMsg}`,
-            "SFTP",
-          );
+        const folderName = selectedDirectory.split(/[/\\]/).filter(Boolean).pop() || selectedDirectory;
+        reportSftpUploadResults({
+          results,
+          t,
+          toast,
+          successMessage: `${t("sftp.uploadFolder")}: ${folderName}`,
         });
       } catch (error) {
         logger.error("[SftpView] Failed to upload picked folder:", error);
@@ -476,8 +430,9 @@ export const useSftpViewFileOps = ({
           return;
         }
 
-        // For remote SFTP files/directories, use streaming download with save dialog.
-        if (!showSaveDialog || !startStreamTransfer || !getSftpIdForConnection) {
+        // For remote SFTP files/directories, use transfer-center downloads
+        // (dedicated pool sessions via downloadToLocal).
+        if (!showSaveDialog || !getSftpIdForConnection) {
           toast.error(t("sftp.error.downloadFailed"), "SFTP");
           return;
         }
@@ -505,6 +460,8 @@ export const useSftpViewFileOps = ({
               targetPath,
               sftpId,
               connectionId: pane.connection.id,
+              sourceHostId: pane.connection.hostId,
+              sourceHostLabel: pane.connection.hostLabel,
               sourceEncoding: pane.filenameEncoding,
               isDirectory: true,
             });
@@ -512,6 +469,8 @@ export const useSftpViewFileOps = ({
               toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
             } else if (status === "failed") {
               toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
+            } else if (status === "attention") {
+              toast.error(`${file.name}: another transfer for this path is already in progress`, "SFTP");
             }
           } catch (error) {
             const errorMessage = error instanceof Error ? error.message : t("sftp.error.downloadFailed");
@@ -529,101 +488,33 @@ export const useSftpViewFileOps = ({
           return;
         }
 
-        const transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        const fileSize = typeof file.size === 'string' ? parseInt(file.size, 10) || 0 : (file.size || 0);
-
-        // Add download task to transfer queue for progress display
-        sftpRef.current.addExternalUpload({
-          id: transferId,
+        const fileSize = typeof file.size === "string" ? parseInt(file.size, 10) || 0 : (file.size || 0);
+        // Route through downloadToLocal so FileZilla-style transfer pool
+        // sessions are used (browse session stays free for listing).
+        const status = await sftpRef.current.downloadToLocal({
           fileName: file.name,
           sourcePath: resolvedFullPath,
           targetPath,
-          sourceConnectionId: pane.connection.id,
-          targetConnectionId: 'local',
-          direction: 'download',
-          status: 'transferring',
-          totalBytes: fileSize,
-          transferredBytes: 0,
-          speed: 0,
-          startTime: Date.now(),
+          sftpId,
+          connectionId: pane.connection.id,
+          sourceHostId: pane.connection.hostId,
+          sourceHostLabel: pane.connection.hostLabel,
+          sourceEncoding: pane.filenameEncoding,
           isDirectory: false,
+          totalBytes: fileSize,
         });
-
-        // Track if error was already handled by callback
-        let errorHandled = false;
-
-        const result = await startStreamTransfer(
-          {
-            transferId,
-            sourcePath: resolvedFullPath,
-            targetPath,
-            sourceType: 'sftp',
-            targetType: 'local',
-            sourceSftpId: sftpId,
-            totalBytes: fileSize,
-            sourceEncoding: pane.filenameEncoding,
-          },
-          (transferred, total, speed) => {
-            // Update transfer progress in the queue
-            sftpRef.current.updateExternalUpload(transferId, {
-              transferredBytes: transferred,
-              totalBytes: total,
-              speed,
-            });
-          },
-          () => {
-            // Mark as completed
-            sftpRef.current.updateExternalUpload(transferId, {
-              status: 'completed',
-              transferredBytes: fileSize,
-              endTime: Date.now(),
-            });
-            toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
-          },
-          (error) => {
-            errorHandled = true;
-            // Check if this is a cancellation - don't show error toast for cancellations
-            const isCancelError = error.includes('cancelled') || error.includes('canceled');
-            sftpRef.current.updateExternalUpload(transferId, {
-              status: isCancelError ? 'cancelled' : 'failed',
-              error: isCancelError ? undefined : error,
-              endTime: Date.now(),
-            });
-            if (!isCancelError) {
-              toast.error(error, "SFTP");
-            }
-          }
-        );
-
-        // Check if bridge doesn't support streaming (returns undefined)
-        if (result === undefined) {
-          sftpRef.current.updateExternalUpload(transferId, {
-            status: 'failed',
-            error: t("sftp.error.downloadFailed"),
-            endTime: Date.now(),
-          });
-          toast.error(t("sftp.error.downloadFailed"), "SFTP");
-          return;
-        }
-
-        // Handle error from result only if onError callback wasn't called
-        if (result?.error && !errorHandled) {
-          const isCancelError = result.error.includes('cancelled') || result.error.includes('canceled');
-          sftpRef.current.updateExternalUpload(transferId, {
-            status: isCancelError ? 'cancelled' : 'failed',
-            error: isCancelError ? undefined : result.error,
-            endTime: Date.now(),
-          });
-          if (!isCancelError) {
-            toast.error(result.error, "SFTP");
-          }
+        if (status === "completed") {
+          toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
+        } else if (status === "failed") {
+          toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
+        } else if (status === "attention") {
+          toast.error(`${file.name}: another transfer for this path is already in progress`, "SFTP");
         }
       } catch (e) {
         logger.error("[SftpView] Failed to download file:", e);
-        toast.error(
-          e instanceof Error ? e.message : t("sftp.error.downloadFailed"),
-          "SFTP",
-        );
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        const isCancelError = errorMessage.includes("cancelled") || errorMessage.includes("canceled");
+        if (!isCancelError) toast.error(errorMessage || t("sftp.error.downloadFailed"), "SFTP");
       }
     },
     [
@@ -631,7 +522,6 @@ export const useSftpViewFileOps = ({
       t,
       showSaveDialog,
       selectDirectory,
-      startStreamTransfer,
       getSftpIdForConnection,
     ],
   );
@@ -644,6 +534,52 @@ export const useSftpViewFileOps = ({
   const onDownloadFileRight = useCallback(
     (file: SftpFileEntry, fullPath?: string) => handleDownloadFileForSide("right", file, fullPath),
     [handleDownloadFileForSide],
+  );
+
+  const handleExtractArchiveForSide = useCallback(
+    async (side: "left" | "right", file: SftpFileEntry, fullPath?: string) => {
+      const pane = side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
+      if (!pane.connection) return;
+
+      const resolvedPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+      toast.info(t("sftp.extract.extracting", { fileName: file.name }), "SFTP");
+      try {
+        const bridge = netcattyBridge.get();
+        if (pane.connection.isLocal) {
+          if (!bridge?.extractLocalArchive) {
+            throw new Error("Local extract unavailable");
+          }
+          await bridge.extractLocalArchive(resolvedPath);
+        } else {
+          const sftpId = getSftpIdForConnection?.(pane.connection.id);
+          if (!sftpId || !bridge?.extractSftpArchive) {
+            throw new Error("SFTP session not found");
+          }
+          await bridge.extractSftpArchive(sftpId, resolvedPath, pane.filenameEncoding);
+        }
+        await sftpRef.current.refresh(side);
+        toast.success(t("sftp.extract.success", { fileName: file.name }), "SFTP");
+      } catch (e) {
+        logger.error("[SftpView] Failed to extract archive:", e);
+        toast.error(
+          t("sftp.extract.error", {
+            fileName: file.name,
+            error: e instanceof Error ? e.message : String(e),
+          }),
+          "SFTP",
+        );
+      }
+    },
+    [getSftpIdForConnection, sftpRef, t],
+  );
+
+  const onExtractArchiveLeft = useCallback(
+    (file: SftpFileEntry, fullPath?: string) => handleExtractArchiveForSide("left", file, fullPath),
+    [handleExtractArchiveForSide],
+  );
+  const onExtractArchiveRight = useCallback(
+    (file: SftpFileEntry, fullPath?: string) => handleExtractArchiveForSide("right", file, fullPath),
+    [handleExtractArchiveForSide],
   );
 
   // Multi-file download. For local panes, each file auto-downloads as a blob
@@ -662,13 +598,18 @@ export const useSftpViewFileOps = ({
       if (!pane.connection) return;
 
       if (pane.connection.isLocal) {
-        for (const file of files) {
-          await handleDownloadFileForSide(side, file);
-        }
+        // Sequential: each local download materializes a full ArrayBuffer.
+        await runBoundedConcurrency(
+          files,
+          LOCAL_BLOB_DOWNLOAD_CONCURRENCY,
+          async (file) => {
+            await handleDownloadFileForSide(side, file);
+          },
+        );
         return;
       }
 
-      if (!selectDirectory || !startStreamTransfer || !getSftpIdForConnection) {
+      if (!selectDirectory || !getSftpIdForConnection) {
         toast.error(t("sftp.error.downloadFailed"), "SFTP");
         return;
       }
@@ -682,118 +623,54 @@ export const useSftpViewFileOps = ({
       const selectedDirectory = await selectDirectory(t("sftp.context.download"));
       if (!selectedDirectory) return;
 
-      for (const file of files) {
-        const sourcePath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
-        const targetPath = joinFsPath(selectedDirectory, file.name);
-        const isDirectory = isNavigableDirectory(file);
+      // Bound root jobs: each directory root walks and transfers independently,
+      // so unbounded Promise.allSettled would multiply session / LIST pressure.
+      const results: Array<PromiseSettledResult<{ file: SftpFileEntry; status: TransferStatus }>> = [];
+      await runBoundedConcurrency(
+        files,
+        MULTI_SELECT_ROOT_DOWNLOAD_CONCURRENCY,
+        async (file, index) => {
+          try {
+            const sourcePath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
+            const targetPath = joinFsPath(selectedDirectory, file.name);
+            const isDirectory = isNavigableDirectory(file);
+            const fileSize = typeof file.size === "string" ? parseInt(file.size, 10) || 0 : (file.size || 0);
 
-        try {
-          if (isDirectory) {
             const status = await sftpRef.current.downloadToLocal({
               fileName: file.name,
               sourcePath,
               targetPath,
               sftpId,
               connectionId: pane.connection.id,
+              sourceHostId: pane.connection.hostId,
+              sourceHostLabel: pane.connection.hostLabel,
               sourceEncoding: pane.filenameEncoding,
-              isDirectory: true,
+              isDirectory,
+              totalBytes: isDirectory ? undefined : fileSize,
             });
-            if (status === "completed") {
-              toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
-            } else if (status === "failed") {
-              toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
-            }
-            continue;
+            results[index] = { status: "fulfilled", value: { file, status } };
+          } catch (reason) {
+            results[index] = { status: "rejected", reason };
           }
+        },
+      );
 
-          const transferId = `download-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-          const fileSize = typeof file.size === "string" ? parseInt(file.size, 10) || 0 : (file.size || 0);
-
-          sftpRef.current.addExternalUpload({
-            id: transferId,
-            fileName: file.name,
-            sourcePath,
-            targetPath,
-            sourceConnectionId: pane.connection.id,
-            targetConnectionId: "local",
-            direction: "download",
-            status: "transferring",
-            totalBytes: fileSize,
-            transferredBytes: 0,
-            speed: 0,
-            startTime: Date.now(),
-            isDirectory: false,
-          });
-
-          let errorHandled = false;
-
-          const result = await startStreamTransfer(
-            {
-              transferId,
-              sourcePath,
-              targetPath,
-              sourceType: "sftp",
-              targetType: "local",
-              sourceSftpId: sftpId,
-              totalBytes: fileSize,
-              sourceEncoding: pane.filenameEncoding,
-            },
-            (transferred, total, speed) => {
-              sftpRef.current.updateExternalUpload(transferId, {
-                transferredBytes: transferred,
-                totalBytes: total,
-                speed,
-              });
-            },
-            () => {
-              sftpRef.current.updateExternalUpload(transferId, {
-                status: "completed",
-                transferredBytes: fileSize,
-                endTime: Date.now(),
-              });
-              toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
-            },
-            (error) => {
-              errorHandled = true;
-              const isCancelError = error.includes("cancelled") || error.includes("canceled");
-              sftpRef.current.updateExternalUpload(transferId, {
-                status: isCancelError ? "cancelled" : "failed",
-                error: isCancelError ? undefined : error,
-                endTime: Date.now(),
-              });
-              if (!isCancelError) {
-                toast.error(error, "SFTP");
-              }
-            },
-          );
-
-          if (result === undefined) {
-            sftpRef.current.updateExternalUpload(transferId, {
-              status: "failed",
-              error: t("sftp.error.downloadFailed"),
-              endTime: Date.now(),
-            });
-            toast.error(t("sftp.error.downloadFailed"), "SFTP");
-            continue;
+      for (const result of results) {
+        if (!result) continue;
+        if (result.status === "fulfilled") {
+          const { file, status } = result.value;
+          if (status === "completed") {
+            toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
+          } else if (status === "failed") {
+            toast.error(`${t("sftp.error.downloadFailed")}: ${file.name}`, "SFTP");
+          } else if (status === "attention") {
+            toast.error(`${file.name}: another transfer for this path is already in progress`, "SFTP");
           }
-
-          if (result?.error && !errorHandled) {
-            const isCancelError = result.error.includes("cancelled") || result.error.includes("canceled");
-            sftpRef.current.updateExternalUpload(transferId, {
-              status: isCancelError ? "cancelled" : "failed",
-              error: isCancelError ? undefined : result.error,
-              endTime: Date.now(),
-            });
-            if (!isCancelError) {
-              toast.error(result.error, "SFTP");
-            }
-          }
-        } catch (e) {
-          logger.error("[SftpView] Failed to download file:", e);
-          toast.error(
-            e instanceof Error ? e.message : t("sftp.error.downloadFailed"),
-            "SFTP",
-          );
+        } else {
+          logger.error("[SftpView] Failed to download file:", result.reason);
+          const errorMessage = result.reason instanceof Error ? result.reason.message : String(result.reason);
+          const isCancelError = errorMessage.includes("cancelled") || errorMessage.includes("canceled");
+          if (!isCancelError) toast.error(errorMessage || t("sftp.error.downloadFailed"), "SFTP");
         }
       }
     },
@@ -801,7 +678,6 @@ export const useSftpViewFileOps = ({
       sftpRef,
       t,
       selectDirectory,
-      startStreamTransfer,
       getSftpIdForConnection,
       handleDownloadFileForSide,
     ],
@@ -909,6 +785,8 @@ export const useSftpViewFileOps = ({
     onOpenFileWithRight,
     onDownloadFileLeft,
     onDownloadFileRight,
+    onExtractArchiveLeft,
+    onExtractArchiveRight,
     onDownloadFilesLeft,
     onDownloadFilesRight,
     onUploadExternalFilesLeft,

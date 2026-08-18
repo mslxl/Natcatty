@@ -11,6 +11,8 @@ import ChatInput from './ai/ChatInput';
 import ChatMessageList from './ai/ChatMessageList';
 import ConversationExport from './ai/ConversationExport';
 import { SessionHistoryDrawer, formatRelativeTime } from './AIChatSessionHistoryDrawer';
+import { cn } from '../lib/utils';
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
 import {
   getAIPanelDiagnosticHiddenParts,
   getAIPanelProfilerProps,
@@ -47,14 +49,23 @@ interface AIChatPanelContentProps {
   handleDeleteSession: (event: React.MouseEvent, sessionId: string) => void;
   messages: ChatMessage[];
   isStreaming: boolean;
-  activeCompaction?: import('./ai/hooks/useAgentCompactionUi').ActiveCompactionUi | null;
+  activeCompaction?: import('../application/state/useAgentCompactionUi').ActiveCompactionUi | null;
+  contextUsage?: import('../application/state/useAgentCompactionUi').AgentContextUsage | null;
   inputValue: string;
   setInputValue: (value: string) => void;
   handleSend: () => void;
+  handleCompact: () => void;
+  canCompact?: boolean;
+  handleSteer: () => void;
   handleStop: () => void;
+  canSteer: boolean;
+  isSteering: boolean;
+  steerWarning?: string;
+  lockTurnConfiguration: boolean;
   canSendCurrentAgent: boolean;
   providerDisplayName?: string;
   modelDisplayName?: string;
+  modelCatalogWarning?: string;
   agentModelPresets: AgentModelPreset[];
   selectedAgentModel: string;
   handleAgentModelSelect: (modelId: string) => void;
@@ -78,6 +89,10 @@ interface AIChatPanelContentProps {
   onOpenVaultNote?: (noteId: string) => void;
   onOpenVaultHost?: (hostId: string) => void;
   onOpenVaultSection?: (section: 'notes' | 'hosts') => void;
+  /** Hidden retained panels keep the composer warm without the message tree. */
+  parked?: boolean;
+  /** Disable header transitions while send preflight is in flight. */
+  sending?: boolean;
 }
 
 export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
@@ -102,13 +117,22 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   messages,
   isStreaming,
   activeCompaction = null,
+  contextUsage = null,
   inputValue,
   setInputValue,
   handleSend,
+  handleCompact,
+  canCompact = false,
+  handleSteer,
   handleStop,
+  canSteer,
+  isSteering,
+  steerWarning,
+  lockTurnConfiguration,
   canSendCurrentAgent,
   providerDisplayName,
   modelDisplayName,
+  modelCatalogWarning,
   agentModelPresets,
   selectedAgentModel,
   handleAgentModelSelect,
@@ -132,7 +156,37 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   onOpenVaultNote,
   onOpenVaultHost,
   onOpenVaultSection,
+  parked = false,
+  sending = false,
 }) => {
+  const mentionHosts = React.useMemo(
+    () => terminalSessions.map((session) => ({
+      sessionId: session.sessionId,
+      hostname: session.hostname,
+      label: session.label,
+      connected: session.connected,
+    })),
+    [terminalSessions],
+  );
+  const providerSwitcher = React.useMemo(
+    () => (
+      currentAgentId === 'catty' && cattyConfiguredProviders.length > 0
+        ? {
+            providers: cattyConfiguredProviders,
+            selectedProviderId: effectiveActiveProvider?.id,
+            selectedModelId: effectiveActiveModelId || undefined,
+            onSelect: handleAgentProviderModelSelect,
+          }
+        : undefined
+    ),
+    [
+      cattyConfiguredProviders,
+      currentAgentId,
+      effectiveActiveModelId,
+      effectiveActiveProvider?.id,
+      handleAgentProviderModelSelect,
+    ],
+  );
   const hiddenParts = getAIPanelDiagnosticHiddenParts();
   const hideHeader = isAIPanelDiagnosticPartHidden('header', hiddenParts);
   const hideHistory = isAIPanelDiagnosticPartHidden('history', hiddenParts);
@@ -145,12 +199,17 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
       {/* ── Header ── */}
       {!hideHeader && (
         <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Header')}>
-          <div className="px-2.5 py-1.5 flex items-center justify-between border-b border-border/50 shrink-0">
+          <div className={cn(
+            TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+            'px-2 flex items-center justify-between border-b border-border/50',
+          )}>
             <AgentSelector
               currentAgentId={currentAgentId}
               externalAgents={externalAgents}
               discoveredAgents={discoveredAgents}
               isDiscovering={isDiscovering}
+              parked={parked}
+              disabled={sending}
               onSelectAgent={handleAgentChange}
               onEnableDiscoveredAgent={handleEnableDiscoveredAgent}
               onRediscover={rediscover}
@@ -160,16 +219,18 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               <ConversationExport
                 session={activeSession}
                 onExport={handleExport}
+                className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground [&_svg]:size-3"
               />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
+                    className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
+                    disabled={sending}
                     onClick={() => setShowHistory(!showHistory)}
                   >
-                    <History size={14} />
+                    <History size={12} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t('ai.chat.sessionHistory')}</TooltipContent>
@@ -179,10 +240,11 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 rounded-md text-primary/82 hover:bg-primary/[0.10] hover:text-primary"
+                    className="h-6 w-6 rounded-md text-primary/82 hover:bg-primary/[0.10] hover:text-primary"
+                    disabled={sending}
                     onClick={handleNewChat}
                   >
-                    <Plus size={15} />
+                    <Plus size={13} />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>{t('ai.chat.newChat')}</TooltipContent>
@@ -193,12 +255,12 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
       )}
 
       {/* ── Main content ── */}
-      {showHistory && !hideHistory ? (
+      {!parked && showHistory && !hideHistory ? (
         <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.History')}>
           <SessionHistoryDrawer
             sessions={historySessions}
             activeSessionId={activeSessionId}
-            onSelect={handleSelectSession}
+            onSelect={sending ? () => undefined : handleSelectSession}
             onDelete={handleDeleteSession}
             onClose={() => setShowHistory(false)}
           />
@@ -206,7 +268,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
       ) : (
         <>
           {/* Chat messages */}
-          {!hideMessages && (
+          {!parked && !hideMessages && (
             <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Messages')}>
               <ChatMessageList
                 messages={messages}
@@ -223,7 +285,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
           )}
 
           {/* Recent sessions (Zed-style, shown when no messages) */}
-          {messages.length === 0 && historySessions.length > 0 && !hideRecent && (
+          {!parked && messages.length === 0 && historySessions.length > 0 && !hideRecent && (
             <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Recent')}>
               <div className="shrink-0 px-4 pb-1">
                 <div className="flex items-baseline justify-between mb-2">
@@ -238,8 +300,9 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                 {historySessions.slice(0, 3).map((session) => (
                   <button
                     key={session.id}
+                    disabled={sending}
                     onClick={() => handleSelectSession(session.id)}
-                    className="w-full flex items-baseline justify-between py-1.5 text-left hover:text-foreground transition-colors cursor-pointer"
+                    className="w-full flex items-baseline justify-between py-1.5 text-left hover:text-foreground transition-colors cursor-pointer disabled:pointer-events-none disabled:opacity-50"
                   >
                     <span className="text-[13px] text-foreground/60 truncate pr-4">
                       {session.title || t('ai.chat.untitled')}
@@ -256,41 +319,51 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
           {/* Input area */}
           {!hideInput && (
             <React.Profiler {...getAIPanelProfilerProps('AIChatPanel.Input')}>
-              <ChatInput
-                value={inputValue}
-                onChange={setInputValue}
-                onSend={handleSend}
-                onStop={handleStop}
-                isStreaming={isStreaming}
-                disabled={!canSendCurrentAgent}
-                providerName={providerDisplayName}
-                modelName={modelDisplayName}
-                agentName={currentAgentId === 'catty' ? 'Catty Agent' : externalAgents.find(a => a.id === currentAgentId)?.name}
-                modelPresets={agentModelPresets}
-                selectedModelId={selectedAgentModel}
-                onModelSelect={handleAgentModelSelect}
-                providerSwitcher={
-                  currentAgentId === 'catty' && cattyConfiguredProviders.length > 0
-                    ? {
-                        providers: cattyConfiguredProviders,
-                        selectedProviderId: effectiveActiveProvider?.id,
-                        selectedModelId: effectiveActiveModelId || undefined,
-                        onSelect: handleAgentProviderModelSelect,
-                      }
-                    : undefined
-                }
-                files={files}
-                onAddFiles={addFiles}
-                onRemoveFile={removeFile}
-                hosts={terminalSessions.map(s => ({ sessionId: s.sessionId, hostname: s.hostname, label: s.label, connected: s.connected }))}
-                selectedUserSkills={selectedUserSkills}
-                userSkills={userSkillOptions}
-                quickMessages={quickMessages}
-                onAddUserSkill={addSelectedUserSkill}
-                onRemoveUserSkill={removeSelectedUserSkill}
-                permissionMode={globalPermissionMode}
-                onPermissionModeChange={setGlobalPermissionMode}
-              />
+              <div>
+                {steerWarning ? (
+                  <div role="status" className="mx-3 mb-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                    {steerWarning}
+                  </div>
+                ) : modelCatalogWarning ? (
+                  <div role="status" className="mx-3 mb-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                    {modelCatalogWarning}
+                  </div>
+                ) : null}
+                <ChatInput
+                  parked={parked}
+                  value={inputValue}
+                  onChange={setInputValue}
+                  onSend={handleSend}
+                  onCompact={handleCompact}
+                  canCompact={canCompact}
+                  onSteer={handleSteer}
+                  onStop={handleStop}
+                  isStreaming={isStreaming}
+                  canSteer={canSteer}
+                  isSteering={isSteering}
+                  lockTurnConfiguration={lockTurnConfiguration}
+                  disabled={!canSendCurrentAgent}
+                  providerName={providerDisplayName}
+                  modelName={modelDisplayName}
+                  agentName={currentAgentId === 'catty' ? 'Catty Agent' : externalAgents.find(a => a.id === currentAgentId)?.name}
+                  modelPresets={agentModelPresets}
+                  selectedModelId={selectedAgentModel}
+                  onModelSelect={handleAgentModelSelect}
+                  providerSwitcher={providerSwitcher}
+                  files={files}
+                  onAddFiles={addFiles}
+                  onRemoveFile={removeFile}
+                  hosts={mentionHosts}
+                  selectedUserSkills={selectedUserSkills}
+                  userSkills={userSkillOptions}
+                  quickMessages={quickMessages}
+                  onAddUserSkill={addSelectedUserSkill}
+                  onRemoveUserSkill={removeSelectedUserSkill}
+                  permissionMode={globalPermissionMode}
+                  onPermissionModeChange={setGlobalPermissionMode}
+                  contextUsage={contextUsage}
+                />
+              </div>
             </React.Profiler>
           )}
         </>

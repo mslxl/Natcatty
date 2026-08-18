@@ -13,6 +13,11 @@ const MAX_PENDING_ESCAPE_CHARS = 4096;
 
 type ControlStringMode = "osc" | "string";
 
+export type ReplaySafeTerminalLogSanitizerOptions = {
+  /** Seed when attaching mid-TUI so live redraws stay omitted until leave. */
+  alternateScreenActive?: boolean;
+};
+
 export interface ReplaySafeTerminalLogSanitizer {
   append(input: string): string;
   finish(): string;
@@ -147,6 +152,23 @@ const isC1SingleCharCursorControl = (ch: string): boolean =>
 const isEscSingleCharCursorControl = (ch: string): boolean =>
   ch === "D" || ch === "E" || ch === "M";
 
+// ESC or any C1 control (0x80-0x9f): every branch of the sanitizer's parser
+// that can rewrite output starts at one of these characters.
+// eslint-disable-next-line no-control-regex
+const REPLAY_CONTROL_CANDIDATE = /[\u001b\u0080-\u009f]/;
+// eslint-disable-next-line no-control-regex
+const REPLAY_CONTROL_CANDIDATE_SCAN = /[\u001b\u0080-\u009f]/g;
+
+const hasReplayControlCandidate = (input: string): boolean =>
+  REPLAY_CONTROL_CANDIDATE.test(input);
+
+/** Index of the next ESC/C1 control at or after `from`, or -1. */
+const nextReplayControlCandidate = (input: string, from: number): number => {
+  REPLAY_CONTROL_CANDIDATE_SCAN.lastIndex = from;
+  const match = REPLAY_CONTROL_CANDIDATE_SCAN.exec(input);
+  return match === null ? -1 : match.index;
+};
+
 class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitizer {
   private pendingInput = "";
   private pendingCursorHome = "";
@@ -158,8 +180,13 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
   private discardingCsi = false;
   private inClearCluster = false;
   private protectingClearedHistory = false;
+  private alternateScreenActive: boolean;
   private hasOutput = false;
   private lastOutputChar = "";
+
+  constructor(options: ReplaySafeTerminalLogSanitizerOptions = {}) {
+    this.alternateScreenActive = options.alternateScreenActive === true;
+  }
 
   append(input: string): string {
     let output = "";
@@ -172,6 +199,20 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
       this.hasOutput = true;
       this.lastOutputChar = next[next.length - 1];
     };
+
+    if (
+      !this.alternateScreenActive
+      && !this.pendingCursorHome
+      && !this.discardingCsi
+      && !this.controlStringMode
+      && !hasReplayControlCandidate(data)
+    ) {
+      appendOutput(data);
+      if (data) {
+        this.inClearCluster = false;
+      }
+      return output;
+    }
 
     const flushPendingCursorHome = () => {
       if (!this.pendingCursorHome) return;
@@ -230,9 +271,18 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
       if (sequence) {
         const alternateScreenMode = getAlternateScreenMode(sequence);
         if (alternateScreenMode) {
+          this.alternateScreenActive = alternateScreenMode === "enter";
           if (alternateScreenMode === "enter") {
-            emitClearSeparator(false);
+            this.pendingCursorHome = "";
+            this.pendingAfterCursorHome = "";
+            this.replaySafePendingAfterCursorHome = "";
+            this.pendingAfterCursorHomeOverflowed = false;
           }
+          i = sequence.end;
+          continue;
+        }
+
+        if (this.alternateScreenActive) {
           i = sequence.end;
           continue;
         }
@@ -289,6 +339,25 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
         continue;
       }
 
+      if (this.alternateScreenActive) {
+        if (data[i] === ESC && i + 1 >= data.length) {
+          this.setPendingEscapeInput(data.slice(i));
+          break;
+        }
+        // RIS (ESC c) fully resets the terminal, including leaving the
+        // alternate screen. Process it before the omit-scan skip so later
+        // shell output is not dropped from the connection log.
+        if (data[i] === ESC && data[i + 1] === "c") {
+          this.alternateScreenActive = false;
+          emitClearSeparator(false);
+          i += 2;
+          continue;
+        }
+        const nextControl = nextReplayControlCandidate(data, i + 1);
+        i = nextControl === -1 ? data.length : nextControl;
+        continue;
+      }
+
       if (data[i] === ESC) {
         if (i + 1 >= data.length) {
           this.setPendingEscapeInput(data.slice(i));
@@ -296,6 +365,7 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
         }
 
         if (data[i + 1] === "c") {
+          this.alternateScreenActive = false;
           emitClearSeparator(false);
           i += 2;
           continue;
@@ -312,10 +382,14 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
         }
       }
 
+      // Plain span: no branch above can trigger until the next ESC/C1
+      // control. Hop there with a native scan and append it in one slice.
       flushPendingCursorHome();
-      appendOutput(data[i]);
+      const nextControl = nextReplayControlCandidate(data, i + 1);
+      const end = nextControl === -1 ? data.length : nextControl;
+      appendOutput(data.slice(i, end));
       this.inClearCluster = false;
-      i += 1;
+      i = end;
     }
 
     return output;
@@ -414,8 +488,10 @@ class ReplaySafeTerminalLogSanitizerImpl implements ReplaySafeTerminalLogSanitiz
   }
 }
 
-export const createReplaySafeTerminalLogSanitizer = (): ReplaySafeTerminalLogSanitizer =>
-  new ReplaySafeTerminalLogSanitizerImpl();
+export const createReplaySafeTerminalLogSanitizer = (
+  options: ReplaySafeTerminalLogSanitizerOptions = {},
+): ReplaySafeTerminalLogSanitizer =>
+  new ReplaySafeTerminalLogSanitizerImpl(options);
 
 /**
  * Convert terminal output into a form that can be replayed in LogView without

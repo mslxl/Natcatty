@@ -63,6 +63,56 @@ test("register attaches terminal output ports and delivers port messages", () =>
   ]);
 });
 
+test("terminal output ports forward terminal output metadata", () => {
+  const delivered = [];
+  const ipcRenderer = createFakeIpcRenderer();
+  const registry = createTerminalOutputPortRegistry({
+    ipcRenderer,
+    deliverToListeners(sessionId, data, meta) {
+      delivered.push({ sessionId, data, meta });
+    },
+  });
+  const port = createFakePort();
+
+  registry.register();
+  ipcRenderer.emitPort("session-1", port);
+  port.emit({
+    sessionId: "session-1",
+    data: "hello",
+    meta: { droppedOutputMayAffectTerminalState: true },
+  });
+
+  assert.deepEqual(delivered, [
+    {
+      sessionId: "session-1",
+      data: "hello",
+      meta: { droppedOutputMayAffectTerminalState: true },
+    },
+  ]);
+});
+
+test("terminal output drain marker follows earlier data on the same port", () => {
+  const events = [];
+  const ipcRenderer = createFakeIpcRenderer();
+  const registry = createTerminalOutputPortRegistry({
+    ipcRenderer,
+    deliverToListeners(_sessionId, data) {
+      events.push(`data:${data}`);
+    },
+    onDrain(_sessionId, requestId) {
+      events.push(`drain:${requestId}`);
+    },
+  });
+  const port = createFakePort();
+
+  registry.register();
+  ipcRenderer.emitPort("session-1", port);
+  port.emit({ sessionId: "session-1", data: "tail" });
+  port.emit({ kind: "drain", sessionId: "session-1", requestId: "drain-1" });
+
+  assert.deepEqual(events, ["data:tail", "drain:drain-1"]);
+});
+
 test("terminal output ports filter data before delivery", () => {
   const delivered = [];
   const ipcRenderer = createFakeIpcRenderer();
@@ -83,6 +133,36 @@ test("terminal output ports filter data before delivery", () => {
 
   assert.deepEqual(delivered, [
     { sessionId: "session-1", data: "before\nvisible\n" },
+  ]);
+});
+
+test("terminal output ports accept filtered data with metadata", () => {
+  const delivered = [];
+  const ipcRenderer = createFakeIpcRenderer();
+  const registry = createTerminalOutputPortRegistry({
+    ipcRenderer,
+    filterData(_sessionId, data) {
+      return {
+        data: data.toUpperCase(),
+        meta: { droppedOutputMayAffectTerminalState: true },
+      };
+    },
+    deliverToListeners(sessionId, data, meta) {
+      delivered.push({ sessionId, data, meta });
+    },
+  });
+  const port = createFakePort();
+
+  registry.register();
+  ipcRenderer.emitPort("session-1", port);
+  port.emit({ sessionId: "session-1", data: "hello" });
+
+  assert.deepEqual(delivered, [
+    {
+      sessionId: "session-1",
+      data: "HELLO",
+      meta: { droppedOutputMayAffectTerminalState: true },
+    },
   ]);
 });
 

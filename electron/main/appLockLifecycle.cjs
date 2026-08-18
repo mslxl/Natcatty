@@ -153,12 +153,32 @@ async function handleBeforeQuit({
   timeoutMs,
   setQuitGuardChannelBusy,
   setQuitConfirmed,
+  commitQuit,
+  cancelPendingUpdateInstall,
 }) {
   if (quitConfirmed) return { committed: false, skipped: "quit-confirmed" };
   if (quitGuardChannelBusy) {
     event?.preventDefault?.();
     return { committed: false, skipped: "busy" };
   }
+
+  // When the caller provides commitQuit (async plugin shutdown before the real
+  // quit), the original quit event must stay cancelled until commitQuit
+  // re-enters app.quit(). commitQuit owns background-lock, isQuitting and
+  // quitConfirmed in that case.
+  const commit = () => {
+    if (typeof commitQuit === "function") {
+      event?.preventDefault?.();
+      commitQuit();
+      return;
+    }
+    if (shouldBackgroundLockOnHide(appLockController)) {
+      appLockController.setLocked("background");
+    }
+    windowManager?.setIsQuitting?.(true);
+    setQuitConfirmed?.(true);
+    app?.quit?.();
+  };
 
   const reachableMainWindows = (Array.isArray(mainWindows) ? mainWindows : []).filter((candidate) => (
     candidate && !candidate.isDestroyed?.()
@@ -174,12 +194,7 @@ async function handleBeforeQuit({
     .filter(Boolean);
 
   if (shouldCommitQuitWithoutDirtyCheck({ reachableMainWindows, queryableWebContents })) {
-    if (shouldBackgroundLockOnHide(appLockController)) {
-      appLockController.setLocked("background");
-    }
-    windowManager?.setIsQuitting?.(true);
-    setQuitConfirmed?.(true);
-    app?.quit?.();
+    commit();
     return { committed: true, skipped: "fast-path" };
   }
 
@@ -198,12 +213,7 @@ async function handleBeforeQuit({
     setQuitGuardChannelBusy?.(false);
     const dirtyWindows = dirtyResults.filter((result) => result.hasDirty).map((result) => result.win);
     if (dirtyWindows.length === 0) {
-      if (shouldBackgroundLockOnHide(appLockController)) {
-        appLockController.setLocked("background");
-      }
-      windowManager?.setIsQuitting?.(true);
-      setQuitConfirmed?.(true);
-      app?.quit?.();
+      commit();
       return { committed: true, skipped: null };
     }
 
@@ -254,17 +264,22 @@ async function handleBeforeQuit({
     }
 
     if (windowManager?.isQuittingForUpdate?.()) {
-      windowManager.setQuittingForUpdate?.(false);
+      // Cancel the install bridge's in-flight state as well as the
+      // window-manager flag so a cancelled update can be retried immediately
+      // instead of waiting for its watchdog (#1215 review).
+      try {
+        cancelPendingUpdateInstall?.();
+      } catch {
+        // ignore
+      }
+      if (windowManager.isQuittingForUpdate?.()) {
+        windowManager.setQuittingForUpdate?.(false);
+      }
     }
     return { committed: false, skipped: "dirty" };
   } catch {
     setQuitGuardChannelBusy?.(false);
-    if (shouldBackgroundLockOnHide(appLockController)) {
-      appLockController.setLocked("background");
-    }
-    windowManager?.setIsQuitting?.(true);
-    setQuitConfirmed?.(true);
-    app?.quit?.();
+    commit();
     return { committed: true, skipped: "error" };
   }
 }

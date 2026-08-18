@@ -3,6 +3,7 @@ import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import type { AIProviderId, ProviderStyle } from "../../../../infrastructure/ai/types";
 import { resolveProviderStyle } from "../../../../infrastructure/ai/types";
 import { buildModelDiscoveryHeaders, resolveModelsDiscoveryEndpoint } from "../../../../infrastructure/ai/modelDiscoveryHeaders";
+import { buildProviderProbeUrl } from "../../../../infrastructure/ai/providerConnectionProbe";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import { Button } from "../../../ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../../ui/tooltip";
@@ -79,6 +80,13 @@ export function getModelSuggestionsPresentation({
   };
 }
 
+export function getModelSuggestionClassName(isSelected: boolean): string {
+  return cn(
+    "w-full text-left px-3 py-1.5 text-xs hover:bg-accent hover:text-accent-foreground transition-colors flex items-center justify-between gap-2",
+    isSelected && "bg-accent text-accent-foreground",
+  );
+}
+
 export const ModelSelector: React.FC<{
   value: string;
   onChange: (value: string) => void;
@@ -143,7 +151,7 @@ export const ModelSelector: React.FC<{
       if (bridge.aiAllowlistAddHost && baseURL) {
         await bridge.aiAllowlistAddHost(baseURL);
       }
-      const url = `${baseURL.replace(/\/+$/, "")}${effectiveModelsEndpoint}`;
+      const url = buildProviderProbeUrl(baseURL, effectiveModelsEndpoint);
       const headers = buildModelDiscoveryHeaders(resolvedStyle, apiKey);
       const result = await bridge.aiFetch(url, "GET", headers, undefined, undefined, undefined, undefined, skipTLSVerify);
       if (!result.ok) {
@@ -267,13 +275,10 @@ export const ModelSelector: React.FC<{
                     onModelMetadata?.(m);
                     setIsOpen(false);
                   }}
-                  className={cn(
-                    "w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors flex items-center justify-between gap-2",
-                    m.id === value && "bg-accent",
-                  )}
+                  className={getModelSuggestionClassName(m.id === value)}
                 >
                   <span className="font-mono truncate">{m.id}</span>
-                  {m.id === value && <Check size={12} className="text-primary shrink-0" />}
+                  {m.id === value && <Check size={12} className="text-accent-foreground shrink-0" />}
                 </button>
               ))
             )}

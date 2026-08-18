@@ -13,6 +13,84 @@ export type SftpFollowTerminalCwdContext = {
   isConnected: boolean;
   /** Skip auto-follow while this terminal cwd cannot be reached on SFTP. */
   blockedFollow?: SftpFollowTerminalCwdBlock | null;
+  /** Skip auto-follow after this terminal cwd was already handled for the connection. */
+  handledFollow?: SftpFollowTerminalCwdBlock | null;
+};
+
+export type SftpFollowTerminalCwdSyncResultContext = {
+  syncGeneration: number;
+  currentGeneration: number;
+  followEnabled: boolean;
+  canFollow: boolean;
+  expectedConnectionId?: string | null;
+  liveConnectionId?: string | null;
+  paneConnectionId?: string | null;
+  expectedTerminalCwd?: string | null;
+  liveTerminalCwd?: string | null;
+  requireLiveTerminalCwd?: boolean;
+};
+
+type InitialFollowConnection = {
+  id: string;
+  currentPath?: string | null;
+  status: string;
+  isLocal?: boolean;
+};
+
+type InitialFollowSyncOptions = {
+  expectedConnectionId: string;
+  staleTerminalCwd?: string | null;
+  getFreshTerminalCwd: () => Promise<string | null | undefined>;
+  isEligible: () => boolean;
+  getConnection: () => InitialFollowConnection | null | undefined;
+  navigate: (
+    cwd: string,
+    shouldApply: () => boolean,
+  ) => Promise<"reached" | "failed" | "aborted" | "superseded">;
+  setHandled: (value: SftpFollowTerminalCwdBlock) => void;
+  setBlocked: (value: SftpFollowTerminalCwdBlock | null) => void;
+};
+
+/** Run one guarded first-open sync. False means the caller may retry. */
+export const runInitialFollowTerminalCwdSync = async ({
+  expectedConnectionId,
+  staleTerminalCwd,
+  getFreshTerminalCwd,
+  isEligible,
+  getConnection,
+  navigate,
+  setHandled,
+  setBlocked,
+}: InitialFollowSyncOptions): Promise<boolean> => {
+  const cwd = await getFreshTerminalCwd();
+  if (!cwd || !isEligible()) return false;
+
+  const live = getConnection();
+  if (!live || live.id !== expectedConnectionId || live.status !== "connected" || live.isLocal) {
+    return false;
+  }
+
+  setHandled({
+    connectionId: expectedConnectionId,
+    terminalCwd: staleTerminalCwd && staleTerminalCwd !== cwd ? staleTerminalCwd : cwd,
+  });
+  if (live.currentPath === cwd) return true;
+
+  const navigateResult = await navigate(cwd, isEligible);
+  if (!isEligible()) return false;
+  const current = getConnection();
+  if (!current || current.id !== expectedConnectionId || current.status !== "connected") {
+    return false;
+  }
+  if (navigateResult === "failed") {
+    setBlocked({ connectionId: expectedConnectionId, terminalCwd: cwd });
+    return true;
+  }
+  if (navigateResult === "reached") {
+    setBlocked(null);
+    return true;
+  }
+  return navigateResult === "superseded";
 };
 
 export const resolveHostFollowTerminalCwd = (
@@ -59,6 +137,34 @@ export const shouldClearBlockedFollowOnReach = (
   );
 };
 
+/** Whether an async follow result still belongs to the current terminal/connection state. */
+export const shouldApplyFollowTerminalCwdSyncResult = ({
+  syncGeneration,
+  currentGeneration,
+  followEnabled,
+  canFollow,
+  expectedConnectionId,
+  liveConnectionId,
+  paneConnectionId,
+  expectedTerminalCwd,
+  liveTerminalCwd,
+  requireLiveTerminalCwd = false,
+}: SftpFollowTerminalCwdSyncResultContext): boolean => {
+  if (syncGeneration !== currentGeneration || !followEnabled || !canFollow) {
+    return false;
+  }
+  if (expectedConnectionId !== undefined) {
+    if (!expectedConnectionId) return false;
+    if (liveConnectionId !== undefined && liveConnectionId !== expectedConnectionId) return false;
+    if (paneConnectionId !== undefined && paneConnectionId !== expectedConnectionId) return false;
+  }
+  if (expectedTerminalCwd !== undefined) {
+    if (requireLiveTerminalCwd && !liveTerminalCwd) return false;
+    if (liveTerminalCwd && liveTerminalCwd !== expectedTerminalCwd) return false;
+  }
+  return true;
+};
+
 /** Whether SFTP should auto-navigate to match the linked terminal cwd. */
 export const shouldFollowTerminalCwdNavigate = ({
   followEnabled,
@@ -69,10 +175,19 @@ export const shouldFollowTerminalCwdNavigate = ({
   hasActiveWork,
   isConnected,
   blockedFollow,
+  handledFollow,
 }: SftpFollowTerminalCwdContext): boolean => {
   if (!followEnabled || !isVisible || !isConnected) return false;
   if (hasActiveWork) return false;
   if (!terminalCwd || terminalCwd.trim().length === 0) return false;
+  if (
+    handledFollow
+    && connectionId
+    && handledFollow.connectionId === connectionId
+    && handledFollow.terminalCwd === terminalCwd
+  ) {
+    return false;
+  }
   if (
     blockedFollow
     && connectionId

@@ -21,6 +21,7 @@ export type AgentIconKey =
   | 'opencode'
   | 'kimi'
   | 'codebuddy'
+  | 'grok'
   | 'terminal'
   | 'plus';
 
@@ -116,6 +117,11 @@ export const AGENT_ICON_VISUALS: Record<AgentIconKey, AgentIconVisual> = {
     badgeClassName: 'border-indigo-500/22 bg-indigo-500/12',
     imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
   },
+  grok: {
+    src: '/ai/providers/grok.svg',
+    badgeClassName: 'border-zinc-500/22 bg-zinc-500/12',
+    imageClassName: 'object-contain dark:brightness-0 dark:invert opacity-90',
+  },
   terminal: {
     src: '/ai/agents/terminal.svg',
     badgeClassName: 'border-white/8 bg-white/[0.04]',
@@ -135,8 +141,6 @@ export type AgentIconSource = {
   id?: string;
   type?: 'builtin' | 'external';
 };
-
-const GENERIC_AGENT_ICON_KEYS = new Set<AgentIconKey>(['terminal', 'plus', 'catty']);
 
 export function normalizeAgentToken(value?: string): string {
   return (value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
@@ -207,12 +211,11 @@ export function resolveAgentIconKey(source: AgentIconSource | 'add-more'): Agent
   if (tokens.some((token) => token.includes('factory'))) {
     return 'atom';
   }
+  if (tokens.some((token) => token.includes('grok') || token.includes('xai'))) {
+    return 'grok';
+  }
 
   return 'terminal';
-}
-
-export function isRecognizedAgentIconKey(key: AgentIconKey): boolean {
-  return !GENERIC_AGENT_ICON_KEYS.has(key);
 }
 
 export function getAgentIconVisual(key: AgentIconKey): AgentIconVisual {

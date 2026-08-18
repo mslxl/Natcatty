@@ -6,12 +6,13 @@ import type { VaultOrderPosition } from '../../domain/vaultOrder';
 export interface VaultHostTreeActions {
   onDeleteHost: (host: Host) => void;
   onDuplicateHost: (host: Host) => void;
+  onCopyHostname?: (host: Host) => void;
   onCopyCredentials: (host: Host) => void;
   onRenameHost: (host: Host) => void;
   onNewGroup: (parentPath?: string) => void;
   onRenameGroup: (groupPath: string) => void;
   onDeleteGroup: (groupPath: string) => void;
-  commitInlineGroupRename: (name: string) => void;
+  commitInlineGroupRename: (name: string) => boolean | void | Promise<boolean | void>;
   cancelInlineGroupEdit: () => void;
   commitInlineHostRename: (name: string) => void;
   cancelInlineHostEdit: () => void;

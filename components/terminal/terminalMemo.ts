@@ -15,26 +15,28 @@ export const terminalPropsAreEqual = (
   && prev.snippetPackages === next.snippetPackages
   && prev.compactToolbar === next.compactToolbar
   && prev.lineTimestampsAvailable === next.lineTimestampsAvailable
+  && prev.onDeleteSnippets === next.onDeleteSnippets
   && prev.chainHosts === next.chainHosts
   && themeFingerprint(prev.appearanceTheme ?? prev.terminalTheme) === themeFingerprint(next.appearanceTheme ?? next.terminalTheme)
   && prev.knownHosts === next.knownHosts
-  // TerminalPane owns the actual visibility style and publishes per-session
-  // visibility to paneVisibilityStore. Let Terminal skip visibility-only tab
-  // switches so the expensive terminal subtree is not re-rendered for every
-  // pane when returning to a workspace.
+  // Solo tab switches only flip isVisible. Skipping it leaves isVisibleRef
+  // stale, so hidden panes keep the visible write path and tab-return recovery
+  // in useTerminalEffects never runs (#1985).
+  && prev.isVisible === next.isVisible
   && prev.paneLayoutKey === next.paneLayoutKey
   && prev.inWorkspace === next.inWorkspace
   && prev.isResizing === next.isResizing
   && prev.isFocusMode === next.isFocusMode
   && prev.isFocused === next.isFocused
+  && prev.isFocusedPane === next.isFocusedPane
   && prev.fontFamilyId === next.fontFamilyId
   && prev.fontSize === next.fontSize
   && prev.followAppTerminalTheme === next.followAppTerminalTheme
-  && prev.accentMode === next.accentMode
-  && prev.customAccent === next.customAccent
+  // accentMode / customAccent intentionally omitted — Terminal reads appearanceChromeStore.
   && prev.terminalSettings === next.terminalSettings
   && prev.sessionId === next.sessionId
   && prev.restoreState === next.restoreState
+  && prev.vaultInitializedOverride === next.vaultInitializedOverride
   && prev.shellType === next.shellType
   && prev.lastCwd === next.lastCwd
   && prev.restoreTerminalCwd === next.restoreTerminalCwd
@@ -44,6 +46,7 @@ export const terminalPropsAreEqual = (
   && prev.pendingScriptId === next.pendingScriptId
   && prev.pendingScript === next.pendingScript
   && prev.reuseConnectionFromSessionId === next.reuseConnectionFromSessionId
+  && prev.attachExistingSession === next.attachExistingSession
   && prev.serialConfig === next.serialConfig
   && prev.hotkeyScheme === next.hotkeyScheme
   && prev.disableTerminalFontZoom === next.disableTerminalFontZoom
@@ -53,6 +56,7 @@ export const terminalPropsAreEqual = (
   && prev.sessionLog === next.sessionLog
   && prev.sshDebugLogEnabled === next.sshDebugLogEnabled
   && prev.sudoAutofillPassword === next.sudoAutofillPassword
+  && prev.sudoAutofillCandidates === next.sudoAutofillCandidates
   && prev.showSelectionAIAction === next.showSelectionAIAction
   && prev.onHotkeyAction === next.onHotkeyAction
   && prev.onTerminalFontSizeChange === next.onTerminalFontSizeChange

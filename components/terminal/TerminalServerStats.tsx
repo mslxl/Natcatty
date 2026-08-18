@@ -6,8 +6,8 @@ import { cn } from '../../lib/utils';
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '../ui/hover-card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { formatNetSpeed } from './terminalHelpers';
-import { useServerStats } from './hooks/useServerStats';
-import { usePaneVisible } from './paneVisibilityStore';
+import { useServerStats } from '../../application/state/useServerStats';
+import { formatDiskCapacityRange, resolveTerminalDiskSummary } from './serverStatsFormat';
 
 interface TerminalServerStatsProps {
   sessionId: string;
@@ -38,17 +38,16 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
   isConnected,
 }) => {
   const { t } = useI18n();
-  const isVisible = usePaneVisible(sessionId);
   const { stats: serverStats } = useServerStats({
     sessionId,
     enabled,
     refreshInterval,
     isSupportedOs,
     isConnected,
-    isVisible,
   });
   const hasNetworkDetails = serverStats.netInterfaces.length > 0;
   const hasLatency = serverStats.latencyMs !== null;
+  const diskSummary = resolveTerminalDiskSummary(serverStats);
 
   if (!enabled || !isConnected || !serverStats.lastUpdated) return null;
 
@@ -77,7 +76,7 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
                     <div className="text-xs space-y-2">
                       <div className="font-medium text-sm mb-2">{t("terminal.serverStats.cpuCores")}</div>
                       {serverStats.cpuPerCore.length > 0 ? (
-                        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(4, serverStats.cpuPerCore.length)}, 1fr)` }}>
+                        <div className="grid gap-1.5 max-h-[260px] overflow-y-auto pr-1 overscroll-contain" style={{ gridTemplateColumns: `repeat(${Math.min(4, serverStats.cpuPerCore.length)}, 1fr)` }}>
                           {serverStats.cpuPerCore.map((usage, index) => (
                             <div key={index} className="flex flex-col items-center gap-1 min-w-[48px]">
                               <div className="text-[10px] text-muted-foreground">Core {index}</div>
@@ -260,13 +259,13 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
                       <HardDrive size={10} className="flex-shrink-0" />
                       <span className={cn(
                         "truncate",
-                        serverStats.diskPercent !== null && serverStats.diskPercent >= 90 && "text-red-400",
-                        serverStats.diskPercent !== null && serverStats.diskPercent >= 80 && serverStats.diskPercent < 90 && "text-amber-400"
+                        diskSummary.percent !== null && diskSummary.percent >= 90 && "text-red-400",
+                        diskSummary.percent !== null && diskSummary.percent >= 80 && diskSummary.percent < 90 && "text-amber-400"
                       )}>
-                        {serverStats.diskUsed !== null && serverStats.diskTotal !== null && serverStats.diskPercent !== null
-                          ? `${serverStats.diskUsed}/${serverStats.diskTotal}G (${serverStats.diskPercent}%)`
-                          : serverStats.diskPercent !== null
-                            ? `${serverStats.diskPercent}%`
+                        {diskSummary.used !== null && diskSummary.total !== null && diskSummary.percent !== null
+                          ? `${formatDiskCapacityRange(diskSummary.used, diskSummary.total)} (${diskSummary.percent}%)`
+                          : diskSummary.percent !== null
+                            ? `${diskSummary.percent}%`
                             : '--'}
                       </span>
                     </button>
@@ -296,7 +295,7 @@ export const TerminalServerStats: React.FC<TerminalServerStatsProps> = ({
                                   "text-[11px] font-medium whitespace-nowrap",
                                   disk.percent >= 90 ? "text-red-400" : disk.percent >= 80 ? "text-amber-400" : "text-emerald-400"
                                 )}>
-                                  {disk.used}/{disk.total}G ({disk.percent}%)
+                                  {formatDiskCapacityRange(disk.used, disk.total)} ({disk.percent}%)
                                 </span>
                               </div>
                               <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">

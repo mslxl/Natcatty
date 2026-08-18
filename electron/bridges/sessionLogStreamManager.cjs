@@ -214,7 +214,9 @@ function createStreamEntry(sessionId, opts) {
     format,
     isRaw,
     isHtml,
-    renderer: isRaw ? null : createTerminalTextRenderer(),
+    renderer: isRaw ? null : createTerminalTextRenderer({
+      alternateScreenActive: opts.alternateScreenActive === true,
+    }),
     renderedTimestampPrefixer: !isRaw && opts.timestampsEnabled
       ? createRenderedLineTimestampPrefixer({ timestampProvider: opts.timestampProvider })
       : null,
@@ -232,6 +234,8 @@ function createStreamEntry(sessionId, opts) {
     disabled: false,
     startToken,
     stopRequiresToken: Boolean(opts.stopRequiresToken),
+    separateInitialLineBeforeLeadingCarriageReturn: false,
+    pendingInitialLineLeadingCarriageReturn: false,
   };
 
   entry.flushTimer = setInterval(() => {
@@ -264,9 +268,14 @@ function startStreamToFile(sessionId, opts = {}) {
       timestampsEnabled: opts.timestampsEnabled,
       timestampProvider: opts.timestampProvider,
       stopRequiresToken: opts.stopRequiresToken,
+      alternateScreenActive: opts.alternateScreenActive === true,
     });
     if (typeof initialLine === "string" && initialLine.length > 0) {
       appendData(sessionId, initialLine);
+      const entry = activeStreams.get(sessionId);
+      if (entry && opts.separateInitialLineBeforeLeadingCarriageReturn && !/[\r\n]$/.test(initialLine)) {
+        entry.separateInitialLineBeforeLeadingCarriageReturn = true;
+      }
     }
     return { ok: true, token };
   } catch (err) {
@@ -368,6 +377,24 @@ function appendData(sessionId, dataChunk) {
   const entry = activeStreams.get(sessionId);
   if (!entry || entry.disabled) return;
 
+  if (entry.pendingInitialLineLeadingCarriageReturn && dataChunk) {
+    entry.pendingInitialLineLeadingCarriageReturn = false;
+    dataChunk = dataChunk.startsWith("\n") ? `\r${dataChunk}` : `\n\r${dataChunk}`;
+  } else if (entry.separateInitialLineBeforeLeadingCarriageReturn && dataChunk) {
+    entry.separateInitialLineBeforeLeadingCarriageReturn = false;
+    if (dataChunk === "\r") {
+      entry.pendingInitialLineLeadingCarriageReturn = true;
+      return;
+    }
+    if (dataChunk.startsWith("\r") && !dataChunk.startsWith("\r\n")) {
+      dataChunk = `\n${dataChunk}`;
+    }
+  }
+
+  appendBufferedData(entry, dataChunk);
+}
+
+function appendBufferedData(entry, dataChunk) {
   const readableData = entry.programmaticCommandLogRewriter
     ? entry.programmaticCommandLogRewriter.append(dataChunk)
     : dataChunk;
@@ -417,6 +444,10 @@ async function stopStream(sessionId, expectedToken) {
   }
 
   // Flush remaining buffer
+  if (entry.pendingInitialLineLeadingCarriageReturn) {
+    entry.pendingInitialLineLeadingCarriageReturn = false;
+    appendBufferedData(entry, "\n\r");
+  }
   const readablePending = entry.programmaticCommandLogRewriter?.finish();
   if (readablePending) {
     entry.buffer += sanitizeSudoAutofillLogData(entry, readablePending);
@@ -443,7 +474,7 @@ async function stopStream(sessionId, expectedToken) {
   const finalPath = entry.filePath;
 
   console.log(`[SessionLogStream] Stopped stream for ${sessionId} -> ${finalPath}`);
-  return finalPath;
+  return entry.disabled ? null : finalPath;
 }
 
 /**
@@ -453,6 +484,20 @@ async function stopStream(sessionId, expectedToken) {
  */
 function hasStream(sessionId) {
   return activeStreams.has(sessionId);
+}
+
+/**
+ * Absolute paths of files currently open by active log streams.
+ * Used by clear-all so it never unlinks a live write target.
+ * @returns {string[]}
+ */
+function getActiveLogPaths() {
+  const paths = [];
+  for (const entry of activeStreams.values()) {
+    if (!entry?.filePath || entry.disabled) continue;
+    paths.push(path.resolve(entry.filePath));
+  }
+  return paths;
 }
 
 /**
@@ -472,5 +517,6 @@ module.exports = {
   registerProgrammaticCommandLogRewrite,
   stopStream,
   hasStream,
+  getActiveLogPaths,
   cleanupAll,
 };

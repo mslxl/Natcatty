@@ -5,7 +5,7 @@ import { cn } from "../../lib/utils";
 
 type VaultTreeInlineRenameInputProps = {
   initialName: string;
-  onCommit: (name: string) => void;
+  onCommit: (name: string) => boolean | void | Promise<boolean | void>;
   onCancel: () => void;
   className?: string;
   style?: React.CSSProperties;
@@ -20,7 +20,7 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(initialName);
-  const committedRef = useRef(false);
+  const submittingRef = useRef(false);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -29,15 +29,20 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
     input.select();
   }, []);
 
-  const commit = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
-    onCommit(value);
+  const commit = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      const committed = await onCommit(value);
+      if (committed === false) submittingRef.current = false;
+    } catch {
+      submittingRef.current = false;
+    }
   };
 
   const cancel = () => {
-    if (committedRef.current) return;
-    committedRef.current = true;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     onCancel();
   };
 
@@ -51,7 +56,7 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
       onChange={(event) => setValue(event.target.value)}
       onBlur={() => {
         queueMicrotask(() => {
-          commit();
+          void commit();
         });
       }}
       onClick={(event) => event.stopPropagation()}
@@ -66,7 +71,7 @@ export const VaultTreeInlineRenameInput: React.FC<VaultTreeInlineRenameInputProp
         event.stopPropagation();
         if (event.key === "Enter") {
           event.preventDefault();
-          commit();
+          void commit();
         }
         if (event.key === "Escape") {
           event.preventDefault();
@@ -91,9 +96,10 @@ type VaultTreeGroupRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childr
   hasChildren?: boolean;
   editing?: boolean;
   editingInitialName?: string;
-  onRenameCommit?: (name: string) => void;
+  onRenameCommit?: (name: string) => boolean | void | Promise<boolean | void>;
   onRenameCancel?: () => void;
   actions?: React.ReactNode;
+  labelActions?: React.ReactNode;
   icon?: React.ReactNode;
   iconSize?: number;
   meta?: React.ReactNode;
@@ -113,6 +119,7 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
   onRenameCommit,
   onRenameCancel,
   actions,
+  labelActions,
   icon,
   iconSize = 18,
   meta,
@@ -161,15 +168,19 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
           className="flex-1 font-semibold"
         />
       ) : (
-        <span className="flex h-5 min-w-0 flex-1 translate-y-px items-center truncate leading-none">{name}</span>
+        // leading-5 (not leading-none): CJK fallbacks like PingFang paint outside a 1.0 em box and get clipped by truncate.
+        <span className="flex min-h-5 min-w-0 flex-1 items-center gap-1.5 leading-5">
+          <span className="min-w-0 truncate" title={name}>{name}</span>
+          {labelActions ? <span className="shrink-0">{labelActions}</span> : null}
+        </span>
       )}
-      {meta}
+      {meta ? <div className="shrink-0">{meta}</div> : null}
       {typeof count === "number" && count > 0 && (
         <span className="shrink-0 rounded-full border border-border bg-background/50 px-1.5 py-0 text-[10px] opacity-70">
           {count}
         </span>
       )}
-      {actions}
+      {actions ? <div className="shrink-0">{actions}</div> : null}
     </div>
   );
 };
@@ -184,7 +195,7 @@ type VaultTreeItemRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childre
   actions?: React.ReactNode;
   editing?: boolean;
   editingInitialName?: string;
-  onRenameCommit?: (name: string) => void;
+  onRenameCommit?: (name: string) => boolean | void | Promise<boolean | void>;
   onRenameCancel?: () => void;
   content?: React.ReactNode;
 };
@@ -222,7 +233,7 @@ export const VaultTreeItemRow: React.FC<VaultTreeItemRowProps> = ({
     {leading ?? <div className="mr-1 h-5 w-4 flex-shrink-0" />}
     {icon ? <div className="mr-2 flex shrink-0 items-center self-center">{icon}</div> : <FileText size={14} className="mr-2 shrink-0 text-muted-foreground" />}
     {content ?? (
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 overflow-hidden">
         {editing && onRenameCommit && onRenameCancel ? (
           <VaultTreeInlineRenameInput
             initialName={editingInitialName ?? label}
@@ -230,11 +241,12 @@ export const VaultTreeItemRow: React.FC<VaultTreeItemRowProps> = ({
             onCancel={onRenameCancel}
           />
         ) : (
-          <div className="flex min-w-0 items-center truncate leading-none">{label}</div>
+          // leading-5 keeps CJK glyphs inside the line box under truncate overflow.
+          <div className="min-w-0 truncate leading-5" title={label}>{label}</div>
         )}
-        {detail && <div className="truncate text-xs text-muted-foreground">{detail}</div>}
+        {detail && <div className="truncate text-xs leading-4 text-muted-foreground">{detail}</div>}
       </div>
     )}
-    {actions}
+    {actions ? <div className="shrink-0">{actions}</div> : null}
   </div>
 );

@@ -1,8 +1,9 @@
 import React from "react";
-import type { DynamicTabTitleMode, LinkModifier, MiddleClickBehavior, RightClickBehavior, TerminalSettings } from "../../../domain/models";
+import { DEFAULT_TERMINAL_WORD_SEPARATORS } from "../../../domain/models";
+import type { DynamicTabTitleMode, LinkModifier, MiddleClickBehavior, OscNotificationMode, RightClickBehavior, TerminalSettings } from "../../../domain/models";
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
-import { SectionHeader, Select, SettingRow, Toggle } from "../settings-ui";
+import { SectionHeader, Select, SettingsAnchor, SettingRow, Toggle } from "../settings-ui";
 
 type Translate = (key: string) => string;
 
@@ -39,6 +40,18 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
       <SectionHeader title={t("settings.terminal.section.behavior")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
         <SettingRow
+          anchorId="terminal-auto-close-on-exit"
+          label={t("settings.terminal.behavior.autoCloseOnExit")}
+          description={t("settings.terminal.behavior.autoCloseOnExit.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.autoCloseOnExit}
+            onChange={(v) => updateTerminalSetting("autoCloseOnExit", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-right-click"
           label={t("settings.terminal.behavior.rightClick")}
           description={t("settings.terminal.behavior.rightClick.desc")}
         >
@@ -55,6 +68,17 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          label={t("settings.terminal.behavior.rightClick.fullscreenMenu")}
+          description={t("settings.terminal.behavior.rightClick.fullscreenMenu.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.showContextMenuOverFullscreenApps}
+            onChange={(v) => updateTerminalSetting("showContextMenuOverFullscreenApps", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-copy-on-select"
           label={t("settings.terminal.behavior.copyOnSelect")}
           description={t("settings.terminal.behavior.copyOnSelect.desc")}
         >
@@ -62,6 +86,18 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-normalize-text-on-copy"
+          label={t("settings.terminal.behavior.normalizeTextOnCopy")}
+          description={t("settings.terminal.behavior.normalizeTextOnCopy.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.normalizeTextOnCopy ?? true}
+            onChange={(v) => updateTerminalSetting("normalizeTextOnCopy", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-middle-click"
           label={t("settings.terminal.behavior.middleClick")}
           description={t("settings.terminal.behavior.middleClick.desc")}
         >
@@ -77,6 +113,21 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-word-separators"
+          label={t("settings.terminal.behavior.wordSeparators")}
+          description={t("settings.terminal.behavior.wordSeparators.desc")}
+        >
+          <Input
+            value={terminalSettings.wordSeparators}
+            onChange={(e) => updateTerminalSetting("wordSeparators", e.target.value)}
+            placeholder={`${DEFAULT_TERMINAL_WORD_SEPARATORS}=,:`}
+            className="w-56 font-mono"
+            spellCheck={false}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-bracketed-paste"
           label={t("settings.terminal.behavior.bracketedPaste")}
           description={t("settings.terminal.behavior.bracketedPaste.desc")}
         >
@@ -84,6 +135,39 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-auto-upload-clipboard-image"
+          label={t("settings.terminal.behavior.autoUploadClipboardImage")}
+          description={t("settings.terminal.behavior.autoUploadClipboardImage.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.autoUploadClipboardImageOnPaste ?? false}
+            onChange={(v) => updateTerminalSetting("autoUploadClipboardImageOnPaste", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-shift-enter-newline"
+          label={t("settings.terminal.behavior.shiftEnterNewline")}
+          description={t("settings.terminal.behavior.shiftEnterNewline.desc")}
+        >
+          <Toggle checked={terminalSettings.shiftEnterNewlineEnabled ?? true} onChange={(v) => updateTerminalSetting("shiftEnterNewlineEnabled", v)} />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.behavior.shiftEnterNewlineText")}
+          description={t("settings.terminal.behavior.shiftEnterNewlineText.desc")}
+        >
+          <Input
+            value={terminalSettings.shiftEnterNewlineText ?? "\\n"}
+            onChange={(e) => updateTerminalSetting("shiftEnterNewlineText", e.target.value)}
+            placeholder="\\n"
+            className="w-56 font-mono"
+            spellCheck={false}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-clear-wipes-scrollback"
           label={t("settings.terminal.behavior.clearWipesScrollback")}
           description={t("settings.terminal.behavior.clearWipesScrollback.desc")}
         >
@@ -105,6 +189,7 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-dynamic-tab-title"
           label={t("settings.terminal.behavior.dynamicTabTitle")}
           description={t("settings.terminal.behavior.dynamicTabTitle.desc")}
         >
@@ -120,6 +205,24 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-osc-notifications"
+          label={t("settings.terminal.behavior.oscNotifications")}
+          description={t("settings.terminal.behavior.oscNotifications.desc")}
+        >
+          <Select
+            value={terminalSettings.oscNotifications ?? "always"}
+            options={[
+              { value: "always", label: t("settings.terminal.behavior.oscNotifications.always") },
+              { value: "unfocused", label: t("settings.terminal.behavior.oscNotifications.unfocused") },
+              { value: "off", label: t("settings.terminal.behavior.oscNotifications.off") },
+            ]}
+            onChange={(v) => updateTerminalSetting("oscNotifications", v as OscNotificationMode)}
+            className="w-40"
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-osc52-clipboard"
           label={t("settings.terminal.behavior.osc52Clipboard")}
           description={t("settings.terminal.behavior.osc52Clipboard.desc")}
         >
@@ -190,7 +293,7 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
       </div>
 
       <SectionHeader title={t("settings.terminal.section.scrollback")} />
-      <div className="rounded-lg border bg-card p-4">
+      <SettingsAnchor anchorId="terminal-scrollback-rows" className="rounded-lg border bg-card p-4">
         <p className="text-sm text-muted-foreground mb-3">
           {t("settings.terminal.scrollback.desc")}
         </p>
@@ -210,10 +313,10 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
             className="w-full"
           />
         </div>
-      </div>
+      </SettingsAnchor>
 
       <SectionHeader title={t("settings.terminal.section.startupCommand")} />
-      <div className="rounded-lg border bg-card p-4">
+      <SettingsAnchor anchorId="terminal-startup-command-delay" className="rounded-lg border bg-card p-4">
         <p className="text-sm text-muted-foreground mb-3">
           {t("settings.terminal.startupCommandDelay.desc")}
         </p>
@@ -233,6 +336,6 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
             className="w-full"
           />
         </div>
-      </div>
+      </SettingsAnchor>
   </>
 );

@@ -30,10 +30,30 @@ const {
   hasWorkspaceSessionDrag,
   isPointInsideRect,
 } = await import("../application/state/terminalDragData.ts");
-const { activateLogViewTab } = await import("./top-tabs/TopTabItems.tsx");
+const {
+  activateLogViewTab,
+  createTopTabCopyDoubleClickHandler,
+  formatSessionTopTabLabel,
+  formatSessionTopTabTooltip,
+  resolveSessionTabCodingCliIconState,
+  stopCloseButtonDoubleClickPropagation,
+} = await import("./top-tabs/TopTabItems.tsx");
 const { activeTabStore } = await import("../application/state/activeTabStore.ts");
 const indexCss = readFileSync(new URL("../index.css", import.meta.url), "utf8");
 const topTabsSource = readFileSync(new URL("./TopTabs.tsx", import.meta.url), "utf8");
+const topTabsQuickControlsSource = readFileSync(new URL("./TopTabsQuickControls.tsx", import.meta.url), "utf8");
+const syncStatusButtonSource = readFileSync(new URL("./SyncStatusButton.tsx", import.meta.url), "utf8");
+const switchSource = readFileSync(new URL("./ui/switch.tsx", import.meta.url), "utf8");
+const appViewSource = readFileSync(new URL("../application/app/AppView.tsx", import.meta.url), "utf8");
+const appSource = [
+  readFileSync(new URL("../App.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../application/app/AppSideEffects.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../application/app/hosts/TerminalHost.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../application/app/hosts/ChromeHost.tsx", import.meta.url), "utf8"),
+].join("\n");
+const externalMcpToggleSource = readFileSync(new URL("../application/state/useExternalMcpToggleState.ts", import.meta.url), "utf8");
+const zhTwAiSource = readFileSync(new URL("../application/i18n/locales/zh-TW/ai.ts", import.meta.url), "utf8");
+const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
 const terminalViewSource = readFileSync(new URL("./terminal/TerminalView.tsx", import.meta.url), "utf8");
 
 test("host tree tab gutter fills the remaining sidebar width", () => {
@@ -103,12 +123,227 @@ test("quick switcher plus button exposes a custom CSS hook", () => {
   assert.match(topTabsSource, /data-section="top-tabs-quick-switcher-toggle"/);
 });
 
-test("SessionTabIcon checks custom host icon appearance before distro logos", () => {
-  const source = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
-  assert.match(source, /resolveHostIconAppearance\(host\)/);
+test("top tabs keep cloud sync separate from quick controls", () => {
+  assert.match(topTabsSource, /SyncStatusButton/);
+  assert.match(topTabsSource, /TopTabsQuickControls/);
+  assert.match(topTabsSource, /onOpenSettings=\{onOpenSettings\}/);
+  assert.match(topTabsSource, /onSyncNow=\{onSyncNow\}/);
+  assert.match(topTabsSource, /theme=\{theme\}/);
+  assert.match(topTabsSource, /themePreference=\{themePreference\}/);
+  assert.match(topTabsSource, /onThemeChange=\{onThemeChange\}/);
+  assert.match(topTabsSource, /externalMcpEnabled=\{externalMcpEnabled\}/);
+  assert.match(topTabsSource, /windowOpacity=\{windowOpacity\}/);
+  assert.match(topTabsSource, /showExternalMcpToggle=\{showExternalMcpToggle\}/);
+  assert.doesNotMatch(topTabsSource, /WindowOpacityButton/);
+  assert.doesNotMatch(topTabsSource, /onToggleTheme/);
+  const syncButtonUsage = topTabsSource.match(/<SyncStatusButton[\s\S]*?\/>/);
+  assert.ok(syncButtonUsage, 'expected a SyncStatusButton usage');
+  assert.doesNotMatch(syncButtonUsage[0], /externalMcpEnabled=/);
+  assert.doesNotMatch(syncButtonUsage[0], /windowOpacity=/);
+  assert.doesNotMatch(syncButtonUsage[0], /onThemeChange=/);
+  const quickControlsUsage = topTabsSource.match(/<TopTabsQuickControls[\s\S]*?\/>/);
+  assert.ok(quickControlsUsage, 'expected a TopTabsQuickControls usage');
+  assert.match(quickControlsUsage[0], /showExternalMcpToggle=\{showExternalMcpToggle\}/);
+  assert.match(quickControlsUsage[0], /externalMcpEnabled=\{externalMcpEnabled\}/);
+});
+
+test("quick controls panel hosts External MCP, opacity, and theme", () => {
+  assert.match(topTabsQuickControlsSource, /data-section="top-tabs-quick-controls"/);
+  assert.match(topTabsQuickControlsSource, /className="w-72 p-0 app-no-drag"/);
+  assert.match(topTabsQuickControlsSource, /topTabs\.controlPanel/);
+  assert.doesNotMatch(topTabsQuickControlsSource, /topTabs\.controlPanel\.description/);
+  assert.match(topTabsQuickControlsSource, /externalMcpEnabled/);
+  assert.match(topTabsQuickControlsSource, /onToggleExternalMcp/);
+  assert.match(topTabsQuickControlsSource, /windowOpacity/);
+  assert.match(topTabsQuickControlsSource, /setWindowOpacity/);
+  assert.match(topTabsQuickControlsSource, /themePreference/);
+  assert.match(topTabsQuickControlsSource, /onThemeChange/);
+  assert.match(topTabsQuickControlsSource, /topTabs\.controlPanel\.theme\.system/);
+  assert.match(topTabsQuickControlsSource, /aria-pressed=\{themePreference === option\.value\}/);
+  assert.match(topTabsQuickControlsSource, /onClick=\{\(\) => onThemeChange\(option\.value\)\}/);
+  assert.match(topTabsQuickControlsSource, /<Plug size=\{14\}/);
+  assert.match(topTabsQuickControlsSource, /OPACITY_PRESETS/);
+  assert.match(topTabsQuickControlsSource, /isOpacityExpanded/);
+  assert.match(topTabsQuickControlsSource, /isPresetActive/);
+  assert.match(topTabsQuickControlsSource, /type="range"/);
+  assert.match(topTabsQuickControlsSource, /aria-labelledby=\{externalMcpLabelId\}/);
+  assert.doesNotMatch(topTabsQuickControlsSource, /onOpenAutoFocus/);
+  assert.match(topTabsQuickControlsSource, /mt-1 border-t border-border\/60 pt-1/);
+  assert.doesNotMatch(topTabsQuickControlsSource, /useCloudSync/);
+  assert.doesNotMatch(topTabsQuickControlsSource, /border border-border\/60 bg-background\/70/);
+  assert.doesNotMatch(syncStatusButtonSource, /topTabs\.controlPanel/);
+  assert.doesNotMatch(syncStatusButtonSource, /externalMcpEnabled/);
+  assert.match(switchSource, /aria-label=\{ariaLabel\}/);
+  assert.match(switchSource, /role="switch"/);
+});
+
+test("External MCP top bar labels exist in Traditional Chinese", () => {
+  assert.match(zhTwAiSource, /'topTabs\.externalMcp\.enable':/);
+  assert.match(zhTwAiSource, /'topTabs\.externalMcp\.disable':/);
+  assert.match(zhTwAiSource, /'topTabs\.controlPanel':/);
+  assert.match(zhTwAiSource, /'topTabs\.controlPanel\.externalMcp':/);
+});
+
+test("AppView hides External MCP toggle in peer session windows", () => {
+  assert.match(appViewSource, /hash\.startsWith\('#\/session-window'\)/);
+  assert.match(appViewSource, /showExternalMcpToggle=\{!isPeerSessionWindow\}/);
+});
+
+test("External MCP top-bar status sync waits for App startup reconcile", () => {
+  assert.match(appSource, /await syncExternalMcpStartupStateOnce\(netcattyBridge\.get\(\)\)/);
+  assert.match(appSource, /markExternalMcpStartupReady\(\)/);
   assert.ok(
-    source.indexOf("resolveHostIconAppearance(host)") < source.indexOf("getEffectiveHostDistro(host)"),
+    appSource.indexOf("await syncExternalMcpStartupStateOnce(netcattyBridge.get())")
+      < appSource.indexOf("markExternalMcpStartupReady()"),
+    "startup ready must be marked only after await syncExternalMcpStartupStateOnce",
+  );
+  assert.match(externalMcpToggleSource, /shouldWaitForExternalMcpStartupReady/);
+  assert.match(externalMcpToggleSource, /waitForExternalMcpStartupReady\(/);
+  assert.match(externalMcpToggleSource, /!status\.enabled && !status\.error/);
+  assert.match(externalMcpToggleSource, /if \(isPeerSessionWindow \|\| !enabled\) return;/);
+});
+
+test("SessionTabIcon checks custom host icon appearance before distro logos", () => {
+  assert.match(topTabItemsSource, /resolveHostIconAppearance\(host\)/);
+  assert.ok(
+    topTabItemsSource.indexOf("resolveHostIconAppearance(host)") < topTabItemsSource.indexOf("getEffectiveHostDistro(host)"),
     "custom host icon should be checked before distro fallback",
+  );
+});
+
+test("disabling dynamic titles freezes a stored coding CLI icon and stops title fallback", () => {
+  assert.deepEqual(
+    resolveSessionTabCodingCliIconState({
+      codingCliProviderId: "claude",
+      dynamicTitle: "⠋ Reading files",
+    }, undefined, "off"),
+    {
+      provider: {
+        id: "claude",
+        label: "Claude Code",
+        command: "claude",
+        titleHints: ["claude code", "claude"],
+        iconKey: "claude",
+      },
+      activityPhase: "idle",
+    },
+  );
+  assert.equal(
+    resolveSessionTabCodingCliIconState({
+      dynamicTitle: "OpenAI Codex",
+    }, undefined, "off"),
+    null,
+  );
+  assert.equal(
+    resolveSessionTabCodingCliIconState({
+      startupCommand: "claude",
+    }, undefined, "off")?.provider.id,
+    "claude",
+  );
+  assert.equal(
+    resolveSessionTabCodingCliIconState({
+      dynamicTitle: "OpenAI Codex",
+    }, undefined, "agent")?.provider.id,
+    "codex",
+  );
+});
+
+test("session top tabs copy the session on double click through the existing copy handler", () => {
+  const copiedSessionIds: string[] = [];
+  const handleDoubleClick = createTopTabCopyDoubleClickHandler(
+    (sessionId) => copiedSessionIds.push(sessionId),
+    "session-1",
+  );
+
+  handleDoubleClick({} as Parameters<typeof handleDoubleClick>[0]);
+
+  assert.deepEqual(copiedSessionIds, ["session-1"]);
+  assert.match(topTabItemsSource, /onDoubleClick=\{handleDoubleClick\}/);
+});
+
+test("session close button double click stays on the close button", () => {
+  let stopPropagationCount = 0;
+
+  stopCloseButtonDoubleClickPropagation({
+    stopPropagation: () => {
+      stopPropagationCount += 1;
+    },
+  });
+
+  assert.equal(stopPropagationCount, 1);
+  assert.match(topTabItemsSource, /onDoubleClick=\{stopCloseButtonDoubleClickPropagation\}/);
+});
+
+test("session top tab label only shows the host label for ssh sessions", () => {
+  assert.equal(
+    formatSessionTopTabLabel({
+      hostLabel: "prod-web",
+      hostname: "10.1.2.34",
+      protocol: "ssh",
+    }),
+    "prod-web",
+  );
+});
+
+test("session top tab label treats missing protocol as ssh", () => {
+  assert.equal(
+    formatSessionTopTabLabel({
+      hostLabel: "prod-web",
+      hostname: "10.1.2.34",
+    }),
+    "prod-web",
+  );
+  assert.equal(
+    formatSessionTopTabTooltip({
+      username: "root",
+      hostname: "10.1.2.34",
+      port: 22,
+    }),
+    "root@10.1.2.34:22",
+  );
+});
+
+test("session top tab label avoids duplicating the target address", () => {
+  assert.equal(
+    formatSessionTopTabLabel({
+      hostLabel: "10.1.2.34",
+      hostname: "10.1.2.34",
+      protocol: "ssh",
+    }),
+    "10.1.2.34",
+  );
+});
+
+test("session top tab tooltip includes username and port when present", () => {
+  assert.equal(
+    formatSessionTopTabTooltip({
+      username: "root",
+      hostname: "db.internal",
+      port: 2222,
+      protocol: "ssh",
+    }),
+    "root@db.internal:2222",
+  );
+});
+
+test("session top tab helpers ignore local and mosh sessions", () => {
+  assert.equal(
+    formatSessionTopTabLabel({
+      hostLabel: "Local shell",
+      hostname: "127.0.0.1",
+      protocol: "local",
+    }),
+    "Local shell",
+  );
+  assert.equal(
+    formatSessionTopTabTooltip({
+      username: "root",
+      hostname: "10.1.2.34",
+      port: 22,
+      protocol: "ssh",
+      moshEnabled: true,
+    }),
+    null,
   );
 });
 
@@ -124,6 +359,14 @@ test("workspace session drag data is recognized with a dedicated drag type", () 
 
   assert.equal(hasWorkspaceSessionDrag(transfer), true);
   assert.equal(getWorkspaceSessionDragId(transfer), "session-1");
+});
+
+test("TopTabs wires host drops to workspace tabs without replacing tab reorder", () => {
+  assert.match(topTabsSource, /appendHostFromWorkspaceDrop/);
+  assert.match(topTabsSource, /workspaceMap\.has\(targetTabId\)/);
+  assert.match(topTabsSource, /dropEffect = 'copy'/);
+  assert.match(topTabsSource, /isHostDropTarget=\{hostDropWorkspaceId === workspace\.id\}/);
+  assert.match(appViewSource, /<TopTabs[\s\S]*?onAppendHostToWorkspace=\{handleAppendHostToWorkspace\}/);
 });
 
 test("workspace session drag id falls back to the legacy session id", () => {
@@ -339,4 +582,55 @@ test("host tree toggle is hidden on root pages", () => {
     sessionIds: new Set(["session-1"]),
     workspaceIds: new Set(),
   }), false);
+});
+
+test("TopTabs applies presentation per session tab, not via global version fan-out", () => {
+  // Global presentationVersion remapping was removed to stop sibling title
+  // thrash from re-rendering the whole tab bar.
+  assert.doesNotMatch(topTabsSource, /presentationVersion/);
+  assert.doesNotMatch(topTabsSource, /sessionPresentationStore\.subscribe/);
+  const topTabItemsSource = readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8");
+  assert.match(topTabItemsSource, /usePresentedSession/);
+  // Workspace detach menu must also apply presentation per session so labels
+  // stay live without remapping TopTabsInner.
+  assert.match(topTabItemsSource, /WorkspaceDetachSessionMenuItem/);
+  assert.match(topTabsSource, /workspaceSessions=/);
+  assert.doesNotMatch(topTabsSource, /workspaceSessionLabels/);
+});
+
+test("tab-switch focus calls refocus primitive directly without outer rAF wrap", () => {
+  const effectsSource = readFileSync(
+    new URL("./terminalLayer/useTerminalLayerEffects.ts", import.meta.url),
+    "utf8",
+  );
+  const focusBlock = effectsSource.slice(
+    effectsSource.indexOf("Restore keyboard focus after switching work tabs"),
+    effectsSource.indexOf("When focusedSessionId changes"),
+  );
+  assert.match(focusBlock, /refocusActiveTerminalSession\(\)/);
+  // Outer rAF wrapper was removed — focusTerminalSessionInput already schedules.
+  assert.doesNotMatch(focusBlock, /requestAnimationFrame\(\(\) => \{\s*refocusActiveTerminalSession/);
+});
+
+test("topTabsAreEqual tracks editorTabs for dirty chrome", () => {
+  assert.match(topTabsSource, /prev\.editorTabs === next\.editorTabs/);
+  assert.match(topTabsSource, /prev\.onRequestCloseEditorTab === next\.onRequestCloseEditorTab/);
+  // Dirty dots come from useEditorTabDirty; structure list is presence-only chrome.
+  assert.match(
+    readFileSync(new URL("./top-tabs/TopTabItems.tsx", import.meta.url), "utf8"),
+    /useEditorTabDirty/,
+  );
+});
+
+test("App shell uses editor presence chrome list not full content tabs", () => {
+  assert.match(appSource, /useEditorTabChromeList/);
+  assert.doesNotMatch(appSource, /useEditorTabs\(\)/);
+});
+
+test("App shell retains presentation-stable sessions for domain memos", () => {
+  assert.match(appSource, /retainStableSessionsIgnoringPresentation/);
+  assert.match(appSource, /sessionsForShell/);
+  assert.match(appSource, /orphanSessionsForShell/);
+  assert.match(appSource, /sessions: sessionsForShell/);
+  assert.match(appSource, /orphanSessions: orphanSessionsForShell/);
 });

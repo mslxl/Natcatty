@@ -22,9 +22,12 @@ function printHelp() {
     "Examples:\n" +
     "  netcatty-tool-cli status --json\n" +
     "  netcatty-tool-cli env --chat-session ai_123 --json\n" +
+    "  netcatty-tool-cli attachment list --chat-session ai_123 --json\n" +
+    "  netcatty-tool-cli attachment read --filename hosts.csv --chat-session ai_123 --json\n" +
     "  netcatty-tool-cli session --session sess_123 --json --chat-session ai_123\n" +
     "  netcatty-tool-cli exec --session sess_123 --chat-session ai_123 --json -- \"pwd\"\n" +
     "  netcatty-tool-cli vault host get --host-id host_123 --json\n" +
+    "  netcatty-tool-cli vault host open --host-id host_123 --json\n" +
     "  netcatty-tool-cli snippets run --snippet-id snip_1 --session sess_123 --chat-session ai_123 --json\n" +
     "  netcatty-tool-cli portforward rules list --json\n\n" +
     "Notes:\n" +
@@ -72,10 +75,14 @@ function parseArgs(argv) {
     mode: null,
     encoding: null,
     hostId: null,
+    filename: null,
     snippetId: null,
+    scriptId: null,
     ruleId: null,
     notes: null,
     variables: null,
+    targetGroups: null,
+    multiLineRunMode: null,
     command: [],
   };
 
@@ -157,8 +164,18 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (arg === "--filename") {
+      opts.filename = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
     if (arg === "--snippet-id") {
       opts.snippetId = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--script-id") {
+      opts.scriptId = readFlagValue(args, i + 1);
       i += 1;
       continue;
     }
@@ -174,6 +191,16 @@ function parseArgs(argv) {
     }
     if (arg === "--variables") {
       opts.variables = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--target-groups") {
+      opts.targetGroups = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--multi-line-run-mode") {
+      opts.multiLineRunMode = readFlagValue(args, i + 1);
       i += 1;
       continue;
     }
@@ -386,7 +413,7 @@ async function run() {
     process.stdout.write(opts.json
       ? `${JSON.stringify(payload, null, 2)}\n`
       : `${payload.capabilities.map((entry) => entry.command.join(" ")).join("\n")}\n`);
-    process.exit(0);
+    return;
   }
 
   let client = null;
@@ -751,4 +778,10 @@ async function run() {
   }
 }
 
-run();
+if (require.main === module) {
+  run();
+}
+
+module.exports = {
+  parseArgs,
+};

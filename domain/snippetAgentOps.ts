@@ -7,6 +7,7 @@ import {
 } from './hostConnectScripts.ts';
 import { isScriptSnippet } from './snippetScript.ts';
 import { getNextVaultOrder } from './vaultOrder.ts';
+import { normalizeGroupTargetPaths } from './hostGroupPathMutations.ts';
 
 export type SnippetAgentListItem = ReturnType<typeof serializeSnippetForAgentList>;
 export type SnippetAgentDetail = ReturnType<typeof serializeSnippetForAgentGet>;
@@ -22,10 +23,14 @@ export function serializeSnippetForAgentList(snippet: Snippet) {
     kind: snippet.kind ?? 'snippet',
     tags: snippet.tags ?? [],
     targets: snippet.targets ?? [],
+    // Preserve the distinction between a legacy unscoped script (missing) and
+    // an explicit empty group scope (disabled after its last group is deleted).
+    targetGroups: snippet.targetGroups,
     targetsAllHosts: snippet.targetsAllHosts ?? false,
     package: snippet.package,
     shortkey: snippet.shortkey,
     noAutoRun: snippet.noAutoRun,
+    multiLineRunMode: snippet.multiLineRunMode,
     language: snippet.language,
     description: snippet.description,
     trigger: snippet.trigger,
@@ -54,10 +59,12 @@ export type SnippetAgentDraft = {
   kind?: unknown;
   tags?: unknown;
   targets?: unknown;
+  targetGroups?: unknown;
   targetsAllHosts?: unknown;
   package?: unknown;
   shortkey?: unknown;
   noAutoRun?: unknown;
+  multiLineRunMode?: unknown;
   language?: unknown;
   description?: unknown;
   trigger?: unknown;
@@ -69,6 +76,7 @@ export type SnippetAgentPatch = SnippetAgentDraft;
 const VALID_KINDS = new Set<SnippetKind>(['snippet', 'script']);
 const VALID_TRIGGERS = new Set<ScriptTrigger>(['manual', 'onConnect', 'onOutput']);
 const VALID_LANGUAGES = new Set<ScriptLanguage>(['javascript', 'python']);
+const VALID_MULTI_LINE_RUN_MODES = new Set<NonNullable<Snippet['multiLineRunMode']>>(['paste', 'lineDelay']);
 
 function parseKind(raw: unknown, fallback: SnippetKind = 'snippet'): SnippetKind | { error: string } {
   if (raw === undefined || raw === null || raw === '') return fallback;
@@ -89,6 +97,15 @@ function parseLanguage(raw: unknown): ScriptLanguage | undefined | { error: stri
   const value = String(raw).trim();
   if (VALID_LANGUAGES.has(value as ScriptLanguage)) return value as ScriptLanguage;
   return { error: `language must be javascript or python, got "${value}".` };
+}
+
+function parseMultiLineRunMode(raw: unknown): Snippet['multiLineRunMode'] | { error: string } {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const value = String(raw).trim();
+  if (VALID_MULTI_LINE_RUN_MODES.has(value as NonNullable<Snippet['multiLineRunMode']>)) {
+    return value as NonNullable<Snippet['multiLineRunMode']>;
+  }
+  return { error: `multiLineRunMode must be paste or lineDelay, got "${value}".` };
 }
 
 function parseOptionalBoolean(raw: unknown): boolean | undefined {
@@ -181,16 +198,30 @@ export function buildSnippetFromAgentDraft(
 
   const targetsAllHosts = parseOptionalBoolean(draft.targetsAllHosts);
   let targets: string[] | undefined;
+  let targetGroups: string[] | undefined;
   if (!targetsAllHosts) {
     const targetsResult = parseTargets(draft.targets);
     if (targetsResult && 'error' in targetsResult) return { ok: false, error: targetsResult.error };
     targets = targetsResult && targetsResult.length > 0 ? targetsResult : undefined;
+    const targetGroupsResult = parseStringArray(draft.targetGroups, 'targetGroups');
+    if (targetGroupsResult && !Array.isArray(targetGroupsResult)) {
+      return { ok: false, error: targetGroupsResult.error };
+    }
+    targetGroups = draft.targetGroups === undefined
+      ? undefined
+      : Array.isArray(targetGroupsResult)
+        ? normalizeGroupTargetPaths(targetGroupsResult)
+        : undefined;
   }
 
   const triggerPatternRaw = typeof draft.triggerPattern === 'string' ? draft.triggerPattern : undefined;
   const triggerPattern = validateTriggerPattern(trigger, triggerPatternRaw);
   if (triggerPattern && typeof triggerPattern === 'object' && 'error' in triggerPattern) {
     return { ok: false, error: triggerPattern.error };
+  }
+  const multiLineRunMode = parseMultiLineRunMode(draft.multiLineRunMode);
+  if (multiLineRunMode && typeof multiLineRunMode === 'object' && 'error' in multiLineRunMode) {
+    return { ok: false, error: multiLineRunMode.error };
   }
 
   const snippet: Snippet = {
@@ -200,10 +231,12 @@ export function buildSnippetFromAgentDraft(
     kind,
     tags: tags && tags.length > 0 ? tags : undefined,
     targets: targetsAllHosts ? undefined : targets,
+    targetGroups: targetsAllHosts ? undefined : targetGroups,
     targetsAllHosts: targetsAllHosts || undefined,
     package: typeof draft.package === 'string' && draft.package.trim() ? draft.package.trim() : undefined,
     shortkey: typeof draft.shortkey === 'string' && draft.shortkey.trim() ? draft.shortkey.trim() : undefined,
     noAutoRun: parseOptionalBoolean(draft.noAutoRun),
+    multiLineRunMode,
     language: languageResult ?? (kind === 'script' ? 'javascript' : undefined),
     description: typeof draft.description === 'string' && draft.description.trim()
       ? draft.description.trim()
@@ -266,20 +299,41 @@ export function applySnippetAgentPatch(
   const prevTargetIds = existing.targets ? [...existing.targets] : undefined;
 
   let targetsAllHosts = existing.targetsAllHosts;
-  if (patch.targets !== undefined && patch.targetsAllHosts === undefined) {
+  if (
+    (patch.targets !== undefined || patch.targetGroups !== undefined)
+    && patch.targetsAllHosts === undefined
+  ) {
     targetsAllHosts = false;
   } else if (patch.targetsAllHosts !== undefined) {
     targetsAllHosts = parseOptionalBoolean(patch.targetsAllHosts) ?? false;
   }
 
   let targets = existing.targets;
-  if (patch.targets !== undefined || patch.targetsAllHosts !== undefined) {
+  let targetGroups = existing.targetGroups;
+  if (
+    patch.targets !== undefined
+    || patch.targetGroups !== undefined
+    || patch.targetsAllHosts !== undefined
+  ) {
     if (targetsAllHosts) {
       targets = undefined;
+      targetGroups = undefined;
     } else {
       const targetsResult = parseTargets(patch.targets ?? existing.targets ?? []);
       if (targetsResult && 'error' in targetsResult) return { ok: false, error: targetsResult.error };
       targets = targetsResult && targetsResult.length > 0 ? targetsResult : undefined;
+      const targetGroupsResult = parseStringArray(
+        patch.targetGroups ?? existing.targetGroups ?? [],
+        'targetGroups',
+      );
+      if (targetGroupsResult && !Array.isArray(targetGroupsResult)) {
+        return { ok: false, error: targetGroupsResult.error };
+      }
+      targetGroups = patch.targetGroups === undefined
+        ? existing.targetGroups
+        : Array.isArray(targetGroupsResult)
+          ? normalizeGroupTargetPaths(targetGroupsResult)
+          : undefined;
     }
   }
 
@@ -290,6 +344,12 @@ export function applySnippetAgentPatch(
   if (triggerPattern && typeof triggerPattern === 'object' && 'error' in triggerPattern) {
     return { ok: false, error: triggerPattern.error };
   }
+  const multiLineRunMode = patch.multiLineRunMode !== undefined
+    ? parseMultiLineRunMode(patch.multiLineRunMode)
+    : existing.multiLineRunMode;
+  if (multiLineRunMode && typeof multiLineRunMode === 'object' && 'error' in multiLineRunMode) {
+    return { ok: false, error: multiLineRunMode.error };
+  }
 
   const snippet: Snippet = {
     ...existing,
@@ -298,6 +358,7 @@ export function applySnippetAgentPatch(
     kind,
     tags: tags && tags.length > 0 ? tags : undefined,
     targets,
+    targetGroups,
     targetsAllHosts: targetsAllHosts || undefined,
     package: patch.package !== undefined
       ? (typeof patch.package === 'string' && patch.package.trim() ? patch.package.trim() : undefined)
@@ -308,6 +369,7 @@ export function applySnippetAgentPatch(
     noAutoRun: patch.noAutoRun !== undefined
       ? parseOptionalBoolean(patch.noAutoRun)
       : existing.noAutoRun,
+    multiLineRunMode,
     language: language ?? (kind === 'script' ? 'javascript' : undefined),
     description: patch.description !== undefined
       ? (typeof patch.description === 'string' && patch.description.trim() ? patch.description.trim() : undefined)
@@ -425,7 +487,7 @@ export function summarizeConnectScriptsForHost(host: Host, snippets: Snippet[]) 
 
 export function applyScriptTargetsPatch(
   snippet: Snippet,
-  params: { targets?: unknown; targetsAllHosts?: unknown },
+  params: { targets?: unknown; targetGroups?: unknown; targetsAllHosts?: unknown },
 ): { ok: true; snippet: Snippet; prevTargetIds?: string[] } | { ok: false; error: string } {
   return applySnippetAgentPatch(snippet, params, { forceKind: 'script' });
 }

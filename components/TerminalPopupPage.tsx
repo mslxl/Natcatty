@@ -4,8 +4,12 @@ import { I18nProvider, useI18n } from '../application/i18n/I18nProvider';
 import { useTerminalPopupWindow } from '../application/state/useTerminalPopupWindow';
 import { useVaultState } from '../application/state/useVaultState';
 import { useWindowControls } from '../application/state/useWindowControls';
-import { shouldCloseTerminalPopupOnExit } from '../application/state/resolveTerminalSessionExitIntent';
+import {
+  shouldCloseTerminalPopupOnExit,
+  shouldRevealTerminalPopupOnExit,
+} from '../application/state/resolveTerminalSessionExitIntent';
 import { upsertKnownHost } from '../domain/knownHosts';
+import { isPluginHostProtocol, sanitizePluginConnection } from '../domain/pluginConnection';
 import { resolveTerminalChainHosts, resolveTerminalSessionHost } from '../domain/terminalHostResolution';
 import type { TerminalPopupPayload } from '../domain/systemManager/types';
 import type { GroupConfig, Host, ProxyProfile, TerminalTheme } from '../domain/models';
@@ -14,6 +18,7 @@ import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
 import { detectLocalOs } from '../lib/localShell';
 import { cn } from '../lib/utils';
 import type { AppLockGateRenderContext } from './AppLockGate';
+import { PluginAuthenticationHost } from './plugins/PluginAuthenticationHost';
 
 const Terminal = lazy(() => import('./Terminal'));
 
@@ -177,10 +182,15 @@ function TerminalPopupTitleIcon({ icon }: { icon: TerminalPopupPayload['icon'] }
   );
 }
 
-function resolveHostProtocolFromSourceSession(source: TerminalPopupPayload['sourceSession']): Host['protocol'] {
+function resolveHostProtocolFromSourceSession(
+  source: TerminalPopupPayload['sourceSession'],
+  attachExistingSession: boolean,
+): Host['protocol'] {
   if (
     source.protocol === 'local' ||
-    source.protocol === 'telnet'
+    source.protocol === 'telnet' ||
+    isPluginHostProtocol(source.protocol) ||
+    (attachExistingSession && source.protocol === 'serial')
   ) {
     return source.protocol;
   }
@@ -190,10 +200,16 @@ function resolveHostProtocolFromSourceSession(source: TerminalPopupPayload['sour
 function applySourceSessionConnectionOverrides(
   host: Host,
   source: TerminalPopupPayload['sourceSession'],
+  attachExistingSession: boolean,
 ): Host {
-  const protocol = resolveHostProtocolFromSourceSession(source);
+  const protocol = resolveHostProtocolFromSourceSession(source, attachExistingSession);
+  const pluginConnection = isPluginHostProtocol(protocol)
+    ? sanitizePluginConnection(source.pluginConnection, protocol)
+      ?? sanitizePluginConnection(host.pluginConnection, protocol)
+    : undefined;
+  const { pluginConnection: _pluginConnection, ...baseHost } = host;
   return {
-    ...host,
+    ...baseHost,
     hostname: source.hostname || host.hostname,
     username: source.username || host.username,
     port: source.port ?? (protocol === 'local' ? undefined : host.port),
@@ -201,6 +217,10 @@ function applySourceSessionConnectionOverrides(
     moshEnabled: source.moshEnabled === true,
     etEnabled: source.etEnabled === true,
     charset: source.charset ?? host.charset,
+    ...(pluginConnection ? { pluginConnection } : {}),
+    ...(protocol === 'serial' && source.serialConfig
+      ? { serialConfig: source.serialConfig }
+      : {}),
   };
 }
 
@@ -223,6 +243,7 @@ export function resolveTerminalPopupHost(
   return applySourceSessionConnectionOverrides(
     resolvedHost,
     config.sourceSession,
+    Boolean(config.attachSessionId),
   );
 }
 
@@ -239,7 +260,13 @@ function TerminalPopupPageInner({
   allowTerminalStart?: boolean;
 }) {
   const { t } = useI18n();
-  const { close, setWindowTitle, onPopupConfig } = useTerminalPopupWindow();
+  const {
+    close,
+    markAttachClosePrepared,
+    onPopupConfig,
+    onPrepareClose,
+    setWindowTitle,
+  } = useTerminalPopupWindow();
   const { notifyRendererReady, onWindowCommandCloseRequested } = useWindowControls();
   const {
     isInitialized: vaultInitialized,
@@ -252,12 +279,50 @@ function TerminalPopupPageInner({
     snippetPackages,
     groupConfigs,
     updateKnownHosts,
+    deleteSelectedSnippets,
   } = useVaultState();
   const [config, setConfig] = useState<TerminalPopupPayload | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);
-  const sessionId = useMemo(() => crypto.randomUUID(), []);
+  const generatedSessionId = useMemo(() => crypto.randomUUID(), []);
+  const attachSessionId = config?.attachSessionId;
+  const attachAuthorization = config?.attachAuthorization;
+  const isAttachMode = Boolean(attachSessionId);
+  // Attach mode must reuse the live backend session id so input/output hit the same PTY.
+  const sessionId = attachSessionId || generatedSessionId;
   const knownHostsRef = React.useRef(knownHosts);
+  const attachClosePreparationRef = React.useRef<(() => Promise<void>) | null>(null);
+  const closePromiseRef = React.useRef<Promise<void> | null>(null);
+  const handleAttachClosePreparationChange = useCallback((prepare: (() => Promise<void>) | null) => {
+    attachClosePreparationRef.current = prepare;
+  }, []);
+  const handleClose = useCallback(() => {
+    if (closePromiseRef.current) return closePromiseRef.current;
+    const closePromise = (async () => {
+      if (isAttachMode && attachSessionId && attachAuthorization) {
+        try {
+          const preparation = attachClosePreparationRef.current?.();
+          if (preparation) {
+            await Promise.race([
+              preparation,
+              new Promise<never>((_, reject) => setTimeout(
+                () => reject(new Error("Attach close preparation timed out")),
+                1500,
+              )),
+            ]);
+          }
+          await markAttachClosePrepared(attachSessionId, attachAuthorization);
+        } catch { /* The main-process close handshake owns the final fallback. */ }
+      }
+      await close();
+    })();
+    closePromiseRef.current = closePromise;
+    const clearClosePromise = () => {
+      if (closePromiseRef.current === closePromise) closePromiseRef.current = null;
+    };
+    void closePromise.then(clearClosePromise, clearClosePromise);
+    return closePromise;
+  }, [attachAuthorization, attachSessionId, close, isAttachMode, markAttachClosePrepared]);
   const effectiveKnownHosts = useMemo(
     () => getEffectiveKnownHosts(knownHosts) ?? [],
     [knownHosts],
@@ -288,9 +353,16 @@ function TerminalPopupPageInner({
 
   useEffect(() => {
     return onWindowCommandCloseRequested(() => {
-      void close();
+      void handleClose();
     });
-  }, [close, onWindowCommandCloseRequested]);
+  }, [handleClose, onWindowCommandCloseRequested]);
+
+  useEffect(() => {
+    return onPrepareClose((payload) => {
+      if (payload.sessionId !== attachSessionId || payload.authorization !== attachAuthorization) return;
+      void handleClose();
+    });
+  }, [attachAuthorization, attachSessionId, handleClose, onPrepareClose]);
 
   const host = useMemo(() => {
     if (!config) return null;
@@ -323,6 +395,8 @@ function TerminalPopupPageInner({
   }, [readyToStart]);
   const ready = sessionStarted || readyToStart;
   const startupRevealDelayMs = useMemo(() => {
+    // Attach mode shows the live session immediately (no startup command).
+    if (isAttachMode) return 0;
     if (!config?.startupCommand) return 0;
     const configuredDelay = settings.terminalSettings?.startupCommandDelayMs;
     const startupDelay = typeof configuredDelay === 'number' && Number.isFinite(configuredDelay)
@@ -332,7 +406,7 @@ function TerminalPopupPageInner({
       POPUP_STARTUP_REVEAL_MAX_DELAY_MS,
       Math.max(POPUP_STARTUP_REVEAL_MIN_DELAY_MS, startupDelay + POPUP_STARTUP_REVEAL_EXTRA_DELAY_MS),
     );
-  }, [config?.startupCommand, settings.terminalSettings?.startupCommandDelayMs]);
+  }, [config?.startupCommand, isAttachMode, settings.terminalSettings?.startupCommandDelayMs]);
   const revealTerminal = useCallback(() => {
     setTerminalReady(true);
   }, []);
@@ -344,9 +418,13 @@ function TerminalPopupPageInner({
 
   useEffect(() => {
     if (!ready) return undefined;
+    if (isAttachMode) {
+      setTerminalReady(true);
+      return undefined;
+    }
     const timeout = window.setTimeout(() => setTerminalReady(true), startupRevealDelayMs);
     return () => window.clearTimeout(timeout);
-  }, [config?.popupId, ready, startupRevealDelayMs]);
+  }, [config?.popupId, isAttachMode, ready, startupRevealDelayMs]);
 
   return (
     <div
@@ -369,7 +447,7 @@ function TerminalPopupPageInner({
             {config?.title ?? ''}
           </div>
         </div>
-        {!isMac && <TerminalPopupWindowControls mac={false} onClose={() => void close()} />}
+        {!isMac && <TerminalPopupWindowControls mac={false} onClose={() => void handleClose()} />}
       </div>
       {!ready || !config || !host ? (
         <TerminalPopupSpinner />
@@ -377,7 +455,7 @@ function TerminalPopupPageInner({
         <TerminalPopupStartupError
           message={startupError}
           closeLabel={t('common.close')}
-          onClose={() => void close()}
+          onClose={() => void handleClose()}
         />
       ) : (
         <div className="relative flex-1 min-h-0 flex flex-col bg-[color:var(--terminal-popup-bg)]">
@@ -390,6 +468,7 @@ function TerminalPopupPageInner({
               snippetPackages={snippetPackages}
               chainHosts={chainHosts}
               compactToolbar
+              onDeleteSnippets={deleteSelectedSnippets}
               lineTimestampsAvailable={false}
               knownHosts={effectiveKnownHosts}
               onAddKnownHost={handleAddKnownHost}
@@ -402,23 +481,39 @@ function TerminalPopupPageInner({
               accentMode={settings.accentMode}
               customAccent={settings.customAccent}
               terminalSettings={settings.terminalSettings}
+              vaultInitializedOverride={vaultInitialized}
               disableTerminalFontZoom={settings.disableTerminalFontZoom}
               sessionId={sessionId}
-              startupCommand={config.startupCommand}
-              reuseConnectionFromSessionId={reuseId}
+              startupCommand={isAttachMode ? undefined : config.startupCommand}
+              reuseConnectionFromSessionId={isAttachMode ? undefined : reuseId}
+              attachExistingSession={isAttachMode}
+              attachAuthorization={attachAuthorization}
+              onAttachClosePreparationChange={handleAttachClosePreparationChange}
+              serialConfig={isAttachMode ? config.sourceSession.serialConfig : undefined}
               onCloseSession={() => {
-                void close();
+                void handleClose();
               }}
               onSessionExit={(_closedSessionId, evt) => {
-                if (shouldCloseTerminalPopupOnExit(evt)) {
-                  void close();
+                if (shouldCloseTerminalPopupOnExit(evt, {
+                  autoCloseOnExit: settings.terminalSettings.autoCloseOnExit,
+                  isAttachMode,
+                })) {
+                  void handleClose();
                   return;
                 }
-                if (!terminalReady && config.startupCommand) {
+                if (shouldRevealTerminalPopupOnExit(evt, {
+                  autoCloseOnExit: settings.terminalSettings.autoCloseOnExit,
+                  isAttachMode,
+                })) {
+                  revealTerminal();
+                  return;
+                }
+                if (!terminalReady && config.startupCommand && !isAttachMode) {
                   setStartupError(t('systemManager.popup.startupFailed'));
                 }
               }}
               onStatusChange={(_changedSessionId, status) => {
+                if (isAttachMode && status === 'connected') revealTerminal();
                 if (!config.startupCommand && status === 'connected') revealTerminal();
               }}
               onTerminalDataCapture={revealTerminal}
@@ -448,6 +543,7 @@ export default function TerminalPopupPage({
         settings={settings}
         allowTerminalStart={allowTerminalStart}
       />
+      <PluginAuthenticationHost />
     </I18nProvider>
   );
 }

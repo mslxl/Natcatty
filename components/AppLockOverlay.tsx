@@ -71,7 +71,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSystemUnlocking, setIsSystemUnlocking] = useState(false);
   const [systemUnlockError, setSystemUnlockError] = useState(false);
-  const [logoClickCount, setLogoClickCount] = useState(0);
+  // Value is only read inside functional updates; keep the setter alone.
+  const [, setLogoClickCount] = useState(0);
   const [lastLogoClickAt, setLastLogoClickAt] = useState<number | null>(null);
   const [showReset, setShowReset] = useState(false);
   const [isResetting, setIsResetting] = useState(false);

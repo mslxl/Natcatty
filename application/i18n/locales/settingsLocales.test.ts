@@ -6,10 +6,12 @@ import en from "./en.ts";
 import { HOST_ICON_COLORS, HOST_ICON_IDS } from "../../../domain/hostIcon.ts";
 import zhCN from "./zh-CN.ts";
 import ru from "./ru.ts";
+import es from "./es.ts";
 
 const LOCALIZED_SETTINGS_LOCALES = [
   { name: "zh-CN", messages: zhCN },
   { name: "ru", messages: ru },
+  { name: "es", messages: es },
 ];
 
 const APP_LOCK_LOCALES = [
@@ -40,6 +42,44 @@ test("localized settings include workspace focus indicator labels", () => {
   for (const locale of LOCALIZED_SETTINGS_LOCALES) {
     const missing = keys.filter((key) => !locale.messages[key]);
     assert.deepEqual(missing, [], `${locale.name} is missing workspace focus labels`);
+  }
+});
+
+test("localized settings include network proxy labels", () => {
+  const keys = [
+    "settings.system.networkProxy.title",
+    "settings.system.networkProxy.description",
+    "settings.system.networkProxy.mode",
+    "settings.system.networkProxy.mode.system",
+    "settings.system.networkProxy.mode.direct",
+    "settings.system.networkProxy.mode.custom",
+    "settings.system.networkProxy.url",
+    "settings.system.networkProxy.url.placeholder",
+    "settings.system.networkProxy.url.desc",
+    "settings.system.networkProxy.bypass",
+    "settings.system.networkProxy.bypass.placeholder",
+    "settings.system.networkProxy.bypass.desc",
+    "settings.system.networkProxy.hint",
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing network proxy labels`);
+  }
+});
+
+test("localized settings include OSC desktop notification labels", () => {
+  const keys = [
+    "settings.terminal.behavior.oscNotifications",
+    "settings.terminal.behavior.oscNotifications.desc",
+    "settings.terminal.behavior.oscNotifications.off",
+    "settings.terminal.behavior.oscNotifications.unfocused",
+    "settings.terminal.behavior.oscNotifications.always",
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing OSC notification labels`);
   }
 });
 
@@ -147,5 +187,17 @@ test("localized vault messages include host icon labels", () => {
   for (const locale of LOCALIZED_SETTINGS_LOCALES) {
     const missing = keys.filter((key) => !locale.messages[key]);
     assert.deepEqual(missing, [], `${locale.name} is missing host icon labels`);
+  }
+});
+
+test("localized vault messages include interactive authentication labels", () => {
+  const keys = [
+    "hostDetails.auth.mfaFirst",
+    "hostDetails.auth.mfaFirst.desc",
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing interactive authentication labels`);
   }
 });

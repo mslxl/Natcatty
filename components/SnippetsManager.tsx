@@ -1,11 +1,16 @@
 import { CheckSquare, ChevronDown, Clock, Copy, Download, Edit2, FileCode, FolderPlus, LayoutGrid, List as ListIcon, Package, Play, Plus, Search, Square, Trash2, Upload, X, Zap } from 'lucide-react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { useStoredViewMode } from '../application/state/useStoredViewMode';
 import { STORAGE_KEY_VAULT_SNIPPETS_VIEW_MODE } from '../infrastructure/config/storageKeys';
 import { cn, isMacPlatform } from '../lib/utils';
 import { Host, ProxyProfile, ShellHistoryEntry, Snippet, SSHKey } from '../types';
-import { HotkeyScheme, KeyBinding, keyEventToString, ManagedSource, matchesKeyBinding, parseKeyCombo } from '../domain/models';
+import {
+  getShellHistorySnapshot,
+  subscribeShellHistory,
+} from '../application/state/shellHistoryStore';
+import { findActiveSystemShortcutConflict } from '../domain/activeKeyBindings';
+import { HotkeyScheme, KeyBinding, keyEventToString, keyStringToKeyboardEvent, ManagedSource, matchesKeyBinding } from '../domain/models';
 import {
   buildSnippetExportPayload,
   combineSnippetImportPayloads,
@@ -14,9 +19,14 @@ import {
   type SnippetExportPayload,
   type SnippetImportConflictAction,
 } from '../domain/snippetTransfer';
-import { getRunnableHostsForSnippet, snippetHasRunTargets } from '../domain/snippetTargets.ts';
+import {
+  getRunnableHostsForSnippet,
+  resolveSnippetTargetGroupsForSave,
+  snippetHasRunTargets,
+} from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
+import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
 import { DEFAULT_SCRIPT_TEMPLATE, isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
 import { Button } from './ui/button';
@@ -44,6 +54,7 @@ import {
   vaultSnippetIconClass,
 } from './vault/VaultEntityIcon';
 import { isAppLockOverlayActive } from '../infrastructure/appLockOverlayDom';
+import { VaultDeleteConfirmDialog } from './vault/VaultDeleteConfirmDialog';
 import {
   clearVaultDropIndicator as clearSnippetDropIndicator,
   getVaultDropIntent as getPackageDropIntent,
@@ -59,7 +70,8 @@ interface SnippetsManagerProps {
   packages: string[];
   hosts: Host[];
   customGroups?: string[];
-  shellHistory: ShellHistoryEntry[];
+  /** @deprecated Prefer shellHistoryStore; optional override for tests only. */
+  shellHistory?: ShellHistoryEntry[];
   hotkeyScheme: HotkeyScheme;
   keyBindings: KeyBinding[];
   onSave: (snippet: Snippet) => void;
@@ -447,7 +459,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   packages,
   hosts,
   customGroups = [],
-  shellHistory,
+  shellHistory: shellHistoryProp,
   hotkeyScheme,
   keyBindings,
   onSave,
@@ -466,6 +478,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   onOpenSnippetIdHandled,
 }) => {
   const { t } = useI18n();
+  const shellHistoryFromStore = useSyncExternalStore(
+    subscribeShellHistory,
+    getShellHistorySnapshot,
+    getShellHistorySnapshot,
+  );
+  const shellHistory = shellHistoryProp ?? (shellHistoryFromStore as ShellHistoryEntry[]);
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('none');
   const [editingSnippet, setEditingSnippet] = useState<Partial<Snippet>>({
     label: '',
@@ -474,6 +492,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     targets: [],
   });
   const [targetSelection, setTargetSelection] = useState<string[]>([]);
+  const [targetGroupSelection, setTargetGroupSelection] = useState<string[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [selectedPackage, setSelectedPackage] = useState<string | null>(null);
   const [newPackageName, setNewPackageName] = useState('');
@@ -499,6 +518,11 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const [draggingPackagePath, setDraggingPackagePath] = useState<string | null>(null);
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedSnippetIds, setSelectedSnippetIds] = useState<Set<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { type: 'snippet' | 'package'; id: string; name: string }
+    | { type: 'selection'; ids: string[] }
+    | null
+  >(null);
   const [isSnippetImportDialogOpen, setIsSnippetImportDialogOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingSnippetImport | null>(null);
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(listRef);
@@ -554,95 +578,21 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     hotkeyScheme === 'mac' || (hotkeyScheme === 'disabled' && isMacPlatform())
   ), [hotkeyScheme]);
 
-  const activeSystemBindings = useMemo(() => {
-    return keyBindings.flatMap((binding) => {
-      const entries: { binding: string; isMac: boolean }[] = [];
-      const macBinding = binding.mac;
-      const pcBinding = binding.pc;
-
-      if (hotkeyScheme === 'mac') {
-        if (macBinding && macBinding !== 'Disabled') {
-          entries.push({ binding: macBinding, isMac: true });
-        }
-        return entries;
-      }
-
-      if (hotkeyScheme === 'pc') {
-        if (pcBinding && pcBinding !== 'Disabled') {
-          entries.push({ binding: pcBinding, isMac: false });
-        }
-        return entries;
-      }
-
-      if (macBinding && macBinding !== 'Disabled') {
-        entries.push({ binding: macBinding, isMac: true });
-      }
-      if (pcBinding && pcBinding !== 'Disabled') {
-        entries.push({ binding: pcBinding, isMac: false });
-      }
-      return entries;
-    });
-  }, [hotkeyScheme, keyBindings]);
-
-  const buildKeyEventFromString = useCallback((keyString: string) => {
-    const parsed = parseKeyCombo(keyString);
-    if (!parsed) return null;
-
-    const modifiers = new Set(parsed.modifiers);
-    const key = parsed.key;
-    const normalizedKey = (() => {
-      switch (key) {
-        case 'Space':
-          return ' ';
-        case '↑':
-          return 'ArrowUp';
-        case '↓':
-          return 'ArrowDown';
-        case '←':
-          return 'ArrowLeft';
-        case '→':
-          return 'ArrowRight';
-        case 'Esc':
-          return 'Escape';
-        case '⌫':
-          return 'Backspace';
-        case 'Del':
-          return 'Delete';
-        case '↵':
-          return 'Enter';
-        case '⇥':
-          return 'Tab';
-        default:
-          return key.length === 1 ? key.toLowerCase() : key;
-      }
-    })();
-
-    return new KeyboardEvent('keydown', {
-      key: normalizedKey,
-      metaKey: modifiers.has('⌘') || modifiers.has('Win'),
-      ctrlKey: modifiers.has('⌃') || modifiers.has('Ctrl'),
-      altKey: modifiers.has('⌥') || modifiers.has('Alt'),
-      shiftKey: modifiers.has('Shift'),
-    });
-  }, []);
-
   const normalizeKeyString = useCallback((value: string) => (
     value.toLowerCase().replace(/\s+/g, '')
   ), []);
 
   const validateShortkey = useCallback((key: string): string | null => {
     if (!key) return null;
-    
-    const syntheticEvent = buildKeyEventFromString(key);
-    if (syntheticEvent) {
-      const conflictsSystem = activeSystemBindings.some(({ binding, isMac: bindingIsMac }) => (
-        matchesKeyBinding(syntheticEvent, binding, bindingIsMac)
-      ));
-      if (conflictsSystem) {
-        return t('snippets.shortkey.error.systemConflict');
-      }
+
+    const systemConflict = findActiveSystemShortcutConflict(key, hotkeyScheme, keyBindings);
+    if (systemConflict) {
+      const nameKey = `settings.shortcuts.binding.${systemConflict.id}`;
+      const name = t(nameKey) !== nameKey ? t(nameKey) : systemConflict.label;
+      return t('snippets.shortkey.error.systemConflict', { name });
     }
-    
+
+    const syntheticEvent = keyStringToKeyboardEvent(key);
     if (syntheticEvent) {
       for (const snippet of existingShortkeys) {
         if (snippet.shortkey && matchesKeyBinding(syntheticEvent, snippet.shortkey, isMac)) {
@@ -658,13 +608,13 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         return t('snippets.shortkey.error.snippetConflict', { name: conflictingSnippet.label });
       }
     }
-    
+
     return null;
   }, [
-    activeSystemBindings,
-    buildKeyEventFromString,
     existingShortkeys,
+    hotkeyScheme,
     isMac,
+    keyBindings,
     normalizeKeyString,
     t,
   ]);
@@ -721,6 +671,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     if (snippet) {
       setEditingSnippet(snippet);
       setTargetSelection(snippet.targetsAllHosts ? [] : (snippet.targets || []));
+      setTargetGroupSelection(snippet.targetsAllHosts ? [] : (snippet.targetGroups || []));
     } else {
       setEditingSnippet(asScript ? {
         label: '',
@@ -737,6 +688,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         targets: [],
       });
       setTargetSelection([]);
+      setTargetGroupSelection([]);
     }
     setRightPanelMode('edit-snippet');
   }, [selectedPackage]);
@@ -759,9 +711,14 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       tags: editingSnippet.tags || [],
       package: editingSnippet.package || '',
       targets: editingSnippet.targetsAllHosts ? [] : targetSelection,
+      targetGroups: resolveSnippetTargetGroupsForSave(
+        editingSnippet,
+        targetGroupSelection,
+      ),
       targetsAllHosts: editingSnippet.targetsAllHosts || undefined,
       shortkey: editingSnippet.shortkey,
       noAutoRun: editingSnippet.noAutoRun,
+      multiLineRunMode: editingSnippet.multiLineRunMode,
       order: editingSnippet.order,
       kind: editingSnippet.kind,
       language: editingSnippet.language,
@@ -769,7 +726,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       trigger: editingSnippet.trigger,
       triggerPattern: editingSnippet.triggerPattern,
     };
-  }, [editingSnippet, targetSelection]);
+  }, [editingSnippet, targetGroupSelection, targetSelection]);
 
   const syncHostsAfterSnippetSave = useCallback((
     savedSnippet: Snippet,
@@ -841,6 +798,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     setRightPanelMode('none');
     setEditingSnippet({ label: '', command: '', package: '', targets: [] });
     setTargetSelection([]);
+    setTargetGroupSelection([]);
   };
 
   const hostById = useMemo(() => (
@@ -870,6 +828,15 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       }));
       return next;
     });
+  };
+
+  const handleTargetSelectionChange = (nextSelectedHostIds: string[]) => {
+    setTargetSelection(nextSelectedHostIds);
+    setEditingSnippet((snippet) => ({
+      ...snippet,
+      targetsAllHosts: undefined,
+      targets: nextSelectedHostIds,
+    }));
   };
 
   const handleTargetPickerBack = () => {
@@ -1193,7 +1160,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     setIsPackageDialogOpen(false);
   };
 
-  const deletePackage = (path: string) => {
+  const performDeletePackage = (path: string) => {
     const keep = packages.filter((p) => !(p === path || p.startsWith(path + '/')));
     
     const updatedSnippets = snippets.map((s) => {
@@ -1211,6 +1178,71 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
     if (selectedPackage && (selectedPackage === path || selectedPackage.startsWith(path + '/'))) {
       setSelectedPackage(null);
     }
+  };
+
+  const requestDeletePackage = (path: string) => {
+    setDeleteTarget({
+      type: 'package',
+      id: path,
+      name: path,
+    });
+  };
+
+  const requestDeleteSnippet = (id: string) => {
+    const snippet = snippets.find((item) => item.id === id);
+    setDeleteTarget({
+      type: 'snippet',
+      id,
+      name: snippet?.label || t('snippets.panel.editTitle'),
+    });
+  };
+
+  const requestDeleteSelectedSnippets = () => {
+    const ids = snippets
+      .filter((snippet) => selectedSnippetIds.has(snippet.id))
+      .map((snippet) => snippet.id);
+    if (ids.length === 0) return;
+    setDeleteTarget({ type: 'selection', ids });
+  };
+
+  const existingDeleteSelectionIds = deleteTarget?.type === 'selection'
+    ? deleteTarget.ids.filter((id) => snippets.some((snippet) => snippet.id === id))
+    : [];
+
+  const confirmDeleteTarget = () => {
+    if (!deleteTarget) return;
+
+    if (deleteTarget.type === 'package') {
+      performDeletePackage(deleteTarget.id);
+    } else if (deleteTarget.type === 'selection') {
+      const deletedIds = new Set(deleteTarget.ids);
+      const result = deleteSelectedSnippetsFromVault(snippets, hosts, deletedIds);
+      if (result.deletedCount === 0) {
+        clearSnippetSelection();
+        setDeleteTarget(null);
+        return;
+      }
+      onBulkSave(result.snippets);
+      onUpdateHosts?.(result.hosts);
+      if (editingSnippet.id && deletedIds.has(editingSnippet.id)) {
+        handleClosePanel();
+      }
+      toast.success(t('snippets.selection.deleteSuccess', { count: result.deletedCount }));
+      clearSnippetSelection();
+    } else {
+      onDelete(deleteTarget.id);
+      setSelectedSnippetIds((prev) => {
+        if (!prev.has(deleteTarget.id)) return prev;
+        const next = new Set(prev);
+        next.delete(deleteTarget.id);
+        return next;
+      });
+      if (editingSnippet.id === deleteTarget.id) {
+        handleClosePanel();
+      }
+    }
+
+    setDeleteTarget(null);
   };
 
   const movePackage = (source: string, target: string | null) => {
@@ -1575,7 +1607,10 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       customGroups={customGroups}
       targetSelection={targetSelection}
       setTargetSelection={setTargetSelection}
+      targetGroupSelection={targetGroupSelection}
+      setTargetGroupSelection={setTargetGroupSelection}
       handleTargetSelect={handleTargetSelect}
+      handleTargetSelectionChange={handleTargetSelectionChange}
       handleTargetPickerBack={handleTargetPickerBack}
       availableKeys={availableKeys}
       proxyProfiles={proxyProfiles}
@@ -1585,7 +1620,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
       t={t}
       handleClosePanel={handleClosePanel}
       editingSnippet={editingSnippet}
-      onDelete={onDelete}
+      onDelete={requestDeleteSnippet}
       handleSave={handleSave}
       handleSaveAndRun={handleSaveAndRun}
       setEditingSnippet={setEditingSnippet}
@@ -1729,7 +1764,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
 
         {isMultiSelectMode && (
           <div className="px-4 py-1.5 bg-background border-b border-border/40 flex items-center gap-2">
-            <span className="flex items-center h-7 text-xs text-muted-foreground leading-none">
+            <span className="flex h-7 items-center text-xs leading-4 text-muted-foreground">
               {t('snippets.selection.selected', { count: selectedSnippetIds.size })}
             </span>
             <div className="flex-1" />
@@ -1758,6 +1793,16 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
             >
               <Download size={12} className="mr-1" />
               {t('snippets.selection.exportSelected', { count: selectedSnippetIds.size })}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={selectedSnippetIds.size === 0}
+              onClick={requestDeleteSelectedSnippets}
+            >
+              <Trash2 size={12} className="mr-1" />
+              {t('snippets.selection.deleteSelected', { count: selectedSnippetIds.size })}
             </Button>
             <Button
               variant="ghost"
@@ -1873,7 +1918,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                         <Download className="mr-2 h-4 w-4" /> {t('snippets.export.package')}
                       </ContextMenuItem>
                       <ContextMenuItem onClick={() => openRenameDialog(pkg.path)}>{t('common.rename')}</ContextMenuItem>
-                      <ContextMenuItem className="text-destructive" onClick={() => deletePackage(pkg.path)}>{t('action.delete')}</ContextMenuItem>
+                      <ContextMenuItem className="text-destructive" onClick={() => requestDeletePackage(pkg.path)}>{t('action.delete')}</ContextMenuItem>
                     </ContextMenuContent>
                   </ContextMenu>
                 ))}
@@ -2011,7 +2056,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                       <ContextMenuItem onClick={() => exportSingleSnippet(snippet)}>
                         <Download className="mr-2 h-4 w-4" /> {t('snippets.export.snippet')}
                       </ContextMenuItem>
-                      <ContextMenuItem className="text-destructive" onClick={() => onDelete(snippet.id)}>
+                      <ContextMenuItem className="text-destructive" onClick={() => requestDeleteSnippet(snippet.id)}>
                         <Trash2 className="mr-2 h-4 w-4" /> {t('action.delete')}
                       </ContextMenuItem>
                     </ContextMenuContent>
@@ -2073,6 +2118,24 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
         onConfirmOverwrite={() => {
           if (pendingImport) applySnippetImport(pendingImport.payload, 'overwrite');
         }}
+      />
+
+      <VaultDeleteConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={deleteTarget?.type === 'selection'
+          ? t('snippets.selection.deleteConfirmTitle', { count: existingDeleteSelectionIds.length })
+          : t('vault.deleteConfirm.title', { name: deleteTarget?.name ?? '' })}
+        description={
+          deleteTarget?.type === 'package'
+            ? t('vault.deleteConfirm.packageDesc')
+            : deleteTarget?.type === 'selection'
+              ? t('snippets.selection.deleteConfirmDesc')
+            : t('vault.deleteConfirm.desc')
+        }
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        onConfirm={confirmDeleteTarget}
       />
 
       {renderRightPanel()}

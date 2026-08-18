@@ -62,6 +62,7 @@ interface AsidePanelContextType {
 }
 
 const AsidePanelContext = createContext<AsidePanelContextType | null>(null);
+const AsideActionMenuContext = createContext<(() => void) | null>(null);
 
 export const useAsidePanel = () => {
     const context = useContext(AsidePanelContext);
@@ -172,18 +173,31 @@ interface AsideActionMenuProps {
 }
 
 export const AsideActionMenu: React.FC<AsideActionMenuProps> = ({ children }) => {
+    const [open, setOpen] = useState(false);
+    const close = useCallback(() => setOpen(false), []);
+
     return (
-        <Popover>
+        <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <button className="p-1.5 hover:bg-muted rounded-md transition-colors cursor-pointer">
                     <MoreVertical size={18} />
                 </button>
             </PopoverTrigger>
             <PopoverContent className="w-40 p-1" align="end">
-                {children}
+                <AsideActionMenuContext.Provider value={close}>
+                    {children}
+                </AsideActionMenuContext.Provider>
             </PopoverContent>
         </Popover>
     );
+};
+
+export const invokeAsideActionMenuItemClick = (
+    closeMenu: (() => void) | null,
+    onClick?: () => void,
+) => {
+    closeMenu?.();
+    onClick?.();
 };
 
 // Action Menu Item
@@ -193,9 +207,11 @@ export const AsideActionMenuItem: React.FC<{
     onClick?: () => void;
     variant?: 'default' | 'destructive';
 }> = ({ icon, children, onClick, variant = 'default' }) => {
+    const closeMenu = useContext(AsideActionMenuContext);
+
     return (
         <button
-            onClick={onClick}
+            onClick={() => invokeAsideActionMenuItemClick(closeMenu, onClick)}
             className={cn(
                 "w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md transition-colors cursor-pointer",
                 variant === 'destructive'
@@ -337,27 +353,29 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
     dataSection,
 }) => {
     const fallbackWidthPx = parseInlineWidthPx(width);
-    const [inlineWidthPx, setInlineWidthPx] = useState(() =>
+    const [panelWidthPx, setPanelWidthPx] = useState(() =>
         resizable ? readPersistedAsideWidth(persistWidthStorageKey, fallbackWidthPx) : fallbackWidthPx,
     );
     const [isResizing, setIsResizing] = useState(false);
-    const effectiveInlineWidthPx = resizable ? inlineWidthPx : fallbackWidthPx;
+    const effectivePanelWidthPx = resizable ? panelWidthPx : fallbackWidthPx;
+    // Resizable panels always use pixel width so overlay and inline share the same drag path.
+    const usesPixelWidth = resizable || layout === 'inline';
 
-    const inlineStyle = layout === 'inline'
+    const panelStyle = usesPixelWidth
         ? ({
-            width: `${effectiveInlineWidthPx}px`,
-            ['--aside-inline-width' as string]: `${effectiveInlineWidthPx}px`,
+            width: `${effectivePanelWidthPx}px`,
+            ['--aside-inline-width' as string]: `${effectivePanelWidthPx}px`,
         } as React.CSSProperties)
         : undefined;
 
     const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-        if (!resizable || layout !== 'inline') return;
+        if (!resizable) return;
 
         event.preventDefault();
         event.stopPropagation();
 
         const startX = event.clientX;
-        const startWidth = inlineWidthPx;
+        const startWidth = panelWidthPx;
         const previousCursor = document.body.style.cursor;
         const previousUserSelect = document.body.style.userSelect;
 
@@ -366,11 +384,11 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
         document.body.style.userSelect = 'none';
 
         const handlePointerMove = (moveEvent: PointerEvent) => {
-            setInlineWidthPx(clampAsideInlineWidth(startWidth + startX - moveEvent.clientX));
+            setPanelWidthPx(clampAsideInlineWidth(startWidth + startX - moveEvent.clientX));
         };
         const handlePointerUp = (upEvent: PointerEvent) => {
             const nextWidth = clampAsideInlineWidth(startWidth + startX - upEvent.clientX);
-            setInlineWidthPx(nextWidth);
+            setPanelWidthPx(nextWidth);
             if (persistWidthStorageKey) {
                 localStorageAdapter.writeNumber(persistWidthStorageKey, nextWidth);
             }
@@ -385,7 +403,7 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
         window.addEventListener('pointermove', handlePointerMove);
         window.addEventListener('pointerup', handlePointerUp);
         window.addEventListener('pointercancel', handlePointerUp);
-    }, [inlineWidthPx, layout, persistWidthStorageKey, resizable]);
+    }, [panelWidthPx, persistWidthStorageKey, resizable]);
 
     if (!open) return null;
 
@@ -394,13 +412,13 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
             layout === 'inline'
                 ? "relative split-panel-enter shrink-0 h-full min-h-0 max-w-full border-l border-border/60 bg-background flex flex-col app-no-drag overflow-hidden shadow-[-16px_0_32px_hsl(var(--foreground)/0.08)]"
                 : "absolute right-0 top-0 bottom-0 max-w-full border-l border-border/60 bg-background z-30 flex flex-col app-no-drag overflow-hidden",
-            layout === 'overlay' && width,
-            isResizing && layout === 'inline' && 'transition-none',
+            layout === 'overlay' && !usesPixelWidth && width,
+            isResizing && 'transition-none',
             className
         )}
-        style={inlineStyle}
+        style={panelStyle}
         data-section={dataSection}>
-            {resizable && layout === 'inline' ? (
+            {resizable ? (
                 <div
                     role="separator"
                     aria-orientation="vertical"

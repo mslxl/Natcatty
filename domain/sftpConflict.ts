@@ -10,8 +10,15 @@ export const canReplaceSftpConflict = (
   existingType?: SftpConflictExistingType,
 ): boolean => {
   if (!existingType) return true;
+  // Symlinks are neither files nor directories for conflict typing. Replace must
+  // unlink the link itself (not follow it), so either incoming kind may replace.
+  if (existingType === "symlink") return true;
   return (existingType === "directory") === isDirectory;
 };
+
+export const shouldUnlinkSftpConflictBeforeReplace = (
+  existingType?: SftpConflictExistingType,
+): boolean => existingType === "symlink";
 
 export const describeSftpIncomingKind = (isDirectory: boolean): string =>
   isDirectory ? "directory" : "file";

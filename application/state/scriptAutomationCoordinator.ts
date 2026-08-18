@@ -5,6 +5,7 @@ import { STORAGE_KEY_AI_PERMISSION_MODE } from '@/infrastructure/config/storageK
 import type { AIPermissionMode } from '@/infrastructure/ai/types.ts';
 import { netcattyBridge } from '@/infrastructure/services/netcattyBridge.ts';
 import type { ScriptRun } from '@/types/global/netcatty-bridge-script.d.ts';
+import { publishScriptRunsSnapshot } from './scriptRunsStore.ts';
 
 type RunsListener = (runs: ScriptRun[]) => void;
 
@@ -27,9 +28,52 @@ export function subscribeScriptRuns(listener: RunsListener): () => void {
   return () => runsListeners.delete(listener);
 }
 
+export function getScriptRuns(): readonly ScriptRun[] {
+  return runs;
+}
+
 export function setScriptRuns(nextRuns: ScriptRun[]) {
   runs = nextRuns;
+  // Keep the panel-facing store in lockstep so Scripts UI and overlays share one source.
+  publishScriptRunsSnapshot(nextRuns);
   runsListeners.forEach((listener) => listener(runs));
+}
+
+/**
+ * Chooses the single overlay worth showing while retaining dismissed history
+ * so global run broadcasts cannot bring old completion banners back.
+ */
+export function selectScriptOverlayRun(
+  allRuns: ScriptRun[],
+  sessionId: string,
+  dismissedRunIds: Set<string>,
+): ScriptRun | undefined {
+  const sessionRuns = allRuns.filter((run) => run.sessionId === sessionId);
+  const activeRunIds = new Set(sessionRuns.map((run) => run.runId));
+  for (const runId of dismissedRunIds) {
+    if (!activeRunIds.has(runId)) dismissedRunIds.delete(runId);
+  }
+
+  const liveRun = sessionRuns.find((run) => run.status === 'running' || run.status === 'paused');
+  if (liveRun) {
+    for (const run of sessionRuns) {
+      if (run.status === 'completed' || run.status === 'failed') {
+        dismissedRunIds.add(run.runId);
+      }
+    }
+    return liveRun;
+  }
+
+  const finishedRuns = sessionRuns
+    .filter((run) => run.status === 'completed' || run.status === 'failed')
+    .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
+  const latestRun = finishedRuns.find((run) => !dismissedRunIds.has(run.runId));
+  if (!latestRun) return undefined;
+
+  for (const run of finishedRuns) {
+    if (run.runId !== latestRun.runId) dismissedRunIds.add(run.runId);
+  }
+  return latestRun;
 }
 
 export function getActiveScriptRunForSession(sessionId: string): ScriptRun | undefined {
@@ -39,12 +83,15 @@ export function getActiveScriptRunForSession(sessionId: string): ScriptRun | und
 }
 
 export async function runAutomationScript(params: {
+  runId?: string;
+  returnWhenQueued?: boolean;
   snippet: Snippet;
   sessionId: string;
   sessionIds?: string[];
   mode?: 'sequential' | 'parallel';
   sessionMeta?: {
     connected?: boolean;
+    name?: string;
     hostname?: string;
     username?: string;
   };
@@ -59,6 +106,8 @@ export async function runAutomationScript(params: {
     throw new Error('Script bridge unavailable');
   }
   return bridge.scriptRun({
+    runId: params.runId,
+    returnWhenQueued: params.returnWhenQueued,
     scriptId: params.snippet.id,
     scriptLabel: params.snippet.label,
     content: params.snippet.command,
@@ -131,33 +180,84 @@ export async function runConnectScriptsSequential(params: {
   scripts: Snippet[];
   sessionId: string;
   signal?: AbortSignal;
+  onCancelableRunChange?: (stopCurrentRun: (() => Promise<void>) | null) => void;
   onScriptStart?: (snippet: Snippet) => void;
   onScriptComplete?: (snippet: Snippet) => void;
   sessionMeta?: {
     connected?: boolean;
+    name?: string;
     hostname?: string;
     username?: string;
   };
 }): Promise<void> {
-  for (const snippet of params.scripts) {
+  const throwIfAborted = () => {
     if (params.signal?.aborted) {
-      throw new Error('Aborted');
+      throw new DOMException('Connect script run cancelled', 'AbortError');
     }
+  };
+
+  for (const snippet of params.scripts) {
+    throwIfAborted();
+    const runId = crypto.randomUUID();
+    let stopPromise: Promise<void> | undefined;
+    let stopped = false;
     params.onScriptStart?.(snippet);
-    const { runId } = await runAutomationScript({
+    const queueAccepted = runAutomationScript({
+      runId,
+      returnWhenQueued: true,
       snippet,
       sessionId: params.sessionId,
       sessionMeta: params.sessionMeta,
     });
-    await waitForScriptRun(runId, { signal: params.signal });
-    params.onScriptComplete?.(snippet);
+    const stopThisRun = () => {
+      if (stopPromise) return stopPromise;
+      const attempt = queueAccepted.then(async () => {
+        const result = await stopScriptRun(runId);
+        if (!result.ok) {
+          throw new Error(`Connect script run could not be stopped: ${runId}`);
+        }
+        stopped = true;
+      });
+      stopPromise = attempt;
+      void attempt.catch(() => {
+        if (stopPromise === attempt) stopPromise = undefined;
+      });
+      return attempt;
+    };
+    params.onCancelableRunChange?.(stopThisRun);
+    const onAbort = () => {
+      void stopThisRun().catch(() => {});
+    };
+    params.signal?.addEventListener('abort', onAbort, { once: true });
+
+    try {
+      await queueAccepted;
+      throwIfAborted();
+      await waitForScriptRun(runId, { signal: params.signal });
+      params.onScriptComplete?.(snippet);
+    } catch (err) {
+      if (params.signal?.aborted) {
+        await stopThisRun();
+        throw new DOMException('Connect script run cancelled', 'AbortError');
+      }
+      throw err;
+    } finally {
+      params.signal?.removeEventListener('abort', onAbort);
+      if (!params.signal?.aborted || stopped) {
+        params.onCancelableRunChange?.(null);
+      }
+    }
   }
 }
 
 export async function runSnippetOrScript(params: {
   snippet: Snippet;
   sessionId: string;
-  runSnippetText: (command: string, noAutoRun?: boolean) => void;
+  runSnippetText: (
+    command: string,
+    noAutoRun?: boolean,
+    options?: { multiLineRunMode?: Snippet["multiLineRunMode"] },
+  ) => void;
   command: string;
 }) {
   if (isScriptSnippet(params.snippet)) {
@@ -167,7 +267,9 @@ export async function runSnippetOrScript(params: {
     });
     return;
   }
-  params.runSnippetText(params.command, params.snippet.noAutoRun);
+  params.runSnippetText(params.command, params.snippet.noAutoRun, {
+    multiLineRunMode: params.snippet.multiLineRunMode,
+  });
 }
 
 export async function stopScriptRun(runId: string): Promise<{ ok: boolean }> {

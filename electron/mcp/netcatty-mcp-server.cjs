@@ -7,11 +7,13 @@
  */
 "use strict";
 
+const fs = require("node:fs");
 const net = require("node:net");
 const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
 const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
 const { getCatalogToolDescription } = require("./catalogToolMetadata.cjs");
 const { registerMcpTools } = require("../capabilities/codegen/mcpToolRegistry.cjs");
+const { normalizeMcpJsonRpcMessage } = require("./normalizeMcpCallArguments.cjs");
 
 function catalogDescription(toolName, fallback) {
   return getCatalogToolDescription(toolName) || fallback;
@@ -56,8 +58,23 @@ const SCOPED_SESSION_IDS = process.env.NETCATTY_MCP_SESSION_IDS != null
 // Chat session ID for per-scope metadata isolation
 const CHAT_SESSION_ID = process.env.NETCATTY_MCP_CHAT_SESSION_ID || null;
 
-// Permission mode: 'observer' | 'confirm' | 'auto' (defense-in-depth, TCP bridge also checks)
-const PERMISSION_MODE = process.env.NETCATTY_MCP_PERMISSION_MODE || "confirm";
+// Permission mode: 'observer' | 'confirm' | 'auto' (defense-in-depth, TCP bridge also checks).
+// External MCP clients may keep a long-lived stdio process; re-read discovery so
+// Settings → AI → Safety changes apply without restarting the client.
+function readPermissionMode() {
+  const discoveryPath = process.env.NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE;
+  if (discoveryPath) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(discoveryPath, "utf8"));
+      if (typeof parsed?.permissionMode === "string" && parsed.permissionMode.trim()) {
+        return parsed.permissionMode.trim();
+      }
+    } catch {
+      // Fall through to env / default.
+    }
+  }
+  return process.env.NETCATTY_MCP_PERMISSION_MODE || "confirm";
+}
 
 // Default command blocklist (defense-in-depth, TCP bridge also checks)
 const DEFAULT_COMMAND_BLOCKLIST = require("../../lib/commandBlocklist.cjs");
@@ -83,7 +100,7 @@ function checkCommandSafety(command) {
 
 /** Guard for write tools: blocks in observer mode, optionally checks command safety. */
 function guardWriteOperation(command, { skipBlocklist = false } = {}) {
-  if (PERMISSION_MODE === "observer") {
+  if (readPermissionMode() === "observer") {
     return 'Operation denied: permission mode is "observer" (read-only). Change to "confirm" or "auto" in Settings → AI → Safety to allow this action.';
   }
   // When skipBlocklist is true, the caller relies on the TCP bridge layer for
@@ -226,7 +243,7 @@ async function main() {
     hasToken: Boolean(NETCATTY_MCP_TOKEN),
     scopedSessionIds: SCOPED_SESSION_IDS,
     chatSessionId: CHAT_SESSION_ID,
-    permissionMode: PERMISSION_MODE,
+    permissionMode: readPermissionMode(),
   });
   await connectTcp();
 
@@ -239,6 +256,10 @@ async function main() {
   process.stderr.write("[netcatty-mcp] Authenticated with TCP bridge\n");
 
   const transport = new StdioServerTransport();
+  // Protocol.connect keeps this callback and runs it before request dispatch.
+  transport.onmessage = (message) => {
+    normalizeMcpJsonRpcMessage(message);
+  };
   await server.connect(transport);
 }
 

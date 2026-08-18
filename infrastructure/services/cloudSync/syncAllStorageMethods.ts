@@ -7,22 +7,38 @@ import {
 import packageJson from '../../../package.json';
 import { EncryptionService } from '../EncryptionService';
 import { mergeSyncPayloads } from '../../../domain/syncMerge';
+import { stripSyncPayloadEncryptedCredentials, healPoisonedSecretsForMerge } from '../../../domain/credentials';
 import {
   SYNC_SNAPSHOT_LIMIT,
   summarizeSyncChanges,
   withSyncReliabilityMeta,
 } from '../../../domain/syncReliability';
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
-import { resolveCloudSyncConflictAction, type CloudSyncConflictAction } from '../../../domain/syncStrategy';
+import { resolveCloudSyncConflictAction, type CloudSyncConflictAction, type CloudSyncStrategy } from '../../../domain/syncStrategy';
+import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
+import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
+import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
+import {
+  coalesceStoredSyncPreferences,
+  hasSyncPreferenceFields,
+  resolveSyncPreferencesForPersist,
+  resolveSyncVersionsForPersist,
+} from './syncConfigPersist';
 import type { CloudAdapter } from '../adapters';
 import type {
   CloudProvider,
+  ProviderConnection,
   SyncedFile,
   SyncHistoryEntry,
   SyncSnapshotEntry,
   SyncPayload,
   SyncResult,
 } from '../../../domain/sync';
+// CloudProvider used when clearing dynamic plugin-provider bases/anchors.
+import {
+  decryptLocalStorageValue,
+  encryptLocalStorageValue,
+} from './encryptedLocalStorage';
 
 function getSyncSecurityGeneration(manager: any): number | undefined {
   return typeof manager.getSyncSecurityGeneration === 'function'
@@ -42,7 +58,9 @@ async function downloadRemoteForSyncAllImpl(this: any,
   syncSecurityGeneration?: number,
 ): Promise<SyncResult> {
   assertSyncSecurityGeneration(this, syncSecurityGeneration);
-  const payload = await EncryptionService.decryptPayload(remoteFile, this.masterPassword);
+  const payload = stripSyncPayloadEncryptedCredentials(
+    await EncryptionService.decryptPayload(remoteFile, this.masterPassword),
+  );
   assertSyncSecurityGeneration(this, syncSecurityGeneration);
   this.updateProviderStatus(provider, 'connected');
 
@@ -61,35 +79,12 @@ async function downloadRemoteForSyncAllImpl(this: any,
 const SYNC_HISTORY_STORAGE_KEY = 'netcatty_sync_history_v1';
 const SYNC_SNAPSHOTS_STORAGE_KEY = 'netcatty_sync_snapshots_v1';
 
-async function encryptForLocalStorage(payload: unknown, key: CryptoKey): Promise<string> {
-  const data = new TextEncoder().encode(JSON.stringify(payload));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data);
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
-  let binary = '';
-  const CHUNK = 8192;
-  for (let i = 0; i < combined.length; i += CHUNK) {
-    binary += String.fromCharCode(...combined.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-async function decryptFromLocalStorage<T>(encoded: string, key: CryptoKey): Promise<T> {
-  const combined = Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0));
-  const iv = combined.slice(0, 12);
-  const ciphertext = combined.slice(12);
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
-  return JSON.parse(new TextDecoder().decode(decrypted)) as T;
-}
-
 async function loadRawSyncBase(this: any, provider?: CloudProvider): Promise<SyncPayload | null> {
   const key = this.state.unlockedKey?.derivedKey;
   if (!key || typeof this.loadFromStorage !== 'function') return null;
   const encoded = this.loadFromStorage(this.syncBaseKey(provider));
   if (!encoded || typeof encoded !== 'string') return null;
-  return decryptFromLocalStorage<SyncPayload>(encoded, key);
+  return decryptLocalStorageValue<SyncPayload>(encoded, key);
 }
 
 async function rememberCurrentSyncBaseSnapshot(this: any, provider?: CloudProvider): Promise<void> {
@@ -108,11 +103,41 @@ async function rememberCurrentSyncBaseSnapshot(this: any, provider?: CloudProvid
 
 export async function syncAllProvidersImpl(this: any,
   inputPayload?: SyncPayload,
-  opts: { overrideShrink?: boolean; conflictActionOverride?: CloudSyncConflictAction } = {},
+  opts: {
+    overrideShrink?: boolean;
+    conflictActionOverride?: CloudSyncConflictAction;
+    applyConvergentPayload?: (
+      payload: SyncPayload,
+      commitReplica: () => Promise<void>,
+    ) => Promise<void>;
+  } = {},
 ): Promise<Map<CloudProvider, SyncResult>> {
     const results = new Map<CloudProvider, SyncResult>();
     let payload = inputPayload;
     let wasMerged = false;
+
+    const convergentConfig = getConvergentSyncLocalConfig();
+    if (convergentConfig.initialized && inputPayload) {
+      if (convergentConfig.enabled) {
+        return syncAllProvidersConvergentlyImpl.call(this, inputPayload, {
+          ...opts,
+          applyPayload: opts.applyConvergentPayload,
+        });
+      }
+      const message = 'Convergent sync is paused on this device';
+      for (const [provider, connection] of Object.entries(
+        this.state.providers as Record<CloudProvider, ProviderConnection>,
+      )) {
+        if (!isProviderReadyForSync(connection)) continue;
+        results.set(provider as CloudProvider, {
+          success: false,
+          provider: provider as CloudProvider,
+          action: 'none',
+          error: message,
+        });
+      }
+      return results;
+    }
 
     const overrideShrinkRequested = opts.overrideShrink === true;
     const syncSecurityGeneration = getSyncSecurityGeneration(this);
@@ -130,7 +155,9 @@ export async function syncAllProvidersImpl(this: any,
       return results;
     }
 
-    const connectedProviders = Object.entries(this.state.providers)
+    const connectedProviders = Object.entries(
+      this.state.providers as Record<CloudProvider, ProviderConnection>,
+    )
       .filter(([provider, connection]) => {
         if (!isProviderReadyForSync(connection)) return false;
         if (connection.status === 'error') {
@@ -283,15 +310,23 @@ export async function syncAllProvidersImpl(this: any,
           let merged = payload;
           for (const c of conflicts) {
             const providerBase = await this.loadSyncBase(c.provider as CloudProvider);
-            const remotePayload = await EncryptionService.decryptPayload(
+            const remoteRaw = await EncryptionService.decryptPayload(
               c.check!.remoteFile!,
               this.masterPassword,
             );
+            const localHealed = healPoisonedSecretsForMerge(merged, remoteRaw, providerBase);
+            const remotePayload = healPoisonedSecretsForMerge(
+              remoteRaw,
+              merged,
+              providerBase,
+            );
             assertSyncSecurityGeneration(this, syncSecurityGeneration);
-            const result = mergeSyncPayloads(providerBase, merged, remotePayload);
+            const result = mergeSyncPayloads(providerBase, localHealed, remotePayload);
             merged = result.payload;
           }
-          const mergeResult = { payload: merged };
+          const mergeResult = {
+            payload: stripSyncPayloadEncryptedCredentials(merged),
+          };
 
           console.info('[CloudSyncManager] syncAll: three-way merge completed');
 
@@ -499,8 +534,21 @@ export async function syncAllProvidersImpl(this: any,
     }
 
     // Use the highest version as base: either local or any remote that was merged
+    // or forcibly overwritten. Explicit keep-local (conflictActionOverride
+    // upload-local) can run while syncStrategy is still smartMerge; without
+    // taking the remote version here, encryptPayload would mint local+1 and
+    // regress past a higher conflicting remote (e.g. local v1 over remote v5).
     let baseVersion = this.state.localVersion;
-    if (wasMerged || (this.state.syncStrategy !== 'smartMerge' && conflicts.length > 0)) {
+    if (
+      wasMerged
+      || (
+        conflicts.length > 0
+        && (
+          this.state.syncStrategy !== 'smartMerge'
+          || opts.conflictActionOverride === 'upload-local'
+        )
+      )
+    ) {
       for (const c of conflicts) {
         const rv = c.check?.remoteFile?.meta?.version ?? 0;
         if (rv > baseVersion) baseVersion = rv;
@@ -515,10 +563,11 @@ export async function syncAllProvidersImpl(this: any,
     // fresh anchor paired with a stale base.
     const uploadTasks = validUploads.map(async ({ provider, adapter }) => {
       try {
+        const entry = checkResults.find((result) => result.provider === provider);
+        assertConvergentSyncWriteCompatible(entry?.check?.remoteFile?.meta, payload);
         const providerBase = await this.loadSyncBase(provider);
         let providerRemoteRef: SyncPayload | null = null;
         if (!providerBase) {
-          const entry = checkResults.find((r) => r.provider === provider);
           const remoteFile = entry?.check?.remoteFile;
           if (remoteFile) {
             assertSyncSecurityGeneration(this, syncSecurityGeneration);
@@ -565,8 +614,21 @@ export async function syncAllProvidersImpl(this: any,
     await Promise.all(uploadTasks);
 
     // 5. Final State Update
-    const hasSuccess = Array.from(results.values()).some((r) => r.success);
-    if (hasSuccess) {
+    const resultList = Array.from(results.values());
+    const hasSuccess = resultList.some((r) => r.success);
+    const hasConflict = resultList.some((r) => r.conflictDetected);
+    if (hasConflict) {
+      // Prefer CONFLICT over IDLE even when another provider succeeded, so the
+      // conflict UI from uploadToProvider is not wiped by a mixed multi-provider run.
+      this.state.syncState = 'CONFLICT';
+      if (wasMerged && payload) {
+        for (const [p, r] of results) {
+          if (r.success) {
+            results.set(p, { ...r, action: 'merge', mergedPayload: payload });
+          }
+        }
+      }
+    } else if (hasSuccess) {
       this.exitBlockedState();
       this.state.syncState = 'IDLE';
       this.state.lastShrinkFinding = undefined;
@@ -611,13 +673,18 @@ export function setDeviceNameImpl(this: any,name: string): void {
 
 export function setAutoSyncImpl(this: any,enabled: boolean, intervalMinutes?: number): void {
     this.state.autoSyncEnabled = enabled;
+    const memoryKeys: Array<'autoSync' | 'interval'> = ['autoSync'];
     if (intervalMinutes) {
       this.state.autoSyncInterval = Math.max(
         SYNC_CONSTANTS.MIN_SYNC_INTERVAL,
         Math.min(SYNC_CONSTANTS.MAX_SYNC_INTERVAL, intervalMinutes)
       );
+      memoryKeys.push('interval');
     }
-    this.saveSyncConfig();
+    // Preference write: only the fields this setter owns — leave syncStrategy
+    // (and interval when unchanged) to whatever is already persisted so another
+    // window's concurrent edit is not overwritten by stale memory.
+    this.saveSyncConfig({ preferencesFromMemory: true, memoryKeys });
     this.notifyStateChange(); // Notify UI of state change
 
     if (enabled && this.state.securityState === 'UNLOCKED') {
@@ -648,16 +715,131 @@ export function stopAutoSyncImpl(this: any): void {
     }
   }
 
-export function saveSyncConfigImpl(this: any): void {
-    this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, {
+export function saveSyncConfigImpl(
+    this: any,
+    opts?: {
+      preferencesFromMemory?: boolean;
+      memoryKeys?: ReadonlyArray<'autoSync' | 'interval' | 'syncStrategy'>;
+    },
+  ): void {
+    const preferencesFromMemory = opts?.preferencesFromMemory === true;
+    const memoryKeys = opts?.memoryKeys;
+    type StoredPrefs = {
+      autoSync?: boolean;
+      interval?: number;
+      syncStrategy?: unknown;
+    };
+    type StoredConfig = StoredPrefs & {
+      localVersion?: number;
+      localUpdatedAt?: number;
+      remoteVersion?: number;
+      remoteUpdatedAt?: number;
+    };
+
+    const adoptPreferences = (nextPrefs: {
+      autoSync: boolean;
+      interval: number;
+      syncStrategy: CloudSyncStrategy;
+    }): boolean => {
+      const autoSyncChanged = this.state.autoSyncEnabled !== nextPrefs.autoSync;
+      const intervalChanged = this.state.autoSyncInterval !== nextPrefs.interval;
+      const strategyChanged = this.state.syncStrategy !== nextPrefs.syncStrategy;
+      this.state.autoSyncEnabled = nextPrefs.autoSync;
+      this.state.autoSyncInterval = nextPrefs.interval;
+      this.state.syncStrategy = nextPrefs.syncStrategy;
+      if (autoSyncChanged) {
+        if (nextPrefs.autoSync && this.state.securityState === 'UNLOCKED') {
+          this.startAutoSync?.();
+        } else {
+          this.stopAutoSync?.();
+        }
+      }
+      return autoSyncChanged || intervalChanged || strategyChanged;
+    };
+
+    const memoryPreferences = {
       autoSync: this.state.autoSyncEnabled,
       interval: this.state.autoSyncInterval,
+      syncStrategy: this.state.syncStrategy,
+    };
+
+    // Preference writers only touch SYNC_PREFERENCES so a concurrent
+    // version bump cannot re-enable auto-sync via a shared RMW blob (#2976).
+    // When memoryKeys is set, merge owned fields onto the stored snapshot so
+    // a strategy-only write cannot revive a stale autoSync from memory.
+    if (preferencesFromMemory) {
+      const storedPreferences = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as
+        | StoredPrefs
+        | null
+        | undefined;
+      const storedConfig = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as
+        | StoredConfig
+        | null
+        | undefined;
+      const nextPreferences = resolveSyncPreferencesForPersist({
+        memory: memoryPreferences,
+        stored: coalesceStoredSyncPreferences(storedPreferences, storedConfig),
+        preferencesFromMemory: true,
+        memoryKeys,
+      });
+      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_PREFERENCES, nextPreferences);
+      return;
+    }
+
+    const storedPreferences = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as
+      | StoredPrefs
+      | null
+      | undefined;
+    const storedConfig = this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as
+      | StoredConfig
+      | null
+      | undefined;
+    const hasSeparatePreferences = Boolean(
+      storedPreferences && typeof storedPreferences === 'object',
+    );
+
+    const nextVersions = resolveSyncVersionsForPersist({
       localVersion: this.state.localVersion,
       localUpdatedAt: this.state.localUpdatedAt,
       remoteVersion: this.state.remoteVersion,
       remoteUpdatedAt: this.state.remoteUpdatedAt,
-      syncStrategy: this.state.syncStrategy,
     });
+
+    // Version-only saves never write SYNC_PREFERENCES. The dedicated key is
+    // created only by preference writers (setAutoSync / setSyncStrategy).
+    // A check-then-write migrate here can overwrite a concurrent
+    // autoSync=false from another window (#2976).
+    if (hasSeparatePreferences || !hasSyncPreferenceFields(storedConfig)) {
+      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, nextVersions);
+    } else {
+      // Keep legacy preference fields in SYNC_CONFIG until a preference
+      // writer splits them out. Take those fields from storage, never
+      // from this window's possibly stale memory.
+      const preservedPreferences = resolveSyncPreferencesForPersist({
+        memory: memoryPreferences,
+        stored: coalesceStoredSyncPreferences(null, storedConfig),
+        preferencesFromMemory: false,
+      });
+      this.saveToStorage(SYNC_STORAGE_KEYS.SYNC_CONFIG, {
+        ...preservedPreferences,
+        ...nextVersions,
+      });
+    }
+
+    // Re-read preferences after the version write so a toggle that landed
+    // during the version persist window is adopted into this process.
+    const latestPreferences = resolveSyncPreferencesForPersist({
+      memory: memoryPreferences,
+      stored: coalesceStoredSyncPreferences(
+        this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_PREFERENCES) as StoredPrefs | null | undefined,
+        this.loadFromStorage?.(SYNC_STORAGE_KEYS.SYNC_CONFIG) as StoredConfig | null | undefined,
+      ),
+      preferencesFromMemory: false,
+    });
+    const shouldNotifyPreferenceAdopt = adoptPreferences(latestPreferences);
+    if (shouldNotifyPreferenceAdopt) {
+      this.notifyStateChange?.();
+    }
   }
 
 export function syncBaseKeyImpl(this: any,provider?: CloudProvider): string {
@@ -670,7 +852,8 @@ export function providerAccountIdKeyImpl(this: any,provider: CloudProvider): str
   }
 
 export function loadProviderAccountIdImpl(this: any,provider: CloudProvider): string | null {
-    return this.loadFromStorage<string>(this.providerAccountIdKey(provider)) ?? null;
+    const stored = this.loadFromStorage(this.providerAccountIdKey(provider));
+    return typeof stored === 'string' ? stored : null;
   }
 
 export function saveProviderAccountIdImpl(this: any,provider: CloudProvider, id: string): void {
@@ -688,7 +871,14 @@ export async function saveSyncBaseImpl(this: any,payload: SyncPayload, provider?
       } catch (snapshotError) {
         console.warn('[CloudSyncManager] Failed to save previous sync snapshot', snapshotError);
       }
-      this.saveToStorage(this.syncBaseKey(provider), await encryptForLocalStorage(payload, key));
+      if (
+        this.saveToStorage(
+          this.syncBaseKey(provider),
+          await encryptLocalStorageValue(payload, key),
+        ) === false
+      ) {
+        throw new Error('Unable to persist sync base');
+      }
     } catch (error) {
       console.warn('[CloudSyncManager] Failed to save sync base', error);
       throw error;
@@ -699,9 +889,9 @@ export async function loadSyncBaseImpl(this: any,provider?: CloudProvider): Prom
     const key = this.state.unlockedKey?.derivedKey;
     if (!key) return null;
     try {
-      const encoded = this.loadFromStorage<string>(this.syncBaseKey(provider));
+      const encoded = this.loadFromStorage(this.syncBaseKey(provider)) as unknown;
       if (!encoded || typeof encoded !== 'string') return null;
-      return decryptFromLocalStorage<SyncPayload>(encoded, key);
+      return decryptLocalStorageValue<SyncPayload>(encoded, key);
     } catch {
       return null;
     }
@@ -716,9 +906,9 @@ export async function loadSyncSnapshotsImpl(this: any,provider?: CloudProvider):
     const key = this.state.unlockedKey?.derivedKey;
     if (!key) return [];
     try {
-      const encoded = this.loadFromStorage<string>(this.syncSnapshotsKey(provider));
+      const encoded = this.loadFromStorage(this.syncSnapshotsKey(provider)) as unknown;
       if (!encoded || typeof encoded !== 'string') return [];
-      const snapshots = await decryptFromLocalStorage<SyncSnapshotEntry[]>(encoded, key);
+      const snapshots = await decryptLocalStorageValue<SyncSnapshotEntry[]>(encoded, key);
       return Array.isArray(snapshots) ? snapshots : [];
     } catch {
       return [];
@@ -730,10 +920,10 @@ export async function saveSyncSnapshotsImpl(this: any,snapshots: SyncSnapshotEnt
     if (!key) {
       throw new Error('Sync snapshot encryption key is unavailable');
     }
-    this.saveToStorage(
+    if (this.saveToStorage(
       this.syncSnapshotsKey(provider),
-      await encryptForLocalStorage(snapshots.slice(0, SYNC_SNAPSHOT_LIMIT), key),
-    );
+      await encryptLocalStorageValue(snapshots.slice(0, SYNC_SNAPSHOT_LIMIT), key),
+    ) === false) throw new Error('Unable to persist sync snapshots');
   }
 
 export function clearSyncBaseImpl(this: any): void {
@@ -741,8 +931,20 @@ export function clearSyncBaseImpl(this: any): void {
     if (typeof this.syncSnapshotsKey === 'function') {
       this.removeFromStorage(this.syncSnapshotsKey());
     }
-    for (const p of ['github', 'google', 'onedrive', 'webdav', 's3'] as const) {
+    const providers = new Set<CloudProvider>([
+      'github', 'google', 'onedrive', 'webdav', 's3',
+    ]);
+    for (const id of Object.keys(this.state?.providers ?? {})) {
+      providers.add(id as CloudProvider);
+    }
+    if (typeof this.listRegisteredPluginProviderIds === 'function') {
+      for (const id of this.listRegisteredPluginProviderIds()) {
+        providers.add(id as CloudProvider);
+      }
+    }
+    for (const p of providers) {
       this.removeFromStorage(this.syncBaseKey(p));
+      this.removeFromStorage(this.convergentProviderBaselineKey(p));
       if (typeof this.syncSnapshotsKey === 'function') {
         this.removeFromStorage(this.syncSnapshotsKey(p));
       }

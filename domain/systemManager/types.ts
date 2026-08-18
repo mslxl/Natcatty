@@ -4,6 +4,85 @@ export interface SessionCapabilities {
   targetOs: TargetOs;
   hasTmux: boolean;
   hasDocker: boolean;
+  hasNvidiaSmi: boolean;
+  hasNpuSmi: boolean;
+  /** `ss` binary present (preferred listening-port collector). */
+  hasSs?: boolean;
+  /** `netstat` binary present (ports fallback). */
+  hasNetstat?: boolean;
+  /** `lsof` binary present (macOS / process-aware ports fallback). */
+  hasLsof?: boolean;
+  /** `systemctl` binary present. */
+  hasSystemctl?: boolean;
+  probedAt: number;
+}
+
+export type ListeningPortProtocol = 'tcp' | 'udp' | 'tcp6' | 'udp6' | 'unknown';
+
+export interface ListeningPortInfo {
+  protocol: ListeningPortProtocol;
+  address: string;
+  port: number;
+  pid: number | null;
+  processName: string;
+  /** Stable row id for list merging: protocol|address|port|pid */
+  id: string;
+}
+
+export type SystemdUnitActiveState =
+  | 'active'
+  | 'inactive'
+  | 'failed'
+  | 'activating'
+  | 'deactivating'
+  | 'reloading'
+  | 'unknown';
+
+export type SystemdUnitLoadState = 'loaded' | 'not-found' | 'bad-setting' | 'error' | 'masked' | 'unknown';
+export type SystemdUnitSubState = string;
+
+export interface SystemdUnitInfo {
+  name: string;
+  loadState: SystemdUnitLoadState;
+  activeState: SystemdUnitActiveState;
+  subState: SystemdUnitSubState;
+  description: string;
+  /** system or --user instance */
+  scope: 'system' | 'user';
+}
+
+export type SystemdUnitAction = 'start' | 'stop' | 'restart' | 'enable' | 'disable' | 'reload';
+
+export type AcceleratorVendor = 'nvidia' | 'ascend';
+
+export interface AcceleratorDeviceInfo {
+  vendor: AcceleratorVendor;
+  index: number;
+  uuid: string;
+  name: string;
+  utilizationPercent: number | null;
+  memoryUsedMb: number | null;
+  memoryTotalMb: number | null;
+  temperatureC: number | null;
+  powerDrawW: number | null;
+  powerLimitW: number | null;
+  fanPercent: number | null;
+  driverVersion: string | null;
+  health: string | null;
+}
+
+export interface AcceleratorProcessInfo {
+  vendor: AcceleratorVendor;
+  gpuIndex: number;
+  pid: number;
+  processName: string;
+  memoryUsedMb: number | null;
+}
+
+export interface AcceleratorSnapshot {
+  devices: AcceleratorDeviceInfo[];
+  processes: AcceleratorProcessInfo[];
+  nvidiaDriverVersion: string | null;
   probedAt: number;
 }
 
@@ -119,7 +198,14 @@ export type DockerImageManageAction =
   | { action: 'prune'; all?: boolean }
   | { action: 'tag'; imageId: string; repository: string; tag?: string };
 
-export type SystemManagerSubTab = 'processes' | 'tmux' | 'docker';
+export type SystemManagerSubTab =
+  | 'overview'
+  | 'processes'
+  | 'ports'
+  | 'services'
+  | 'tmux'
+  | 'docker'
+  | 'gpu';
 
 export interface TerminalPopupIcon {
   kind: 'image';
@@ -136,4 +222,11 @@ export interface TerminalPopupPayload {
   sourceSession: import('../../types').TerminalSession;
   startupCommand: string;
   localShellType?: import('../../types').TerminalSession['shellType'];
+  /**
+   * When set, the popup attaches to this already-running backend session
+   * (same PTY) instead of starting a new shell. Used for AI silent sessions.
+   */
+  attachSessionId?: string;
+  /** Ephemeral main-process grant bound to the attach popup window. */
+  attachAuthorization?: string;
 }

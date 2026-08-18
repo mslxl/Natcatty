@@ -1,5 +1,4 @@
 import {
-  AlertTriangle,
   Check,
   ChevronDown,
   Globe,
@@ -12,6 +11,7 @@ import {
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { usePortForwardingState } from "../application/state/usePortForwardingState";
+import { STORAGE_KEY_PORT_FORWARDING_PANEL_WIDTH } from "../infrastructure/config/storageKeys";
 import {
   GroupConfig,
   Host,
@@ -32,14 +32,6 @@ import {
   AsidePanelFooter,
 } from "./ui/aside-panel";
 import { Button } from "./ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "./ui/dialog";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
 import { SortDropdown } from "./ui/sort-dropdown";
 import { toast } from "./ui/toast";
@@ -50,6 +42,7 @@ import {
   vaultHeaderSecondaryButtonClass,
   vaultSectionTitleClass,
 } from "./vault/VaultPageHeader";
+import { VaultDeleteConfirmDialog } from "./vault/VaultDeleteConfirmDialog";
 import { useVaultItemReorder } from "./vault/vaultReorderDrag";
 
 // Import components and utilities from port-forwarding module
@@ -59,6 +52,7 @@ import {
   getTypeMenuLabel,
   NewFormPanel,
   RuleCard,
+  stopRuntimeTunnelBeforeDelete,
   WizardContent,
 } from "./port-forwarding";
 
@@ -101,6 +95,11 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   terminalSettings,
 }) => {
   const { t } = useI18n();
+  const portForwardingPanelResizeProps = {
+    resizable: true as const,
+    persistWidthStorageKey: STORAGE_KEY_PORT_FORWARDING_PANEL_WIDTH,
+    resizeAriaLabel: t("vault.panel.resizeWidth"),
+  };
   const {
     rules: _rules,
     selectedRuleId,
@@ -119,6 +118,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     setRuleStatus,
     startTunnel,
     stopTunnel,
+    hasRuntimeTunnel,
     filteredRules,
     selectedRule: _selectedRule,
     preferFormMode,
@@ -223,7 +223,13 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       setPendingOperations((prev) => new Set([...prev, rule.id]));
 
       try {
-        await stopTunnel(rule.id);
+        const result = await stopTunnel(rule.id);
+        if (!result.success && result.error) {
+          toast.error(
+            result.error,
+            t("pf.toast.titleWithLabel", { label: rule.label }),
+          );
+        }
       } finally {
         setPendingOperations((prev) => {
           const next = new Set(prev);
@@ -232,7 +238,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [stopTunnel],
+    [stopTunnel, t],
   );
 
   // Wizard state
@@ -312,6 +318,12 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   // Start new rule - wizard or form based on user preference
   const startNewRule = (type: PortForwardingType) => {
     setShowNewMenu(false);
+    // The new-rule flow replaces an open editor; never leave both side panels mounted.
+    setShowEditPanel(false);
+    setEditingRule(null);
+    setEditDraft({});
+    setSelectedRuleId(null);
+    setShowHostSelector(false);
 
     if (preferFormMode) {
       // Form mode: show all-in-one form
@@ -436,33 +448,26 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     setSelectedRuleId(null);
   }, [setSelectedRuleId]);
 
-  // Handle delete with confirmation for active tunnels
+  // Handle delete with confirmation
   const handleDeleteRule = useCallback(
     (rule: PortForwardingRule) => {
-      // If tunnel is active or connecting, show confirmation dialog
-      if (rule.status === "active" || rule.status === "connecting") {
-        setRuleToDelete(rule);
-        setShowDeleteConfirm(true);
-      } else {
-        // If inactive, delete directly
-        if (editingRule?.id === rule.id) {
-          closeEditPanel();
-        }
-        deleteRule(rule.id);
-      }
+      setRuleToDelete(rule);
+      setShowDeleteConfirm(true);
     },
-    [editingRule, deleteRule, closeEditPanel],
+    [],
   );
 
-  // Confirm delete of active tunnel: stop first, then delete
-  const confirmDeleteActiveRule = useCallback(async () => {
+  // Confirm delete; active tunnels are stopped first.
+  const confirmDeleteRule = useCallback(async () => {
     if (!ruleToDelete) return;
 
     setIsDeleting(true);
     try {
-      // Stop the tunnel first
-      await stopTunnel(ruleToDelete.id);
-      // Then delete the rule
+      const stopped = await stopRuntimeTunnelBeforeDelete(
+        ruleToDelete.id,
+        stopTunnel,
+      );
+      if (!stopped) return;
       if (editingRule?.id === ruleToDelete.id) {
         closeEditPanel();
       }
@@ -473,6 +478,10 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       setRuleToDelete(null);
     }
   }, [ruleToDelete, stopTunnel, deleteRule, editingRule, closeEditPanel]);
+
+  const deleteTargetIsActive = Boolean(
+    ruleToDelete && hasRuntimeTunnel(ruleToDelete.id),
+  );
 
   // Handle wizard navigation
   // Flow for local: type -> local-config -> destination -> host-selection
@@ -607,8 +616,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       {/* Main Content */}
       <div
         className={cn(
-          "flex-1 flex flex-col min-h-0",
-          showWizard || showEditPanel || showNewForm ? "mr-[360px]" : "",
+          "flex-1 min-w-0 flex flex-col min-h-0",
         )}
       >
         <VaultPageHeader className="z-20">
@@ -756,6 +764,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                     viewMode={viewMode}
                     isSelected={selectedRuleId === rule.id}
                     isPending={pendingOperations.has(rule.id)}
+                    canStop={hasRuntimeTunnel(rule.id)}
                     reorderProps={ruleReorder.getItemReorderProps(rule.id, `rule:${rule.id}`)}
                     onSelect={() => {
                       setSelectedRuleId(rule.id);
@@ -775,7 +784,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       </div>
 
       {/* Edit Panel - shown when a rule is selected */}
-      {showEditPanel && editingRule && (
+      {showEditPanel && editingRule && !showHostSelector && (
         <EditPanel
           rule={editingRule}
           draft={editDraft}
@@ -791,11 +800,12 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           }}
           onDelete={() => handleDeleteRule(editingRule)}
           onOpenHostSelector={() => setShowHostSelector(true)}
+          {...portForwardingPanelResizeProps}
         />
       )}
 
       {/* Wizard Panel */}
-      {showWizard && (
+      {showWizard && !showHostSelector && (
         <AsidePanel
           open={true}
           onClose={() => {
@@ -804,6 +814,8 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           }}
           title={isEditing ? t("pf.wizard.editTitle") : t("pf.wizard.newTitle")}
           width="w-[360px]"
+          layout="inline"
+          {...portForwardingPanelResizeProps}
           showBackButton={!!getPrevStep()}
           onBack={
             getPrevStep()
@@ -904,11 +916,14 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           managedSources={managedSources}
           onSaveHost={onSaveHost}
           onCreateGroup={_onCreateGroup}
+          width="w-[360px]"
+          layout="inline"
+          {...portForwardingPanelResizeProps}
         />
       )}
 
       {/* New Form Panel (skip wizard mode) */}
-      {showNewForm && (
+      {showNewForm && !showHostSelector && (
         <NewFormPanel
           draft={newFormDraft}
           hosts={hosts}
@@ -920,47 +935,30 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
           onOpenHostSelector={() => setShowHostSelector(true)}
           onOpenWizard={openWizardFromForm}
           isValid={isNewFormValid()}
+          {...portForwardingPanelResizeProps}
         />
       )}
 
-      {/* Delete Active Tunnel Confirmation Dialog */}
-      <Dialog open={showDeleteConfirm} onOpenChange={(open) => {
-        if (!isDeleting) {
+      <VaultDeleteConfirmDialog
+        open={showDeleteConfirm}
+        title={t("vault.deleteConfirm.title", {
+          name: ruleToDelete?.label ?? "",
+        })}
+        description={
+          deleteTargetIsActive
+            ? t("pf.deleteActive.desc", { label: ruleToDelete?.label ?? "" })
+            : t("vault.deleteConfirm.portForwardingDesc")
+        }
+        confirmLabel={deleteTargetIsActive ? t("pf.deleteActive.confirm") : undefined}
+        disabled={isDeleting}
+        onOpenChange={(open) => {
           setShowDeleteConfirm(open);
           if (!open) setRuleToDelete(null);
-        }
-      }}>
-        <DialogContent className="sm:max-w-[400px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-destructive">
-              <AlertTriangle size={20} />
-              {t("pf.deleteActive.title")}
-            </DialogTitle>
-            <DialogDescription>
-              {t("pf.deleteActive.desc", { label: ruleToDelete?.label ?? "" })}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setShowDeleteConfirm(false);
-                setRuleToDelete(null);
-              }}
-              disabled={isDeleting}
-            >
-              {t("common.cancel")}
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={confirmDeleteActiveRule}
-              disabled={isDeleting}
-            >
-              {t("pf.deleteActive.confirm")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        }}
+        onConfirm={() => {
+          void confirmDeleteRule();
+        }}
+      />
     </div>
   );
 };

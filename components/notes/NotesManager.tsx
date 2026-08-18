@@ -15,7 +15,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../../application/state/useApplicationBackend";
 import { useStoredNumber } from "../../application/state/useStoredNumber";
@@ -44,6 +44,7 @@ import {
 } from "../../infrastructure/config/storageKeys";
 import { logger } from "../../lib/logger";
 import { cn } from "../../lib/utils";
+import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from "../terminalLayer/terminalSidePanelChrome";
 import { readTextFile } from "../../lib/readTextFile";
 import { buildTextFilesZipBlob } from "../../lib/textZip";
 import type { Host, VaultNote } from "../../types";
@@ -65,6 +66,7 @@ import {
   VaultTreeInlineRenameInput,
   VaultTreeItemRow,
 } from "../vault/VaultTreeRow";
+import { VaultDeleteConfirmDialog } from "../vault/VaultDeleteConfirmDialog";
 import {
   clearVaultDropIndicator,
   getVaultDropIntent,
@@ -75,10 +77,16 @@ import {
   markVaultInsideDropIndicator,
 } from "../vault/vaultReorderDrag";
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
+import { NoteTitleInput } from "./NoteTitleInput";
 
 const InlineMarkdownEditor = lazy(() =>
   import("./InlineMarkdownEditor").then((module) => ({ default: module.InlineMarkdownEditor })),
 );
+
+/** Warm the MDXEditor chunk before Suspense. */
+export function prefetchInlineMarkdownEditor(): void {
+  void import("./InlineMarkdownEditor");
+}
 
 interface NoteFolderNode {
   name: string;
@@ -89,13 +97,18 @@ interface NoteFolderNode {
 
 type NotesToolbarPanel = "search" | null;
 
-const toolbarIconButtonClass = "netcatty-tab h-7 w-7 shrink-0 rounded-md p-0 hover:bg-transparent";
+const toolbarIconButtonClass = "netcatty-tab h-6 w-6 shrink-0 rounded-md p-0 hover:bg-transparent";
 const menuItemClass = "flex h-8 w-full items-center rounded-md px-3 text-left text-sm hover:bg-secondary";
 const NOTES_TREE_DEFAULT_WIDTH = 300;
-const NOTES_TREE_MIN_WIDTH = 220;
+/** Narrow enough for nested folders + ellipsis; toolbar scrolls if needed. */
+const NOTES_TREE_MIN_WIDTH = 160;
 const NOTES_TREE_MAX_WIDTH = 520;
 const NOTE_DRAG_TYPE = "application/x-netcatty-note-id";
 const NOTE_GROUP_DRAG_TYPE = "application/x-netcatty-note-group-path";
+
+export function clampNotesTreeWidth(value: number): number {
+  return Math.max(NOTES_TREE_MIN_WIDTH, Math.min(NOTES_TREE_MAX_WIDTH, value));
+}
 
 export const normalizeNoteEditorMode = (value: string | null): NoteEditorMode | null =>
   value === "edit" || value === "preview" ? value : null;
@@ -105,7 +118,7 @@ const isNoteEditorMode = (value: string | null): value is NoteEditorMode =>
 
 const InlineMarkdownEditorFallback = () => (
   <div
-    className="netcatty-lazy-fade-in min-h-[420px]"
+    className="min-h-[420px] bg-background"
     data-notes-editor-loading="true"
     aria-hidden="true"
   />
@@ -119,6 +132,8 @@ export interface NotesManagerProps {
   onUpdateNoteGroups: (groups: string[]) => void;
   onOpenHost?: (host: Host, source?: { noteId: string }) => void;
   displayMode?: "full" | "sidebar";
+  /** When false (hidden retained mount), flush any pending draft immediately. */
+  isActive?: boolean;
   openNoteId?: string | null;
   openNoteRequestId?: number | null;
   /** Called after a one-shot openNoteId focus request has been applied. */
@@ -126,7 +141,7 @@ export interface NotesManagerProps {
 }
 
 type HoverActionMenuProps = {
-  children: React.ReactNode;
+  children: React.ReactNode | ((closeMenu: () => void) => React.ReactNode);
   className?: string;
 };
 
@@ -147,6 +162,11 @@ const HoverActionMenu: React.FC<HoverActionMenuProps> = ({ children, className }
   };
 
   useEffect(() => () => cancelClose(), []);
+
+  const closeMenu = () => {
+    cancelClose();
+    setOpen(false);
+  };
 
   return (
     <Dropdown open={open} onOpenChange={setOpen}>
@@ -179,7 +199,7 @@ const HoverActionMenu: React.FC<HoverActionMenuProps> = ({ children, className }
         onMouseEnter={cancelClose}
         onMouseLeave={scheduleClose}
       >
-        {children}
+        {typeof children === "function" ? children(closeMenu) : children}
       </DropdownContent>
     </Dropdown>
   );
@@ -333,6 +353,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   onUpdateNoteGroups,
   onOpenHost,
   displayMode = "full",
+  isActive = true,
   openNoteId = null,
   openNoteRequestId = null,
   onOpenNoteIdHandled,
@@ -362,11 +383,19 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const [isTreeResizing, setIsTreeResizing] = useState(false);
   const [draggingNoteId, setDraggingNoteId] = useState<string | null>(null);
   const [draggingGroupPath, setDraggingGroupPath] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    type: "note" | "group";
+    id: string;
+    name: string;
+  } | null>(null);
   const [treeWidth, setTreeWidth, persistTreeWidth] = useStoredNumber(
     STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
     NOTES_TREE_DEFAULT_WIDTH,
     { min: NOTES_TREE_MIN_WIDTH, max: NOTES_TREE_MAX_WIDTH },
   );
+  const treeAsideRef = useRef<HTMLElement | null>(null);
+  const treeWidthRef = useRef(treeWidth);
+  treeWidthRef.current = treeWidth;
   const searchInputRef = useRef<HTMLInputElement>(null);
   const importFileInputRef = useRef<HTMLInputElement>(null);
   const isImportingMarkdownRef = useRef(false);
@@ -389,6 +418,102 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     return cleaned;
   }, [onUpdateNotes]);
 
+  const NOTE_DRAFT_DEBOUNCE_MS = 300;
+  const draftNoteIdRef = useRef<string | null>(null);
+  const draftTitleRef = useRef<string | null>(null);
+  const draftContentRef = useRef<string | null>(null);
+  const draftTimerRef = useRef<number | null>(null);
+  const [draftNoteId, setDraftNoteId] = useState<string | null>(null);
+  const [draftTitle, setDraftTitle] = useState<string | null>(null);
+
+  const clearDraftTimer = useCallback(() => {
+    if (draftTimerRef.current !== null) {
+      window.clearTimeout(draftTimerRef.current);
+      draftTimerRef.current = null;
+    }
+  }, []);
+
+  const flushNoteDraft = useCallback(() => {
+    clearDraftTimer();
+    const noteId = draftNoteIdRef.current;
+    if (!noteId) return;
+    const title = draftTitleRef.current;
+    const content = draftContentRef.current;
+    draftNoteIdRef.current = null;
+    draftTitleRef.current = null;
+    draftContentRef.current = null;
+    setDraftNoteId(null);
+    setDraftTitle(null);
+    if (title === null && content === null) return;
+    commitNotes(sortedNotesRef.current.map((note) => {
+      if (note.id !== noteId) return note;
+      return {
+        ...note,
+        ...(title !== null ? { title } : {}),
+        ...(content !== null ? { content } : {}),
+        updatedAt: Date.now(),
+      };
+    }));
+  }, [clearDraftTimer, commitNotes]);
+
+  const scheduleNoteDraftFlush = useCallback(() => {
+    clearDraftTimer();
+    draftTimerRef.current = window.setTimeout(() => {
+      draftTimerRef.current = null;
+      flushNoteDraft();
+    }, NOTE_DRAFT_DEBOUNCE_MS);
+  }, [clearDraftTimer, flushNoteDraft]);
+
+  const updateNoteDraft = useCallback((noteId: string, fields: { title?: string; content?: string }) => {
+    if (draftNoteIdRef.current && draftNoteIdRef.current !== noteId) {
+      flushNoteDraft();
+    }
+    draftNoteIdRef.current = noteId;
+    if (fields.title !== undefined) {
+      draftTitleRef.current = fields.title;
+      setDraftNoteId(noteId);
+      setDraftTitle(fields.title);
+    }
+    if (fields.content !== undefined) {
+      draftContentRef.current = fields.content;
+    }
+    scheduleNoteDraftFlush();
+  }, [flushNoteDraft, scheduleNoteDraftFlush]);
+
+  const flushNoteDraftRef = useRef(flushNoteDraft);
+  flushNoteDraftRef.current = flushNoteDraft;
+
+  useEffect(() => () => {
+    flushNoteDraftRef.current();
+  }, []);
+
+  useLayoutEffect(() => {
+    if (isActive) return;
+    flushNoteDraft();
+  }, [flushNoteDraft, isActive]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    prefetchInlineMarkdownEditor();
+  }, [isActive]);
+
+  useEffect(() => {
+    const flushOnTeardown = () => {
+      flushNoteDraft();
+    };
+    const flushOnHidden = () => {
+      if (document.visibilityState === "hidden") flushNoteDraft();
+    };
+    window.addEventListener("pagehide", flushOnTeardown);
+    window.addEventListener("beforeunload", flushOnTeardown);
+    document.addEventListener("visibilitychange", flushOnHidden);
+    return () => {
+      window.removeEventListener("pagehide", flushOnTeardown);
+      window.removeEventListener("beforeunload", flushOnTeardown);
+      document.removeEventListener("visibilitychange", flushOnHidden);
+    };
+  }, [flushNoteDraft]);
+
   const noteTree = useMemo(() => {
     const tree = buildNoteTree(groups, sortedNotes);
     return {
@@ -398,6 +523,24 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, [groupOrderByPath, groups, sortedNotes]);
   const selectedNote = getSelectedVaultNote(sortedNotes, selectedNoteId);
   const overlayNote = sortedNotes.find((note) => note.id === overlayNoteId) ?? null;
+  const selectedNoteView = selectedNote && draftNoteId === selectedNote.id
+    ? {
+        ...selectedNote,
+        ...(draftTitle !== null ? { title: draftTitle } : {}),
+      }
+    : selectedNote;
+  const overlayNoteView = overlayNote && draftNoteId === overlayNote.id
+    ? {
+        ...overlayNote,
+        ...(draftTitle !== null ? { title: draftTitle } : {}),
+      }
+    : overlayNote;
+
+  useEffect(() => {
+    if (!draftNoteIdRef.current) return;
+    if (draftNoteIdRef.current === selectedNoteId || draftNoteIdRef.current === overlayNoteId) return;
+    flushNoteDraft();
+  }, [flushNoteDraft, overlayNoteId, selectedNoteId]);
 
   useEffect(() => {
     const urls = activeDownloadUrlsRef.current;
@@ -484,9 +627,41 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const expandAllGroups = () => setExpandedGroups(new Set(allGroupPaths));
   const collapseAllGroups = () => setExpandedGroups(new Set());
 
-  const saveNote = (nextNote: VaultNote) => {
-    commitNotes(sortedNotes.map((note) => (note.id === nextNote.id ? nextNote : note)));
+  /** Flush pending draft, then mutate from the post-flush ref snapshot. */
+  const commitNotesAfterFlush = useCallback((mutator: (notes: VaultNote[]) => VaultNote[]) => {
+    flushNoteDraft();
+    return commitNotes(mutator(sortedNotesRef.current));
+  }, [commitNotes, flushNoteDraft]);
+
+  /** Rename from the tree row: merge title into the post-flush note so an
+   *  unflushed body edit is not discarded by a stale tree-row snapshot. */
+  const renameNoteFromTree = (noteId: string, title: string) => {
+    const nextTitle = title.trim();
+    const updatedAt = Date.now();
+    commitNotesAfterFlush((notes) => notes.map((note) => (
+      note.id === noteId ? { ...note, title: nextTitle, updatedAt } : note
+    )));
   };
+
+  const saveNoteTitleDraft = (note: VaultNote, title: string) => {
+    updateNoteDraft(note.id, { title });
+  };
+
+  /** Ref-only title stash for IME composition — avoids controlled value rewrite. */
+  const stashNoteTitleDraft = (note: VaultNote, title: string) => {
+    if (draftNoteIdRef.current && draftNoteIdRef.current !== note.id) {
+      flushNoteDraft();
+    }
+    // Cancel any idle-commit debounce so a prior ASCII commit cannot flush
+    // mid-composition and rewrite the controlled title.
+    clearDraftTimer();
+    draftNoteIdRef.current = note.id;
+    draftTitleRef.current = title;
+  };
+
+  const saveNoteContentDraft = useCallback((noteId: string, content: string) => {
+    updateNoteDraft(noteId, { content });
+  }, [updateNoteDraft]);
 
   const handleOpenHostFromNote = useCallback((host: Host, noteId: string) => {
     onOpenHost?.(host, { noteId });
@@ -506,9 +681,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             data-note-mode-switch
             aria-label={label}
             className="app-no-drag h-8 w-8 shrink-0 rounded-md p-0 text-muted-foreground transition-colors hover:bg-secondary/70 hover:text-foreground"
-            onClick={() => setNoteEditorMode((currentMode) => (
-              currentMode === "edit" ? "preview" : "edit"
-            ))}
+            onClick={() => {
+              flushNoteDraft();
+              setNoteEditorMode((currentMode) => (
+                currentMode === "edit" ? "preview" : "edit"
+              ));
+            }}
           >
             <Icon size={16} />
           </Button>
@@ -519,10 +697,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   };
 
   const addNoteToGroup = (group: string | null) => {
-    const note = createNote(group, getNextVaultOrder(sortedNotes));
-    commitNotes([...sortedNotes, note]);
+    let created: VaultNote | null = null;
+    commitNotesAfterFlush((notes) => {
+      created = createNote(group, getNextVaultOrder(notes));
+      return [...notes, created];
+    });
+    if (!created) return;
     if (group) expandPath(group);
-    const nextSelection = getNoteSelectionState(note, isSidebarMode);
+    const nextSelection = getNoteSelectionState(created, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
     setSelectedGroup(nextSelection.selectedGroup);
     setOverlayNoteId(nextSelection.overlayNoteId);
@@ -579,7 +761,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
       const result = importMarkdownPayloadsToVaultNotes(
         payloads,
-        sortedNotesRef.current,
+        (() => {
+          flushNoteDraft();
+          return sortedNotesRef.current;
+        })(),
         targetGroup,
       );
 
@@ -611,6 +796,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, [
     isSidebarMode,
     commitNotes,
+    flushNoteDraft,
     selectedGroup,
     selectedNote,
     t,
@@ -633,10 +819,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, []);
 
   const exportNoteToMarkdown = useCallback((note: VaultNote) => {
+    flushNoteDraft();
+    const latest = sortedNotesRef.current.find((item) => item.id === note.id) ?? note;
     try {
-      const fileName = `${sanitizeNoteExportFileNamePart(note.title, "note")}.md`;
+      const fileName = `${sanitizeNoteExportFileNamePart(latest.title, "note")}.md`;
       downloadNotesBlob(
-        new Blob([note.content], { type: "text/markdown;charset=utf-8" }),
+        new Blob([latest.content], { type: "text/markdown;charset=utf-8" }),
         fileName,
       );
       toast.success(t("notes.export.toast.success", { count: 1 }));
@@ -644,9 +832,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       logger.error("Failed to export note:", err);
       toast.error(t("notes.export.toast.failed"));
     }
-  }, [downloadNotesBlob, t]);
+  }, [downloadNotesBlob, flushNoteDraft, t]);
 
   const exportNotesToZip = useCallback((scope: VaultNotesExportScope, fileNamePart: string) => {
+    flushNoteDraft();
     try {
       const files = buildVaultNoteMarkdownExportFiles(sortedNotesRef.current, scope);
       if (files.length === 0) {
@@ -662,7 +851,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       logger.error("Failed to export notes:", err);
       toast.error(t("notes.export.toast.failed"));
     }
-  }, [downloadNotesBlob, t]);
+  }, [downloadNotesBlob, flushNoteDraft, t]);
 
   const exportAllNotes = useCallback(() => {
     exportNotesToZip({ type: "all" }, "all");
@@ -691,7 +880,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   );
 
   const duplicateNoteById = (noteId: string) => {
-    const source = sortedNotes.find((note) => note.id === noteId);
+    flushNoteDraft();
+    const source = sortedNotesRef.current.find((note) => note.id === noteId);
     if (!source) return;
     const now = Date.now();
     const copy: VaultNote = {
@@ -700,9 +890,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       title: `${source.title} (${t("action.copy")})`,
       createdAt: now,
       updatedAt: now,
-      order: getNextVaultOrder(sortedNotes),
+      order: getNextVaultOrder(sortedNotesRef.current),
     };
-    commitNotes([...sortedNotes, copy]);
+    commitNotes([...sortedNotesRef.current, copy]);
     if (copy.group) expandPath(copy.group);
     const nextSelection = getNoteSelectionState(copy, isSidebarMode);
     setSelectedNoteId(nextSelection.selectedNoteId);
@@ -710,9 +900,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     setOverlayNoteId(nextSelection.overlayNoteId);
   };
 
-  const deleteNoteById = (noteId: string) => {
-    const next = sortedNotes.filter((note) => note.id !== noteId);
-    commitNotes(next);
+  const performDeleteNoteById = (noteId: string) => {
+    const next = commitNotesAfterFlush((notes) => notes.filter((note) => note.id !== noteId));
     if (selectedNoteId === noteId) {
       const nextSelection = getFallbackNoteSelectionState(next, isSidebarMode);
       setSelectedNoteId(nextSelection.selectedNoteId);
@@ -721,6 +910,15 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       setEditingNoteId(null);
     }
     if (overlayNoteId === noteId) setOverlayNoteId(null);
+  };
+
+  const requestDeleteNoteById = (noteId: string) => {
+    const note = sortedNotes.find((item) => item.id === noteId);
+    setDeleteTarget({
+      type: "note",
+      id: noteId,
+      name: note?.title || t("notes.title.placeholder"),
+    });
   };
 
   const startCreateGroup = () => {
@@ -751,12 +949,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     const nextGroups = normalizeNoteGroups(
       groups.map((item) => replaceNoteGroupPrefix(item, group, nextPath) || ""),
     );
-    const nextNotes = sortedNotes.map((note) => ({
+    onUpdateNoteGroups(nextGroups);
+    commitNotesAfterFlush((notes) => notes.map((note) => ({
       ...note,
       group: replaceNoteGroupPrefix(note.group, group, nextPath),
-    }));
-    onUpdateNoteGroups(nextGroups);
-    commitNotes(nextNotes);
+    })));
     setExpandedGroups((current) => {
       const next = new Set<string>();
       current.forEach((item) => {
@@ -771,11 +968,31 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     }
   };
 
-  const deleteGroup = (group: string) => {
+  const performDeleteGroup = (group: string) => {
     onUpdateNoteGroups(groups.filter((item) => !isNoteGroupInside(item, group)));
-    commitNotes(sortedNotes.map((note) => isNoteGroupInside(note.group, group) ? { ...note, group: undefined } : note));
+    commitNotesAfterFlush((notes) => notes.map((note) => (
+      isNoteGroupInside(note.group, group) ? { ...note, group: undefined } : note
+    )));
     if (selectedGroup && isNoteGroupInside(selectedGroup, group)) setSelectedGroup(null);
     setEditingGroupPath(null);
+  };
+
+  const requestDeleteGroup = (group: string) => {
+    setDeleteTarget({
+      type: "group",
+      id: group,
+      name: group,
+    });
+  };
+
+  const confirmDeleteTarget = () => {
+    if (!deleteTarget) return;
+    if (deleteTarget.type === "note") {
+      performDeleteNoteById(deleteTarget.id);
+    } else {
+      performDeleteGroup(deleteTarget.id);
+    }
+    setDeleteTarget(null);
   };
 
   const resetTreeDragState = () => {
@@ -805,12 +1022,13 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   };
 
   const moveNoteToGroup = (noteId: string, group: string | null) => {
-    const source = sortedNotes.find((note) => note.id === noteId);
+    flushNoteDraft();
+    const source = sortedNotesRef.current.find((note) => note.id === noteId);
     if (!source) return;
     const nextGroup = group || undefined;
     if ((source.group || undefined) === nextGroup) return;
 
-    commitNotes(sortedNotes.map((note) => (
+    commitNotes(sortedNotesRef.current.map((note) => (
       note.id === noteId ? { ...note, group: nextGroup, updatedAt: Date.now() } : note
     )));
     if (group) expandPath(group);
@@ -819,29 +1037,31 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const reorderNoteToNote = (sourceId: string, targetNote: VaultNote, event: React.DragEvent<HTMLElement>) => {
     if (!sourceId || sourceId === targetNote.id) return;
     const position = getVaultDropPosition(event.currentTarget, event.clientX, event.clientY);
-    const movedNotes = sortedNotes.map((note) => (
-      note.id === sourceId
-        ? { ...note, group: targetNote.group, updatedAt: Date.now() }
-        : note
-    ));
-    commitNotes(reorderVaultItems(movedNotes, sourceId, targetNote.id, position));
+    commitNotesAfterFlush((notes) => {
+      const movedNotes = notes.map((note) => (
+        note.id === sourceId
+          ? { ...note, group: targetNote.group, updatedAt: Date.now() }
+          : note
+      ));
+      return reorderVaultItems(movedNotes, sourceId, targetNote.id, position);
+    });
     if (targetNote.group) expandPath(targetNote.group);
   };
 
   const moveGroupToParent = (group: string, parent: string | null) => {
+    flushNoteDraft();
     const knownGroups = normalizeNoteGroups([
       ...groups,
-      ...sortedNotes.map((note) => note.group).filter((item): item is string => Boolean(item)),
+      ...sortedNotesRef.current.map((note) => note.group).filter((item): item is string => Boolean(item)),
     ]);
     const nextPath = resolveMovedNoteGroupPath(group, parent, knownGroups);
     if (!nextPath) return;
     const nextGroups = normalizeNoteGroups(groups.map((item) => replaceNoteGroupPrefix(item, group, nextPath) || ""));
-    const nextNotes = sortedNotes.map((note) => ({
+    onUpdateNoteGroups(nextGroups);
+    commitNotes(sortedNotesRef.current.map((note) => ({
       ...note,
       group: replaceNoteGroupPrefix(note.group, group, nextPath),
-    }));
-    onUpdateNoteGroups(nextGroups);
-    commitNotes(nextNotes);
+    })));
     setExpandedGroups((current) => remapExpandedNoteGroupPaths(current, group, nextPath));
     if (selectedGroup && isNoteGroupInside(selectedGroup, group)) {
       setSelectedGroup(replaceNoteGroupPrefix(selectedGroup, group, nextPath) ?? null);
@@ -856,10 +1076,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     if (!sourceGroup || !targetGroup || sourceGroup === targetGroup) return;
     if (targetGroup.startsWith(`${sourceGroup}/`)) return;
 
+    flushNoteDraft();
     const targetParent = getNoteGroupParentPath(targetGroup);
     const knownGroups = normalizeNoteGroups([
       ...groups,
-      ...sortedNotes.map((note) => note.group).filter((item): item is string => Boolean(item)),
+      ...sortedNotesRef.current.map((note) => note.group).filter((item): item is string => Boolean(item)),
     ]);
     const nextSourceGroup = getNoteGroupParentPath(sourceGroup) === targetParent
       ? cleanNoteGroupPath(sourceGroup)
@@ -877,16 +1098,13 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       targetGroup,
       position,
     );
-    const nextNotes = nextSourceGroup === sourceGroup
-      ? sortedNotes
-      : sortedNotes.map((note) => ({
-        ...note,
-        group: replaceNoteGroupPrefix(note.group, sourceGroup, nextSourceGroup),
-      }));
 
     onUpdateNoteGroups(nextGroups);
     if (nextSourceGroup !== sourceGroup) {
-      commitNotes(nextNotes);
+      commitNotes(sortedNotesRef.current.map((note) => ({
+        ...note,
+        group: replaceNoteGroupPrefix(note.group, sourceGroup, nextSourceGroup),
+      })));
       setExpandedGroups((current) => remapExpandedNoteGroupPaths(current, sourceGroup, nextSourceGroup));
       if (selectedGroup && isNoteGroupInside(selectedGroup, sourceGroup)) {
         setSelectedGroup(replaceNoteGroupPrefix(selectedGroup, sourceGroup, nextSourceGroup) ?? null);
@@ -904,7 +1122,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     resetTreeDragState();
   };
 
-  const renderNoteActions = (note: VaultNote, mode: "dropdown" | "context") => {
+  const renderNoteActions = (note: VaultNote, mode: "dropdown" | "context", closeMenu?: () => void) => {
     const actions = [
       {
         label: t("common.rename"),
@@ -920,7 +1138,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       },
       {
         label: t("action.delete"),
-        action: () => deleteNoteById(note.id),
+        action: () => requestDeleteNoteById(note.id),
         destructive: true,
       },
     ];
@@ -946,6 +1164,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         className={cn(menuItemClass, action.destructive && "text-destructive hover:bg-destructive/10")}
         onClick={(event) => {
           event.stopPropagation();
+          closeMenu?.();
           action.action();
         }}
       >
@@ -954,7 +1173,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     ));
   };
 
-  const renderGroupActions = (groupPath: string, mode: "dropdown" | "context") => {
+  const renderGroupActions = (groupPath: string, mode: "dropdown" | "context", closeMenu?: () => void) => {
     const actions = [
       {
         label: t("notes.action.newNote"),
@@ -981,7 +1200,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       },
       {
         label: t("action.delete"),
-        action: () => deleteGroup(groupPath),
+        action: () => requestDeleteGroup(groupPath),
         destructive: true,
       },
     ];
@@ -1007,6 +1226,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         className={cn(menuItemClass, action.destructive && "text-destructive hover:bg-destructive/10")}
         onClick={(event) => {
           event.stopPropagation();
+          closeMenu?.();
           action.action();
         }}
       >
@@ -1020,7 +1240,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     return (
       <div
         key={`new-folder-${parent || "root"}`}
-        className="flex h-7 items-center px-2 text-sm"
+        className="flex h-7 min-w-0 items-center px-2 text-sm"
         style={{ paddingLeft: depth * 16 + 4 }}
       >
         <div className="mr-1 h-5 w-4 shrink-0" />
@@ -1043,7 +1263,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     return (
       <ContextMenu key={note.id}>
         <ContextMenuTrigger asChild>
-          <VaultTreeItemRow
+            <VaultTreeItemRow
             label={noteDisplayTitle(note.title)}
             depth={depth}
             selected={selectedNoteId === note.id}
@@ -1051,7 +1271,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             editingInitialName={note.title}
             onRenameCommit={(name) => {
               setEditingNoteId(null);
-              saveNote({ ...note, title: name.trim(), updatedAt: Date.now() });
+              renameNoteFromTree(note.id, name);
             }}
             onRenameCancel={() => setEditingNoteId(null)}
             icon={<FileText size={16} className="mr-2 shrink-0 text-muted-foreground" />}
@@ -1094,11 +1314,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               setSelectedGroup(nextSelection.selectedGroup);
               setOverlayNoteId(nextSelection.overlayNoteId);
             }}
-            actions={(
-              <HoverActionMenu>
-                {renderNoteActions(note, "dropdown")}
-              </HoverActionMenu>
-            )}
+              actions={(
+                <HoverActionMenu>
+                  {(closeMenu) => renderNoteActions(note, "dropdown", closeMenu)}
+                </HoverActionMenu>
+              )}
           />
         </ContextMenuTrigger>
         <ContextMenuContent data-notes-context-menu="note">
@@ -1196,11 +1416,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 setOverlayNoteId(nextSelection.overlayNoteId);
                 if (hasChildren) toggleGroup(node.path);
               }}
-              actions={(
-                <HoverActionMenu>
-                  {renderGroupActions(node.path, "dropdown")}
-                </HoverActionMenu>
-              )}
+                actions={(
+                  <HoverActionMenu>
+                    {(closeMenu) => renderGroupActions(node.path, "dropdown", closeMenu)}
+                  </HoverActionMenu>
+                )}
             />
           </ContextMenuTrigger>
           <ContextMenuContent data-notes-context-menu="group">
@@ -1232,23 +1452,53 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     event.stopPropagation();
 
     const startX = event.clientX;
-    const startWidth = treeWidth;
+    const startWidth = treeWidthRef.current;
     const previousCursor = document.body.style.cursor;
     const previousUserSelect = document.body.style.userSelect;
+    const aside = treeAsideRef.current;
+    let frame = 0;
+    let latestWidth = startWidth;
 
+    // Avoid setState on every pointermove — NotesManager owns the MDX editor and
+    // re-rendering it per pixel makes sidebar resize feel stuck.
     setIsTreeResizing(true);
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
+    if (aside) {
+      aside.style.willChange = "width";
+    }
 
-    const clampWidth = (value: number) =>
-      Math.max(NOTES_TREE_MIN_WIDTH, Math.min(NOTES_TREE_MAX_WIDTH, value));
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      setTreeWidth(clampWidth(startWidth + moveEvent.clientX - startX));
+    const applyWidth = (width: number) => {
+      latestWidth = width;
+      if (aside) {
+        aside.style.width = `${width}px`;
+      }
     };
 
-    const handlePointerUp = (upEvent: PointerEvent) => {
-      const nextWidth = clampWidth(startWidth + upEvent.clientX - startX);
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const nextWidth = clampNotesTreeWidth(startWidth + moveEvent.clientX - startX);
+      if (frame) {
+        latestWidth = nextWidth;
+        return;
+      }
+      latestWidth = nextWidth;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        applyWidth(latestWidth);
+      });
+    };
+
+    const handlePointerUp = () => {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+      const nextWidth = clampNotesTreeWidth(latestWidth);
+      applyWidth(nextWidth);
+      if (aside) {
+        aside.style.willChange = "";
+      }
+      treeWidthRef.current = nextWidth;
       setTreeWidth(nextWidth);
       persistTreeWidth(nextWidth);
       setIsTreeResizing(false);
@@ -1262,7 +1512,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
-  }, [persistTreeWidth, setTreeWidth, treeWidth]);
+  }, [persistTreeWidth, setTreeWidth]);
 
   return (
     <div className="relative flex h-full min-h-0 flex-col overflow-hidden">
@@ -1279,14 +1529,21 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       <div className="flex min-h-0 flex-1">
         {shouldShowNotesTree && (
           <aside
+            ref={treeAsideRef}
             className={cn(
-              "relative flex flex-col bg-background",
-              isSidebarMode ? "min-w-0 flex-1" : "shrink-0 border-r border-border/60",
+              // min-w-0 on the aside; overflow-hidden stays on the inner tree shell
+              // so the resize separator's translate-x-1/2 hit area is not clipped.
+              "relative flex min-w-0 flex-col bg-background",
+              isSidebarMode ? "flex-1" : "shrink-0 border-r border-border/60",
             )}
             style={isSidebarMode ? undefined : { width: treeWidth }}
           >
-          <div className="flex-shrink-0">
-            <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="min-w-0 flex-shrink-0 overflow-hidden">
+            <div className={cn(
+              TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+              "flex min-w-0 items-center gap-1 overflow-x-auto border-b border-border/60 px-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            )}>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -1430,9 +1687,13 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               </div>
             </div>
           </div>
-          <ScrollArea className="flex-1">
+          {/* Radix ScrollArea viewport child defaults to display:table, which
+              expands to content width and blocks title ellipsis on narrow trees.
+              Force block + min-w-0 so rows shrink with the sidebar (same pattern
+              as AsidePanelContent). */}
+          <ScrollArea className="min-w-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block [&>[data-radix-scroll-area-viewport]>div]:!min-w-0">
             <div
-              className="min-h-full space-y-1 px-1.5 pt-1.5 pb-4"
+              className="min-h-full min-w-0 space-y-1 overflow-hidden px-1.5 pt-1.5 pb-4"
               data-notes-drop-zone="root"
               onDragOver={(event) => {
                 if (!hasNotesTreeDrag(event.dataTransfer)) return;
@@ -1452,6 +1713,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               )}
             </div>
           </ScrollArea>
+          </div>
           {!isSidebarMode && (
             <div
               role="separator"
@@ -1470,42 +1732,51 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         )}
 
         {!isSidebarMode && (
-        <main className="flex min-w-0 flex-1 flex-col bg-background">
-          {selectedNote ? (
+        <main
+          className={cn(
+            "flex min-w-0 flex-1 flex-col bg-background",
+            // Keep the editor out of hit-testing / paint thrash while the tree
+            // width is driven from the DOM during resize.
+            isTreeResizing && "pointer-events-none",
+          )}
+        >
+          {selectedNoteView ? (
             <>
               <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-8 pt-6 pb-1" data-note-title-row>
                 <div className="min-w-0 flex-1">
-                  <input
-                    className="h-7 w-full bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground"
-                    value={selectedNote.title}
+                  <NoteTitleInput
+                    noteId={selectedNoteView.id}
+                    className="h-8 w-full bg-transparent text-lg font-semibold leading-8 outline-none placeholder:text-muted-foreground"
+                    value={selectedNoteView.title}
                     placeholder={t("notes.title.placeholder")}
-                    onChange={(event) => saveNote({
-                      ...selectedNote,
-                      title: event.target.value,
-                      updatedAt: Date.now(),
-                    })}
+                    onCommit={(title) => saveNoteTitleDraft(selectedNoteView, title)}
+                    onLiveDraft={(title) => stashNoteTitleDraft(selectedNoteView, title)}
+                    onBlur={() => flushNoteDraft()}
                   />
                 </div>
-                {renderNoteExportButton(selectedNote)}
+                {renderNoteExportButton(selectedNoteView)}
                 {renderNoteModeToggle()}
               </div>
               <ScrollArea className="min-h-0 flex-1">
-                <div className="min-h-full w-full px-8 pt-2 pb-6">
-                  <LazyLoadBoundary name="Notes editor" resetKey={selectedNote.id}>
+                <div
+                  className="min-h-full w-full px-8 pt-2 pb-6"
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      flushNoteDraft();
+                    }
+                  }}
+                >
+                  <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
                     <Suspense fallback={<InlineMarkdownEditorFallback />}>
                       <InlineMarkdownEditor
-                        key={selectedNote.id}
-                        value={selectedNote.content}
+                        noteId={selectedNoteView.id}
+                        value={selectedNoteView.content}
                         placeholder={t("notes.editor.placeholder")}
                         editorMode={noteEditorMode}
                         previewEmptyLabel={t("notes.preview.empty")}
-                        onChange={(content) => saveNote({
-                          ...selectedNote,
-                          content,
-                          updatedAt: Date.now(),
-                        })}
+                        onChange={(content) => saveNoteContentDraft(selectedNoteView.id, content)}
                         hosts={hosts}
-                        onOpenHost={(host) => handleOpenHostFromNote(host, selectedNote.id)}
+                        onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                         onOpenExternalLink={openExternal}
                       />
                     </Suspense>
@@ -1538,9 +1809,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         )}
       </div>
 
-      {isSidebarMode && overlayNote && (
+      {isSidebarMode && overlayNoteView && (
         <div className="absolute inset-0 z-30 flex min-h-0 flex-col bg-background text-foreground">
-          <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border/60 px-1.5 py-1">
+          <div className={cn(
+            TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS,
+            "flex items-center gap-1 border-b border-border/60 px-1.5",
+          )}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -1554,44 +1828,46 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               </TooltipTrigger>
               <TooltipContent side="bottom">{t("common.back")}</TooltipContent>
             </Tooltip>
-            <div className="min-w-0 flex-1 truncate px-1 text-xs font-medium text-foreground">
-              {overlayNote.title || t("notes.title.placeholder")}
+            <div className="min-w-0 flex-1 truncate px-1 text-xs font-medium leading-4 text-foreground">
+              {overlayNoteView.title || t("notes.title.placeholder")}
             </div>
           </div>
           <div className="flex min-h-0 flex-1 flex-col bg-background">
             <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-4 pt-5 pb-1" data-note-title-row>
               <div className="min-w-0 flex-1">
-                <input
-                  className="h-7 w-full bg-transparent text-lg font-semibold outline-none placeholder:text-muted-foreground"
-                  value={overlayNote.title}
+                <NoteTitleInput
+                  noteId={overlayNoteView.id}
+                  className="h-8 w-full bg-transparent text-lg font-semibold leading-8 outline-none placeholder:text-muted-foreground"
+                  value={overlayNoteView.title}
                   placeholder={t("notes.title.placeholder")}
-                  onChange={(event) => saveNote({
-                    ...overlayNote,
-                    title: event.target.value,
-                    updatedAt: Date.now(),
-                  })}
+                  onCommit={(title) => saveNoteTitleDraft(overlayNoteView, title)}
+                  onLiveDraft={(title) => stashNoteTitleDraft(overlayNoteView, title)}
+                  onBlur={() => flushNoteDraft()}
                 />
               </div>
-              {renderNoteExportButton(overlayNote)}
+              {renderNoteExportButton(overlayNoteView)}
               {renderNoteModeToggle()}
             </div>
             <ScrollArea className="min-h-0 flex-1">
-              <div className="min-h-full w-full px-4 pt-2 pb-6">
-                <LazyLoadBoundary name="Notes editor" resetKey={overlayNote.id}>
+              <div
+                className="min-h-full w-full px-4 pt-2 pb-6"
+                onBlur={(event) => {
+                  if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                    flushNoteDraft();
+                  }
+                }}
+              >
+                <LazyLoadBoundary name="Notes editor" resetKey="notes-overlay-editor">
                   <Suspense fallback={<InlineMarkdownEditorFallback />}>
                     <InlineMarkdownEditor
-                      key={overlayNote.id}
-                      value={overlayNote.content}
+                      noteId={overlayNoteView.id}
+                      value={overlayNoteView.content}
                       placeholder={t("notes.editor.placeholder")}
                       editorMode={noteEditorMode}
-                      onChange={(content) => saveNote({
-                        ...overlayNote,
-                        content,
-                        updatedAt: Date.now(),
-                      })}
+                      onChange={(content) => saveNoteContentDraft(overlayNoteView.id, content)}
                       previewEmptyLabel={t("notes.preview.empty")}
                       hosts={hosts}
-                      onOpenHost={(host) => handleOpenHostFromNote(host, overlayNote.id)}
+                      onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
                       onOpenExternalLink={openExternal}
                     />
                   </Suspense>
@@ -1601,6 +1877,21 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
           </div>
         </div>
       )}
+      <VaultDeleteConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={t("vault.deleteConfirm.title", {
+          name: deleteTarget?.name ?? "",
+        })}
+        description={
+          deleteTarget?.type === "group"
+            ? t("vault.deleteConfirm.noteGroupDesc")
+            : t("vault.deleteConfirm.desc")
+        }
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+        onConfirm={confirmDeleteTarget}
+      />
     </div>
   );
 };

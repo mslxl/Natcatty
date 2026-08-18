@@ -18,13 +18,13 @@ function stepsToJavaScript(steps, recordedAt) {
     const step = steps[index];
     if (step.type === "send") {
       if (step.sensitive) {
-        lines.push(`  const sensitiveValue${index} = await nct.dialog.prompt("Enter sensitive value", "");`);
-        lines.push(`  await nct.screen.sendLine(sensitiveValue${index});`);
+        lines.push(`  const sensitiveValue${index} = await nct.dialog.prompt("Enter sensitive value", "", { sensitive: true });`);
+        lines.push(`  await nct.screen.sendLine(sensitiveValue${index}, { sensitive: true });`);
         continue;
       }
       lines.push(`  await nct.screen.sendLine(${escapeJsString(step.value)});`);
     } else if (step.type === "waitFor") {
-      lines.push(`  await nct.screen.waitFor(${escapeJsString(step.value)}, ${step.timeoutMs || 5000});`);
+      lines.push(`  await nct.screen.waitForText(${escapeJsString(step.value)}, ${step.timeoutMs || 5000});`);
     } else if (step.type === "waitForPrompt") {
       lines.push(`  await nct.screen.waitForPrompt(${step.timeoutMs || 30000});`);
     } else if (step.type === "sleep") {

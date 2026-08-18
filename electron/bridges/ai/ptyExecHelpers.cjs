@@ -2,7 +2,12 @@
 
 const { StringDecoder } = require("node:string_decoder");
 const iconv = require("iconv-lite");
-const { stripAnsi, isDefaultPowerShellPromptLine } = require("./shellUtils.cjs");
+const {
+  stripAnsi,
+  isDefaultPowerShellPromptLine,
+  isDefaultCmdPromptLine,
+  isDefaultPosixPromptLine,
+} = require("./shellUtils.cjs");
 const { classifyLocalShellType } = require("../../../lib/localShell.cjs");
 
 // Build a stateful decoder for a full exec call. Serial data events can
@@ -94,34 +99,112 @@ function isPowerShellPrompt(prompt) {
   return isDefaultPowerShellPromptLine(lastLine);
 }
 
+function isCmdPrompt(prompt) {
+  const lastLine = stripAnsi(String(prompt || ""))
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .pop()
+    .replace(/\s+$/, "");
+  return isDefaultCmdPromptLine(lastLine);
+}
+
+function isPosixPrompt(prompt) {
+  const lastLine = stripAnsi(String(prompt || ""))
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .pop()
+    .replace(/\s+$/, "");
+  return isDefaultPosixPromptLine(lastLine);
+}
+
 // Prompt-driven override is intentionally narrow: only flip to PowerShell
 // when the session has no confirmed shell type. This keeps the issue #841
-// fix working (SSH/Telnet sessions never set shellKind — see
-// sshBridge.cjs:1265) while preventing a malicious remote process from
-// spoofing a `PS ...>` line on a real bash/zsh/fish/cmd session to coerce
-// a single mis-wrapped command.
+// fix working for remote Windows shells that never set shellKind at connect
+// time, while preventing a malicious remote process from spoofing a
+// `PS ...>` line on a real bash/zsh/fish/cmd session to coerce a single
+// mis-wrapped command.
+//
+// Remote login-shell probing stores a *soft* hint (`loginShellHint` /
+// session._loginShellKind) without pinning session.shellKind:
+//   - hint "fish"  → fish wrapper (issue #1854) without permanent pin
+//   - hint "posix" → native posix wrapper evaluated by interactive bash/zsh
+//                    (NOT sh -c / dash — Codex P2 on #2061)
+//   - hint "powershell" / "cmd" → Windows DefaultShell (issue #2959) without
+//     permanent pin, so a live opposing PS/cmd prompt can still win, and a
+//     live `user@host:...$` POSIX prompt (e.g. WSL nesting) can override too
+//   - live PS ...> still overrides when base kind is open
+//   - live C:\...> selects cmd when base kind is open (Windows OpenSSH default)
 //
 // Universe of shellKind values (see lib/localShell.cjs:23-33 and
 // terminalBridge.cjs:368, :932, :1074):
 //   "posix" | "powershell" | "cmd" | "fish" | "unknown" | "raw" | "" | undefined
-// Excluded on purpose:
-//   - "posix" / "fish" / "cmd": confirmed POSIX-family or cmd.exe — never override.
-//   - "powershell": already correct; no override needed (would be a no-op).
+// Excluded on purpose from prompt override:
+//   - "posix" / "fish" / "cmd" / "powershell": confirmed local/spawn kinds —
+//     never override (anti-spoof for #841).
 //   - "raw": serial / network device — execViaRawPty bypasses buildWrappedCommand.
 const SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE = new Set([
   "",
   "unknown",
 ]);
 
-function resolveEffectiveShellKind(shellKind, expectedPrompt) {
+const LOGIN_SHELL_HINTS = new Set(["posix", "fish", "powershell", "cmd"]);
+
+function resolveEffectiveShellKind(shellKind, expectedPrompt, options = {}) {
   const baseKind = shellKind || "";
-  if (
-    SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE.has(baseKind) &&
-    isPowerShellPrompt(expectedPrompt)
-  ) {
-    return "powershell";
+  const hint = options.loginShellHint || "";
+  if (SHELL_KINDS_OPEN_TO_PROMPT_OVERRIDE.has(baseKind)) {
+    if (isPowerShellPrompt(expectedPrompt)) {
+      return "powershell";
+    }
+    if (isCmdPrompt(expectedPrompt)) {
+      return "cmd";
+    }
+    // Windows OpenSSH DefaultShell soft hint + nested WSL/bash: live
+    // `user@host:...$` must win so AI does not type a PS/cmd wrapper into
+    // a POSIX shell and hang on markers. Fish/posix soft hints stay put —
+    // those login shells already share this prompt family.
+    if (
+      isPosixPrompt(expectedPrompt)
+      && (hint === "powershell" || hint === "cmd")
+    ) {
+      return "posix";
+    }
   }
-  return baseKind || "posix";
+  if (baseKind) return baseKind;
+
+  // Soft login-shell hint from remote probe (not a permanent pin).
+  if (LOGIN_SHELL_HINTS.has(hint)) return hint;
+
+  return "posix";
+}
+
+// Discard unfinished prompt-line input before the agent wrapper so typed-but-
+// not-entered text is not concatenated onto the injected command (#2962).
+// Raw/serial devices have no portable line-kill binding; leave them alone.
+function buildPendingInputClearPrefix(shellKind) {
+  switch (shellKind) {
+    case "raw":
+      return "";
+    case "cmd":
+      return "\x1b";
+    case "powershell":
+      // Escape = Windows-mode PSReadLine RevertLine (issue reporter default).
+      // Ctrl+U/Ctrl+K also fire for Emacs/Vi when those bindings exist.
+      return "\x1b\x15\x0b";
+    default:
+      return "\x15\x0b";
+  }
+}
+
+function buildPosixWrapperBody(command, marker) {
+  const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
+  const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
+  const cmdAssign = commandLines.length > 1
+    ? `${marker}_cmd=$(printf '%s\\n' ${commandLines.map((line) => `'${escapePosixSingleQuoted(line)}'`).join(" ")})`
+    : `${marker}_cmd='${escapePosixSingleQuoted(command)}'`;
+  return (
+    `${marker}=0; ${cmdAssign}; { printf '%s\\n' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }`
+  );
 }
 
 function buildWrappedCommand(command, shellKind, marker) {
@@ -177,8 +260,21 @@ function buildWrappedCommand(command, shellKind, marker) {
       //    cannot cause bash to flush the end marker from the input buffer.
       //    trap ':' INT lets child processes receive SIGINT normally while
       //    preventing the shell from aborting the compound command.
-      const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
-      const escaped = escapePosixSingleQuoted(command);
+      //
+      // 4) The eval runs inside a subshell ( ... ) so shell-terminating
+      //    constructs in the generated command — set -e / set -o errexit
+      //    followed by a failure, exit, shell option changes, traps,
+      //    function/alias definitions — end or mutate only the subshell,
+      //    never the user's active login shell (issue #1850). set -e still
+      //    behaves normally *inside* the command, and the subshell shares
+      //    the PTY so the user sees all output live. The intentional
+      //    trade-off is that cd/export no longer persist into the user's
+      //    shell or across agent commands; the terminal.execute tool
+      //    description tells the model to combine cd with its command.
+      //    Earlier attempts (PRs #1852/#1882) that instead tried to detect
+      //    dangerous commands grew into shell parsing and were abandoned —
+      //    do not reintroduce detection here.
+      //
       // Leading single space: lets bash/zsh skip recording this command
       // in history when the user already has HISTCONTROL=ignorespace
       // (bash) or HIST_IGNORE_SPACE (zsh) configured — Debian/Ubuntu and
@@ -186,22 +282,23 @@ function buildWrappedCommand(command, shellKind, marker) {
       // can opt in by adding `HISTCONTROL=ignoreboth` to ~/.bashrc.
       // Without that config the prefix is harmless; it just doesn't
       // suppress history recording.
-      return (
-        ` ${marker}=0; ${marker}_cmd='${escaped}'; { printf '%s\\n' '${marker}_S'; trap ':' INT; ${noPager}eval "$${marker}_cmd"; __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }\n`
-      );
+      return ` ${buildPosixWrapperBody(command, marker)}\n`;
     }
   }
 }
 
-function findEndMarker(outputText, marker) {
+function findEndMarker(outputText, marker, { allowInline = false } = {}) {
   const endPattern = marker + "_E:";
   let searchFrom = 0;
   while (searchFrom < outputText.length) {
     const endIdx = outputText.indexOf(endPattern, searchFrom);
     if (endIdx === -1) return null;
 
-    // Accept if at start of output, or preceded by \n or \r (line boundary)
-    if (endIdx === 0 || outputText[endIdx - 1] === "\n" || outputText[endIdx - 1] === "\r") {
+    // Before the start marker is confirmed, require a line boundary so the
+    // echoed wrapper command cannot be mistaken for real completion. Once the
+    // command has started, the random marker can safely follow output that did
+    // not end with a newline.
+    if (allowInline || endIdx === 0 || outputText[endIdx - 1] === "\n" || outputText[endIdx - 1] === "\r") {
       const afterEnd = outputText.slice(endIdx + endPattern.length);
       const codeMatch = afterEnd.match(/^(\d+)/);
       const exitCode = codeMatch ? parseInt(codeMatch[1], 10) : null;
@@ -238,8 +335,16 @@ function normalizePtyOutput(stdout, {
 }
 
 function appendBoundedOutput(current, chunk, maxBufferedChars) {
-  const combined = `${current || ""}${chunk || ""}`;
   const limit = Number.isFinite(maxBufferedChars) ? Math.max(0, Math.floor(maxBufferedChars)) : 0;
+  const currentText = String(current || "");
+  const chunkText = String(chunk || "");
+  if (limit > 0 && chunkText.length >= limit) {
+    return {
+      text: chunkText.slice(-limit),
+      dropped: currentText.length + chunkText.length - limit,
+    };
+  }
+  const combined = `${currentText}${chunkText}`;
   if (limit <= 0 || combined.length <= limit) {
     return { text: combined, dropped: 0 };
   }
@@ -343,6 +448,7 @@ module.exports = {
   subscribeToPtyData,
   hasExpectedPromptSuffix,
   resolveEffectiveShellKind,
+  buildPendingInputClearPrefix,
   buildWrappedCommand,
   findEndMarker,
   normalizePtyOutput,

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -90,6 +91,7 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   addMessageToSession: () => undefined,
   updateLastMessage: () => undefined,
   updateMessageById: () => undefined,
+  persistContextCompaction: () => undefined,
   providers: [],
   activeProviderId: '',
   activeModelId: '',
@@ -105,6 +107,51 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   scopeTargetId: 'terminal-1',
   isVisible: false,
   ...overrides,
+});
+
+test('send preflight aborts after the panel unmounts or the scope changes', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.match(source, /sendEpochRef/);
+  assert.match(source, /if \(isSendStale\(\)\) return;/);
+});
+
+test('send preflight locks header agent and new-chat controls', () => {
+  const panel = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  const content = readFileSync(new URL('./AIChatPanelContent.tsx', import.meta.url), 'utf8');
+  assert.match(panel, /sending=\{isSending\}/);
+  assert.match(content, /disabled=\{sending\}/);
+  const selector = readFileSync(new URL('./ai/AgentSelector.tsx', import.meta.url), 'utf8');
+  assert.match(selector, /if \(parked \|\| disabled\) setOpen\(false\)/);
+});
+
+test('first send awaits provider sync instead of idle-deferring it', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.match(source, /await sendBridge\.aiSyncProviders\(providers\)/);
+  assert.match(source, /await sendBridge\.aiSyncWebSearch\(/);
+  assert.doesNotMatch(source, /scheduleWhenAiComposerIdle\(\(\) => \{\s*void bridge\.aiSyncProviders/);
+});
+
+test('send and new chat discard pending composer text', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.match(source, /discardPendingComposerText/);
+  assert.match(source, /if \(!options\?\.keepPendingText\) discardPendingComposerText\(\)/);
+});
+
+test('text-only draft writes do not emit AI state changes', () => {
+  const source = readFileSync(new URL('../application/state/useAIState.ts', import.meta.url), 'utf8');
+  assert.match(source, /draftsByScopeEqualIgnoringAllComposerText/);
+  assert.match(source, /if \(textOnly\) return;/);
+});
+
+test('first composer keystroke does not create a store draft synchronously', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  const setter = source.slice(
+    source.indexOf('const setInputValue = useCallback'),
+    source.indexOf('const addFiles = useCallback'),
+  );
+  assert.match(setter, /pendingComposerTextRef\.current = value/);
+  assert.doesNotMatch(setter, /enterScopeDraftMode/);
+  assert.doesNotMatch(setter, /setTimeout/);
 });
 
 test('hidden empty AI side panel can release its subtree', () => {
@@ -183,6 +230,41 @@ test('AI side panel re-renders when retained content becomes visible again', () 
   ), false);
 });
 
+test('hidden retained AI side panel keeps the composer and skips message content', () => {
+  const markup = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      { locale: 'en' },
+      React.createElement(
+        TooltipProvider,
+        null,
+        React.createElement(AIChatSidePanel, baseProps({
+          isVisible: false,
+          activeSessionIdMap: { 'terminal:terminal-1': 'session-1' },
+          sessions: [
+            session({
+              messages: [
+                { id: 'm1', role: 'user', content: 'hidden-user-message', timestamp: 1 },
+                { id: 'm2', role: 'assistant', content: 'hidden-assistant-message', timestamp: 2 },
+              ],
+            }),
+          ],
+          draftsByScope: {
+            'terminal:terminal-1': draft({ text: 'draft still retained' }),
+          },
+        })),
+      ),
+    ),
+  );
+
+  assert.match(markup, /data-section="ai-chat-panel-retained"/);
+  assert.match(markup, /inert/);
+  assert.match(markup, /aria-hidden/);
+  assert.match(markup, /textarea/);
+  assert.doesNotMatch(markup, /hidden-user-message/);
+  assert.doesNotMatch(markup, /hidden-assistant-message/);
+});
+
 test('AI side panel re-renders when command timeout changes', () => {
   const props = baseProps({
     isVisible: true,
@@ -193,4 +275,94 @@ test('AI side panel re-renders when command timeout changes', () => {
     props,
     { ...props, commandTimeout: 86_400 },
   ), false);
+});
+
+test('AI side panel skips re-render when only a sibling scope session object changes', () => {
+  const own = session({ id: 'session-1', scope: { type: 'terminal', targetId: 'terminal-1' } });
+  const siblingA = session({ id: 'session-2', scope: { type: 'terminal', targetId: 'terminal-2' } });
+  const siblingB = session({ id: 'session-2', scope: { type: 'terminal', targetId: 'terminal-2' } });
+  const prev = baseProps({
+    isVisible: true,
+    scopeType: 'terminal',
+    scopeTargetId: 'terminal-1',
+    sessions: [own, siblingA],
+  });
+  const next = {
+    ...prev,
+    sessions: [own, siblingB],
+  };
+  assert.equal(aiChatSidePanelPropsAreEqual(prev, next), true);
+
+  const ownStreamed = session({ id: 'session-1', scope: { type: 'terminal', targetId: 'terminal-1' } });
+  assert.equal(
+    aiChatSidePanelPropsAreEqual(prev, { ...prev, sessions: [ownStreamed, siblingA] }),
+    false,
+  );
+});
+
+test('AI side panel skips re-render when only the composer draft text changes', () => {
+  const empty = draft({ text: '' });
+  const prev = baseProps({
+    isVisible: true,
+    scopeType: 'terminal',
+    scopeTargetId: 'terminal-1',
+    draftsByScope: {
+      'terminal:terminal-1': empty,
+    },
+  });
+  const next = {
+    ...prev,
+    draftsByScope: {
+      'terminal:terminal-1': { ...empty, text: '你好', updatedAt: 2 },
+    },
+  };
+  assert.equal(aiChatSidePanelPropsAreEqual(prev, next), true);
+});
+
+test('workspace AI panel memo follows visible inherited session, not hidden terminal maps', () => {
+  const visibleMemberChat = session({
+    id: 'chat-visible',
+    scope: { type: 'terminal', targetId: 'terminal-b', hostIds: ['host-b'] },
+  });
+  const hiddenFocusedChat = session({
+    id: 'chat-hidden',
+    scope: { type: 'terminal', targetId: 'terminal-other', hostIds: ['host-other'] },
+  });
+  const prev = baseProps({
+    isVisible: true,
+    scopeType: 'workspace',
+    scopeTargetId: 'ws-1',
+    focusedSessionId: 'terminal-a',
+    terminalSessions: [
+      {
+        sessionId: 'terminal-a',
+        hostId: 'host-a',
+        hostname: 'a.example',
+        label: 'A',
+        connected: true,
+      },
+      {
+        sessionId: 'terminal-b',
+        hostId: 'host-b',
+        hostname: 'b.example',
+        label: 'B',
+        connected: true,
+      },
+    ],
+    activeSessionIdMap: {
+      'terminal:terminal-a': 'chat-hidden',
+      'terminal:terminal-b': 'chat-visible',
+    },
+    sessions: [visibleMemberChat, hiddenFocusedChat],
+  });
+  const streamedVisible = session({
+    id: 'chat-visible',
+    scope: { type: 'terminal', targetId: 'terminal-b', hostIds: ['host-b'] },
+    messages: [{ id: 'm1', role: 'assistant', content: 'stream', timestamp: 2 }],
+  });
+
+  assert.equal(
+    aiChatSidePanelPropsAreEqual(prev, { ...prev, sessions: [streamedVisible, hiddenFocusedChat] }),
+    false,
+  );
 });

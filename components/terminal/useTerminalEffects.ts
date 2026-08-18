@@ -1,16 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useRef } from 'react';
+import { publishPluginTerminalRuntimeLifecycleEvent } from '../../application/state/pluginTerminalRuntimeLifecycle';
+import { markTerminalCommandCompletionPending } from './runtime/promptLineBreak';
 import { resolveFontWeightBold } from '../../lib/fontWeightAvailability';
 import { bundledFamiliesInStack } from '../../lib/fontAvailability';
+import { isMacPlatform } from '../../lib/utils';
 import { resolveXTermScrollback } from '../../infrastructure/config/xtermPerformance';
-import { shouldInterceptMouseTrackingContextMenu } from './runtime/middleClickBehavior';
+import {
+  createMacOptionForcedSelectionMouseEvent,
+  createRightClickMouseTrackingPressClaim,
+  shouldInterceptMouseTrackingContextMenu,
+  shouldReplayShiftMouseSelectionAsMacOption,
+  shouldStopRightClickMouseTrackingMouseUp,
+} from './runtime/middleClickBehavior';
 import {
   hasOpenAppDialog,
   TERMINAL_SESSION_RESTORE_FOCUS_EVENT,
   type TerminalSessionRestoreFocusDetail,
 } from './focusTerminalSession';
-import { resolveHibernatePreferWasmSerialize } from '../../domain/terminalHibernate';
+import {
+  resolveHibernatePreferWasmSerialize,
+  resolveTerminalHibernateEnabledForProtocol,
+} from '../../domain/terminalHibernate';
+import { setTerminalBootEpoch } from '../../domain/terminalBootEpoch';
 import { applyUserCursorBlinkPreference } from './runtime/cursorPreference';
+import { resolveCursorLineHighlightBackground } from '../../domain/cursorLineHighlight';
 import { getFlowControllerForTerm } from './runtime/terminalSessionAttachment';
 import {
   prioritizeTerminalInput,
@@ -24,15 +38,36 @@ import {
 } from './terminalHibernateRuntime';
 import {
   cancelScheduledUnfocusedRepaint,
+  flushPendingTerminalWritesBeforeHibernate,
+  flushPendingTerminalWritesOnResume,
   forceTerminalRepaintBypassingAnimationFrame,
+  repaintTerminalAfterReveal,
 } from './runtime/terminalUnfocusedRepaint';
+import {
+  forceXTermFontRemeasure,
+  type XTermFontRemeasureTarget,
+} from './runtime/terminalFontRemeasure';
+import { shouldClaimTerminalKeyboardFocus } from '../../domain/terminalKeyboardFocus';
+import { handleTerminalOscNotification } from '../../application/state/oscDesktopNotifications';
+import { settleTerminalSearchAfterLayout } from './hooks/useTerminalSearch';
 import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
   scheduleTerminalCloseTeardown,
   serializeTerminalCloseFallback,
 } from './runtime/terminalCloseCapture';
-import { getConnectionTimeoutMs, shouldRunConnectionTimeout } from './connectionTimeouts';
+import {
+  CONNECTION_PROGRESS_START,
+  advanceIndeterminateConnectionProgress,
+} from './connectionProgress';
+import {
+  getConnectionTimeoutMs,
+  resolveActiveConnectionTimeoutHost,
+  shouldRunConnectionTimeout,
+} from './connectionTimeouts';
+import { resolveHostSshConnectionTimeouts } from '../../domain/sshConnectionTimeouts';
+import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
+import { isPluginHostProtocol } from '../../domain/pluginConnection';
 
 type TerminalEffectsContext = Record<string, any>;
 
@@ -58,6 +93,8 @@ type ZmodemToastApi = {
   success: (message: string, title?: string) => void;
   error: (message: string, title?: string) => void;
 };
+
+const CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS = 3000;
 
 export function resolveZmodemTransferToast(zmodem: ZmodemToastInput): ZmodemToast {
   if (zmodem.active) return null;
@@ -94,15 +131,6 @@ export function applyZmodemTransferToast(
     toast.success(zmodemToast.message, zmodemToast.title);
   }
 }
-
-const areSelectionOverlayPositionsEqual = (
-  a: SelectionOverlayPosition,
-  b: SelectionOverlayPosition,
-): boolean => {
-  if (a === b) return true;
-  if (!a || !b) return false;
-  return a.left === b.left && a.top === b.top;
-};
 
 export function resolveSelectionOverlayPosition(term: any, container: HTMLElement | null): SelectionOverlayPosition {
   if (!container || !term?.getSelectionPosition || !term.getSelection()) return null;
@@ -143,7 +171,28 @@ export function resolveSelectionOverlayPosition(term: any, container: HTMLElemen
 }
 
 export function useTerminalEffects(ctx: TerminalEffectsContext) {
-  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOutputTriggerUserInputRef, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, prepareRestoredReconnect, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setHasSelection, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setSelectionOverlayPosition, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, onSnippetShortkeyRef, snippetsRef, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState } = ctx;
+  const { CONNECTION_TIMEOUT, Error, XTERM_PERFORMANCE_CONFIG, applyUserCursorPreference, auth, autocompleteCloseRef, autocompleteInputRef, autocompleteKeyEventRef, captureTerminalLogData, chainHosts, chainProgress, clearTerminalCwd, commandBufferRef, connectionLogBufferRef, containerRef, createPromptLineBreakState, createReplaySafeTerminalLogSanitizer, createXTermRuntime, deferTerminalResizeRef, disableTerminalFontZoomRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippetCommand, finalizeTerminalLogData, fitAddonRef, fontFamilyId, fontSize, fontWeightFixupDoneRef, forceCloseHibernatedSession, forceSyncRenderAfterResize, handleOsc52ReadRequest, handleTerminalDataCaptureOnce, hasConnectedRef, hasRuntimeRef, host, hotkeySchemeRef, hibernatedRef, identities, inWorkspace, isBootActiveRef, bootEpochRef, isBroadcastEnabledRef, isComposeBarOpen, isConnectionAwaitingUserInput, isConnectionPastTcpDial, isFocusMode, isFocused, isLocalConnection, isNetworkDevice, isResizing, isRestoringSelectionRef, isSearchOpen, isSerialConnection, isVisible, isVisibleRef, keyBindingsRef, keys, kittyKeyboardProtocolEnabledForSession, knownCwdRef, lastFittedSizeRef, lastToastedErrorRef, logger, mouseTrackingRef, needsHostKeyVerification, onBroadcastInputRef, onBroadcastInterruptPriorityChange, onCommandExecuted, onCommandSubmitted, onHotkeyActionRef, onOpenExternalError, onOutputTriggerUserInputRef, onPluginRuntimeCwdChange, onSnippetExecutorChange, onTerminalCwdChange, onTerminalTitleChange, onTerminalBell, onTerminalFontSizeChange, paneLayoutKey, passwordPromptActiveRef, pendingAuthRef, pendingOutputScrollRef, pluginDecorationRules, pluginTerminalLifecycle, pluginTerminalProviderRevision, isPluginTerminalProviderAvailable, requestPluginTerminalProviders, prepareRestoredReconnect, prepareInitialCwdIntent, prevIsResizingRef, promptLineBreakStateRef, resizeSession, resolveHostAuth, resolvedFontFamily, safeFit, scriptRecorderRef, searchAddonRef, serialConfig, serialLineBufferRef, serializeAddonRef, sessionId, sessionRef, sessionStarters, setError, setHasMouseTracking, setIsCancelling, setIsDisconnectedDialogDismissed, requestSearchFocus, setNeedsHostKeyVerification, setPendingHostKeyInfo, setPendingHostKeyRequestId, setProgressLogs, setProgressValue, setShowLogs, setStatus, setTimeLeft, shouldEnableNativeUserInputAutoScroll, shouldProbeSessionCwd, shouldStartTerminalBackend, attachExistingSession, attachAuthorization, attachHomeWebContentsIdRef, onSnippetShortkeyRef, snippetsRef, splitResizeActive, status, statusRef, sudoAutofillRef, t, teardown, telnetLocalEchoRef, termRef, terminalAltKeyOptions, terminalBackend, terminalContextActionsRef, terminalCwdTracker, terminalDataCapturedRef, terminalLogSanitizerRef, terminalSettings, terminalSettingsRef, terminalTitleRef, toHostKeyInfo, toast, updateStatus, useEffect, useLayoutEffect, xtermRuntimeRef, zmodem, zmodemToastedRef, restoreState, vaultInitialized } = ctx;
+  const effectiveTerminalProtocol = resolveEffectiveTerminalProtocol(host);
+  const hibernateHiddenTabs = resolveTerminalHibernateEnabledForProtocol(
+    terminalSettings,
+    effectiveTerminalProtocol,
+  ) && !kittyKeyboardProtocolEnabledForSession;
+  ctx.pluginDecorationRulesRef.current = pluginDecorationRules;
+  const prevIsSearchOpenRef = useRef(isSearchOpen);
+  const isFocusedRef = useRef(!!isFocused);
+  isFocusedRef.current = !!isFocused;
+  const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
+    markTerminalCommandCompletionPending(promptLineBreakStateRef);
+    publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
+    void xtermRuntimeRef.current?.pluginProviderHost?.commandSubmitted(args[0]);
+  };
+  const pluginAwareOnCommandCompleted = () => {
+    publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandCompleted');
+    void xtermRuntimeRef.current?.pluginProviderHost?.commandCompleted();
+  };
+  const isRendererActive = isVisible || !hibernateHiddenTabs;
+  const isRendererActiveRef = useRef(isRendererActive);
+  isRendererActiveRef.current = isRendererActive;
 
   // Remember the last layout we successfully refit while visible so revisiting
   // the same workspace tab does not replay expensive force-fit/WebGL recovery.
@@ -159,6 +208,14 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       // Merge global rules with host-level rules
       const globalRules = terminalSettings?.keywordHighlightRules ?? [];
       const hostRules = host?.keywordHighlightRules ?? [];
+      const providerRules = pluginDecorationRules.map((rule) => ({
+        id: rule.id,
+        label: rule.label,
+        patterns: [...rule.patterns],
+        color: rule.color,
+        enabled: true,
+        providerId: rule.providerId,
+      }));
 
       const globalEnabled = terminalSettings?.keywordHighlightEnabled ?? false;
       // Host-level toggle: undefined = inherit global, true/false = explicit override
@@ -171,9 +228,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
       const mergedRules = [
         ...(effectiveGlobalEnabled ? globalRules : []),
-        ...(effectiveHostEnabled ? hostRules : [])
+        ...(effectiveHostEnabled ? hostRules : []),
+        ...providerRules,
       ];
-      const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled;
+      const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled || providerRules.length > 0;
 
       xtermRuntimeRef.current.keywordHighlighter.setRules(mergedRules, isEnabled);
     }
@@ -181,8 +239,52 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     terminalSettings?.keywordHighlightEnabled,
     terminalSettings?.keywordHighlightRules,
     host?.keywordHighlightEnabled,
-    host?.keywordHighlightRules
+    host?.keywordHighlightRules,
+    pluginDecorationRules,
   ]);
+
+  useEffect(() => {
+    const runtime = xtermRuntimeRef.current;
+    if (!runtime?.cursorLineHighlighter) return;
+    runtime.cursorLineHighlighter.setBackgroundColor(
+      resolveCursorLineHighlightBackground(effectiveTheme.colors),
+    );
+    runtime.cursorLineHighlighter.setEnabled(
+      terminalSettings?.highlightCursorLine ?? false,
+    );
+  }, [
+    effectiveTheme.colors.background,
+    effectiveTheme.colors.foreground,
+    effectiveTheme.colors.selection,
+    terminalSettings?.highlightCursorLine,
+  ]);
+
+  useEffect(() => {
+    xtermRuntimeRef.current?.pluginProviderHost?.providerAvailabilityChanged(
+      effectiveTheme.colors.background,
+    );
+    xtermRuntimeRef.current?.pluginLinkProviderHost?.providerAvailabilityChanged();
+  }, [
+    effectiveTheme.colors.background,
+    pluginTerminalProviderRevision,
+    xtermRuntimeRef,
+  ]);
+
+  useEffect(() => {
+    xtermRuntimeRef.current?.pluginProviderHost?.setActive(
+      status === 'connected',
+      effectiveTheme.colors.background,
+    );
+    xtermRuntimeRef.current?.pluginLinkProviderHost?.setActive(status === 'connected');
+  }, [effectiveTheme.colors.background, status, xtermRuntimeRef]);
+
+  useEffect(() => {
+    xtermRuntimeRef.current?.pluginProviderHost?.setVisible(
+      isVisible,
+      effectiveTheme.colors.background,
+    );
+    xtermRuntimeRef.current?.pluginLinkProviderHost?.setVisible(isVisible);
+  }, [effectiveTheme.colors.background, isVisible, xtermRuntimeRef]);
 
 
   // Work around xterm.js WebGL renderer bug: glyphs rendered via the constructor
@@ -210,7 +312,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    if (host.protocol === "local" || host.protocol === "serial" || host.protocol === "telnet") {
+    if (host.protocol === "local" || host.protocol === "serial" || host.protocol === "telnet"
+      || isPluginHostProtocol(host.protocol)) {
       return;
     }
     if (status !== "connected" || !sessionRef.current || knownCwdRef.current) return;
@@ -232,9 +335,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         }
         const result = await terminalBackend.getSessionPwd(id);
         if (!cancelled && !terminalCwdTracker.getRendererCwd() && result.success && result.cwd) {
-          const cwd = terminalCwdTracker.setRendererCwd(result.cwd);
-          knownCwdRef.current = cwd;
-          onTerminalCwdChange?.(sessionId, cwd ?? null);
+          onPluginRuntimeCwdChange(result.cwd);
         }
       } catch {
         // Best effort only.
@@ -273,6 +374,22 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     const dispose = terminalBackend.onHostKeyVerification?.((request) => {
       if (request.sessionId !== sessionId) return;
+      // Disconnect keeps the pane mounted; reject late host-key prompts instead
+      // of reopening approval UI on a disconnected / aborted boot. After a
+      // reconnect the shared flags are active again, so also require the
+      // request's boot epoch (when present) to match the current boot.
+      const requestBootEpoch = request.bootEpoch;
+      const bootEpochMismatch = Number.isFinite(requestBootEpoch)
+        && bootEpochRef
+        && requestBootEpoch !== bootEpochRef.current;
+      if (
+        !isBootActiveRef.current
+        || statusRef.current === "disconnected"
+        || bootEpochMismatch
+      ) {
+        void terminalBackend.respondHostKeyVerification?.(request.requestId, false);
+        return;
+      }
 
       setPendingHostKeyRequestId(request.requestId);
       setPendingHostKeyInfo(toHostKeyInfo(request));
@@ -293,8 +410,25 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
+    // Restored sessions can mount while vault init has published hosts but not
+    // yet decrypted keys. Wait for hydration (and re-run when it flips) so the
+    // first SSH dial does not go out with an empty keychain.
+    if (!attachExistingSession && !vaultInitialized) {
+      return;
+    }
+
     let disposed = false;
+    let initialFitTimer: ReturnType<typeof setTimeout> | undefined;
+    let ownedRuntime: { dispose: () => void } | null = null;
+    // Every boot owns a controller so cleanup can cancel an in-flight start
+    // instead of waiting for the async capture/teardown below to finish.
+    const bootAbort = new AbortController();
+    const bootStartOptions = { signal: bootAbort.signal };
     const closeGeneration = ++terminalBootCloseGenerationRef.current;
+    if (bootEpochRef) {
+      bootEpochRef.current += 1;
+      setTerminalBootEpoch(sessionId, bootEpochRef.current);
+    }
     isBootActiveRef.current = true;
     terminalDataCapturedRef.current = false;
     connectionLogBufferRef.current.reset();
@@ -308,6 +442,25 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     setIsDisconnectedDialogDismissed(false);
     promptLineBreakStateRef.current = createPromptLineBreakState();
 
+    const disposeOwnedRuntime = () => {
+      const runtime = ownedRuntime;
+      ownedRuntime = null;
+      if (!runtime) return;
+      if (xtermRuntimeRef.current === runtime) {
+        xtermRuntimeRef.current = null;
+        termRef.current = null;
+        fitAddonRef.current = null;
+        serializeAddonRef.current = null;
+        searchAddonRef.current = null;
+        hasRuntimeRef.current = false;
+      }
+      try {
+        runtime.dispose();
+      } catch (err) {
+        logger.warn("Failed to dispose terminal runtime on unmount", err);
+      }
+    };
+
     const boot = async () => {
       try {
         if (disposed || !containerRef.current) return;
@@ -320,6 +473,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           fontSize,
           terminalTheme: effectiveTheme,
           terminalSettingsRef,
+          kittyKeyboardProtocolEnabled: kittyKeyboardProtocolEnabledForSession,
           terminalBackend,
           sessionRef,
           hotkeySchemeRef,
@@ -327,6 +481,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           keyBindingsRef,
           onHotkeyActionRef,
           onTerminalFontSizeChange,
+          onOpenExternalError,
           isBroadcastEnabledRef,
           onBroadcastInputRef,
           snippetsRef,
@@ -335,10 +490,26 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           statusRef,
           onCommandExecuted,
           onCommandSubmitted,
+          onTrustedCommandSubmitted: pluginAwareOnCommandSubmitted,
+          onCommandCompleted: pluginAwareOnCommandCompleted,
+          requestPluginTerminalProviders,
+          pluginProviderVisible: isVisible,
+          isPluginTerminalProviderAvailable,
+          onResize: (cols: number, rows: number) => (
+            publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'resized', { cols, rows })
+          ),
+          onAlternateScreenChange: (alternateScreen: boolean) => (
+            publishPluginTerminalRuntimeLifecycleEvent(
+              pluginTerminalLifecycle,
+              'alternateScreenChanged',
+              { alternateScreen },
+            )
+          ),
           commandBufferRef,
           promptLineBreakStateRef,
           scriptRecorderRef,
           passwordPromptActiveRef,
+          allowHostStyleGreaterThanPrompt: isNetworkDevice,
           onOutputTriggerUserInputRef,
           sudoAutofillRef,
           requestSearchFocus,
@@ -349,15 +520,29 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           telnetLocalEchoRef,
           onTerminalLogData: captureTerminalLogData,
           onCwdChange: (cwd: string) => {
-            terminalCwdTracker.setRendererCwd(cwd);
-            knownCwdRef.current = cwd;
-            onTerminalCwdChange?.(sessionId, cwd, { source: 'osc7' });
+            onPluginRuntimeCwdChange(cwd, { source: 'osc7' });
           },
           onTitleChange: (title: string | null) => {
+            terminalTitleRef.current = title || undefined;
+            publishPluginTerminalRuntimeLifecycleEvent(
+              pluginTerminalLifecycle,
+              'titleChanged',
+              { ...(title ? { title } : {}) },
+            );
             onTerminalTitleChange?.(sessionId, title);
           },
           onBell: () => {
             onTerminalBell?.(sessionId);
+          },
+          onOscNotification: (notification) => {
+            handleTerminalOscNotification({
+              notification,
+              mode: terminalSettingsRef.current?.oscNotifications,
+              sessionFocused: isFocusedRef.current,
+              sessionId,
+              fallbackTitle: host.label || host.hostname || "Netcatty",
+              onSessionActivity: () => onTerminalBell?.(sessionId),
+            });
           },
           onOsc52ReadRequest: handleOsc52ReadRequest,
           // Autocomplete integration
@@ -367,7 +552,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           isRestoringSelectionRef,
           // Defer WebGL context creation for panes that mount hidden (e.g. the
           // background tabs of a batch connect) until they first become visible.
-          initiallyVisible: isVisible,
+          initiallyVisible: isRendererActive,
         });
 
         if (disposed) {
@@ -375,6 +560,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           return;
         }
 
+        ownedRuntime = runtime;
         xtermRuntimeRef.current = runtime;
         termRef.current = runtime.term;
         fitAddonRef.current = runtime.fitAddon;
@@ -383,7 +569,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         hasRuntimeRef.current = true;
         // xterm boots asynchronously; ResizeObserver may have already run without
         // fitAddon and will not re-attach until isVisible/isResizing changes.
-        setTimeout(() => {
+        initialFitTimer = setTimeout(() => {
           if (disposed) return;
           safeFit({ force: true, requireVisible: true });
         }, 0);
@@ -403,11 +589,19 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         ];
         const isEnabled = effectiveGlobalEnabled || effectiveHostEnabled;
         runtime.keywordHighlighter.setRules(mergedRules, isEnabled);
+        runtime.cursorLineHighlighter.setBackgroundColor(
+          resolveCursorLineHighlightBackground(effectiveTheme.colors),
+        );
+        runtime.cursorLineHighlighter.setEnabled(
+          terminalSettingsRef.current?.highlightCursorLine ?? false,
+        );
 
         const term = runtime.term;
         const restoredReconnect = restoreState === "restored-disconnected";
         if (restoredReconnect) {
           prepareRestoredReconnect?.();
+        } else {
+          prepareInitialCwdIntent?.();
         }
         const setBackendConnectingStatus = () => {
           if (restoredReconnect) {
@@ -417,36 +611,192 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           }
         };
 
+        if (attachExistingSession) {
+          // Observe popup: pause → snapshot → rebind → resume so no live bytes
+          // fall into the gap between snapshot and route handoff.
+          let outputRebound = false;
+          let reboundHomeWebContentsId: number | null = null;
+          const outputPauseLease = await terminalBackend.acquireSessionFlowPauseLease(sessionId);
+          try {
+            const paused = await outputPauseLease.waitForPause();
+            if (!paused?.success && paused?.error === "Output drain unavailable") {
+              await new Promise((resolve) => setTimeout(resolve, 40));
+            } else if (!paused?.success) {
+              throw new Error(paused?.error || "Failed to drain terminal output");
+            }
+            if (disposed) {
+              outputPauseLease.release();
+              return;
+            }
+            // Snapshot while home still owns the display route (and stream is paused).
+            const snap = await terminalBackend.requestSessionSnapshot?.(
+              sessionId,
+              attachAuthorization || "",
+            );
+            if (disposed) {
+              outputPauseLease.release();
+              return;
+            }
+            if (!snap?.success) {
+              throw new Error(snap?.error || "Failed to capture terminal snapshot");
+            }
+            if (typeof snap.kittyKeyboardProtocolEnabled === "boolean") {
+              runtime.setKittyKeyboardProtocolEnabled(snap.kittyKeyboardProtocolEnabled);
+            }
+            if (typeof snap.passwordPromptActive === "boolean") {
+              passwordPromptActiveRef.current = snap.passwordPromptActive;
+            }
+            if (snap.cwd !== undefined) {
+              const cwd = terminalCwdTracker.setRendererCwd(snap.cwd);
+              knownCwdRef.current = cwd;
+              publishPluginTerminalRuntimeLifecycleEvent(
+                pluginTerminalLifecycle,
+                'cwdChanged',
+                { ...(cwd ? { cwd } : {}) },
+              );
+              onTerminalCwdChange?.(sessionId, cwd ?? null);
+            }
+            if (snap.title !== undefined) {
+              const title = snap.title || null;
+              terminalTitleRef.current = title ?? undefined;
+              publishPluginTerminalRuntimeLifecycleEvent(
+                pluginTerminalLifecycle,
+                'titleChanged',
+                { ...(title ? { title } : {}) },
+              );
+              onTerminalTitleChange?.(sessionId, title);
+            }
+            if (snap.kittyKeyboardModeState) {
+              runtime.restoreKittyKeyboardModeState(snap.kittyKeyboardModeState);
+            }
+            if (snap?.success && snap.snapshot) {
+              try {
+                await new Promise<void>((resolve) => term.write(snap.snapshot!, resolve));
+              } catch (writeErr) {
+                logger.warn("Failed to write attach snapshot to popup terminal", writeErr);
+              }
+            }
+            // Snapshot was applied with term.write(), not the connection-log
+            // sanitizer. Re-seed from the restored buffer so live TUI redraws
+            // after attach (vim already open) stay omitted until leave.
+            terminalLogSanitizerRef.current = createReplaySafeTerminalLogSanitizer({
+              alternateScreenActive: isTerminalAlternateScreenActive(term),
+            });
+
+            const rebind = await terminalBackend.rebindSessionOutput?.(
+              sessionId,
+              attachAuthorization || "",
+            );
+            if (disposed) {
+              if (rebind?.success) {
+                try {
+                  await terminalBackend.restoreSessionOutput?.(
+                    sessionId,
+                    rebind.previousWebContentsId ?? null,
+                    attachAuthorization || "",
+                  );
+                } catch {
+                  // Main-process closed lifecycle remains the final fallback.
+                }
+              }
+              outputPauseLease.release();
+              return;
+            }
+            if (!rebind?.success) {
+              outputPauseLease.release();
+              setError(rebind?.error || "Failed to attach to session");
+              updateStatus("disconnected");
+              isBootActiveRef.current = false;
+              return;
+            }
+            outputRebound = true;
+            reboundHomeWebContentsId = rebind.previousWebContentsId ?? null;
+            if (attachHomeWebContentsIdRef) {
+              attachHomeWebContentsIdRef.current = rebind.previousWebContentsId ?? null;
+            }
+            sessionRef.current = sessionId;
+            const attached = sessionStarters.reattachSession(term);
+            if (!attached) {
+              throw new Error("Failed to attach display to session");
+            }
+            // Resume only after the popup has subscribed to the live session.
+            outputPauseLease.release();
+            hasConnectedRef.current = true;
+            updateStatus("connected");
+            setTimeout(() => {
+              if (disposed) return;
+              safeFit({ force: true, requireVisible: true });
+              try {
+                term.scrollToBottom?.();
+              } catch {
+                // ignore
+              }
+              try {
+                terminalBackend.resizeSession?.(sessionId, term.cols, term.rows);
+              } catch {
+                // ignore
+              }
+            }, 50);
+          } catch (attachErr) {
+            if (outputRebound) {
+              try {
+                const restored = await terminalBackend.restoreSessionOutput?.(
+                  sessionId,
+                  reboundHomeWebContentsId,
+                  attachAuthorization || "",
+                );
+                if (restored?.success) outputPauseLease.release();
+              } catch {
+                // Main-process close/recovery lifecycle remains the fallback.
+              }
+            } else {
+              outputPauseLease.release();
+            }
+            if (disposed) return;
+            logger.error("Failed to attach existing session", attachErr);
+            setError(attachErr instanceof Error ? attachErr.message : String(attachErr));
+            updateStatus("disconnected");
+          }
+          isBootActiveRef.current = false;
+          return;
+        }
+
         if (!shouldStartTerminalBackend()) {
           isBootActiveRef.current = false;
           return;
         }
 
-        if (host.protocol === "serial") {
+        const bootStillActive = () => !disposed && isBootActiveRef.current;
+        if (effectiveTerminalProtocol.startsWith("plugin:")) {
+          setBackendConnectingStatus();
+          setProgressLogs(["Initializing plugin connection..."]);
+          await sessionStarters.startPluginConnection(term, bootStartOptions);
+          if (!bootStillActive()) return;
+        } else if (effectiveTerminalProtocol === "serial") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing serial connection..."]);
-          await sessionStarters.startSerial(term);
-          if (disposed) return;
-        } else if (host.protocol === "local" || host.hostname === "localhost") {
+          await sessionStarters.startSerial(term, bootStartOptions);
+          if (!bootStillActive()) return;
+        } else if (effectiveTerminalProtocol === "local") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing local shell..."]);
-          await sessionStarters.startLocal(term);
-          if (disposed) return;
-        } else if (host.protocol === "telnet") {
+          await sessionStarters.startLocal(term, bootStartOptions);
+          if (!bootStillActive()) return;
+        } else if (effectiveTerminalProtocol === "telnet") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Telnet connection..."]);
-          await sessionStarters.startTelnet(term);
-          if (disposed) return;
-        } else if (host.moshEnabled) {
+          await sessionStarters.startTelnet(term, bootStartOptions);
+          if (!bootStillActive()) return;
+        } else if (effectiveTerminalProtocol === "mosh") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing Mosh connection..."]);
-          await sessionStarters.startMosh(term);
-          if (disposed) return;
-        } else if (host.etEnabled) {
+          await sessionStarters.startMosh(term, bootStartOptions);
+          if (!bootStillActive()) return;
+        } else if (effectiveTerminalProtocol === "et") {
           setBackendConnectingStatus();
           setProgressLogs(["Initializing EternalTerminal connection..."]);
-          await sessionStarters.startEt(term);
-          if (disposed) return;
+          await sessionStarters.startEt(term, bootStartOptions);
+          if (!bootStillActive()) return;
         } else {
           const resolvedAuth = resolveHostAuth({ host, keys, identities });
           const hasPassword = !!resolvedAuth.password;
@@ -466,24 +816,56 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
           setBackendConnectingStatus();
           setProgressLogs(["Initializing secure channel..."]);
-          await sessionStarters.startSSH(term);
-          if (disposed) return;
+          await sessionStarters.startSSH(term, bootStartOptions);
+          if (!bootStillActive()) return;
         }
       } catch (err) {
-        if (disposed) return;
+        if (disposed || !isBootActiveRef.current) return;
         logger.error("Failed to initialize terminal", err);
         setError(err instanceof Error ? err.message : String(err));
         updateStatus("disconnected");
       }
     };
 
-    boot();
+    queueMicrotask(() => {
+      if (disposed) return;
+      void boot();
+    });
 
     return () => {
       disposed = true;
+      if (initialFitTimer !== undefined) clearTimeout(initialFitTimer);
+      // Abort first: a start still awaiting the bridge must stop counting as
+      // the current attempt before anything below yields to a microtask.
+      bootAbort.abort();
       isBootActiveRef.current = false;
       if (hibernatedRef?.current) {
         forceCloseHibernatedSession?.();
+        disposeOwnedRuntime();
+        return;
+      }
+
+      // A boot that never reached "connected" has nothing worth capturing, and
+      // the teardown below awaits terminal drain plus serialization before it
+      // closes anything. Tell the main process now so it can abort the pending
+      // boot (passphrase prompt, TCP dial) for this epoch instead of letting it
+      // finish against a pane that is already gone. Attached popups never own
+      // the backend session (skip closeSession) but still sync-dispose xterm.
+      if (!hasConnectedRef.current) {
+        if (!attachExistingSession) {
+          try {
+            const closeResult = terminalBackend.closeSession(
+              sessionRef.current ?? sessionId,
+              { bootEpoch: bootEpochRef ? bootEpochRef.current : undefined },
+            );
+            void Promise.resolve(closeResult).catch((err: unknown) => {
+              logger.warn("Failed to cancel pending terminal boot on unmount", err);
+            });
+          } catch (err) {
+            logger.warn("Failed to cancel pending terminal boot on unmount", err);
+          }
+        }
+        disposeOwnedRuntime();
         return;
       }
 
@@ -496,53 +878,103 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
       };
 
-      const connectionLogPayload = !terminalDataCapturedRef.current
-        ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
-        : null;
-      if (connectionLogPayload) {
-        persistCloseCapture(
-          connectionLogPayload.data,
-          connectionLogPayload.source,
-          connectionLogPayload.data.length,
-        );
-        scheduleTerminalCloseTeardown(teardown);
-        return;
-      }
-
       const term = termRef.current;
-      const serializeAddon = serializeAddonRef.current;
-      if (!terminalDataCapturedRef.current && term && serializeAddon) {
-        const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
-        void serializeTerminalCloseFallback(term, serializeAddon, { preferWasm })
-          .then((payload) => {
+      const completeClose = async () => {
+        if (term) {
+          // A hidden terminal can have more output queued than the synchronous
+          // resume helper intentionally drains. Wait for the complete ordered
+          // backlog before finalizing the saved capture.
+          const flushed = await flushPendingTerminalWritesBeforeHibernate(term);
+          if (!isTerminalCloseGenerationCurrent(
+            closeGeneration,
+            terminalBootCloseGenerationRef.current,
+          )) {
+            // Remount already replaced the live refs; still drop this boot's
+            // orphaned DOM node if dispose was deferred past the generation bump.
+            disposeOwnedRuntime();
+            return;
+          }
+          if (!flushed) {
+            logger.warn("Terminal output did not drain before close capture; skipping stale capture");
+            teardown();
+            ownedRuntime = null;
+            return;
+          }
+        }
+
+        if (!isTerminalCloseGenerationCurrent(
+          closeGeneration,
+          terminalBootCloseGenerationRef.current,
+        )) {
+          disposeOwnedRuntime();
+          return;
+        }
+
+        const connectionLogPayload = !terminalDataCapturedRef.current
+          ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
+          : null;
+        if (connectionLogPayload) {
+          persistCloseCapture(
+            connectionLogPayload.data,
+            connectionLogPayload.source,
+            connectionLogPayload.data.length,
+          );
+          ownedRuntime = null;
+          scheduleTerminalCloseTeardown(teardown);
+          return;
+        }
+
+        const serializeAddon = serializeAddonRef.current;
+        if (!terminalDataCapturedRef.current && term && serializeAddon) {
+          const preferWasm = resolveHibernatePreferWasmSerialize(terminalSettingsRef.current);
+          try {
+            const payload = await serializeTerminalCloseFallback(term, serializeAddon, {
+              preferWasm,
+              prepare: () => xtermRuntimeRef.current?.keywordHighlighter.prepareForSerialization()
+                ?? Promise.resolve(),
+            });
             if (!isTerminalCloseGenerationCurrent(
               closeGeneration,
               terminalBootCloseGenerationRef.current,
             )) {
+              disposeOwnedRuntime();
               return;
             }
             if (payload) {
               persistCloseCapture(payload.data, payload.source, payload.data.length);
             }
+            ownedRuntime = null;
             scheduleTerminalCloseTeardown(teardown);
-          })
-          .catch((err) => {
+          } catch (err) {
             if (!isTerminalCloseGenerationCurrent(
               closeGeneration,
               terminalBootCloseGenerationRef.current,
             )) {
+              disposeOwnedRuntime();
               return;
             }
             logger.warn("Failed to serialize terminal data on unmount:", err);
+            ownedRuntime = null;
             scheduleTerminalCloseTeardown(teardown);
-          });
-        return;
-      }
+          }
+          return;
+        }
 
-      teardown();
+        ownedRuntime = null;
+        teardown();
+      };
+
+      void completeClose();
     };
      
-  }, [forceCloseHibernatedSession, handleTerminalDataCaptureOnce, host.id, sessionId]);
+  }, [
+    attachExistingSession,
+    forceCloseHibernatedSession,
+    handleTerminalDataCaptureOnce,
+    host.id,
+    sessionId,
+    vaultInitialized,
+  ]);
 
 
   // Connection timeline and timeout visuals
@@ -553,7 +985,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       && host.protocol !== "mosh"
       && !host.moshEnabled
       && host.protocol !== "et"
-      && !host.etEnabled;
+      && !host.etEnabled
+      && !isPluginHostProtocol(host.protocol);
     const timeoutState = {
       status,
       needsAuth: auth.needsAuth,
@@ -566,7 +999,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     };
     if (!shouldRunConnectionTimeout(timeoutState)) return;
 
-    const connectionTimeout = getConnectionTimeoutMs(timeoutState) || CONNECTION_TIMEOUT;
+    const activeTimeoutHost = resolveActiveConnectionTimeoutHost(
+      host,
+      chainHosts,
+      chainProgress?.currentHop,
+      chainProgress?.connectionPhase,
+    );
+    const hostConnectionTimeouts = resolveHostSshConnectionTimeouts(activeTimeoutHost);
+    const connectionTimeout = getConnectionTimeoutMs(timeoutState, {
+      tcpConnectTimeoutMs: hostConnectionTimeouts.tcpConnectTimeoutSeconds * 1000,
+      authReadyTimeoutMs: hostConnectionTimeouts.authReadyTimeoutSeconds * 1000,
+    }) || CONNECTION_TIMEOUT;
     setTimeLeft(connectionTimeout / 1000);
     const countdown = setInterval(() => {
       setTimeLeft((prev) => (prev > 0 ? prev - 1 : 0));
@@ -578,14 +1021,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       setProgressLogs((prev) => [...prev, "Connection timed out."]);
     }, connectionTimeout);
 
-    setProgressValue(5);
     const prog = setInterval(() => {
-      setProgressValue((prev) => {
-        if (prev >= 95) return prev;
-        const remaining = 95 - prev;
-        const increment = Math.max(1, remaining * 0.15);
-        return Math.min(95, prev + increment);
-      });
+      setProgressValue(advanceIndeterminateConnectionProgress);
     }, 200);
 
     return () => {
@@ -594,12 +1031,13 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       clearInterval(prog);
     };
      
-  }, [status, auth.needsAuth, host.protocol, host.hostname, host.moshEnabled, host.etEnabled, isLocalConnection, isSerialConnection, needsHostKeyVerification, isConnectionAwaitingUserInput, isConnectionPastTcpDial]);
+  }, [status, auth.needsAuth, host.protocol, host.hostname, host.moshEnabled, host.etEnabled, host.sshTcpConnectTimeoutSeconds, host.sshAuthReadyTimeoutSeconds, chainHosts, chainProgress?.currentHop, chainProgress?.connectionPhase, isLocalConnection, isSerialConnection, needsHostKeyVerification, isConnectionAwaitingUserInput, isConnectionPastTcpDial]);
 
 
   useEffect(() => {
     if (status === "connecting") {
       setIsDisconnectedDialogDismissed(false);
+      setProgressValue(CONNECTION_PROGRESS_START);
     }
   }, [status]);
 
@@ -611,7 +1049,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const term = termRef.current;
     if (!term) return;
 
-    if (isVisibleRef.current || isFocused) {
+    if (isRendererActiveRef.current || isFocused) {
       cancelTerminalThemeUpdate(sessionId);
       applyTerminalThemeSync(term, effectiveTheme);
       injectTerminalPaneAppearanceVars(sessionId, effectiveTheme);
@@ -634,8 +1072,9 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     if (!termRef.current) return;
     termRef.current.options.fontSize = effectiveFontSize;
     xtermRuntimeRef.current?.clearTextureAtlas();
-    if (isVisibleRef.current) {
-      setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+    if (isRendererActiveRef.current) {
+      const refitTimer = setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      return () => clearTimeout(refitTimer);
     } else {
       lastFittedSizeRef.current = null;
     }
@@ -698,8 +1137,9 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     // Clear the texture atlas so glyphs re-rasterize with the new font.
     xtermRuntimeRef.current?.clearTextureAtlas();
 
-    if (isVisibleRef.current) {
-      setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+    if (isRendererActiveRef.current) {
+      const refitTimer = setTimeout(() => safeFit({ force: true, requireVisible: true }), 50);
+      return () => clearTimeout(refitTimer);
     } else {
       lastFittedSizeRef.current = null;
     }
@@ -712,10 +1152,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     if (force) {
       lastFittedSizeRef.current = null;
     }
-    safeFit({ force, requireVisible: true });
+    safeFit({ force, requireVisible: true, immediate: true });
     if (force && repeatOnNextFrame && typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
-        safeFit({ force: true, requireVisible: true });
+        safeFit({ force: true, requireVisible: true, immediate: true });
       });
     }
   };
@@ -797,12 +1237,6 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     return () => window.removeEventListener(TERMINAL_SESSION_RESTORE_FOCUS_EVENT, handleRestoreFocus);
   }, [sessionId]);
 
-  const shouldRefitImmediatelyOnShow = () => (
-    !inWorkspace || isFocusMode || isFocused
-  );
-
-  const shouldRecoverWebglOnShow = () => shouldRefitImmediatelyOnShow();
-
   const layoutAlreadyCommitted = () => (
     lastCommittedVisibleLayoutKeyRef.current === paneLayoutKey
   );
@@ -811,40 +1245,96 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     lastCommittedVisibleLayoutKeyRef.current = paneLayoutKey;
   };
 
-  const recoverTerminalAfterBecomeVisible = () => {
+  const currentContainerSizeAlreadyFit = () => {
+    const container = containerRef.current;
+    const lastSize = lastFittedSizeRef.current;
+    if (!container || !lastSize) return false;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    return width > 0 && height > 0 && lastSize.width === width && lastSize.height === height;
+  };
+
+  const getHiddenDurationMs = () => (
+    hiddenAtRef.current !== null
+      ? Date.now() - hiddenAtRef.current
+      : Number.POSITIVE_INFINITY
+  );
+
+  const flushPendingOutputScroll = () => {
+    if (!pendingOutputScrollRef.current) return;
+    termRef.current?.scrollToBottom();
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        termRef.current?.scrollToBottom();
+      });
+    }
+    pendingOutputScrollRef.current = false;
+  };
+
+  const flushTerminalWritesAfterBecomeVisible = () => {
     lastCommittedVisibleLayoutKeyRef.current = null;
-    lastFittedSizeRef.current = null;
+    const term = termRef.current;
+    if (term) {
+      cancelScheduledUnfocusedRepaint(term);
+      flushPendingTerminalWritesOnResume(term);
+      repaintTerminalAfterReveal(term, () => isVisibleRef.current);
+    }
+  };
+
+  const recoverTerminalAfterBecomeVisible = () => {
+    flushTerminalWritesAfterBecomeVisible();
+
+    if (
+      getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
+      && currentContainerSizeAlreadyFit()
+    ) {
+      lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
+      flushPendingOutputScroll();
+      commitVisibleLayout();
+      return;
+    }
+
     xtermRuntimeRef.current?.ensureWebglRenderer();
     xtermRuntimeRef.current?.clearTextureAtlas();
+    lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
+
+    if (currentContainerSizeAlreadyFit()) {
+      finishLayoutRecovery();
+      flushPendingOutputScroll();
+      commitVisibleLayout();
+      return;
+    }
+
+    lastFittedSizeRef.current = null;
     runImmediateRefit({ force: true, repeatOnNextFrame: false });
     finishLayoutRecoveryAfterFit();
+    flushPendingOutputScroll();
     commitVisibleLayout();
     scheduleLayoutRecoveryRefit([100, 350]);
   };
 
   // Refit synchronously when a split pane becomes visible or its bounds change.
-  // Tab switches move hidden panes off-screen without resizing xterm; becoming
-  // visible again does not always fire ResizeObserver, leaving a gap below content.
-  // Skip during split-divider drag — refit runs once when isResizing becomes false.
-  // In multi-split workspaces only the focused pane refits on tab switch; other
-  // visible panes defer so N terminals don't block the main thread together.
+  // Tab switches hide inactive panes without resizing xterm; becoming visible
+  // again does not always fire ResizeObserver, leaving a gap below content.
+  // Skip during split-divider drag — refit runs once when split resizing ends.
+  // Recover every visible pane immediately so split workspaces return with
+  // fresh terminal buffers, scroll positions, and PTY sizes.
   useLayoutEffect(() => {
     const becameVisible = isVisible && !wasVisibleRef.current;
-    wasVisibleRef.current = isVisible;
 
-    if (!isVisible || isResizing) return;
-
-    if (becameVisible) {
-      if (shouldRefitImmediatelyOnShow()) {
-        recoverTerminalAfterBecomeVisible();
-      } else {
-        lastCommittedVisibleLayoutKeyRef.current = null;
-        scheduleLayoutRecoveryRefit([120, 350]);
-      }
+    if (!isVisible) {
+      wasVisibleRef.current = false;
       return;
     }
 
-    if (!shouldRefitImmediatelyOnShow()) return;
+    if (splitResizeActive) return;
+
+    wasVisibleRef.current = true;
+
+    if (becameVisible) {
+      recoverTerminalAfterBecomeVisible();
+      return;
+    }
 
     if (layoutAlreadyCommitted()) {
       safeFit({ requireVisible: true });
@@ -854,36 +1344,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     commitVisibleLayout();
     runImmediateRefit({ force: true, repeatOnNextFrame: false });
     finishLayoutRecoveryAfterFit();
-  }, [isVisible, paneLayoutKey, isResizing, inWorkspace, isFocusMode, isFocused]);
-
-  // Defer refit for non-focused split panes that became visible on a tab switch.
-  useEffect(() => {
-    if (!isVisible || isResizing || shouldRefitImmediatelyOnShow()) return;
-    if (layoutAlreadyCommitted()) return;
-
-    let cancelled = false;
-    const runDeferred = () => {
-      if (cancelled || !isVisibleRef.current) return;
-      if (lastCommittedVisibleLayoutKeyRef.current === paneLayoutKey) return;
-      runImmediateRefit({ force: true, repeatOnNextFrame: false });
-      finishLayoutRecoveryAfterFit();
-      commitVisibleLayout();
-    };
-
-    if (typeof requestIdleCallback === 'function') {
-      const idleId = requestIdleCallback(runDeferred, { timeout: 250 });
-      return () => {
-        cancelled = true;
-        cancelIdleCallback(idleId);
-      };
-    }
-
-    const timerId = setTimeout(runDeferred, 120);
-    return () => {
-      cancelled = true;
-      clearTimeout(timerId);
-    };
-  }, [isVisible, paneLayoutKey, isResizing, inWorkspace, isFocusMode, isFocused]);
+  }, [isVisible, paneLayoutKey, splitResizeActive]);
 
   useLayoutEffect(() => {
     if (isVisible) return;
@@ -895,7 +1356,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, [isVisible]);
 
   useEffect(() => {
-    if (!isVisible || !shouldRecoverWebglOnShow()) return;
+    if (!isVisible) return;
 
     const hiddenMs = hiddenAtRef.current
       ? Date.now() - hiddenAtRef.current
@@ -904,8 +1365,9 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
     if (
       lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey
-      && hiddenMs < 3000
+      && hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
     ) {
+      flushPendingOutputScroll();
       return;
     }
 
@@ -926,18 +1388,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       xtermRuntimeRef.current?.clearTextureAtlas();
       runImmediateRefit({ force: true });
       finishLayoutRecoveryAfterFit();
-      if (pendingOutputScrollRef.current) {
-        termRef.current?.scrollToBottom();
-        if (typeof requestAnimationFrame === "function") {
-          requestAnimationFrame(() => {
-            termRef.current?.scrollToBottom();
-          });
-        }
-        pendingOutputScrollRef.current = false;
-      }
+      flushPendingOutputScroll();
     }, 50);
     return () => clearTimeout(timer);
-  }, [isVisible, paneLayoutKey, inWorkspace, isFocusMode, isFocused]);
+  }, [isVisible, paneLayoutKey]);
 
 
   useEffect(() => {
@@ -952,17 +1406,22 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       const term = termRef.current as {
         cols: number;
         rows: number;
-        renderer?: { remeasureFont?: () => void };
-      } | null;
+      } & XTermFontRemeasureTarget | null;
       if (cancelled || !term) return;
+      if (!isRendererActiveRef.current) {
+        lastFittedSizeRef.current = null;
+        return;
+      }
       const fitAddon = fitAddonRef.current;
       try {
-        term.renderer?.remeasureFont?.();
+        if (!forceXTermFontRemeasure(term)) {
+          logger.warn("Font remeasure skipped: xterm measurement hook unavailable");
+        }
       } catch (err) {
         logger.warn("Font remeasure failed", err);
       }
 
-      // remeasureFont does not invalidate cells rasterized before fonts were ready.
+      // Font remeasurement does not invalidate cells rasterized before fonts were ready.
       xtermRuntimeRef.current?.clearTextureAtlas();
       const visibleTerm = termRef.current;
       if (visibleTerm) {
@@ -1066,16 +1525,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (remeasureTimer) clearTimeout(remeasureTimer);
       fontFaceSet?.removeEventListener?.("loadingdone", onLoadingDone);
     };
-  }, [effectiveFontSize, effectiveFontWeight, resizeSession, terminalSettings]);
+  }, [effectiveFontSize, effectiveFontWeight, resizeSession, resolvedFontFamily, terminalSettings]);
 
 
   useEffect(() => {
-    if (!isVisible || !containerRef.current) return;
+    if (!isRendererActive || !containerRef.current) return;
 
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const observer = new ResizeObserver(() => {
-      if (deferTerminalResizeRef?.current || !isVisibleRef.current) return;
+      if (deferTerminalResizeRef?.current || !isRendererActiveRef.current) return;
       if (!fitAddonRef.current) return;
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
@@ -1090,18 +1549,18 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       observer.disconnect();
     };
-  }, [isVisible, isResizing]);
+  }, [isRendererActive, isResizing]);
 
   useLayoutEffect(() => {
-    if (isResizing) {
+    if (splitResizeActive) {
       prevIsResizingRef.current = true;
       return;
     }
     if (!prevIsResizingRef.current || !isVisible) {
-      prevIsResizingRef.current = isResizing;
+      prevIsResizingRef.current = splitResizeActive;
       return;
     }
-    prevIsResizingRef.current = isResizing;
+    prevIsResizingRef.current = splitResizeActive;
     lastFittedSizeRef.current = null;
     safeFit({ force: true, requireVisible: true });
     finishLayoutRecoveryAfterFit();
@@ -1115,7 +1574,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         }
       });
     }
-  }, [isResizing, isVisible]);
+  }, [splitResizeActive, isVisible]);
 
 
   useEffect(() => {
@@ -1138,13 +1597,29 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   // When search bar opens/closes, re-fit terminal and maintain scroll position
   useEffect(() => {
     const term = termRef.current;
+    const wasSearchOpen = prevIsSearchOpenRef.current;
+    prevIsSearchOpenRef.current = isSearchOpen;
     if (!term || !fitAddonRef.current) return;
     const buffer = term.buffer.active;
     const wasAtBottom = buffer.viewportY >= buffer.baseY;
     const prevViewportY = buffer.viewportY;
+    const closingSearch = wasSearchOpen && !isSearchOpen;
+    let raf = 0;
+    const settleClosedSearch = () => {
+      // A later open flips prevIsSearchOpenRef before this stale frame runs.
+      if (!closingSearch || prevIsSearchOpenRef.current) return;
+      settleTerminalSearchAfterLayout(
+        searchAddonRef.current,
+        term,
+        () => xtermRuntimeRef.current?.clearTextureAtlas(),
+      );
+    };
     const timer = setTimeout(() => {
       safeFit({ force: true, requireVisible: true });
-      requestAnimationFrame(() => {
+      settleClosedSearch();
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        settleClosedSearch();
         if (wasAtBottom) {
           term.scrollToBottom();
         } else {
@@ -1152,7 +1627,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         }
       });
     }, 0);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [isSearchOpen]);
 
   // When compose bar opens/closes, re-fit terminal and maintain scroll position
@@ -1181,6 +1659,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     const shouldAutoFocus = isVisible && termRef.current && (!inWorkspace || isFocusMode);
     if (shouldAutoFocus) {
       const timer = setTimeout(() => {
+        // Pane focus ≠ document focus: do not yank caret from AI/side-panel inputs.
+        if (!shouldClaimTerminalKeyboardFocus(document.activeElement)) return;
         termRef.current?.focus();
       }, 50);
       return () => clearTimeout(timer);
@@ -1191,88 +1671,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     if (isFocused && termRef.current && isVisible) {
       const timer = setTimeout(() => {
+        if (!shouldClaimTerminalKeyboardFocus(document.activeElement)) return;
         termRef.current?.focus();
       }, 10);
       return () => clearTimeout(timer);
     }
   }, [isFocused, isVisible, sessionId]);
 
-
-  useEffect(() => {
-    const term = termRef.current;
-    if (!term) return;
-
-    let overlayRafId: number | null = null;
-    let copyTimer: ReturnType<typeof setTimeout> | null = null;
-    let lastHasSelection: boolean | null = null;
-    let lastOverlayPosition: SelectionOverlayPosition = null;
-    const requestFrame = typeof requestAnimationFrame === "function"
-      ? requestAnimationFrame
-      : (callback: FrameRequestCallback) => setTimeout(() => callback(Date.now()), 0) as unknown as number;
-    const cancelFrame = typeof cancelAnimationFrame === "function"
-      ? cancelAnimationFrame
-      : (id: number) => clearTimeout(id);
-
-    const publishSelectionOverlayPosition = () => {
-      overlayRafId = null;
-      const nextPosition = resolveSelectionOverlayPosition(term, containerRef.current);
-      if (areSelectionOverlayPositionsEqual(lastOverlayPosition, nextPosition)) return;
-      lastOverlayPosition = nextPosition;
-      setSelectionOverlayPosition?.(nextPosition);
-    };
-
-    const scheduleSelectionOverlayPosition = () => {
-      if (overlayRafId !== null) return;
-      overlayRafId = requestFrame(publishSelectionOverlayPosition);
-    };
-
-    const onSelectionChange = () => {
-      const selection = term.getSelection();
-      const hasText = !!selection && selection.length > 0;
-      if (lastHasSelection !== hasText) {
-        lastHasSelection = hasText;
-        setHasSelection(hasText);
-      }
-      scheduleSelectionOverlayPosition();
-
-      if (copyTimer) {
-        clearTimeout(copyTimer);
-        copyTimer = null;
-      }
-
-      if (hasText && terminalSettings?.copyOnSelect && !isRestoringSelectionRef.current) {
-        copyTimer = setTimeout(() => {
-          navigator.clipboard.writeText(selection).catch((err) => {
-            logger.warn("Copy on select failed:", err);
-          });
-        }, 80);
-      }
-    };
-
-    const selectionDisposable = term.onSelectionChange(onSelectionChange);
-    const scrollDisposable = term.onScroll?.(scheduleSelectionOverlayPosition);
-    const resizeDisposable = term.onResize?.(scheduleSelectionOverlayPosition);
-    const resizeObserver = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(scheduleSelectionOverlayPosition);
-    if (containerRef.current) {
-      resizeObserver?.observe(containerRef.current);
-    }
-    scheduleSelectionOverlayPosition();
-    return () => {
-      if (overlayRafId !== null) {
-        cancelFrame(overlayRafId);
-      }
-      if (copyTimer) {
-        clearTimeout(copyTimer);
-      }
-      selectionDisposable.dispose();
-      scrollDisposable?.dispose();
-      resizeDisposable?.dispose();
-      resizeObserver?.disconnect();
-    };
-  }, [terminalSettings?.copyOnSelect, isSearchOpen, isVisible, isResizing]);
-
+  // Selection overlay + copy-on-select live in TerminalSelectionAIOverlay so
+  // selection churn does not re-render the whole Terminal tree (e.g. when focus
+  // moves to the AI side panel and the selection clears).
 
   // Track whether the terminal application has enabled mouse tracking
   // (e.g. tmux with `set -g mouse on`, vim with `set mouse=a`).
@@ -1299,21 +1707,32 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   }, [sessionId]);
 
 
-  // Prevent xterm.js's built-in rightClickHandler and right-button mouseup
-  // from interfering with tmux/vim popup menus when mouse tracking is active.
+  // Prevent xterm.js's built-in rightClickHandler from interfering with
+  // mouse-tracking TUIs. On macOS, xterm forces selection with Option, while
+  // most terminal users expect Shift to bypass mouse reporting. Replay
+  // Shift+left-click as that native xterm force-selection gesture before
+  // xterm receives the original.
+  // - mousedown (button 2 + Shift / fullscreen-apps menu): keep the press
+  //   local so the terminal app does not also receive it
   // - contextmenu: xterm.js calls textarea.select() which steals focus
-  // - mouseup (button 2): tmux interprets the right-button release as a
-  //   dismiss action, closing the popup menu immediately after it appears
-  // Both are intercepted at the capture phase before xterm.js's own listeners.
+  // - mouseup (button 2): only stop when we also claimed the matching
+  //   mousedown. App-owned right-clicks (Herdr, tmux, vim, ...) must receive
+  //   the release or the TUI stays stuck with the button held (#2721).
+  // Intercepted at the capture phase before xterm.js's own listeners.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    const rightClickPressClaim = createRightClickMouseTrackingPressClaim();
 
     const handleContextMenuCapture = (e: MouseEvent) => {
       if (!shouldInterceptMouseTrackingContextMenu({
         event: e,
         mouseTracking: mouseTrackingRef.current,
+        terminalMouseTrackingMode: termRef.current?.modes.mouseTrackingMode,
         status: statusRef.current,
+        rightClickBehavior: terminalSettingsRef.current?.rightClickBehavior,
+        forceMenuInAlternateScreen: terminalSettingsRef.current?.showContextMenuOverFullscreenApps,
       })) {
         return;
       }
@@ -1339,15 +1758,50 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       // does not intercept.
     };
 
+    const handleMouseDownCapture = (e: MouseEvent) => {
+      if (rightClickPressClaim.noteMouseDown({
+        event: e,
+        mouseTracking: mouseTrackingRef.current,
+        terminalMouseTrackingMode: termRef.current?.modes.mouseTrackingMode,
+        status: statusRef.current,
+        rightClickBehavior: terminalSettingsRef.current?.rightClickBehavior,
+        forceMenuInAlternateScreen: terminalSettingsRef.current?.showContextMenuOverFullscreenApps,
+      })) {
+        e.stopImmediatePropagation();
+        return;
+      }
+
+      if (!shouldReplayShiftMouseSelectionAsMacOption({
+        event: e,
+        mouseTracking: mouseTrackingRef.current,
+        status: statusRef.current,
+        isMacPlatform: isMacPlatform(),
+      })) {
+        return;
+      }
+
+      const target = e.target as EventTarget | null;
+      if (!target || typeof target.dispatchEvent !== 'function') return;
+
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      target.dispatchEvent(createMacOptionForcedSelectionMouseEvent(e));
+    };
+
     const handleMouseUpCapture = (e: MouseEvent) => {
-      if (e.button === 2 && mouseTrackingRef.current && statusRef.current === 'connected') {
+      if (shouldStopRightClickMouseTrackingMouseUp({
+        event: e,
+        claimedMatchingMouseDown: rightClickPressClaim.consumeMouseUpClaim(e),
+      })) {
         e.stopImmediatePropagation();
       }
     };
 
+    el.addEventListener('mousedown', handleMouseDownCapture, true);
     el.addEventListener('contextmenu', handleContextMenuCapture, true);
     el.addEventListener('mouseup', handleMouseUpCapture, true);
     return () => {
+      el.removeEventListener('mousedown', handleMouseDownCapture, true);
       el.removeEventListener('contextmenu', handleContextMenuCapture, true);
       el.removeEventListener('mouseup', handleMouseUpCapture, true);
     };
@@ -1355,12 +1809,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
 
   useEffect(() => {
-    if (!isVisible) return;
+    if (!isRendererActive) return;
 
     let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
 
     const handler = () => {
-      if (!isVisibleRef.current) return;
+      if (!isRendererActiveRef.current) return;
       if (resizeTimeout) {
         clearTimeout(resizeTimeout);
       }
@@ -1374,42 +1828,43 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       if (resizeTimeout) clearTimeout(resizeTimeout);
       window.removeEventListener("resize", handler);
     };
-  }, [isVisible]);
+  }, [isRendererActive]);
 
 
   useEffect(() => {
     if (!isVisible) return;
 
-    // App resume / refocus only needs a GPU+fit recovery on the active pane;
-    // non-focused split panes already refit when focused (see shouldRefitImmediatelyOnShow).
-    const shouldRecoverOnAppResume = () => (
-      !inWorkspace || isFocusMode || isFocused
-    );
-
     const recoverWebglRendererOnAppResume = () => {
       xtermRuntimeRef.current?.ensureWebglRenderer();
     };
 
+    const recoverTerminalOnAppResume = () => {
+      const term = termRef.current;
+      if (term) {
+        cancelScheduledUnfocusedRepaint(term);
+        flushPendingTerminalWritesOnResume(term);
+        forceTerminalRepaintBypassingAnimationFrame(term);
+      }
+      flushPendingOutputScroll();
+      recoverWebglRendererOnAppResume();
+      scheduleLayoutRecoveryRefit([0, 100, 300]);
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
-      if (!shouldRecoverOnAppResume()) return;
-      recoverWebglRendererOnAppResume();
-      scheduleLayoutRecoveryRefit();
+      recoverTerminalOnAppResume();
     };
 
     const handleWindowFocus = () => {
-      if (!shouldRecoverOnAppResume()) return;
-      let term = termRef.current;
-      if (term) {
-        cancelScheduledUnfocusedRepaint(term);
-        forceTerminalRepaintBypassingAnimationFrame(term);
-      }
-      recoverWebglRendererOnAppResume();
-      scheduleLayoutRecoveryRefit();
+      recoverTerminalOnAppResume();
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
+
+    const unsubscribeWindowShown = terminalBackend.onWindowShown?.(() => {
+      recoverTerminalOnAppResume();
+    });
 
     // Fullscreen changes layout for every visible pane.
     const unsubscribeFullscreen = terminalBackend.onWindowFullScreenChanged?.((isFullscreen) => {
@@ -1420,9 +1875,10 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       clearLayoutRecoveryTimers();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
+      unsubscribeWindowShown?.();
       unsubscribeFullscreen?.();
     };
-  }, [isVisible, inWorkspace, isFocusMode, isFocused, terminalBackend]);
+  }, [isVisible, terminalBackend]);
 
 
   // Only register the snippet executor once the terminal session is ready.
