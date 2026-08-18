@@ -132,6 +132,34 @@ test("parseGrokAcpModelCatalog exposes only each model's advertised reasoning ef
   });
 });
 
+test("parseGrokAcpModelCatalog fills known legacy models without overriding explicit no-reasoning metadata", () => {
+  const catalog = parseGrokAcpModelCatalog({
+    _meta: {
+      modelState: {
+        currentModelId: "grok-4.5",
+        availableModels: [
+          { modelId: "grok-4.5", name: "Grok 4.5" },
+          {
+            modelId: "grok-4.6",
+            name: "Grok 4.6",
+            _meta: { supportsReasoningEffort: false },
+          },
+        ],
+      },
+    },
+  });
+
+  assert.deepEqual(catalog.models, [
+    {
+      id: "grok-4.5",
+      name: "Grok 4.5",
+      thinkingLevels: ["high", "medium", "low"],
+      defaultThinkingLevel: "high",
+    },
+    { id: "grok-4.6", name: "Grok 4.6" },
+  ]);
+});
+
 test("listGrokAcpModels reads reasoning metadata from the initialize response", async () => {
   const { EventEmitter } = require("node:events");
   const child = new EventEmitter();

@@ -28,6 +28,7 @@ const {
   extractGrokAcpPromptUsage,
   emitGrokUsage,
   normalizeGrokPlanUpdate,
+  applyGrokReasoningFallback,
   parseGrokModelSelection,
   shouldReportGrokProcessExitFailure,
   spawnGrokProcess,
@@ -249,6 +250,10 @@ function parseGrokAcpModelCatalog(initResult) {
       : (entry?.meta && typeof entry.meta === "object" ? entry.meta : {});
     const supportsReasoning = meta.supportsReasoningEffort === true
       || meta.supports_reasoning_effort === true;
+    const explicitlyUnsupported = !supportsReasoning && (
+      meta.supportsReasoningEffort === false
+      || meta.supports_reasoning_effort === false
+    );
     if (supportsReasoning) {
       const rawOptions = Array.isArray(meta.reasoningEfforts)
         ? meta.reasoningEfforts
@@ -279,6 +284,8 @@ function parseGrokAcpModelCatalog(initResult) {
       } else {
         preset.defaultThinkingLevel = levels[0];
       }
+    } else if (!explicitlyUnsupported) {
+      Object.assign(preset, applyGrokReasoningFallback(preset));
     }
     models.push(preset);
   }
