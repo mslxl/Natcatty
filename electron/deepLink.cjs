@@ -1,5 +1,9 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  parsePuttyCommandLine,
+  redactPuttyCommandLinePasswords,
+} = require("./puttyCommandLine.cjs");
 
 const SSH_DEEP_LINK_CHANNEL = "netcatty:deepLink:ssh";
 const TELNET_DEEP_LINK_CHANNEL = "netcatty:deepLink:telnet";
@@ -42,6 +46,23 @@ function collectTelnetDeepLinkUrls(argv) {
 
 function collectJmsDeepLinkUrls(argv) {
   return collectDeepLinkUrls(argv, JMS_PROTOCOL);
+}
+
+function collectPuttyStyleDeepLinkUrls(argv) {
+  if (
+    collectSshDeepLinkUrls(argv).length > 0
+    || collectTelnetDeepLinkUrls(argv).length > 0
+    || collectJmsDeepLinkUrls(argv).length > 0
+  ) {
+    return { ssh: [], telnet: [] };
+  }
+
+  const parsed = parsePuttyCommandLine(argv);
+  if (!parsed?.url) return { ssh: [], telnet: [] };
+  if (parsed.protocol === TELNET_PROTOCOL) {
+    return { ssh: [], telnet: [parsed.url] };
+  }
+  return { ssh: [parsed.url], telnet: [] };
 }
 
 function registerProtocolClient({
@@ -358,8 +379,10 @@ module.exports = {
   applyJmsProtocolClientPreference,
   applySshProtocolClientPreference,
   collectJmsDeepLinkUrls,
+  collectPuttyStyleDeepLinkUrls,
   collectSshDeepLinkUrls,
   collectTelnetDeepLinkUrls,
+  redactPuttyCommandLinePasswords,
   isJmsDeepLinkUrl,
   isSshDeepLinkUrl,
   isTelnetDeepLinkUrl,

@@ -72,8 +72,10 @@ const {
   applyJmsProtocolClientPreference,
   applySshProtocolClientPreference,
   collectJmsDeepLinkUrls,
+  collectPuttyStyleDeepLinkUrls,
   collectSshDeepLinkUrls,
   collectTelnetDeepLinkUrls,
+  redactPuttyCommandLinePasswords,
   isJmsDeepLinkUrl,
   isSshDeepLinkUrl,
   isTelnetDeepLinkUrl,
@@ -580,8 +582,18 @@ async function createAndShowMainWindow() {
 }
 
 let sshDeepLinkEnabled = readSshDeepLinkEnabledPreference({ app });
-const pendingSshDeepLinkUrls = sshDeepLinkEnabled ? collectSshDeepLinkUrls(process.argv) : [];
-const pendingTelnetDeepLinkUrls = sshDeepLinkEnabled ? collectTelnetDeepLinkUrls(process.argv) : [];
+const puttyStyleDeepLinks = sshDeepLinkEnabled
+  ? collectPuttyStyleDeepLinkUrls(process.argv)
+  : { ssh: [], telnet: [] };
+const pendingSshDeepLinkUrls = sshDeepLinkEnabled
+  ? [...collectSshDeepLinkUrls(process.argv), ...puttyStyleDeepLinks.ssh]
+  : [];
+const pendingTelnetDeepLinkUrls = sshDeepLinkEnabled
+  ? [...collectTelnetDeepLinkUrls(process.argv), ...puttyStyleDeepLinks.telnet]
+  : [];
+if (sshDeepLinkEnabled) {
+  redactPuttyCommandLinePasswords(process.argv);
+}
 const pendingOpenTerminalPaths = resolveOpenTerminalPathsFromArgs(process.argv);
 let flushingSshDeepLinks = false;
 let flushingTelnetDeepLinks = false;
@@ -982,8 +994,18 @@ if (!gotLock) {
 
   app.on("second-instance", (_event, argv, workingDirectory) => {
     const jmsDeepLinkUrls = collectJmsDeepLinkUrls(argv);
-    const telnetDeepLinkUrls = collectTelnetDeepLinkUrls(argv);
-    const sshDeepLinkUrls = collectSshDeepLinkUrls(argv);
+    const puttyStyleDeepLinks = collectPuttyStyleDeepLinkUrls(argv);
+    const telnetDeepLinkUrls = [
+      ...collectTelnetDeepLinkUrls(argv),
+      ...puttyStyleDeepLinks.telnet,
+    ];
+    const sshDeepLinkUrls = [
+      ...collectSshDeepLinkUrls(argv),
+      ...puttyStyleDeepLinks.ssh,
+    ];
+    if (jmsDeepLinkUrls.length > 0 || sshDeepLinkUrls.length > 0 || telnetDeepLinkUrls.length > 0) {
+      redactPuttyCommandLinePasswords(argv);
+    }
     if (jmsDeepLinkUrls.length > 0) {
       if (jmsDeepLinkEnabled) {
         jmsDeepLinkUrls.forEach(queueJmsDeepLink);

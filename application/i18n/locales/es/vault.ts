@@ -493,7 +493,7 @@ export const esVaultMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transferDesc': 'Transferir el archivo al host activo del otro panel',
   'settings.sshDeepLink.title': 'Enlaces SSH y Telnet',
   'settings.sshDeepLink.enable': 'Abrir enlaces ssh:// y telnet:// con Netcatty',
-  'settings.sshDeepLink.enableDesc': 'Permite que Netcatty maneje los enlaces ssh:// y telnet:// de los navegadores y otras aplicaciones.',
+  'settings.sshDeepLink.enableDesc': 'Permite que Netcatty maneje los enlaces ssh:// y telnet:// de los navegadores y otras aplicaciones, además de lanzamientos al estilo PuTTY como -ssh user@host -P 22 -pw password.',
   'settings.explorerContextMenu.title': 'Explorador de Windows',
   'settings.explorerContextMenu.enable': 'Mostrar "Abrir en Netcatty" en los menús contextuales de carpetas',
   'settings.explorerContextMenu.enableDesc': 'Agrega un elemento de clic derecho para las carpetas y los fondos de carpeta, para que puedas abrir una terminal local allí. Se aplica de inmediato; no es necesario reinstalar.',

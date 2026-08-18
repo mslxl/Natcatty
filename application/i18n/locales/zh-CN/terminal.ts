@@ -131,7 +131,7 @@ export const zhCNTerminalMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transferDesc': '将文件传输到另一窗格的活动主机',
   'settings.sshDeepLink.title': 'SSH 和 Telnet 链接',
   'settings.sshDeepLink.enable': '用 Netcatty 打开 ssh:// 和 telnet:// 链接',
-  'settings.sshDeepLink.enableDesc': '允许 Netcatty 接管来自浏览器和其他应用的 ssh://、telnet:// 链接。',
+  'settings.sshDeepLink.enableDesc': '允许 Netcatty 接管来自浏览器和其他应用的 ssh://、telnet:// 链接，以及堡垒机常用的 PuTTY 启动参数（例如 -ssh user@host -P 22 -pw password）。',
   'settings.explorerContextMenu.title': 'Windows 资源管理器',
   'settings.explorerContextMenu.enable': '在文件夹右键菜单中显示 “Open in Netcatty”',
   'settings.explorerContextMenu.enableDesc': '为文件夹和文件夹空白处添加右键项，可直接在该目录打开本地终端。开关立即生效，无需重装。',

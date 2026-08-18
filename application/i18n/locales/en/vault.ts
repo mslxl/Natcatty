@@ -493,7 +493,7 @@ export const enVaultMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transferDesc': 'Transfer the file to the other pane\'s active host',
   'settings.sshDeepLink.title': 'SSH and Telnet links',
   'settings.sshDeepLink.enable': 'Open ssh:// and telnet:// links with Netcatty',
-  'settings.sshDeepLink.enableDesc': 'Allow Netcatty to handle ssh:// and telnet:// links from browsers and other apps.',
+  'settings.sshDeepLink.enableDesc': 'Allow Netcatty to handle ssh:// and telnet:// links from browsers and other apps, plus PuTTY-style launches such as -ssh user@host -P 22 -pw password.',
   'settings.explorerContextMenu.title': 'Windows Explorer',
   'settings.explorerContextMenu.enable': 'Show “Open in Netcatty” in folder context menus',
   'settings.explorerContextMenu.enableDesc': 'Adds a right-click item for folders and folder backgrounds so you can open a local terminal there. Applies immediately; no reinstall needed.',

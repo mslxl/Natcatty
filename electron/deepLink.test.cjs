@@ -7,6 +7,7 @@ const {
   applyJmsProtocolClientPreference,
   applySshProtocolClientPreference,
   collectJmsDeepLinkUrls,
+  collectPuttyStyleDeepLinkUrls,
   collectSshDeepLinkUrls,
   collectTelnetDeepLinkUrls,
   isJmsDeepLinkUrl,
@@ -40,6 +41,34 @@ test("collectSshDeepLinkUrls extracts ssh URLs from process arguments", () => {
       "ssh://bob@example.net:2222",
     ]),
     ["ssh://alice@example.com", "ssh://bob@example.net:2222"],
+  );
+});
+
+test("collectPuttyStyleDeepLinkUrls converts PuTTY argv when no ssh:// token is present", () => {
+  assert.deepEqual(
+    collectPuttyStyleDeepLinkUrls([
+      String.raw`C:\Program Files\Netcatty\Netcatty.exe`,
+      "-ssh",
+      "alice@10.0.0.8",
+      "-P",
+      "2222",
+      "-pw",
+      "s3cret",
+    ]),
+    { ssh: ["ssh://alice:s3cret@10.0.0.8:2222"], telnet: [] },
+  );
+});
+
+test("collectPuttyStyleDeepLinkUrls leaves ssh:// tokens to the existing collector", () => {
+  assert.deepEqual(
+    collectPuttyStyleDeepLinkUrls([
+      "Netcatty.exe",
+      "-url",
+      "ssh://alice@example.com",
+      "-ssh",
+      "ignored@host",
+    ]),
+    { ssh: [], telnet: [] },
   );
 });
 

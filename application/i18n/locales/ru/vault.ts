@@ -529,7 +529,7 @@ export const ruVaultMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transferDesc': 'Передать файл на активный хост другой панели',
   'settings.sshDeepLink.title': 'SSH- и Telnet-ссылки',
   'settings.sshDeepLink.enable': 'Открывать ssh:// и telnet:// ссылки в Netcatty',
-  'settings.sshDeepLink.enableDesc': 'Разрешить Netcatty обрабатывать ssh:// и telnet:// ссылки из браузеров и других приложений.',
+  'settings.sshDeepLink.enableDesc': 'Разрешить Netcatty обрабатывать ssh:// и telnet:// ссылки из браузеров и других приложений, а также запуски в стиле PuTTY, например -ssh user@host -P 22 -pw password.',
   'settings.explorerContextMenu.title': 'Проводник Windows',
   'settings.explorerContextMenu.enable': 'Показывать «Open in Netcatty» в контекстном меню папок',
   'settings.explorerContextMenu.enableDesc': 'Добавляет пункт в меню папок и фона папки, чтобы открыть локальный терминал в этом каталоге. Применяется сразу, переустановка не нужна.',

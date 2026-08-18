@@ -131,7 +131,7 @@ export const zhTWTerminalMessages: Messages = {
   'settings.sftp.doubleClickBehavior.transferDesc': '將檔案傳輸到另一窗格的使用中主機',
   'settings.sshDeepLink.title': 'SSH 和 Telnet 連結',
   'settings.sshDeepLink.enable': '用 Netcatty 開啟 ssh:// 和 telnet:// 連結',
-  'settings.sshDeepLink.enableDesc': '允許 Netcatty 接管來自瀏覽器和其他應用程式的 ssh://、telnet:// 連結。',
+  'settings.sshDeepLink.enableDesc': '允許 Netcatty 接管來自瀏覽器和其他應用程式的 ssh://、telnet:// 連結，以及堡壘機常用的 PuTTY 啟動參數（例如 -ssh user@host -P 22 -pw password）。',
   'settings.explorerContextMenu.title': 'Windows 檔案總管',
   'settings.explorerContextMenu.enable': '在資料夾右鍵選單中顯示 “Open in Netcatty”',
   'settings.explorerContextMenu.enableDesc': '為資料夾與資料夾空白處加入右鍵項目，可直接在該目錄開啟本機終端機。開關立即生效，無需重裝。',
