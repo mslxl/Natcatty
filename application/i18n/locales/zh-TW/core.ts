@@ -719,6 +719,10 @@ export const zhTWCoreMessages: Messages = {
   'vault.import.mobaxterm.utf8Desc': '適用於已儲存或轉換為 UTF-8 的檔案。',
   'vault.import.mobaxterm.gb18030': '中文 Windows',
   'vault.import.mobaxterm.gb18030Desc': '適用於中文 Windows 上匯出的舊版檔案。',
+  'vault.import.mobaxterm.masterPassword': '主密碼（選填）',
+  'vault.import.mobaxterm.masterPasswordPlaceholder': '輸入 MobaXterm 主密碼',
+  'vault.import.mobaxterm.masterPasswordHint':
+    '匯入 .mobaconf 或 MobaXterm.ini 中已儲存的密碼時需要填寫。留空則只匯入工作階段。',
   'vault.import.sshConfig.chooseMode': '選擇如何匯入你的 SSH config 檔案。',
   'vault.import.sshConfig.modeQuestion': '你希望如何匯入？',
   'vault.import.sshConfig.importOnly': '僅匯入',

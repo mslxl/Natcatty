@@ -128,6 +128,10 @@ export const ruVaultMessages: Messages = {
   'vault.import.mobaxterm.utf8Desc': 'Для файлов, сохранённых или преобразованных в UTF-8.',
   'vault.import.mobaxterm.gb18030': 'Китайская Windows',
   'vault.import.mobaxterm.gb18030Desc': 'Для старых файлов, экспортированных в китайской Windows.',
+  'vault.import.mobaxterm.masterPassword': 'Мастер-пароль (необязательно)',
+  'vault.import.mobaxterm.masterPasswordPlaceholder': 'Введите мастер-пароль MobaXterm',
+  'vault.import.mobaxterm.masterPasswordHint':
+    'Нужен, чтобы импортировать сохранённые пароли из .mobaconf или MobaXterm.ini. Оставьте пустым, чтобы импортировать только сеансы.',
   'vault.import.sshConfig.chooseMode': 'Выберите, как импортировать ваш файл SSH-конфига.',
   'vault.import.sshConfig.modeQuestion': 'Как вы хотите выполнить импорт?',
   'vault.import.sshConfig.importOnly': 'Только импорт',
