@@ -10,6 +10,7 @@ const { spawn } = require("node:child_process");
 const { StringDecoder } = require("node:string_decoder");
 const fs = require("node:fs");
 const path = require("node:path");
+const { resolveCursorCliSpawnSpec } = require("../cursorCliSpawn.cjs");
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 
 const DEFAULT_CURSOR_CLI_MODEL = "auto";
@@ -54,6 +55,15 @@ function stripCursorApiKeyFromEnv(env) {
   const out = { ...(env || {}) };
   delete out.CURSOR_API_KEY;
   return out;
+}
+
+function spawnCursorCliProcess(spawnImpl, cliPath, args, options = {}) {
+  const spawnFn = spawnImpl || spawn;
+  const spawnSpec = resolveCursorCliSpawnSpec(cliPath, args);
+  return spawnFn(spawnSpec.command, spawnSpec.args, {
+    ...options,
+    shell: spawnSpec.shell,
+  });
 }
 
 function resolveCursorCliModel(model) {
@@ -520,7 +530,6 @@ async function runCursorCliTurn({
     failed: false,
   };
 
-  const spawnFn = spawnImpl || spawn;
   let child = null;
   let settled = false;
 
@@ -529,7 +538,7 @@ async function runCursorCliTurn({
   };
 
   try {
-    child = spawnFn(cliPath, args, {
+    child = spawnCursorCliProcess(spawnImpl, cliPath, args, {
       cwd: effectiveCwd,
       env: childEnv,
       stdio: ["ignore", "pipe", "pipe"],
@@ -667,7 +676,6 @@ async function listCursorCliModels({
   if (abortSignal?.aborted) return { currentModelId: null, models: [] };
 
   const childEnv = stripCursorApiKeyFromEnv(env || process.env);
-  const spawnFn = spawnImpl || spawn;
 
   return await new Promise((resolve) => {
     let stdout = "";
@@ -690,7 +698,7 @@ async function listCursorCliModels({
 
     let child;
     try {
-      child = spawnFn(cliPath, ["models"], {
+      child = spawnCursorCliProcess(spawnImpl, cliPath, ["models"], {
         env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
@@ -771,8 +779,10 @@ module.exports = {
   resetMcpMergeRefcountsForTests,
   resolveCursorCliExecMode,
   resolveCursorCliModel,
+  resolveCursorCliSpawnSpec,
   resolveCursorCliWorkspaceCwd,
   runCursorCliTurn,
+  spawnCursorCliProcess,
   stripCursorApiKeyFromEnv,
   translateCursorCliEvent,
 };
