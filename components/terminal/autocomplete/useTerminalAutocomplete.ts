@@ -276,6 +276,8 @@ export function useTerminalAutocomplete(
   const completionAbortRef = useRef<AbortController | null>(null);
   /** Last accepted suggestion text — for accurate history recording on fast Enter after accept */
   const lastAcceptedCommandRef = useRef<string | null>(null);
+  /** Deadline for treating the next `.` / `_` as readline Meta after Esc dismissed the popup. */
+  const escMetaPrefixUntilRef = useRef(0);
   /** The user's typed input that produced the current popup suggestions (live-preview baseline). */
   const previewBaselineRef = useRef<string>("");
   /** Whether a popup candidate is currently rendered into the command line (#1005). */
@@ -1146,6 +1148,7 @@ export function useTerminalAutocomplete(
       typedBufferReliableRef,
       previewActiveRef,
       lastAcceptedCommandRef,
+      escMetaPrefixUntilRef,
       setState,
       expandSubDir,
       writeToTerminal,

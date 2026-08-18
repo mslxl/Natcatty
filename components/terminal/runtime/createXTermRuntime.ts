@@ -89,6 +89,7 @@ import {
 import { installUserCursorPreferenceGuard } from "./cursorPreference";
 import { terminalAltKeyOptions } from "./altKeyOptions";
 import { optionArrowWordJumpSequence } from "./optionArrowWordJump";
+import { optionYankLastArgSequence } from "./optionYankLastArg";
 import { watchDevicePixelRatio } from "./rendererDprWatch";
 import { shouldDeferWebglUntilVisible } from "./webglRendererPolicy";
 import { createWebglRendererController } from "./webglRendererController";
@@ -1925,6 +1926,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         e.stopPropagation();
         handleTerminalInputData(wordJumpSequence);
         scrollToBottomAfterInput(wordJumpSequence);
+        return false;
+      }
+    }
+
+    // macOS Option+. / Option+_ → ESC+. / ESC+_ so readline yank-last-arg and
+    // zsh insert-last-word work without enabling Option-as-Meta (issue #2364).
+    const yankLastArgSequence = isKittyKeyboardModeActive(kittyKeyboardMode)
+      ? null
+      : optionYankLastArgSequence(e, isMacPlatform());
+    if (yankLastArgSequence) {
+      const id = ctx.sessionRef.current;
+      if (id) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleTerminalInputData(yankLastArgSequence);
+        scrollToBottomAfterInput(yankLastArgSequence);
         return false;
       }
     }

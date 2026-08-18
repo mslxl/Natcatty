@@ -1006,6 +1006,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         onBroadcastInputRef.current(text, sessionId);
       }
 
+      // ESC-prefixed writes (Esc+. yank-last-arg) are shell editor commands.
+      // Walking printable bytes would append "." and leave history/completions
+      // tracking a stale line.
+      if (text.startsWith("\x1b")) {
+        return;
+      }
+
       // Update command buffer for onCommandExecuted tracking
       for (const ch of text) {
         if (handledSubmittedInput) {
