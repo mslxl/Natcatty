@@ -275,19 +275,12 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       >
         <button
           type="button"
-          className="relative flex h-24 w-24 items-center justify-center border-0 bg-transparent p-0 shadow-none transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="flex h-24 w-24 items-center justify-center border-0 bg-transparent p-0 shadow-none transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={t('appLock.logoLabel')}
           data-testid="app-lock-logo-easter-egg"
           onClick={handleLogoClick}
         >
           <AppLogo className="h-full w-full" />
-          <span
-            className="absolute -bottom-1 -left-1 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md"
-            data-testid="app-lock-logo-lock-badge"
-            aria-hidden="true"
-          >
-            <LockKeyhole className="h-4 w-4" strokeWidth={2.25} />
-          </span>
         </button>
 
         <h1 id="app-lock-title" className="text-center text-xl font-semibold tracking-normal">
@@ -296,21 +289,31 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
 
         <div className="w-full space-y-2">
           <Label htmlFor="app-lock-password">{t('appLock.passwordLabel')}</Label>
-          <Input
-            ref={passwordRef}
-            id="app-lock-password"
-            type="password"
-            value={password}
-            autoComplete="current-password"
-            placeholder={t('appLock.passwordPlaceholder')}
-            disabled={isSubmitting}
-            aria-invalid={Boolean(errorKey)}
-            aria-describedby={errorKey ? 'app-lock-error' : undefined}
-            onChange={(event) => {
-              setPassword(event.target.value);
-              if (error) setError(null);
-            }}
-          />
+          <div className="relative">
+            <Input
+              ref={passwordRef}
+              id="app-lock-password"
+              type="password"
+              value={password}
+              autoComplete="current-password"
+              placeholder={t('appLock.passwordPlaceholder')}
+              disabled={isSubmitting}
+              aria-invalid={Boolean(errorKey)}
+              aria-describedby={errorKey ? 'app-lock-error' : undefined}
+              className="pr-12"
+              onChange={(event) => {
+                setPassword(event.target.value);
+                if (error) setError(null);
+              }}
+            />
+            <span
+              className="pointer-events-none absolute inset-y-px right-px flex w-10 items-center justify-center rounded-r-md border-l border-border/70 bg-muted/30 text-muted-foreground"
+              data-testid="app-lock-password-lock-icon"
+              aria-hidden="true"
+            >
+              <LockKeyhole className="h-4 w-4" strokeWidth={2.25} />
+            </span>
+          </div>
           {errorKey && (
             <p id="app-lock-error" className="text-sm text-destructive">
               {t(errorKey)}
