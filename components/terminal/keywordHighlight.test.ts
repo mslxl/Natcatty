@@ -265,6 +265,101 @@ test("ordinary Enter does not rebuild a saturated scrollback", async () => {
   term.dispose();
 });
 
+test("Enter fused with bracketed-paste CR keeps the previous line highlighted", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "[root@host ~]# echo ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // bash 5.1+ disables bracketed paste on Enter with `\x1b[?2004l\r`; the bare
+  // CR arrives fused with the echoed newline, output, and next prompt.
+  await write(term, "\r\n\x1b[?2004l\rERROR\r\n\x1b[?2004h[root@host ~]# ");
+
+  assert.equal(cellRgb(term, 1, "ERROR"), RED, "new output must be highlighted");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED, "previous command line must stay highlighted");
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("newline-prefixed chunks that climb back up do not leave stale highlight colors", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // Multi-line progress style redraw: advance, climb back up, partially
+  // overwrite the highlighted keyword, and return to the newer row.
+  await write(term, "\r\n\x1b[1A\rOK\x1b[1B");
+
+  assert.equal(term.buffer.active.getLine(0)?.translateToString(true), "OKROR");
+  const line = term.buffer.active.getLine(0);
+  for (let x = 0; x < 5; x += 1) {
+    assert.notEqual(line?.getCell(x)?.getFgColor(), RED, `cell ${x} must not keep the injected color`);
+  }
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("VPA jumps back to an earlier row without leaving stale highlight colors", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // Absolute vertical positioning (CSI Ps d) can also target the earlier row.
+  await write(term, "\r\n\x1b[1d\rOK\x1b[2d");
+
+  assert.equal(term.buffer.active.getLine(0)?.translateToString(true), "OKROR");
+  const line = term.buffer.active.getLine(0);
+  for (let x = 0; x < 5; x += 1) {
+    assert.notEqual(line?.getCell(x)?.getFgColor(), RED, `cell ${x} must not keep the injected color`);
+  }
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("DECSTBM homing does not leave stale highlight colors on the earlier row", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // Setting a scroll region (CSI Ps;Ps r) homes the cursor back to row 0.
+  await write(term, "\r\n\x1b[1;10r\rOK\x1b[1B");
+
+  assert.equal(term.buffer.active.getLine(0)?.translateToString(true), "OKROR");
+  const line = term.buffer.active.getLine(0);
+  for (let x = 0; x < 5; x += 1) {
+    assert.notEqual(line?.getCell(x)?.getFgColor(), RED, `cell ${x} must not keep the injected color`);
+  }
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("unenumerated homing controls are caught by the start-row fingerprint", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // DECOM (CSI ?6h) homes the cursor but is not in the backtracking regex;
+  // the mutated start row is detected by its changed text instead.
+  await write(term, "\r\n\x1b[?6h\rOK\x1b[1B");
+
+  assert.equal(term.buffer.active.getLine(0)?.translateToString(true), "OKROR");
+  const line = term.buffer.active.getLine(0);
+  for (let x = 0; x < 5; x += 1) {
+    assert.notEqual(line?.getCell(x)?.getFgColor(), RED, `cell ${x} must not keep the injected color`);
+  }
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("carriage-return rewrites rematch the current line", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 5, scrollback: 20 });
   const highlighter = new KeywordHighlighter(term);
