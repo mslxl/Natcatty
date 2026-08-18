@@ -1330,7 +1330,11 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       return true;
     };
 
-    if (isVisible) {
+    // Only full-size layouts may feed the hidden-pane pinned size. Split rects
+    // must never be cached: after a split -> focus viewMode switch the cached
+    // fragment size would pin the hidden pane (and its PTY) narrow again,
+    // recreating the \r progress-refresh scrollback spam (#3046).
+    if (isVisible && !rect) {
       capturePaneSize();
       const observer = new ResizeObserver(() => {
         capturePaneSize();
@@ -1338,6 +1342,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       observer.observe(element);
       return () => observer.disconnect();
     }
+    if (isVisible) return;
 
     const initializeHiddenFullSize = !hibernateHiddenTabs
       && !rect

@@ -57,9 +57,12 @@ test("background split workspaces keep their live geometry without hibernate", (
     supportSource,
     /const initializeHiddenFullSize = !hibernateHiddenTabs[\s\S]*&& !rect[\s\S]*&& !lastVisiblePaneSizeRef\.current;[\s\S]*bumpHiddenPaneSizeVersion/,
   );
+  // Split rects must never feed the hidden-pane pinned size, or a
+  // split -> focus viewMode switch pins hidden panes (and their PTYs) at the
+  // cached fragment width (#3046).
   assert.match(
     supportSource,
-    /if \(isVisible\) \{[\s\S]*const observer = new ResizeObserver\(\(\) => \{[\s\S]*capturePaneSize\(\)/,
+    /if \(isVisible && !rect\) \{[\s\S]*const observer = new ResizeObserver\(\(\) => \{[\s\S]*capturePaneSize\(\)/,
   );
   assert.match(
     layerEffectsSource,
