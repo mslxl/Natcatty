@@ -31,3 +31,10 @@ test("terminal behavior settings expose disabled auto-close", () => {
     /settings\.terminal\.behavior\.autoCloseOnExit[\s\S]*?role="switch" aria-checked="false"/,
   );
 });
+
+test("terminal behavior settings expose OSC desktop notification mode", () => {
+  const markup = renderSettings(true);
+  assert.match(markup, /settings-anchor-terminal-osc-notifications/);
+  assert.match(markup, /settings\.terminal\.behavior\.oscNotifications/);
+  assert.match(markup, /settings\.terminal\.behavior\.oscNotifications\.always/);
+});

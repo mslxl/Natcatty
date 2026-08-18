@@ -1,6 +1,6 @@
 import React from "react";
 import { DEFAULT_TERMINAL_WORD_SEPARATORS } from "../../../domain/models";
-import type { DynamicTabTitleMode, LinkModifier, MiddleClickBehavior, RightClickBehavior, TerminalSettings } from "../../../domain/models";
+import type { DynamicTabTitleMode, LinkModifier, MiddleClickBehavior, OscNotificationMode, RightClickBehavior, TerminalSettings } from "../../../domain/models";
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import { SectionHeader, Select, SettingsAnchor, SettingRow, Toggle } from "../settings-ui";
@@ -201,6 +201,23 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
             }))}
             onChange={(v) => updateTerminalSetting("dynamicTabTitleMode", v as DynamicTabTitleMode)}
             className="w-44"
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-osc-notifications"
+          label={t("settings.terminal.behavior.oscNotifications")}
+          description={t("settings.terminal.behavior.oscNotifications.desc")}
+        >
+          <Select
+            value={terminalSettings.oscNotifications ?? "always"}
+            options={[
+              { value: "always", label: t("settings.terminal.behavior.oscNotifications.always") },
+              { value: "unfocused", label: t("settings.terminal.behavior.oscNotifications.unfocused") },
+              { value: "off", label: t("settings.terminal.behavior.oscNotifications.off") },
+            ]}
+            onChange={(v) => updateTerminalSetting("oscNotifications", v as OscNotificationMode)}
+            className="w-40"
           />
         </SettingRow>
 

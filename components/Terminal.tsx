@@ -120,6 +120,7 @@ import {
 import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
 import { useVaultSnapshotField } from "@/application/state/vaultSnapshotStore.ts";
 import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
+import { showOscDesktopNotification } from "./terminal/oscDesktopNotification";
 import { ScriptExecutionOverlay } from "./terminal/ScriptExecutionOverlay";
 import { isScriptSnippet } from "@/domain/snippetScript.ts";
 import { snippetCanRunInTerminal } from "@/domain/snippetTargets.ts";
@@ -605,6 +606,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onTerminalDataCaptureRef.current = onTerminalDataCapture;
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
+  const isFocusedRef = useRef(!!isFocused);
+  isFocusedRef.current = !!isFocused;
   const hibernateEnabled =
     resolveTerminalHibernateEnabledForProtocol(terminalSettings, effectiveTerminalProtocol) &&
     !kittyKeyboardProtocolEnabledForSession &&
@@ -3919,6 +3922,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     },
     onBell: () => {
       onTerminalBell?.(sessionId);
+    },
+    onOscNotification: (notification) => {
+      onTerminalBell?.(sessionId);
+      showOscDesktopNotification({
+        notification,
+        mode: terminalSettingsRef.current?.oscNotifications,
+        sessionFocused: isFocusedRef.current,
+        sessionId,
+        fallbackTitle: host.label || host.hostname || "Netcatty",
+      });
     },
     onOsc52ReadRequest: handleOsc52ReadRequest,
     onAutocompleteKeyEvent: (e: KeyboardEvent) => autocompleteKeyEventRef.current?.(e) ?? true,

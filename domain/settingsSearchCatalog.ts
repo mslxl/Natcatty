@@ -378,6 +378,13 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.terminal.section.behavior",
   },
   {
+    id: "terminal-osc-notifications",
+    tab: "terminal",
+    labelKey: "settings.terminal.behavior.oscNotifications",
+    descriptionKey: "settings.terminal.behavior.oscNotifications.desc",
+    sectionKey: "settings.terminal.section.behavior",
+  },
+  {
     id: "terminal-osc52-clipboard",
     tab: "terminal",
     labelKey: "settings.terminal.behavior.osc52Clipboard",

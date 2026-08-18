@@ -1,0 +1,206 @@
+export type OscNotificationProtocol = 'osc9' | 'osc777' | 'osc99';
+
+export type OscNotification = {
+  title: string;
+  body: string;
+  protocol: OscNotificationProtocol;
+};
+
+export const DEFAULT_OSC_NOTIFICATION_TITLE = 'Netcatty';
+export const OSC_NOTIFICATION_TITLE_MAX = 120;
+export const OSC_NOTIFICATION_BODY_MAX = 500;
+
+const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const CONEMU_OSC9_COMMAND = /^\d+(?:;|$)/;
+const OSC99_PENDING_TTL_MS = 10_000;
+const OSC99_PENDING_MAX = 16;
+
+const DEFAULT_LIMIT_WINDOW_MS = 10_000;
+const DEFAULT_LIMIT_MAX = 4;
+const DEFAULT_LIMIT_MIN_GAP_MS = 400;
+
+export function sanitizeOscNotificationText(value: string, max: number): string {
+  if (typeof value !== 'string' || max <= 0) return '';
+  const cleaned = value.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}
+
+export function resolveOscNotificationPresentation(
+  notification: OscNotification,
+  fallbackTitle = DEFAULT_OSC_NOTIFICATION_TITLE,
+): { title: string; body: string } {
+  const fallback = sanitizeOscNotificationText(fallbackTitle, OSC_NOTIFICATION_TITLE_MAX)
+    || DEFAULT_OSC_NOTIFICATION_TITLE;
+  const title = sanitizeOscNotificationText(notification.title, OSC_NOTIFICATION_TITLE_MAX);
+  const body = sanitizeOscNotificationText(notification.body, OSC_NOTIFICATION_BODY_MAX);
+  if (title && body) return { title, body };
+  if (body) return { title: fallback, body };
+  if (title) return { title: fallback, body: title };
+  return { title: fallback, body: '' };
+}
+
+export function shouldShowOscDesktopNotification(
+  mode: 'off' | 'unfocused' | 'always' | undefined,
+  context: { windowFocused: boolean; sessionFocused: boolean },
+): boolean {
+  if (mode === 'off') return false;
+  if (mode === 'unfocused') return !context.windowFocused || !context.sessionFocused;
+  return true;
+}
+
+export function parseOsc9Payload(data: string): OscNotification | null {
+  if (typeof data !== 'string') return null;
+  const payload = data.trim();
+  if (!payload) return null;
+  // ConEmu/Windows Terminal also use OSC 9;n (especially 9;4 progress).
+  // Those must not become desktop notifications.
+  if (CONEMU_OSC9_COMMAND.test(payload)) return null;
+  return {
+    title: '',
+    body: payload,
+    protocol: 'osc9',
+  };
+}
+
+export function parseOsc777Payload(data: string): OscNotification | null {
+  if (typeof data !== 'string') return null;
+  const match = data.match(/^notify;(.*)$/i);
+  if (!match) return null;
+  const rest = match[1] ?? '';
+  const separator = rest.indexOf(';');
+  if (separator < 0) {
+    const body = rest.trim();
+    if (!body) return null;
+    return { title: '', body, protocol: 'osc777' };
+  }
+  const title = rest.slice(0, separator).trim();
+  const body = rest.slice(separator + 1).trim();
+  if (!title && !body) return null;
+  return { title, body, protocol: 'osc777' };
+}
+
+type Osc99Pending = {
+  title: string;
+  body: string;
+  updatedAt: number;
+};
+
+const decodeOsc99Payload = (payload: string, encoded: boolean): string => {
+  if (!encoded) return payload;
+  try {
+    const binary = atob(payload);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return '';
+  }
+};
+
+export class Osc99Assembler {
+  private readonly pending = new Map<string, Osc99Pending>();
+
+  consume(data: string, now = Date.now()): OscNotification | null {
+    if (typeof data !== 'string') return null;
+    this.prune(now);
+
+    const separator = data.indexOf(';');
+    const metadata = separator < 0 ? '' : data.slice(0, separator);
+    const rawPayload = separator < 0 ? data : data.slice(separator + 1);
+    const fields = parseOsc99Metadata(metadata);
+    if (fields.close) {
+      if (fields.id) this.pending.delete(fields.id);
+      return null;
+    }
+
+    const payload = decodeOsc99Payload(rawPayload, fields.encoded).trim();
+    const current = this.pending.get(fields.id) ?? { title: '', body: '', updatedAt: now };
+    if (fields.part === 'body') current.body += payload;
+    else current.title += payload;
+    current.updatedAt = now;
+
+    if (!fields.done) {
+      this.pending.set(fields.id, current);
+      this.evictOldest();
+      return null;
+    }
+
+    this.pending.delete(fields.id);
+    if (!current.title.trim() && !current.body.trim()) return null;
+    return {
+      title: current.title,
+      body: current.body,
+      protocol: 'osc99',
+    };
+  }
+
+  private prune(now: number): void {
+    for (const [id, entry] of this.pending) {
+      if (now - entry.updatedAt > OSC99_PENDING_TTL_MS) this.pending.delete(id);
+    }
+  }
+
+  private evictOldest(): void {
+    while (this.pending.size > OSC99_PENDING_MAX) {
+      const oldest = this.pending.keys().next().value;
+      if (oldest === undefined) return;
+      this.pending.delete(oldest);
+    }
+  }
+}
+
+function parseOsc99Metadata(metadata: string): {
+  id: string;
+  part: 'title' | 'body';
+  done: boolean;
+  encoded: boolean;
+  close: boolean;
+} {
+  const fields = {
+    id: '',
+    part: 'title' as 'title' | 'body',
+    done: true,
+    encoded: false,
+    close: false,
+  };
+  if (!metadata.trim()) return fields;
+
+  for (const token of metadata.split(':')) {
+    const eq = token.indexOf('=');
+    if (eq <= 0) continue;
+    const key = token.slice(0, eq).trim();
+    const value = token.slice(eq + 1).trim();
+    if (key === 'i') fields.id = value;
+    else if (key === 'p' && (value === 'title' || value === 'body')) fields.part = value;
+    else if (key === 'd') fields.done = value !== '0';
+    else if (key === 'e') fields.encoded = value === '1';
+    else if ((key === 'p' || key === 'a') && value === 'close') fields.close = true;
+  }
+  return fields;
+}
+
+export class OscNotificationLimiter {
+  private readonly stamps = new Map<string, number[]>();
+
+  constructor(
+    private readonly windowMs = DEFAULT_LIMIT_WINDOW_MS,
+    private readonly max = DEFAULT_LIMIT_MAX,
+    private readonly minGapMs = DEFAULT_LIMIT_MIN_GAP_MS,
+  ) {}
+
+  allow(key: string, now = Date.now()): boolean {
+    const recent = (this.stamps.get(key) ?? []).filter((stamp) => now - stamp < this.windowMs);
+    const last = recent[recent.length - 1];
+    if (last !== undefined && now - last < this.minGapMs) {
+      this.stamps.set(key, recent);
+      return false;
+    }
+    if (recent.length >= this.max) {
+      this.stamps.set(key, recent);
+      return false;
+    }
+    recent.push(now);
+    this.stamps.set(key, recent);
+    return true;
+  }
+}

@@ -610,6 +610,12 @@ Highlight the focused split pane:
   'settings.terminal.behavior.dynamicTabTitle.off': 'Disabled',
   'settings.terminal.behavior.dynamicTabTitle.agent': 'Agents only',
   'settings.terminal.behavior.dynamicTabTitle.all': 'All sessions',
+  'settings.terminal.behavior.oscNotifications': 'OSC desktop notifications',
+  'settings.terminal.behavior.oscNotifications.desc':
+    'Show a system notification when a program emits OSC 9, OSC 777 notify, or kitty OSC 99. Used by Codex and other agents for turn-complete and approval alerts.',
+  'settings.terminal.behavior.oscNotifications.off': 'Disabled',
+  'settings.terminal.behavior.oscNotifications.unfocused': 'When unfocused',
+  'settings.terminal.behavior.oscNotifications.always': 'Always',
   'settings.terminal.behavior.osc52Clipboard': 'OSC-52 clipboard',
   'settings.terminal.behavior.osc52Clipboard.desc':
     'Allow remote programs (tmux, vim, etc.) to access the local clipboard via OSC-52 escape sequences.',

@@ -48,6 +48,7 @@ import {
   type XTermFontRemeasureTarget,
 } from './runtime/terminalFontRemeasure';
 import { shouldClaimTerminalKeyboardFocus } from '../../domain/terminalKeyboardFocus';
+import { showOscDesktopNotification } from './oscDesktopNotification';
 import { settleTerminalSearchAfterLayout } from './hooks/useTerminalSearch';
 import {
   isTerminalCloseGenerationCurrent,
@@ -178,6 +179,8 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   ) && !kittyKeyboardProtocolEnabledForSession;
   ctx.pluginDecorationRulesRef.current = pluginDecorationRules;
   const prevIsSearchOpenRef = useRef(isSearchOpen);
+  const isFocusedRef = useRef(!!isFocused);
+  isFocusedRef.current = !!isFocused;
   const pluginAwareOnCommandSubmitted = (...args: Parameters<NonNullable<typeof onCommandSubmitted>>) => {
     markTerminalCommandCompletionPending(promptLineBreakStateRef);
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
@@ -530,6 +533,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           },
           onBell: () => {
             onTerminalBell?.(sessionId);
+          },
+          onOscNotification: (notification) => {
+            onTerminalBell?.(sessionId);
+            showOscDesktopNotification({
+              notification,
+              mode: terminalSettingsRef.current?.oscNotifications,
+              sessionFocused: isFocusedRef.current,
+              sessionId,
+              fallbackTitle: host.label || host.hostname || "Netcatty",
+            });
           },
           onOsc52ReadRequest: handleOsc52ReadRequest,
           // Autocomplete integration
