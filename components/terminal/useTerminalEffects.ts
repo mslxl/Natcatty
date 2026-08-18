@@ -48,7 +48,7 @@ import {
   type XTermFontRemeasureTarget,
 } from './runtime/terminalFontRemeasure';
 import { shouldClaimTerminalKeyboardFocus } from '../../domain/terminalKeyboardFocus';
-import { showOscDesktopNotification } from './oscDesktopNotification';
+import { handleTerminalOscNotification } from '../../application/state/oscDesktopNotifications';
 import { settleTerminalSearchAfterLayout } from './hooks/useTerminalSearch';
 import {
   isTerminalCloseGenerationCurrent,
@@ -535,13 +535,13 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
             onTerminalBell?.(sessionId);
           },
           onOscNotification: (notification) => {
-            onTerminalBell?.(sessionId);
-            showOscDesktopNotification({
+            handleTerminalOscNotification({
               notification,
               mode: terminalSettingsRef.current?.oscNotifications,
               sessionFocused: isFocusedRef.current,
               sessionId,
               fallbackTitle: host.label || host.hostname || "Netcatty",
+              onSessionActivity: () => onTerminalBell?.(sessionId),
             });
           },
           onOsc52ReadRequest: handleOsc52ReadRequest,

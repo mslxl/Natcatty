@@ -10,8 +10,8 @@ export const DEFAULT_OSC_NOTIFICATION_TITLE = 'Netcatty';
 export const OSC_NOTIFICATION_TITLE_MAX = 120;
 export const OSC_NOTIFICATION_BODY_MAX = 500;
 
-const CONTROL_CHARS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
 const CONEMU_OSC9_COMMAND = /^\d+(?:;|$)/;
+const OSC_NOTIFICATION_CARRY_MAX = 8192;
 const OSC99_PENDING_TTL_MS = 10_000;
 const OSC99_PENDING_MAX = 16;
 
@@ -19,9 +19,21 @@ const DEFAULT_LIMIT_WINDOW_MS = 10_000;
 const DEFAULT_LIMIT_MAX = 4;
 const DEFAULT_LIMIT_MIN_GAP_MS = 400;
 
+const isForbiddenOscNotificationChar = (code: number): boolean => (
+  code <= 8
+  || code === 0x0b
+  || code === 0x0c
+  || (code >= 0x0e && code <= 0x1f)
+  || code === 0x7f
+);
+
 export function sanitizeOscNotificationText(value: string, max: number): string {
   if (typeof value !== 'string' || max <= 0) return '';
-  const cleaned = value.replace(CONTROL_CHARS, '').replace(/\s+/g, ' ').trim();
+  let cleaned = '';
+  for (const char of value) {
+    if (!isForbiddenOscNotificationChar(char.charCodeAt(0))) cleaned += char;
+  }
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
   if (cleaned.length <= max) return cleaned;
   return `${cleaned.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
@@ -177,6 +189,138 @@ function parseOsc99Metadata(metadata: string): {
     else if ((key === 'p' || key === 'a') && value === 'close') fields.close = true;
   }
   return fields;
+}
+
+type OscScanResult =
+  | { incomplete: true }
+  | { incomplete: false; notification: boolean; id: number; payload: string; end: number };
+
+const isNotificationOscId = (id: number): boolean => id === 9 || id === 777 || id === 99;
+
+const readOscAt = (input: string, start: number): OscScanResult => {
+  if (input[start] !== '\x1b') return { incomplete: false, notification: false, id: -1, payload: '', end: start + 1 };
+  if (start + 1 >= input.length) return { incomplete: true };
+  if (input[start + 1] !== ']') {
+    return { incomplete: false, notification: false, id: -1, payload: '', end: start + 1 };
+  }
+
+  let index = start + 2;
+  if (index >= input.length) return { incomplete: true };
+
+  let id = 0;
+  let sawDigit = false;
+  while (index < input.length) {
+    const code = input.charCodeAt(index);
+    if (code >= 48 && code <= 57) {
+      sawDigit = true;
+      id = id * 10 + (code - 48);
+      index += 1;
+      continue;
+    }
+    break;
+  }
+  if (!sawDigit) {
+    return { incomplete: index >= input.length, notification: false, id: -1, payload: '', end: index };
+  }
+  if (index >= input.length) return { incomplete: true };
+
+  if (input[index] === ';') index += 1;
+
+  const payloadStart = index;
+  while (index < input.length) {
+    if (input[index] === '\x07') {
+      return {
+        incomplete: false,
+        notification: isNotificationOscId(id),
+        id,
+        payload: input.slice(payloadStart, index),
+        end: index + 1,
+      };
+    }
+    if (input[index] === '\x1b') {
+      if (index + 1 >= input.length) {
+        return isNotificationOscId(id) ? { incomplete: true } : {
+          incomplete: false,
+          notification: false,
+          id,
+          payload: '',
+          end: index,
+        };
+      }
+      if (input[index + 1] === '\\') {
+        return {
+          incomplete: false,
+          notification: isNotificationOscId(id),
+          id,
+          payload: input.slice(payloadStart, index),
+          end: index + 2,
+        };
+      }
+      if (!isNotificationOscId(id)) {
+        return { incomplete: false, notification: false, id, payload: '', end: index };
+      }
+    }
+    index += 1;
+  }
+
+  return isNotificationOscId(id) ? { incomplete: true } : {
+    incomplete: false,
+    notification: false,
+    id,
+    payload: '',
+    end: input.length,
+  };
+};
+
+export class OscNotificationStreamScanner {
+  private carry = '';
+  private readonly assembler = new Osc99Assembler();
+
+  consume(chunk: string): { notifications: OscNotification[]; remainder: string } {
+    const input = this.carry + (typeof chunk === 'string' ? chunk : '');
+    this.carry = '';
+    const notifications: OscNotification[] = [];
+    let remainder = '';
+    let index = 0;
+
+    while (index < input.length) {
+      const esc = input.indexOf('\x1b', index);
+      if (esc < 0) {
+        remainder += input.slice(index);
+        break;
+      }
+      remainder += input.slice(index, esc);
+      const scanned = readOscAt(input, esc);
+      if (scanned.incomplete) {
+        const leftover = input.slice(esc);
+        if (leftover.length > OSC_NOTIFICATION_CARRY_MAX) {
+          remainder += leftover;
+        } else {
+          this.carry = leftover;
+        }
+        break;
+      }
+      if (scanned.notification) {
+        const notification = scanned.id === 9
+          ? parseOsc9Payload(scanned.payload)
+          : scanned.id === 777
+            ? parseOsc777Payload(scanned.payload)
+            : this.assembler.consume(scanned.payload);
+        if (notification) notifications.push(notification);
+      } else {
+        remainder += input.slice(esc, scanned.end);
+      }
+      index = scanned.end;
+    }
+
+    return { notifications, remainder };
+  }
+
+  flush(): string {
+    const leftover = this.carry;
+    this.carry = '';
+    return leftover;
+  }
 }
 
 export class OscNotificationLimiter {

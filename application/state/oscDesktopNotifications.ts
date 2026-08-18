@@ -24,14 +24,14 @@ export function showOscDesktopNotification(options: {
   sessionFocused: boolean;
   sessionId: string;
   fallbackTitle?: string;
-}): void {
+}): boolean {
   if (!shouldShowOscDesktopNotification(options.mode, {
     windowFocused: typeof document !== "undefined" && document.hasFocus(),
     sessionFocused: options.sessionFocused,
   })) {
-    return;
+    return false;
   }
-  if (!limiterForSession(options.sessionId).allow(options.sessionId)) return;
+  if (!limiterForSession(options.sessionId).allow(options.sessionId)) return false;
 
   const presented = resolveOscNotificationPresentation(
     options.notification,
@@ -42,4 +42,19 @@ export function showOscDesktopNotification(options: {
     body: presented.body,
     sessionId: options.sessionId,
   });
+  return true;
+}
+
+export function handleTerminalOscNotification(options: {
+  notification: OscNotification;
+  mode: OscNotificationMode | undefined;
+  sessionFocused: boolean;
+  sessionId: string;
+  fallbackTitle?: string;
+  onSessionActivity?: () => void;
+}): boolean {
+  if (options.mode === "off") return false;
+  options.onSessionActivity?.();
+  showOscDesktopNotification(options);
+  return true;
 }

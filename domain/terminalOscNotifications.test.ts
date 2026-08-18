@@ -5,6 +5,7 @@ import {
   DEFAULT_OSC_NOTIFICATION_TITLE,
   Osc99Assembler,
   OscNotificationLimiter,
+  OscNotificationStreamScanner,
   parseOsc777Payload,
   parseOsc9Payload,
   resolveOscNotificationPresentation,
@@ -148,6 +149,34 @@ test("shouldShowOscDesktopNotification honors mode and focus", () => {
   assert.equal(shouldShowOscDesktopNotification("unfocused", { windowFocused: true, sessionFocused: false }), true);
   assert.equal(shouldShowOscDesktopNotification("unfocused", { windowFocused: false, sessionFocused: true }), true);
   assert.equal(shouldShowOscDesktopNotification(undefined, { windowFocused: true, sessionFocused: true }), true);
+});
+
+test("OscNotificationStreamScanner extracts split OSC 9 sequences and leaves other text", () => {
+  const scanner = new OscNotificationStreamScanner();
+  const first = scanner.consume("hello\x1b]9;Codex turn");
+  assert.deepEqual(first.notifications, []);
+  assert.equal(first.remainder, "hello");
+  const second = scanner.consume(" complete\x07world");
+  assert.deepEqual(second.notifications, [{
+    title: "",
+    body: "Codex turn complete",
+    protocol: "osc9",
+  }]);
+  assert.equal(second.remainder, "world");
+});
+
+test("OscNotificationStreamScanner keeps non-notification OSC in the remainder", () => {
+  const scanner = new OscNotificationStreamScanner();
+  const result = scanner.consume("pre\x1b]7;file://host/tmp\x07post");
+  assert.deepEqual(result.notifications, []);
+  assert.equal(result.remainder, "pre\x1b]7;file://host/tmp\x07post");
+});
+
+test("OscNotificationStreamScanner flushes an unfinished prefix", () => {
+  const scanner = new OscNotificationStreamScanner();
+  scanner.consume("\x1b]9;pending");
+  assert.equal(scanner.flush(), "\x1b]9;pending");
+  assert.equal(scanner.flush(), "");
 });
 
 test("OscNotificationLimiter rate-limits a noisy session", () => {
