@@ -29,6 +29,7 @@ const {
   emitGrokUsage,
   normalizeGrokPlanUpdate,
   applyGrokReasoningFallback,
+  resolveGrokCatalogCurrentModelId,
   parseGrokModelSelection,
   shouldReportGrokProcessExitFailure,
   spawnGrokProcess,
@@ -38,7 +39,9 @@ const GROK_ACP_ABORT_GRACE_MS = 1_500;
 const MAX_GROK_ACP_LINE_BYTES = 10 * 1024 * 1024;
 const MAX_GROK_ACP_STDERR_CHARS = 64 * 1024;
 const ACP_PROTOCOL_VERSION = 1;
-const GROK_ACP_MODEL_LIST_TIMEOUT_MS = 10_000;
+// The outer SDK model-list request has a 10s deadline. Leave enough time for
+// the legacy `grok models` fallback when ACP initialize hangs.
+const GROK_ACP_MODEL_LIST_TIMEOUT_MS = 4_000;
 const GROK_FALLBACK_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
 const GROK_REASONING_EFFORTS = new Set([
   "none",
@@ -265,7 +268,14 @@ function parseGrokAcpModelCatalog(initResult) {
           levels.push(value);
         }
       }
-      if (levels.length === 0) levels.push(...GROK_FALLBACK_REASONING_EFFORTS);
+      if (levels.length === 0) {
+        const knownFallback = applyGrokReasoningFallback(preset);
+        if (Array.isArray(knownFallback?.thinkingLevels)) {
+          levels.push(...knownFallback.thinkingLevels);
+        } else {
+          levels.push(...GROK_FALLBACK_REASONING_EFFORTS);
+        }
+      }
       preset.thinkingLevels = levels;
 
       const advertisedDefault = String(
@@ -290,9 +300,10 @@ function parseGrokAcpModelCatalog(initResult) {
     models.push(preset);
   }
 
-  const currentModelId = String(
+  const advertisedCurrentModelId = String(
     modelState.currentModelId || modelState.current_model_id || "",
   ).trim() || null;
+  const currentModelId = resolveGrokCatalogCurrentModelId(models, advertisedCurrentModelId);
   return { currentModelId, models };
 }
 

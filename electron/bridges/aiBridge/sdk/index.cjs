@@ -379,7 +379,10 @@ const DRIVER_REGISTRY = {
         : (currentModelId
           ? [grok.applyGrokReasoningFallback({ id: currentModelId, name: currentModelId })]
           : []);
-      return { currentModelId, models };
+      return {
+        currentModelId: grok.resolveGrokCatalogCurrentModelId(models, currentModelId),
+        models,
+      };
     },
   },
 };

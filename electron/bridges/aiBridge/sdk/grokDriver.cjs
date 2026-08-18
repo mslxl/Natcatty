@@ -964,6 +964,19 @@ function applyGrokReasoningFallback(model) {
   };
 }
 
+function resolveGrokCatalogCurrentModelId(models, currentModelId) {
+  const advertised = String(currentModelId || "").trim();
+  if (!advertised) return null;
+  const selection = parseGrokModelSelection(advertised);
+  const preset = (Array.isArray(models) ? models : [])
+    .find((entry) => entry?.id === selection.model);
+  if (!preset?.thinkingLevels?.length) return advertised;
+  const effort = preset.thinkingLevels.includes(selection.effort)
+    ? selection.effort
+    : (preset.defaultThinkingLevel || preset.thinkingLevels[0]);
+  return effort ? `${preset.id}/${effort}` : preset.id;
+}
+
 async function listGrokModels({
   binPath,
   env,
@@ -1062,6 +1075,7 @@ module.exports = {
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
+  resolveGrokCatalogCurrentModelId,
   resolveGrokRuntime,
   resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,

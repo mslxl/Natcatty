@@ -118,7 +118,7 @@ test("parseGrokAcpModelCatalog exposes only each model's advertised reasoning ef
   });
 
   assert.deepEqual(catalog, {
-    currentModelId: "grok-4.6",
+    currentModelId: "grok-4.6/high",
     models: [
       {
         id: "grok-4.6",
@@ -158,6 +158,29 @@ test("parseGrokAcpModelCatalog fills known legacy models without overriding expl
     },
     { id: "grok-4.6", name: "Grok 4.6" },
   ]);
+  assert.equal(catalog.currentModelId, "grok-4.5/high");
+});
+
+test("parseGrokAcpModelCatalog uses a model-specific fallback when advertised options are empty", () => {
+  const catalog = parseGrokAcpModelCatalog({
+    _meta: {
+      modelState: {
+        currentModelId: "grok-4.5",
+        availableModels: [{
+          modelId: "grok-4.5",
+          name: "Grok 4.5",
+          _meta: {
+            supportsReasoningEffort: true,
+            reasoningEfforts: [],
+          },
+        }],
+      },
+    },
+  });
+
+  assert.equal(catalog.currentModelId, "grok-4.5/high");
+  assert.deepEqual(catalog.models[0].thinkingLevels, ["high", "medium", "low"]);
+  assert.ok(!catalog.models[0].thinkingLevels.includes("xhigh"));
 });
 
 test("listGrokAcpModels reads reasoning metadata from the initialize response", async () => {
@@ -222,7 +245,7 @@ test("listGrokAcpModels reads reasoning metadata from the initialize response", 
     },
   });
 
-  assert.equal(catalog.currentModelId, "grok-4.6");
+  assert.equal(catalog.currentModelId, "grok-4.6/high");
   assert.deepEqual(catalog.models[0].thinkingLevels, ["high", "low"]);
   assert.equal(catalog.models[0].defaultThinkingLevel, "high");
   assert.deepEqual(signals, ["SIGTERM"]);
@@ -240,14 +263,20 @@ test("listGrokAcpModels force-kills a model probe that ignores timeout shutdown"
   child.pid = 43;
   const signals = [];
 
-  const catalog = await listGrokAcpModels({
-    binPath: "/usr/bin/grok",
-    spawnImpl: () => child,
-    timeoutMs: 2,
-    abortGraceMs: 2,
-    forceKillImpl: (_child, signal) => signals.push(signal),
-  });
-  await new Promise((resolve) => setTimeout(resolve, 10));
+  const keepAlive = setTimeout(() => {}, 50);
+  let catalog;
+  try {
+    catalog = await listGrokAcpModels({
+      binPath: "/usr/bin/grok",
+      spawnImpl: () => child,
+      timeoutMs: 2,
+      abortGraceMs: 2,
+      forceKillImpl: (_child, signal) => signals.push(signal),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  } finally {
+    clearTimeout(keepAlive);
+  }
 
   assert.deepEqual(catalog, { currentModelId: null, models: [] });
   assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
@@ -294,7 +323,7 @@ test("registry Grok model discovery enriches legacy fallback reasoning levels", 
   });
   try {
     const catalog = await getDriver("grok").listModels({});
-    assert.equal(catalog.currentModelId, "grok-4.6");
+    assert.equal(catalog.currentModelId, "grok-4.6/high");
     assert.deepEqual(catalog.models[0].thinkingLevels, ["xhigh", "high", "medium", "low"]);
     assert.equal(catalog.models[0].defaultThinkingLevel, "high");
   } finally {
@@ -312,7 +341,7 @@ test("registry Grok model discovery keeps ACP current model when its list is inc
   grokModule.listGrokModels = async () => ({ currentModelId: "grok-4.5", models: [] });
   try {
     const catalog = await getDriver("grok").listModels({});
-    assert.equal(catalog.currentModelId, "grok-4.6");
+    assert.equal(catalog.currentModelId, "grok-4.6/high");
     assert.deepEqual(catalog.models, [{
       id: "grok-4.6",
       name: "grok-4.6",
