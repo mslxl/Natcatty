@@ -2,7 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   probeClaudeAuth, probeCopilotAuth, probeCodexAuth, probeCodebuddyAuth, probeCursorCliAuth, probeGrokAuth,
+  parseCursorStatusJson, resolveCursorCliSpawnSpec,
 } = require("./agentAuthProbes.cjs");
+const { prepareCommandForSpawn } = require("../ai/shellUtils.cjs");
 
 test("probeClaudeAuth: env ANTHROPIC_API_KEY -> authenticated env", () => {
   const r = probeClaudeAuth({
@@ -270,4 +272,42 @@ test("probeCursorCliAuth: status command failure -> not authenticated", () => {
     runStatus: () => ({ exitCode: 1, stdout: "", stderr: "boom" }),
   });
   assert.equal(r.authenticated, false);
+});
+
+test("probeCursorCliAuth: extracts authenticated JSON wrapped in cmd noise", () => {
+  const r = probeCursorCliAuth({
+    resolveBinary: () => "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd",
+    runStatus: () => ({
+      exitCode: 0,
+      stdout: "Starting...\r\n{\"status\":\"authenticated\",\"isAuthenticated\":true,\"userInfo\":{\"email\":\"user@example.com\"}}\r\n",
+    }),
+  });
+  assert.equal(r.authenticated, true);
+  assert.equal(r.authSource, "cli-login");
+  assert.equal(r.email, "user@example.com");
+});
+
+test("parseCursorStatusJson accepts BOM and surrounding text", () => {
+  const parsed = parseCursorStatusJson(
+    "\uFEFFnoise\n{\"isAuthenticated\":true,\"status\":\"authenticated\"}\n",
+  );
+  assert.equal(parsed.isAuthenticated, true);
+  assert.equal(parsed.status, "authenticated");
+});
+
+test("resolveCursorCliSpawnSpec does not unwrap cursor-agent.cmd to node.exe", () => {
+  const shim = "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
+  const args = ["status", "--format", "json"];
+  const actual = resolveCursorCliSpawnSpec(shim, args);
+  assert.deepEqual(actual, prepareCommandForSpawn(shim, args, { unwrapNativeExe: false }));
+  if (process.platform === "win32") {
+    assert.equal(actual.shell, true);
+    assert.equal(actual.args.length, 0);
+    assert.match(actual.command, /cursor-agent\.cmd/i);
+    assert.match(actual.command, /status/);
+  } else {
+    assert.equal(actual.shell, false);
+    assert.equal(actual.command, shim);
+    assert.deepEqual(actual.args, args);
+  }
 });

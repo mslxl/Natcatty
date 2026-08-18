@@ -13,8 +13,10 @@ const {
   resetMcpMergeRefcountsForTests,
   resolveCursorCliExecMode,
   resolveCursorCliModel,
+  resolveCursorCliSpawnSpec,
   resolveCursorCliWorkspaceCwd,
   runCursorCliTurn,
+  spawnCursorCliProcess,
   stripCursorApiKeyFromEnv,
   translateCursorCliEvent,
 } = require("./cursorCliDriver.cjs");
@@ -585,6 +587,55 @@ test("runCursorCliTurn closes open reasoning before done", async () => {
     ["reasoningEnd"],
     ["done"],
   ]);
+});
+
+test("resolveCursorCliSpawnSpec wraps Windows cmd shims without unwrapping node.exe", () => {
+  const { prepareCommandForSpawn } = require("../../ai/shellUtils.cjs");
+  const shim = "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
+  const args = ["--print", "--trust"];
+  const actual = resolveCursorCliSpawnSpec(shim, args);
+  assert.deepEqual(actual, prepareCommandForSpawn(shim, args, { unwrapNativeExe: false }));
+  if (process.platform === "win32") {
+    assert.equal(actual.shell, true);
+    assert.equal(actual.args.length, 0);
+  } else {
+    assert.equal(actual.shell, false);
+    assert.deepEqual(actual.args, args);
+  }
+
+  const exePath = process.platform === "win32"
+    ? "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.exe"
+    : "/usr/local/bin/cursor-agent";
+  const exe = resolveCursorCliSpawnSpec(exePath, args);
+  assert.equal(exe.shell, false);
+  assert.equal(exe.command, exePath);
+  assert.deepEqual(exe.args, args);
+});
+
+test("spawnCursorCliProcess forwards shell from resolveCursorCliSpawnSpec", () => {
+  const calls = [];
+  const fakeChild = {
+    stdout: { on() {} },
+    stderr: { on() {} },
+    stdin: null,
+    on() {},
+    kill() {},
+  };
+  const shim = "C:\\Users\\me\\AppData\\Local\\cursor-agent\\cursor-agent.cmd";
+  const child = spawnCursorCliProcess(
+    (command, args, options) => {
+      calls.push({ command, args, options });
+      return fakeChild;
+    },
+    shim,
+    ["models"],
+    { cwd: "D:\\repo", windowsHide: true },
+  );
+  assert.equal(child, fakeChild);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.cwd, "D:\\repo");
+  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.shell, process.platform === "win32");
 });
 
 test("listCursorCliModels parses agent models output and prefers auto", async () => {
