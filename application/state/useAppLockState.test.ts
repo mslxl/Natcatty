@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createAppLockPasswordVerifier, type AppLockSettings } from "../../domain/appLock.ts";
+import type { AppLockPasswordVerifier, AppLockSettings } from "../../domain/appLock.ts";
 import {
   createOptimisticUnlockedRuntimeState,
   DEFAULT_APP_LOCK_SYSTEM_UNLOCK_STATUS,
@@ -13,8 +13,15 @@ import {
 } from "./useAppLockState.ts";
 import { selectPreferredRuntimeAppLockState } from "./useAppLockRuntime.ts";
 
-test("shouldLockOnStartup locks only when enabled with a verifier", async () => {
-  const verifier = await createAppLockPasswordVerifier("secret");
+const verifier: AppLockPasswordVerifier = {
+  version: 1,
+  algorithm: "PBKDF2-SHA256",
+  iterations: 210000,
+  salt: Buffer.alloc(16, 1).toString("base64"),
+  hash: Buffer.alloc(32, 2).toString("base64"),
+};
+
+test("shouldLockOnStartup locks only when enabled with a verifier", () => {
   const enabled: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 15,
@@ -28,8 +35,7 @@ test("shouldLockOnStartup locks only when enabled with a verifier", async () => 
   assert.equal(shouldLockOnStartup({ ...enabled, passwordVerifier: null }), false);
 });
 
-test("shouldLockAfterIdle honors the configured timeout", async () => {
-  const verifier = await createAppLockPasswordVerifier("secret");
+test("shouldLockAfterIdle honors the configured timeout", () => {
   const settings: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 5,
@@ -45,8 +51,7 @@ test("shouldLockAfterIdle honors the configured timeout", async () => {
   assert.equal(shouldLockAfterIdle({ ...settings, passwordVerifier: null }, 1_000, 1_000 + 60 * 60_000), false);
 });
 
-test("getIdleLockDelayMs schedules the next check after remaining idle time", async () => {
-  const verifier = await createAppLockPasswordVerifier("secret");
+test("getIdleLockDelayMs schedules the next check after remaining idle time", () => {
   const settings: AppLockSettings = {
     enabled: true,
     timeoutMinutes: 5,
@@ -158,8 +163,6 @@ test("normalizes app lock system unlock bridge status and results", () => {
 
 test("resolveUnlockAttempt validates empty, incorrect, and correct passwords", async () => {
   const originalWindow = globalThis.window;
-  const verifier = await createAppLockPasswordVerifier("secret");
-  void verifier;
   globalThis.window = {
     netcatty: {
       requestAppLockUnlock: async (password: string) =>

@@ -1,6 +1,5 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
 import type { CustomKeyBindings, HotkeyScheme, SessionLogFormat, TerminalSettings, UILanguage } from '../../domain/models';
-import type { AppLockSettings } from '../../domain/appLock';
 import { parseCustomKeyBindingsStorageRecord } from '../../domain/customKeyBindings';
 import { resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import {
@@ -80,7 +79,6 @@ interface UseSettingsStorageSyncParams {
   followAppTerminalTheme: boolean;
   terminalFontFamilyId: string;
   terminalFontSize: number;
-  appLockSettings: AppLockSettings;
   sftpDoubleClickBehavior: 'open' | 'transfer';
   sftpAutoSync: boolean;
   sftpShowHiddenFiles: boolean;
@@ -130,7 +128,6 @@ interface UseSettingsStorageSyncParams {
   setFollowAppTerminalThemeState: Dispatch<SetStateAction<boolean>>;
   setTerminalFontFamilyId: Dispatch<SetStateAction<string>>;
   setTerminalFontSize: (raw: unknown) => void;
-  setAppLockSettingsState: Dispatch<SetStateAction<AppLockSettings>>;
   setSftpDoubleClickBehavior: Dispatch<SetStateAction<'open' | 'transfer'>>;
   setSftpAutoSync: Dispatch<SetStateAction<boolean>>;
   setSftpShowHiddenFiles: Dispatch<SetStateAction<boolean>>;
@@ -177,7 +174,6 @@ export function useSettingsStorageSync({
   theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentVersion,
   customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
   terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
-  appLockSettings,
   sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
   sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
   showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
@@ -187,7 +183,6 @@ export function useSettingsStorageSync({
   setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
   setTerminalThemeId, setTerminalThemeDarkId, setTerminalThemeLightId,
   setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize,
-  setAppLockSettingsState,
   setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
   setSftpUseCompressedUpload, setSftpSkipUnchanged, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
   setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState, setStartupLandingState,
@@ -203,7 +198,6 @@ export function useSettingsStorageSync({
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentVersion,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
-    appLockSettings,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
@@ -214,7 +208,6 @@ export function useSettingsStorageSync({
     theme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentVersion,
     customCSS, uiFontFamilyId, hotkeyScheme, uiLanguage,
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
-    appLockSettings,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
@@ -547,7 +540,6 @@ export function useSettingsStorageSync({
     applyIncomingCustomKeyBindings,
     mergeIncomingTerminalSettings,
     setAccentMode,
-    setAppLockSettingsState,
     setAutoUpdateEnabled,
     applyIncomingCustomAccent,
     setCustomCSS,

@@ -1212,7 +1212,7 @@ if (!gotLock) {
       platform: process.platform,
       systemPreferences: electronModule.systemPreferences,
       execFile,
-      helperPath: resolveDefaultHelperPath(),
+      helperPath: resolveDefaultHelperPath({ isPackaged: app.isPackaged }),
       getNativeWindowHandle: getAppLockNativeWindowHandle,
     });
     appLockController = createAppLockController({
@@ -1329,6 +1329,7 @@ if (!gotLock) {
     try {
       const menu = getWindowManager().buildAppMenu(Menu, app, isMac, undefined, {
         isAppLocked: () => Boolean(appLockRuntimeBridge?.getState?.()?.locked),
+        setAppLockWindowTitle: (win, title) => appLockController?.setWindowTitle?.(win, title),
       });
       Menu.setApplicationMenu(menu);
     } catch (err) {
@@ -1340,6 +1341,7 @@ if (!gotLock) {
 
     app.on("browser-window-created", (_event, win) => {
       try {
+        appLockController?.protectWindow?.(win);
         const windowManager = getWindowManager();
         const mainWin = windowManager.getMainWindow();
         const settingsWin = windowManager.getSettingsWindow();

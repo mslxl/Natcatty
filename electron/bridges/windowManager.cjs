@@ -1108,6 +1108,13 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
   ipcMain.handle("netcatty:window:setTitle", (event, title) => {
     const win = getWindowForIpcEvent(event);
     if (!win || win.isDestroyed()) return false;
+    try {
+      if (typeof menuDeps?.setAppLockWindowTitle === "function") {
+        return menuDeps.setAppLockWindowTitle(win, title) === true;
+      }
+    } catch {
+      // Ignore title-guard failures and keep normal title behavior.
+    }
     const value = typeof title === "string" ? title.trim() : "";
     try {
       win.setTitle(value || "Netcatty");
@@ -1251,6 +1258,11 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage, options = {}
     isAppLocked: typeof options.isAppLocked === "function"
       ? options.isAppLocked
       : (typeof menuDeps?.isAppLocked === "function" ? menuDeps.isAppLocked : undefined),
+    setAppLockWindowTitle: typeof options.setAppLockWindowTitle === "function"
+      ? options.setAppLockWindowTitle
+      : (typeof menuDeps?.setAppLockWindowTitle === "function"
+        ? menuDeps.setAppLockWindowTitle
+        : undefined),
   };
   const closeFocusedWindow = (_menuItem, browserWindow) => {
     // Block native Close while app lock is visible so popups/sessions are not

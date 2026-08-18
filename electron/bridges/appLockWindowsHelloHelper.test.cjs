@@ -29,3 +29,8 @@ test("Windows Hello helper maps all expected verifier states", () => {
     assert.match(helperSource, new RegExp(state));
   }
 });
+
+test("Windows Hello helper uses a multi-threaded apartment for blocking waits", () => {
+  assert.match(helperSource, /init_apartment\(winrt::apartment_type::multi_threaded\)/);
+  assert.doesNotMatch(helperSource, /init_apartment\(winrt::apartment_type::single_threaded\)/);
+});

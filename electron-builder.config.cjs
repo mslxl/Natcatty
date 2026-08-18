@@ -54,6 +54,9 @@ module.exports = {
     files: [
         'dist/**/*',
         'electron/**/*',
+        // The Windows Hello helper is shipped once through win.extraResources.
+        // Exclude local per-arch build output from app.asar on every platform.
+        '!electron/bridges/windowsHelloHelper/build/**/*',
         // Runtime smoke fixtures are built test packages, not host resources.
         // Keep them out of production ASARs so no example plugin can be
         // mistaken for an installed or host-trusted package.

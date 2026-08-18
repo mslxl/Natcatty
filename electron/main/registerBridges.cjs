@@ -43,6 +43,25 @@ function waitForApplicationSpawn(child, requireCleanLauncherExit = false) {
   });
 }
 
+function createCloudSyncSessionPasswordReader({
+  getAppLockController,
+  getCachedPassword,
+  setCachedPassword,
+  readPersistedPassword,
+}) {
+  return async function readCloudSyncSessionPassword() {
+    const controller = getAppLockController?.();
+    if (controller?.getRuntimeState?.()?.locked === true) {
+      return null;
+    }
+    const cached = getCachedPassword();
+    if (cached) return cached;
+    const persisted = readPersistedPassword();
+    setCachedPassword(persisted);
+    return persisted;
+  };
+}
+
 function createBridgeRegistrar(context) {
   const {
     electronModule,
@@ -691,10 +710,15 @@ function createBridgeRegistrar(context) {
           registerAsMainWindow: false,
           onRegisterBridge: registerBridges,
         });
-        try {
-          win.setTitle(title);
-        } catch {
-          // ignore
+        const appLockController = getAppLockController?.();
+        if (typeof appLockController?.setWindowTitle === "function") {
+          appLockController.setWindowTitle(win, title);
+        } else {
+          try {
+            win.setTitle(title);
+          } catch {
+            // ignore
+          }
         }
         const delivery = await getWindowManager().sendWhenRendererReady(
           win,
@@ -771,12 +795,14 @@ function createBridgeRegistrar(context) {
       return true;
     });
   
-    ipcMain.handle("netcatty:cloudSync:session:getPassword", async () => {
-      if (cloudSyncSessionPassword) return cloudSyncSessionPassword;
-      const persisted = readPersistedCloudSyncPassword();
-      cloudSyncSessionPassword = persisted;
-      return persisted;
-    });
+    ipcMain.handle("netcatty:cloudSync:session:getPassword", createCloudSyncSessionPasswordReader({
+      getAppLockController,
+      getCachedPassword: () => cloudSyncSessionPassword,
+      setCachedPassword: (password) => {
+        cloudSyncSessionPassword = password;
+      },
+      readPersistedPassword: readPersistedCloudSyncPassword,
+    }));
   
     ipcMain.handle("netcatty:cloudSync:session:clearPassword", async () => {
       cloudSyncSessionPassword = null;
@@ -1152,6 +1178,7 @@ function createBridgeRegistrar(context) {
 }
 
 module.exports = {
+  createCloudSyncSessionPasswordReader,
   createBridgeRegistrar,
   filterExcludedFigSpecs,
   isExcludedFigSpec,

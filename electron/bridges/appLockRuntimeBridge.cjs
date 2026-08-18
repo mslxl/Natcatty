@@ -245,6 +245,7 @@ function createAppLockController({
   getSettingsWindow = () => null,
   getTrayPanelWindow = () => null,
   getTerminalPopupWindows = () => [],
+  waitForUnlockFailureDelay = (delayMs) => new Promise((resolve) => setTimeout(resolve, delayMs)),
 }) {
   if (!settingsStore || typeof settingsStore.getSnapshot !== "function" || typeof settingsStore.save !== "function") {
     throw new Error("createAppLockController requires a settingsStore");
@@ -257,6 +258,10 @@ function createAppLockController({
   let settingsMutationChain = Promise.resolve();
   // Single in-flight system-auth prompt shared across windows (Codex P2).
   let systemUnlockInFlight = null;
+  let passwordUnlockInFlight = null;
+  let passwordUnlockFailureCount = 0;
+  const lockedWindowTitles = new Map();
+  const protectedWindows = new WeakSet();
 
   function syncIdleTimer() {
     const settings = getSettings();
@@ -307,6 +312,83 @@ function createAppLockController({
       }
     }
   }
+
+  function enforceWindowProtection(win) {
+    if (!win || win.isDestroyed?.() || getRuntimeState()?.locked !== true) return;
+    try {
+      if (typeof win.getTitle === "function") {
+        const currentTitle = win.getTitle();
+        if (currentTitle && currentTitle !== "Netcatty") {
+          lockedWindowTitles.set(win, currentTitle);
+        }
+      }
+      win.setTitle?.("Netcatty");
+      if (win.webContents?.isDevToolsOpened?.()) {
+        win.webContents.closeDevTools?.();
+      }
+    } catch {
+      // ignore per-window failures during lock transitions
+    }
+  }
+
+  function protectWindow(win) {
+    if (!win || win.isDestroyed?.()) return;
+    if (!protectedWindows.has(win)) {
+      protectedWindows.add(win);
+      const enforce = () => enforceWindowProtection(win);
+      try { win.on?.("show", enforce); } catch { /* ignore */ }
+      try { win.on?.("focus", enforce); } catch { /* ignore */ }
+      try { win.webContents?.on?.("devtools-opened", enforce); } catch { /* ignore */ }
+      try {
+        win.webContents?.on?.("did-finish-load", () => {
+          queueMicrotask(enforce);
+        });
+      } catch {
+        // ignore
+      }
+    }
+    enforceWindowProtection(win);
+  }
+
+  function setWindowTitle(win, title) {
+    if (!win || win.isDestroyed?.()) return false;
+    const nextTitle = typeof title === "string" && title.trim() ? title.trim() : "Netcatty";
+    try {
+      if (getRuntimeState()?.locked === true) {
+        lockedWindowTitles.set(win, nextTitle);
+        win.setTitle?.("Netcatty");
+        return false;
+      }
+      win.setTitle?.(nextTitle);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function protectWindowsForRuntimeState(nextState) {
+    if (nextState?.locked === true) {
+      for (const win of getWindowsForBroadcast()) protectWindow(win);
+      return;
+    }
+
+    for (const [win, title] of lockedWindowTitles) {
+      try {
+        if (!win.isDestroyed?.() && win.getTitle?.() === "Netcatty") {
+          win.setTitle?.(title || "Netcatty");
+        }
+      } catch {
+        // ignore disposed windows during unlock
+      }
+    }
+    lockedWindowTitles.clear();
+  }
+
+  // Runtime transitions are the single lock boundary. Idle, background,
+  // startup, and manual locks all pass through this subscription.
+  runtimeBridge.subscribe?.(protectWindowsForRuntimeState);
+  // initialize() can lock the runtime before the controller exists.
+  protectWindowsForRuntimeState(runtimeBridge.getState());
 
   function getSettings() {
     return settingsStore.getSnapshot();
@@ -463,30 +545,43 @@ function createAppLockController({
   }
 
   async function requestPasswordChange(input = {}) {
-    const current = getSettings();
     const nextPassword = typeof input.nextPassword === "string" ? input.nextPassword : "";
     const currentPassword = typeof input.currentPassword === "string" ? input.currentPassword : "";
+    const hadVerifierAtRequest = Boolean(getSettings().passwordVerifier);
 
     if (nextPassword.trim() === "") {
       return { ok: false, error: "empty-next" };
     }
-    if (current.passwordVerifier) {
-      if (!currentPassword) {
-        return { ok: false, error: "empty-current" };
+    let fail = null;
+    let enablingFromNoVerifier = false;
+    const saved = await mutateSettings(async (current) => {
+      // A password-change request must not turn into a first-time enable if a
+      // disable/reset queued ahead of it removed the verifier.
+      if (hadVerifierAtRequest && !current.passwordVerifier) {
+        fail = { ok: false, error: "incorrect" };
+        return null;
       }
-      const verified = await verifyAppLockPassword(currentPassword, current.passwordVerifier);
-      if (!verified) {
-        return { ok: false, error: "incorrect" };
+      if (current.passwordVerifier) {
+        if (!currentPassword) {
+          fail = { ok: false, error: "empty-current" };
+          return null;
+        }
+        const verified = await verifyAppLockPassword(currentPassword, current.passwordVerifier);
+        if (!verified) {
+          fail = { ok: false, error: "incorrect" };
+          return null;
+        }
       }
-    }
 
-    const passwordVerifier = await createAppLockPasswordVerifier(nextPassword);
-    const enablingFromNoVerifier = !current.passwordVerifier;
-    const saved = await mutateSettings(async (latest) => ({
-      ...latest,
-      enabled: latest.enabled || !latest.passwordVerifier,
-      passwordVerifier,
-    }));
+      enablingFromNoVerifier = !current.passwordVerifier;
+      const passwordVerifier = await createAppLockPasswordVerifier(nextPassword);
+      return {
+        ...current,
+        enabled: current.enabled || enablingFromNoVerifier,
+        passwordVerifier,
+      };
+    });
+    if (fail) return fail;
     // While lock was disabled the renderer never reported activity. Re-arming
     // the idle timer on enable would schedule an immediate lock if Netcatty
     // has been open longer than the timeout. Record fresh activity first
@@ -572,28 +667,33 @@ function createAppLockController({
     }
     const nextState = runtimeBridge.lock(reason);
     syncIdleTimer();
-    // Close DevTools that were open before lock — menu guard only blocks new
-    // toggles, not already-open consoles (Codex P1).
-    try {
-      for (const win of getWindowsForBroadcast()) {
-        try {
-          if (win?.webContents?.isDevToolsOpened?.()) {
-            win.webContents.closeDevTools();
-          }
-        } catch {
-          // ignore per-window failures
-        }
-      }
-    } catch {
-      // ignore
-    }
     broadcast("netcatty:appLock:runtimeStateChanged", nextState);
     return nextState;
   }
 
-  async function requestUnlock(password) {
+  function isSamePasswordVerifier(a, b) {
+    return Boolean(
+      a
+      && b
+      && a.version === b.version
+      && a.algorithm === b.algorithm
+      && a.iterations === b.iterations
+      && a.salt === b.salt
+      && a.hash === b.hash
+    );
+  }
+
+  async function rejectPasswordUnlockAttempt() {
+    passwordUnlockFailureCount += 1;
+    const delayMs = 250 * (2 ** Math.min(passwordUnlockFailureCount - 1, 3));
+    await waitForUnlockFailureDelay(delayMs);
+    return { ok: false, error: "incorrect" };
+  }
+
+  async function requestUnlockAttempt(password, requestContext) {
     const current = getSettings();
     if (!canLockFromSettings(current)) {
+      passwordUnlockFailureCount = 0;
       const nextState = runtimeBridge.unlock();
       syncIdleTimer();
       broadcast("netcatty:appLock:runtimeStateChanged", nextState);
@@ -603,15 +703,51 @@ function createAppLockController({
       return { ok: false, error: "empty" };
     }
 
-    const verified = await verifyAppLockPassword(password, current.passwordVerifier);
-    if (!verified) {
-      return { ok: false, error: "incorrect" };
+    const lockAtAttempt = requestContext.lockState;
+    if (
+      lockAtAttempt.locked !== true
+      || !isSamePasswordVerifier(requestContext.passwordVerifier, current.passwordVerifier)
+    ) {
+      return rejectPasswordUnlockAttempt();
+    }
+    const verified = await verifyAppLockPassword(password, requestContext.passwordVerifier);
+    const latest = getSettings();
+    const lockAfterVerify = runtimeBridge.getState();
+    const staleAttempt = !isSamePasswordVerifier(requestContext.passwordVerifier, latest.passwordVerifier)
+      || lockAfterVerify.locked !== true
+      || lockAfterVerify.version !== lockAtAttempt.version;
+    if (!verified || staleAttempt) {
+      return rejectPasswordUnlockAttempt();
     }
 
+    passwordUnlockFailureCount = 0;
     const nextState = runtimeBridge.unlock();
     syncIdleTimer();
     broadcast("netcatty:appLock:runtimeStateChanged", nextState);
     return { ok: true };
+  }
+
+  function requestUnlock(password) {
+    const current = getSettings();
+    const requestContext = {
+      lockState: runtimeBridge.getState(),
+      passwordVerifier: current.passwordVerifier,
+    };
+    if (!canLockFromSettings(current)) {
+      return requestUnlockAttempt(password, requestContext);
+    }
+    // Calls made while unlocked must never enter a queue that can delay a
+    // later legitimate unlock after idle/background locking.
+    if (requestContext.lockState.locked !== true) {
+      return Promise.resolve({ ok: false, error: "incorrect" });
+    }
+    // At most one expensive password attempt may be active. Concurrent IPC
+    // calls share it instead of creating an unbounded PBKDF/backoff queue.
+    if (passwordUnlockInFlight) return passwordUnlockInFlight;
+    passwordUnlockInFlight = requestUnlockAttempt(password, requestContext);
+    return passwordUnlockInFlight.finally(() => {
+      passwordUnlockInFlight = null;
+    });
   }
 
   async function requestSystemUnlock() {
@@ -711,6 +847,8 @@ function createAppLockController({
     setSystemUnlockEnabled,
     requestSystemUnlock,
     reportActivity,
+    protectWindow,
+    setWindowTitle,
     registerHandlers,
     syncIdleTimer,
   };

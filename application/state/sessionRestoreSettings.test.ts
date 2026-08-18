@@ -129,9 +129,9 @@ test("session peer windows do not run main-window startup effects", () => {
   // AppLockGate owns useSettingsState; App forwards the gate's instance into
   // SettingsPublisher so the runtime slot/context still publish it.
   assert.match(appRootSource, /<SettingsPublisher settings=\{settings\}>/);
-  assert.match(
+  assert.doesNotMatch(
     readFileSync(new URL("../app/publishers/SettingsPublisher.tsx", import.meta.url), "utf8"),
-    /useSettingsState\(\{ enableSettingsSync, enableSystemEffects \}\)/,
+    /useSettingsState\(/,
   );
   assert.match(appSource, /useAppStartupEffects\(\{[^}]*enabled: !isPeerSessionWindow/s);
   assert.match(appSource, /useUpdateCheck\(\{[^}]*enabled: !isPeerSessionWindow/s);

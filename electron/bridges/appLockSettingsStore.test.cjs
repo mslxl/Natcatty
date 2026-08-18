@@ -7,6 +7,15 @@ const {
   canLockFromSettings,
   verifyAppLockPassword,
 } = require("./appLockSettingsStore.cjs");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const settingsStoreSource = fs.readFileSync(path.join(__dirname, "appLockSettingsStore.cjs"), "utf8");
+
+test("password hashing uses the asynchronous crypto API", () => {
+  assert.doesNotMatch(settingsStoreSource, /pbkdf2Sync/);
+  assert.match(settingsStoreSource, /\bpbkdf2\b/);
+});
 
 const VALID_VERIFIER = {
   version: 1,

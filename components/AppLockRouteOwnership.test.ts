@@ -23,3 +23,11 @@ test("settings, tray, and terminal popup routes do not create fallback settings 
   assert.doesNotMatch(terminalPopupPage, /settings\?:\s*SettingsState/);
   assert.doesNotMatch(terminalPopupPage, /providedSettings\s*\?\?/);
 });
+
+test("terminal popups wait for app-lock initialization before starting a terminal", () => {
+  const indexSource = readComponentSource("../index.tsx");
+  assert.match(
+    indexSource,
+    /allowTerminalStart=\{appLock\.initialized\s*&&\s*!appLock\.locked\}/,
+  );
+});

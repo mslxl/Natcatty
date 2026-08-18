@@ -108,6 +108,10 @@ test("Windows packaging includes the Windows Hello helper executable", () => {
     )),
     "Windows package must include the Windows Hello helper executable for the target arch",
   );
+  assert.ok(
+    config.files.includes("!electron/bridges/windowsHelloHelper/build/**/*"),
+    "Windows Hello build output must not also be copied into app.asar",
+  );
 });
 
 test("Windows package arch is controlled by pack script CLI flags", () => {

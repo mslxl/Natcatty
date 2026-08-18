@@ -84,6 +84,7 @@ test("Windows status and unlock call helper with HWND", async () => {
   assert.equal(calls[0].options.windowsHide, true);
   assert.equal(calls[0].options.timeout, 15000);
   assert.deepEqual(calls[1].args, ["verify", "--hwnd", "1234605616436508552", "--message", "Unlock Netcatty"]);
+  assert.equal(calls[1].options.timeout, 120000);
 });
 
 test("Windows dev helper path follows the architecture-specific build output", () => {
@@ -93,12 +94,41 @@ test("Windows dev helper path follows the architecture-specific build output", (
   Object.defineProperty(process, "arch", { value: "x64" });
 
   try {
-    const helperPath = resolveDefaultHelperPath();
+    const helperPath = resolveDefaultHelperPath({
+      isPackaged: false,
+      resourcesPath: "C:\\fake-electron-resources",
+    });
     assert.match(helperPath, /windowsHelloHelper[\\/]build[\\/]x64[\\/]NetcattyWindowsHello\.exe$/);
   } finally {
     Object.defineProperty(process, "platform", originalPlatform);
     Object.defineProperty(process, "arch", originalArch);
   }
+});
+
+test("Windows packaged helper path uses the app resources directory", () => {
+  assert.equal(
+    resolveDefaultHelperPath({
+      platform: "win32",
+      isPackaged: true,
+      resourcesPath: "C:\\Netcatty\\resources",
+      arch: "x64",
+    }),
+    "C:\\Netcatty\\resources\\windowsHello\\NetcattyWindowsHello.exe",
+  );
+});
+
+test("macOS localized prompt rejection maps to cancelled", async () => {
+  const bridge = createAppLockSystemAuthBridge({
+    platform: "darwin",
+    systemPreferences: {
+      canPromptTouchID: () => true,
+      promptTouchID: async () => {
+        throw new Error("用户已取消认证");
+      },
+    },
+  });
+
+  assert.deepEqual(await bridge.requestUnlock(), { ok: false, error: "cancelled" });
 });
 
 test("Windows helper maps unavailable and cancelled states", async () => {

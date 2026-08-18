@@ -215,7 +215,7 @@ const renderApp = () => {
                   locked; defer starting the terminal until unlock (Codex P2). */}
               <LazyTerminalPopupPage
                 settings={settings}
-                allowTerminalStart={!appLock.locked}
+                allowTerminalStart={appLock.initialized && !appLock.locked}
               />
             </Suspense>
           )}

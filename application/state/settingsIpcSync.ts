@@ -1,6 +1,5 @@
 import { useEffect, type Dispatch, type SetStateAction } from 'react';
 import type { CustomKeyBindings, HotkeyScheme, SessionLogFormat, TerminalSettings, UILanguage } from '../../domain/models';
-import type { AppLockSettings } from '../../domain/appLock';
 import { parseCustomKeyBindingsStorageRecord } from '../../domain/customKeyBindings';
 import { resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import {
@@ -77,7 +76,6 @@ interface UseSettingsIpcSyncParams {
   setFollowAppTerminalThemeState: Dispatch<SetStateAction<boolean>>;
   setTerminalFontFamilyId: Dispatch<SetStateAction<string>>;
   setTerminalFontSize: (raw: unknown) => void;
-  setAppLockSettingsState: Dispatch<SetStateAction<AppLockSettings>>;
   mergeIncomingTerminalSettings: (incoming: Partial<TerminalSettings>) => void;
   setEditorWordWrapState: Dispatch<SetStateAction<boolean>>;
   setSessionLogsEnabled: Dispatch<SetStateAction<boolean>>;
@@ -123,7 +121,6 @@ export function useSettingsIpcSync({
   setFollowAppTerminalThemeState,
   setTerminalFontFamilyId,
   setTerminalFontSize,
-  setAppLockSettingsState,
   mergeIncomingTerminalSettings,
   setEditorWordWrapState,
   setSessionLogsEnabled,
@@ -335,7 +332,6 @@ export function useSettingsIpcSync({
     setAutoUpdateEnabled,
     setHttpNetworkProxy,
     setEditorWordWrapState,
-    setAppLockSettingsState,
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,
     setWindowOpacity,

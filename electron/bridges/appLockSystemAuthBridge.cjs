@@ -1,7 +1,8 @@
 const path = require("node:path");
 const { execFile: defaultExecFile } = require("node:child_process");
 
-const SYSTEM_AUTH_TIMEOUT_MS = 15000;
+const SYSTEM_AUTH_STATUS_TIMEOUT_MS = 15000;
+const SYSTEM_AUTH_VERIFY_TIMEOUT_MS = 120000;
 const UNAVAILABLE_ERRORS = new Set([
   "DeviceNotPresent",
   "NotConfiguredForUser",
@@ -70,7 +71,7 @@ function nativeWindowHandleToDecimal(handle) {
   return value > 0n ? value.toString(10) : null;
 }
 
-function runHelper(execFile, helperPath, args) {
+function runHelper(execFile, helperPath, args, timeout) {
   return new Promise((resolve) => {
     if (!helperPath) {
       resolve({ ok: false, error: "unavailable" });
@@ -78,7 +79,7 @@ function runHelper(execFile, helperPath, args) {
     }
     execFile(helperPath, args, {
       encoding: "utf8",
-      timeout: SYSTEM_AUTH_TIMEOUT_MS,
+      timeout,
       windowsHide: true,
       maxBuffer: 1024 * 1024,
     }, (error, stdout) => {
@@ -91,12 +92,17 @@ function runHelper(execFile, helperPath, args) {
   });
 }
 
-function resolveDefaultHelperPath() {
-  if (process.platform !== "win32") return null;
-  if (process.resourcesPath) {
-    return path.join(process.resourcesPath, "windowsHello", "NetcattyWindowsHello.exe");
+function resolveDefaultHelperPath({
+  platform = process.platform,
+  arch = process.arch,
+  isPackaged = false,
+  resourcesPath = process.resourcesPath,
+} = {}) {
+  if (platform !== "win32") return null;
+  if (isPackaged) {
+    return path.win32.join(resourcesPath, "windowsHello", "NetcattyWindowsHello.exe");
   }
-  return path.join(__dirname, "windowsHelloHelper", "build", process.arch, "NetcattyWindowsHello.exe");
+  return path.join(__dirname, "windowsHelloHelper", "build", arch, "NetcattyWindowsHello.exe");
 }
 
 function createAppLockSystemAuthBridge({
@@ -125,15 +131,16 @@ function createAppLockSystemAuthBridge({
       await systemPreferences.promptTouchID("Unlock Netcatty");
       return { ok: true };
     } catch (err) {
-      const message = String(err?.message || err || "");
-      return /cancel/i.test(message)
-        ? { ok: false, error: "cancelled" }
-        : { ok: false, error: "failed" };
+      // Electron exposes only a localized rejection message here. Since the
+      // status check already established availability, a rejected prompt is a
+      // user-visible cancellation regardless of system language.
+      void err;
+      return { ok: false, error: "cancelled" };
     }
   }
 
   async function getWindowsStatus() {
-    const result = await runHelper(execFile, helperPath, ["status"]);
+    const result = await runHelper(execFile, helperPath, ["status"], SYSTEM_AUTH_STATUS_TIMEOUT_MS);
     return normalizeSystemAuthStatus({
       supported: true,
       available: result?.available === true,
@@ -144,7 +151,12 @@ function createAppLockSystemAuthBridge({
   async function requestWindowsUnlock() {
     const hwnd = nativeWindowHandleToDecimal(getNativeWindowHandle());
     if (!hwnd) return { ok: false, error: "unavailable" };
-    const result = await runHelper(execFile, helperPath, ["verify", "--hwnd", hwnd, "--message", "Unlock Netcatty"]);
+    const result = await runHelper(
+      execFile,
+      helperPath,
+      ["verify", "--hwnd", hwnd, "--message", "Unlock Netcatty"],
+      SYSTEM_AUTH_VERIFY_TIMEOUT_MS,
+    );
     return normalizeSystemAuthUnlockResult(result);
   }
 

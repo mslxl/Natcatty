@@ -3,6 +3,8 @@ import { useCallback } from 'react';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import type { RuntimeAppLockReason } from './useAppLockRuntime';
 
+let rendererReadySent = false;
+
 export function useAppLockBridge() {
   const getRuntimeState = useCallback(async () => {
     return netcattyBridge.get()?.getAppLockRuntimeState?.();
@@ -45,6 +47,8 @@ export function useAppLockBridge() {
   }, []);
 
   const notifyRendererReady = useCallback(() => {
+    if (rendererReadySent) return;
+    rendererReadySent = true;
     try {
       netcattyBridge.get()?.rendererReady?.();
     } catch {

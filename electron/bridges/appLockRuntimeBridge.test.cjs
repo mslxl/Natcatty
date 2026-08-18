@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 
 const {
   createAppLockController,
@@ -229,22 +230,49 @@ test("runtime bridge unreferences the shared idle timer handle when supported", 
 
 function createWindowCollector(name) {
   const sent = [];
-  return {
-    name,
-    sent,
+  let devToolsOpened = false;
+  let devToolsCloseCount = 0;
+  let title = `${name}@host`;
+  const win = new EventEmitter();
+  const webContents = new EventEmitter();
+  Object.assign(webContents, {
+    id: `${name}-${Math.random()}`,
     isDestroyed() {
       return false;
     },
-    webContents: {
-      id: `${name}-${Math.random()}`,
-      isDestroyed() {
-        return false;
-      },
-      send(channel, payload) {
-        sent.push([channel, payload]);
-      },
+    send(channel, payload) {
+      sent.push([channel, payload]);
     },
-  };
+    isDevToolsOpened() {
+      return devToolsOpened;
+    },
+    closeDevTools() {
+      devToolsOpened = false;
+      devToolsCloseCount += 1;
+    },
+  });
+  Object.assign(win, {
+    name,
+    sent,
+    openDevToolsForTest() {
+      devToolsOpened = true;
+      webContents.emit("devtools-opened");
+    },
+    getDevToolsCloseCount() {
+      return devToolsCloseCount;
+    },
+    getTitle() {
+      return title;
+    },
+    setTitle(nextTitle) {
+      title = nextTitle;
+    },
+    isDestroyed() {
+      return false;
+    },
+    webContents,
+  });
+  return win;
 }
 
 function createIpcMainHarness() {
@@ -257,7 +285,7 @@ function createIpcMainHarness() {
   };
 }
 
-async function createControllerHarness() {
+async function createControllerHarness(options = {}) {
   const settingsStore = createAppLockSettingsStore({
     filePath: "/tmp/app-lock-settings.json",
     readFile: async () => {
@@ -304,6 +332,7 @@ async function createControllerHarness() {
       return { ok: true };
     },
   };
+  const unlockFailureDelays = [];
 
   const controller = createAppLockController({
     settingsStore,
@@ -316,6 +345,9 @@ async function createControllerHarness() {
     getSettingsWindow: () => settingsWindow,
     getTrayPanelWindow: () => trayPanelWindow,
     getTerminalPopupWindows: () => [popupWindowA, popupWindowB],
+    waitForUnlockFailureDelay: options.waitForUnlockFailureDelay ?? (async (delayMs) => {
+      unlockFailureDelays.push(delayMs);
+    }),
   });
 
   return {
@@ -324,6 +356,7 @@ async function createControllerHarness() {
     settingsStore,
     systemAuthBridge,
     systemAuthCalls,
+    unlockFailureDelays,
     windows: [
       mainWindowA,
       mainWindowB,
@@ -448,6 +481,115 @@ test("unlock request verifies against the latest persisted password verifier", a
   assert.deepEqual(await controller.requestUnlock("bravo"), {
     ok: true,
   });
+});
+
+test("incorrect password attempts back off and a successful unlock resets the delay", async () => {
+  const { controller, unlockFailureDelays } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  controller.setLocked("manual");
+
+  assert.deepEqual(await controller.requestUnlock("wrong-1"), { ok: false, error: "incorrect" });
+  assert.deepEqual(await controller.requestUnlock("wrong-2"), { ok: false, error: "incorrect" });
+  assert.deepEqual(unlockFailureDelays, [250, 500]);
+
+  assert.deepEqual(await controller.requestUnlock("alpha"), { ok: true });
+  controller.setLocked("manual");
+  assert.deepEqual(await controller.requestUnlock("wrong-3"), { ok: false, error: "incorrect" });
+  assert.deepEqual(unlockFailureDelays, [250, 500, 250]);
+});
+
+test("parallel password attempts share one bounded in-flight verification", async () => {
+  const delays = [];
+  let releaseFirstDelay;
+  const { controller } = await createControllerHarness({
+    waitForUnlockFailureDelay: async (delayMs) => {
+      delays.push(delayMs);
+      if (delays.length === 1) {
+        await new Promise((resolve) => {
+          releaseFirstDelay = resolve;
+        });
+      }
+    },
+  });
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  controller.setLocked("manual");
+
+  const first = controller.requestUnlock("wrong-1");
+  const second = controller.requestUnlock("wrong-2");
+  const deadline = Date.now() + 1000;
+  while (!releaseFirstDelay && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.ok(releaseFirstDelay, "first attempt should reach backoff");
+  assert.deepEqual(delays, [250], "second attempt must not start another backoff");
+
+  releaseFirstDelay();
+  assert.deepEqual(await Promise.all([first, second]), [
+    { ok: false, error: "incorrect" },
+    { ok: false, error: "incorrect" },
+  ]);
+  assert.deepEqual(delays, [250]);
+});
+
+test("password unlock result is discarded after a newer lock transition", async () => {
+  const { controller, runtimeBridge } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  controller.setLocked("manual");
+
+  const pending = controller.requestUnlock("alpha");
+  await Promise.resolve();
+  controller.setLocked("background");
+
+  assert.deepEqual(await pending, { ok: false, error: "incorrect" });
+  assert.equal(runtimeBridge.getState().locked, true);
+  assert.equal(runtimeBridge.getState().reason, "background");
+});
+
+test("an unlock request started while unlocked cannot unlock a later background lock", async () => {
+  const { controller, runtimeBridge } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestUnlock("alpha");
+  assert.equal(runtimeBridge.getState().locked, false);
+
+  const pending = controller.requestUnlock("alpha");
+  controller.setLocked("background");
+
+  assert.deepEqual(await pending, { ok: false, error: "incorrect" });
+  assert.equal(runtimeBridge.getState().locked, true);
+  assert.equal(runtimeBridge.getState().reason, "background");
+});
+
+test("unlocked requests cannot queue ahead of a later legitimate unlock", async () => {
+  const { controller, runtimeBridge, unlockFailureDelays } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestUnlock("alpha");
+
+  const staleCalls = Array.from({ length: 20 }, () => controller.requestUnlock("garbage"));
+  controller.setLocked("background");
+  assert.deepEqual(await controller.requestUnlock("alpha"), { ok: true });
+  assert.equal(runtimeBridge.getState().locked, false);
+  assert.deepEqual(await Promise.all(staleCalls), Array.from(
+    { length: 20 },
+    () => ({ ok: false, error: "incorrect" }),
+  ));
+  assert.deepEqual(unlockFailureDelays, []);
+});
+
+test("password unlock result is discarded after the verifier changes", async () => {
+  const { controller, runtimeBridge, settingsStore } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  controller.setLocked("manual");
+  const replacementVerifier = await createAppLockPasswordVerifier("bravo");
+
+  const pending = controller.requestUnlock("alpha");
+  await Promise.resolve();
+  await settingsStore.save({
+    ...settingsStore.getSnapshot(),
+    passwordVerifier: replacementVerifier,
+  });
+
+  assert.deepEqual(await pending, { ok: false, error: "incorrect" });
+  assert.equal(runtimeBridge.getState().locked, true);
 });
 
 test("stale renderer cannot overwrite the latest verifier with a whole-object settings write", async () => {
@@ -578,6 +720,76 @@ test("activity reported from any window postpones the shared idle lock", async (
   });
 });
 
+test("idle lock closes DevTools in every app window", async () => {
+  await withPatchedTimers(async ({ flushDueTimers }) => {
+    await withPatchedDateNow(1000, async ({ setNow }) => {
+      const { controller, runtimeBridge, windows } = await createControllerHarness();
+
+      await controller.requestPasswordChange({ nextPassword: "alpha" });
+      await controller.setTimeoutMinutes(1);
+      await controller.requestUnlock("alpha");
+      windows.forEach((win) => win.openDevToolsForTest());
+
+      setNow(61000);
+      assert.equal(flushDueTimers(), 1);
+      assert.equal(runtimeBridge.getState().locked, true);
+      assert.equal(runtimeBridge.getState().reason, "idle");
+      windows.forEach((win) => {
+        assert.equal(win.getDevToolsCloseCount(), 1, `${win.name} DevTools should close on idle lock`);
+      });
+    });
+  });
+});
+
+test("startup lock immediately protects existing and newly opened windows", async () => {
+  const existingWindow = createWindowCollector("existing");
+  existingWindow.openDevToolsForTest();
+  const settingsStore = createAppLockSettingsStore({
+    filePath: "/tmp/app-lock-startup-window.json",
+    readFile: async () => {
+      const err = new Error("ENOENT");
+      err.code = "ENOENT";
+      throw err;
+    },
+    writeFile: async () => {},
+  });
+  await settingsStore.load();
+  const runtimeBridge = createAppLockRuntimeBridge();
+  runtimeBridge.initialize({ locked: true, reason: "startup", lastActivityAt: 1000 });
+  const controller = createAppLockController({
+    settingsStore,
+    runtimeBridge,
+    getMainWindows: () => [existingWindow],
+  });
+
+  assert.equal(existingWindow.getTitle(), "Netcatty");
+  assert.equal(existingWindow.getDevToolsCloseCount(), 1);
+
+  const newWindow = createWindowCollector("new-session");
+  controller.protectWindow(newWindow);
+  assert.equal(newWindow.getTitle(), "Netcatty");
+  newWindow.openDevToolsForTest();
+  assert.equal(newWindow.getDevToolsCloseCount(), 1);
+
+  controller.setWindowTitle(newWindow, "new@host");
+  assert.equal(newWindow.getTitle(), "Netcatty");
+  runtimeBridge.unlock();
+  assert.equal(newWindow.getTitle(), "new@host");
+});
+
+test("lock redacts window titles and unlock restores them", async () => {
+  const { controller, windows } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestUnlock("alpha");
+  const originalTitles = windows.map((win) => win.getTitle());
+
+  controller.setLocked("manual");
+  assert.deepEqual(windows.map((win) => win.getTitle()), windows.map(() => "Netcatty"));
+
+  await controller.requestUnlock("alpha");
+  assert.deepEqual(windows.map((win) => win.getTitle()), originalTitles);
+});
+
 test("disabling app lock clears the shared idle timer", async () => {
   await withPatchedTimers(async ({ getPendingTimerCount }) => {
     const { controller, runtimeBridge } = await createControllerHarness();
@@ -657,4 +869,20 @@ test("creating the first app lock password enables app lock", async () => {
 
   assert.equal(saved.enabled, true);
   assert.equal(typeof saved.passwordVerifier?.hash, "string");
+});
+
+test("a queued password change cannot revive a concurrently disabled lock", async () => {
+  const { controller } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+
+  const disable = controller.requestDisable("alpha");
+  const passwordChange = controller.requestPasswordChange({
+    currentPassword: "alpha",
+    nextPassword: "beta",
+  });
+  await Promise.all([passwordChange, disable]);
+
+  const settings = controller.getSettings();
+  assert.equal(settings.enabled, false);
+  assert.equal(settings.passwordVerifier, null);
 });

@@ -267,7 +267,11 @@ async function withPlatform(platform, run) {
 }
 
 async function enableCloseToTray(bridge, electronModule = createElectronStub(), extraDeps = {}) {
-  bridge.init({ electronModule, ...extraDeps });
+  bridge.init({
+    electronModule,
+    getMainWindow: () => electronModule.BrowserWindow.getAllWindows()[0] ?? null,
+    ...extraDeps,
+  });
   const ipcMain = createIpcMainStub();
   bridge.registerHandlers(ipcMain);
   await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
@@ -504,6 +508,7 @@ test("tray session menu reveal cancels a pending fullscreen hide before focusing
     electronModule.BrowserWindow.getAllWindows = () => [win];
     bridge.init({
       electronModule,
+      getMainWindow: () => win,
       getAppLockController: () => appLockController,
     });
     const ipcMain = createIpcMainStub();
@@ -525,6 +530,7 @@ test("tray session menu reveal cancels a pending fullscreen hide before focusing
         .filter((item) => typeof item.click === "function")
         .find((item) => String(item.label).includes("dev.example"));
       sessionItem.click();
+      await Promise.resolve();
 
       assert.equal(win.showCalls, 1);
       assert.equal(getPendingTimerCount(), 0);
@@ -754,15 +760,17 @@ test("tray icon event registration is platform-dependent", async () => {
 
     const win = new FakeWindow();
     win.minimized = true;
-    bridge.init({
-      electronModule: {
+    const initializedElectronModule = {
         ...createElectronStub(),
         BrowserWindow: {
           getAllWindows() {
             return [win];
           },
         },
-      },
+      };
+    bridge.init({
+      electronModule: initializedElectronModule,
+      getMainWindow: () => win,
       getAppLockController: () => null,
     });
     await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
@@ -774,6 +782,7 @@ test("tray icon event registration is platform-dependent", async () => {
     const portForwardItem = clickableItems.find((item) => String(item.label).includes("ssh"));
 
     sessionItem.click();
+    await Promise.resolve();
     assert.deepEqual(win.sentMessages.slice(0, 2), [
       ["netcatty:app-lock:reopen"],
       ["netcatty:tray:focusSession", "s1"],
@@ -791,18 +800,20 @@ test("tray icon event registration is platform-dependent", async () => {
   // Locked runtime defers the toggle until unlock, while still reopening the window.
   await withPlatform("linux", async () => {
     const bridge = loadBridge();
-    const appLockController = createAppLockControllerStub({ locked: true, reason: "background" });
+    const appLockController = createAppLockControllerStub();
     const win = new FakeWindow();
     win.minimized = true;
-    bridge.init({
-      electronModule: {
+    const initializedElectronModule = {
         ...createElectronStub(),
         BrowserWindow: {
           getAllWindows() {
             return [win];
           },
         },
-      },
+      };
+    bridge.init({
+      electronModule: initializedElectronModule,
+      getMainWindow: () => win,
       getAppLockController: () => appLockController,
     });
     const ipcMain = createIpcMainStub();
@@ -823,6 +834,7 @@ test("tray icon event registration is platform-dependent", async () => {
     const portForwardItem = bridge.getTray().contextMenu.template
       .filter((item) => typeof item.click === "function")
       .find((item) => String(item.label).includes("ssh"));
+    appLockController.setLocked("background");
     portForwardItem.click();
 
     assert.deepEqual(win.sentMessages, [
@@ -884,11 +896,10 @@ test("native tray sends an explicit stop for a runtime-present error rule", asyn
     );
     assert.ok(ruleItem);
     ruleItem.click();
-    assert.deepEqual(sentMessages, [[
-      "netcatty:tray:togglePortForward",
-      "cleanup-failed-rule",
-      false,
-    ]]);
+    assert.deepEqual(sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:tray:togglePortForward", "cleanup-failed-rule", false],
+    ]);
     bridge.cleanup();
   });
 });
@@ -932,7 +943,10 @@ test("mac dock menu lists saved hosts and forwards connect actions", async () =>
 
     await connectionMenu.submenu[0].click();
 
-    assert.deepEqual(sentMessages, [["netcatty:trayPanel:connectToHost", "pinned"]]);
+    assert.deepEqual(sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:trayPanel:connectToHost", "pinned"],
+    ]);
   });
 });
 
@@ -972,7 +986,10 @@ test("mac dock host click creates a main window when none exists", async () => {
     await connectionMenu.submenu[0].click();
 
     assert.equal(createCalls, 1);
-    assert.deepEqual(sentMessages, [["netcatty:trayPanel:connectToHost", "target"]]);
+    assert.deepEqual(sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:trayPanel:connectToHost", "target"],
+    ]);
   });
 });
 
@@ -1018,12 +1035,15 @@ test("mac dock host click waits for a newly created main window to be ready", as
     for (let i = 0; i < 5 && !releaseReady; i += 1) {
       await Promise.resolve();
     }
-    assert.deepEqual(sentMessages, []);
+    assert.deepEqual(sentMessages, [["netcatty:app-lock:reopen"]]);
 
     releaseReady();
     await clickPromise;
 
-    assert.deepEqual(sentMessages, [["netcatty:trayPanel:connectToHost", "target"]]);
+    assert.deepEqual(sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:trayPanel:connectToHost", "target"],
+    ]);
   });
 });
 
@@ -1075,12 +1095,15 @@ test("mac dock host click waits for a tracked main window to be ready", async ()
       await Promise.resolve();
     }
     assert.equal(createCalls, 0);
-    assert.deepEqual(sentMessages, []);
+    assert.deepEqual(sentMessages, [["netcatty:app-lock:reopen"]]);
 
     releaseReady();
     await clickPromise;
 
-    assert.deepEqual(sentMessages, [["netcatty:trayPanel:connectToHost", "target"]]);
+    assert.deepEqual(sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:trayPanel:connectToHost", "target"],
+    ]);
   });
 });
 

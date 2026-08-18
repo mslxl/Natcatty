@@ -2118,6 +2118,7 @@ test("window IPC handlers target the sender owner window", async () => {
   };
   const calls = [];
   const titles = [];
+  const guardedTitles = [];
   const win = {
     isDestroyed() {
       return false;
@@ -2166,6 +2167,17 @@ test("window IPC handlers target the sender owner window", async () => {
     },
   };
 
+  buildAppMenu({
+    buildFromTemplate(template) {
+      return { template };
+    },
+  }, { name: "Netcatty" }, false, "en", {
+    setAppLockWindowTitle(target, title) {
+      guardedTitles.push([target, title]);
+      target.setTitle(title);
+      return true;
+    },
+  });
   registerWindowHandlers(ipcMain, { themeSource: "light" });
 
   const result = await handlers.get("netcatty:window:focus")({
@@ -2190,6 +2202,7 @@ test("window IPC handlers target the sender owner window", async () => {
 
   assert.equal(titleResult, true);
   assert.deepEqual(titles, ["Prod SSH"]);
+  assert.deepEqual(guardedTitles, [[win, "Prod SSH"]]);
 
   const opacityCalls = [];
   registerMainWindow({

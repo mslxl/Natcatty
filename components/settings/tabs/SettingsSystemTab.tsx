@@ -4,9 +4,8 @@
 import { ChevronDown, ChevronRight, Download, ExternalLink, FolderOpen, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import React, { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
-import type { AppLockSettingsChangeError } from "../../../application/state/appLockSettingsStorage";
 import type { AppLockSystemUnlockStatus } from "../../../application/state/useAppLockState";
-import type { AppLockSettings, AppLockTimeoutMinutes } from "../../../domain/appLock";
+import type { AppLockSettings, AppLockSettingsChangeError, AppLockTimeoutMinutes } from "../../../domain/appLock";
 import { APP_LOCK_TIMEOUT_OPTIONS_MINUTES } from "../../../domain/appLock";
 import { getCredentialProtectionAvailability } from "../../../infrastructure/services/credentialProtection";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";

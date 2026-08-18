@@ -1,5 +1,5 @@
 const {
-  pbkdf2Sync,
+  pbkdf2,
   randomBytes,
   timingSafeEqual,
 } = require("node:crypto");
@@ -98,7 +98,15 @@ function normalizeAppLockPasswordVerifier(input) {
 }
 
 function derivePasswordHash(password, saltBytes, iterations) {
-  return pbkdf2Sync(password, saltBytes, iterations, APP_LOCK_HASH_BYTES, "sha256").toString("base64");
+  return new Promise((resolve, reject) => {
+    pbkdf2(password, saltBytes, iterations, APP_LOCK_HASH_BYTES, "sha256", (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey.toString("base64"));
+    });
+  });
 }
 
 function normalizeAppLockSettings(input) {
@@ -135,7 +143,7 @@ async function createAppLockPasswordVerifier(password) {
     algorithm: APP_LOCK_ALGORITHM,
     iterations: APP_LOCK_HASH_ITERATIONS,
     salt: saltBytes.toString("base64"),
-    hash: derivePasswordHash(password, saltBytes, APP_LOCK_HASH_ITERATIONS),
+    hash: await derivePasswordHash(password, saltBytes, APP_LOCK_HASH_ITERATIONS),
   };
 }
 
@@ -150,7 +158,7 @@ async function verifyAppLockPassword(password, verifier) {
   if (!saltBytes || !hashBytes) return false;
 
   const candidateBytes = Buffer.from(
-    derivePasswordHash(password, saltBytes, normalized.iterations),
+    await derivePasswordHash(password, saltBytes, normalized.iterations),
     "base64",
   );
   if (candidateBytes.length !== hashBytes.length) return false;

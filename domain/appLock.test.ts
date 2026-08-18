@@ -4,11 +4,8 @@ import test from "node:test";
 import {
   APP_LOCK_TIMEOUT_OPTIONS_MINUTES,
   DEFAULT_APP_LOCK_SETTINGS,
-  canEnableAppLock,
-  createAppLockPasswordVerifier,
   normalizeAppLockSettings,
   normalizeAppLockTimeoutMinutes,
-  verifyAppLockPassword,
 } from "./appLock.ts";
 
 test("normalizeAppLockTimeoutMinutes accepts only supported timeout options", () => {
@@ -104,28 +101,4 @@ test("normalizeAppLockSettings disables auto prompt unless system unlock is enab
 
   assert.equal(normalized.systemUnlockEnabled, false);
   assert.equal(normalized.systemUnlockAutoPromptEnabled, false);
-});
-
-test("createAppLockPasswordVerifier stores a verifier and verifies password attempts", async () => {
-  const verifier = await createAppLockPasswordVerifier("correct horse battery staple");
-
-  assert.equal(verifier.version, 1);
-  assert.equal(verifier.algorithm, "PBKDF2-SHA256");
-  assert.ok(verifier.iterations >= 100000);
-  assert.notEqual(verifier.salt, "");
-  assert.notEqual(verifier.hash, "");
-  assert.ok(!verifier.hash.includes("correct horse battery staple"));
-
-  assert.equal(canEnableAppLock({ enabled: false, timeoutMinutes: 15, passwordVerifier: verifier }), true);
-  assert.equal(await verifyAppLockPassword("correct horse battery staple", verifier), true);
-  assert.equal(await verifyAppLockPassword("wrong password", verifier), false);
-  assert.equal(await verifyAppLockPassword("", verifier), false);
-  assert.equal(await verifyAppLockPassword("correct horse battery staple", null), false);
-});
-
-test("createAppLockPasswordVerifier rejects empty passwords", async () => {
-  await assert.rejects(
-    () => createAppLockPasswordVerifier("  "),
-    /password/i,
-  );
 });
