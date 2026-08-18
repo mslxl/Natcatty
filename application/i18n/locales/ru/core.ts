@@ -567,6 +567,12 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.behavior.dynamicTabTitle.off': 'Отключено',
   'settings.terminal.behavior.dynamicTabTitle.agent': 'Только агенты',
   'settings.terminal.behavior.dynamicTabTitle.all': 'Все сеансы',
+  'settings.terminal.behavior.oscNotifications': 'Системные уведомления OSC',
+  'settings.terminal.behavior.oscNotifications.desc':
+    'Показывать системное уведомление, когда программа отправляет OSC 9, OSC 777 notify или kitty OSC 99. Так Codex и другие агенты сообщают о завершении хода и запросе подтверждения.',
+  'settings.terminal.behavior.oscNotifications.off': 'Отключено',
+  'settings.terminal.behavior.oscNotifications.unfocused': 'Когда окно не в фокусе',
+  'settings.terminal.behavior.oscNotifications.always': 'Всегда',
   'settings.terminal.behavior.osc52Clipboard': 'Буфер обмена OSC-52',
   'settings.terminal.behavior.osc52Clipboard.desc':
     'Разрешить удалённым программам (tmux, vim и т. д.) доступ к локальному буферу обмена через escape-последовательности OSC-52.',

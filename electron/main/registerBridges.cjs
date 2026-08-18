@@ -3,6 +3,7 @@
 let bridgesRegistered = false;
 let cloudSyncSessionPassword = null;
 const { readClipboardFiles, readClipboardImage, hasClipboardImage } = require("../bridges/clipboardFiles.cjs");
+const { registerSystemNotificationHandlers } = require("../bridges/systemNotification.cjs");
 
 const excludedFigSpecPrefixes = ["aws", "gcloud", "az"];
 
@@ -847,6 +848,9 @@ function createBridgeRegistrar(context) {
       },
     );
   
+    // OSC 9/777/99 desktop notifications (Codex, iTerm2, kitty, rxvt)
+    registerSystemNotificationHandlers(ipcMain, { electronModule, BrowserWindow });
+
     // Clipboard helpers for renderer fallback paths (e.g. Monaco paste in Electron)
     ipcMain.handle("netcatty:clipboard:readText", async () => {
       try {

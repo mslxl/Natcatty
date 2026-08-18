@@ -61,6 +61,21 @@ test("localized settings include network proxy labels", () => {
   }
 });
 
+test("localized settings include OSC desktop notification labels", () => {
+  const keys = [
+    "settings.terminal.behavior.oscNotifications",
+    "settings.terminal.behavior.oscNotifications.desc",
+    "settings.terminal.behavior.oscNotifications.off",
+    "settings.terminal.behavior.oscNotifications.unfocused",
+    "settings.terminal.behavior.oscNotifications.always",
+  ];
+
+  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing OSC notification labels`);
+  }
+});
+
 test("localized settings include terminal font weight option labels", () => {
   const keys = [
     "settings.terminal.font.weight.thin",

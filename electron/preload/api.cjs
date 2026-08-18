@@ -1592,6 +1592,10 @@ function createPreloadApi(ctx) {
     return { success: true };
   },
 
+  showSystemNotification: async (payload) => {
+    return ipcRenderer.invoke("netcatty:notification:show", payload ?? {});
+  },
+
   // Clipboard fallback helpers
   readClipboardText: async () => {
     return ipcRenderer.invoke("netcatty:clipboard:readText");

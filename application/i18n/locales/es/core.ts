@@ -610,6 +610,12 @@ Resalta el panel dividido enfocado:
   'settings.terminal.behavior.dynamicTabTitle.off': 'Desactivado',
   'settings.terminal.behavior.dynamicTabTitle.agent': 'Solo agentes',
   'settings.terminal.behavior.dynamicTabTitle.all': 'Todas las sesiones',
+  'settings.terminal.behavior.oscNotifications': 'Notificaciones de escritorio OSC',
+  'settings.terminal.behavior.oscNotifications.desc':
+    'Muestra una notificación del sistema cuando un programa emite OSC 9, OSC 777 notify o kitty OSC 99. Lo usan Codex y otros agentes para avisos de turno completado y de aprobación.',
+  'settings.terminal.behavior.oscNotifications.off': 'Desactivado',
+  'settings.terminal.behavior.oscNotifications.unfocused': 'Si no tiene el foco',
+  'settings.terminal.behavior.oscNotifications.always': 'Siempre',
   'settings.terminal.behavior.osc52Clipboard': 'Portapapeles OSC-52',
   'settings.terminal.behavior.osc52Clipboard.desc':
     'Permite que los programas remotos (tmux, vim, etc.) accedan al portapapeles local mediante secuencias de escape OSC-52.',

@@ -41,6 +41,12 @@ import {
   resolveHostTerminalFontWeight,
 } from "../../../domain/terminalAppearance";
 import { DEFAULT_TERMINAL_SCROLLBACK } from "../../../domain/models/terminal";
+import {
+  Osc99Assembler,
+  parseOsc777Payload,
+  parseOsc9Payload,
+  type OscNotification,
+} from "../../../domain/terminalOscNotifications";
 import { resolveFontWeightBold } from "../../../lib/fontWeightAvailability";
 import { isPluginHostProtocol } from "../../../domain/pluginConnection";
 import { resolveTerminalFontFamilyId } from "../../../infrastructure/config/fonts";
@@ -351,6 +357,9 @@ export type CreateXTermRuntimeContext = {
 
   // Callback when the shell rings the terminal bell
   onBell?: () => void;
+
+  // Callback when a remote program requests a desktop notification via OSC 9/777/99
+  onOscNotification?: (notification: OscNotification) => void;
 
   // Callback when remote requests clipboard read in 'prompt' mode; resolves to user's decision
   onOsc52ReadRequest?: () => Promise<boolean>;
@@ -2266,6 +2275,25 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     return true;
   });
 
+  // OSC 9 / 777 / 99 — desktop notifications (Codex, iTerm2, rxvt, kitty)
+  const osc99Assembler = new Osc99Assembler();
+  const emitOscNotification = (notification: OscNotification | null) => {
+    if (!notification) return;
+    ctx.onOscNotification?.(notification);
+  };
+  const osc9Disposable = term.parser.registerOscHandler(9, (data) => {
+    emitOscNotification(parseOsc9Payload(data));
+    return true;
+  });
+  const osc777Disposable = term.parser.registerOscHandler(777, (data) => {
+    emitOscNotification(parseOsc777Payload(data));
+    return true;
+  });
+  const osc99Disposable = term.parser.registerOscHandler(99, (data) => {
+    emitOscNotification(osc99Assembler.consume(data));
+    return true;
+  });
+
   // OSC 52 — clipboard integration
   // Format: 52;<target>;<base64-data>  (write)  or  52;<target>;?  (query/read)
   // <target> is typically "c" (clipboard) or "p" (primary selection)
@@ -2450,6 +2478,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       clearKittyTransientInputState();
       osc7Disposable.dispose();
       osc133Disposable.dispose();
+      osc9Disposable.dispose();
+      osc777Disposable.dispose();
+      osc99Disposable.dispose();
       osc52Disposable.dispose();
       titleChangeDisposable.dispose();
       bellDisposable.dispose();

@@ -106,6 +106,23 @@ test("normalizeTerminalSettings falls back for unsupported dynamic tab title mod
   );
 });
 
+test("normalizeTerminalSettings enables OSC desktop notifications by default", () => {
+  assert.equal(normalizeTerminalSettings().oscNotifications, "always");
+});
+
+test("normalizeTerminalSettings preserves supported OSC notification modes", () => {
+  assert.equal(normalizeTerminalSettings({ oscNotifications: "off" }).oscNotifications, "off");
+  assert.equal(normalizeTerminalSettings({ oscNotifications: "unfocused" }).oscNotifications, "unfocused");
+  assert.equal(normalizeTerminalSettings({ oscNotifications: "always" }).oscNotifications, "always");
+});
+
+test("normalizeTerminalSettings falls back for unsupported OSC notification modes", () => {
+  assert.equal(
+    normalizeTerminalSettings({ oscNotifications: "legacy" as never }).oscNotifications,
+    "always",
+  );
+});
+
 test("normalizeTerminalSettings enables font smoothing by default", () => {
   assert.equal(normalizeTerminalSettings().fontSmoothing, true);
 });

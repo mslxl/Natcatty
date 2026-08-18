@@ -338,6 +338,12 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.behavior.dynamicTabTitle.off': '关闭',
   'settings.terminal.behavior.dynamicTabTitle.agent': '仅 Agent',
   'settings.terminal.behavior.dynamicTabTitle.all': '全部会话',
+  'settings.terminal.behavior.oscNotifications': 'OSC 桌面通知',
+  'settings.terminal.behavior.oscNotifications.desc':
+    '当程序发出 OSC 9、OSC 777 notify 或 kitty OSC 99 时弹出系统通知。Codex 等 Agent 用它提示回合完成或等待审批。',
+  'settings.terminal.behavior.oscNotifications.off': '关闭',
+  'settings.terminal.behavior.oscNotifications.unfocused': '未聚焦时',
+  'settings.terminal.behavior.oscNotifications.always': '始终',
   'settings.terminal.behavior.osc52Clipboard': 'OSC-52 剪贴板',
   'settings.terminal.behavior.osc52Clipboard.desc':
     '允许远程程序（tmux、vim 等）通过 OSC-52 转义序列访问本地剪贴板。',

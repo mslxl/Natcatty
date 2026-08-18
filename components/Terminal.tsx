@@ -120,6 +120,8 @@ import {
 import { isVaultInitialized } from "@/application/state/vaultInitStore.ts";
 import { useVaultSnapshotField } from "@/application/state/vaultSnapshotStore.ts";
 import { netcattyBridge } from "@/infrastructure/services/netcattyBridge.ts";
+import { handleTerminalOscNotification } from "@/application/state/oscDesktopNotifications.ts";
+import { OscNotificationStreamScanner } from "@/domain/terminalOscNotifications.ts";
 import { ScriptExecutionOverlay } from "./terminal/ScriptExecutionOverlay";
 import { isScriptSnippet } from "@/domain/snippetScript.ts";
 import { snippetCanRunInTerminal } from "@/domain/snippetTargets.ts";
@@ -605,6 +607,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onTerminalDataCaptureRef.current = onTerminalDataCapture;
   const isVisibleRef = useRef(isVisible);
   isVisibleRef.current = isVisible;
+  const isFocusedRef = useRef(!!isFocused);
+  isFocusedRef.current = !!isFocused;
+  const oscNotificationScannerRef = useRef(new OscNotificationStreamScanner());
   const hibernateEnabled =
     resolveTerminalHibernateEnabledForProtocol(terminalSettings, effectiveTerminalProtocol) &&
     !kittyKeyboardProtocolEnabledForSession &&
@@ -1899,15 +1904,27 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     flushTerminalSessionFlowAck(backendId);
     terminalBackend.setSessionFlowPaused?.(backendId, false);
     hibernatePendingBufferRef.current = "";
+    oscNotificationScannerRef.current = new OscNotificationStreamScanner();
     disposeDataRef.current = terminalBackend.onSessionData(
       backendId,
       (chunk, meta) => {
         observeTerminalInputPrompt(chunk, meta);
+        const scanned = oscNotificationScannerRef.current.consume(chunk);
+        for (const notification of scanned.notifications) {
+          handleTerminalOscNotification({
+            notification,
+            mode: terminalSettingsRef.current?.oscNotifications,
+            sessionFocused: isFocusedRef.current,
+            sessionId,
+            fallbackTitle: host.label || host.hostname || "Netcatty",
+            onSessionActivity: () => onTerminalBell?.(sessionId),
+          });
+        }
         hibernatePendingBufferRef.current = hibernatePendingCapDisabledRef.current
-          ? hibernatePendingBufferRef.current + chunk
+          ? hibernatePendingBufferRef.current + scanned.remainder
           : appendHibernatePendingBuffer(
             hibernatePendingBufferRef.current,
-            chunk,
+            scanned.remainder,
           );
         const pluginPipelineIngressBytes = Number.isFinite(meta?.pluginPipelineIngressBytes)
           ? Math.max(0, Number(meta.pluginPipelineIngressBytes))
@@ -1937,7 +1954,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       onSessionExitRef.current?.(sessionId, evt);
       scheduleAutoReconnect({ evt });
     });
-  }, [observeTerminalInputPrompt, scheduleAutoReconnect, sessionId, terminalBackend]);
+  }, [host.hostname, host.label, observeTerminalInputPrompt, onTerminalBell, scheduleAutoReconnect, sessionId, terminalBackend]);
 
   const clearHibernateRetry = useCallback(() => {
     if (hibernateRetryTimerRef.current === null) return;
@@ -3920,6 +3937,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onBell: () => {
       onTerminalBell?.(sessionId);
     },
+    onOscNotification: (notification) => {
+      handleTerminalOscNotification({
+        notification,
+        mode: terminalSettingsRef.current?.oscNotifications,
+        sessionFocused: isFocusedRef.current,
+        sessionId,
+        fallbackTitle: host.label || host.hostname || "Netcatty",
+        onSessionActivity: () => onTerminalBell?.(sessionId),
+      });
+    },
     onOsc52ReadRequest: handleOsc52ReadRequest,
     onAutocompleteKeyEvent: (e: KeyboardEvent) => autocompleteKeyEventRef.current?.(e) ?? true,
     onAutocompleteInput: (data: string) => autocompleteInputRef.current?.(data),
@@ -4035,7 +4062,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         return false;
       },
       takePendingBuffer: () => {
-        const pending = hibernatePendingBufferRef.current;
+        const pending = hibernatePendingBufferRef.current + oscNotificationScannerRef.current.flush();
         hibernatePendingBufferRef.current = "";
         return pending;
       },
