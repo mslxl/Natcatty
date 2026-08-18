@@ -206,7 +206,7 @@ export const useTerminalContextActions = ({
   const onSelectAll = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    pulseCopyOnSelectUserCommand();
+    pulseCopyOnSelectUserCommand(term);
     const previewOverlay = findHistoryPreviewOverlay(term.element?.parentElement);
     if (previewOverlay && selectHistoryPreviewAll(previewOverlay)) {
       onHasSelectionChange?.(true);
@@ -233,7 +233,7 @@ export const useTerminalContextActions = ({
   const onSelectWord = useCallback(() => {
     const term = termRef.current;
     if (!term) return;
-    pulseCopyOnSelectUserCommand();
+    pulseCopyOnSelectUserCommand(term);
     term.selectAll();
     onHasSelectionChange?.(true);
   }, [onHasSelectionChange, termRef]);

@@ -107,7 +107,7 @@ function TerminalSelectionAIOverlayInner({
       cleanupListeners();
       userGestureTracker = createCopyOnSelectUserGestureTracker();
       const unsubscribePointer = subscribeCopyOnSelectUserGesture(term, userGestureTracker);
-      const unsubscribeCommand = subscribeCopyOnSelectUserCommand(() => {
+      const unsubscribeCommand = subscribeCopyOnSelectUserCommand(term, () => {
         userGestureTracker?.pulse();
       });
       userGestureUnsubscribe = () => {

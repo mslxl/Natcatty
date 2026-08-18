@@ -1770,7 +1770,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               break;
             }
             case "selectAll": {
-              pulseCopyOnSelectUserCommand();
+              pulseCopyOnSelectUserCommand(term);
               if (historyPreviewOverlay && selectHistoryPreviewAll(historyPreviewOverlay)) {
                 break;
               }

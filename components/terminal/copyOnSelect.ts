@@ -122,20 +122,23 @@ export const subscribeCopyOnSelectUserGesture = (
   };
 };
 
-const userCommandPulses = new Set<() => void>();
+const userCommandPulses = new Map<unknown, () => void>();
 
 /** Select All / Select Word from a shortcut or menu — not SearchAddon. */
 export const subscribeCopyOnSelectUserCommand = (
+  key: unknown,
   pulse: () => void,
 ): (() => void) => {
-  userCommandPulses.add(pulse);
+  userCommandPulses.set(key, pulse);
   return () => {
-    userCommandPulses.delete(pulse);
+    if (userCommandPulses.get(key) === pulse) {
+      userCommandPulses.delete(key);
+    }
   };
 };
 
-export const pulseCopyOnSelectUserCommand = (): void => {
-  for (const pulse of userCommandPulses) pulse();
+export const pulseCopyOnSelectUserCommand = (key: unknown): void => {
+  userCommandPulses.get(key)?.();
 };
 
 export const shouldWriteCopyOnSelect = ({

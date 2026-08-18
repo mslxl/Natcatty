@@ -235,18 +235,27 @@ test("document-capture contextmenu still counts when the terminal never sees the
   assert.equal(pulsed, 1);
 });
 
-test("user-invoked Select All pulses copy-on-select without a pointer gesture", () => {
-  let pulsed = 0;
-  const unsubscribe = subscribeCopyOnSelectUserCommand(() => {
-    pulsed += 1;
+test("user-invoked Select All pulses only the selected terminal", () => {
+  let pulsedA = 0;
+  let pulsedB = 0;
+  const terminalA = { id: "a" };
+  const terminalB = { id: "b" };
+  const unsubscribeA = subscribeCopyOnSelectUserCommand(terminalA, () => {
+    pulsedA += 1;
+  });
+  const unsubscribeB = subscribeCopyOnSelectUserCommand(terminalB, () => {
+    pulsedB += 1;
   });
 
-  pulseCopyOnSelectUserCommand();
-  assert.equal(pulsed, 1);
+  pulseCopyOnSelectUserCommand(terminalA);
+  assert.equal(pulsedA, 1);
+  assert.equal(pulsedB, 0);
 
-  unsubscribe();
-  pulseCopyOnSelectUserCommand();
-  assert.equal(pulsed, 1);
+  unsubscribeA();
+  unsubscribeB();
+  pulseCopyOnSelectUserCommand(terminalA);
+  assert.equal(pulsedA, 1);
+  assert.equal(pulsedB, 0);
 });
 
 test("issue 3007: search match then later revival does not copy", () => {
