@@ -265,6 +265,23 @@ test("ordinary Enter does not rebuild a saturated scrollback", async () => {
   term.dispose();
 });
 
+test("Enter fused with bracketed-paste CR keeps the previous line highlighted", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 10, scrollback: 50 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "[root@host ~]# echo ERROR");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+
+  // bash 5.1+ disables bracketed paste on Enter with `\x1b[?2004l\r`; the bare
+  // CR arrives fused with the echoed newline, output, and next prompt.
+  await write(term, "\r\n\x1b[?2004l\rERROR\r\n\x1b[?2004h[root@host ~]# ");
+
+  assert.equal(cellRgb(term, 1, "ERROR"), RED, "new output must be highlighted");
+  assert.equal(cellRgb(term, 0, "ERROR"), RED, "previous command line must stay highlighted");
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("carriage-return rewrites rematch the current line", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 80, rows: 5, scrollback: 20 });
   const highlighter = new KeywordHighlighter(term);

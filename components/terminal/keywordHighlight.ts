@@ -384,10 +384,15 @@ export class KeywordHighlighter implements IDisposable {
     }
     // In-place CR / backspace / EL / ICH / DCH rewrite the current row.
     // `\r\n` is a line advance and must not restore/repaint the previous prompt.
-    const eraseInLine = typeof data === "string" && /\x1b\[[\d;]*[K@PMLGHf]/.test(data); // eslint-disable-line no-control-regex
-    const rewritesCurrentLine = typeof data === "string"
-      && (/\r(?!\n)/.test(data) || data.includes("\x08") || eraseInLine);
     const startsWithLineAdvance = typeof data === "string" && /^(?:\r\n|\n)/.test(data);
+    const eraseInLine = typeof data === "string" && /\x1b\[[\d;]*[K@PMLGHf]/.test(data); // eslint-disable-line no-control-regex
+    // A chunk that starts with a line advance leaves the cursor row before any
+    // later CR/EL can touch it (bash's bracketed-paste `\x1b[?2004l\r` arrives
+    // fused with the echoed newline). Restoring startY here would strip the
+    // previous prompt's highlight while the post-write repaint skips that row.
+    const rewritesCurrentLine = typeof data === "string"
+      && !startsWithLineAdvance
+      && (/\r(?!\n)/.test(data) || data.includes("\x08") || eraseInLine);
     if (this.compiledPatterns.length > 0 && rewritesCurrentLine) {
       this.restorePhysicalLine(startY);
     }
