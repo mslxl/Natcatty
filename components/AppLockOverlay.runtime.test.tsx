@@ -608,6 +608,63 @@ test("AppLockOverlay waits until the document is visible before auto system unlo
   }
 });
 
+test("AppLockOverlay waits for window focus before auto system unlock", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let focused = false;
+  let systemUnlockCount = 0;
+
+  Object.defineProperty(dom.document, "hasFocus", {
+    configurable: true,
+    value: () => focused,
+  });
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "darwin" as const,
+            label: "Touch ID" as const,
+            reason: null,
+          },
+          autoPromptSystemUnlock: true,
+          onSystemUnlock: async () => {
+            systemUnlockCount += 1;
+            return { ok: true as const };
+          },
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+    await waitForAutoPrompt(dom);
+    assert.equal(systemUnlockCount, 0);
+
+    focused = true;
+    await dispatchDomEvent(dom.window, new dom.window.FocusEvent("focus"));
+    await flushEffects();
+    assert.match(dom.document.body.textContent ?? "", /Preparing Touch ID/i);
+    await waitForAutoPrompt(dom);
+    assert.equal(systemUnlockCount, 1);
+
+    await dispatchDomEvent(dom.window, new dom.window.FocusEvent("focus"));
+    await waitForAutoPrompt(dom);
+    assert.equal(systemUnlockCount, 1);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
 test("AppLockOverlay retries a reopen presentation after an in-flight auto prompt finishes", async () => {
   const dom = installDomEnvironment();
   const renderer = await createDomRenderer(dom.document);

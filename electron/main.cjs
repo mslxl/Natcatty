@@ -827,7 +827,7 @@ async function deliverJmsDeepLink(rawUrl, expectedGeneration = jmsDeepLinkDelive
     JMS_DEEP_LINK_CHANNEL,
     { url: rawUrl },
     {
-      timeoutMs: isDev ? 30000 : 15000,
+      timeoutMs: 0,
       shouldSend: () => shouldDeliverJmsDeepLink({
         enabled: jmsDeepLinkEnabled,
         deliveryGeneration: jmsDeepLinkDeliveryGeneration,
@@ -839,23 +839,42 @@ async function deliverJmsDeepLink(rawUrl, expectedGeneration = jmsDeepLinkDelive
   if (result && result.success === false && result.reason !== "jms-deep-link-disabled") {
     console.warn("[Main] Failed to deliver jms:// deep link:", result.error || result.reason);
   }
+  return result || { success: true };
 }
 
 async function flushPendingJmsDeepLinks() {
   if (flushingJmsDeepLinks) return;
   flushingJmsDeepLinks = true;
+  let requeueDelayMs = 0;
   try {
     while (jmsDeepLinkEnabled && pendingJmsDeepLinkUrls.length > 0) {
       const rawUrl = pendingJmsDeepLinkUrls.shift();
       if (!rawUrl) continue;
-      await deliverJmsDeepLink(rawUrl, jmsDeepLinkDeliveryGeneration);
+      const result = await deliverJmsDeepLink(rawUrl, jmsDeepLinkDeliveryGeneration);
+      if (shouldRequeueFailedSshDeepLinkDelivery({
+        enabled: jmsDeepLinkEnabled,
+        deliveryGeneration: jmsDeepLinkDeliveryGeneration,
+        expectedGeneration: jmsDeepLinkDeliveryGeneration,
+        result,
+        cancelReason: "jms-deep-link-disabled",
+      })) {
+        pendingJmsDeepLinkUrls.unshift(rawUrl);
+        requeueDelayMs = 1000;
+        break;
+      }
     }
   } catch (err) {
     console.warn("[Main] Failed to process jms:// deep link:", err);
   } finally {
     flushingJmsDeepLinks = false;
     if (jmsDeepLinkEnabled && pendingJmsDeepLinkUrls.length > 0) {
-      void flushPendingJmsDeepLinks();
+      if (requeueDelayMs > 0) {
+        setTimeout(() => {
+          void flushPendingJmsDeepLinks();
+        }, requeueDelayMs);
+      } else {
+        void flushPendingJmsDeepLinks();
+      }
     }
   }
 }
@@ -919,7 +938,7 @@ async function deliverTelnetDeepLink(rawUrl, expectedGeneration = sshDeepLinkDel
     TELNET_DEEP_LINK_CHANNEL,
     { url: rawUrl },
     {
-      timeoutMs: isDev ? 30000 : 15000,
+      timeoutMs: 0,
       shouldSend: () => shouldDeliverTelnetDeepLink({
         enabled: sshDeepLinkEnabled,
         deliveryGeneration: sshDeepLinkDeliveryGeneration,
@@ -931,6 +950,7 @@ async function deliverTelnetDeepLink(rawUrl, expectedGeneration = sshDeepLinkDel
   if (result && result.success === false && result.reason !== "telnet-deep-link-disabled") {
     console.warn("[Main] Failed to deliver telnet:// deep link:", result.error || result.reason);
   }
+  return result || { success: true };
 }
 
 async function flushPendingSshDeepLinks() {
@@ -975,18 +995,36 @@ async function flushPendingSshDeepLinks() {
 async function flushPendingTelnetDeepLinks() {
   if (flushingTelnetDeepLinks) return;
   flushingTelnetDeepLinks = true;
+  let requeueDelayMs = 0;
   try {
     while (sshDeepLinkEnabled && pendingTelnetDeepLinkUrls.length > 0) {
       const rawUrl = pendingTelnetDeepLinkUrls.shift();
       if (!rawUrl) continue;
-      await deliverTelnetDeepLink(rawUrl, sshDeepLinkDeliveryGeneration);
+      const result = await deliverTelnetDeepLink(rawUrl, sshDeepLinkDeliveryGeneration);
+      if (shouldRequeueFailedSshDeepLinkDelivery({
+        enabled: sshDeepLinkEnabled,
+        deliveryGeneration: sshDeepLinkDeliveryGeneration,
+        expectedGeneration: sshDeepLinkDeliveryGeneration,
+        result,
+        cancelReason: "telnet-deep-link-disabled",
+      })) {
+        pendingTelnetDeepLinkUrls.unshift(rawUrl);
+        requeueDelayMs = 1000;
+        break;
+      }
     }
   } catch (err) {
     console.warn("[Main] Failed to process telnet:// deep link:", err);
   } finally {
     flushingTelnetDeepLinks = false;
     if (sshDeepLinkEnabled && pendingTelnetDeepLinkUrls.length > 0) {
-      void flushPendingTelnetDeepLinks();
+      if (requeueDelayMs > 0) {
+        setTimeout(() => {
+          void flushPendingTelnetDeepLinks();
+        }, requeueDelayMs);
+      } else {
+        void flushPendingTelnetDeepLinks();
+      }
     }
   }
 }
@@ -999,28 +1037,41 @@ async function deliverOpenTerminalPath(targetPath) {
     win,
     OPEN_TERMINAL_PATH_CHANNEL,
     { path: targetPath },
-    { timeoutMs: isDev ? 30000 : 15000 },
+    { timeoutMs: 0 },
   );
   if (result && result.success === false) {
     console.warn("[Main] Failed to deliver open terminal path:", result.error || result.reason);
   }
+  return result || { success: true };
 }
 
 async function flushPendingOpenTerminalPaths() {
   if (flushingOpenTerminalPaths) return;
   flushingOpenTerminalPaths = true;
+  let requeueDelayMs = 0;
   try {
     while (pendingOpenTerminalPaths.length > 0) {
       const targetPath = pendingOpenTerminalPaths.shift();
       if (!targetPath) continue;
-      await deliverOpenTerminalPath(targetPath);
+      const result = await deliverOpenTerminalPath(targetPath);
+      if (result && result.success === false) {
+        pendingOpenTerminalPaths.unshift(targetPath);
+        requeueDelayMs = 1000;
+        break;
+      }
     }
   } catch (err) {
     console.warn("[Main] Failed to process open terminal path:", err);
   } finally {
     flushingOpenTerminalPaths = false;
     if (pendingOpenTerminalPaths.length > 0) {
-      void flushPendingOpenTerminalPaths();
+      if (requeueDelayMs > 0) {
+        setTimeout(() => {
+          void flushPendingOpenTerminalPaths();
+        }, requeueDelayMs);
+      } else {
+        void flushPendingOpenTerminalPaths();
+      }
     }
   }
 }

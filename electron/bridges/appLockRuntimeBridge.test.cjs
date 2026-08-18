@@ -420,6 +420,34 @@ test("system unlock setting cannot be disabled without password while locked", a
   assert.equal(saved.systemUnlockEnabled, false);
 });
 
+test("system unlock result is rejected when the setting is disabled during verification", async () => {
+  const { controller, systemAuthBridge } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestEnable();
+  await controller.setSystemUnlockEnabled({ enabled: true });
+  controller.setLocked("manual");
+
+  let resolveSystemUnlock;
+  systemAuthBridge.requestUnlock = async () => new Promise((resolve) => {
+    resolveSystemUnlock = resolve;
+  });
+  const pendingUnlock = controller.requestSystemUnlock();
+  for (let attempt = 0; attempt < 5 && !resolveSystemUnlock; attempt += 1) {
+    await Promise.resolve();
+  }
+  assert.equal(typeof resolveSystemUnlock, "function");
+
+  const disabled = await controller.setSystemUnlockEnabled({
+    enabled: false,
+    currentPassword: "alpha",
+  });
+  assert.equal(disabled.systemUnlockEnabled, false);
+  resolveSystemUnlock({ ok: true });
+
+  assert.deepEqual(await pendingUnlock, { ok: false, error: "disabled" });
+  assert.equal(controller.getRuntimeState().locked, true);
+});
+
 test("system unlock succeeds only when enabled and locked", async () => {
   const { controller, runtimeBridge, systemAuthCalls } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });

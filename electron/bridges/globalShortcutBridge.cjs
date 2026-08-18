@@ -41,6 +41,8 @@ let appLockController = null;
 let unsubscribeAppLockRuntime = null;
 /** Queued tray port-forward toggles deferred while the runtime is locked. */
 let pendingPortForwardToggles = [];
+/** Dock host connections deferred until App Lock is unlocked. */
+let pendingHostConnections = [];
 
 /** True after the tray panel renderer finishes its first load. */
 let trayPanelReady = false;
@@ -134,6 +136,14 @@ function flushPendingPortForwardToggles() {
   }
 }
 
+function flushPendingHostConnections() {
+  if (isAppRuntimeLocked()) return;
+  const pending = pendingHostConnections.splice(0);
+  for (const hostId of pending) {
+    void sendToMainWindow("netcatty:trayPanel:connectToHost", hostId, { focus: false });
+  }
+}
+
 function bindAppLockRuntimeSubscription() {
   if (typeof unsubscribeAppLockRuntime === "function") {
     try {
@@ -150,12 +160,15 @@ function bindAppLockRuntimeSubscription() {
     unsubscribeAppLockRuntime = appLockController.subscribe((state) => {
       if (state?.locked === false) {
         flushPendingPortForwardToggles();
+        flushPendingHostConnections();
         pushTrayMenuDataToPanel();
         updateTrayMenu();
+        updateDockMenu();
       } else if (state?.locked === true) {
         // Clear cached details from the tray panel/menu while locked.
         pushTrayMenuDataToPanel();
         updateTrayMenu();
+        updateDockMenu();
       }
     });
   } catch {
@@ -361,6 +374,12 @@ async function sendToMainWindow(channel, payload, { focus = true, createIfMissin
 
 async function connectToHostFromSystemMenu(hostId) {
   if (!hostId) return;
+  if (isAppRuntimeLocked()) {
+    pendingHostConnections = pendingHostConnections.filter((id) => id !== hostId);
+    pendingHostConnections.push(hostId);
+    await openMainWindowReady();
+    return;
+  }
   await sendToMainWindow("netcatty:trayPanel:connectToHost", hostId);
 }
 
@@ -986,7 +1005,7 @@ function getDockMenuHosts() {
 }
 
 function buildDockMenuTemplate() {
-  const hostItems = getDockMenuHosts().map((host) => ({
+  const hostItems = (isAppRuntimeLocked() ? [] : getDockMenuHosts()).map((host) => ({
     label: getDockHostLabel(host),
     click: async () => {
       await connectToHostFromSystemMenu(host.id);
@@ -1214,6 +1233,7 @@ function cleanup() {
   unregisterGlobalHotkey();
   destroyTray();
   pendingPortForwardToggles = [];
+  pendingHostConnections = [];
   if (typeof unsubscribeAppLockRuntime === "function") {
     try {
       unsubscribeAppLockRuntime();

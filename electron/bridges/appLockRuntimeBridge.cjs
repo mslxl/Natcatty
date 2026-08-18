@@ -779,6 +779,13 @@ function createAppLockController({
           error: result?.error || "failed",
         };
       }
+      const latestSettings = getSettings();
+      if (
+        !canLockFromSettings(latestSettings)
+        || latestSettings.systemUnlockEnabled !== true
+      ) {
+        return { ok: false, error: "disabled" };
+      }
       // Drop the prompt result if we unlocked, re-locked, or the lock reason
       // changed while the dialog was open (version advances on each lock patch).
       const lockAfterPrompt = runtimeBridge.getState();

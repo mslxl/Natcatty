@@ -35,7 +35,7 @@ type AppLockSystemUnlockResult =
 
 type AppLockSystemUnlockSettingsResult =
   | AppLockSettings
-  | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' };
+  | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' | 'cancelled' | 'failed' };
 
 declare global {
   interface NetcattyBridge {

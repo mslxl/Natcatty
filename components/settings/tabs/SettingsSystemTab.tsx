@@ -93,7 +93,7 @@ interface SettingsSystemTabProps {
     enabled: boolean;
     currentPassword?: string;
     autoPromptEnabled?: boolean;
-  }) => Promise<AppLockSettings | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' }>;
+  }) => Promise<AppLockSettings | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' | 'cancelled' | 'failed' }>;
   sessionLogsEnabled: boolean;
   setSessionLogsEnabled: (enabled: boolean) => void;
   sessionLogsDir: string;

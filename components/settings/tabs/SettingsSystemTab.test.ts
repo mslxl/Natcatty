@@ -101,6 +101,14 @@ test("app lock system unlock exposes auto prompt as a child option", () => {
   assert.match(source, /appLockSettings\.systemUnlockEnabled/);
 });
 
+test("app lock system unlock handles native verification failures", () => {
+  const source = readAppLockSectionSource();
+
+  assert.match(source, /'cancelled' \| 'failed'/);
+  assert.match(source, /result\.error === 'cancelled'/);
+  assert.match(source, /case 'failed':\s*return t\('settings\.appLock\.systemUnlock\.unavailable'\)/);
+});
+
 test("app lock disable explains that turning it off removes the saved password", () => {
   const englishLocale = readFileSync(new URL("../../../application/i18n/locales/en/core.ts", import.meta.url), "utf8");
 

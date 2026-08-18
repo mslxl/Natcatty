@@ -950,6 +950,56 @@ test("mac dock menu lists saved hosts and forwards connect actions", async () =>
   });
 });
 
+test("mac dock host connections wait until App Lock is unlocked", async () => {
+  await withPlatform("darwin", async () => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const appLockController = createAppLockControllerStub();
+    const sentMessages = [];
+    const win = new FakeWindow();
+    win.webContents = {
+      send(channel, ...args) {
+        sentMessages.push([channel, ...args]);
+      },
+    };
+    electronModule.BrowserWindow.getAllWindows = () => [win];
+
+    bridge.init({
+      electronModule,
+      getMainWindow: () => win,
+      getAppLockController: () => appLockController,
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+    await ipcMain.handlers.get("netcatty:tray:updateMenuData")(null, {
+      hosts: [{ id: "target", label: "Target Host", hostname: "target.example" }],
+    });
+
+    const unlockedTemplate = electronModule.app.dock.menu.template;
+    const staleHostItem = unlockedTemplate
+      .find((item) => item.label === "New Connection")
+      .submenu[0];
+    appLockController.setLocked("manual");
+
+    const lockedTemplate = electronModule.app.dock.menu.template;
+    const lockedConnectionMenu = lockedTemplate.find((item) => item.label === "New Connection");
+    assert.equal(lockedConnectionMenu.enabled, false);
+    assert.deepEqual(lockedConnectionMenu.submenu.map((item) => item.label), ["No Saved Hosts"]);
+
+    await staleHostItem.click();
+    assert.deepEqual(sentMessages, [["netcatty:app-lock:reopen"]]);
+
+    appLockController.unlock();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(sentMessages, [
+      ["netcatty:app-lock:reopen"],
+      ["netcatty:trayPanel:connectToHost", "target"],
+    ]);
+    bridge.cleanup();
+  });
+});
+
 test("mac dock host click creates a main window when none exists", async () => {
   await withPlatform("darwin", async () => {
     const bridge = loadBridge();

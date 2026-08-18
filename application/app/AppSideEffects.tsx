@@ -1423,7 +1423,12 @@ export function AppSideEffects() {
   // Idle/background/manual locks keep children mounted under the overlay. Queue
   // deep links until unlock so saved-credential connects cannot start behind
   // the lock screen.
-  const pendingDeepLinksWhileLockedRef = useRef<Array<{ kind: 'ssh' | 'telnet' | 'jms'; payload: { url?: string } }>>([]);
+  const pendingDeepLinksWhileLockedRef = useRef<Array<
+    | { kind: 'ssh'; payload: { url?: string } }
+    | { kind: 'telnet'; payload: { url?: string } }
+    | { kind: 'jms'; payload: { url?: string } }
+    | { kind: 'open-terminal-path'; payload: { path?: string } }
+  >>([]);
 
   const _processSshDeepLink = useEffectEvent((payload: { url?: string }) => {
     startupLaunchIntentReceivedRef.current = true;
@@ -1583,13 +1588,32 @@ export function AppSideEffects() {
     });
   }, [isPeerSessionWindow]);
 
+  const _processOpenTerminalPath = useEffectEvent((payload: { path?: string }) => {
+    startupLaunchIntentReceivedRef.current = true;
+    const localStartDir = typeof payload?.path === 'string' ? payload.path : '';
+    if (!localStartDir.trim()) return;
+    handleCreateLocalTerminal(undefined, { localStartDir });
+  });
+
+  const _handleOpenTerminalPath = useEffectEvent((payload: { path?: string }) => {
+    if (shouldDeferExternalActionWhileAppLocked({ locked: appLockLocked })) {
+      pendingDeepLinksWhileLockedRef.current.push({
+        kind: 'open-terminal-path',
+        payload: payload || {},
+      });
+      return;
+    }
+    _processOpenTerminalPath(payload);
+  });
+
   useEffect(() => {
     if (shouldDeferExternalActionWhileAppLocked({ locked: appLockLocked })) return;
     const pending = pendingDeepLinksWhileLockedRef.current.splice(0);
     for (const item of pending) {
       if (item.kind === 'ssh') _processSshDeepLink(item.payload);
       else if (item.kind === 'telnet') _processTelnetDeepLink(item.payload);
-      else _processJmsDeepLink(item.payload);
+      else if (item.kind === 'jms') _processJmsDeepLink(item.payload);
+      else _processOpenTerminalPath(item.payload);
     }
   }, [appLockLocked]);
 
@@ -1603,13 +1627,6 @@ export function AppSideEffects() {
       return next.length === prev.length ? prev : next;
     });
   }, [sessions]);
-
-  const _handleOpenTerminalPath = useEffectEvent((payload: { path?: string }) => {
-    startupLaunchIntentReceivedRef.current = true;
-    const localStartDir = typeof payload?.path === 'string' ? payload.path : '';
-    if (!localStartDir.trim()) return;
-    handleCreateLocalTerminal(undefined, { localStartDir });
-  });
 
   useEffect(() => {
     if (isPeerSessionWindow) return;

@@ -17,8 +17,12 @@ const RESET_REVEAL_CLICK_COUNT = 5;
 const RESET_REVEAL_WINDOW_MS = 1500;
 export const APP_LOCK_AUTO_PROMPT_DELAY_MS = 1200;
 
-function isDocumentVisible(): boolean {
-  return typeof document === 'undefined' || document.visibilityState !== 'hidden';
+function isWindowInteractive(): boolean {
+  return typeof document === 'undefined'
+    || (
+      document.visibilityState !== 'hidden'
+      && (typeof document.hasFocus !== 'function' || document.hasFocus())
+    );
 }
 
 interface AppLockOverlayProps {
@@ -68,7 +72,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [showReset, setShowReset] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
   const [resetError, setResetError] = useState(false);
-  const [documentVisible, setDocumentVisible] = useState(() => isDocumentVisible());
+  const [windowInteractive, setWindowInteractive] = useState(() => isWindowInteractive());
   const lastAutoUnlockPresentationRef = useRef<string | null>(null);
   const autoUnlockTimerRef = useRef<number | null>(null);
   const canUseSystemUnlock = Boolean(
@@ -83,16 +87,18 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     || showReset;
 
   useEffect(() => {
-    const updateDocumentVisible = () => {
-      setDocumentVisible(isDocumentVisible());
+    const updateWindowInteractive = () => {
+      setWindowInteractive(isWindowInteractive());
     };
 
-    updateDocumentVisible();
-    document.addEventListener('visibilitychange', updateDocumentVisible);
-    window.addEventListener('focus', updateDocumentVisible);
+    updateWindowInteractive();
+    document.addEventListener('visibilitychange', updateWindowInteractive);
+    window.addEventListener('focus', updateWindowInteractive);
+    window.addEventListener('blur', updateWindowInteractive);
     return () => {
-      document.removeEventListener('visibilitychange', updateDocumentVisible);
-      window.removeEventListener('focus', updateDocumentVisible);
+      document.removeEventListener('visibilitychange', updateWindowInteractive);
+      window.removeEventListener('focus', updateWindowInteractive);
+      window.removeEventListener('blur', updateWindowInteractive);
     };
   }, []);
 
@@ -232,7 +238,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   useEffect(() => {
     if (!locked) return;
     if (!autoPromptSystemUnlock) return;
-    if (!documentVisible) return;
+    if (!windowInteractive) return;
     if (showReset) return;
     if (isSystemUnlocking) return;
     if (!systemUnlockStatus?.enabled || !systemUnlockStatus.available || !systemUnlockStatus.label) return;
@@ -274,7 +280,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     autoPromptSystemUnlock,
     reason,
     reopenSignal,
-    documentVisible,
+    windowInteractive,
     onSystemUnlock,
     systemUnlockStatus?.available,
     systemUnlockStatus?.enabled,

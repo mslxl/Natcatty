@@ -41,6 +41,11 @@ export function installDomEnvironment(): DomEnvironment {
     getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
   } as const;
 
+  Object.defineProperty(dom.window.document, "hasFocus", {
+    configurable: true,
+    value: () => true,
+  });
+
   for (const [key, value] of Object.entries(overrides)) {
     Object.defineProperty(globalThis, key, {
       configurable: true,

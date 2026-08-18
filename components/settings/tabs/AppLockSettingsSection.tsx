@@ -40,7 +40,7 @@ interface AppLockSettingsSectionProps {
     autoPromptEnabled?: boolean;
   }) => Promise<
     AppLockSettings
-    | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' }
+    | { ok: false; error: 'empty-current' | 'incorrect' | 'locked' | 'unsupported' | 'unavailable' | 'cancelled' | 'failed' }
   >;
 }
 
@@ -77,7 +77,7 @@ export const AppLockSettingsSection: React.FC<AppLockSettingsSectionProps> = ({
   }));
 
   const mapChangeError = useCallback((
-    changeError: AppLockSettingsChangeError | 'locked' | 'unsupported' | 'unavailable',
+    changeError: AppLockSettingsChangeError | 'locked' | 'unsupported' | 'unavailable' | 'failed',
   ): string => {
     switch (changeError) {
       case 'empty-current':
@@ -90,6 +90,7 @@ export const AppLockSettingsSection: React.FC<AppLockSettingsSectionProps> = ({
         return t('settings.appLock.systemUnlock.locked');
       case 'unsupported':
       case 'unavailable':
+      case 'failed':
         return t('settings.appLock.systemUnlock.unavailable');
     }
   }, [t]);
@@ -181,6 +182,7 @@ export const AppLockSettingsSection: React.FC<AppLockSettingsSectionProps> = ({
           : false,
       });
       if ('ok' in result && result.ok === false) {
+        if (result.error === 'cancelled') return;
         setError(mapChangeError(result.error));
       }
     } finally {
@@ -202,6 +204,7 @@ export const AppLockSettingsSection: React.FC<AppLockSettingsSectionProps> = ({
     try {
       const result = await setAppLockSystemUnlockEnabled({ enabled: true, autoPromptEnabled });
       if ('ok' in result && result.ok === false) {
+        if (result.error === 'cancelled') return;
         setError(mapChangeError(result.error));
       }
     } finally {
