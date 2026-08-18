@@ -33,3 +33,15 @@ test("failed locked launch-intent deliveries return to their queues", () => {
   assert.match(telnetFlush, /pendingTelnetDeepLinkUrls\.unshift\(rawUrl\)/);
   assert.match(terminalFlush, /pendingOpenTerminalPaths\.unshift\(targetPath\)/);
 });
+
+test("cold-start completion waits until the locked renderer is really ready", () => {
+  const start = source.indexOf("void createAndShowMainWindow().then(async (win) =>");
+  const end = source.indexOf("// Trigger auto-update check", start);
+  const startupSettleSource = source.slice(start, end);
+
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  assert.match(startupSettleSource, /waitForRendererReady\(win, \{\s*timeoutMs: 0/);
+  assert.match(startupSettleSource, /notifyColdStartIntentsSettled\(win\)/);
+  assert.doesNotMatch(startupSettleSource, /15000|30000/);
+});

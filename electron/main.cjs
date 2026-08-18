@@ -1415,7 +1415,7 @@ if (!gotLock) {
       // renderer subscribes). Wait for ready, then drain, then settle.
       try {
         await getWindowManager().waitForRendererReady(win, {
-          timeoutMs: isDev ? 30000 : 15000,
+          timeoutMs: 0,
         });
       } catch (err) {
         console.warn(
