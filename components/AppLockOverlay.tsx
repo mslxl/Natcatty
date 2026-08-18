@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { LockKeyhole } from 'lucide-react';
+import { Fingerprint, KeyRound, Loader2, LockKeyhole } from 'lucide-react';
 
 import { useI18n } from '../application/i18n/I18nProvider';
 import type {
@@ -15,6 +15,7 @@ import { Label } from './ui/label';
 
 const RESET_REVEAL_CLICK_COUNT = 5;
 const RESET_REVEAL_WINDOW_MS = 1500;
+export const APP_LOCK_AUTO_PROMPT_DELAY_MS = 1200;
 
 function isDocumentVisible(): boolean {
   return typeof document === 'undefined' || document.visibilityState !== 'hidden';
@@ -58,7 +59,9 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [error, setError] = useState<AppLockUnlockResult['error'] | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSystemUnlocking, setIsSystemUnlocking] = useState(false);
+  const [isAutoPromptPending, setIsAutoPromptPending] = useState(false);
   const [systemUnlockError, setSystemUnlockError] = useState(false);
+  const [passwordFallbackRequested, setPasswordFallbackRequested] = useState(false);
   // Value is only read inside functional updates; keep the setter alone.
   const [, setLogoClickCount] = useState(0);
   const [lastLogoClickAt, setLastLogoClickAt] = useState<number | null>(null);
@@ -67,6 +70,17 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   const [resetError, setResetError] = useState(false);
   const [documentVisible, setDocumentVisible] = useState(() => isDocumentVisible());
   const lastAutoUnlockPresentationRef = useRef<string | null>(null);
+  const autoUnlockTimerRef = useRef<number | null>(null);
+  const canUseSystemUnlock = Boolean(
+    systemUnlockStatus?.enabled
+    && systemUnlockStatus.available
+    && systemUnlockStatus.label
+    && onSystemUnlock,
+  );
+  const showPasswordUnlock = !canUseSystemUnlock
+    || passwordFallbackRequested
+    || systemUnlockError
+    || showReset;
 
   useEffect(() => {
     const updateDocumentVisible = () => {
@@ -86,11 +100,17 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
 
   useEffect(() => {
     if (!locked) {
+      if (autoUnlockTimerRef.current !== null) {
+        window.clearTimeout(autoUnlockTimerRef.current);
+        autoUnlockTimerRef.current = null;
+      }
       setPassword('');
       setError(null);
       setIsSubmitting(false);
       setIsSystemUnlocking(false);
+      setIsAutoPromptPending(false);
       setSystemUnlockError(false);
+      setPasswordFallbackRequested(false);
       setLogoClickCount(0);
       setLastLogoClickAt(null);
       setShowReset(false);
@@ -99,9 +119,16 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       lastAutoUnlockPresentationRef.current = null;
       return;
     }
+    if (!showPasswordUnlock) return;
     const timeout = window.setTimeout(() => passwordRef.current?.focus(), 0);
     return () => window.clearTimeout(timeout);
-  }, [locked]);
+  }, [locked, showPasswordUnlock]);
+
+  useEffect(() => {
+    if (!locked || reason !== 'background' || reopenSignal <= 0) return;
+    setPasswordFallbackRequested(false);
+    setSystemUnlockError(false);
+  }, [locked, reason, reopenSignal]);
 
   // Soft focus trap + stop ALL app-level keydown while locked.
   // inert does not block window capture (shortkey/hotkey recorders) or window
@@ -169,16 +196,32 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     };
   }, [locked]);
 
+  const clearAutoUnlockTimer = useCallback(() => {
+    if (autoUnlockTimerRef.current !== null) {
+      window.clearTimeout(autoUnlockTimerRef.current);
+      autoUnlockTimerRef.current = null;
+    }
+    setIsAutoPromptPending(false);
+  }, []);
+
   const handleSystemUnlock = useCallback(async () => {
     if (isSystemUnlocking || !onSystemUnlock) return;
+    clearAutoUnlockTimer();
     setIsSystemUnlocking(true);
     setSystemUnlockError(false);
-    const result = await onSystemUnlock();
-    if (!result.ok) {
+    try {
+      const result = await onSystemUnlock();
+      if (!result.ok) {
+        setSystemUnlockError(true);
+        setPasswordFallbackRequested(true);
+      }
+    } catch {
       setSystemUnlockError(true);
+      setPasswordFallbackRequested(true);
+    } finally {
+      setIsSystemUnlocking(false);
     }
-    setIsSystemUnlocking(false);
-  }, [isSystemUnlocking, onSystemUnlock]);
+  }, [clearAutoUnlockTimer, isSystemUnlocking, onSystemUnlock]);
 
   const requestAutomaticSystemUnlock = useCallback(() => {
     if (isSystemUnlocking || !onSystemUnlock) return false;
@@ -190,6 +233,8 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     if (!locked) return;
     if (!autoPromptSystemUnlock) return;
     if (!documentVisible) return;
+    if (showReset) return;
+    if (isSystemUnlocking) return;
     if (!systemUnlockStatus?.enabled || !systemUnlockStatus.available || !systemUnlockStatus.label) return;
     if (!onSystemUnlock) return;
 
@@ -197,10 +242,33 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       ? `background:${reopenSignal}`
       : `foreground:${reason ?? 'default'}:${locked}`;
     if (reason === 'background' && reopenSignal <= 0) return;
+    if (
+      passwordFallbackRequested
+      && lastAutoUnlockPresentationRef.current === presentationKey
+    ) return;
     if (lastAutoUnlockPresentationRef.current === presentationKey) return;
+    if (autoUnlockTimerRef.current !== null) return;
 
-    if (!requestAutomaticSystemUnlock()) return;
-    lastAutoUnlockPresentationRef.current = presentationKey;
+    if (passwordFallbackRequested || systemUnlockError) {
+      setPasswordFallbackRequested(false);
+      setSystemUnlockError(false);
+    }
+    setIsAutoPromptPending(true);
+    const timer = window.setTimeout(() => {
+      if (autoUnlockTimerRef.current !== timer) return;
+      autoUnlockTimerRef.current = null;
+      setIsAutoPromptPending(false);
+      if (!requestAutomaticSystemUnlock()) return;
+      lastAutoUnlockPresentationRef.current = presentationKey;
+    }, APP_LOCK_AUTO_PROMPT_DELAY_MS);
+    autoUnlockTimerRef.current = timer;
+
+    return () => {
+      if (autoUnlockTimerRef.current !== timer) return;
+      window.clearTimeout(timer);
+      autoUnlockTimerRef.current = null;
+      setIsAutoPromptPending(false);
+    };
   }, [
     locked,
     autoPromptSystemUnlock,
@@ -211,12 +279,18 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
     systemUnlockStatus?.available,
     systemUnlockStatus?.enabled,
     systemUnlockStatus?.label,
+    passwordFallbackRequested,
+    systemUnlockError,
+    showReset,
+    isSystemUnlocking,
     requestAutomaticSystemUnlock,
   ]);
 
   if (!locked) return null;
 
   const errorKey = getAppLockErrorMessageKey(error);
+  const SystemUnlockIcon = systemUnlockStatus?.platform === 'darwin' ? Fingerprint : KeyRound;
+  const isSystemButtonLoading = isAutoPromptPending || isSystemUnlocking;
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -287,57 +361,101 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
           {t('appLock.title')}
         </h1>
 
-        <div className="w-full space-y-2">
-          <Label htmlFor="app-lock-password" className="sr-only">
-            {t('appLock.passwordLabel')}
-          </Label>
-          <div className="relative">
-            <Input
-              ref={passwordRef}
-              id="app-lock-password"
-              type="password"
-              value={password}
-              autoComplete="current-password"
-              placeholder={t('appLock.passwordPlaceholder')}
-              disabled={isSubmitting}
-              aria-invalid={Boolean(errorKey)}
-              aria-describedby={errorKey ? 'app-lock-error' : undefined}
-              className="pr-12"
-              onChange={(event) => {
-                setPassword(event.target.value);
-                if (error) setError(null);
-              }}
-            />
-            <span
-              className="pointer-events-none absolute inset-y-px right-px flex w-10 items-center justify-center rounded-r-md bg-muted/30 text-muted-foreground"
-              data-testid="app-lock-password-lock-icon"
-              aria-hidden="true"
-            >
-              <LockKeyhole className="h-4 w-4" strokeWidth={2.25} />
-            </span>
-          </div>
-          {errorKey && (
-            <p id="app-lock-error" className="text-sm text-destructive">
-              {t(errorKey)}
-            </p>
-          )}
-        </div>
+        {showPasswordUnlock && (
+          <>
+            <div className="w-full space-y-2">
+              <Label htmlFor="app-lock-password" className="sr-only">
+                {t('appLock.passwordLabel')}
+              </Label>
+              <div className="relative">
+                <Input
+                  ref={passwordRef}
+                  id="app-lock-password"
+                  type="password"
+                  value={password}
+                  autoComplete="current-password"
+                  placeholder={t('appLock.passwordPlaceholder')}
+                  disabled={isSubmitting}
+                  aria-invalid={Boolean(errorKey)}
+                  aria-describedby={errorKey ? 'app-lock-error' : undefined}
+                  className="pr-12"
+                  onChange={(event) => {
+                    setPassword(event.target.value);
+                    if (error) setError(null);
+                  }}
+                />
+                <span
+                  className="pointer-events-none absolute inset-y-px right-px flex w-10 items-center justify-center rounded-r-md bg-muted/30 text-muted-foreground"
+                  data-testid="app-lock-password-lock-icon"
+                  aria-hidden="true"
+                >
+                  <LockKeyhole className="h-4 w-4" strokeWidth={2.25} />
+                </span>
+              </div>
+              {errorKey && (
+                <p id="app-lock-error" className="text-sm text-destructive">
+                  {t(errorKey)}
+                </p>
+              )}
+            </div>
 
-        <Button type="submit" className="w-full" disabled={isSubmitting}>
-          {isSubmitting ? t('appLock.unlocking') : t('appLock.unlock')}
-        </Button>
+            <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {isSubmitting ? t('appLock.unlocking') : t('appLock.unlock')}
+            </Button>
+          </>
+        )}
 
-        {systemUnlockStatus?.enabled && systemUnlockStatus.available && systemUnlockStatus.label && (
+        {canUseSystemUnlock && systemUnlockStatus?.label && (
           <div className="w-full space-y-2">
             <Button
               type="button"
-              variant="outline"
+              variant={showPasswordUnlock ? 'outline' : 'default'}
               className="w-full"
-              disabled={isSystemUnlocking}
+              disabled={isSystemButtonLoading}
+              data-testid="app-lock-system-unlock-button"
               onClick={() => void handleSystemUnlock()}
             >
-              {t('appLock.systemUnlock.unlockWith').replace('{label}', systemUnlockStatus.label)}
+              {isSystemButtonLoading ? (
+                <Loader2
+                  className="mr-2 h-4 w-4 animate-spin"
+                  data-testid="app-lock-system-unlock-loading"
+                  aria-hidden="true"
+                />
+              ) : (
+                <SystemUnlockIcon
+                  className="mr-2 h-4 w-4"
+                  data-testid={systemUnlockStatus.platform === 'darwin'
+                    ? 'app-lock-system-unlock-touch-id-icon'
+                    : 'app-lock-system-unlock-windows-icon'}
+                  aria-hidden="true"
+                />
+              )}
+              <span aria-live="polite">
+                {isAutoPromptPending
+                  ? t('appLock.systemUnlock.preparing').replace('{label}', systemUnlockStatus.label)
+                  : isSystemUnlocking
+                    ? t('appLock.systemUnlock.verifying').replace('{label}', systemUnlockStatus.label)
+                    : t('appLock.systemUnlock.unlockWith').replace('{label}', systemUnlockStatus.label)}
+              </span>
             </Button>
+            {!showPasswordUnlock && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-auto w-full py-1 text-muted-foreground"
+                onClick={() => {
+                  lastAutoUnlockPresentationRef.current = reason === 'background'
+                    ? `background:${reopenSignal}`
+                    : `foreground:${reason ?? 'default'}:${locked}`;
+                  clearAutoUnlockTimer();
+                  setPasswordFallbackRequested(true);
+                  setSystemUnlockError(false);
+                }}
+              >
+                {t('appLock.usePassword')}
+              </Button>
+            )}
             {systemUnlockError && (
               <p className="text-sm text-destructive">
                 {t('appLock.systemUnlock.error')}

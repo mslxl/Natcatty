@@ -3,13 +3,22 @@ import test from "node:test";
 import React from "react";
 
 import { I18nProvider } from "../application/i18n/I18nProvider.tsx";
-import { AppLockOverlay } from "./AppLockOverlay.tsx";
+import { APP_LOCK_AUTO_PROMPT_DELAY_MS, AppLockOverlay } from "./AppLockOverlay.tsx";
 import {
   createDomRenderer,
   dispatchDomEvent,
   flushEffects,
   installDomEnvironment,
+  runWithAct,
 } from "./test-support/renderReactDom.tsx";
+
+async function waitForAutoPrompt(dom: ReturnType<typeof installDomEnvironment>) {
+  await runWithAct(async () => {
+    await new Promise((resolve) => dom.window.setTimeout(resolve, APP_LOCK_AUTO_PROMPT_DELAY_MS + 50));
+  });
+  await flushEffects();
+  await flushEffects();
+}
 
 test("AppLockOverlay shows incorrect-password error and clears it after editing", async () => {
   const dom = installDomEnvironment();
@@ -271,6 +280,8 @@ test("AppLockOverlay renders platform-specific system unlock button", async () =
     await flushEffects();
 
     assert.equal(systemUnlockCount, 0);
+    assert.equal(dom.document.getElementById("app-lock-password"), null);
+    assert.ok(dom.document.querySelector('[data-testid="app-lock-system-unlock-windows-icon"]'));
 
     const button = [...dom.document.querySelectorAll("button")]
       .find((candidate) => /Unlock with Windows Hello/i.test(candidate.textContent ?? ""));
@@ -315,6 +326,8 @@ test("AppLockOverlay localizes the system unlock button label", async () => {
 
     assert.match(dom.document.body.textContent ?? "", /使用 Touch ID 解锁/i);
     assert.doesNotMatch(dom.document.body.textContent ?? "", /Unlock with Touch ID/i);
+    assert.equal(dom.document.getElementById("app-lock-password"), null);
+    assert.ok(dom.document.querySelector('[data-testid="app-lock-system-unlock-touch-id-icon"]'));
   } finally {
     await renderer.unmount();
     dom.cleanup();
@@ -357,6 +370,8 @@ test("AppLockOverlay does not automatically request system unlock by default", a
     await flushEffects();
 
     assert.equal(systemUnlockCount, 0);
+    assert.equal(dom.document.getElementById("app-lock-password"), null);
+    assert.match(dom.document.body.textContent ?? "", /Use password instead/i);
 
     const button = [...dom.document.querySelectorAll("button")]
       .find((candidate) => /Unlock with Touch ID/i.test(candidate.textContent ?? ""));
@@ -366,6 +381,107 @@ test("AppLockOverlay does not automatically request system unlock by default", a
     await flushEffects();
 
     assert.equal(systemUnlockCount, 1);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay reveals password fallback and cancels a delayed automatic prompt", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let systemUnlockCount = 0;
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          autoPromptSystemUnlock: true,
+          onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "darwin" as const,
+            label: "Touch ID" as const,
+            reason: null,
+          },
+          onSystemUnlock: async () => {
+            systemUnlockCount += 1;
+            return { ok: true as const };
+          },
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    assert.equal(dom.document.getElementById("app-lock-password"), null);
+    assert.match(dom.document.body.textContent ?? "", /Preparing Touch ID/i);
+    const usePasswordButton = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Use password instead/i.test(candidate.textContent ?? ""));
+    assert.ok(usePasswordButton);
+    await dispatchDomEvent(usePasswordButton, new dom.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+
+    assert.ok(dom.document.getElementById("app-lock-password"));
+    await waitForAutoPrompt(dom);
+    assert.equal(systemUnlockCount, 0);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});
+
+test("AppLockOverlay shows animated feedback while system unlock is in flight", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+  let resolveSystemUnlock: ((result: { ok: true }) => void) | null = null;
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false as const, error: "incorrect" as const }),
+          systemUnlockStatus: {
+            supported: true,
+            available: true,
+            enabled: true,
+            platform: "darwin" as const,
+            label: "Touch ID" as const,
+            reason: null,
+          },
+          onSystemUnlock: async () => new Promise<{ ok: true }>((resolve) => {
+            resolveSystemUnlock = resolve;
+          }),
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    const systemButton = [...dom.document.querySelectorAll("button")]
+      .find((candidate) => /Unlock with Touch ID/i.test(candidate.textContent ?? ""));
+    assert.ok(systemButton);
+    await dispatchDomEvent(systemButton, new dom.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+
+    assert.match(dom.document.body.textContent ?? "", /Waiting for Touch ID/i);
+    assert.ok(dom.document.querySelector('[data-testid="app-lock-system-unlock-loading"]'));
+    assert.ok(resolveSystemUnlock);
+    await runWithAct(async () => {
+      resolveSystemUnlock?.({ ok: true });
+    });
+    await flushEffects();
+    await flushEffects();
   } finally {
     await renderer.unmount();
     dom.cleanup();
@@ -408,6 +524,11 @@ test("AppLockOverlay automatically requests system unlock once when auto prompt 
     await flushEffects();
     await flushEffects();
 
+    assert.equal(systemUnlockCount, 0);
+    assert.match(dom.document.body.textContent ?? "", /Preparing Touch ID/i);
+    assert.ok(dom.document.querySelector('[data-testid="app-lock-system-unlock-loading"]'));
+
+    await waitForAutoPrompt(dom);
     assert.equal(systemUnlockCount, 1);
 
     await renderer.render(
@@ -419,6 +540,7 @@ test("AppLockOverlay automatically requests system unlock once when auto prompt 
     );
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
 
     assert.equal(systemUnlockCount, 1);
   } finally {
@@ -476,6 +598,9 @@ test("AppLockOverlay waits until the document is visible before auto system unlo
     await flushEffects();
     await flushEffects();
 
+    assert.equal(systemUnlockCount, 0);
+    assert.match(dom.document.body.textContent ?? "", /Preparing Touch ID/i);
+    await waitForAutoPrompt(dom);
     assert.equal(systemUnlockCount, 1);
   } finally {
     await renderer.unmount();
@@ -523,6 +648,7 @@ test("AppLockOverlay retries a reopen presentation after an in-flight auto promp
     await renderer.render(createOverlay(1));
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
     assert.equal(systemUnlockCount, 1);
 
     await renderer.render(createOverlay(2));
@@ -531,9 +657,12 @@ test("AppLockOverlay retries a reopen presentation after an in-flight auto promp
     assert.equal(systemUnlockCount, 1);
 
     assert.ok(resolveFirstUnlock);
-    resolveFirstUnlock({ ok: false, error: "cancelled" });
+    await runWithAct(async () => {
+      resolveFirstUnlock?.({ ok: false, error: "cancelled" });
+    });
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
 
     assert.equal(systemUnlockCount, 2);
   } finally {
@@ -609,6 +738,7 @@ test("AppLockOverlay keeps password fallback after system unlock failure", async
     );
     await flushEffects();
 
+    assert.equal(dom.document.getElementById("app-lock-password"), null);
     const systemButton = [...dom.document.querySelectorAll("button")]
       .find((candidate) => /Unlock with Touch ID/i.test(candidate.textContent ?? ""));
     assert.ok(systemButton);

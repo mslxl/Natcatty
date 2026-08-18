@@ -5,6 +5,7 @@ import React from "react";
 import { useAppLockBridge } from "../application/state/useAppLockBridge.ts";
 import { useAppLockState } from "../application/state/useAppLockState.ts";
 import { createAppLockGate } from "./AppLockGate.tsx";
+import { APP_LOCK_AUTO_PROMPT_DELAY_MS } from "./AppLockOverlay.tsx";
 import { createAppLockBridgeHarness } from "./test-support/createAppLockBridgeHarness.ts";
 import {
   createDomRenderer,
@@ -13,6 +14,14 @@ import {
   installDomEnvironment,
   runWithAct,
 } from "./test-support/renderReactDom.tsx";
+
+async function waitForAutoPrompt(dom: ReturnType<typeof installDomEnvironment>) {
+  await runWithAct(async () => {
+    await new Promise((resolve) => dom.window.setTimeout(resolve, APP_LOCK_AUTO_PROMPT_DELAY_MS + 50));
+  });
+  await flushEffects();
+  await flushEffects();
+}
 
 test("startup-locked gate reveals children after successful unlock", async () => {
   const dom = installDomEnvironment();
@@ -142,6 +151,7 @@ test("startup-locked gate reveals children after successful system unlock", asyn
     );
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
 
     assert.equal(bridgeHarness.getSystemUnlockCount(), 1);
     assert.equal(bridgeHarness.getRuntimeState().locked, false);
@@ -287,6 +297,7 @@ test("background-locked gate waits for reopen before automatic system unlock", a
     });
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
 
     assert.equal(bridgeHarness.getSystemUnlockCount(), 1);
     assert.equal(bridgeHarness.getRuntimeState().locked, false);
@@ -362,6 +373,7 @@ test("background-locked gate retries automatic system unlock on each reopen whil
     });
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
 
     assert.equal(bridgeHarness.getSystemUnlockCount(), 1);
     assert.equal(bridgeHarness.getRuntimeState().locked, true);
@@ -371,6 +383,7 @@ test("background-locked gate retries automatic system unlock on each reopen whil
     });
     await flushEffects();
     await flushEffects();
+    await waitForAutoPrompt(dom);
 
     assert.equal(bridgeHarness.getSystemUnlockCount(), 2);
     assert.equal(bridgeHarness.getRuntimeState().locked, true);
