@@ -12,6 +12,8 @@ export const COPY_ON_SELECT_USER_GESTURE_RELEASE_MS = 80;
 export type CopyOnSelectUserGestureTracker = {
   mark: () => void;
   release: () => void;
+  /** Mark then release — one-shot gestures such as a late contextmenu. */
+  pulse: () => void;
   isActive: () => boolean;
   dispose: () => void;
 };
@@ -47,6 +49,11 @@ export const createCopyOnSelectUserGestureTracker = ({
     }, releaseDelayMs);
   };
 
+  const pulse = () => {
+    mark();
+    release();
+  };
+
   const dispose = () => {
     clearReleaseTimer();
     active = false;
@@ -55,37 +62,61 @@ export const createCopyOnSelectUserGestureTracker = ({
   return {
     mark,
     release,
+    pulse,
     isActive: () => active,
     dispose,
   };
 };
 
+const CAPTURE = { capture: true } as const;
+
+const eventIsInsideTerminal = (
+  event: Event,
+  el: EventTarget,
+): boolean => {
+  const target = event.target;
+  if (!target) return false;
+  if (target === el) return true;
+  const host = el as { contains?: (node: EventTarget) => boolean };
+  return typeof host.contains === "function" && host.contains(target);
+};
+
 export const subscribeCopyOnSelectUserGesture = (
   term: { element?: EventTarget | null } | null | undefined,
-  tracker: Pick<CopyOnSelectUserGestureTracker, "mark" | "release">,
+  tracker: Pick<CopyOnSelectUserGestureTracker, "mark" | "release" | "pulse">,
   root: Pick<EventTarget, "addEventListener" | "removeEventListener"> | null = (
     typeof document === "undefined" ? null : document
   ),
 ): (() => void) => {
   const el = term?.element;
-  if (!el) return () => {};
+  if (!el || !root) return () => {};
 
-  const onPointerDown = () => tracker.mark();
+  const onPointerDown = (event: Event) => {
+    if (!eventIsInsideTerminal(event, el)) return;
+    tracker.mark();
+  };
+  const onContextMenu = (event: Event) => {
+    if (!eventIsInsideTerminal(event, el)) return;
+    // Capture on the document so we still see right-clicks that
+    // useTerminalEffects intercepts with stopImmediatePropagation
+    // (tmux/vim mouse tracking + select-word). Pulse so a late
+    // contextmenu after mouseup cannot leave the tracker armed.
+    tracker.pulse();
+  };
   const onPointerUp = () => tracker.release();
 
-  el.addEventListener("mousedown", onPointerDown);
-  el.addEventListener("touchstart", onPointerDown);
-  // Right-click select-word fires on contextmenu, sometimes after mouseup.
-  el.addEventListener("contextmenu", onPointerDown);
-  root?.addEventListener("mouseup", onPointerUp);
-  root?.addEventListener("touchend", onPointerUp);
+  root.addEventListener("mousedown", onPointerDown, CAPTURE);
+  root.addEventListener("touchstart", onPointerDown, CAPTURE);
+  root.addEventListener("contextmenu", onContextMenu, CAPTURE);
+  root.addEventListener("mouseup", onPointerUp);
+  root.addEventListener("touchend", onPointerUp);
 
   return () => {
-    el.removeEventListener("mousedown", onPointerDown);
-    el.removeEventListener("touchstart", onPointerDown);
-    el.removeEventListener("contextmenu", onPointerDown);
-    root?.removeEventListener("mouseup", onPointerUp);
-    root?.removeEventListener("touchend", onPointerUp);
+    root.removeEventListener("mousedown", onPointerDown, CAPTURE);
+    root.removeEventListener("touchstart", onPointerDown, CAPTURE);
+    root.removeEventListener("contextmenu", onContextMenu, CAPTURE);
+    root.removeEventListener("mouseup", onPointerUp);
+    root.removeEventListener("touchend", onPointerUp);
   };
 };
 

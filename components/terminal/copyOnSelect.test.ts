@@ -105,38 +105,55 @@ test("marking again cancels a pending release so a new drag can copy", () => {
   tracker.dispose();
 });
 
-test("pointer listeners mark on terminal down and release on document up", () => {
+const listenerKey = (
+  type: string,
+  options?: boolean | AddEventListenerOptions,
+): string => {
+  const capture = options === true || (
+    typeof options === "object" && options?.capture === true
+  );
+  return `${type}:${capture ? "capture" : "bubble"}`;
+};
+
+const createEventTargetStub = () => {
   const listeners = new Map<string, Set<EventListener>>();
-  const add = (type: string, listener: EventListener) => {
-    const set = listeners.get(type) ?? new Set();
-    set.add(listener);
-    listeners.set(type, set);
+  return {
+    addEventListener(
+      type: string,
+      listener: EventListener,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      const key = listenerKey(type, options);
+      const set = listeners.get(key) ?? new Set();
+      set.add(listener);
+      listeners.set(key, set);
+    },
+    removeEventListener(
+      type: string,
+      listener: EventListener,
+      options?: boolean | AddEventListenerOptions,
+    ) {
+      listeners.get(listenerKey(type, options))?.delete(listener);
+    },
+    dispatch(type: string, event: Event, phase: "capture" | "bubble") {
+      for (const listener of listeners.get(`${type}:${phase}`) ?? []) {
+        listener(event);
+      }
+    },
   };
-  const remove = (type: string, listener: EventListener) => {
-    listeners.get(type)?.delete(listener);
-  };
-  const fire = (target: "el" | "root", type: string) => {
-    for (const listener of listeners.get(`${target}:${type}`) ?? []) listener(new Event(type));
-  };
+};
 
-  const el = {
-    addEventListener(type: string, listener: EventListener) {
-      add(`el:${type}`, listener);
-    },
-    removeEventListener(type: string, listener: EventListener) {
-      remove(`el:${type}`, listener);
-    },
-  };
-  const root = {
-    addEventListener(type: string, listener: EventListener) {
-      add(`root:${type}`, listener);
-    },
-    removeEventListener(type: string, listener: EventListener) {
-      remove(`root:${type}`, listener);
-    },
-  };
+const eventOn = (type: string, target: EventTarget): Event => {
+  const event = new Event(type);
+  Object.defineProperty(event, "target", { value: target });
+  return event;
+};
 
+test("pointer listeners mark on capture down and release on document up", () => {
+  const el = createEventTargetStub();
+  const root = createEventTargetStub();
   let marked = 0;
+  let pulsed = 0;
   let released = 0;
   const unsubscribe = subscribeCopyOnSelectUserGesture(
     { element: el },
@@ -147,21 +164,71 @@ test("pointer listeners mark on terminal down and release on document up", () =>
       release: () => {
         released += 1;
       },
+      pulse: () => {
+        pulsed += 1;
+      },
     },
     root,
   );
 
-  fire("el", "mousedown");
-  fire("root", "mouseup");
-  fire("el", "contextmenu");
-  assert.equal(marked, 2);
+  root.dispatch("mousedown", eventOn("mousedown", el), "capture");
+  root.dispatch("mouseup", eventOn("mouseup", el), "bubble");
+  root.dispatch("contextmenu", eventOn("contextmenu", el), "capture");
+  assert.equal(marked, 1);
   assert.equal(released, 1);
+  assert.equal(pulsed, 1);
 
   unsubscribe();
-  fire("el", "mousedown");
-  fire("root", "mouseup");
-  assert.equal(marked, 2);
+  root.dispatch("mousedown", eventOn("mousedown", el), "capture");
+  root.dispatch("mouseup", eventOn("mouseup", el), "bubble");
+  assert.equal(marked, 1);
   assert.equal(released, 1);
+  assert.equal(pulsed, 1);
+});
+
+test("late contextmenu after mouseup is a one-shot and then releases", () => {
+  const scheduled: Array<() => void> = [];
+  const tracker = createCopyOnSelectUserGestureTracker({
+    setTimeoutFn: ((cb: () => void) => {
+      scheduled.push(cb);
+      return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout,
+    clearTimeoutFn: (() => {}) as typeof clearTimeout,
+  });
+
+  tracker.mark();
+  tracker.release();
+  // Windows: contextmenu after mouseup used to cancel this timer and stick.
+  tracker.pulse();
+  assert.equal(tracker.isActive(), true);
+  scheduled.at(-1)?.();
+  assert.equal(tracker.isActive(), false);
+
+  tracker.dispose();
+});
+
+test("document-capture contextmenu still counts when the terminal never sees the bubble", () => {
+  const el = createEventTargetStub();
+  const outside = createEventTargetStub();
+  const root = createEventTargetStub();
+  let pulsed = 0;
+  subscribeCopyOnSelectUserGesture(
+    { element: el },
+    {
+      mark: () => {},
+      release: () => {},
+      pulse: () => {
+        pulsed += 1;
+      },
+    },
+    root,
+  );
+
+  // tmux/vim capture handler on the container stops the event before
+  // term.element bubble listeners would run.
+  root.dispatch("contextmenu", eventOn("contextmenu", el), "capture");
+  root.dispatch("contextmenu", eventOn("contextmenu", outside), "capture");
+  assert.equal(pulsed, 1);
 });
 
 test("issue 3007: search match then later revival does not copy", () => {
