@@ -18,6 +18,7 @@ const {
   extractGrokAcpPromptUsage,
   emitGrokUsage,
   normalizeGrokPlanUpdate,
+  parseGrokModelSelection,
   shouldReportGrokProcessExitFailure,
   runGrokTurn,
   spawnGrokProcess,
@@ -83,6 +84,28 @@ test("buildGrokCliArgs uses streaming-json and optional model/resume/cwd", () =>
   assert.ok(autoArgs.includes("--always-approve"));
   assert.ok(autoArgs.includes("--no-auto-update"));
   assert.ok(!autoArgs.includes("-m"));
+});
+
+test("buildGrokCliArgs passes a selected reasoning effort separately from the model", () => {
+  assert.deepEqual(parseGrokModelSelection("grok-4.6/xhigh"), {
+    model: "grok-4.6",
+    effort: "xhigh",
+  });
+  assert.deepEqual(parseGrokModelSelection("provider/model"), {
+    model: "provider/model",
+    effort: undefined,
+  });
+
+  const args = buildGrokCliArgs({
+    prompt: "hi",
+    model: "grok-4.6/xhigh",
+    permissionMode: "auto",
+    toolIntegrationMode: "skills",
+  });
+  const modelIdx = args.indexOf("-m");
+  const effortIdx = args.indexOf("--reasoning-effort");
+  assert.equal(args[modelIdx + 1], "grok-4.6");
+  assert.equal(args[effortIdx + 1], "xhigh");
 });
 
 test("resolveGrokToolIntegrationFlags locks local side-effect tools only in MCP mode", () => {

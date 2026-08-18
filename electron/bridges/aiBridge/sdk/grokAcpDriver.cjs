@@ -28,6 +28,7 @@ const {
   extractGrokAcpPromptUsage,
   emitGrokUsage,
   normalizeGrokPlanUpdate,
+  parseGrokModelSelection,
   shouldReportGrokProcessExitFailure,
   spawnGrokProcess,
 } = require("./grokDriver.cjs");
@@ -36,6 +37,17 @@ const GROK_ACP_ABORT_GRACE_MS = 1_500;
 const MAX_GROK_ACP_LINE_BYTES = 10 * 1024 * 1024;
 const MAX_GROK_ACP_STDERR_CHARS = 64 * 1024;
 const ACP_PROTOCOL_VERSION = 1;
+const GROK_ACP_MODEL_LIST_TIMEOUT_MS = 10_000;
+const GROK_FALLBACK_REASONING_EFFORTS = ["low", "medium", "high", "xhigh"];
+const GROK_REASONING_EFFORTS = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 function signalProcessTree(child, signal, forceKillImpl) {
   if (!child) return;
@@ -102,9 +114,12 @@ function buildGrokAcpSpawnArgs({
   if (mode !== "observer") {
     args.push("--always-approve");
   }
-  const modelId = String(model || "").trim();
-  if (modelId) {
-    args.push("-m", modelId);
+  const selection = parseGrokModelSelection(model);
+  if (selection.model) {
+    args.push("-m", selection.model);
+  }
+  if (selection.effort) {
+    args.push("--reasoning-effort", selection.effort);
   }
   args.push("stdio");
   return args;
@@ -204,6 +219,185 @@ function buildGrokAcpInitializeParams() {
       version: "0.0.0",
     },
   };
+}
+
+/**
+ * Convert Grok's ACP initialize modelState into Netcatty's shared model picker
+ * shape. Reasoning levels are model-specific and come from the live catalog;
+ * non-reasoning models intentionally remain plain model rows.
+ */
+function parseGrokAcpModelCatalog(initResult) {
+  const modelState = initResult?._meta?.modelState
+    || initResult?.modelState
+    || initResult?.agentCapabilities?._meta?.modelState;
+  if (!modelState || typeof modelState !== "object") {
+    return { currentModelId: null, models: [] };
+  }
+
+  const models = [];
+  for (const entry of Array.isArray(modelState.availableModels) ? modelState.availableModels : []) {
+    const id = String(entry?.modelId || entry?.id || "").trim();
+    if (!id) continue;
+    const preset = {
+      id,
+      name: String(entry?.name || id),
+    };
+    if (entry?.description) preset.description = String(entry.description);
+
+    const meta = entry?._meta && typeof entry._meta === "object"
+      ? entry._meta
+      : (entry?.meta && typeof entry.meta === "object" ? entry.meta : {});
+    const supportsReasoning = meta.supportsReasoningEffort === true
+      || meta.supports_reasoning_effort === true;
+    if (supportsReasoning) {
+      const rawOptions = Array.isArray(meta.reasoningEfforts)
+        ? meta.reasoningEfforts
+        : (Array.isArray(meta.reasoning_efforts) ? meta.reasoning_efforts : []);
+      const levels = [];
+      for (const option of rawOptions) {
+        const value = String(option?.value || option?.id || "").trim().toLowerCase();
+        if (GROK_REASONING_EFFORTS.has(value) && !levels.includes(value)) {
+          levels.push(value);
+        }
+      }
+      if (levels.length === 0) levels.push(...GROK_FALLBACK_REASONING_EFFORTS);
+      preset.thinkingLevels = levels;
+
+      const advertisedDefault = String(
+        meta.reasoningEffort || meta.reasoning_effort || "",
+      ).trim().toLowerCase();
+      const optionDefault = rawOptions.find((option) => option?.default === true);
+      const optionDefaultValue = String(
+        optionDefault?.value || optionDefault?.id || "",
+      ).trim().toLowerCase();
+      if (levels.includes(advertisedDefault)) {
+        preset.defaultThinkingLevel = advertisedDefault;
+      } else if (levels.includes(optionDefaultValue)) {
+        preset.defaultThinkingLevel = optionDefaultValue;
+      } else if (levels.includes("high")) {
+        preset.defaultThinkingLevel = "high";
+      } else {
+        preset.defaultThinkingLevel = levels[0];
+      }
+    }
+    models.push(preset);
+  }
+
+  const currentModelId = String(
+    modelState.currentModelId || modelState.current_model_id || "",
+  ).trim() || null;
+  return { currentModelId, models };
+}
+
+/**
+ * Read the live Grok model catalog from ACP initialize. Unlike `grok models`,
+ * this response includes per-model reasoning support, available levels, and
+ * the default effort. Authentication is not required for the initialize step.
+ */
+async function listGrokAcpModels({
+  binPath,
+  env,
+  spawnImpl,
+  abortController,
+  signal,
+  timeoutMs = GROK_ACP_MODEL_LIST_TIMEOUT_MS,
+  forceKillImpl,
+} = {}) {
+  const cliPath = String(binPath || "").trim();
+  if (!cliPath) return { currentModelId: null, models: [] };
+  const abortSignal = signal || abortController?.signal;
+  if (abortSignal?.aborted) return { currentModelId: null, models: [] };
+
+  return await new Promise((resolve) => {
+    let child;
+    let settled = false;
+    let timer = null;
+    let abortHandler = null;
+    const empty = { currentModelId: null, models: [] };
+
+    const finish = (value, terminate = true) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (abortSignal && abortHandler) {
+        abortSignal.removeEventListener("abort", abortHandler);
+      }
+      if (terminate && child && child.exitCode == null && !child.killed) {
+        signalProcessTree(child, "SIGTERM", forceKillImpl);
+      }
+      try { child?.stdin?.end?.(); } catch { /* ignore */ }
+      resolve(value);
+    };
+
+    try {
+      child = spawnGrokProcess(spawnImpl, cliPath, ["agent", "stdio"], {
+        env: { ...(env || process.env) },
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+        detached: process.platform !== "win32",
+      });
+    } catch {
+      finish(empty, false);
+      return;
+    }
+
+    const lineBuffer = createLineBuffer((line) => {
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (message?.id !== 1) return;
+      if (message.error) {
+        finish(empty);
+        return;
+      }
+      finish(parseGrokAcpModelCatalog(message.result));
+    }, MAX_GROK_ACP_LINE_BYTES);
+
+    child.stdout?.on("data", (chunk) => {
+      if (settled || abortSignal?.aborted) return;
+      try {
+        lineBuffer.push(chunk);
+      } catch {
+        finish(empty);
+      }
+    });
+    child.stdin?.on?.("error", () => finish(empty));
+    child.on("error", () => finish(empty, false));
+    child.on("close", () => {
+      if (!settled) {
+        try { lineBuffer.flush(); } catch { /* ignore */ }
+      }
+      finish(empty, false);
+    });
+
+    abortHandler = () => finish(empty);
+    if (abortSignal) {
+      if (abortSignal.aborted) {
+        abortHandler();
+        return;
+      }
+      abortSignal.addEventListener("abort", abortHandler, { once: true });
+    }
+    timer = setTimeout(() => finish(empty), Math.max(1, timeoutMs));
+    timer.unref?.();
+
+    const request = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: buildGrokAcpInitializeParams(),
+    };
+    try {
+      child.stdin?.write?.(`${JSON.stringify(request)}\n`, (err) => {
+        if (err) finish(empty);
+      });
+    } catch {
+      finish(empty);
+    }
+  });
 }
 
 function buildGrokAcpPromptParams(sessionId, prompt) {
@@ -1050,9 +1244,11 @@ module.exports = {
   establishGrokAcpSession,
   handleGrokAcpMessage,
   parseGrokAcpAgentCapabilities,
+  parseGrokAcpModelCatalog,
   planGrokAcpSessionEstablish,
   resolveGrokAcpCwd,
   runGrokAcpTurn,
+  listGrokAcpModels,
   selectGrokAcpAuthMethodId,
   toAcpMcpEnvPairs,
   toAcpMcpServers,

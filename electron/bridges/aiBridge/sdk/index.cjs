@@ -358,6 +358,15 @@ const DRIVER_REGISTRY = {
       });
     },
     async listModels(ctx) {
+      const acpCatalog = await grokAcp.listGrokAcpModels({
+        binPath: ctx.binPath,
+        env: ctx.env,
+        abortController: ctx.abortController,
+        signal: ctx.signal || ctx.abortController?.signal,
+      });
+      if (acpCatalog.models.length > 0 || acpCatalog.currentModelId) {
+        return acpCatalog;
+      }
       return grok.listGrokModels({
         binPath: ctx.binPath,
         env: ctx.env,

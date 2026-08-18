@@ -22,6 +22,15 @@ const GROK_ABORT_GRACE_MS = 1_500;
 const MAX_GROK_STDERR_CHARS = 64 * 1024;
 const MAX_GROK_MODEL_STDOUT_CHARS = 1024 * 1024;
 const MAX_GROK_LINE_BYTES = 10 * 1024 * 1024;
+const GROK_REASONING_EFFORTS = new Set([
+  "none",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+]);
 
 /**
  * Resolve Grok CLI spawn target for Windows .cmd/.bat shims.
@@ -280,6 +289,21 @@ function resolveGrokToolIntegrationFlags(toolIntegrationMode) {
   ];
 }
 
+/**
+ * The renderer encodes a reasoning selection as `<model>/<effort>`. Grok's
+ * CLI requires those values as separate flags, and model ids may themselves
+ * contain `/`, so split only a recognized trailing effort token.
+ */
+function parseGrokModelSelection(model) {
+  const value = String(model || "").trim();
+  const slash = value.lastIndexOf("/");
+  const effort = slash > 0 ? value.slice(slash + 1).toLowerCase() : "";
+  if (slash > 0 && GROK_REASONING_EFFORTS.has(effort)) {
+    return { model: value.slice(0, slash), effort };
+  }
+  return { model: value || undefined, effort: undefined };
+}
+
 function buildGrokCliArgs({
   prompt,
   model,
@@ -296,9 +320,12 @@ function buildGrokCliArgs({
     "--output-format",
     "streaming-json",
   ];
-  const modelId = String(model || "").trim();
-  if (modelId) {
-    args.push("-m", modelId);
+  const selection = parseGrokModelSelection(model);
+  if (selection.model) {
+    args.push("-m", selection.model);
+  }
+  if (selection.effort) {
+    args.push("--reasoning-effort", selection.effort);
   }
   if (cwd) {
     args.push("--cwd", String(cwd));
@@ -1015,6 +1042,7 @@ module.exports = {
   extractGrokAcpPromptUsage,
   emitGrokUsage,
   normalizeGrokPlanUpdate,
+  parseGrokModelSelection,
   shouldReportGrokProcessExitFailure,
   runGrokTurn,
   spawnGrokProcess,

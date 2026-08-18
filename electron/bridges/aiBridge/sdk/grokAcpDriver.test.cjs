@@ -13,7 +13,9 @@ const {
   createJsonRpcClient,
   establishGrokAcpSession,
   handleGrokAcpMessage,
+  listGrokAcpModels,
   parseGrokAcpAgentCapabilities,
+  parseGrokAcpModelCatalog,
   planGrokAcpSessionEstablish,
   resolveGrokAcpCwd,
   runGrokAcpTurn,
@@ -64,6 +66,129 @@ test("buildGrokAcpSpawnArgs uses agent stdio, no-auto-update, and always-approve
     toolIntegrationMode: "skills",
   });
   assert.deepEqual(observer, ["--no-auto-update", "agent", "stdio"]);
+});
+
+test("buildGrokAcpSpawnArgs passes a selected reasoning effort separately from the model", () => {
+  assert.deepEqual(buildGrokAcpSpawnArgs({
+    model: "grok-4.6/high",
+    permissionMode: "auto",
+    toolIntegrationMode: "skills",
+  }), [
+    "--no-auto-update",
+    "agent",
+    "--always-approve",
+    "-m",
+    "grok-4.6",
+    "--reasoning-effort",
+    "high",
+    "stdio",
+  ]);
+});
+
+test("parseGrokAcpModelCatalog exposes only each model's advertised reasoning efforts", () => {
+  const catalog = parseGrokAcpModelCatalog({
+    _meta: {
+      modelState: {
+        currentModelId: "grok-4.6",
+        availableModels: [
+          {
+            modelId: "grok-4.6",
+            name: "Grok 4.6",
+            description: "Latest",
+            _meta: {
+              supportsReasoningEffort: true,
+              reasoningEffort: "high",
+              reasoningEfforts: [
+                { id: "deep", value: "xhigh", label: "Extra High" },
+                { id: "high", value: "high", label: "High" },
+                { id: "medium", value: "medium", label: "Medium" },
+                { id: "low", value: "low", label: "Low" },
+              ],
+            },
+          },
+          {
+            modelId: "ocx-fast",
+            name: "OCX Fast",
+            _meta: { supportsReasoningEffort: false },
+          },
+        ],
+      },
+    },
+  });
+
+  assert.deepEqual(catalog, {
+    currentModelId: "grok-4.6",
+    models: [
+      {
+        id: "grok-4.6",
+        name: "Grok 4.6",
+        description: "Latest",
+        thinkingLevels: ["xhigh", "high", "medium", "low"],
+        defaultThinkingLevel: "high",
+      },
+      { id: "ocx-fast", name: "OCX Fast" },
+    ],
+  });
+});
+
+test("listGrokAcpModels reads reasoning metadata from the initialize response", async () => {
+  const { EventEmitter } = require("node:events");
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = new EventEmitter();
+  child.stdin.end = () => {};
+  child.exitCode = null;
+  child.killed = false;
+  child.pid = 42;
+  child.kill = () => { child.killed = true; };
+  child.stdin.write = (line, callback) => {
+    const request = JSON.parse(String(line));
+    assert.equal(request.method, "initialize");
+    queueMicrotask(() => {
+      child.stdout.emit("data", Buffer.from(`${JSON.stringify({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          _meta: {
+            modelState: {
+              currentModelId: "grok-4.6",
+              availableModels: [{
+                modelId: "grok-4.6",
+                name: "Grok 4.6",
+                _meta: {
+                  supportsReasoningEffort: true,
+                  reasoningEffort: "high",
+                  reasoningEfforts: [
+                    { id: "high", value: "high" },
+                    { id: "low", value: "low" },
+                  ],
+                },
+              }],
+            },
+          },
+        },
+      })}\n`));
+      callback?.();
+    });
+    return true;
+  };
+
+  const signals = [];
+  const catalog = await listGrokAcpModels({
+    binPath: "/usr/bin/grok",
+    spawnImpl: (bin, args) => {
+      assert.equal(bin, "/usr/bin/grok");
+      assert.deepEqual(args, ["agent", "stdio"]);
+      return child;
+    },
+    forceKillImpl: (_child, signal) => signals.push(signal),
+  });
+
+  assert.equal(catalog.currentModelId, "grok-4.6");
+  assert.deepEqual(catalog.models[0].thinkingLevels, ["high", "low"]);
+  assert.equal(catalog.models[0].defaultThinkingLevel, "high");
+  assert.deepEqual(signals, ["SIGTERM"]);
 });
 
 test("buildGrokAcpSpawnArgs places global MCP lockdown before agent subcommand", () => {
