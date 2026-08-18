@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppWindow, ArrowDown, ArrowRight, ArrowUp, ChevronDown, ClipboardCopy, Copy, Download, Edit2, ExternalLink, FilePlus, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Shield, Trash2, Unplug, Upload } from "lucide-react";
+import { AppWindow, Archive, ArrowDown, ArrowRight, ArrowUp, ChevronDown, ClipboardCopy, Copy, Download, Edit2, ExternalLink, FilePlus, Folder, FolderPlus, Loader2, Pencil, RefreshCw, Shield, Trash2, Unplug, Upload } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   ContextMenu,
@@ -17,6 +17,7 @@ import { sftpListOrderStore } from "./hooks/useSftpListOrderStore";
 import type { UseSftpPaneSortingResult } from "../../application/state/sftp/useSftpPaneSorting";
 import { buildSftpColumnTemplate, isNavigableDirectory, isSftpColumnMenuKey } from "./utils";
 import { isKnownBinaryFile } from "../../lib/sftpFileUtils";
+import { isExtractableArchive } from "../../domain/sftpArchive";
 import { SftpFileRow } from "./SftpFileRow";
 import { SftpColumnMenuItems } from "./SftpColumnMenuItems";
 import { getSftpVirtualListScrollTop } from "../../domain/sftpVirtualList";
@@ -65,6 +66,7 @@ interface SftpPaneFileListProps {
   onEditFile?: (entry: SftpFileEntry) => void;
   onDownloadFile?: (entry: SftpFileEntry) => void;
   onDownloadFiles?: (entries: SftpFileEntry[]) => void;
+  onExtractArchive?: (entry: SftpFileEntry) => void;
   onEditPermissions?: (entry: SftpFileEntry) => void;
   onUploadExternalFileList?: (fileList: FileList, targetPath?: string) => Promise<void> | void;
   onUploadExternalFolder?: (targetPath?: string) => Promise<void> | void;
@@ -153,6 +155,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
   onEditFile,
   onDownloadFile,
   onDownloadFiles,
+  onExtractArchive,
   onEditPermissions,
   onUploadExternalFileList,
   onUploadExternalFolder,
@@ -347,6 +350,12 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
                 {t("sftp.context.download")}
               </ContextMenuItem>
             )}
+            {!isNavigableDirectory(entry) && onExtractArchive && isExtractableArchive(entry.name) && (
+              <ContextMenuItem onClick={() => onExtractArchive(entry)}>
+                <Archive size={14} className="mr-2" />{" "}
+                {t("sftp.context.extract")}
+              </ContextMenuItem>
+            )}
             <ContextMenuSeparator />
             <ContextMenuItem
               onClick={() => {
@@ -472,6 +481,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
       onMoveEntriesToPath,
       onDownloadFile,
       onDownloadFiles,
+      onExtractArchive,
       onDragEnd,
       onEditFile,
       onEditPermissions,

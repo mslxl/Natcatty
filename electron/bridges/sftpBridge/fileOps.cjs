@@ -1015,6 +1015,64 @@ function createFileOpsApi(ctx) {
       await client.chmod(encodedPath, parseInt(payload.mode, 8));
       return true;
     }
+
+    /**
+     * Extract a remote archive into its parent directory via SSH exec.
+     */
+    async function extractSftpArchive(event, payload) {
+      const client = sftpClients.get(payload.sftpId);
+      if (!client) throw new Error("SFTP session not found");
+
+      const archivePath = payload.path;
+      if (typeof archivePath !== "string" || !archivePath) {
+        throw new Error("Archive path is required");
+      }
+
+      const {
+        buildExtractCommand,
+        computeExtractTimeoutMs,
+        EXTRACT_OPEN_TIMEOUT_MS,
+        EXTRACT_MAX_OUTPUT_BYTES,
+        getArchiveKind,
+      } = require("./archiveExtract.cjs");
+      if (!getArchiveKind(archivePath)) {
+        throw new Error(`Unsupported archive type: ${archivePath}`);
+      }
+
+      const encoding = resolveEncodingForRequest(payload.sftpId, payload.encoding);
+      const command = buildExtractCommand(archivePath, { encoding });
+      const signal = payload?.abortSignal || null;
+      throwIfAborted(signal);
+
+      const sshClient = client.client;
+      if (!sshClient || typeof sshClient.exec !== "function") {
+        throw new Error("SSH exec unavailable");
+      }
+      if (typeof execRemoteShellCommand !== "function") {
+        throw new Error("SSH exec unavailable");
+      }
+
+      let archiveSize = 0;
+      try {
+        if (!isScpModeClient(client) && typeof lstatAsync === "function") {
+          const sftp = await requireSftpChannel(client, { signal });
+          const encodedPath = encodePath(archivePath, encoding);
+          const attrs = await lstatAsync(sftp, encodedPath);
+          archiveSize = Number(attrs?.size) || 0;
+        }
+      } catch {
+        archiveSize = 0;
+      }
+
+      await execRemoteShellCommand(sshClient, command, {
+        signal,
+        openingTimeoutMs: EXTRACT_OPEN_TIMEOUT_MS,
+        runTimeoutMs: computeExtractTimeoutMs(archiveSize),
+        maxOutputBytes: EXTRACT_MAX_OUTPUT_BYTES,
+        discardStdout: true,
+      });
+      return { success: true };
+    }
     
     /**
      * Resolve the remote user's home directory.
@@ -1147,6 +1205,7 @@ function createFileOpsApi(ctx) {
       statSftp,
       lstatSftp,
       chmodSftp,
+      extractSftpArchive,
       getSftpHomeDir,
     };
   }

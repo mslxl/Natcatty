@@ -865,6 +865,9 @@ function createPreloadApi(ctx) {
   chmodSftp: async (sftpId, path, mode, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:chmod", { sftpId, path, mode, encoding });
   },
+  extractSftpArchive: async (sftpId, path, encoding) => {
+    return ipcRenderer.invoke("netcatty:sftp:extract", { sftpId, path, encoding });
+  },
   getSftpHomeDir: async (sftpId, encoding) => {
     return ipcRenderer.invoke("netcatty:sftp:homeDir", { sftpId, encoding });
   },
@@ -886,6 +889,9 @@ function createPreloadApi(ctx) {
   },
   renameLocalFile: async (oldPath, newPath) => {
     return ipcRenderer.invoke("netcatty:local:rename", { oldPath, newPath });
+  },
+  extractLocalArchive: async (path) => {
+    return ipcRenderer.invoke("netcatty:local:extract", { path });
   },
   mkdirLocal: async (path) => {
     return ipcRenderer.invoke("netcatty:local:mkdir", { path });

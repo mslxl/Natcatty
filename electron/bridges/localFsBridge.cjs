@@ -617,6 +617,11 @@ async function listDrives() {
   return letters.filter((_, idx) => results[idx].status === "fulfilled").map((letter) => letter + ":");
 }
 
+async function extractLocalArchive(_event, payload) {
+  const { extractLocalArchiveFile } = require("./sftpBridge/archiveExtract.cjs");
+  return extractLocalArchiveFile(payload?.path);
+}
+
 /**
  * Register IPC handlers for local filesystem operations
  */
@@ -626,6 +631,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle("netcatty:local:write", writeLocalFile);
   ipcMain.handle("netcatty:local:delete", deleteLocalFile);
   ipcMain.handle("netcatty:local:rename", renameLocalFile);
+  ipcMain.handle("netcatty:local:extract", extractLocalArchive);
   ipcMain.handle("netcatty:local:mkdir", mkdirLocal);
   ipcMain.handle("netcatty:local:stat", statLocal);
   ipcMain.handle("netcatty:local:lstat", lstatLocal);
@@ -644,6 +650,7 @@ module.exports = {
   writeLocalFile,
   deleteLocalFile,
   renameLocalFile,
+  extractLocalArchive,
   mkdirLocal,
   statLocal,
   lstatLocal,
