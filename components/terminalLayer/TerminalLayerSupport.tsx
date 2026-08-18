@@ -1342,7 +1342,14 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       observer.observe(element);
       return () => observer.disconnect();
     }
-    if (isVisible) return;
+    if (isVisible) {
+      // A split-visible pane invalidates the cached full-size measurement:
+      // after an intervening viewport resize the stale pixels would pin later
+      // hidden full-size layouts at the wrong width (#3046). The hidden
+      // initialization below re-measures the current area instead.
+      lastVisiblePaneSizeRef.current = null;
+      return;
+    }
 
     const initializeHiddenFullSize = !hibernateHiddenTabs
       && !rect
