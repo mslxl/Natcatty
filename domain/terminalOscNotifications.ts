@@ -237,6 +237,16 @@ const readOscAt = (input: string, start: number): OscScanResult => {
         end: index + 1,
       };
     }
+    if (input[index] === '\x18' || input[index] === '\x1a') {
+      return {
+        incomplete: false,
+        notification: false,
+        aborted: isNotificationOscId(id),
+        id,
+        payload: '',
+        end: index + 1,
+      };
+    }
     if (input[index] === '\x1b') {
       if (index + 1 >= input.length) {
         return isNotificationOscId(id) ? { incomplete: true } : {

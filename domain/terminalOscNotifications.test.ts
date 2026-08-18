@@ -196,6 +196,16 @@ test("OscNotificationStreamScanner aborts a notification OSC at a non-ST escape"
   assert.equal(result.remainder, "hello\x1b[31mRED\x07world");
 });
 
+test("OscNotificationStreamScanner aborts a notification OSC on CAN or SUB", () => {
+  const scanner = new OscNotificationStreamScanner();
+  const can = scanner.consume("pre\x1b]9;bad\x18visible\x07");
+  assert.deepEqual(can.notifications, []);
+  assert.equal(can.remainder, "previsible\x07");
+  const sub = scanner.consume("\x1b]777;notify;x;y\x1aafter");
+  assert.deepEqual(sub.notifications, []);
+  assert.equal(sub.remainder, "after");
+});
+
 test("OscNotificationLimiter rate-limits a noisy session", () => {
   const limiter = new OscNotificationLimiter(1_000, 2, 100);
   assert.equal(limiter.allow("s1", 1_000), true);
