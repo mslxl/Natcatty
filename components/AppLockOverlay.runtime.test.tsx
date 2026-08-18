@@ -36,11 +36,16 @@ test("AppLockOverlay shows incorrect-password error and clears it after editing"
 
     const input = dom.document.getElementById("app-lock-password") as HTMLInputElement | null;
     const form = dom.document.querySelector("form");
+    const passwordLabel = dom.document.querySelector('label[for="app-lock-password"]');
     const lockIcon = dom.document.querySelector('[data-testid="app-lock-password-lock-icon"]');
     assert.ok(input);
     assert.ok(form);
+    assert.ok(passwordLabel);
     assert.ok(lockIcon);
+    assert.equal(input.getAttribute("placeholder"), "Enter password to unlock");
+    assert.match(passwordLabel.getAttribute("class") ?? "", /sr-only/);
     assert.equal(lockIcon.getAttribute("aria-hidden"), "true");
+    assert.doesNotMatch(lockIcon.getAttribute("class") ?? "", /border-l/);
 
     const setInputValue = Object.getOwnPropertyDescriptor(
       dom.window.HTMLInputElement.prototype,

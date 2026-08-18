@@ -89,7 +89,7 @@ export const ruCoreMessages: Messages = {
   'appLock.reason.idle': 'Netcatty заблокирован после периода бездействия.',
   'appLock.reason.manual': 'Netcatty был заблокирован вручную.',
   'appLock.passwordLabel': 'Пароль блокировки',
-  'appLock.passwordPlaceholder': 'Введите пароль',
+  'appLock.passwordPlaceholder': 'Введите пароль для разблокировки',
   'appLock.unlock': 'Разблокировать',
   'appLock.unlocking': 'Разблокировка...',
   'appLock.error.emptyPassword': 'Введите пароль блокировки.',

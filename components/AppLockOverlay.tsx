@@ -288,7 +288,9 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
         </h1>
 
         <div className="w-full space-y-2">
-          <Label htmlFor="app-lock-password">{t('appLock.passwordLabel')}</Label>
+          <Label htmlFor="app-lock-password" className="sr-only">
+            {t('appLock.passwordLabel')}
+          </Label>
           <div className="relative">
             <Input
               ref={passwordRef}
@@ -307,7 +309,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
               }}
             />
             <span
-              className="pointer-events-none absolute inset-y-px right-px flex w-10 items-center justify-center rounded-r-md border-l border-border/70 bg-muted/30 text-muted-foreground"
+              className="pointer-events-none absolute inset-y-px right-px flex w-10 items-center justify-center rounded-r-md bg-muted/30 text-muted-foreground"
               data-testid="app-lock-password-lock-icon"
               aria-hidden="true"
             >

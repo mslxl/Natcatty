@@ -73,7 +73,7 @@ export const zhCNCoreMessages: Messages = {
   'appLock.reason.idle': 'Netcatty 已因长时间无操作而锁定。',
   'appLock.reason.manual': 'Netcatty 已被手动锁定。',
   'appLock.passwordLabel': '锁定密码',
-  'appLock.passwordPlaceholder': '输入密码',
+  'appLock.passwordPlaceholder': '输入密码解锁',
   'appLock.unlock': '解锁',
   'appLock.unlocking': '正在解锁...',
   'appLock.error.emptyPassword': '请输入锁定密码。',

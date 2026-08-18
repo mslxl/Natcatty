@@ -90,7 +90,7 @@ export const enCoreMessages: Messages = {
   'appLock.reason.idle': 'Netcatty locked after the inactivity timeout.',
   'appLock.reason.manual': 'Netcatty was locked manually.',
   'appLock.passwordLabel': 'Lock password',
-  'appLock.passwordPlaceholder': 'Enter password',
+  'appLock.passwordPlaceholder': 'Enter password to unlock',
   'appLock.unlock': 'Unlock',
   'appLock.unlocking': 'Unlocking...',
   'appLock.error.emptyPassword': 'Enter the lock password.',
