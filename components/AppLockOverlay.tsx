@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { LockKeyhole } from 'lucide-react';
 
 import { useI18n } from '../application/i18n/I18nProvider';
 import type {
@@ -274,12 +275,19 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       >
         <button
           type="button"
-          className="flex h-24 w-24 items-center justify-center border-0 bg-transparent p-0 shadow-none transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          className="relative flex h-24 w-24 items-center justify-center border-0 bg-transparent p-0 shadow-none transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label={t('appLock.logoLabel')}
           data-testid="app-lock-logo-easter-egg"
           onClick={handleLogoClick}
         >
           <AppLogo className="h-full w-full" />
+          <span
+            className="absolute -bottom-1 -left-1 flex h-8 w-8 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-md"
+            data-testid="app-lock-logo-lock-badge"
+            aria-hidden="true"
+          >
+            <LockKeyhole className="h-4 w-4" strokeWidth={2.25} />
+          </span>
         </button>
 
         <h1 id="app-lock-title" className="text-center text-xl font-semibold tracking-normal">
