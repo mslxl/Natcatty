@@ -200,6 +200,7 @@ function createFileOpsApi(ctx) {
                   size: `${rec.size || 0} bytes`,
                   lastModified: new Date(rec.modifyTime || Date.now()).toISOString(),
                   permissions: rec.permissions,
+                  ...(rec.owner ? { owner: rec.owner } : {}),
                 };
                 if (rec.type === "symlink") {
                   try {
@@ -285,6 +286,7 @@ function createFileOpsApi(ctx) {
       const resolvedEncoding = updateResolvedEncoding(payload.sftpId, requestedEncoding, detectedEncoding);
     
       // Process items and resolve symlinks
+      const { resolveListingOwner } = require("./scpShell.cjs");
       const results = await Promise.all(list.map(async (item) => {
         const filenameRaw = item.filenameRaw || (item.filename ? Buffer.from(item.filename, "utf8") : null);
         const longnameRaw = item.longnameRaw || (item.longname ? Buffer.from(item.longname, "utf8") : null);
@@ -339,6 +341,10 @@ function createFileOpsApi(ctx) {
         }
     
         const modifyTime = item.attrs?.mtime ? item.attrs.mtime * 1000 : Date.now();
+        const owner = resolveListingOwner({
+          longname,
+          uid: item.attrs?.uid,
+        });
         return {
           name,
           type,
@@ -346,6 +352,7 @@ function createFileOpsApi(ctx) {
           size: `${item.attrs?.size || 0} bytes`,
           lastModified: new Date(modifyTime).toISOString(),
           permissions,
+          ...(owner ? { owner } : {}),
         };
       }));
     

@@ -90,6 +90,7 @@ export const useSftpViewPaneCallbacks = ({
               lastModified: ms,
               lastModifiedFormatted: formatDate(ms),
               permissions: f.permissions,
+              owner: f.owner,
               linkTarget: f.linkTarget as 'file' | 'directory' | null | undefined,
               hidden: f.hidden,
             };

@@ -813,6 +813,7 @@ export const zhTWCoreMessages: Messages = {
   'sftp.columns.modified': '修改時間',
   'sftp.columns.size': '大小',
   'sftp.columns.kind': '型別',
+  'sftp.columns.owner': '擁有者',
   'sftp.columns.actions': '操作',
   'sftp.sort.directoriesFirst': '資料夾置頂',
   'sftp.emptyDirectory': '空目錄',
