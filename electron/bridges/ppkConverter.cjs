@@ -199,6 +199,8 @@ function assertArgon2WorkFactors(kdf) {
 
 function deriveV3Keys(passphrase, encryption, kdf) {
   if (encryption === "none") {
+    // Unencrypted PPK v3 uses HMAC-SHA256 with an empty key. Confirmed against
+    // PuTTYgen 0.85 and the SshAgentLib ed25519 v3-none fixture.
     return { cipherKey: null, iv: null, macKey: Buffer.alloc(0), macAlgo: "sha256" };
   }
   if (typeof argon2Sync !== "function") {

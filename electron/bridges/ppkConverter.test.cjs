@@ -9,7 +9,7 @@ const {
   PrivateKeyPassphraseError,
   UnsupportedPrivateKeyError,
 } = require("./privateKeyNormalizer.cjs");
-const { preparePrivateKeyForAuth } = require("./sshAuthHelper.cjs");
+const { preparePrivateKeyForAuth, isKeyEncrypted } = require("./sshAuthHelper.cjs");
 
 const hasArgon2 = typeof crypto.argon2Sync === "function";
 
@@ -130,36 +130,37 @@ test("converts an encrypted Ed25519 PPK with CRLF line endings", () => {
   assert.ok(parseOk(result.privateKey));
 });
 
+function stubEncryptedPpkV3({ memory = 8192, passes = 2, parallelism = 1 } = {}) {
+  return [
+    "PuTTY-User-Key-File-3: ssh-ed25519",
+    "Encryption: aes256-cbc",
+    "Comment: stub",
+    "Public-Lines: 1",
+    "AAAA",
+    "Key-Derivation: Argon2id",
+    `Argon2-Memory: ${memory}`,
+    `Argon2-Passes: ${passes}`,
+    `Argon2-Parallelism: ${parallelism}`,
+    "Argon2-Salt: 00112233445566778899aabbccddeeff",
+    "Private-Lines: 1",
+    "AAAA",
+    "Private-MAC: 00",
+    "",
+  ].join("\n");
+}
+
 test("rejects an encrypted PPK v3 with unbounded Argon2 memory before deriving keys", () => {
-  const { publicBlob, privateBlob } = ed25519Blobs();
-  const ppk = serializePpk({
-    version: 3,
-    type: "ssh-ed25519",
-    comment: "dos",
-    publicBlob,
-    privateBlob,
-    passphrase: "secret",
-  }).replace(/^Argon2-Memory: \d+$/m, "Argon2-Memory: 999999999");
   const started = Date.now();
   assert.throws(
-    () => normalizePrivateKeyForSsh2(ppk, "secret"),
+    () => normalizePrivateKeyForSsh2(stubEncryptedPpkV3({ memory: 999999999 }), "secret"),
     (err) => err instanceof UnsupportedPrivateKeyError && /Argon2 parameters exceed supported limits/.test(err.message),
   );
   assert.ok(Date.now() - started < 250, "oversized Argon2 work factors must be rejected without deriving");
 });
 
 test("rejects an encrypted PPK v3 with a non-positive Argon2 pass count", () => {
-  const { publicBlob, privateBlob } = ed25519Blobs();
-  const ppk = serializePpk({
-    version: 3,
-    type: "ssh-ed25519",
-    comment: "zero-passes",
-    publicBlob,
-    privateBlob,
-    passphrase: "secret",
-  }).replace(/^Argon2-Passes: \d+$/m, "Argon2-Passes: 0");
   assert.throws(
-    () => normalizePrivateKeyForSsh2(ppk, "secret"),
+    () => normalizePrivateKeyForSsh2(stubEncryptedPpkV3({ passes: 0 }), "secret"),
     (err) => err instanceof UnsupportedPrivateKeyError && /Argon2 parameters exceed supported limits/.test(err.message),
   );
 });
@@ -280,6 +281,17 @@ ssG0o2XpU0dez67/t5sffDp5j41eXMt7ViZpeB7O1jtA7NLOQ3Q3UjAPBQJCR/Vs
 Private-MAC: 8d45d4218f19b0677d6b51529ef43236468f0de9
 `;
 
+const PUTTYGEN_ED25519_V3_NONE = `PuTTY-User-Key-File-3: ssh-ed25519
+Encryption: none
+Comment: eddsa-key-20220506
+Public-Lines: 2
+AAAAC3NzaC1lZDI1NTE5AAAAIH+QE+UNYtz7N9RX2FseJmmzIroOs24UzTsJP6kj
+0gxU
+Private-Lines: 1
+AAAAIAOsb28qs/Ob4JfyCCGqcONFEtlWkqquOryLlfbjebBp
+Private-MAC: fd89c96303e82b9c7f3ddbec3884ebd5a3500da8d4f2e9716c0494f3c207fffa
+`;
+
 const PUTTYGEN_ED25519_V3 = `PuTTY-User-Key-File-3: ssh-ed25519
 Encryption: aes256-cbc
 Comment: eddsa-key-20220506
@@ -297,6 +309,39 @@ Private-MAC: 0a0cc345089719caa38a7990ed9b6dd9b38792fd553a84e54be01885d240df83
 `;
 
 const PUTTYGEN_PASSPHRASE = "correct horse battery staple";
+
+test("converts a real PuTTYgen unencrypted Ed25519 PPK v3", () => {
+  const result = normalizePrivateKeyForSsh2(PUTTYGEN_ED25519_V3_NONE);
+  assert.equal(result.converted, true);
+  const parsed = parseOk(result.privateKey);
+  assert.ok(parsed);
+  assert.equal(parsed.type, "ssh-ed25519");
+});
+
+test("converts an unencrypted generated Ed25519 PPK v3", () => {
+  const { ppk } = ed25519Ppk({ version: 3 });
+  assert.match(ppk, /^PuTTY-User-Key-File-3: ssh-ed25519/m);
+  assert.match(ppk, /^Encryption: none/m);
+  const result = normalizePrivateKeyForSsh2(ppk);
+  assert.equal(result.converted, true);
+  assert.ok(parseOk(result.privateKey));
+});
+
+test("preparePrivateKeyForAuth returns an unlocked OpenSSH key for encrypted PPK", async () => {
+  const { ppk } = ed25519Ppk({ passphrase: "secret" });
+  const result = await preparePrivateKeyForAuth({
+    sender: { isDestroyed: () => false, send: () => {} },
+    privateKey: ppk,
+    keyName: "putty-ed25519.ppk",
+    hostname: "example.test",
+    initialPassphrase: "secret",
+    logPrefix: "[Test]",
+  });
+  assert.ok(result);
+  assert.equal(isKeyEncrypted(ppk), true);
+  assert.equal(isKeyEncrypted(result.privateKey), false);
+  assert.equal(result.passphrase, undefined);
+});
 
 test("decrypts a real PuTTYgen encrypted Ed25519 PPK v2", () => {
   assert.ok(sshUtils.parseKey(PUTTYGEN_ED25519_V2, PUTTYGEN_PASSPHRASE) instanceof Error);
