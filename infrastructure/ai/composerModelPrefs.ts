@@ -30,12 +30,26 @@ function readAllPrefs(): PrefsByScope {
   }
 }
 
+const prefsListeners = new Set<() => void>();
+
+function notifyComposerModelPrefsChanged(): void {
+  for (const listener of prefsListeners) listener();
+}
+
+export function subscribeComposerModelPrefs(listener: () => void): () => void {
+  prefsListeners.add(listener);
+  return () => {
+    prefsListeners.delete(listener);
+  };
+}
+
 function writeAllPrefs(prefs: PrefsByScope): void {
   try {
     localStorageAdapter.write(STORAGE_KEY_AI_COMPOSER_MODEL_PREFS, prefs);
   } catch {
     // Tests and SSR have no storage. Recent/pinned stay in-memory only.
   }
+  notifyComposerModelPrefsChanged();
 }
 
 export function readComposerModelPrefs(scope: string): ComposerModelPrefs {

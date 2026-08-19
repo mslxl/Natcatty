@@ -19,6 +19,7 @@ import {
 import {
   readComposerModelPrefs,
   rememberComposerRecentModel,
+  subscribeComposerModelPrefs,
   toggleComposerPinnedModel,
 } from '../../infrastructure/ai/composerModelPrefs';
 import {
@@ -324,7 +325,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
   }, []);
 
   useEffect(() => {
-    setModelPrefs(readComposerModelPrefs(pickerScope));
+    const refresh = () => setModelPrefs(readComposerModelPrefs(pickerScope));
+    refresh();
+    return subscribeComposerModelPrefs(refresh);
   }, [pickerScope]);
 
   useEffect(() => {
