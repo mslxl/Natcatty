@@ -1372,3 +1372,168 @@ test("discover can refresh shell env before scanning Cursor", async () => {
     restore();
   }
 });
+
+/** Boot the bridge with a local HTTP server and capture the request it receives. */
+async function withCapturingServer(t, options, respond) {
+  const received = {};
+  let handleStreamEvent = () => {};
+  const { bridge, restore } = loadBridgeWithMocks({
+    safeSend: (_sender, channel, payload) => handleStreamEvent(channel, payload),
+    ...options,
+  });
+  const ipcMain = createIpcMainStub();
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      received.headers = req.headers;
+      received.body = Buffer.concat(chunks);
+      respond(res);
+    });
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() } },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseURL = `http://127.0.0.1:${address.port}`;
+  const sender = { id: 1 };
+  await ipcMain.handlers.get("netcatty:ai:sync-providers")(
+    { sender },
+    { providers: [{ id: "content-length", baseURL }] },
+  );
+
+  return {
+    received,
+    baseURL,
+    sender,
+    ipcMain,
+    restore,
+    onStreamEvent: (fn) => {
+      handleStreamEvent = fn;
+    },
+  };
+}
+
+test("streaming AI requests send Content-Length instead of chunked encoding", { timeout: 5_000 }, async (t) => {
+  const ctx = await withCapturingServer(t, {}, (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n');
+  });
+
+  try {
+    const body = JSON.stringify({
+      stream: true,
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    const streamFinished = new Promise((resolve, reject) => {
+      ctx.onStreamEvent((channel, payload) => {
+        if (channel === "netcatty:ai:stream:end") resolve();
+        else if (channel === "netcatty:ai:stream:error") reject(new Error(payload.error));
+      });
+    });
+
+    const result = await ctx.ipcMain.handlers.get("netcatty:ai:chat:stream")(
+      { sender: ctx.sender },
+      {
+        requestId: "content-length-stream",
+        url: `${ctx.baseURL}/v1/messages`,
+        headers: { "content-type": "application/json" },
+        body,
+        providerId: "content-length",
+      },
+    );
+    await streamFinished;
+
+    assert.equal(result.ok, true);
+    assert.equal(ctx.received.headers["content-length"], String(Buffer.byteLength(body)));
+    assert.equal(ctx.received.headers["transfer-encoding"], undefined);
+    assert.equal(ctx.received.body.toString("utf8"), body);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test("Content-Length for AI request bodies counts bytes, not UTF-16 code units", { timeout: 5_000 }, async (t) => {
+  const ctx = await withCapturingServer(t, {}, (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n');
+  });
+
+  try {
+    // A realistic system prompt: multi-byte characters make the UTF-16 length
+    // shorter than the UTF-8 byte length, so `body.length` would truncate.
+    const body = JSON.stringify({
+      stream: true,
+      system: "你是 Catty Agent，一个内置于 netcatty 的终端自动化助手。请检查磁盘使用率。",
+      messages: [{ role: "user", content: "检查系统状态" }],
+    });
+    assert.notEqual(body.length, Buffer.byteLength(body));
+
+    const streamFinished = new Promise((resolve, reject) => {
+      ctx.onStreamEvent((channel, payload) => {
+        if (channel === "netcatty:ai:stream:end") resolve();
+        else if (channel === "netcatty:ai:stream:error") reject(new Error(payload.error));
+      });
+    });
+
+    const result = await ctx.ipcMain.handlers.get("netcatty:ai:chat:stream")(
+      { sender: ctx.sender },
+      {
+        requestId: "content-length-multibyte",
+        url: `${ctx.baseURL}/v1/messages`,
+        headers: { "content-type": "application/json" },
+        body,
+        providerId: "content-length",
+      },
+    );
+    await streamFinished;
+
+    assert.equal(result.ok, true);
+    assert.equal(ctx.received.headers["content-length"], String(Buffer.byteLength(body)));
+    assert.equal(ctx.received.body.toString("utf8"), body);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test("non-streaming AI requests send Content-Length instead of chunked encoding", { timeout: 5_000 }, async (t) => {
+  const ctx = await withCapturingServer(t, {}, (res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"data":[]}');
+  });
+
+  try {
+    const body = JSON.stringify({ model: "test-model", input: "hi" });
+
+    const result = await ctx.ipcMain.handlers.get("netcatty:ai:fetch")(
+      { sender: ctx.sender },
+      {
+        url: `${ctx.baseURL}/v1/messages`,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+        providerId: "content-length",
+      },
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(ctx.received.headers["content-length"], String(Buffer.byteLength(body)));
+    assert.equal(ctx.received.headers["transfer-encoding"], undefined);
+    assert.equal(ctx.received.body.toString("utf8"), body);
+  } finally {
+    ctx.restore();
+  }
+});
