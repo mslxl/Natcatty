@@ -82,8 +82,8 @@ function formatContextTokens(tokens: number): string {
 
 /**
  * Provider picker payload used by Catty Agent. When set, the model chip
- * opens a two-column picker: providers on the left, that provider's
- * models on the right (presets + live discovery + search).
+ * opens a single-column model list. The current provider sits on a
+ * one-line header that drills into a second-level provider list.
  */
 export interface ProviderSwitcherConfig {
   /** Every configured provider — Settings-level visibility, not the
@@ -893,7 +893,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     modelPresets,
   );
   const selectedBaseModelId = selectedPreset?.id;
-  // Provider switcher mode (Catty Agent): two-column popover, chip carries
+  // Provider switcher mode (Catty Agent): single-column popover, chip carries
   // the provider's icon + name + model name. Falls back to the existing
   // single-list model dropdown for external SDK agents.
   const hasProviderSwitcher = !!providerSwitcher && providerSwitcher.providers.length > 0;

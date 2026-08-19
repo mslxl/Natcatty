@@ -1,4 +1,4 @@
-import { Check, Loader2, Pin, Search, Star } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Loader2, Pin, Search, Star } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
@@ -12,8 +12,8 @@ import type { AgentModelPreset, ProviderConfig } from '../../infrastructure/ai/t
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { useProviderModelCatalog } from './useProviderModelCatalog';
 
-export const COMPOSER_PROVIDER_PICKER_WIDTH = 380;
-export const COMPOSER_MODEL_PICKER_WIDTH = 280;
+export const COMPOSER_PROVIDER_PICKER_WIDTH = 260;
+export const COMPOSER_MODEL_PICKER_WIDTH = 260;
 
 export interface ComposerModelPickerProps {
   providers?: ProviderConfig[];
@@ -27,10 +27,10 @@ export interface ComposerModelPickerProps {
 }
 
 const rowClassName =
-  'w-full flex items-center gap-2 px-2 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer';
+  'flex h-8 w-full items-center gap-2 px-2.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer';
 
 const SectionLabel: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-  <div className="px-2 pt-1.5 pb-0.5 text-[10px] tracking-wide text-muted-foreground/45">
+  <div className="px-2.5 pt-1.5 pb-0.5 text-[10px] tracking-wide text-muted-foreground/45">
     {children}
   </div>
 );
@@ -55,14 +55,7 @@ const ModelRow: React.FC<{
       {selected
         ? <Check size={11} className="text-primary shrink-0" />
         : <span className="w-[11px] shrink-0" />}
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-foreground/88">{model.name}</span>
-        {model.description && model.description !== model.name && (
-          <span className="block truncate text-[10px] text-muted-foreground/45">
-            {model.description}
-          </span>
-        )}
-      </span>
+      <span className="min-w-0 flex-1 truncate text-foreground/88">{model.name}</span>
     </button>
     <button
       type="button"
@@ -99,6 +92,7 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
     selectedProviderId || providers[0]?.id || '',
   );
   const [query, setQuery] = useState('');
+  const [view, setView] = useState<'models' | 'providers'>('models');
 
   useEffect(() => {
     if (selectedProviderId) setPreviewProviderId(selectedProviderId);
@@ -154,54 +148,85 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
     previewProvider ? { providerId: previewProvider.id, modelId } : { modelId }
   );
 
+  if (hasProviders && view === 'providers') {
+    return (
+      <div className="w-[260px] max-w-[calc(100vw-16px)] py-1">
+        <button
+          type="button"
+          onClick={() => setView('models')}
+          className={rowClassName}
+        >
+          <ChevronLeft size={12} className="text-muted-foreground/60 shrink-0" />
+          <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/70">
+            {t('ai.chat.providers')}
+          </span>
+        </button>
+        <div className="mx-2 my-1 border-t border-border/40" />
+        {providers.map((provider) => {
+          const isBound = provider.id === selectedProviderId;
+          return (
+            <button
+              key={provider.id}
+              type="button"
+              role="option"
+              aria-selected={isBound}
+              onClick={() => {
+                setPreviewProviderId(provider.id);
+                setQuery('');
+                setView('models');
+              }}
+              className={rowClassName}
+            >
+              <ProviderIconBadge provider={provider} size="xs" />
+              <span className="min-w-0 flex-1 truncate text-foreground/88">{provider.name}</span>
+              {isBound && <Check size={11} className="text-primary shrink-0" />}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
-    <div className={`flex ${hasProviders ? 'w-[380px]' : 'w-[280px]'} max-w-[calc(100vw-16px)]`}>
-      {hasProviders && (
-        <div className="w-[128px] shrink-0 border-r border-border/40 py-1 max-h-[320px] overflow-y-auto">
-          <SectionLabel>{t('ai.chat.providers')}</SectionLabel>
-          {providers.map((provider) => {
-            const isActive = provider.id === previewProvider?.id;
-            const isBound = provider.id === selectedProviderId;
-            return (
-              <button
-                key={provider.id}
-                type="button"
-                onMouseEnter={() => setPreviewProviderId(provider.id)}
-                onFocus={() => setPreviewProviderId(provider.id)}
-                onClick={() => setPreviewProviderId(provider.id)}
-                className={`${rowClassName} ${isActive ? 'bg-muted/35' : ''}`}
-              >
-                <ProviderIconBadge provider={provider} size="xs" />
-                <span className="min-w-0 flex-1 truncate text-foreground/86">{provider.name}</span>
-                {isBound && <Check size={10} className="text-primary shrink-0" />}
-              </button>
-            );
-          })}
-        </div>
+    <div className="w-[260px] max-w-[calc(100vw-16px)] py-1">
+      {hasProviders && previewProvider && (
+        <>
+          <button
+            type="button"
+            aria-label={t('ai.chat.selectProvider')}
+            onClick={() => setView('providers')}
+            className={rowClassName}
+          >
+            <ProviderIconBadge provider={previewProvider} size="xs" />
+            <span className="min-w-0 flex-1 truncate text-foreground/88">{previewProvider.name}</span>
+            <ChevronRight size={12} className="text-muted-foreground/50 shrink-0" />
+          </button>
+          <div className="mx-2 my-1 border-t border-border/40" />
+        </>
       )}
 
-      <div className="min-w-0 flex-1 py-1 max-h-[320px] overflow-y-auto">
-        <div className="px-2 pb-1">
-          <div className="flex h-7 items-center gap-1.5 rounded-md border border-border/40 bg-muted/15 px-2">
-            <Search size={11} className="text-muted-foreground/50 shrink-0" />
-            <input
-              autoFocus
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && trimmedQuery) {
-                  event.preventDefault();
-                  selectModel(grouped.pinned[0]?.id ?? grouped.recent[0]?.id ?? filtered[0]?.id ?? trimmedQuery);
-                }
-              }}
-              placeholder={t('ai.chat.searchModels')}
-              className="h-full w-full bg-transparent text-[12px] text-foreground/88 outline-none placeholder:text-muted-foreground/40"
-            />
-          </div>
+      <div className="px-2 pb-1">
+        <div className="flex h-7 items-center gap-1.5 rounded-md border border-border/40 bg-muted/15 px-2">
+          <Search size={11} className="text-muted-foreground/50 shrink-0" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && trimmedQuery) {
+                event.preventDefault();
+                selectModel(grouped.pinned[0]?.id ?? grouped.recent[0]?.id ?? filtered[0]?.id ?? trimmedQuery);
+              }
+            }}
+            placeholder={t('ai.chat.searchModels')}
+            className="h-full w-full bg-transparent text-[12px] text-foreground/88 outline-none placeholder:text-muted-foreground/40"
+          />
         </div>
+      </div>
 
+      <div className="max-h-[280px] overflow-y-auto">
         {catalog.loading && (
-          <div className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] text-muted-foreground/55">
+          <div className="flex h-8 items-center gap-1.5 px-2.5 text-[11px] text-muted-foreground/55">
             <Loader2 size={11} className="animate-spin" />
             {t('ai.chat.loadingModels')}
           </div>
@@ -214,7 +239,7 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
             className={rowClassName}
           >
             <Pin size={11} className="text-muted-foreground/55 shrink-0" />
-            <span className="truncate text-foreground/85">
+            <span className="min-w-0 truncate text-foreground/85">
               {t('ai.chat.useCustomModel').replace('{id}', trimmedQuery)}
             </span>
           </button>

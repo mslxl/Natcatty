@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { ComposerModelPicker } from './ComposerModelPicker';
 
-test('Catty picker shows providers and a model search field', () => {
+test('Catty picker keeps a single model list and hides other providers until the submenu opens', () => {
   const html = renderToStaticMarkup(
     <ComposerModelPicker
       providers={[
@@ -33,9 +33,11 @@ test('Catty picker shows providers and a model search field', () => {
   );
 
   assert.match(html, /DeepSeek/);
-  assert.match(html, /OpenAI/);
   assert.match(html, /placeholder="ai\.chat\.searchModels"/);
   assert.match(html, /deepseek-v4-pro/);
+  assert.match(html, /aria-label="ai\.chat\.selectProvider"/);
+  assert.doesNotMatch(html, /OpenAI/);
+  assert.doesNotMatch(html, /w-\[128px\]/);
 });
 
 test('external agent picker lists presets without a provider column', () => {
