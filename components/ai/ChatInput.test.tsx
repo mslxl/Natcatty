@@ -252,6 +252,7 @@ test('Catty composer exposes a provider switcher without a mixed thinking submen
   assert.match(source, /ComposerModelPicker/);
   assert.match(source, /ComposerThinkingChip/);
   assert.match(source, /cattyReasoningLevelsForSelection/);
+  assert.match(source, /if \(!thinkingLevel\) return;/);
   assert.doesNotMatch(source, /showThinkingLevels/);
 });
 

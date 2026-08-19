@@ -940,18 +940,23 @@ const ChatInput: React.FC<ChatInputProps> = ({
     ],
   );
   const selectedThinking = hasProviderSwitcher
-    ? (thinkingLevel || 'off')
+    ? (thinkingLevel
+      ? thinkingLevel
+      : (thinkingLevels.includes('off') ? 'off' : undefined))
     : selectedPresetThinking;
   const visibleThinking = hasProviderSwitcher
-    ? resolveVisibleCattyThinkingLevel(thinkingLevels, selectedThinking)
+    ? (selectedThinking
+      ? resolveVisibleCattyThinkingLevel(thinkingLevels, selectedThinking)
+      : undefined)
     : selectedThinking;
 
   useEffect(() => {
     if (!hasProviderSwitcher || !onThinkingLevelChange) return;
     if (!thinkingLevels.length) return;
-    const current = thinkingLevel || 'off';
-    const next = resolveVisibleCattyThinkingLevel(thinkingLevels, current);
-    if (next && next !== current) onThinkingLevelChange(next);
+    if (!thinkingLevel) return;
+    if (thinkingLevels.includes(thinkingLevel)) return;
+    const next = resolveVisibleCattyThinkingLevel(thinkingLevels, thinkingLevel);
+    if (next && next !== thinkingLevel) onThinkingLevelChange(next);
   }, [
     hasProviderSwitcher,
     onThinkingLevelChange,
