@@ -203,9 +203,6 @@ function deriveV3Keys(passphrase, encryption, kdf) {
     // PuTTYgen 0.85 and the SshAgentLib ed25519 v3-none fixture.
     return { cipherKey: null, iv: null, macKey: Buffer.alloc(0), macAlgo: "sha256" };
   }
-  if (typeof argon2Sync !== "function") {
-    throw new Error("PPK_V3_ARGON2_UNAVAILABLE");
-  }
   const algorithm = String(kdf?.name || "").toLowerCase();
   if (algorithm !== "argon2id" && algorithm !== "argon2i" && algorithm !== "argon2d") {
     throw new Error(`Unsupported PPK key derivation "${kdf?.name}"`);
@@ -215,6 +212,9 @@ function deriveV3Keys(passphrase, encryption, kdf) {
   }
   assertArgon2WorkFactors(kdf);
   const salt = parseArgon2Salt(kdf.saltHex);
+  if (typeof argon2Sync !== "function") {
+    throw new Error("PPK_V3_ARGON2_UNAVAILABLE");
+  }
   const derived = argon2Sync(algorithm, {
     message: passphrase,
     nonce: salt,
