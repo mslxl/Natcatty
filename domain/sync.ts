@@ -361,6 +361,7 @@ export interface SyncPayload {
       maxIterations?: number;
       agentModelMap?: Record<string, string>;
       agentProviderMap?: Record<string, string>;
+      agentThinkingMap?: Record<string, string>;
       webSearchConfig?: Record<string, unknown> | null;
       quickMessages?: Array<Record<string, unknown>>;
       showTerminalSelectionAction?: boolean;

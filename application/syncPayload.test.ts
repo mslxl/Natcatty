@@ -234,6 +234,7 @@ test("buildSyncPayload includes AI configuration settings", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_MAX_ITERATIONS, "10");
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_MODEL_MAP, JSON.stringify({ codex: "gpt-test" }));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_PROVIDER_MAP, JSON.stringify({ catty: "openai-main" }));
+  localStorage.setItem(storageKeys.STORAGE_KEY_AI_AGENT_THINKING_MAP, JSON.stringify({ catty: "high" }));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_WEB_SEARCH, JSON.stringify(webSearch));
   localStorage.setItem(storageKeys.STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION, "false");
 
@@ -254,6 +255,7 @@ test("buildSyncPayload includes AI configuration settings", () => {
     maxIterations: 10,
     agentModelMap: { codex: "gpt-test" },
     agentProviderMap: { catty: "openai-main" },
+    agentThinkingMap: { catty: "high" },
     webSearchConfig: webSearchWithoutKey,
     showTerminalSelectionAction: false,
   });
