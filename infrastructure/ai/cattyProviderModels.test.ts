@@ -5,6 +5,7 @@ import {
   clearProviderModelCatalogCache,
   fetchProviderModelCatalog,
   providerModelCacheKey,
+  resolveProviderDiscoveryBaseURL,
   seedProviderModelCatalog,
 } from './cattyProviderModels';
 import type { ProviderConfig } from './types';
@@ -18,6 +19,55 @@ const provider: ProviderConfig = {
   apiKey: 'test-key',
   enabled: true,
 };
+
+test('resolveProviderDiscoveryBaseURL falls back to the built-in preset host', () => {
+  assert.equal(
+    resolveProviderDiscoveryBaseURL({
+      id: 'openai-1',
+      providerId: 'openai',
+      name: 'OpenAI',
+      enabled: true,
+    }),
+    'https://api.openai.com/v1',
+  );
+  assert.equal(
+    resolveProviderDiscoveryBaseURL({
+      id: 'ollama-1',
+      providerId: 'ollama',
+      name: 'Ollama',
+      enabled: true,
+      baseURL: 'https://ollama.com',
+    }),
+    'https://ollama.com/v1',
+  );
+});
+
+test('fetchProviderModelCatalog discovers models when baseURL is omitted', async () => {
+  clearProviderModelCatalogCache();
+  const requested: string[] = [];
+  const catalog = await fetchProviderModelCatalog(
+    {
+      id: 'openai-legacy',
+      providerId: 'openai',
+      name: 'OpenAI',
+      defaultModel: 'gpt-4o',
+      apiKey: 'sk-test',
+      enabled: true,
+    },
+    {
+      aiFetch: async (url) => {
+        requested.push(url);
+        return {
+          ok: true,
+          data: JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-5.5' }] }),
+        };
+      },
+    },
+  );
+  assert.deepEqual(requested, ['https://api.openai.com/v1/models']);
+  assert.equal(catalog.fetched, true);
+  assert.ok(catalog.models.some((model) => model.id === 'gpt-5.5'));
+});
 
 test('providerModelCacheKey changes when the stored API key changes', () => {
   const base = { ...provider };

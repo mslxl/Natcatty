@@ -2,7 +2,7 @@ import { decryptField } from '../persistence/secureFieldAdapter';
 import { buildModelDiscoveryHeaders, resolveModelsDiscoveryEndpoint } from './modelDiscoveryHeaders';
 import { normalizeOllamaSdkBaseURL } from './ollamaCompatBaseUrl';
 import { buildProviderProbeUrl } from './providerConnectionProbe';
-import { resolveProviderStyle, type ProviderConfig } from './types';
+import { PROVIDER_PRESETS, resolveProviderStyle, type ProviderConfig } from './types';
 import {
   buildProviderSeedModels,
   mergeComposerModels,
@@ -55,6 +55,12 @@ export function providerModelCacheKey(provider: ProviderConfig): string {
   ].join('|');
 }
 
+export function resolveProviderDiscoveryBaseURL(provider: ProviderConfig): string {
+  const raw = provider.baseURL || PROVIDER_PRESETS[provider.providerId]?.defaultBaseURL || '';
+  if (!raw) return '';
+  return provider.providerId === 'ollama' ? normalizeOllamaSdkBaseURL(raw) : raw;
+}
+
 export function seedProviderModelCatalog(provider: ProviderConfig): ProviderModelCatalog {
   return {
     models: buildProviderSeedModels(provider),
@@ -103,7 +109,8 @@ export async function fetchProviderModelCatalog(
 
   const style = resolveProviderStyle(provider);
   const endpoint = resolveModelsDiscoveryEndpoint(style, undefined);
-  if (!endpoint || !provider.baseURL || !bridge?.aiFetch) {
+  const baseURL = resolveProviderDiscoveryBaseURL(provider);
+  if (!endpoint || !baseURL || !bridge?.aiFetch) {
     return seed;
   }
 
@@ -112,9 +119,6 @@ export async function fetchProviderModelCatalog(
     if (provider.providerId !== 'ollama' && !apiKey) {
       return seed;
     }
-    const baseURL = provider.providerId === 'ollama'
-      ? normalizeOllamaSdkBaseURL(provider.baseURL)
-      : provider.baseURL;
     if (bridge.aiAllowlistAddHost) {
       await bridge.aiAllowlistAddHost(baseURL);
     }
