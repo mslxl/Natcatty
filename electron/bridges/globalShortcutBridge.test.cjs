@@ -1488,3 +1488,150 @@ test("toggleWindowVisibility focuses visible-but-unfocused windows via showAndFo
     }
   });
 });
+
+function installFakeTrayPanelWindow(electronModule, { getBoundsSize } = {}) {
+  class FakePanelWindow extends EventEmitter {
+    constructor(opts = {}) {
+      super();
+      FakePanelWindow.instances.push(this);
+      this.opts = opts;
+      this.bounds = {
+        x: 0,
+        y: 0,
+        width: opts.width,
+        height: opts.height,
+      };
+      this.setBoundsCalls = [];
+      this.destroyed = false;
+      this.visible = false;
+      const webContents = new EventEmitter();
+      webContents.send = () => {};
+      this.webContents = webContents;
+    }
+
+    async loadURL() {}
+    getBounds() {
+      if (getBoundsSize) return { ...this.bounds, ...getBoundsSize };
+      return { ...this.bounds };
+    }
+    setBounds(next) {
+      this.setBoundsCalls.push({ ...next });
+      this.bounds = { ...this.bounds, ...next };
+    }
+    isDestroyed() {
+      return this.destroyed;
+    }
+    show() {
+      this.visible = true;
+    }
+    hide() {
+      this.visible = false;
+    }
+    focus() {}
+    destroy() {
+      this.destroyed = true;
+    }
+  }
+
+  FakePanelWindow.instances = [];
+  FakePanelWindow.getAllWindows = () => [];
+  electronModule.BrowserWindow = FakePanelWindow;
+  return FakePanelWindow;
+}
+
+test("Windows right-click places the designed panel above the taskbar from event bounds", async () => {
+  await withPlatform("win32", async () => {
+    const { placeTrayPanel } = require("./trayPanelBounds.cjs");
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const FakePanelWindow = installFakeTrayPanelWindow(electronModule, {
+      getBoundsSize: { width: 720, height: 1040 },
+    });
+    const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
+    const eventBounds = { x: 1680, y: 1044, width: 24, height: 24 };
+    electronModule.screen = {
+      getCursorScreenPoint: () => ({ x: 1690, y: 1050 }),
+      getDisplayNearestPoint: () => ({ workArea }),
+    };
+
+    try {
+      await enableCloseToTray(bridge, electronModule);
+      const trayInstance = bridge.getTray();
+      trayInstance.getBounds = () => ({ x: 0, y: 0, width: 0, height: 0 });
+      trayInstance.handlers.get("right-click")({}, eventBounds);
+
+      assert.equal(FakePanelWindow.instances.length, 1);
+      assert.equal(FakePanelWindow.instances[0].opts.width, 360);
+      assert.equal(FakePanelWindow.instances[0].opts.height, 520);
+      assert.deepEqual(
+        FakePanelWindow.instances[0].setBoundsCalls[0],
+        placeTrayPanel({ anchor: eventBounds, workArea, width: 360, height: 520 }),
+      );
+    } finally {
+      bridge.cleanup();
+    }
+  });
+});
+
+test("Windows right-click ignores a y=0 tray.getBounds lie and uses the cursor", async () => {
+  await withPlatform("win32", async () => {
+    const { placeTrayPanel } = require("./trayPanelBounds.cjs");
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const FakePanelWindow = installFakeTrayPanelWindow(electronModule);
+    const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
+    const cursor = { x: 1700, y: 1040 };
+    electronModule.screen = {
+      getCursorScreenPoint: () => cursor,
+      getDisplayNearestPoint: () => ({ workArea }),
+    };
+
+    try {
+      await enableCloseToTray(bridge, electronModule);
+      const trayInstance = bridge.getTray();
+      trayInstance.getBounds = () => ({ x: 1680, y: 0, width: 24, height: 24 });
+      trayInstance.handlers.get("right-click")({});
+
+      assert.deepEqual(
+        FakePanelWindow.instances[0].setBoundsCalls[0],
+        placeTrayPanel({
+          anchor: { x: cursor.x, y: cursor.y, width: 1, height: 1 },
+          workArea,
+          width: 360,
+          height: 520,
+        }),
+      );
+    } finally {
+      bridge.cleanup();
+    }
+  });
+});
+
+test("macOS tray click still opens the panel below a top menu-bar icon", async () => {
+  await withPlatform("darwin", async () => {
+    const { placeTrayPanel } = require("./trayPanelBounds.cjs");
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const FakePanelWindow = installFakeTrayPanelWindow(electronModule);
+    const workArea = { x: 0, y: 25, width: 1440, height: 875 };
+    const eventBounds = { x: 900, y: 0, width: 24, height: 24 };
+    electronModule.screen = {
+      getCursorScreenPoint: () => ({ x: 910, y: 8 }),
+      getDisplayNearestPoint: () => ({ workArea }),
+    };
+
+    try {
+      await enableCloseToTray(bridge, electronModule);
+      const trayInstance = bridge.getTray();
+      trayInstance.getBounds = () => eventBounds;
+      trayInstance.handlers.get("click")({}, eventBounds);
+
+      assert.deepEqual(
+        FakePanelWindow.instances[0].setBoundsCalls[0],
+        placeTrayPanel({ anchor: eventBounds, workArea, width: 360, height: 520 }),
+      );
+    } finally {
+      bridge.cleanup();
+    }
+  });
+});
