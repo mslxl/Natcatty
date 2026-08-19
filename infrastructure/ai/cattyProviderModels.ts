@@ -1,5 +1,6 @@
 import { decryptField } from '../persistence/secureFieldAdapter';
 import { buildModelDiscoveryHeaders, resolveModelsDiscoveryEndpoint } from './modelDiscoveryHeaders';
+import { normalizeOllamaSdkBaseURL } from './ollamaCompatBaseUrl';
 import { buildProviderProbeUrl } from './providerConnectionProbe';
 import { resolveProviderStyle, type ProviderConfig } from './types';
 import {
@@ -98,10 +99,13 @@ export async function fetchProviderModelCatalog(
     if (provider.providerId !== 'ollama' && !apiKey) {
       return seed;
     }
+    const baseURL = provider.providerId === 'ollama'
+      ? normalizeOllamaSdkBaseURL(provider.baseURL)
+      : provider.baseURL;
     if (bridge.aiAllowlistAddHost) {
-      await bridge.aiAllowlistAddHost(provider.baseURL);
+      await bridge.aiAllowlistAddHost(baseURL);
     }
-    const url = buildProviderProbeUrl(provider.baseURL, endpoint);
+    const url = buildProviderProbeUrl(baseURL, endpoint);
     const headers = buildModelDiscoveryHeaders(style, apiKey);
     const result = await bridge.aiFetch(
       url,

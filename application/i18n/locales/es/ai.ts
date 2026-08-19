@@ -54,6 +54,7 @@ export const esAiMessages: Messages = {
   'ai.providers.apiKey.decrypting': 'Descifrando...',
   'ai.providers.baseUrl': 'URL base',
   'ai.providers.baseUrl.anthropicHelp': 'Compatible con Anthropic: host con o sin /v1 (por ejemplo https://gateway.example o https://gateway.example/v1). La detección y el chat usan /v1/models y /v1/messages.',
+  'ai.providers.baseUrl.ollamaHelp': 'Ollama local: http://localhost:11434/v1 (sin API key). Ollama Cloud: https://ollama.com/v1 y tu clave de Cloud.',
   'ai.providers.skipTLSVerify': 'Omitir la verificación del certificado TLS (para certificados autofirmados)',
   'ai.providers.defaultModel': 'Modelo predeterminado',
   'ai.providers.defaultModel.placeholder': 'p. ej. gpt-4o, claude-sonnet-4-20250514',

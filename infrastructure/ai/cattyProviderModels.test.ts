@@ -45,3 +45,31 @@ test('fetchProviderModelCatalog merges discovered models and caches them', async
   assert.equal(cached.fetched, true);
   assert.ok(cached.models.some((model) => model.id === 'deepseek-reasoner'));
 });
+
+test('fetchProviderModelCatalog appends /v1 when listing Ollama Cloud from a bare origin', async () => {
+  clearProviderModelCatalogCache();
+  const requested: string[] = [];
+  const catalog = await fetchProviderModelCatalog(
+    {
+      id: 'ollama-cloud',
+      providerId: 'ollama',
+      name: 'Ollama',
+      defaultModel: 'deepseek-v4-flash:0731',
+      baseURL: 'https://ollama.com',
+      apiKey: 'cloud-key',
+      enabled: true,
+    },
+    {
+      aiFetch: async (url) => {
+        requested.push(url);
+        return {
+          ok: true,
+          data: JSON.stringify({ data: [{ id: 'deepseek-v4-flash:0731' }] }),
+        };
+      },
+    },
+  );
+  assert.deepEqual(requested, ['https://ollama.com/v1/models']);
+  assert.equal(catalog.fetched, true);
+  assert.ok(catalog.models.some((model) => model.id === 'deepseek-v4-flash:0731'));
+});
