@@ -14,6 +14,22 @@ const ANTHROPIC_THINKING_BUDGET: Record<Exclude<CattyReasoningLevel, 'off'>, num
 
 export type CattyReasoningProviderOptions = Record<string, Record<string, unknown>>;
 
+/** Extra completion tokens the SDK will add on top of maxTokens for thinking. */
+export function estimateReasoningOutputReserve(
+  options: CattyReasoningProviderOptions | undefined,
+): number {
+  if (!options) return 0;
+  const anthropicThinking = options.anthropic?.thinking as { budgetTokens?: unknown } | undefined;
+  if (typeof anthropicThinking?.budgetTokens === 'number' && anthropicThinking.budgetTokens > 0) {
+    return Math.ceil(anthropicThinking.budgetTokens);
+  }
+  const googleConfig = options.google?.thinkingConfig as { thinkingBudget?: unknown } | undefined;
+  if (typeof googleConfig?.thinkingBudget === 'number' && googleConfig.thinkingBudget > 0) {
+    return Math.ceil(googleConfig.thinkingBudget);
+  }
+  return 0;
+}
+
 const GEMINI_25_THINKING_BUDGET: Record<Exclude<CattyReasoningLevel, 'off'>, number> = {
   low: 1_024,
   medium: 8_192,

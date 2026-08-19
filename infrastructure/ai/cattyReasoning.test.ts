@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildCattyReasoningProviderOptions,
   cattyReasoningLevelsForSelection,
+  estimateReasoningOutputReserve,
   openaiModelLikelySupportsReasoning,
   openaiModelSupportsNoneReasoning,
   resolveVisibleCattyThinkingLevel,
@@ -95,6 +96,34 @@ test('resolveVisibleCattyThinkingLevel drops stale levels after a model switch',
   assert.equal(
     resolveVisibleCattyThinkingLevel(['off', 'low', 'medium', 'high'], 'high'),
     'high',
+  );
+});
+
+test('estimateReasoningOutputReserve folds thinking budgets into the output reserve', () => {
+  assert.equal(estimateReasoningOutputReserve(undefined), 0);
+  assert.equal(
+    estimateReasoningOutputReserve(
+      buildCattyReasoningProviderOptions({ providerId: 'anthropic' }, 'high', 'claude-opus-4-6'),
+    ),
+    20_000,
+  );
+  assert.equal(
+    estimateReasoningOutputReserve(
+      buildCattyReasoningProviderOptions({ providerId: 'anthropic' }, 'medium', 'claude-sonnet-4-6'),
+    ),
+    10_000,
+  );
+  assert.equal(
+    estimateReasoningOutputReserve(
+      buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-2.5-pro'),
+    ),
+    16_384,
+  );
+  assert.equal(
+    estimateReasoningOutputReserve(
+      buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'high', 'gpt-5.5'),
+    ),
+    0,
   );
 });
 
