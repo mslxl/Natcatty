@@ -163,7 +163,7 @@ export const enCoreMessages: Messages = {
   'settings.appLock.enable': 'Enable app lock',
   'settings.appLock.enableDesc': 'Lock on startup and after the selected inactivity timeout.',
   'settings.appLock.timeout': 'Inactivity timeout',
-  'settings.appLock.timeoutDesc': 'Lock Netcatty when there is no keyboard, pointer, wheel, touch, or focus activity.',
+  'settings.appLock.timeoutDesc': 'Lock after inactivity, or when the window is closed to the tray. Never skips both.',
   'settings.appLock.timeout.0': 'Never lock automatically',
   'settings.appLock.timeout.1': '1 minute',
   'settings.appLock.timeout.5': '5 minutes',
