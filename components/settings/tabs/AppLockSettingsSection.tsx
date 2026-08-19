@@ -230,7 +230,7 @@ export const AppLockSettingsSection: React.FC<AppLockSettingsSectionProps> = ({
 
   return (
     <>
-      <SectionHeader title={t('settings.appLock.title')} />
+      <SectionHeader title={t('settings.appLock.title')} anchorId="system-app-lock" />
       <SettingCard divided>
         {!hasPassword ? (
           <SettingRow

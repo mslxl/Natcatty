@@ -26,6 +26,12 @@ test("app lock setup starts with password setup instead of a misleading enable t
   );
 });
 
+test("app lock section exposes settings-search anchors", () => {
+  const source = readAppLockSectionSource();
+
+  assert.match(source, /anchorId="system-app-lock"/);
+});
+
 test("app lock disable handler uses its modal current password field", () => {
   const source = readAppLockSectionSource();
   const handlerStart = source.indexOf("const handleDisable = useCallback");
