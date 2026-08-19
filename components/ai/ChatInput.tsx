@@ -940,9 +940,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     ],
   );
   const selectedThinking = hasProviderSwitcher
-    ? (thinkingLevel
-      ? thinkingLevel
-      : (thinkingLevels.includes('off') ? 'off' : undefined))
+    ? thinkingLevel
     : selectedPresetThinking;
   const visibleThinking = hasProviderSwitcher
     ? (selectedThinking
