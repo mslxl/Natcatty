@@ -6,12 +6,14 @@ const {
   TRAY_PANEL_HEIGHT,
   isValidRect,
   resolveTrayAnchor,
+  resolveTrayDisplayPoint,
   placeTrayPanel,
 } = require("./trayPanelBounds.cjs");
 
 const BOTTOM_WORK_AREA = { x: 0, y: 0, width: 1920, height: 1040 };
 const TOP_TRAY = { x: 900, y: 0, width: 24, height: 24 };
 const BOTTOM_TRAY = { x: 1680, y: 1044, width: 24, height: 24 };
+const OTHER_MONITOR_CURSOR = { x: 2600, y: 400 };
 
 test("isValidRect rejects zero-size Windows getBounds placeholders", () => {
   assert.equal(isValidRect({ x: 0, y: 0, width: 0, height: 0 }), false);
@@ -20,16 +22,46 @@ test("isValidRect rejects zero-size Windows getBounds placeholders", () => {
 
 test("resolveTrayAnchor keeps event bounds that match the cursor", () => {
   assert.deepEqual(
-    resolveTrayAnchor(BOTTOM_TRAY, { x: 1690, y: 1050 }, BOTTOM_WORK_AREA),
+    resolveTrayAnchor({
+      eventBounds: BOTTOM_TRAY,
+      cursorPoint: { x: 1690, y: 1050 },
+      workArea: BOTTOM_WORK_AREA,
+    }),
     BOTTOM_TRAY,
   );
 });
 
-test("resolveTrayAnchor ignores a top-left y=0 lie when the cursor is on a bottom taskbar", () => {
+test("resolveTrayAnchor keeps event bounds when the cursor is on another monitor", () => {
+  assert.deepEqual(
+    resolveTrayAnchor({
+      eventBounds: BOTTOM_TRAY,
+      trayBounds: { x: 0, y: 0, width: 0, height: 0 },
+      cursorPoint: OTHER_MONITOR_CURSOR,
+      workArea: BOTTOM_WORK_AREA,
+    }),
+    BOTTOM_TRAY,
+  );
+});
+
+test("resolveTrayDisplayPoint uses event bounds even when the cursor is elsewhere", () => {
+  assert.deepEqual(
+    resolveTrayDisplayPoint({
+      eventBounds: BOTTOM_TRAY,
+      cursorPoint: OTHER_MONITOR_CURSOR,
+    }),
+    { x: BOTTOM_TRAY.x, y: BOTTOM_TRAY.y },
+  );
+});
+
+test("resolveTrayAnchor ignores a top-left y=0 getBounds lie when the cursor is on a bottom taskbar", () => {
   const lied = { x: 1680, y: 0, width: 24, height: 24 };
   const cursor = { x: 1692, y: 1058 };
   assert.deepEqual(
-    resolveTrayAnchor(lied, cursor, BOTTOM_WORK_AREA),
+    resolveTrayAnchor({
+      trayBounds: lied,
+      cursorPoint: cursor,
+      workArea: BOTTOM_WORK_AREA,
+    }),
     { x: 1692, y: 1058, width: 1, height: 1 },
   );
 });
@@ -37,7 +69,12 @@ test("resolveTrayAnchor ignores a top-left y=0 lie when the cursor is on a botto
 test("resolveTrayAnchor falls back to the cursor when tray bounds are empty", () => {
   const cursor = { x: 1700, y: 1040 };
   assert.deepEqual(
-    resolveTrayAnchor({ x: 0, y: 0, width: 0, height: 0 }, cursor, BOTTOM_WORK_AREA),
+    resolveTrayAnchor({
+      eventBounds: { x: 0, y: 0, width: 0, height: 0 },
+      trayBounds: { x: 0, y: 0, width: 0, height: 0 },
+      cursorPoint: cursor,
+      workArea: BOTTOM_WORK_AREA,
+    }),
     { x: 1700, y: 1040, width: 1, height: 1 },
   );
 });
@@ -94,11 +131,12 @@ test("placeTrayPanel clamps to the work area on the trailing edge", () => {
 
 test("Windows y=0 lie plus cursor still docks above the taskbar at designed size", () => {
   const cursor = { x: 1700, y: 1040 };
-  const anchor = resolveTrayAnchor(
-    { x: 0, y: 0, width: 0, height: 0 },
-    cursor,
-    BOTTOM_WORK_AREA,
-  );
+  const anchor = resolveTrayAnchor({
+    eventBounds: { x: 0, y: 0, width: 0, height: 0 },
+    trayBounds: { x: 0, y: 0, width: 0, height: 0 },
+    cursorPoint: cursor,
+    workArea: BOTTOM_WORK_AREA,
+  });
   const placed = placeTrayPanel({ anchor, workArea: BOTTOM_WORK_AREA });
   assert.deepEqual(
     placed,

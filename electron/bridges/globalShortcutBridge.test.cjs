@@ -1607,6 +1607,40 @@ test("Windows right-click ignores a y=0 tray.getBounds lie and uses the cursor",
   });
 });
 
+test("Windows tray activation keeps event bounds when the cursor is on another monitor", async () => {
+  await withPlatform("win32", async () => {
+    const { placeTrayPanel } = require("./trayPanelBounds.cjs");
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const FakePanelWindow = installFakeTrayPanelWindow(electronModule);
+    const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
+    const eventBounds = { x: 1680, y: 1044, width: 24, height: 24 };
+    const nearestCalls = [];
+    electronModule.screen = {
+      getCursorScreenPoint: () => ({ x: 2600, y: 400 }),
+      getDisplayNearestPoint: (point) => {
+        nearestCalls.push(point);
+        return { workArea };
+      },
+    };
+
+    try {
+      await enableCloseToTray(bridge, electronModule);
+      const trayInstance = bridge.getTray();
+      trayInstance.getBounds = () => ({ x: 0, y: 0, width: 0, height: 0 });
+      trayInstance.handlers.get("right-click")({}, eventBounds);
+
+      assert.deepEqual(nearestCalls[0], { x: eventBounds.x, y: eventBounds.y });
+      assert.deepEqual(
+        FakePanelWindow.instances[0].setBoundsCalls[0],
+        placeTrayPanel({ anchor: eventBounds, workArea, width: 360, height: 520 }),
+      );
+    } finally {
+      bridge.cleanup();
+    }
+  });
+});
+
 test("macOS tray click still opens the panel below a top menu-bar icon", async () => {
   await withPlatform("darwin", async () => {
     const { placeTrayPanel } = require("./trayPanelBounds.cjs");

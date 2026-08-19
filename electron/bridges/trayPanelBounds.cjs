@@ -1,10 +1,13 @@
 /**
  * Tray panel size and placement.
  *
- * The panel is a fixed 360x520 overlay. Windows right-click often reports
- * stale or zero `tray.getBounds()` (y=0 while the icon is on a bottom
- * taskbar). Electron already passes live bounds on click / right-click;
- * those plus the cursor are the anchors we trust.
+ * The panel is a fixed 360x520 overlay. Electron click / right-click events
+ * already carry live tray bounds; those are trusted even when the cursor is
+ * on another monitor (keyboard / accessibility activation).
+ *
+ * `tray.getBounds()` on Windows is a weaker fallback: it often reports a
+ * zero-size rect or y=0 while the icon sits on a bottom taskbar. Only that
+ * fallback is checked against the cursor.
  */
 
 const TRAY_PANEL_WIDTH = 360;
@@ -32,6 +35,15 @@ function isValidPoint(point) {
   return Boolean(point && isFiniteNumber(point.x) && isFiniteNumber(point.y));
 }
 
+function copyRect(rect) {
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
 function rectNearPoint(rect, point, slop = ANCHOR_CURSOR_SLOP_PX) {
   if (!isValidRect(rect) || !isValidPoint(point)) return false;
   return point.x >= rect.x - slop
@@ -42,17 +54,22 @@ function rectNearPoint(rect, point, slop = ANCHOR_CURSOR_SLOP_PX) {
 
 /**
  * Pick an anchor rectangle for the tray icon.
- * Prefer event bounds when they sit near the cursor; otherwise use the cursor
- * (Windows y=0 / zero-size getBounds). Last resort: work-area trailing edge.
+ *
+ * Event bounds win unconditionally when they are a usable rect. Cursor
+ * proximity is only used to reject a stale `tray.getBounds()` fallback.
  */
-function resolveTrayAnchor(trayBounds, cursorPoint, workArea) {
+function resolveTrayAnchor({
+  eventBounds,
+  trayBounds,
+  cursorPoint,
+  workArea,
+} = {}) {
+  if (isValidRect(eventBounds)) {
+    return copyRect(eventBounds);
+  }
+
   if (isValidRect(trayBounds) && (!isValidPoint(cursorPoint) || rectNearPoint(trayBounds, cursorPoint))) {
-    return {
-      x: trayBounds.x,
-      y: trayBounds.y,
-      width: trayBounds.width,
-      height: trayBounds.height,
-    };
+    return copyRect(trayBounds);
   }
 
   if (isValidPoint(cursorPoint)) {
@@ -66,6 +83,23 @@ function resolveTrayAnchor(trayBounds, cursorPoint, workArea) {
     width: 1,
     height: 1,
   };
+}
+
+/**
+ * Display lookup point. Event bounds choose the monitor; otherwise the
+ * cursor (so a y=0 getBounds lie cannot pick the wrong screen).
+ */
+function resolveTrayDisplayPoint({ eventBounds, trayBounds, cursorPoint } = {}) {
+  if (isValidRect(eventBounds)) {
+    return { x: eventBounds.x, y: eventBounds.y };
+  }
+  if (isValidPoint(cursorPoint)) {
+    return { x: cursorPoint.x, y: cursorPoint.y };
+  }
+  if (isValidRect(trayBounds)) {
+    return { x: trayBounds.x, y: trayBounds.y };
+  }
+  return { x: 0, y: 0 };
 }
 
 function clamp(value, min, max) {
@@ -129,5 +163,6 @@ module.exports = {
   TRAY_PANEL_GAP,
   isValidRect,
   resolveTrayAnchor,
+  resolveTrayDisplayPoint,
   placeTrayPanel,
 };

@@ -8,8 +8,8 @@ const fs = require("node:fs");
 const {
   TRAY_PANEL_WIDTH,
   TRAY_PANEL_HEIGHT,
-  isValidRect,
   resolveTrayAnchor,
+  resolveTrayDisplayPoint,
   placeTrayPanel,
 } = require("./trayPanelBounds.cjs");
 
@@ -498,18 +498,16 @@ function showTrayPanel(eventBounds) {
   const win = ensureTrayPanelWindow();
 
   const cursorPoint = readCursorPoint();
-  const trayBounds = isValidRect(eventBounds) ? eventBounds : readTrayBounds();
-  // Prefer the cursor for display lookup: Windows getBounds() can report y=0
-  // while the icon is on a bottom taskbar, which would pick the wrong monitor.
-  const displayPoint = cursorPoint && Number.isFinite(cursorPoint.x) && Number.isFinite(cursorPoint.y)
-    ? cursorPoint
-    : isValidRect(trayBounds)
-      ? { x: trayBounds.x, y: trayBounds.y }
-      : { x: 0, y: 0 };
-  const display = screen.getDisplayNearestPoint(displayPoint);
+  const trayBounds = readTrayBounds();
+  // Event bounds choose the monitor. Cursor is only the fallback so a
+  // Windows getBounds() y=0 lie cannot pick the wrong screen; keyboard /
+  // accessibility activation must not follow an unrelated pointer.
+  const display = screen.getDisplayNearestPoint(
+    resolveTrayDisplayPoint({ eventBounds, trayBounds, cursorPoint }),
+  );
   const workArea = display.workArea;
   const panelBounds = placeTrayPanel({
-    anchor: resolveTrayAnchor(trayBounds, cursorPoint, workArea),
+    anchor: resolveTrayAnchor({ eventBounds, trayBounds, cursorPoint, workArea }),
     workArea,
     width: TRAY_PANEL_WIDTH,
     height: TRAY_PANEL_HEIGHT,
