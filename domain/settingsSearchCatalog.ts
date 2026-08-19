@@ -802,6 +802,13 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     keywords: ["proxy", "http", "代理"],
   },
   {
+    id: "system-app-lock",
+    tab: "system",
+    labelKey: "settings.appLock.title",
+    descriptionKey: "settings.appLock.description",
+    keywords: ["app lock", "applock", "lock", "应用锁", "锁屏", "idle", "timeout", "无操作"],
+  },
+  {
     id: "system-credentials",
     tab: "system",
     labelKey: "settings.system.credentials.title",
