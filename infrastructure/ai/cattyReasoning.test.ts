@@ -76,6 +76,10 @@ test('cattyReasoningLevelsForSelection hides the chip unless the model can take 
   );
   assert.deepEqual(
     cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-pro'),
+    ['low', 'high'],
+  );
+  assert.deepEqual(
+    cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3.1-pro-preview'),
     ['low', 'medium', 'high'],
   );
   assert.deepEqual(
@@ -153,6 +157,10 @@ test('buildCattyReasoningProviderOptions maps Gemini thinking levels', () => {
   assert.deepEqual(
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'medium', 'gemini-3-pro'),
     { google: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } } },
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'medium', 'gemini-3.1-pro-preview'),
+    { google: { thinkingConfig: { thinkingLevel: 'medium', includeThoughts: true } } },
   );
   assert.deepEqual(
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'off', 'gemini-3-flash'),

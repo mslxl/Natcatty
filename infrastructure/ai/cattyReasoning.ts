@@ -156,7 +156,9 @@ export function cattyReasoningLevelsForSelection(
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return [];
     // Gemini 3 Flash cannot disable thinking; lowest advertised level is minimal.
     if (isGemini3Flash(modelId)) return ['minimal', 'low', 'medium', 'high'];
-    // Gemini 3 Pro / 2.5 Pro reject a true Off; omit it rather than lying.
+    // Original Gemini 3 Pro only accepts Low/High; 3.1 Pro keeps Medium.
+    if (isGemini3Pro(modelId) && !isGemini31Model(modelId)) return ['low', 'high'];
+    // Gemini 3.1 Pro / 2.5 Pro reject a true Off; omit it rather than lying.
     if (!googleModelAllowsDisabledThinking(modelId)) return ['low', 'medium', 'high'];
     return CATTY_REASONING_LEVELS;
   }
@@ -186,6 +188,15 @@ function isGemini3Flash(modelId: string): boolean {
   return isGemini3Model(id) && /flash/.test(id);
 }
 
+function isGemini3Pro(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  return isGemini3Model(id) && /pro/.test(id) && !/flash/.test(id);
+}
+
+function isGemini31Model(modelId: string): boolean {
+  return /gemini-3\.1/.test(modelId.trim().toLowerCase());
+}
+
 function gemini3ThinkingLevel(
   modelId: string,
   level: string,
@@ -195,7 +206,7 @@ function gemini3ThinkingLevel(
   const isFlash = /flash/.test(id);
   if (raw === 'minimal') return isFlash ? 'minimal' : 'low';
   if (raw === 'off') return isFlash ? 'minimal' : undefined;
-  if (!isFlash && /pro/.test(id) && raw === 'medium') return 'high';
+  if (!isFlash && /pro/.test(id) && raw === 'medium' && !isGemini31Model(id)) return 'high';
   if (raw === 'low' || raw === 'medium' || raw === 'high') return raw;
   return undefined;
 }
