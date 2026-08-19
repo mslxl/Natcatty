@@ -453,6 +453,41 @@ test("runCursorTurn cancels a late Cursor run when aborted while sending", async
   assert.equal(cancelled, true);
 });
 
+test("mapCursorModels prefers advertised effort parameter values over fallbacks", () => {
+  assert.deepEqual(
+    mapCursorModels([
+      {
+        id: "custom-reasoner",
+        displayName: "Custom Reasoner",
+        parameters: [
+          { id: "effort", values: [{ value: "low" }, { value: "xhigh" }] },
+        ],
+      },
+      {
+        id: "gpt-5",
+        displayName: "GPT-5",
+        parameters: [
+          { id: "effort", values: [{ value: "low" }, { value: "high" }] },
+        ],
+      },
+    ]),
+    [
+      {
+        id: "custom-reasoner",
+        name: "Custom Reasoner",
+        thinkingLevels: ["low", "xhigh"],
+        defaultThinkingLevel: "low",
+      },
+      {
+        id: "gpt-5",
+        name: "GPT-5",
+        thinkingLevels: ["low", "high"],
+        defaultThinkingLevel: "low",
+      },
+    ],
+  );
+});
+
 test("mapCursorModels maps display names and effort variants into thinkingLevels", () => {
   assert.deepEqual(
     mapCursorModels([

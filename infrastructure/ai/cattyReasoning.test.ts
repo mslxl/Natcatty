@@ -5,6 +5,7 @@ import {
   buildCattyReasoningProviderOptions,
   cattyReasoningLevelsForSelection,
   openaiModelLikelySupportsReasoning,
+  openaiModelSupportsNoneReasoning,
 } from './cattyReasoning';
 
 test('buildCattyReasoningProviderOptions is omitted when effort is off', () => {
@@ -34,10 +35,20 @@ test('buildCattyReasoningProviderOptions omits reasoningEffort for non-reasoning
     buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'high', 'gpt-5.5'),
     { openai: { reasoningEffort: 'high' } },
   );
-  assert.deepEqual(
+  assert.equal(
     buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'off', 'o3-mini'),
+    undefined,
+  );
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'off', 'gpt-5'),
+    undefined,
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'off', 'gpt-5.5'),
     { openai: { reasoningEffort: 'none' } },
   );
+  assert.equal(openaiModelSupportsNoneReasoning('o4-mini'), false);
+  assert.equal(openaiModelSupportsNoneReasoning('gpt-5.1-codex'), true);
 });
 
 test('cattyReasoningLevelsForSelection hides the chip unless the model can take effort', () => {

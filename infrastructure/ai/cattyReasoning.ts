@@ -31,7 +31,7 @@ export function buildCattyReasoningProviderOptions(
   if (style === 'openai') {
     if (modelId && !openaiModelLikelySupportsReasoning(modelId)) return undefined;
     if (level === 'off') {
-      if (modelId && openaiModelLikelySupportsReasoning(modelId)) {
+      if (modelId && openaiModelSupportsNoneReasoning(modelId)) {
         return { openai: { reasoningEffort: 'none' } };
       }
       return undefined;
@@ -89,6 +89,16 @@ export function buildCattyReasoningProviderOptions(
 export function googleModelLikelySupportsThinking(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
   return /gemini-3|gemini-2\.5|gemini-2\.0-flash-thinking|thinking/.test(id);
+}
+
+/**
+ * `reasoning_effort: "none"` is only valid on GPT-5.1+ (and later minors).
+ * Bare gpt-5 / o3 / o4-mini accept low|medium|high (and sometimes minimal),
+ * but reject none.
+ */
+export function openaiModelSupportsNoneReasoning(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  return /gpt-5\.(?:[1-9]\d*)/.test(id);
 }
 
 /** OpenAI-compat models that accept `reasoning_effort` (o-series, GPT-5, reasoners). */

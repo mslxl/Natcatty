@@ -456,31 +456,40 @@ function modelVariantId(modelId, params) {
   return qs ? `${modelId}?${qs}` : modelId;
 }
 
+function collectCursorEffortLevels(model) {
+  const levels = [];
+  const add = (raw) => {
+    const level = String(raw || "").toLowerCase();
+    if (CURSOR_REASONING_EFFORTS.has(level) && !levels.includes(level)) levels.push(level);
+  };
+  const effortParam = (model.parameters || []).find((param) => param?.id === "effort");
+  if (effortParam && Array.isArray(effortParam.values) && effortParam.values.length > 0) {
+    for (const item of effortParam.values) add(item?.value);
+    return levels;
+  }
+  for (const level of CURSOR_FALLBACK_THINKING[model.id] || []) add(level);
+  if (levels.length > 0) return levels;
+  for (const variant of model.variants || []) {
+    const params = Array.isArray(variant.params) ? variant.params : [];
+    const effortOnly = params.length === 1 && params[0]?.id === "effort" && params[0]?.value;
+    if (effortOnly) add(params[0].value);
+  }
+  return levels;
+}
+
 function mapCursorModels(models) {
   const out = [];
   if (!Array.isArray(models)) return out;
   for (const model of models) {
     if (!model?.id) continue;
     const name = model.displayName || model.name || model.id;
-    const effortLevels = [];
     const extraVariants = [];
     for (const variant of model.variants || []) {
       const params = Array.isArray(variant.params) ? variant.params : [];
       const effortOnly = params.length === 1 && params[0]?.id === "effort" && params[0]?.value;
-      if (effortOnly) {
-        const level = String(params[0].value).toLowerCase();
-        if (CURSOR_REASONING_EFFORTS.has(level) && !effortLevels.includes(level)) {
-          effortLevels.push(level);
-        }
-        continue;
-      }
-      extraVariants.push(variant);
+      if (!effortOnly) extraVariants.push(variant);
     }
-    const fallbackLevels = CURSOR_FALLBACK_THINKING[model.id] || [];
-    const thinkingLevels = [];
-    for (const level of [...effortLevels, ...fallbackLevels]) {
-      if (!thinkingLevels.includes(level)) thinkingLevels.push(level);
-    }
+    const thinkingLevels = collectCursorEffortLevels(model);
     out.push({
       id: model.id,
       name,
