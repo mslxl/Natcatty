@@ -421,6 +421,8 @@ function ensureTrayPanelWindow() {
     maximizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // Native shadow only. CSS box-shadow on this transparent overlay
+    // double-composites on macOS as an extra outline under the card.
     hasShadow: true,
     // Transparent host + clear backdrop so CSS rounded-lg corners are truly
     // see-through. On Windows, disable OS rounding so it does not stack under
