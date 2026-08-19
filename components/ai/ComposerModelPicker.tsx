@@ -216,7 +216,11 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
             onKeyDown={(event) => {
               if (event.key === 'Enter' && trimmedQuery) {
                 event.preventDefault();
-                selectModel(grouped.pinned[0]?.id ?? grouped.recent[0]?.id ?? filtered[0]?.id ?? trimmedQuery);
+                const nextId = grouped.pinned[0]?.id
+                  ?? grouped.recent[0]?.id
+                  ?? filtered[0]?.id
+                  ?? (showCustom ? trimmedQuery : undefined);
+                if (nextId) selectModel(nextId);
               }
             }}
             placeholder={t('ai.chat.searchModels')}
