@@ -49,6 +49,10 @@ test('buildCattyReasoningProviderOptions omits reasoningEffort for non-reasoning
     buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'off', 'gpt-5.5'),
     { openai: { reasoningEffort: 'none' } },
   );
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, undefined, 'gpt-5.5'),
+    undefined,
+  );
   assert.equal(openaiModelSupportsNoneReasoning('o4-mini'), false);
   assert.equal(openaiModelSupportsNoneReasoning('gpt-5.1-codex'), true);
 });
@@ -186,6 +190,10 @@ test('buildCattyReasoningProviderOptions maps Gemini thinking levels', () => {
   assert.deepEqual(
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'off', 'gemini-2.5-flash'),
     { google: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } },
+  );
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, undefined, 'gemini-2.5-flash'),
+    undefined,
   );
   assert.equal(
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high'),

@@ -298,7 +298,7 @@ export function useAIState() {
   const setAgentThinking = useCallback((agentId: string, thinkingLevel: string) => {
     setAgentThinkingMapRaw((prev) => {
       const next = { ...prev };
-      if (thinkingLevel && thinkingLevel !== 'off') {
+      if (thinkingLevel) {
         next[agentId] = thinkingLevel;
       } else {
         delete next[agentId];

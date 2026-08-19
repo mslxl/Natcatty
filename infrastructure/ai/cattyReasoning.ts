@@ -42,7 +42,9 @@ export function buildCattyReasoningProviderOptions(
   modelId?: string,
 ): CattyReasoningProviderOptions | undefined {
   if (!provider) return undefined;
-  const level = normalizeCattyReasoningLevel(effort);
+  const rawEffort = typeof effort === 'string' ? effort.trim() : '';
+  if (!rawEffort) return undefined;
+  const level = normalizeCattyReasoningLevel(rawEffort);
   const style: ProviderStyle = resolveProviderStyle(provider);
   if (style === 'openai') {
     if (modelId && !openaiModelLikelySupportsReasoning(modelId)) return undefined;
@@ -69,8 +71,6 @@ export function buildCattyReasoningProviderOptions(
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return undefined;
     if (isGemini3Model(modelId)) {
-      const rawEffort = typeof effort === 'string' ? effort.trim() : '';
-      if (!rawEffort) return undefined;
       const thinkingLevel = gemini3ThinkingLevel(modelId, rawEffort);
       if (!thinkingLevel) return undefined;
       return {
