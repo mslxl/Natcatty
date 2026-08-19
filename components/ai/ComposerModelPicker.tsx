@@ -21,7 +21,7 @@ export interface ComposerModelPickerProps {
   selectedModelId?: string;
   modelPresets?: AgentModelPreset[];
   prefs: ComposerModelPrefs;
-  onSelectProviderModel?: (providerId: string, modelId: string) => void;
+  onSelectProviderModel?: (providerId: string, modelId: string, contextWindow?: number) => void;
   onSelectModel?: (modelId: string) => void;
   onTogglePinned: (entry: ComposerModelPrefEntry) => void;
 }
@@ -139,8 +139,9 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
   );
 
   const selectModel = (modelId: string) => {
+    const contextWindow = models.find((model) => model.id === modelId)?.contextWindow;
     if (hasProviders && previewProvider) {
-      onSelectProviderModel?.(previewProvider.id, modelId);
+      onSelectProviderModel?.(previewProvider.id, modelId, contextWindow);
       return;
     }
     onSelectModel?.(modelId);

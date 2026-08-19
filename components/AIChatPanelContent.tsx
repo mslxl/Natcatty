@@ -72,7 +72,7 @@ interface AIChatPanelContentProps {
   cattyConfiguredProviders: ProviderConfig[];
   effectiveActiveProvider?: ProviderConfig;
   effectiveActiveModelId?: string;
-  handleAgentProviderModelSelect: (providerId: string, modelId: string) => void;
+  handleAgentProviderModelSelect: (providerId: string, modelId: string, contextWindow?: number) => void;
   selectedCattyThinking?: string;
   handleCattyThinkingSelect?: (level: string) => void;
   files: UploadedFile[];

@@ -13,6 +13,7 @@ export interface ComposerPickerModel {
   id: string;
   name: string;
   description?: string;
+  contextWindow?: number;
 }
 
 export interface ComposerModelPrefEntry {
@@ -138,13 +139,22 @@ export function mergeComposerModels(
       if (!id) continue;
       const existing = byId.get(id);
       if (!existing) {
-        byId.set(id, { id, name: model.name || id, description: model.description });
+        byId.set(id, {
+          id,
+          name: model.name || id,
+          ...(model.description ? { description: model.description } : {}),
+          ...(model.contextWindow != null ? { contextWindow: model.contextWindow } : {}),
+        });
         continue;
       }
+      const contextWindow = existing.contextWindow ?? model.contextWindow;
       byId.set(id, {
         id,
         name: existing.name === existing.id && model.name ? model.name : existing.name,
-        description: existing.description || model.description,
+        ...(existing.description || model.description
+          ? { description: existing.description || model.description }
+          : {}),
+        ...(contextWindow != null ? { contextWindow } : {}),
       });
     }
   }

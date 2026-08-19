@@ -99,7 +99,7 @@ export interface ProviderSwitcherConfig {
   /** Currently bound model id under the selected provider. */
   selectedModelId?: string;
   /** Fires when the user picks a (providerId, modelId) pair. */
-  onSelect: (providerId: string, modelId: string) => void;
+  onSelect: (providerId: string, modelId: string, contextWindow?: number) => void;
 }
 
 type ComposerHasTextStore = {
@@ -1426,8 +1426,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     selectedModelId={hasProviderSwitcher ? providerSwitcher?.selectedModelId : selectedBaseModelId}
                     modelPresets={hasProviderSwitcher ? undefined : modelPresets}
                     prefs={modelPrefs}
-                    onSelectProviderModel={(providerId, modelId) => {
-                      providerSwitcher?.onSelect(providerId, modelId);
+                    onSelectProviderModel={(providerId, modelId, contextWindow) => {
+                      providerSwitcher?.onSelect(providerId, modelId, contextWindow);
                       setModelPrefs(rememberComposerRecentModel(pickerScope, { providerId, modelId }));
                       closeAllMenus();
                     }}

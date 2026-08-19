@@ -39,6 +39,7 @@ import {
   tryBeginSendForKey,
 } from './ai/draftSendGate';
 import { draftsByScopeEqualIgnoringComposerText, selectDraftForAgentSwitch } from '../application/state/aiDraftState';
+import { sanitizeContextWindow } from '../infrastructure/ai/contextCompaction';
 import {
   buildPromptWithTerminalSelectionAttachments,
   isTerminalSelectionAttachment,
@@ -275,6 +276,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   setAgentProvider,
   agentThinkingMap,
   setAgentThinking,
+  updateProvider,
   globalPermissionMode,
   setGlobalPermissionMode,
   commandBlocklist,
@@ -765,11 +767,21 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     && Boolean(effectiveActiveModelId.trim());
 
   const handleAgentProviderModelSelect = useCallback(
-    (providerId: string, modelId: string) => {
+    (providerId: string, modelId: string, contextWindow?: number) => {
       setAgentProvider(currentAgentId, providerId);
       setAgentModel(currentAgentId, modelId);
+      const sanitized = sanitizeContextWindow(contextWindow);
+      if (!updateProvider || sanitized == null) return;
+      const provider = providers.find((item) => item.id === providerId);
+      if (!provider) return;
+      updateProvider(providerId, {
+        modelContextWindows: {
+          ...(provider.modelContextWindows ?? {}),
+          [modelId]: sanitized,
+        },
+      });
     },
-    [currentAgentId, setAgentProvider, setAgentModel],
+    [currentAgentId, providers, setAgentProvider, setAgentModel, updateProvider],
   );
 
   const providerDisplayName = effectiveActiveProvider?.name ?? '';
@@ -1737,6 +1749,7 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'setAgentProvider',
   'agentThinkingMap',
   'setAgentThinking',
+  'updateProvider',
   'globalPermissionMode',
   'setGlobalPermissionMode',
   'commandBlocklist',

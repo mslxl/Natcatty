@@ -588,6 +588,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     setAgentProvider={aiConfig.setAgentProvider}
                     agentThinkingMap={aiConfig.agentThinkingMap}
                     setAgentThinking={aiConfig.setAgentThinking}
+                    updateProvider={aiConfig.updateProvider}
                     globalPermissionMode={aiConfig.globalPermissionMode}
                     setGlobalPermissionMode={aiConfig.setGlobalPermissionMode}
                     commandBlocklist={aiConfig.commandBlocklist}

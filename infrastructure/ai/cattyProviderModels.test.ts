@@ -59,7 +59,7 @@ test('fetchProviderModelCatalog discovers models when baseURL is omitted', async
         requested.push(url);
         return {
           ok: true,
-          data: JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-5.5' }] }),
+          data: JSON.stringify({ data: [{ id: 'gpt-4o' }, { id: 'gpt-5.5', context_length: 200000 }] }),
         };
       },
     },
@@ -67,6 +67,7 @@ test('fetchProviderModelCatalog discovers models when baseURL is omitted', async
   assert.deepEqual(requested, ['https://api.openai.com/v1/models']);
   assert.equal(catalog.fetched, true);
   assert.ok(catalog.models.some((model) => model.id === 'gpt-5.5'));
+  assert.equal(catalog.models.find((model) => model.id === 'gpt-5.5')?.contextWindow, 200000);
 });
 
 test('providerModelCacheKey changes when the stored API key changes', () => {
