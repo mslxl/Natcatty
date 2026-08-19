@@ -201,12 +201,11 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
             <span className="min-w-0 flex-1 truncate text-foreground/88">{previewProvider.name}</span>
             <ChevronRight size={12} className="text-muted-foreground/50 shrink-0" />
           </button>
-          <div className="mx-2 my-1 border-t border-border/40" />
         </>
       )}
 
       <div className="px-2 pb-1">
-        <div className="flex h-7 items-center gap-1.5 rounded-md border border-border/40 bg-muted/15 px-2">
+        <div className="flex h-7 items-center gap-1.5 rounded-md bg-muted/40 px-2">
           <Search size={11} className="text-muted-foreground/50 shrink-0" />
           <input
             autoFocus

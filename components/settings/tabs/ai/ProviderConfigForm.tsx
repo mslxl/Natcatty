@@ -55,6 +55,9 @@ async function compressIconFileToDataUrl(file: File): Promise<string> {
 
 const STYLE_OPTIONS: ReadonlyArray<ProviderStyle> = ["anthropic", "openai", "google"];
 
+/** Same box as the h-8 fields above. Transparent border keeps primary aligned with outline. */
+const PROVIDER_ACTION_CLASS = "box-border h-8 px-3 gap-1.5 text-sm font-medium leading-none";
+
 export const ProviderConfigForm: React.FC<{
   provider: ProviderConfig;
   onSave: (updates: Partial<ProviderConfig>) => void;
@@ -671,20 +674,26 @@ export const ProviderConfigForm: React.FC<{
       {/* Actions */}
       <div className="flex flex-col gap-2 pt-1">
         <div className="flex items-center gap-2">
-          <Button variant="default" size="sm" onClick={() => void handleSave()}>
-            <Check size={14} className="mr-1.5" />
+          <Button
+            variant="default"
+            size="sm"
+            className={cn(PROVIDER_ACTION_CLASS, "border border-transparent")}
+            onClick={() => void handleSave()}
+          >
+            <Check size={14} className="size-3.5 shrink-0" />
             {t('common.save')}
           </Button>
           <Button
             variant="outline"
             size="sm"
+            className={PROVIDER_ACTION_CLASS}
             onClick={() => void handleTestConnection()}
             disabled={isTesting || isDecrypting}
           >
-            <RefreshCw size={14} className={cn("mr-1.5", isTesting && "animate-spin")} />
+            <RefreshCw size={14} className={cn("size-3.5 shrink-0", isTesting && "animate-spin")} />
             {isTesting ? t('ai.providers.test.testing') : t('ai.providers.test')}
           </Button>
-          <Button variant="ghost" size="sm" onClick={onCancel}>
+          <Button variant="ghost" size="sm" className={PROVIDER_ACTION_CLASS} onClick={onCancel}>
             {t('common.cancel')}
           </Button>
         </div>
