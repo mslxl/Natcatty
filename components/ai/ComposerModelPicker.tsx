@@ -118,8 +118,9 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
       models: filtered,
       prefs,
       providerId: previewProvider?.id,
+      allowMissing: Boolean(previewProvider?.id) && !query.trim(),
     }),
-    [filtered, prefs, previewProvider?.id],
+    [filtered, prefs, previewProvider?.id, query],
   );
   const pinnedKeys = useMemo(
     () => new Set(

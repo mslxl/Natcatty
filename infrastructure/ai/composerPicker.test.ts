@@ -114,6 +114,31 @@ test('recent and pinned grouping keeps pinned first and drops duplicates from re
   assert.deepEqual(grouped.rest.map((m) => m.id), ['c']);
 });
 
+test('external agent prefs do not resurrect models missing from the catalog', () => {
+  const grouped = resolvePinnedAndRecentModels({
+    models: [{ id: 'gpt-5.5', name: 'GPT-5.5' }],
+    prefs: {
+      pinned: [{ modelId: 'stale-model' }],
+      recent: [{ modelId: 'gpt-5.5' }, { modelId: 'also-gone' }],
+    },
+  });
+  assert.deepEqual(grouped.pinned.map((m) => m.id), []);
+  assert.deepEqual(grouped.recent.map((m) => m.id), ['gpt-5.5']);
+});
+
+test('Catty may keep a custom model that is not in the live catalog', () => {
+  const grouped = resolvePinnedAndRecentModels({
+    models: [{ id: 'deepseek-chat', name: 'DeepSeek Chat' }],
+    providerId: 'p1',
+    allowMissing: true,
+    prefs: {
+      pinned: [{ providerId: 'p1', modelId: 'my-custom' }],
+      recent: [],
+    },
+  });
+  assert.deepEqual(grouped.pinned.map((m) => m.id), ['my-custom']);
+});
+
 test('pref helpers upsert and toggle without duplicating keys', () => {
   const recent = upsertComposerPrefFront(
     [{ modelId: 'a' }, { modelId: 'b' }],

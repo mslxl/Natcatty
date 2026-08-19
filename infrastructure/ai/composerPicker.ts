@@ -203,6 +203,8 @@ export function resolvePinnedAndRecentModels(input: {
   models: ComposerPickerModel[];
   prefs: ComposerModelPrefs;
   providerId?: string;
+  /** Catty custom IDs only. External catalogs must not resurrect stale prefs. */
+  allowMissing?: boolean;
 }): {
   pinned: ComposerPickerModel[];
   recent: ComposerPickerModel[];
@@ -212,10 +214,12 @@ export function resolvePinnedAndRecentModels(input: {
   const matchesScope = (entry: ComposerModelPrefEntry) => (
     !input.providerId || !entry.providerId || entry.providerId === input.providerId
   );
+  const allowMissing = input.allowMissing ?? false;
   const resolve = (entries: ComposerModelPrefEntry[]) => (
     entries
       .filter(matchesScope)
-      .map((entry) => byId.get(entry.modelId) ?? { id: entry.modelId, name: entry.modelId })
+      .map((entry) => byId.get(entry.modelId) ?? (allowMissing ? { id: entry.modelId, name: entry.modelId } : undefined))
+      .filter((model): model is ComposerPickerModel => model != null)
   );
   const pinned = resolve(input.prefs.pinned);
   const pinnedIds = new Set(pinned.map((model) => model.id));
