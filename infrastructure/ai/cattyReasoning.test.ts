@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCattyReasoningProviderOptions } from './cattyReasoning';
+import {
+  buildCattyReasoningProviderOptions,
+  cattyReasoningLevelsForSelection,
+  openaiModelLikelySupportsReasoning,
+} from './cattyReasoning';
 
 test('buildCattyReasoningProviderOptions is omitted when effort is off', () => {
   assert.equal(
@@ -19,6 +23,30 @@ test('buildCattyReasoningProviderOptions maps OpenAI-compatible effort', () => {
     buildCattyReasoningProviderOptions({ providerId: 'deepseek' }, 'high'),
     { openai: { reasoningEffort: 'high' } },
   );
+});
+
+test('buildCattyReasoningProviderOptions omits reasoningEffort for non-reasoning OpenAI models', () => {
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'high', 'gpt-4o'),
+    undefined,
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'high', 'gpt-5.5'),
+    { openai: { reasoningEffort: 'high' } },
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'off', 'o3-mini'),
+    { openai: { reasoningEffort: 'none' } },
+  );
+});
+
+test('cattyReasoningLevelsForSelection hides the chip unless the model can take effort', () => {
+  assert.equal(openaiModelLikelySupportsReasoning('gpt-4o'), false);
+  assert.equal(openaiModelLikelySupportsReasoning('gpt-5.5'), true);
+  assert.deepEqual(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-4o'), []);
+  assert.ok(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.5').includes('high'));
+  assert.deepEqual(cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-1.5-flash'), []);
+  assert.ok(cattyReasoningLevelsForSelection({ providerId: 'anthropic' }, 'claude-opus-4-6').includes('high'));
 });
 
 test('buildCattyReasoningProviderOptions maps Anthropic thinking budgets', () => {

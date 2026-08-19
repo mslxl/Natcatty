@@ -8,11 +8,11 @@
 
 import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import {
-  CATTY_REASONING_LEVELS,
   resolveModelSelectionWithThinking,
   resolveThinkingSelection,
   type ComposerModelPrefs,
 } from '../../infrastructure/ai/composerPicker';
+import { cattyReasoningLevelsForSelection } from '../../infrastructure/ai/cattyReasoning';
 import {
   readComposerModelPrefs,
   rememberComposerRecentModel,
@@ -917,7 +917,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const modelChipMaxWidth = hasProviderSwitcher ? 'max-w-[168px]' : 'max-w-[96px]';
   const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
   const thinkingLevels = hasProviderSwitcher && onThinkingLevelChange
-    ? [...CATTY_REASONING_LEVELS]
+    ? [...cattyReasoningLevelsForSelection(
+      selectedSwitcherProvider,
+      providerSwitcher?.selectedModelId,
+    )]
     : (selectedPreset?.thinkingLevels ?? []);
   const selectedThinking = hasProviderSwitcher
     ? (thinkingLevel || 'off')

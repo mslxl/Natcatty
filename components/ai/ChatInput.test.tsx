@@ -251,8 +251,56 @@ test('Catty composer exposes a provider switcher without a mixed thinking submen
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
   assert.match(source, /ComposerModelPicker/);
   assert.match(source, /ComposerThinkingChip/);
-  assert.match(source, /CATTY_REASONING_LEVELS/);
+  assert.match(source, /cattyReasoningLevelsForSelection/);
   assert.doesNotMatch(source, /showThinkingLevels/);
+});
+
+test('Catty thinking chip is hidden for OpenAI models that reject reasoningEffort', () => {
+  const openai = {
+    id: 'p1',
+    providerId: 'openai' as const,
+    name: 'OpenAI',
+    enabled: true,
+  };
+  const gpt4o = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Catty Agent"
+        thinkingLevel="high"
+        onThinkingLevelChange={() => {}}
+        providerSwitcher={{
+          providers: [openai],
+          selectedProviderId: 'p1',
+          selectedModelId: 'gpt-4o',
+          onSelect: () => {},
+        }}
+      />
+    </TooltipProvider>,
+  );
+  assert.doesNotMatch(gpt4o, /aria-label="ai\.chat\.thinkingLevel"/);
+
+  const gpt55 = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Catty Agent"
+        thinkingLevel="high"
+        onThinkingLevelChange={() => {}}
+        providerSwitcher={{
+          providers: [openai],
+          selectedProviderId: 'p1',
+          selectedModelId: 'gpt-5.5',
+          onSelect: () => {},
+        }}
+      />
+    </TooltipProvider>,
+  );
+  assert.match(gpt55, /aria-label="ai\.chat\.thinkingLevel"/);
 });
 
 test('ChatInput wires /compact through getSystemSlashCommand and canCompact', () => {
