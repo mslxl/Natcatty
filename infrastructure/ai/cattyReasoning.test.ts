@@ -66,6 +66,14 @@ test('cattyReasoningLevelsForSelection hides the chip unless the model can take 
   assert.ok(!cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-flash').includes('off'));
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'anthropic' }, 'claude-opus-4-6').includes('high'));
   assert.deepEqual(
+    cattyReasoningLevelsForSelection({ providerId: 'anthropic' }, 'claude-3-haiku-20240307'),
+    [],
+  );
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'anthropic' }, 'high', 'claude-3-haiku-20240307'),
+    undefined,
+  );
+  assert.deepEqual(
     cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-pro'),
     ['low', 'medium', 'high'],
   );

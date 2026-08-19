@@ -919,12 +919,23 @@ const ChatInput: React.FC<ChatInputProps> = ({
     : (selectedPreset?.name || modelName || providerName || t('ai.chat.noModel'));
   const modelChipMaxWidth = hasProviderSwitcher ? 'max-w-[168px]' : 'max-w-[96px]';
   const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
-  const thinkingLevels = hasProviderSwitcher && onThinkingLevelChange
-    ? [...cattyReasoningLevelsForSelection(
+  const thinkingLevels = useMemo(
+    () => (
+      hasProviderSwitcher && onThinkingLevelChange
+        ? [...cattyReasoningLevelsForSelection(
+          selectedSwitcherProvider,
+          providerSwitcher?.selectedModelId,
+        )]
+        : (selectedPreset?.thinkingLevels ?? [])
+    ),
+    [
+      hasProviderSwitcher,
+      onThinkingLevelChange,
       selectedSwitcherProvider,
       providerSwitcher?.selectedModelId,
-    )]
-    : (selectedPreset?.thinkingLevels ?? []);
+      selectedPreset?.thinkingLevels,
+    ],
+  );
   const selectedThinking = hasProviderSwitcher
     ? (thinkingLevel || 'off')
     : selectedPresetThinking;

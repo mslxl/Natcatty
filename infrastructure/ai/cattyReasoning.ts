@@ -39,6 +39,7 @@ export function buildCattyReasoningProviderOptions(
     return { openai: { reasoningEffort: level } };
   }
   if (style === 'anthropic') {
+    if (modelId && !anthropicModelLikelySupportsThinking(modelId)) return undefined;
     if (level === 'off') return undefined;
     return {
       anthropic: {
@@ -86,6 +87,16 @@ export function buildCattyReasoningProviderOptions(
   return undefined;
 }
 
+/** Extended thinking is Claude 3.7+ / 4+; original Claude 3 Haiku/Sonnet reject it. */
+export function anthropicModelLikelySupportsThinking(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  if (!id) return false;
+  return /claude-(?:opus|sonnet|haiku)-4/.test(id)
+    || /claude-4/.test(id)
+    || /claude-3-7/.test(id)
+    || /claude-3\.7/.test(id);
+}
+
 export function googleModelLikelySupportsThinking(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
   return /gemini-3|gemini-2\.5|gemini-2\.0-flash-thinking|thinking/.test(id);
@@ -122,7 +133,9 @@ export function cattyReasoningLevelsForSelection(
 ): readonly string[] {
   if (!provider) return [];
   const style = resolveProviderStyle(provider);
-  if (style === 'anthropic') return CATTY_REASONING_LEVELS;
+  if (style === 'anthropic') {
+    return modelId && anthropicModelLikelySupportsThinking(modelId) ? CATTY_REASONING_LEVELS : [];
+  }
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return [];
     // Gemini 3 Flash cannot disable thinking; lowest advertised level is minimal.
