@@ -132,6 +132,16 @@ function canLockFromSettings(settings) {
   return normalized.enabled === true && normalized.passwordVerifier !== null;
 }
 
+/**
+ * Hide-to-tray / app-hide locks are automatic. timeoutMinutes === 0 is
+ * "Never lock automatically", so those background locks stay off. Startup
+ * and manual locks still apply whenever canLockFromSettings is true.
+ */
+function shouldLockOnBackgroundHide(settings) {
+  const normalized = normalizeAppLockSettings(settings);
+  return canLockFromSettings(normalized) && normalized.timeoutMinutes > 0;
+}
+
 async function createAppLockPasswordVerifier(password) {
   if (typeof password !== "string" || password.trim() === "") {
     throw new Error("App lock password is required");
@@ -245,6 +255,7 @@ module.exports = {
   APP_LOCK_TIMEOUT_OPTIONS_MINUTES,
   DEFAULT_APP_LOCK_SETTINGS,
   canLockFromSettings,
+  shouldLockOnBackgroundHide,
   createAppLockPasswordVerifier,
   createAppLockSettingsStore,
   normalizeAppLockPasswordVerifier,

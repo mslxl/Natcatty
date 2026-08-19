@@ -5,6 +5,7 @@ const {
   createAppLockPasswordVerifier,
   createAppLockSettingsStore,
   canLockFromSettings,
+  shouldLockOnBackgroundHide,
   verifyAppLockPassword,
 } = require("./appLockSettingsStore.cjs");
 const fs = require("node:fs");
@@ -135,6 +136,24 @@ test("canLockFromSettings requires enabled and a verifier", async () => {
   assert.equal(canLockFromSettings({ enabled: true, passwordVerifier: null }), false);
   assert.equal(canLockFromSettings({ enabled: true, passwordVerifier: { hash: "x" } }), false);
   assert.equal(canLockFromSettings({ enabled: true, passwordVerifier: VALID_VERIFIER }), true);
+});
+
+test("shouldLockOnBackgroundHide requires an automatic timeout", () => {
+  assert.equal(shouldLockOnBackgroundHide({
+    enabled: true,
+    timeoutMinutes: 0,
+    passwordVerifier: VALID_VERIFIER,
+  }), false);
+  assert.equal(shouldLockOnBackgroundHide({
+    enabled: true,
+    timeoutMinutes: 5,
+    passwordVerifier: VALID_VERIFIER,
+  }), true);
+  assert.equal(shouldLockOnBackgroundHide({
+    enabled: false,
+    timeoutMinutes: 5,
+    passwordVerifier: VALID_VERIFIER,
+  }), false);
 });
 
 test("createAppLockPasswordVerifier stores a verifier that verifyAppLockPassword accepts", async () => {

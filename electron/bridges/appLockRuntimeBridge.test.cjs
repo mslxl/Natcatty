@@ -559,6 +559,38 @@ test("parallel password attempts share one bounded in-flight verification", asyn
   assert.deepEqual(delays, [250]);
 });
 
+test("background lock is skipped when automatic timeout is never", async () => {
+  const { controller, runtimeBridge } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestUnlock("alpha");
+  await controller.setTimeoutMinutes(0);
+
+  const background = controller.setLocked("background");
+  assert.equal(background.locked, false);
+  assert.equal(runtimeBridge.getState().locked, false);
+  assert.equal(runtimeBridge.getState().reason, null);
+
+  const manual = controller.setLocked("manual");
+  assert.equal(manual.locked, true);
+  assert.equal(runtimeBridge.getState().reason, "manual");
+
+  await controller.requestUnlock("alpha");
+  const startup = controller.setLocked("startup");
+  assert.equal(startup.locked, true);
+  assert.equal(runtimeBridge.getState().reason, "startup");
+});
+
+test("background lock still applies when an inactivity timeout is set", async () => {
+  const { controller, runtimeBridge } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+  await controller.requestUnlock("alpha");
+  await controller.setTimeoutMinutes(5);
+
+  const background = controller.setLocked("background");
+  assert.equal(background.locked, true);
+  assert.equal(runtimeBridge.getState().reason, "background");
+});
+
 test("password unlock result is discarded after a newer lock transition", async () => {
   const { controller, runtimeBridge } = await createControllerHarness();
   await controller.requestPasswordChange({ nextPassword: "alpha" });

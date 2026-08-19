@@ -2,6 +2,7 @@ const {
   canLockFromSettings,
   createAppLockPasswordVerifier,
   normalizeAppLockTimeoutMinutes,
+  shouldLockOnBackgroundHide,
   verifyAppLockPassword,
 } = require("./appLockSettingsStore.cjs");
 
@@ -675,7 +676,13 @@ function createAppLockController({
   }
 
   function setLocked(reason) {
-    if (!canLockFromSettings(getSettings())) {
+    const settings = getSettings();
+    if (!canLockFromSettings(settings)) {
+      return getRuntimeState();
+    }
+    // Close-to-tray and app-hide use reason "background". Honor "Never
+    // lock automatically" so hiding the window does not prompt for a password.
+    if (reason === "background" && !shouldLockOnBackgroundHide(settings)) {
       return getRuntimeState();
     }
     const nextState = runtimeBridge.lock(reason);
