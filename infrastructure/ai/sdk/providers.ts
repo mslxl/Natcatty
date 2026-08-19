@@ -2,7 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogle } from '@ai-sdk/google';
 import type { ProviderConfig, ProviderStyle } from '../types';
-import { resolveProviderStyle } from '../types';
+import { resolveOpenAIApi, resolveProviderStyle } from '../types';
 import { normalizeAnthropicSdkBaseURL } from '../anthropicCompatBaseUrl';
 import {
   applyOpenAIChatContinuationToBody,
@@ -664,13 +664,18 @@ export function createModelFromConfig(
   const { baseURL, apiKey } = resolveProviderEndpoint(config, style, safeApiKey);
 
   switch (style) {
-    case 'openai':
-      // Use .chat() to force Chat Completions API (not Responses API)
-      return createOpenAI({
+    case 'openai': {
+      const openai = createOpenAI({
         apiKey,
         baseURL,
         fetch: customFetch,
-      }).chat(modelId);
+      });
+      // Chat Completions stays the default so OpenAI-compatible proxies keep
+      // working. Responses is opt-in for relays that cache better on /v1/responses.
+      return resolveOpenAIApi(config) === 'responses'
+        ? openai.responses(modelId)
+        : openai.chat(modelId);
+    }
 
     case 'anthropic':
       return createAnthropic({
