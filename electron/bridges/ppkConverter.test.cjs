@@ -130,6 +130,40 @@ test("converts an encrypted Ed25519 PPK with CRLF line endings", () => {
   assert.ok(parseOk(result.privateKey));
 });
 
+test("rejects an encrypted PPK v3 with unbounded Argon2 memory before deriving keys", () => {
+  const { publicBlob, privateBlob } = ed25519Blobs();
+  const ppk = serializePpk({
+    version: 3,
+    type: "ssh-ed25519",
+    comment: "dos",
+    publicBlob,
+    privateBlob,
+    passphrase: "secret",
+  }).replace(/^Argon2-Memory: \d+$/m, "Argon2-Memory: 999999999");
+  const started = Date.now();
+  assert.throws(
+    () => normalizePrivateKeyForSsh2(ppk, "secret"),
+    (err) => err instanceof UnsupportedPrivateKeyError && /Argon2 parameters exceed supported limits/.test(err.message),
+  );
+  assert.ok(Date.now() - started < 250, "oversized Argon2 work factors must be rejected without deriving");
+});
+
+test("rejects an encrypted PPK v3 with a non-positive Argon2 pass count", () => {
+  const { publicBlob, privateBlob } = ed25519Blobs();
+  const ppk = serializePpk({
+    version: 3,
+    type: "ssh-ed25519",
+    comment: "zero-passes",
+    publicBlob,
+    privateBlob,
+    passphrase: "secret",
+  }).replace(/^Argon2-Passes: \d+$/m, "Argon2-Passes: 0");
+  assert.throws(
+    () => normalizePrivateKeyForSsh2(ppk, "secret"),
+    (err) => err instanceof UnsupportedPrivateKeyError && /Argon2 parameters exceed supported limits/.test(err.message),
+  );
+});
+
 test("throws PrivateKeyPassphraseError for encrypted Ed25519 PPK with the wrong passphrase", () => {
   const { ppk } = ed25519Ppk({ passphrase: "secret" });
   assert.throws(

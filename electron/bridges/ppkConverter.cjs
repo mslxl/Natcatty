@@ -26,6 +26,16 @@ const PPK_V2_SEQ0 = Buffer.from([0, 0, 0, 0]);
 const PPK_V2_SEQ1 = Buffer.from([0, 0, 0, 1]);
 const PPK_V3_DERIVED_LEN = 80; // 32-byte key + 16-byte IV + 32-byte MAC key
 const OPENSSH_MAGIC = Buffer.from("openssh-key-v1\0");
+// Caps keep a crafted PPK from stalling the Electron main process. Defaults
+// from current PuTTYgen (8 MiB, ~13-34 passes, parallelism 1) sit well inside.
+const ARGON2_MIN_MEMORY_KIB = 8;
+const ARGON2_MAX_MEMORY_KIB = 65536;
+const ARGON2_MIN_PASSES = 1;
+const ARGON2_MAX_PASSES = 128;
+const ARGON2_MIN_PARALLELISM = 1;
+const ARGON2_MAX_PARALLELISM = 4;
+const ARGON2_MIN_SALT_BYTES = 8;
+const ARGON2_MAX_SALT_BYTES = 64;
 
 const SUPPORTED_TYPES = new Set([
   "ssh-ed25519",
@@ -159,6 +169,34 @@ function deriveV2Keys(passphrase) {
   };
 }
 
+function inRange(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max;
+}
+
+function parseArgon2Salt(saltHex) {
+  if (typeof saltHex !== "string" || !/^[0-9a-fA-F]+$/.test(saltHex) || saltHex.length % 2 !== 0) {
+    throw new Error("Malformed PPK Argon2 salt");
+  }
+  const salt = Buffer.from(saltHex, "hex");
+  if (salt.length < ARGON2_MIN_SALT_BYTES || salt.length > ARGON2_MAX_SALT_BYTES) {
+    throw new Error("Malformed PPK Argon2 salt");
+  }
+  return salt;
+}
+
+function assertArgon2WorkFactors(kdf) {
+  if (!inRange(kdf.memory, ARGON2_MIN_MEMORY_KIB, ARGON2_MAX_MEMORY_KIB)
+      || !inRange(kdf.passes, ARGON2_MIN_PASSES, ARGON2_MAX_PASSES)
+      || !inRange(kdf.parallelism, ARGON2_MIN_PARALLELISM, ARGON2_MAX_PARALLELISM)) {
+    throw new Error(
+      `PPK Argon2 parameters exceed supported limits ` +
+        `(memory ${ARGON2_MIN_MEMORY_KIB}-${ARGON2_MAX_MEMORY_KIB} KiB, ` +
+        `passes ${ARGON2_MIN_PASSES}-${ARGON2_MAX_PASSES}, ` +
+        `parallelism ${ARGON2_MIN_PARALLELISM}-${ARGON2_MAX_PARALLELISM})`,
+    );
+  }
+}
+
 function deriveV3Keys(passphrase, encryption, kdf) {
   if (encryption === "none") {
     return { cipherKey: null, iv: null, macKey: Buffer.alloc(0), macAlgo: "sha256" };
@@ -170,12 +208,14 @@ function deriveV3Keys(passphrase, encryption, kdf) {
   if (algorithm !== "argon2id" && algorithm !== "argon2i" && algorithm !== "argon2d") {
     throw new Error(`Unsupported PPK key derivation "${kdf?.name}"`);
   }
-  if (!kdf?.saltHex || !Number.isInteger(kdf.memory) || !Number.isInteger(kdf.passes) || !Number.isInteger(kdf.parallelism)) {
+  if (!kdf) {
     throw new Error("Malformed PPK Argon2 parameters");
   }
+  assertArgon2WorkFactors(kdf);
+  const salt = parseArgon2Salt(kdf.saltHex);
   const derived = argon2Sync(algorithm, {
     message: passphrase,
-    nonce: Buffer.from(kdf.saltHex, "hex"),
+    nonce: salt,
     parallelism: kdf.parallelism,
     tagLength: PPK_V3_DERIVED_LEN,
     memory: kdf.memory,
