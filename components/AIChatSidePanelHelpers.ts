@@ -179,12 +179,47 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
 
 export const sdkRuntimeModelCache = createSdkRuntimeModelCache();
 
-export function modelPresetMatchesId(preset: AgentModelPreset, modelId: string): boolean {
-  if (preset.thinkingLevels?.length) {
-    return preset.id === modelId
-      || preset.thinkingLevels.some((level) => `${preset.id}/${level}` === modelId);
+/** Cursor historically stored effort as `id?effort=low`. Collapse to `id/low`. */
+export function canonicalizeEffortEncodedModelId(modelId: string): string {
+  const queryIndex = modelId.indexOf('?');
+  if (queryIndex < 0) return modelId;
+  const id = modelId.slice(0, queryIndex);
+  const params = new URLSearchParams(modelId.slice(queryIndex + 1));
+  const keys = [...params.keys()];
+  const effort = params.get('effort');
+  if (keys.length === 1 && keys[0] === 'effort' && effort) {
+    return `${id}/${effort}`;
   }
-  return preset.id === modelId;
+  return modelId;
+}
+
+export function mergeFallbackThinkingLevels(
+  runtime: AgentModelPreset[],
+  fallbacks: AgentModelPreset[],
+): AgentModelPreset[] {
+  if (runtime.length === 0 || fallbacks.length === 0) return runtime;
+  const byId = new Map(fallbacks.map((preset) => [preset.id, preset]));
+  return runtime.map((preset) => {
+    if (preset.thinkingLevels?.length) return preset;
+    const fallback = byId.get(preset.id);
+    if (!fallback?.thinkingLevels?.length) return preset;
+    return {
+      ...preset,
+      thinkingLevels: [...fallback.thinkingLevels],
+      ...(fallback.defaultThinkingLevel
+        ? { defaultThinkingLevel: fallback.defaultThinkingLevel }
+        : {}),
+    };
+  });
+}
+
+export function modelPresetMatchesId(preset: AgentModelPreset, modelId: string): boolean {
+  const canonical = canonicalizeEffortEncodedModelId(modelId);
+  if (preset.thinkingLevels?.length) {
+    return preset.id === canonical
+      || preset.thinkingLevels.some((level) => `${preset.id}/${level}` === canonical);
+  }
+  return preset.id === canonical;
 }
 
 export function modelPresetsContainId(presets: AgentModelPreset[], modelId: string): boolean {
@@ -196,11 +231,12 @@ export function normalizeStoredAgentModelSelection(
   presets: AgentModelPreset[],
 ): string | undefined {
   if (!storedModelId) return undefined;
-  const preset = presets.find((candidate) => modelPresetMatchesId(candidate, storedModelId));
+  const canonical = canonicalizeEffortEncodedModelId(storedModelId);
+  const preset = presets.find((candidate) => modelPresetMatchesId(candidate, canonical));
   if (!preset) return undefined;
-  return storedModelId === preset.id
+  return canonical === preset.id
     ? resolveAgentModelSelection(preset)
-    : storedModelId;
+    : canonical;
 }
 
 export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean {

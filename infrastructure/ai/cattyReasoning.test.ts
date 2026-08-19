@@ -33,8 +33,15 @@ test('buildCattyReasoningProviderOptions respects an explicit style override', (
     buildCattyReasoningProviderOptions({ providerId: 'custom', style: 'openai' }, 'low'),
     { openai: { reasoningEffort: 'low' } },
   );
+});
+
+test('buildCattyReasoningProviderOptions maps Gemini thinking levels', () => {
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-2.5-pro'),
+    { google: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } } },
+  );
   assert.equal(
-    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high'),
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-1.5-flash'),
     undefined,
   );
 });

@@ -413,6 +413,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         reasoningProviderOptions: buildCattyReasoningProviderOptions(
           context.activeProvider,
           context.reasoningEffort,
+          activeModelId,
         ),
         continuationContext,
         turnId: ctx.turnId,

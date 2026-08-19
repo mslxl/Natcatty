@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {
   buildCursorListModelsAgentEnv,
   buildSdkRuntimeModelCacheKey,
+  canonicalizeEffortEncodedModelId,
   createSdkRuntimeModelCache,
+  mergeFallbackThinkingLevels,
   modelPresetsContainId,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
@@ -67,6 +69,22 @@ test('Cursor auth mode changes invalidate the SDK model cache key', () => {
   assert.notEqual(apiKey, cliLogin);
 });
 
+test('canonicalizeEffortEncodedModelId collapses Cursor query-string effort', () => {
+  assert.equal(canonicalizeEffortEncodedModelId('gpt-5?effort=low'), 'gpt-5/low');
+  assert.equal(canonicalizeEffortEncodedModelId('gpt-5/high'), 'gpt-5/high');
+  assert.equal(canonicalizeEffortEncodedModelId('gpt-5?effort=low&mode=fast'), 'gpt-5?effort=low&mode=fast');
+});
+
+test('mergeFallbackThinkingLevels fills missing runtime effort catalogs', () => {
+  const merged = mergeFallbackThinkingLevels(
+    [{ id: 'gpt-5.5', name: 'GPT-5.5' }, { id: 'auto', name: 'Auto' }],
+    [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'medium' }],
+  );
+  assert.deepEqual(merged[0]?.thinkingLevels, ['low', 'medium', 'high']);
+  assert.equal(merged[0]?.defaultThinkingLevel, 'medium');
+  assert.equal(merged[1]?.thinkingLevels, undefined);
+});
+
 test('modelPresetsContainId matches plain and thinking-level model ids', () => {
   const presets: AgentModelPreset[] = [
     { id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low', 'high'] },
@@ -74,6 +92,7 @@ test('modelPresetsContainId matches plain and thinking-level model ids', () => {
   ];
 
   assert.equal(modelPresetsContainId(presets, 'gpt-5.5/high'), true);
+  assert.equal(modelPresetsContainId(presets, 'gpt-5.5?effort=high'), true);
   assert.equal(modelPresetsContainId(presets, 'claude-sonnet'), true);
   assert.equal(modelPresetsContainId(presets, 'gpt-5.5/medium'), false);
 });

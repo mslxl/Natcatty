@@ -67,6 +67,7 @@ import {
   buildSdkRuntimeModelCacheKey,
   sdkRuntimeModelCache,
   generateId,
+  mergeFallbackThinkingLevels,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
@@ -841,7 +842,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     catalog: SdkRuntimeModelCatalog,
     options: { adoptCurrentModel?: boolean } = {},
   ) => {
-    const runtimePresets = normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId);
+    const agent = externalAgents.find((item) => item.id === agentId);
+    const runtimePresets = mergeFallbackThinkingLevels(
+      normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
+      getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
+    );
     const storedModelId = agentModelMapRef.current[agentId];
     if (runtimePresets.length === 0) {
       setRuntimeAgentModelPresets((prev) => {
@@ -872,7 +877,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     ) {
       setAgentModel(agentId, catalog.currentModelId);
     }
-  }, [setAgentModel]);
+  }, [externalAgents, setAgentModel]);
 
   const loadSdkRuntimeModelCatalog = useCallback((
     target: SdkRuntimeModelTarget,
@@ -1165,7 +1170,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           const catalog = await loadSdkRuntimeModelCatalog(runtimeTarget);
           if (catalog) {
             applySdkRuntimeModelCatalog(runtimeTarget.agentId, catalog, { adoptCurrentModel: true });
-            const runtimePresets = normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId);
+            const runtimePresets = mergeFallbackThinkingLevels(
+              normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
+              getAgentModelPresets(
+                currentAgentConfig.command,
+                getExternalAgentSdkBackend(currentAgentConfig),
+              ),
+            );
             const storedModelId = agentModelMapRef.current[sendAgentId];
             if (
               catalog.currentModelId

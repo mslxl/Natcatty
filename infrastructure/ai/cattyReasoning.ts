@@ -13,6 +13,7 @@ export type CattyReasoningProviderOptions = Record<string, Record<string, unknow
 export function buildCattyReasoningProviderOptions(
   provider: Pick<ProviderConfig, 'providerId' | 'style'> | null | undefined,
   effort: string | null | undefined,
+  modelId?: string,
 ): CattyReasoningProviderOptions | undefined {
   const level = normalizeCattyReasoningLevel(effort);
   if (level === 'off' || !provider) return undefined;
@@ -30,5 +31,21 @@ export function buildCattyReasoningProviderOptions(
       },
     };
   }
+  if (style === 'google') {
+    if (modelId && !googleModelLikelySupportsThinking(modelId)) return undefined;
+    return {
+      google: {
+        thinkingConfig: {
+          thinkingLevel: level,
+          includeThoughts: true,
+        },
+      },
+    };
+  }
   return undefined;
+}
+
+export function googleModelLikelySupportsThinking(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  return /gemini-3|gemini-2\.5|gemini-2\.0-flash-thinking|thinking/.test(id);
 }

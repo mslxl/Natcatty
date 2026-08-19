@@ -38,6 +38,14 @@ test('getAgentModelPresets returns Cursor presets for cursor-agent paths and sdk
   // Bare `agent` is no longer treated as Cursor without an explicit sdkBackend.
   assert.deepEqual(getAgentModelPresets('/Users/me/.local/bin/agent'), []);
   assert.equal(getAgentModelPresets('/Users/me/.local/bin/agent', 'cursor')[0]?.id, 'auto');
+  assert.deepEqual(
+    getAgentModelPresets(undefined, 'cursor').find((model) => model.id === 'gpt-5.5')?.thinkingLevels,
+    ['low', 'medium', 'high'],
+  );
+  assert.deepEqual(
+    getAgentModelPresets(undefined, 'codebuddy')[0]?.thinkingLevels,
+    ['low', 'medium', 'high', 'xhigh'],
+  );
 });
 
 test('getAgentModelPresets keeps Codex presets separate from CodeBuddy presets', () => {

@@ -690,31 +690,69 @@ export function resolveAgentCliVersion(
   return resolveDiscoveredAgentCliVersion(agent, discovered);
 }
 
+const CURSOR_REASONING_LEVELS = ['low', 'medium', 'high'] as const;
+
 export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'auto', name: 'Auto', description: 'Recommended for CLI login / subscription quota' },
   { id: 'composer-2.5', name: 'Composer 2.5', description: 'Recommended for API key' },
-  { id: 'gpt-5.5', name: 'GPT-5.5' },
-  { id: 'gpt-5.2', name: 'GPT-5.2' },
-  { id: 'gpt-5.1', name: 'GPT-5.1' },
-  { id: 'claude-opus-4.6', name: 'Claude Opus 4.6' },
-  { id: 'claude-sonnet-4.6', name: 'Claude Sonnet 4.6' },
+  {
+    id: 'gpt-5.5',
+    name: 'GPT-5.5',
+    thinkingLevels: [...CURSOR_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'gpt-5.2',
+    name: 'GPT-5.2',
+    thinkingLevels: [...CURSOR_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'gpt-5.1',
+    name: 'GPT-5.1',
+    thinkingLevels: [...CURSOR_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'claude-opus-4.6',
+    name: 'Claude Opus 4.6',
+    thinkingLevels: [...CURSOR_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'claude-sonnet-4.6',
+    name: 'Claude Sonnet 4.6',
+    thinkingLevels: [...CURSOR_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
 ];
 
 // CodeBuddy's SDK model enumeration can be empty depending on CLI/account
 // state; keep a CLI-supported fallback list so users can still pass --model.
+const CODEBUDDY_REASONING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
+
+function codebuddyPreset(id: string, name: string): AgentModelPreset {
+  return {
+    id,
+    name,
+    thinkingLevels: [...CODEBUDDY_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  };
+}
+
 export const CODEBUDDY_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' },
-  { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' },
-  { id: 'deepseek-v3-2-volc', name: 'DeepSeek V3.2' },
-  { id: 'glm-5.1', name: 'GLM 5.1' },
-  { id: 'glm-5.0', name: 'GLM 5.0' },
-  { id: 'glm-5.0-turbo', name: 'GLM 5.0 Turbo' },
-  { id: 'glm-5v-turbo', name: 'GLM 5V Turbo' },
-  { id: 'glm-4.7', name: 'GLM 4.7' },
-  { id: 'minimax-m3-pay', name: 'MiniMax M3' },
-  { id: 'minimax-m2.7', name: 'MiniMax M2.7' },
-  { id: 'kimi-k2.6', name: 'Kimi K2.6' },
-  { id: 'hy3-preview', name: 'Hy3 Preview' },
+  codebuddyPreset('deepseek-v4-pro', 'DeepSeek V4 Pro'),
+  codebuddyPreset('deepseek-v4-flash', 'DeepSeek V4 Flash'),
+  codebuddyPreset('deepseek-v3-2-volc', 'DeepSeek V3.2'),
+  codebuddyPreset('glm-5.1', 'GLM 5.1'),
+  codebuddyPreset('glm-5.0', 'GLM 5.0'),
+  codebuddyPreset('glm-5.0-turbo', 'GLM 5.0 Turbo'),
+  codebuddyPreset('glm-5v-turbo', 'GLM 5V Turbo'),
+  codebuddyPreset('glm-4.7', 'GLM 4.7'),
+  codebuddyPreset('minimax-m3-pay', 'MiniMax M3'),
+  codebuddyPreset('minimax-m2.7', 'MiniMax M2.7'),
+  codebuddyPreset('kimi-k2.6', 'Kimi K2.6'),
+  codebuddyPreset('hy3-preview', 'Hy3 Preview'),
 ];
 
 export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [

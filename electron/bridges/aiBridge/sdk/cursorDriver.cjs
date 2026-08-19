@@ -24,18 +24,49 @@ function toCursorMcpServers(injectedMcpServers) {
   return servers;
 }
 
+const CURSOR_REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
+const CURSOR_FALLBACK_THINKING = {
+  "gpt-5.5": ["low", "medium", "high"],
+  "gpt-5.2": ["low", "medium", "high"],
+  "gpt-5.1": ["low", "medium", "high"],
+  "gpt-5": ["low", "medium", "high"],
+  "claude-opus-4.6": ["low", "medium", "high"],
+  "claude-sonnet-4.6": ["low", "medium", "high"],
+};
+
 function parseCursorModelSelection(model) {
   const raw = String(model || DEFAULT_CURSOR_MODEL).trim() || DEFAULT_CURSOR_MODEL;
   const queryIndex = raw.indexOf("?");
-  if (queryIndex < 0) return { id: raw };
-
-  const id = raw.slice(0, queryIndex);
-  const search = new URLSearchParams(raw.slice(queryIndex + 1));
-  const params = [];
-  for (const [paramId, value] of search.entries()) {
-    if (paramId && value) params.push({ id: paramId, value });
+  if (queryIndex >= 0) {
+    const id = raw.slice(0, queryIndex);
+    const search = new URLSearchParams(raw.slice(queryIndex + 1));
+    const params = [];
+    for (const [paramId, value] of search.entries()) {
+      if (paramId && value) params.push({ id: paramId, value });
+    }
+    return params.length > 0 ? { id, params } : { id };
   }
-  return params.length > 0 ? { id, params } : { id };
+  const slash = raw.lastIndexOf("/");
+  if (slash > 0) {
+    const effort = raw.slice(slash + 1).toLowerCase();
+    if (CURSOR_REASONING_EFFORTS.has(effort)) {
+      return { id: raw.slice(0, slash), params: [{ id: "effort", value: effort }] };
+    }
+  }
+  return { id: raw };
+}
+
+function encodeCursorCliModel(model) {
+  const raw = String(model || "").trim();
+  if (!raw) return "";
+  const selection = parseCursorModelSelection(raw);
+  if (!selection.params?.length) return selection.id || "";
+  const search = new URLSearchParams();
+  for (const param of selection.params) {
+    if (param?.id && param?.value) search.set(param.id, param.value);
+  }
+  const qs = search.toString();
+  return qs ? `${selection.id}?${qs}` : (selection.id || "");
 }
 
 function buildCursorAgentOptions({ apiKey, env, model, cwd, injectedMcpServers }) {
@@ -431,12 +462,32 @@ function mapCursorModels(models) {
   for (const model of models) {
     if (!model?.id) continue;
     const name = model.displayName || model.name || model.id;
+    const effortLevels = [];
+    const extraVariants = [];
+    for (const variant of model.variants || []) {
+      const params = Array.isArray(variant.params) ? variant.params : [];
+      const effortOnly = params.length === 1 && params[0]?.id === "effort" && params[0]?.value;
+      if (effortOnly) {
+        const level = String(params[0].value).toLowerCase();
+        if (CURSOR_REASONING_EFFORTS.has(level) && !effortLevels.includes(level)) {
+          effortLevels.push(level);
+        }
+        continue;
+      }
+      extraVariants.push(variant);
+    }
+    const fallbackLevels = CURSOR_FALLBACK_THINKING[model.id] || [];
+    const thinkingLevels = effortLevels.length > 0 ? effortLevels : fallbackLevels;
     out.push({
       id: model.id,
       name,
       ...(model.description ? { description: model.description } : {}),
+      ...(thinkingLevels.length > 0 ? {
+        thinkingLevels,
+        defaultThinkingLevel: thinkingLevels.includes("medium") ? "medium" : thinkingLevels[0],
+      } : {}),
     });
-    for (const variant of model.variants || []) {
+    for (const variant of extraVariants) {
       const id = modelVariantId(model.id, variant.params || []);
       if (id === model.id) continue;
       out.push({
@@ -488,6 +539,7 @@ module.exports = {
   listCursorModels,
   mapCursorModels,
   parseCursorModelSelection,
+  encodeCursorCliModel,
   runCursorTurn,
   toCursorMcpServers,
   translateCursorEvent,
