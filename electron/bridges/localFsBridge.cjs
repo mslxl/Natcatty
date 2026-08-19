@@ -183,7 +183,9 @@ async function listLocalDir(event, payload) {
         // Windows hidden attribute: resolved from the batched lookup.
         const hidden = isWindows ? hiddenSet.has(entry.name) : false;
 
-        const owner = localOwnerFromStat(stat);
+        // Follow the target for size/mtime/type; owner is the directory entry itself.
+        const ownerStat = type === "symlink" ? await fs.promises.lstat(fullPath) : stat;
+        const owner = localOwnerFromStat(ownerStat);
         result[i] = {
           name: entry.name,
           type,

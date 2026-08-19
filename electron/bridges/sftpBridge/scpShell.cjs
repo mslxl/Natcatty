@@ -232,7 +232,7 @@ function shellQuotePath(remotePath, encoding = "utf-8") {
  */
 function ownerFromSftpLongname(longname) {
   if (!longname) return undefined;
-  const match = String(longname).match(/^[dlbcps\-][rwxsStT\-]{9}\s+\d+\s+(\S+)\s+\S+\s+/);
+  const match = String(longname).match(/^[dlbcps\-][rwxsStT\-]{9}[+.@]?\s+\d+\s+(\S+)\s+\S+\s+/);
   const owner = match?.[1]?.trim();
   return owner || undefined;
 }
@@ -293,7 +293,7 @@ function parseLsLaOutput(stdout, { basePath = "" } = {}) {
     if (!line || line.startsWith("total ")) continue;
     // permissions links owner group size month day time/year name
     const match = line.match(
-      /^([dlbcps\-])([rwxsStT\-]{9})\s+\d+\s+(\S+)\s+\S+\s+(\d+)\s+(\S+\s+\S+\s+\S+)\s+(.+)$/,
+      /^([dlbcps\-])([rwxsStT\-]{9})[+.@]?\s+\d+\s+(\S+)\s+\S+\s+(\d+)\s+(\S+\s+\S+\s+\S+)\s+(.+)$/,
     );
     if (!match) continue;
     const typeChar = match[1];

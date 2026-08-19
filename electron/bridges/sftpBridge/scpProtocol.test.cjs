@@ -181,6 +181,11 @@ describe("scpShell quoting and commands", () => {
     );
     assert.equal(lsRows[0]?.name, "notes.txt");
     assert.equal(lsRows[0]?.owner, "root");
+
+    const aclRows = parseLsLaOutput(
+      "-rw-r--r--+ 1 alice staff 12 Jan  1 00:00 notes.txt\n",
+    );
+    assert.equal(aclRows[0]?.owner, "alice");
   });
 
   it("resolves listing owner from longname, then uid", () => {
@@ -194,6 +199,18 @@ describe("scpShell quoting and commands", () => {
     );
     assert.equal(resolveListingOwner({ uid: 1000 }), "1000");
     assert.equal(resolveListingOwner({ owner: "UNKNOWN", uid: 0 }), "0");
+    assert.equal(
+      ownerFromSftpLongname("-rw-r--r--+  1 alice  staff  12 Jan  1 00:00 notes.txt"),
+      "alice",
+    );
+    assert.equal(
+      ownerFromSftpLongname("-rw-r--r--@  1 alice  staff  12 Jan  1 00:00 notes.txt"),
+      "alice",
+    );
+    assert.equal(
+      ownerFromSftpLongname("-rw-r--r--.  1 alice  staff  12 Jan  1 00:00 notes.txt"),
+      "alice",
+    );
   });
 
   it("list command includes owner in the record", () => {
