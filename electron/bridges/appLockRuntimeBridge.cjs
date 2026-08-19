@@ -331,6 +331,18 @@ function createAppLockController({
     }
   }
 
+  // Windows shows the native title-bar menu (Minimize / Maximize / Close) on
+  // right-click in -webkit-app-region: drag areas. The lock overlay is a drag
+  // region so the window stays movable, so hide that menu while locked.
+  function suppressSystemContextMenu(event) {
+    if (getRuntimeState()?.locked !== true) return;
+    try {
+      event?.preventDefault?.();
+    } catch {
+      // ignore
+    }
+  }
+
   function protectWindow(win) {
     if (!win || win.isDestroyed?.()) return;
     if (!protectedWindows.has(win)) {
@@ -338,6 +350,7 @@ function createAppLockController({
       const enforce = () => enforceWindowProtection(win);
       try { win.on?.("show", enforce); } catch { /* ignore */ }
       try { win.on?.("focus", enforce); } catch { /* ignore */ }
+      try { win.on?.("system-context-menu", suppressSystemContextMenu); } catch { /* ignore */ }
       try { win.webContents?.on?.("devtools-opened", enforce); } catch { /* ignore */ }
       try {
         win.webContents?.on?.("did-finish-load", () => {
