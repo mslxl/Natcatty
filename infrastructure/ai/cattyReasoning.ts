@@ -127,12 +127,25 @@ export function cattyReasoningLevelsForSelection(
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return [];
     // Gemini 3 Flash cannot disable thinking; lowest advertised level is minimal.
     if (isGemini3Flash(modelId)) return ['minimal', 'low', 'medium', 'high'];
+    // Gemini 3 Pro / 2.5 Pro reject a true Off; omit it rather than lying.
+    if (!googleModelAllowsDisabledThinking(modelId)) return ['low', 'medium', 'high'];
     return CATTY_REASONING_LEVELS;
   }
   if (style === 'openai') {
     return modelId && openaiModelLikelySupportsReasoning(modelId) ? CATTY_REASONING_LEVELS : [];
   }
   return [];
+}
+
+/** Pick a level the current model actually advertises; never keep a stale chip value. */
+export function resolveVisibleCattyThinkingLevel(
+  levels: readonly string[],
+  selected: string | undefined,
+): string | undefined {
+  if (!levels.length) return undefined;
+  if (selected && levels.includes(selected)) return selected;
+  if (selected === 'off' && levels.includes('minimal')) return 'minimal';
+  return levels[0];
 }
 
 function isGemini3Model(modelId: string): boolean {

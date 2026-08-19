@@ -6,6 +6,7 @@ import {
   cattyReasoningLevelsForSelection,
   openaiModelLikelySupportsReasoning,
   openaiModelSupportsNoneReasoning,
+  resolveVisibleCattyThinkingLevel,
 } from './cattyReasoning';
 
 test('buildCattyReasoningProviderOptions is omitted when effort is off', () => {
@@ -64,6 +65,29 @@ test('cattyReasoningLevelsForSelection hides the chip unless the model can take 
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-flash').includes('minimal'));
   assert.ok(!cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-flash').includes('off'));
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'anthropic' }, 'claude-opus-4-6').includes('high'));
+  assert.deepEqual(
+    cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-pro'),
+    ['low', 'medium', 'high'],
+  );
+  assert.deepEqual(
+    cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-2.5-pro'),
+    ['low', 'medium', 'high'],
+  );
+});
+
+test('resolveVisibleCattyThinkingLevel drops stale levels after a model switch', () => {
+  assert.equal(
+    resolveVisibleCattyThinkingLevel(['low', 'medium', 'high'], 'minimal'),
+    'low',
+  );
+  assert.equal(
+    resolveVisibleCattyThinkingLevel(['minimal', 'low', 'medium', 'high'], 'off'),
+    'minimal',
+  );
+  assert.equal(
+    resolveVisibleCattyThinkingLevel(['off', 'low', 'medium', 'high'], 'high'),
+    'high',
+  );
 });
 
 test('buildCattyReasoningProviderOptions maps Anthropic thinking budgets', () => {

@@ -12,7 +12,10 @@ import {
   resolveThinkingSelection,
   type ComposerModelPrefs,
 } from '../../infrastructure/ai/composerPicker';
-import { cattyReasoningLevelsForSelection } from '../../infrastructure/ai/cattyReasoning';
+import {
+  cattyReasoningLevelsForSelection,
+  resolveVisibleCattyThinkingLevel,
+} from '../../infrastructure/ai/cattyReasoning';
 import {
   readComposerModelPrefs,
   rememberComposerRecentModel,
@@ -925,9 +928,24 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const selectedThinking = hasProviderSwitcher
     ? (thinkingLevel || 'off')
     : selectedPresetThinking;
-  const visibleThinking = thinkingLevels.includes(selectedThinking || '')
-    ? selectedThinking
-    : (selectedThinking === 'off' && thinkingLevels.includes('minimal') ? 'minimal' : selectedThinking);
+  const visibleThinking = hasProviderSwitcher
+    ? resolveVisibleCattyThinkingLevel(thinkingLevels, selectedThinking)
+    : selectedThinking;
+
+  useEffect(() => {
+    if (!hasProviderSwitcher || !onThinkingLevelChange) return;
+    if (!thinkingLevels.length) return;
+    const current = thinkingLevel || 'off';
+    const next = resolveVisibleCattyThinkingLevel(thinkingLevels, current);
+    if (next && next !== current) onThinkingLevelChange(next);
+  }, [
+    hasProviderSwitcher,
+    onThinkingLevelChange,
+    providerSwitcher?.selectedProviderId,
+    providerSwitcher?.selectedModelId,
+    thinkingLevel,
+    thinkingLevels,
+  ]);
   const showThinkingChip = thinkingLevels.length > 0 && (!hasProviderSwitcher || !!onThinkingLevelChange);
   const popoverMaxWidth = hasProviderSwitcher
     ? COMPOSER_PROVIDER_PICKER_WIDTH
