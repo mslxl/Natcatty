@@ -132,7 +132,8 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
 
   const trimmedQuery = query.trim();
   const showCustom = Boolean(
-    trimmedQuery
+    hasProviders
+    && trimmedQuery
     && !models.some((model) => model.id.toLowerCase() === trimmedQuery.toLowerCase()),
   );
 

@@ -252,10 +252,12 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       activeModelId,
     );
     const reasoningReserveTokens = estimateReasoningOutputReserve(reasoningProviderOptions);
+    // Fold thinking budget into compaction maxOutput only. reservedTokens is
+    // added to estimated input separately, so adding the budget there too
+    // would count the same 10k/20k twice.
     const compactionMaxOutputTokens = maxOutputTokens + reasoningReserveTokens;
     const providerId = context.activeProvider.providerId;
-    const outputReserveTokens = Math.min(maxOutputTokens, Math.ceil(contextWindow * 0.05))
-      + reasoningReserveTokens;
+    const outputReserveTokens = Math.min(maxOutputTokens, Math.ceil(contextWindow * 0.05));
     const getRequestReserveTokens = () => outputReserveTokens + estimateUnknownTokens({
       systemPrompt,
       toolNames: Object.keys(tools),

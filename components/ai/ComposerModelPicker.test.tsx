@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -58,4 +59,9 @@ test('external agent picker lists presets without a provider column', () => {
   assert.match(html, /GPT-5\.4/);
   assert.match(html, /ai\.chat\.recent/);
   assert.doesNotMatch(html, /ai\.chat\.providers/);
+});
+
+test('custom model action is only offered in Catty provider-switcher mode', () => {
+  const source = readFileSync(new URL('./ComposerModelPicker.tsx', import.meta.url), 'utf8');
+  assert.match(source, /const showCustom = Boolean\(\s*hasProviders/s);
 });
