@@ -44,8 +44,12 @@ test('buildCattyReasoningProviderOptions maps Gemini thinking levels', () => {
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-2.5-pro'),
     { google: { thinkingConfig: { thinkingBudget: 16_384, includeThoughts: true } } },
   );
-  assert.deepEqual(
+  assert.equal(
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'off', 'gemini-2.5-pro'),
+    undefined,
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'off', 'gemini-2.5-flash'),
     { google: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } },
   );
   assert.equal(

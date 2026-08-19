@@ -51,11 +51,22 @@ export function buildCattyReasoningProviderOptions(
         },
       };
     }
+    if (level === 'off') {
+      if (!googleModelAllowsDisabledThinking(modelId)) return undefined;
+      return {
+        google: {
+          thinkingConfig: {
+            thinkingBudget: 0,
+            includeThoughts: false,
+          },
+        },
+      };
+    }
     return {
       google: {
         thinkingConfig: {
-          thinkingBudget: level === 'off' ? 0 : GEMINI_25_THINKING_BUDGET[level],
-          includeThoughts: level !== 'off',
+          thinkingBudget: GEMINI_25_THINKING_BUDGET[level],
+          includeThoughts: true,
         },
       },
     };
@@ -70,4 +81,9 @@ export function googleModelLikelySupportsThinking(modelId: string): boolean {
 
 function isGemini3Model(modelId: string): boolean {
   return modelId.trim().toLowerCase().includes('gemini-3');
+}
+
+function googleModelAllowsDisabledThinking(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  return /flash-lite|flash/.test(id) && !/pro/.test(id);
 }

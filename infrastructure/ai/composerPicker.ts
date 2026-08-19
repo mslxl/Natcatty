@@ -1,5 +1,5 @@
 import type { AgentModelPreset, ProviderConfig } from './types';
-import { formatThinkingLabel, PROVIDER_PRESETS } from './types';
+import { formatThinkingLabel, PROVIDER_PRESETS, resolveAgentModelSelection } from './types';
 
 export const CATTY_REASONING_LEVELS = ['off', 'low', 'medium', 'high'] as const;
 export type CattyReasoningLevel = (typeof CATTY_REASONING_LEVELS)[number];
@@ -191,10 +191,7 @@ export function resolveModelSelectionWithThinking(
   if (preferredThinking && levels.includes(preferredThinking)) {
     return `${preset.id}/${preferredThinking}`;
   }
-  const fallback = preset.defaultThinkingLevel && levels.includes(preset.defaultThinkingLevel)
-    ? preset.defaultThinkingLevel
-    : levels[0];
-  return `${preset.id}/${fallback}`;
+  return resolveAgentModelSelection(preset);
 }
 
 export function formatComposerThinkingLabel(level: string): string {

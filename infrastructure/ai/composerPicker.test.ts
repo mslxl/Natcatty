@@ -80,6 +80,16 @@ test('resolveModelSelectionWithThinking keeps the current effort when still vali
   assert.equal(resolveModelSelectionWithThinking(preset, 'high'), 'gpt-5.5/high');
   assert.equal(resolveModelSelectionWithThinking(preset, 'ultra'), 'gpt-5.5/medium');
   assert.equal(resolveModelSelectionWithThinking({ id: 'haiku', name: 'Haiku' }, 'high'), 'haiku');
+  assert.equal(
+    resolveModelSelectionWithThinking({
+      id: 'glm-5.1',
+      name: 'GLM 5.1',
+      thinkingLevels: ['low', 'medium', 'high'],
+      defaultThinkingLevel: 'medium',
+      encodeDefaultThinking: false,
+    }),
+    'glm-5.1',
+  );
 });
 
 test('recent and pinned grouping keeps pinned first and drops duplicates from recent', () => {
