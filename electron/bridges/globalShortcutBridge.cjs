@@ -5,6 +5,13 @@
 
 const path = require("node:path");
 const fs = require("node:fs");
+const {
+  TRAY_PANEL_WIDTH,
+  TRAY_PANEL_HEIGHT,
+  resolveTrayAnchor,
+  resolveTrayDisplayPoint,
+  placeTrayPanel,
+} = require("./trayPanelBounds.cjs");
 
 let electronModule = null;
 let ensureMainWindow = null;
@@ -403,8 +410,8 @@ function ensureTrayPanelWindow() {
   trayPanelShowWhenReady = false;
 
   trayPanelWindow = new BrowserWindow({
-    width: 360,
-    height: 520,
+    width: TRAY_PANEL_WIDTH,
+    height: TRAY_PANEL_HEIGHT,
     show: false,
     frame: false,
     resizable: false,
@@ -414,6 +421,8 @@ function ensureTrayPanelWindow() {
     maximizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    // Native shadow only. CSS box-shadow on this transparent overlay
+    // double-composites on macOS as an extra outline under the card.
     hasShadow: true,
     // Transparent host + clear backdrop so CSS rounded-lg corners are truly
     // see-through. On Windows, disable OS rounding so it does not stack under
@@ -424,7 +433,9 @@ function ensureTrayPanelWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-          spellcheck: false,
+      spellcheck: false,
+      // Tray must not inherit Chromium page-zoom from the main window origin.
+      zoomFactor: 1,
     },
   });
 
@@ -467,23 +478,44 @@ function ensureTrayPanelWindow() {
   return trayPanelWindow;
 }
 
-function showTrayPanel() {
+function readTrayBounds() {
+  try {
+    return tray?.getBounds?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function readCursorPoint() {
+  try {
+    return electronModule?.screen?.getCursorScreenPoint?.() ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function showTrayPanel(eventBounds) {
   if (!tray) return;
   const { screen } = electronModule;
   const win = ensureTrayPanelWindow();
 
-  const trayBounds = tray.getBounds();
-  const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
-  const workArea = display.workArea;
-
-  const panelBounds = win.getBounds();
-  const x = Math.min(
-    Math.max(trayBounds.x + Math.round(trayBounds.width / 2) - Math.round(panelBounds.width / 2), workArea.x),
-    workArea.x + workArea.width - panelBounds.width,
+  const cursorPoint = readCursorPoint();
+  const trayBounds = readTrayBounds();
+  // Event bounds choose the monitor. Cursor is only the fallback so a
+  // Windows getBounds() y=0 lie cannot pick the wrong screen; keyboard /
+  // accessibility activation must not follow an unrelated pointer.
+  const display = screen.getDisplayNearestPoint(
+    resolveTrayDisplayPoint({ eventBounds, trayBounds, cursorPoint }),
   );
-  const y = Math.min(trayBounds.y + trayBounds.height + 6, workArea.y + workArea.height - panelBounds.height);
+  const workArea = display.workArea;
+  const panelBounds = placeTrayPanel({
+    anchor: resolveTrayAnchor({ eventBounds, trayBounds, cursorPoint, workArea }),
+    workArea,
+    width: TRAY_PANEL_WIDTH,
+    height: TRAY_PANEL_HEIGHT,
+  });
 
-  win.setBounds({ x, y, width: panelBounds.width, height: panelBounds.height }, false);
+  win.setBounds(panelBounds, false);
   // Wait for first paint/load so the opaque main-app splash cannot flash as a
   // square underlay before the tray route clears it (#2505).
   if (!trayPanelReady) {
@@ -522,7 +554,7 @@ function hideTrayPanel() {
   }
 }
 
-function toggleTrayPanel() {
+function toggleTrayPanel(eventBounds) {
   // A pending first-load show counts as "open" so a second click cancels it
   // instead of leaving did-finish-load to pop the panel open later.
   const isOpenOrPending =
@@ -531,7 +563,7 @@ function toggleTrayPanel() {
   if (isOpenOrPending) {
     hideTrayPanel();
   } else {
-    showTrayPanel();
+    showTrayPanel(eventBounds);
   }
 }
 
@@ -855,20 +887,20 @@ function createTray() {
       tray.on("click", () => {
         openMainWindow();
       });
-      tray.on("right-click", () => {
-        toggleTrayPanel();
+      tray.on("right-click", (_event, bounds) => {
+        toggleTrayPanel(bounds);
       });
     } else if (process.platform === "linux") {
       // Linux: GtkStatusIcon left-click can toggle the custom panel; StatusNotifier
       // activation shows the native context menu set via setContextMenu() (there is
       // no right-click / popUpContextMenu API on Linux — see Electron Tray docs).
-      tray.on("click", () => {
-        toggleTrayPanel();
+      tray.on("click", (_event, bounds) => {
+        toggleTrayPanel(bounds);
       });
     } else {
       // macOS: Click toggles custom tray panel
-      tray.on("click", () => {
-        toggleTrayPanel();
+      tray.on("click", (_event, bounds) => {
+        toggleTrayPanel(bounds);
       });
     }
 
