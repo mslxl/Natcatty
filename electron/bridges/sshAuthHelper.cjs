@@ -152,7 +152,7 @@ function notifyPassphraseAuthFailed(sender, keyPath, resolvedPath, keyIds) {
 
 /**
  * Resolve a private key (and optional passphrase) into a form ssh2 can parse.
- * PKCS#8 keys, which ssh2 rejects, are transparently converted to a legacy PEM
+ * PKCS#8 keys and PuTTY PPK files that ssh2 rejects are converted first
  * (see privateKeyNormalizer.cjs).
  *
  * @returns {{ privateKey: string, passphrase: string|undefined } | null}
