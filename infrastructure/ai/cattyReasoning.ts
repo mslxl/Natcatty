@@ -132,6 +132,7 @@ export function openaiModelSupportsNoneReasoning(modelId: string): boolean {
 export function openaiModelLikelySupportsReasoning(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
   if (!id) return false;
+  if (/gpt-5-chat/.test(id)) return false;
   return (
     /(^|[^a-z0-9])o[1-4]([^a-z0-9]|$)/.test(id)
     || /gpt-5/.test(id)

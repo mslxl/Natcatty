@@ -55,6 +55,11 @@ test('buildCattyReasoningProviderOptions omits reasoningEffort for non-reasoning
 
 test('cattyReasoningLevelsForSelection hides the chip unless the model can take effort', () => {
   assert.equal(openaiModelLikelySupportsReasoning('gpt-4o'), false);
+  assert.equal(openaiModelLikelySupportsReasoning('gpt-5-chat-latest'), false);
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'openai' }, 'high', 'gpt-5-chat-latest'),
+    undefined,
+  );
   assert.equal(openaiModelLikelySupportsReasoning('gpt-5.5'), true);
   assert.deepEqual(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-4o'), []);
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.5').includes('high'));
