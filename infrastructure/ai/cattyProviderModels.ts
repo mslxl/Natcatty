@@ -32,6 +32,18 @@ type FetchBridge = {
 const catalogCache = new Map<string, { models: ComposerPickerModel[]; expiresAt: number }>();
 const CATALOG_TTL_MS = 5 * 60 * 1000;
 
+/** Length + FNV-1a of the stored secret so a key rotation busts the catalog cache. */
+function credentialFingerprint(value: string | undefined): string {
+  const raw = String(value || '');
+  if (!raw) return '0';
+  let hash = 2166136261;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash ^= raw.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `${raw.length}:${(hash >>> 0).toString(16)}`;
+}
+
 export function providerModelCacheKey(provider: ProviderConfig): string {
   return [
     provider.id,
@@ -39,6 +51,7 @@ export function providerModelCacheKey(provider: ProviderConfig): string {
     provider.style ?? '',
     provider.baseURL ?? '',
     provider.skipTLSVerify ? '1' : '0',
+    credentialFingerprint(provider.apiKey),
   ].join('|');
 }
 

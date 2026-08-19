@@ -52,13 +52,13 @@ export function buildCattyReasoningProviderOptions(
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return undefined;
     if (isGemini3Model(modelId)) {
-      const thinkingLevel = gemini3ThinkingLevel(modelId, level);
+      const thinkingLevel = gemini3ThinkingLevel(modelId, effort || level);
       if (!thinkingLevel) return undefined;
       return {
         google: {
           thinkingConfig: {
             thinkingLevel,
-            includeThoughts: level !== 'off',
+            includeThoughts: thinkingLevel !== 'minimal',
           },
         },
       };
@@ -119,12 +119,15 @@ export function openaiModelLikelySupportsReasoning(modelId: string): boolean {
 export function cattyReasoningLevelsForSelection(
   provider: Pick<ProviderConfig, 'providerId' | 'style'> | null | undefined,
   modelId?: string,
-): readonly CattyReasoningLevel[] {
+): readonly string[] {
   if (!provider) return [];
   const style = resolveProviderStyle(provider);
   if (style === 'anthropic') return CATTY_REASONING_LEVELS;
   if (style === 'google') {
-    return modelId && googleModelLikelySupportsThinking(modelId) ? CATTY_REASONING_LEVELS : [];
+    if (!modelId || !googleModelLikelySupportsThinking(modelId)) return [];
+    // Gemini 3 Flash cannot disable thinking; lowest advertised level is minimal.
+    if (isGemini3Flash(modelId)) return ['minimal', 'low', 'medium', 'high'];
+    return CATTY_REASONING_LEVELS;
   }
   if (style === 'openai') {
     return modelId && openaiModelLikelySupportsReasoning(modelId) ? CATTY_REASONING_LEVELS : [];
@@ -136,15 +139,23 @@ function isGemini3Model(modelId: string): boolean {
   return modelId.trim().toLowerCase().includes('gemini-3');
 }
 
+function isGemini3Flash(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  return isGemini3Model(id) && /flash/.test(id);
+}
+
 function gemini3ThinkingLevel(
   modelId: string,
-  level: CattyReasoningLevel,
+  level: string,
 ): 'minimal' | 'low' | 'medium' | 'high' | undefined {
   const id = modelId.trim().toLowerCase();
+  const raw = level.trim().toLowerCase();
   const isFlash = /flash/.test(id);
-  if (level === 'off') return isFlash ? 'minimal' : undefined;
-  if (!isFlash && /pro/.test(id) && level === 'medium') return 'high';
-  return level;
+  if (raw === 'minimal') return isFlash ? 'minimal' : 'low';
+  if (raw === 'off') return isFlash ? 'minimal' : undefined;
+  if (!isFlash && /pro/.test(id) && raw === 'medium') return 'high';
+  if (raw === 'low' || raw === 'medium' || raw === 'high') return raw;
+  return undefined;
 }
 
 function googleModelAllowsDisabledThinking(modelId: string): boolean {

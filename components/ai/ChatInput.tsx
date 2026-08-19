@@ -925,6 +925,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const selectedThinking = hasProviderSwitcher
     ? (thinkingLevel || 'off')
     : selectedPresetThinking;
+  const visibleThinking = thinkingLevels.includes(selectedThinking || '')
+    ? selectedThinking
+    : (selectedThinking === 'off' && thinkingLevels.includes('minimal') ? 'minimal' : selectedThinking);
   const showThinkingChip = thinkingLevels.length > 0 && (!hasProviderSwitcher || !!onThinkingLevelChange);
   const popoverMaxWidth = hasProviderSwitcher
     ? COMPOSER_PROVIDER_PICKER_WIDTH
@@ -1413,7 +1416,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
             {showThinkingChip && (
               <ComposerThinkingChip
                 levels={thinkingLevels}
-                selectedLevel={selectedThinking}
+                selectedLevel={visibleThinking}
                 disabled={lockTurnConfiguration}
                 open={showThinkingPicker}
                 menuPos={showThinkingPicker ? menuPos : null}

@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   clearProviderModelCatalogCache,
   fetchProviderModelCatalog,
+  providerModelCacheKey,
   seedProviderModelCatalog,
 } from './cattyProviderModels';
 import type { ProviderConfig } from './types';
@@ -17,6 +18,15 @@ const provider: ProviderConfig = {
   apiKey: 'test-key',
   enabled: true,
 };
+
+test('providerModelCacheKey changes when the stored API key changes', () => {
+  const base = { ...provider };
+  const before = providerModelCacheKey({ ...base, apiKey: 'enc-old' });
+  const after = providerModelCacheKey({ ...base, apiKey: 'enc-new' });
+  const empty = providerModelCacheKey({ ...base, apiKey: undefined });
+  assert.notEqual(before, after);
+  assert.notEqual(before, empty);
+});
 
 test('seedProviderModelCatalog includes the default and curated models', () => {
   const seed = seedProviderModelCatalog(provider);

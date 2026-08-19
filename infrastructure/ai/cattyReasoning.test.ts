@@ -57,6 +57,12 @@ test('cattyReasoningLevelsForSelection hides the chip unless the model can take 
   assert.deepEqual(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-4o'), []);
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.5').includes('high'));
   assert.deepEqual(cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-1.5-flash'), []);
+  assert.deepEqual(
+    cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-flash'),
+    ['minimal', 'low', 'medium', 'high'],
+  );
+  assert.ok(cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-flash').includes('minimal'));
+  assert.ok(!cattyReasoningLevelsForSelection({ providerId: 'google' }, 'gemini-3-flash').includes('off'));
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'anthropic' }, 'claude-opus-4-6').includes('high'));
 });
 
