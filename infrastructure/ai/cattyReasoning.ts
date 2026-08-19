@@ -42,10 +42,12 @@ export function buildCattyReasoningProviderOptions(
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return undefined;
     if (isGemini3Model(modelId)) {
+      const thinkingLevel = gemini3ThinkingLevel(modelId, level);
+      if (!thinkingLevel) return undefined;
       return {
         google: {
           thinkingConfig: {
-            thinkingLevel: level === 'off' ? 'minimal' : level,
+            thinkingLevel,
             includeThoughts: level !== 'off',
           },
         },
@@ -81,6 +83,17 @@ export function googleModelLikelySupportsThinking(modelId: string): boolean {
 
 function isGemini3Model(modelId: string): boolean {
   return modelId.trim().toLowerCase().includes('gemini-3');
+}
+
+function gemini3ThinkingLevel(
+  modelId: string,
+  level: CattyReasoningLevel,
+): 'minimal' | 'low' | 'medium' | 'high' | undefined {
+  const id = modelId.trim().toLowerCase();
+  const isFlash = /flash/.test(id);
+  if (level === 'off') return isFlash ? 'minimal' : undefined;
+  if (!isFlash && /pro/.test(id) && level === 'medium') return 'high';
+  return level;
 }
 
 function googleModelAllowsDisabledThinking(modelId: string): boolean {

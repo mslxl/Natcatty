@@ -702,6 +702,12 @@ export const CURSOR_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'auto', name: 'Auto', description: 'Recommended for CLI login / subscription quota' },
   { id: 'composer-2.5', name: 'Composer 2.5', description: 'Recommended for API key' },
   {
+    id: 'gpt-5',
+    name: 'GPT-5',
+    thinkingLevels: [...CURSOR_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
     id: 'gpt-5.5',
     name: 'GPT-5.5',
     thinkingLevels: [...CURSOR_REASONING_LEVELS],

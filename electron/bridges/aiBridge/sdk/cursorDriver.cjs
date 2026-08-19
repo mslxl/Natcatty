@@ -477,7 +477,10 @@ function mapCursorModels(models) {
       extraVariants.push(variant);
     }
     const fallbackLevels = CURSOR_FALLBACK_THINKING[model.id] || [];
-    const thinkingLevels = effortLevels.length > 0 ? effortLevels : fallbackLevels;
+    const thinkingLevels = [];
+    for (const level of [...effortLevels, ...fallbackLevels]) {
+      if (!thinkingLevels.includes(level)) thinkingLevels.push(level);
+    }
     out.push({
       id: model.id,
       name,

@@ -464,8 +464,8 @@ test("mapCursorModels maps display names and effort variants into thinkingLevels
       {
         id: "gpt-5",
         name: "GPT-5",
-        thinkingLevels: ["low"],
-        defaultThinkingLevel: "low",
+        thinkingLevels: ["low", "medium", "high"],
+        defaultThinkingLevel: "medium",
       },
     ],
   );
@@ -489,8 +489,8 @@ test("mapCursorModels keeps extra-param variants as separate models", () => {
     {
       id: "gpt-5",
       name: "GPT-5",
-      thinkingLevels: ["low"],
-      defaultThinkingLevel: "low",
+      thinkingLevels: ["low", "medium", "high"],
+      defaultThinkingLevel: "medium",
     },
     {
       id: "gpt-5?effort=low&mode=fast",
