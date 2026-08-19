@@ -769,6 +769,55 @@ test("idle lock closes DevTools in every app window", async () => {
   });
 });
 
+function emitSystemContextMenu(win) {
+  let preventDefaultCount = 0;
+  win.emit("system-context-menu", {
+    preventDefault() {
+      preventDefaultCount += 1;
+    },
+  });
+  return preventDefaultCount;
+}
+
+test("lock suppresses the native system context menu on every app window", async () => {
+  const { controller, windows } = await createControllerHarness();
+  await controller.requestPasswordChange({ nextPassword: "alpha" });
+
+  for (const win of windows) {
+    assert.equal(
+      emitSystemContextMenu(win),
+      1,
+      `${win.name} should hide the native window menu while locked`,
+    );
+  }
+
+  await controller.requestUnlock("alpha");
+  for (const win of windows) {
+    assert.equal(
+      emitSystemContextMenu(win),
+      0,
+      `${win.name} should keep the native window menu after unlock`,
+    );
+  }
+
+  controller.setLocked("manual");
+  for (const win of windows) {
+    assert.equal(
+      emitSystemContextMenu(win),
+      1,
+      `${win.name} should hide the native window menu after re-lock`,
+    );
+  }
+});
+
+test("newly opened windows suppress the native system context menu while locked", async () => {
+  const { controller } = await createControllerHarness();
+  const newWindow = createWindowCollector("new-session");
+  controller.protectWindow(newWindow);
+
+  assert.equal(emitSystemContextMenu(newWindow), 1);
+});
+
 test("startup lock immediately protects existing and newly opened windows", async () => {
   const existingWindow = createWindowCollector("existing");
   existingWindow.openDevToolsForTest();
