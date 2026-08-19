@@ -824,3 +824,34 @@ test("AppLockOverlay keeps password fallback after system unlock failure", async
     dom.cleanup();
   }
 });
+
+test("AppLockOverlay keeps a window drag region while lock controls stay interactive", async () => {
+  const dom = installDomEnvironment();
+  const renderer = await createDomRenderer(dom.document);
+
+  try {
+    await renderer.render(
+      React.createElement(
+        I18nProvider,
+        { locale: "en" },
+        React.createElement(AppLockOverlay, {
+          locked: true,
+          reason: "manual",
+          onUnlock: async () => ({ ok: false, error: "incorrect" as const }),
+          onResetAppLock: async () => {},
+        }),
+      ),
+    );
+    await flushEffects();
+
+    const overlay = dom.document.querySelector("[data-app-lock-overlay]");
+    const form = overlay?.querySelector("form");
+    assert.ok(overlay);
+    assert.ok(form);
+    assert.match(overlay.getAttribute("class") ?? "", /\bapp-drag\b/);
+    assert.match(form.getAttribute("class") ?? "", /\bapp-no-drag\b/);
+  } finally {
+    await renderer.unmount();
+    dom.cleanup();
+  }
+});

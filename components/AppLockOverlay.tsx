@@ -339,9 +339,11 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
   };
 
   return (
+    // Overlay covers the title bar, and is the only chrome on a locked first
+    // paint, so the backdrop owns the window drag region.
     <div
       ref={overlayRootRef}
-      className="fixed inset-0 flex items-center justify-center bg-background px-6 text-foreground"
+      className="fixed inset-0 flex items-center justify-center bg-background px-6 text-foreground app-drag"
       style={{ zIndex: 2147483647 }}
       role="dialog"
       data-state="open"
@@ -350,7 +352,7 @@ export const AppLockOverlay: React.FC<AppLockOverlayProps> = ({
       aria-labelledby="app-lock-title"
     >
       <form
-        className="flex w-full max-w-[360px] flex-col items-center gap-5"
+        className="flex w-full max-w-[360px] flex-col items-center gap-5 app-no-drag"
         onSubmit={handleSubmit}
       >
         <button
