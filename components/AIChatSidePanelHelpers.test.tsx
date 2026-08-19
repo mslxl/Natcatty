@@ -83,6 +83,12 @@ test('mergeFallbackThinkingLevels fills missing runtime effort catalogs', () => 
   assert.deepEqual(merged[0]?.thinkingLevels, ['low', 'medium', 'high']);
   assert.equal(merged[0]?.defaultThinkingLevel, 'medium');
   assert.equal(merged[1]?.thinkingLevels, undefined);
+  const partial = mergeFallbackThinkingLevels(
+    [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low'] }],
+    [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low', 'medium', 'high'], defaultThinkingLevel: 'medium' }],
+  );
+  assert.deepEqual(partial[0]?.thinkingLevels, ['low']);
+  assert.deepEqual(mergeFallbackThinkingLevels([], [{ id: 'gpt-5.5', name: 'GPT-5.5' }]), []);
 });
 
 test('modelPresetsContainId matches plain and thinking-level model ids', () => {
@@ -143,6 +149,33 @@ test('shouldAdoptSdkCurrentModel keeps SDK defaults when no runtime list is retu
     false,
   );
   assert.equal(shouldAdoptSdkCurrentModel(null, undefined, []), false);
+});
+
+test('normalizeStoredAgentModelSelection rewrites Cursor query effort but not extra params', () => {
+  const presets: AgentModelPreset[] = [{
+    id: 'gpt-5.5',
+    name: 'GPT-5.5',
+    thinkingLevels: ['low', 'medium', 'high'],
+    defaultThinkingLevel: 'medium',
+  }];
+  assert.equal(normalizeStoredAgentModelSelection('gpt-5.5?effort=low', presets), 'gpt-5.5/low');
+  assert.equal(normalizeStoredAgentModelSelection('gpt-5.5/high', presets), 'gpt-5.5/high');
+  assert.equal(
+    normalizeStoredAgentModelSelection('gpt-5.5?effort=low&mode=fast', presets),
+    undefined,
+  );
+});
+
+test('normalizeStoredAgentModelSelection keeps bare CodeBuddy ids unsuffixed', () => {
+  const presets: AgentModelPreset[] = [{
+    id: 'glm-5.1',
+    name: 'GLM 5.1',
+    thinkingLevels: ['low', 'medium', 'high', 'xhigh'],
+    defaultThinkingLevel: 'medium',
+    encodeDefaultThinking: false,
+  }];
+  assert.equal(normalizeStoredAgentModelSelection('glm-5.1', presets), 'glm-5.1');
+  assert.equal(normalizeStoredAgentModelSelection('glm-5.1/high', presets), 'glm-5.1/high');
 });
 
 test('legacy plain model selections keep their model and gain its default reasoning effort', () => {

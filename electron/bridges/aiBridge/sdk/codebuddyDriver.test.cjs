@@ -428,6 +428,7 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
       description: undefined,
       thinkingLevels: ["low", "medium", "high", "xhigh"],
       defaultThinkingLevel: "medium",
+      encodeDefaultThinking: false,
     },
     {
       id: "cb-1",
@@ -435,6 +436,7 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
       description: "default",
       thinkingLevels: ["low", "medium", "high", "xhigh"],
       defaultThinkingLevel: "medium",
+      encodeDefaultThinking: false,
     },
     {
       id: "cb-2",
@@ -442,6 +444,7 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
       description: undefined,
       thinkingLevels: ["low", "medium", "high", "xhigh"],
       defaultThinkingLevel: "medium",
+      encodeDefaultThinking: false,
     },
   ]);
   assert.deepEqual(mapCodebuddyModels(null), []);

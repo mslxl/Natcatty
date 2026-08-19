@@ -64,6 +64,10 @@ test('resolveThinkingSelection keeps slashy model ids unless they match a declar
     preset: presets[1],
     thinking: 'high',
   });
+  assert.deepEqual(resolveThinkingSelection('gpt-5.5?effort=high', presets), {
+    preset: presets[1],
+    thinking: 'high',
+  });
 });
 
 test('resolveModelSelectionWithThinking keeps the current effort when still valid', () => {

@@ -213,6 +213,7 @@ function attachCodebuddyThinkingLevels(preset) {
     ...preset,
     thinkingLevels: [...CODEBUDDY_REASONING_LEVELS],
     defaultThinkingLevel: "medium",
+    encodeDefaultThinking: false,
   };
 }
 

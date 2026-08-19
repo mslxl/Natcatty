@@ -10,18 +10,26 @@ const ANTHROPIC_THINKING_BUDGET: Record<Exclude<CattyReasoningLevel, 'off'>, num
 
 export type CattyReasoningProviderOptions = Record<string, Record<string, unknown>>;
 
+const GEMINI_25_THINKING_BUDGET: Record<Exclude<CattyReasoningLevel, 'off'>, number> = {
+  low: 1_024,
+  medium: 8_192,
+  high: 16_384,
+};
+
 export function buildCattyReasoningProviderOptions(
   provider: Pick<ProviderConfig, 'providerId' | 'style'> | null | undefined,
   effort: string | null | undefined,
   modelId?: string,
 ): CattyReasoningProviderOptions | undefined {
+  if (!provider) return undefined;
   const level = normalizeCattyReasoningLevel(effort);
-  if (level === 'off' || !provider) return undefined;
   const style: ProviderStyle = resolveProviderStyle(provider);
   if (style === 'openai') {
+    if (level === 'off') return undefined;
     return { openai: { reasoningEffort: level } };
   }
   if (style === 'anthropic') {
+    if (level === 'off') return undefined;
     return {
       anthropic: {
         thinking: {
@@ -32,12 +40,22 @@ export function buildCattyReasoningProviderOptions(
     };
   }
   if (style === 'google') {
-    if (modelId && !googleModelLikelySupportsThinking(modelId)) return undefined;
+    if (!modelId || !googleModelLikelySupportsThinking(modelId)) return undefined;
+    if (isGemini3Model(modelId)) {
+      return {
+        google: {
+          thinkingConfig: {
+            thinkingLevel: level === 'off' ? 'minimal' : level,
+            includeThoughts: level !== 'off',
+          },
+        },
+      };
+    }
     return {
       google: {
         thinkingConfig: {
-          thinkingLevel: level,
-          includeThoughts: true,
+          thinkingBudget: level === 'off' ? 0 : GEMINI_25_THINKING_BUDGET[level],
+          includeThoughts: level !== 'off',
         },
       },
     };
@@ -48,4 +66,8 @@ export function buildCattyReasoningProviderOptions(
 export function googleModelLikelySupportsThinking(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
   return /gemini-3|gemini-2\.5|gemini-2\.0-flash-thinking|thinking/.test(id);
+}
+
+function isGemini3Model(modelId: string): boolean {
+  return modelId.trim().toLowerCase().includes('gemini-3');
 }

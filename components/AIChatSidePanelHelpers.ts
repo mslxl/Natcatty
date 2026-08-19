@@ -4,6 +4,9 @@ import {
   type ExternalAgentConfig,
 } from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend } from '../infrastructure/ai/managedAgents';
+import { canonicalizeEffortEncodedModelId } from '../infrastructure/ai/composerPicker';
+
+export { canonicalizeEffortEncodedModelId };
 
 export type SdkRuntimeModelCatalog = {
   currentModelId: string | null;
@@ -179,20 +182,6 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
 
 export const sdkRuntimeModelCache = createSdkRuntimeModelCache();
 
-/** Cursor historically stored effort as `id?effort=low`. Collapse to `id/low`. */
-export function canonicalizeEffortEncodedModelId(modelId: string): string {
-  const queryIndex = modelId.indexOf('?');
-  if (queryIndex < 0) return modelId;
-  const id = modelId.slice(0, queryIndex);
-  const params = new URLSearchParams(modelId.slice(queryIndex + 1));
-  const keys = [...params.keys()];
-  const effort = params.get('effort');
-  if (keys.length === 1 && keys[0] === 'effort' && effort) {
-    return `${id}/${effort}`;
-  }
-  return modelId;
-}
-
 export function mergeFallbackThinkingLevels(
   runtime: AgentModelPreset[],
   fallbacks: AgentModelPreset[],
@@ -208,6 +197,9 @@ export function mergeFallbackThinkingLevels(
       thinkingLevels: [...fallback.thinkingLevels],
       ...(fallback.defaultThinkingLevel
         ? { defaultThinkingLevel: fallback.defaultThinkingLevel }
+        : {}),
+      ...(fallback.encodeDefaultThinking === false
+        ? { encodeDefaultThinking: false }
         : {}),
     };
   });

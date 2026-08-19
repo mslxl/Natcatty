@@ -146,6 +146,16 @@ test('resolveAgentModelSelection uses catalog default effort, not last array ent
     resolveAgentModelSelection({ id: 'plain', name: 'Plain' }),
     'plain',
   );
+  assert.equal(
+    resolveAgentModelSelection({
+      id: 'glm-5.1',
+      name: 'GLM 5.1',
+      thinkingLevels: ['low', 'medium', 'high'],
+      defaultThinkingLevel: 'medium',
+      encodeDefaultThinking: false,
+    }),
+    'glm-5.1',
+  );
 });
 
 test('filterAgentModelPresetsForCliVersion gates GPT-5.6 on CLI < 0.144.0', () => {

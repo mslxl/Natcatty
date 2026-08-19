@@ -151,20 +151,34 @@ export function mergeComposerModels(
   return Array.from(byId.values());
 }
 
+export function canonicalizeEffortEncodedModelId(modelId: string): string {
+  const queryIndex = modelId.indexOf('?');
+  if (queryIndex < 0) return modelId;
+  const id = modelId.slice(0, queryIndex);
+  const params = new URLSearchParams(modelId.slice(queryIndex + 1));
+  const keys = [...params.keys()];
+  const effort = params.get('effort');
+  if (keys.length === 1 && keys[0] === 'effort' && effort) {
+    return `${id}/${effort}`;
+  }
+  return modelId;
+}
+
 export function resolveThinkingSelection(
   selectedModelId: string | undefined,
   presets: AgentModelPreset[],
 ): { preset?: AgentModelPreset; thinking?: string } {
   if (!selectedModelId) return {};
-  const direct = presets.find((preset) => preset.id === selectedModelId);
+  const canonical = canonicalizeEffortEncodedModelId(selectedModelId);
+  const direct = presets.find((preset) => preset.id === canonical);
   if (direct) return { preset: direct };
   const viaThinking = presets.find(
-    (preset) => preset.thinkingLevels?.some((level) => `${preset.id}/${level}` === selectedModelId),
+    (preset) => preset.thinkingLevels?.some((level) => `${preset.id}/${level}` === canonical),
   );
   if (!viaThinking) return {};
   return {
     preset: viaThinking,
-    thinking: selectedModelId.slice(viaThinking.id.length + 1),
+    thinking: canonical.slice(viaThinking.id.length + 1),
   };
 }
 

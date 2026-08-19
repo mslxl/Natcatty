@@ -471,6 +471,34 @@ test("mapCursorModels maps display names and effort variants into thinkingLevels
   );
 });
 
+test("mapCursorModels keeps extra-param variants as separate models", () => {
+  const mapped = mapCursorModels([
+    {
+      id: "gpt-5",
+      displayName: "GPT-5",
+      variants: [
+        { displayName: "Fast", params: [{ id: "effort", value: "low" }] },
+        {
+          displayName: "Fast custom",
+          params: [{ id: "effort", value: "low" }, { id: "mode", value: "fast" }],
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(mapped, [
+    {
+      id: "gpt-5",
+      name: "GPT-5",
+      thinkingLevels: ["low"],
+      defaultThinkingLevel: "low",
+    },
+    {
+      id: "gpt-5?effort=low&mode=fast",
+      name: "GPT-5 - Fast custom",
+    },
+  ]);
+});
+
 test("parseCursorModelSelection accepts query and slash effort encodings", () => {
   const { parseCursorModelSelection, encodeCursorCliModel } = require("./cursorDriver.cjs");
   assert.deepEqual(parseCursorModelSelection("gpt-5/high"), {

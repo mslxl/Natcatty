@@ -498,6 +498,11 @@ export interface AgentModelPreset {
    */
   defaultThinkingLevel?: string;
   /**
+   * When false, a stored bare model id stays unsuffixed so the driver can
+   * apply its own settings-level effort. Defaults to true.
+   */
+  encodeDefaultThinking?: boolean;
+  /**
    * Minimum agent CLI version that advertises this model (semver core).
    * Netcatty is BYO-CLI: the packaged SDK does not replace the user's binary.
    */
@@ -625,6 +630,7 @@ export function filterAgentModelPresetsForCliVersion(
 export function resolveAgentModelSelection(preset: AgentModelPreset): string {
   const levels = preset.thinkingLevels;
   if (!levels?.length) return preset.id;
+  if (preset.encodeDefaultThinking === false) return preset.id;
   const preferred = preset.defaultThinkingLevel;
   if (preferred && levels.includes(preferred)) {
     return `${preset.id}/${preferred}`;
@@ -737,6 +743,7 @@ function codebuddyPreset(id: string, name: string): AgentModelPreset {
     name,
     thinkingLevels: [...CODEBUDDY_REASONING_LEVELS],
     defaultThinkingLevel: 'medium',
+    encodeDefaultThinking: false,
   };
 }
 

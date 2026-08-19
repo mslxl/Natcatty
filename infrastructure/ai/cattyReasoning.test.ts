@@ -37,8 +37,20 @@ test('buildCattyReasoningProviderOptions respects an explicit style override', (
 
 test('buildCattyReasoningProviderOptions maps Gemini thinking levels', () => {
   assert.deepEqual(
-    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-2.5-pro'),
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-3-pro'),
     { google: { thinkingConfig: { thinkingLevel: 'high', includeThoughts: true } } },
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-2.5-pro'),
+    { google: { thinkingConfig: { thinkingBudget: 16_384, includeThoughts: true } } },
+  );
+  assert.deepEqual(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'off', 'gemini-2.5-pro'),
+    { google: { thinkingConfig: { thinkingBudget: 0, includeThoughts: false } } },
+  );
+  assert.equal(
+    buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high'),
+    undefined,
   );
   assert.equal(
     buildCattyReasoningProviderOptions({ providerId: 'google' }, 'high', 'gemini-1.5-flash'),
