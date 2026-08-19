@@ -67,6 +67,7 @@ import {
   buildSdkRuntimeModelCacheKey,
   sdkRuntimeModelCache,
   generateId,
+  normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
@@ -853,6 +854,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }));
     }
 
+    const normalizedStoredModelId = normalizeStoredAgentModelSelection(
+      storedModelId,
+      runtimePresets,
+    );
+    if (normalizedStoredModelId && normalizedStoredModelId !== storedModelId) {
+      setAgentModel(agentId, normalizedStoredModelId);
+      return;
+    }
+
     if (
       options.adoptCurrentModel
       && catalog.currentModelId
@@ -988,7 +998,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const selectedAgentModel = useMemo(() => {
     const stored = agentModelMap[currentAgentId];
     if (shouldUseStoredAgentModel(stored, agentModelPresets, currentAgentConfig)) {
-      return stored;
+      return normalizeStoredAgentModelSelection(stored, agentModelPresets) ?? stored;
     }
     if (agentModelPresets.length > 0) {
       // Cursor CLI login defaults to `auto` (subscription quota routing).
@@ -1156,9 +1166,12 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
             ) {
               sendSelectedAgentModel = catalog.currentModelId;
             } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets)) {
-              sendSelectedAgentModel = storedModelId ?? sendSelectedAgentModel;
+              sendSelectedAgentModel = normalizeStoredAgentModelSelection(
+                storedModelId,
+                runtimePresets,
+              ) ?? storedModelId ?? sendSelectedAgentModel;
             } else if (runtimePresets[0]) {
-              sendSelectedAgentModel = runtimePresets[0].id;
+              sendSelectedAgentModel = resolveAgentModelSelection(runtimePresets[0]);
             }
           }
         }

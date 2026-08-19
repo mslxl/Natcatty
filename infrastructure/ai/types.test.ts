@@ -43,6 +43,18 @@ test('getAgentModelPresets returns curated Grok fallback when runtime catalog is
   assert.deepEqual(getAgentModelPresets('/usr/local/bin/grok'), GROK_MODEL_PRESETS);
   assert.deepEqual(getAgentModelPresets('C:\\\\Tools\\\\grok.exe', 'grok'), GROK_MODEL_PRESETS);
   assert.equal(getAgentModelPresets(undefined, 'grok')[0]?.id, 'grok-4.5');
+  assert.deepEqual(getAgentModelPresets(undefined, 'grok')[0]?.thinkingLevels, [
+    'high',
+    'medium',
+    'low',
+  ]);
+  assert.equal(getAgentModelPresets(undefined, 'grok')[0]?.defaultThinkingLevel, 'high');
+  assert.deepEqual(getAgentModelPresets(undefined, 'grok')[1], {
+    id: 'grok-4.6',
+    name: 'Grok 4.6',
+    thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  });
   // Empty/failed runtime catalog path: shared resolver still yields a non-empty list.
   const runtimeCatalog: Array<{ id: string; name: string }> = [];
   const resolved = runtimeCatalog.length > 0

@@ -1,4 +1,8 @@
-import type { AgentModelPreset, ExternalAgentConfig } from '../infrastructure/ai/types';
+import {
+  resolveAgentModelSelection,
+  type AgentModelPreset,
+  type ExternalAgentConfig,
+} from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend } from '../infrastructure/ai/managedAgents';
 
 export type SdkRuntimeModelCatalog = {
@@ -177,13 +181,26 @@ export const sdkRuntimeModelCache = createSdkRuntimeModelCache();
 
 export function modelPresetMatchesId(preset: AgentModelPreset, modelId: string): boolean {
   if (preset.thinkingLevels?.length) {
-    return preset.thinkingLevels.some((level) => `${preset.id}/${level}` === modelId);
+    return preset.id === modelId
+      || preset.thinkingLevels.some((level) => `${preset.id}/${level}` === modelId);
   }
   return preset.id === modelId;
 }
 
 export function modelPresetsContainId(presets: AgentModelPreset[], modelId: string): boolean {
   return presets.some((preset) => modelPresetMatchesId(preset, modelId));
+}
+
+export function normalizeStoredAgentModelSelection(
+  storedModelId: string | null | undefined,
+  presets: AgentModelPreset[],
+): string | undefined {
+  if (!storedModelId) return undefined;
+  const preset = presets.find((candidate) => modelPresetMatchesId(candidate, storedModelId));
+  if (!preset) return undefined;
+  return storedModelId === preset.id
+    ? resolveAgentModelSelection(preset)
+    : storedModelId;
 }
 
 export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean {

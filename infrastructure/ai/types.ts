@@ -489,7 +489,7 @@ export interface AgentModelPreset {
   id: string;
   name: string;
   description?: string;
-  /** Codex thinking levels (model ID sent as `id/thinking`) */
+  /** Supported reasoning levels (renderer selection encoded as `id/thinking`). */
   thinkingLevels?: string[];
   /**
    * Default effort used when auto-selecting a model with thinkingLevels.
@@ -708,7 +708,19 @@ export const OPENCODE_MODEL_PRESETS: AgentModelPreset[] = [
 // Curated Grok Build models when `grok models` is unavailable. IDs mirror the
 // public Grok Build / xAI coding agent lineup; live discovery still overrides.
 export const GROK_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'grok-4.5', name: 'Grok 4.5', description: 'Default' },
+  {
+    id: 'grok-4.5',
+    name: 'Grok 4.5',
+    description: 'Default',
+    thinkingLevels: ['high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  },
+  {
+    id: 'grok-4.6',
+    name: 'Grok 4.6',
+    thinkingLevels: ['xhigh', 'high', 'medium', 'low'],
+    defaultThinkingLevel: 'high',
+  },
 ];
 
 export function getAgentModelPresets(
