@@ -8,6 +8,23 @@
 
 import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import {
+  CATTY_REASONING_LEVELS,
+  resolveModelSelectionWithThinking,
+  resolveThinkingSelection,
+  type ComposerModelPrefs,
+} from '../../infrastructure/ai/composerPicker';
+import {
+  readComposerModelPrefs,
+  rememberComposerRecentModel,
+  toggleComposerPinnedModel,
+} from '../../infrastructure/ai/composerModelPrefs';
+import {
+  ComposerModelPicker,
+  COMPOSER_MODEL_PICKER_WIDTH,
+  COMPOSER_PROVIDER_PICKER_WIDTH,
+} from './ComposerModelPicker';
+import { ComposerThinkingChip } from './ComposerThinkingChip';
+import {
   buildSlashCommandItems,
   filterQuickMessages,
   filterSystemSlashCommands,
@@ -32,7 +49,6 @@ import {
   PromptInputTools,
 } from '../ai-elements/prompt-input';
 import type { PromptInputStatus } from '../ai-elements/prompt-input';
-import { formatThinkingLabel } from '../../infrastructure/ai/types';
 import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile } from '../../infrastructure/ai/types';
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
@@ -52,12 +68,8 @@ import {
   resolveVisibleChatInputMaxHeight,
 } from './chatInputResize';
 
-// Keep in sync with the popover's Tailwind max-width below.
-const MODEL_PICKER_MAX_WIDTH = 360;
-// Slightly wider for the provider picker so the per-row default-model
-// caption doesn't truncate.
-const PROVIDER_PICKER_MAX_WIDTH = 320;
 const PERMISSION_PICKER_WIDTH = 250;
+const THINKING_PICKER_WIDTH = 168;
 const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
@@ -70,11 +82,8 @@ function formatContextTokens(tokens: number): string {
 
 /**
  * Provider picker payload used by Catty Agent. When set, the model chip
- * switches to a flat provider list (provider icon + name + the provider's
- * configured default model as caption) in place of the generic Cpu glyph
- * + model-preset dropdown. Each provider exposes a single model — its
- * `defaultModel` — so a two-level menu would be empty noise; picking a
- * provider implicitly picks its model.
+ * opens a two-column picker: providers on the left, that provider's
+ * models on the right (presets + live discovery + search).
  */
 export interface ProviderSwitcherConfig {
   /** Every configured provider — Settings-level visibility, not the
@@ -224,6 +233,11 @@ interface ChatInputProps {
    * `modelPresets` dropdown because their provider is wired inside the CLI.
    */
   providerSwitcher?: ProviderSwitcherConfig;
+  /** Scope key for recent/pinned model prefs. */
+  pickerScope?: string;
+  /** Catty-only reasoning effort, stored separately from the model id. */
+  thinkingLevel?: string;
+  onThinkingLevelChange?: (level: string) => void;
   /** Hidden retained panels must not leave body-portaled menus open. */
   parked?: boolean;
 }
@@ -261,6 +275,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
   permissionMode,
   onPermissionModeChange,
   providerSwitcher,
+  pickerScope = 'default',
+  thinkingLevel,
+  onThinkingLevelChange,
   parked = false,
 }) => {
   const { t } = useI18n();
@@ -277,11 +294,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
   const composerDesiredHeightRef = useRef<number | null>(null);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
-  type ActiveMenu = 'model' | 'attach' | 'atMention' | 'slashCommand' | 'perm' | null;
+  type ActiveMenu = 'model' | 'thinking' | 'attach' | 'atMention' | 'slashCommand' | 'perm' | null;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const [inputPanelPos, setInputPanelPos] = useState<{ left: number; bottom: number; width: number } | null>(null);
-  const [hoveredModelId, setHoveredModelId] = useState<string | null>(null);
+  const [modelPrefs, setModelPrefs] = useState<ComposerModelPrefs>(() => readComposerModelPrefs(pickerScope));
   const [slashQuery, setSlashQuery] = useState('');
   const [slashRange, setSlashRange] = useState<{ start: number; end: number } | null>(null);
   // Active highlight index for @ mention / slash skill keyboard navigation
@@ -289,6 +306,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
 
   // Derived booleans for readability
   const showModelPicker = activeMenu === 'model';
+  const showThinkingPicker = activeMenu === 'thinking';
   const showAttachMenu = activeMenu === 'attach';
   const showAtMention = activeMenu === 'atMention';
   const showSlashCommandPicker = activeMenu === 'slashCommand';
@@ -298,10 +316,13 @@ const ChatInput: React.FC<ChatInputProps> = ({
     setActiveMenu(null);
     setMenuPos(null);
     setInputPanelPos(null);
-    setHoveredModelId(null);
     setSlashQuery('');
     setSlashRange(null);
   }, []);
+
+  useEffect(() => {
+    setModelPrefs(readComposerModelPrefs(pickerScope));
+  }, [pickerScope]);
 
   useEffect(() => {
     if (parked) closeAllMenus();
@@ -586,8 +607,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   );
 
   useEffect(() => {
-    if (lockTurnConfiguration && (showModelPicker || showPermPicker)) closeAllMenus();
-  }, [closeAllMenus, lockTurnConfiguration, showModelPicker, showPermPicker]);
+    if (lockTurnConfiguration && (showModelPicker || showThinkingPicker || showPermPicker)) closeAllMenus();
+  }, [closeAllMenus, lockTurnConfiguration, showModelPicker, showThinkingPicker, showPermPicker]);
 
   const quickMessageSlugSet = useMemo(
     () => new Set(quickMessages.map((message) => message.slug)),
@@ -867,19 +888,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   // split on the first '/'. Match against the full id first; only treat the
   // trailing segment as a thinking level when we find a preset whose
   // declared thinkingLevels make the combined form equal to selectedModelId.
-  const { selectedPreset, selectedThinking } = (() => {
-    if (!selectedModelId) return { selectedPreset: undefined, selectedThinking: undefined };
-    const direct = modelPresets.find(m => m.id === selectedModelId);
-    if (direct) return { selectedPreset: direct, selectedThinking: undefined };
-    const viaThinking = modelPresets.find(
-      m => m.thinkingLevels?.some(level => `${m.id}/${level}` === selectedModelId),
-    );
-    if (viaThinking) {
-      const thinking = selectedModelId.slice(viaThinking.id.length + 1);
-      return { selectedPreset: viaThinking, selectedThinking: thinking };
-    }
-    return { selectedPreset: undefined, selectedThinking: undefined };
-  })();
+  const { preset: selectedPreset, thinking: selectedPresetThinking } = resolveThinkingSelection(
+    selectedModelId,
+    modelPresets,
+  );
   const selectedBaseModelId = selectedPreset?.id;
   // Provider switcher mode (Catty Agent): two-column popover, chip carries
   // the provider's icon + name + model name. Falls back to the existing
@@ -901,13 +913,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
     : '';
   const modelLabel = hasProviderSwitcher
     ? providerSwitcherChipLabel
-    : (selectedPreset
-        ? selectedPreset.name + (selectedThinking ? ` / ${formatThinkingLabel(selectedThinking)}` : '')
-        : modelName || providerName || t('ai.chat.noModel'));
-  const modelChipMaxWidth = hasProviderSwitcher
-    ? 'max-w-[180px]'
-    : (selectedThinking ? 'max-w-[148px]' : 'max-w-[82px]');
+    : (selectedPreset?.name || modelName || providerName || t('ai.chat.noModel'));
+  const modelChipMaxWidth = hasProviderSwitcher ? 'max-w-[168px]' : 'max-w-[96px]';
   const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
+  const thinkingLevels = hasProviderSwitcher && onThinkingLevelChange
+    ? [...CATTY_REASONING_LEVELS]
+    : (selectedPreset?.thinkingLevels ?? []);
+  const selectedThinking = hasProviderSwitcher
+    ? (thinkingLevel || 'off')
+    : selectedPresetThinking;
+  const showThinkingChip = thinkingLevels.length > 0 && (!hasProviderSwitcher || !!onThinkingLevelChange);
+  const popoverMaxWidth = hasProviderSwitcher
+    ? COMPOSER_PROVIDER_PICKER_WIDTH
+    : COMPOSER_MODEL_PICKER_WIDTH;
   const contextUsagePercent = contextUsage
     ? Math.min(100, Math.max(0, (contextUsage.inputTokens / contextUsage.contextWindow) * 100))
     : 0;
@@ -923,7 +941,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
       .replace('{used}', formatContextTokens(contextUsage.inputTokens))
       .replace('{max}', formatContextTokens(contextUsage.contextWindow))
     : '';
-  const popoverMaxWidth = hasProviderSwitcher ? PROVIDER_PICKER_MAX_WIDTH : MODEL_PICKER_MAX_WIDTH;
   const chipClassName =
     'inline-flex h-6 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-foreground/72';
   const selectedSkillChipClassName =
@@ -1293,9 +1310,6 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     const left = Math.max(8, Math.min(rect.left, window.innerWidth - popoverMaxWidth - 8));
                     setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
                   }
-                  if (selectedPreset?.thinkingLevels?.length) {
-                    setHoveredModelId(selectedPreset.id);
-                  }
                   setActiveMenu('model');
                 } else {
                   closeAllMenus();
@@ -1303,7 +1317,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               }}
               disabled={lockTurnConfiguration}
               className={`${chipClassName} min-w-0 ${hasModelPicker && !lockTurnConfiguration ? 'cursor-pointer hover:bg-muted/24 transition-colors' : 'opacity-60'}`}
-              aria-label={hasProviderSwitcher ? 'Select provider and model' : 'Select model'}
+              aria-label={hasProviderSwitcher ? t('ai.chat.selectProviderAndModel') : t('ai.chat.selectModel')}
               aria-expanded={showModelPicker}
             >
               {hasProviderSwitcher && selectedSwitcherProvider ? (
@@ -1357,143 +1371,78 @@ const ChatInput: React.FC<ChatInputProps> = ({
               </Tooltip>
             )}
             {showModelPicker && hasModelPicker && menuPos && createPortal(
-<>
-            <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
-            <div className="fixed inset-0 z-[999] cursor-default" onClick={closeAllMenus} />
-            <div
-              role="listbox"
-                  aria-label={hasProviderSwitcher ? 'Select provider and model' : 'Select model'}
-                  className="fixed z-[1000] w-max min-w-[160px] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+              <>
+                <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
+                <div
+                  role="listbox"
+                  aria-label={hasProviderSwitcher ? t('ai.chat.selectProviderAndModel') : t('ai.chat.selectModel')}
+                  className="fixed z-[1000] overflow-hidden rounded-lg border border-border/50 bg-popover shadow-lg"
                   style={{ left: menuPos.left, bottom: menuPos.bottom, maxWidth: popoverMaxWidth }}
-                  onMouseLeave={() => setHoveredModelId(null)}
                 >
-                  {hasProviderSwitcher ? (
-                    <div className="min-w-[260px] max-h-[320px] overflow-y-auto">
-                      {providerSwitcher!.providers.map((p) => {
-                        const isSelected = providerSwitcher!.selectedProviderId === p.id;
-                        const defaultModel = p.defaultModel?.trim() ?? '';
-                        const hasModel = defaultModel.length > 0;
-                        // Rows without a defaultModel are inert — picking
-                        // one would save a binding with an empty model id
-                        // and produce a confusing model error at send time.
-                        // User has to set a defaultModel in Settings first.
-                        const disabled = !hasModel;
-                        const modelCaption = hasModel
-                          ? defaultModel
-                          : t('ai.chat.noProviderModel');
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            role="option"
-                            aria-selected={isSelected}
-                            aria-disabled={disabled}
-                            disabled={disabled}
-                            title={disabled ? t('ai.chat.noProviderModel') : undefined}
-                            onClick={() => {
-                              if (disabled) return;
-                              providerSwitcher!.onSelect(p.id, defaultModel);
-                              closeAllMenus();
-                            }}
-                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 text-left transition-colors ${
-                              disabled
-                                ? 'opacity-55 cursor-not-allowed'
-                                : 'hover:bg-muted/30 cursor-pointer'
-                            }`}
-                          >
-                            <ProviderIconBadge provider={p} size="md" />
-                            <div className="flex-1 min-w-0">
-                              <div className="truncate text-[12px] text-foreground/85">{p.name}</div>
-                              <div className={`truncate text-[10.5px] ${hasModel ? 'text-muted-foreground/70 font-mono' : 'text-muted-foreground/55 italic'}`}>
-                                {modelCaption}
-                              </div>
-                            </div>
-                            {isSelected && <Check size={12} className="text-primary shrink-0" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="min-w-[260px] max-h-[320px] overflow-y-auto">
-                      {modelPresets.map(preset => {
-                    const isSelected = preset.id === selectedBaseModelId;
-                    const hasThinking = preset.thinkingLevels && preset.thinkingLevels.length > 0;
-                    const showThinkingLevels = hasThinking && hoveredModelId === preset.id;
-                    return (
-                      <div
-                        key={preset.id}
-                        onMouseEnter={() => setHoveredModelId(hasThinking ? preset.id : null)}
-                        onFocus={() => { if (hasThinking) setHoveredModelId(preset.id); }}
-                        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setHoveredModelId(null); }}
-                      >
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={isSelected}
-                          aria-expanded={hasThinking ? showThinkingLevels : undefined}
-                          onClick={() => {
-                            if (!hasThinking) {
-                              onModelSelect?.(preset.id);
-                              closeAllMenus();
-                              return;
-                            }
-                            setHoveredModelId(showThinkingLevels ? null : preset.id);
-                          }}
-                          className="w-full min-w-0 flex items-center gap-1.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
-                        >
-                          {isSelected ? <Check size={11} className="text-primary shrink-0" /> : <span className="w-[11px] shrink-0" />}
-                          <span className="flex-1 min-w-0 truncate text-foreground/85">{preset.name}</span>
-                          {hasThinking && (
-                            <ChevronRight
-                              size={10}
-                              className={`text-muted-foreground/50 shrink-0 transition-transform ${showThinkingLevels ? 'rotate-90' : ''}`}
-                            />
-                          )}
-                        </button>
-                        {/* Inline thinking levels — flyout submenus get clipped by overflow-y-auto above. */}
-                        {showThinkingLevels && (
-                          <div role="listbox" aria-label="Thinking level" className="border-t border-border/30 bg-muted/10 py-0.5">
-                            {preset.thinkingLevels!.map(level => {
-                              const fullId = `${preset.id}/${level}`;
-                              const isLevelSelected = selectedModelId === fullId;
-                              return (
-                                <button
-                                  key={level}
-                                  type="button"
-                                  role="option"
-                                  aria-selected={isLevelSelected}
-                                  tabIndex={0}
-                                  onClick={() => {
-                                    onModelSelect?.(fullId);
-                                    closeAllMenus();
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') {
-                                      e.preventDefault();
-                                      onModelSelect?.(fullId);
-                                      closeAllMenus();
-                                    } else if (e.key === 'Escape') {
-                                      e.preventDefault();
-                                      closeAllMenus();
-                                    }
-                                  }}
-                                  className="w-full flex items-center gap-1.5 pl-7 pr-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
-                                >
-                                  {isLevelSelected ? <Check size={11} className="text-primary shrink-0" /> : <span className="w-[11px] shrink-0" />}
-                                  <span className="text-foreground/85">{formatThinkingLabel(level)}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                      })}
-                    </div>
-                  )}
+                  <ComposerModelPicker
+                    providers={hasProviderSwitcher ? providerSwitcher!.providers : undefined}
+                    selectedProviderId={providerSwitcher?.selectedProviderId}
+                    selectedModelId={hasProviderSwitcher ? providerSwitcher?.selectedModelId : selectedBaseModelId}
+                    modelPresets={hasProviderSwitcher ? undefined : modelPresets}
+                    prefs={modelPrefs}
+                    onSelectProviderModel={(providerId, modelId) => {
+                      providerSwitcher?.onSelect(providerId, modelId);
+                      setModelPrefs(rememberComposerRecentModel(pickerScope, { providerId, modelId }));
+                      closeAllMenus();
+                    }}
+                    onSelectModel={(modelId) => {
+                      const preset = modelPresets.find((item) => item.id === modelId);
+                      const nextId = preset
+                        ? resolveModelSelectionWithThinking(preset, selectedPresetThinking)
+                        : modelId;
+                      onModelSelect?.(nextId);
+                      setModelPrefs(rememberComposerRecentModel(pickerScope, { modelId }));
+                      closeAllMenus();
+                    }}
+                    onTogglePinned={(entry) => {
+                      setModelPrefs(toggleComposerPinnedModel(pickerScope, entry));
+                    }}
+                  />
                 </div>
               </>,
               document.body,
+            )}
+            {showThinkingChip && (
+              <ComposerThinkingChip
+                levels={thinkingLevels}
+                selectedLevel={selectedThinking}
+                disabled={lockTurnConfiguration}
+                open={showThinkingPicker}
+                menuPos={showThinkingPicker ? menuPos : null}
+                onToggle={(rect) => {
+                  if (lockTurnConfiguration) return;
+                  if (!showThinkingPicker) {
+                    if (rect) {
+                      const left = Math.max(
+                        MENU_VIEWPORT_GUTTER,
+                        Math.min(rect.left, window.innerWidth - THINKING_PICKER_WIDTH - MENU_VIEWPORT_GUTTER),
+                      );
+                      setMenuPos({ left, bottom: window.innerHeight - rect.top + 6 });
+                    }
+                    setActiveMenu('thinking');
+                  } else {
+                    closeAllMenus();
+                  }
+                }}
+                onSelect={(level) => {
+                  if (hasProviderSwitcher) {
+                    onThinkingLevelChange?.(level);
+                  } else if (selectedPreset) {
+                    onModelSelect?.(
+                      level && selectedPreset.thinkingLevels?.includes(level)
+                        ? `${selectedPreset.id}/${level}`
+                        : selectedPreset.id,
+                    );
+                  }
+                  closeAllMenus();
+                }}
+                onClose={closeAllMenus}
+              />
             )}
             {/* Permission mode chip — only for Catty Agent */}
             {permissionMode && onPermissionModeChange && (
@@ -1658,6 +1607,9 @@ function chatInputPropsAreEqual(prev: ChatInputProps, next: ChatInputProps): boo
     && prev.permissionMode === next.permissionMode
     && prev.onPermissionModeChange === next.onPermissionModeChange
     && prev.providerSwitcher === next.providerSwitcher
+    && prev.pickerScope === next.pickerScope
+    && prev.thinkingLevel === next.thinkingLevel
+    && prev.onThinkingLevelChange === next.onThinkingLevelChange
     && prev.parked === next.parked
   );
 }

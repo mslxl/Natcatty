@@ -16,6 +16,7 @@ import {
   STORAGE_KEY_AI_ACTIVE_SESSION_MAP,
   STORAGE_KEY_AI_AGENT_MODEL_MAP,
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
+  STORAGE_KEY_AI_AGENT_THINKING_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
   STORAGE_KEY_AI_QUICK_MESSAGES,
 } from '../../infrastructure/config/storageKeys';
@@ -174,6 +175,9 @@ export function useAIState() {
   useEffect(() => {
     agentProviderMapRef.current = agentProviderMap;
   }, [agentProviderMap]);
+  const [agentThinkingMap, setAgentThinkingMapRaw] = useState<Record<string, string>>(() =>
+    localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_THINKING_MAP) ?? {}
+  );
 
   // ── Web Search Config ──
   const [webSearchConfig, setWebSearchConfigRaw] = useState<WebSearchConfig | null>(() =>
@@ -287,6 +291,19 @@ export function useAIState() {
         delete next[agentId];
       }
       localStorageAdapter.write(STORAGE_KEY_AI_AGENT_PROVIDER_MAP, next);
+      return next;
+    });
+  }, []);
+
+  const setAgentThinking = useCallback((agentId: string, thinkingLevel: string) => {
+    setAgentThinkingMapRaw((prev) => {
+      const next = { ...prev };
+      if (thinkingLevel && thinkingLevel !== 'off') {
+        next[agentId] = thinkingLevel;
+      } else {
+        delete next[agentId];
+      }
+      localStorageAdapter.write(STORAGE_KEY_AI_AGENT_THINKING_MAP, next);
       return next;
     });
   }, []);
@@ -492,6 +509,9 @@ export function useAIState() {
             break;
           case STORAGE_KEY_AI_AGENT_PROVIDER_MAP:
             setAgentProviderMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_PROVIDER_MAP) ?? {});
+            break;
+          case STORAGE_KEY_AI_AGENT_THINKING_MAP:
+            setAgentThinkingMapRaw(localStorageAdapter.read<Record<string, string>>(STORAGE_KEY_AI_AGENT_THINKING_MAP) ?? {});
             break;
           case STORAGE_KEY_AI_ACTIVE_SESSION_MAP: {
             const nextActiveSessionIdMap =
@@ -1186,6 +1206,8 @@ export function useAIState() {
     setAgentModel,
     agentProviderMap,
     setAgentProvider,
+    agentThinkingMap,
+    setAgentThinking,
     webSearchConfig,
     setWebSearchConfig,
     quickMessages,
@@ -1244,6 +1266,8 @@ export function useAIState() {
     setAgentModel,
     agentProviderMap,
     setAgentProvider,
+    agentThinkingMap,
+    setAgentThinking,
     webSearchConfig,
     setWebSearchConfig,
     quickMessages,

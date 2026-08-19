@@ -154,7 +154,7 @@ test('renders separate steer and stop actions for a running Codex App Server tur
   assert.match(html, /aria-label="ai\.codex\.steer\.addInstruction"/);
   assert.match(html, /placeholder="ai\.codex\.steer\.placeholder"/);
   assert.match(html, /aria-label="Stop"/);
-  assert.match(html, /disabled=""[^>]*aria-label="Select model"/);
+  assert.match(html, /disabled=""[^>]*aria-label="ai\.chat\.selectModel"/);
 });
 
 test('allows terminal-selection-only steering submissions', () => {
@@ -220,6 +220,39 @@ test('renders the Catty context usage ring after the model chip', () => {
 test('slash picker system commands clear the local composer', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
   assert.match(source, /if \(command === 'stop'\) onStop\?\.\(\);\s*commitComposerText\(''\);/s);
+});
+
+test('keeps thinking on a separate chip instead of mixing it into the model list', () => {
+  const html = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Codex"
+        modelPresets={[{
+          id: 'gpt-5.5',
+          name: 'GPT-5.5',
+          thinkingLevels: ['low', 'medium', 'high'],
+        }]}
+        selectedModelId="gpt-5.5/high"
+        onModelSelect={() => {}}
+      />
+    </TooltipProvider>,
+  );
+
+  assert.match(html, /aria-label="ai\.chat\.selectModel"/);
+  assert.match(html, /aria-label="ai\.chat\.thinkingLevel"/);
+  assert.match(html, />High</);
+  assert.doesNotMatch(html, /GPT-5\.5 \/ High/);
+});
+
+test('Catty composer exposes a provider switcher without a mixed thinking submenu', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /ComposerModelPicker/);
+  assert.match(source, /ComposerThinkingChip/);
+  assert.match(source, /CATTY_REASONING_LEVELS/);
+  assert.doesNotMatch(source, /showThinkingLevels/);
 });
 
 test('ChatInput wires /compact through getSystemSlashCommand and canCompact', () => {

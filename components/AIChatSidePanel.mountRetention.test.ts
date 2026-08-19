@@ -102,6 +102,8 @@ const baseProps = (overrides: Partial<AIChatSidePanelProps> = {}): AIChatSidePan
   setAgentModel: () => undefined,
   agentProviderMap: {},
   setAgentProvider: () => undefined,
+  agentThinkingMap: {},
+  setAgentThinking: () => undefined,
   globalPermissionMode: 'auto',
   scopeType: 'terminal',
   scopeTargetId: 'terminal-1',

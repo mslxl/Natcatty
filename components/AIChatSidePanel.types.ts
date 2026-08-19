@@ -68,6 +68,8 @@ export interface AIChatSidePanelProps {
   setAgentModel: (agentId: string, modelId: string) => void;
   agentProviderMap: Record<string, string>;
   setAgentProvider: (agentId: string, providerId: string) => void;
+  agentThinkingMap: Record<string, string>;
+  setAgentThinking: (agentId: string, thinkingLevel: string) => void;
 
   // Safety
   globalPermissionMode: AIPermissionMode;

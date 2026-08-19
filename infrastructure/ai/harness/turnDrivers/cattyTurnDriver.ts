@@ -9,6 +9,7 @@ import {
 } from '../../contextCompaction';
 import { buildSystemPrompt } from '../../cattyAgent/systemPrompt';
 import { isWebSearchReady, normalizeCommandTimeoutSeconds } from '../../types';
+import { buildCattyReasoningProviderOptions } from '../../cattyReasoning';
 import { createModelFromConfig } from '../../sdk/providers';
 import { createCattyToolsFromCatalog } from '../capabilityTools';
 import { createInitialCattyRuntimeContext } from '../cattyRuntimeContext';
@@ -409,6 +410,10 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         currentAssistantMsgId: streamAssistantMsgId,
         maxIterations,
         advancedParams: context.activeProvider?.advancedParams,
+        reasoningProviderOptions: buildCattyReasoningProviderOptions(
+          context.activeProvider,
+          context.reasoningEffort,
+        ),
         continuationContext,
         turnId: ctx.turnId,
         commandTimeoutMs,

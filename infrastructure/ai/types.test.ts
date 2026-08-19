@@ -16,6 +16,14 @@ import {
   resolveDiscoveredAgentCliVersion,
 } from './types';
 
+test('Claude presets advertise effort levels separately from the model id', () => {
+  for (const preset of CLAUDE_MODEL_PRESETS) {
+    assert.deepEqual(preset.thinkingLevels, ['low', 'medium', 'high', 'max']);
+    assert.ok(preset.defaultThinkingLevel);
+  }
+  assert.equal(resolveAgentModelSelection(CLAUDE_MODEL_PRESETS[0]!), 'default/medium');
+});
+
 test('getAgentModelPresets returns CodeBuddy fallback models for command paths', () => {
   assert.deepEqual(
     getAgentModelPresets('/opt/homebrew/bin/codebuddy'),

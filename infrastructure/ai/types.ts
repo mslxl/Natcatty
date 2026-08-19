@@ -504,10 +504,30 @@ export interface AgentModelPreset {
   minCliVersion?: string;
 }
 
+const CLAUDE_REASONING_LEVELS = ['low', 'medium', 'high', 'max'] as const;
+
 export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
-  { id: 'default', name: 'Opus 4.6', description: 'Recommended' },
-  { id: 'sonnet', name: 'Sonnet 4.6', description: 'Everyday tasks' },
-  { id: 'haiku', name: 'Haiku 4.5', description: 'Fastest' },
+  {
+    id: 'default',
+    name: 'Opus 4.6',
+    description: 'Recommended',
+    thinkingLevels: [...CLAUDE_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'sonnet',
+    name: 'Sonnet 4.6',
+    description: 'Everyday tasks',
+    thinkingLevels: [...CLAUDE_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'haiku',
+    name: 'Haiku 4.5',
+    description: 'Fastest',
+    thinkingLevels: [...CLAUDE_REASONING_LEVELS],
+    defaultThinkingLevel: 'low',
+  },
 ];
 
 // Curated codex model list (codex-sdk has no enumeration API). IDs/efforts

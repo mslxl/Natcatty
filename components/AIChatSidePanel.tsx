@@ -272,6 +272,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   setAgentModel,
   agentProviderMap,
   setAgentProvider,
+  agentThinkingMap,
+  setAgentThinking,
   globalPermissionMode,
   setGlobalPermissionMode,
   commandBlocklist,
@@ -1023,6 +1025,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     setAgentModel(currentAgentId, modelId);
   }, [currentAgentId, setAgentModel]);
 
+  const selectedCattyThinking = agentThinkingMap.catty;
+  const handleCattyThinkingSelect = useCallback((level: string) => {
+    setAgentThinking('catty', level);
+  }, [setAgentThinking]);
+
 
   const handleNewChat = useCallback(() => {
     clearScopeDraft();
@@ -1306,6 +1313,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         await sendToCattyAgent(sessionId, sendScopeKey, modelPrompt, abortController, currentSession ?? undefined, assistantMsgId, {
           activeProvider: sendActiveProvider,
           activeModelId: sendActiveModelId,
+          reasoningEffort: selectedCattyThinking,
           scopeType,
           scopeTargetId,
           scopeLabel,
@@ -1328,7 +1336,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
     }
   }, [
-    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, scopeKey, currentAgentId,
+    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
     activeModelId, externalAgents,
     createSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope,
@@ -1370,6 +1378,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         {
           activeProvider: effectiveActiveProvider,
           activeModelId: effectiveActiveModelId,
+          reasoningEffort: selectedCattyThinking,
           scopeType,
           scopeTargetId,
           scopeLabel,
@@ -1403,6 +1412,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     currentAgentId,
     effectiveActiveModelId,
     effectiveActiveProvider,
+    selectedCattyThinking,
     globalPermissionMode,
     isStreaming,
     scopeKey,
@@ -1655,6 +1665,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         effectiveActiveProvider={effectiveActiveProvider}
         effectiveActiveModelId={effectiveActiveModelId}
         handleAgentProviderModelSelect={handleAgentProviderModelSelect}
+        selectedCattyThinking={selectedCattyThinking}
+        handleCattyThinkingSelect={handleCattyThinkingSelect}
         files={files}
         addFiles={addFiles}
         removeFile={removeFile}
@@ -1712,6 +1724,8 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'setAgentModel',
   'agentProviderMap',
   'setAgentProvider',
+  'agentThinkingMap',
+  'setAgentThinking',
   'globalPermissionMode',
   'setGlobalPermissionMode',
   'commandBlocklist',
