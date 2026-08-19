@@ -892,6 +892,7 @@ export const zhCNCoreMessages: Messages = {
   'sftp.columns.modified': '修改时间',
   'sftp.columns.size': '大小',
   'sftp.columns.kind': '类型',
+  'sftp.columns.owner': '所有者',
   'sftp.columns.actions': '操作',
   'sftp.sort.directoriesFirst': '目录置顶',
   'sftp.emptyDirectory': '空目录',

@@ -18,6 +18,21 @@ function normalizeLocalTreeLimit(value, fallback) {
   return Number.isSafeInteger(value) && value >= 0 ? value : fallback;
 }
 
+let cachedLocalUserInfo;
+function localOwnerFromStat(stat) {
+  if (process.platform === "win32") return undefined;
+  if (!stat || typeof stat.uid !== "number") return undefined;
+  try {
+    cachedLocalUserInfo ??= os.userInfo();
+    if (cachedLocalUserInfo.uid === stat.uid && cachedLocalUserInfo.username) {
+      return cachedLocalUserInfo.username;
+    }
+  } catch {
+    // userInfo() can throw when the process has no passwd entry.
+  }
+  return String(stat.uid);
+}
+
 function createLocalTreeTraversalBudget(limits = {}) {
   return {
     directories: 0,
@@ -168,6 +183,7 @@ async function listLocalDir(event, payload) {
         // Windows hidden attribute: resolved from the batched lookup.
         const hidden = isWindows ? hiddenSet.has(entry.name) : false;
 
+        const owner = localOwnerFromStat(stat);
         result[i] = {
           name: entry.name,
           type,
@@ -175,6 +191,7 @@ async function listLocalDir(event, payload) {
           size: `${stat.size} bytes`,
           lastModified: stat.mtime.toISOString(),
           hidden,
+          ...(owner ? { owner } : {}),
         };
       } catch (err) {
         // Handle broken symlinks - lstat doesn't follow symlinks
@@ -186,6 +203,7 @@ async function listLocalDir(event, payload) {
             if (lstat.isSymbolicLink()) {
               // Broken symlink
               const hidden = isWindows ? hiddenSet.has(brokenEntry.name) : false;
+              const owner = localOwnerFromStat(lstat);
               result[i] = {
                 name: brokenEntry.name,
                 type: "symlink",
@@ -193,6 +211,7 @@ async function listLocalDir(event, payload) {
                 size: `${lstat.size} bytes`,
                 lastModified: lstat.mtime.toISOString(),
                 hidden,
+                ...(owner ? { owner } : {}),
               };
               return;
             }

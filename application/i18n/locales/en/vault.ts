@@ -208,6 +208,7 @@ export const enVaultMessages: Messages = {
   'sftp.columns.modified': 'Modified',
   'sftp.columns.size': 'Size',
   'sftp.columns.kind': 'Kind',
+  'sftp.columns.owner': 'Owner',
   'sftp.columns.configure': 'Choose visible columns',
   'sftp.columns.actions': 'Actions',
   'sftp.sort.directoriesFirst': 'Folders first',

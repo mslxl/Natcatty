@@ -208,6 +208,7 @@ export const esVaultMessages: Messages = {
   'sftp.columns.modified': 'Modificado',
   'sftp.columns.size': 'Tamaño',
   'sftp.columns.kind': 'Tipo',
+  'sftp.columns.owner': 'Propietario',
   'sftp.columns.configure': 'Elegir columnas visibles',
   'sftp.columns.actions': 'Acciones',
   'sftp.sort.directoriesFirst': 'Carpetas primero',

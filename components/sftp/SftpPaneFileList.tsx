@@ -607,7 +607,7 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
           )}
           {visibleColumns.type && (
             <div
-              className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground justify-end overflow-hidden"
+              className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground relative pr-2 justify-end overflow-hidden"
               onClick={() => handleSort("type")}
             >
               {sortField === "type" && (
@@ -616,6 +616,23 @@ export const SftpPaneFileList: React.FC<SftpPaneFileListProps> = React.memo(({
                 </span>
               )}
               <span className="truncate whitespace-nowrap">{t("sftp.columns.kind")}</span>
+              <div
+                className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
+                onMouseDown={(e) => handleResizeStart("type", e)}
+              />
+            </div>
+          )}
+          {visibleColumns.owner && (
+            <div
+              className="flex min-w-0 items-center gap-1 cursor-pointer hover:text-foreground justify-end overflow-hidden"
+              onClick={() => handleSort("owner")}
+            >
+              {sortField === "owner" && (
+                <span className="shrink-0 text-primary">
+                  {sortOrder === "asc" ? "↑" : "↓"}
+                </span>
+              )}
+              <span className="truncate whitespace-nowrap">{t("sftp.columns.owner")}</span>
             </div>
           )}
         </div>
