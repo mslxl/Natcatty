@@ -69,7 +69,9 @@ export function buildCattyReasoningProviderOptions(
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return undefined;
     if (isGemini3Model(modelId)) {
-      const thinkingLevel = gemini3ThinkingLevel(modelId, effort || level);
+      const rawEffort = typeof effort === 'string' ? effort.trim() : '';
+      if (!rawEffort) return undefined;
+      const thinkingLevel = gemini3ThinkingLevel(modelId, rawEffort);
       if (!thinkingLevel) return undefined;
       return {
         google: {
