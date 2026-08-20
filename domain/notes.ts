@@ -1,6 +1,8 @@
 import type { Host, VaultNote } from "./models";
 import { getNextVaultOrder, normalizeVaultOrder, sortByVaultOrder } from "./vaultOrder";
 
+export type { Host, VaultNote };
+
 const cleanStringArray = (values: unknown): string[] | undefined => {
   if (!Array.isArray(values)) return undefined;
   const cleaned = Array.from(

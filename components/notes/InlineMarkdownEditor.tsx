@@ -77,6 +77,8 @@ export {
   resolveNoteClipboardPaste,
   shouldInterceptResolvedNotePaste,
   convertClipboardHtmlToMarkdown,
+} from "./noteClipboardPaste";
+
 import { NoteSourceEditor, type NoteSourceEditorHandle } from "./NoteSourceEditor";
 
 export { NoteSourceEditor, type NoteSourceEditorHandle };
