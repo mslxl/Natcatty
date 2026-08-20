@@ -10,6 +10,31 @@ test("main SftpView keeps browse sessions across top-tab switches", () => {
   assert.doesNotMatch(source, /interactive:\s*isActive/);
 });
 
+test("SFTP pane focus hides only the sibling while keeping both pane trees mounted", async () => {
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  });
+  const { getSftpPaneZoomPresentation } = await import("./SftpView.tsx");
+  const source = readFileSync(new URL("./SftpView.tsx", import.meta.url), "utf8");
+
+  assert.deepEqual(getSftpPaneZoomPresentation("left"), {
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 0fr)",
+    hiddenSide: "right",
+  });
+  assert.deepEqual(getSftpPaneZoomPresentation("right"), {
+    gridTemplateColumns: "minmax(0, 0fr) minmax(0, 1fr)",
+    hiddenSide: "left",
+  });
+  assert.match(source, /data-sftp-zoom-side="left"/);
+  assert.match(source, /data-sftp-zoom-side="right"/);
+  assert.doesNotMatch(source, /maximizedSide\s*===\s*['"]left['"]\s*&&\s*\(\s*<div[^>]+data-sftp-zoom-side/);
+});
+
 test("SftpView re-renders when host-key verification setting changes", async () => {
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,

@@ -14,13 +14,14 @@
  * - components/sftp/SftpHostPicker.tsx - Host selection dialog
  */
 
-import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { useIsSftpActive } from "../application/state/activeTabStore";
 import { useSftpState } from "../application/state/useSftpState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
+import { getPaneZoomShortcutLabel, type SidePanelPaneZoomController } from "../domain/sidePanelLayout";
 import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
 import { logger } from "../lib/logger";
 import { useRenderTracker } from "../lib/useRenderTracker";
@@ -73,6 +74,20 @@ interface SftpViewProps {
   editorWordWrap: boolean;
   setEditorWordWrap: (enabled: boolean) => void;
   terminalSettings?: { verifyHostKeys: boolean; keepaliveInterval: number; keepaliveCountMax: number };
+  paneZoomRef?: React.MutableRefObject<SidePanelPaneZoomController | null>;
+}
+
+export function getSftpPaneZoomPresentation(maximizedSide: SftpFocusedSide | null): {
+  gridTemplateColumns?: string;
+  hiddenSide: SftpFocusedSide | null;
+} {
+  if (!maximizedSide) return { hiddenSide: null };
+  return {
+    gridTemplateColumns: maximizedSide === 'left'
+      ? 'minmax(0, 1fr) minmax(0, 0fr)'
+      : 'minmax(0, 0fr) minmax(0, 1fr)',
+    hiddenSide: maximizedSide === 'left' ? 'right' : 'left',
+  };
 }
 
 const SftpViewInner: React.FC<SftpViewProps> = ({
@@ -96,8 +111,10 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   editorWordWrap,
   setEditorWordWrap,
   terminalSettings,
+  paneZoomRef,
 }) => {
   const { t } = useI18n();
+  const paneZoomShortcutLabel = getPaneZoomShortcutLabel(keyBindings, hotkeyScheme);
   const isActive = useIsSftpActive();
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogActionScopeIdRef = useRef("sftp-main-view");
@@ -222,12 +239,50 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
 
   // Subscribe to focused side for visual indicator
   const focusedSide = useSftpFocusedSide();
+  const [maximizedSide, setMaximizedSide] = useState<SftpFocusedSide | null>(null);
+  const paneZoomPresentation = getSftpPaneZoomPresentation(maximizedSide);
+  const isActiveRef = useRef(isActive);
+  const focusedSideRef = useRef(focusedSide);
+  const maximizedSideRef = useRef(maximizedSide);
+  isActiveRef.current = isActive;
+  focusedSideRef.current = focusedSide;
+  maximizedSideRef.current = maximizedSide;
+
+  useEffect(() => {
+    if (!paneZoomRef) return undefined;
+    const controller: SidePanelPaneZoomController = {
+      getState: () => {
+        if (!isActiveRef.current) return 'unavailable';
+        return maximizedSideRef.current ? 'focused' : 'focusable';
+      },
+      focus: () => {
+        if (!isActiveRef.current || maximizedSideRef.current) return false;
+        setMaximizedSide(focusedSideRef.current);
+        return true;
+      },
+      unfocus: () => {
+        if (!isActiveRef.current || !maximizedSideRef.current) return false;
+        setMaximizedSide(null);
+        return true;
+      },
+      toggle: () => {
+        if (!isActiveRef.current) return false;
+        setMaximizedSide((current) => current ? null : focusedSideRef.current);
+        return true;
+      },
+    };
+    paneZoomRef.current = controller;
+    return () => {
+      if (paneZoomRef.current === controller) paneZoomRef.current = null;
+    };
+  }, [paneZoomRef]);
 
   // Handle pane focus when clicking on a pane container
   // Clear the opposite side's selection so file operations only affect the focused pane
   const handlePaneFocus = useCallback((side: SftpFocusedSide, targetTabId?: string) => {
     const prevSide = sftpFocusStore.getFocusedSide();
     sftpFocusStore.setFocusedSide(side);
+    setMaximizedSide((current) => current ? side : null);
     if (prevSide !== side) {
       if (targetTabId) {
         keepOnlyPaneSelections(sftpRef.current, { side, tabId: targetTabId });
@@ -481,9 +536,34 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
         )}
         style={containerStyle}
       >
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0 border-t border-border/70">
+        <div
+          className="relative flex-1 grid grid-cols-1 lg:grid-cols-2 min-h-0 border-t border-border/70"
+          data-section="sftp-main-split"
+          data-maximized-side={maximizedSide ?? undefined}
+          style={maximizedSide ? {
+            gridTemplateColumns: paneZoomPresentation.gridTemplateColumns,
+            transition: 'grid-template-columns 160ms ease',
+          } : { transition: 'grid-template-columns 160ms ease' }}
+        >
+          {maximizedSide && (
+            <button
+              type="button"
+              className="absolute left-1/2 top-2 z-[60] -translate-x-1/2 rounded border border-border/70 bg-background/95 px-2 py-1 text-[10px] text-muted-foreground shadow-sm"
+              onClick={() => setMaximizedSide(null)}
+              aria-label={t('terminal.layer.restorePanes')}
+              data-section="sftp-focus-indicator"
+            >
+              {t('terminal.layer.focusedPane')}: {t('terminal.layer.sftp')} ·{' '}
+              {paneZoomShortcutLabel ? `${paneZoomShortcutLabel} / ` : ''}Esc
+            </button>
+          )}
           <div
-            className="relative border-r border-border/70 flex flex-col"
+            className={cn(
+              "relative min-w-0 border-r border-border/70 flex flex-col",
+              paneZoomPresentation.hiddenSide === 'left' && 'invisible pointer-events-none overflow-hidden',
+            )}
+            aria-hidden={paneZoomPresentation.hiddenSide === 'left' ? true : undefined}
+            data-sftp-zoom-side="left"
             onClick={() => handlePaneFocus("left")}
           >
             {/* Focus indicator triangle */}
@@ -544,7 +624,12 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
             </div>
           </div>
           <div
-            className="relative flex flex-col"
+            className={cn(
+              "relative min-w-0 flex flex-col",
+              paneZoomPresentation.hiddenSide === 'right' && 'invisible pointer-events-none overflow-hidden',
+            )}
+            aria-hidden={paneZoomPresentation.hiddenSide === 'right' ? true : undefined}
+            data-sftp-zoom-side="right"
             onClick={() => handlePaneFocus("right")}
           >
             {/* Focus indicator triangle */}
@@ -669,6 +754,7 @@ export const sftpViewAreEqual = (prev: SftpViewProps, next: SftpViewProps): bool
   prev.sftpUseCompressedUpload === next.sftpUseCompressedUpload &&
   prev.hotkeyScheme === next.hotkeyScheme &&
   prev.keyBindings === next.keyBindings &&
+  prev.paneZoomRef === next.paneZoomRef &&
   prev.editorWordWrap === next.editorWordWrap &&
   prev.setEditorWordWrap === next.setEditorWordWrap &&
   // Only these terminal connection settings affect SFTP connection

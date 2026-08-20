@@ -257,6 +257,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   showHostTreeSidebar = true,
   toggleScriptsSidePanelRef,
   toggleSidePanelRef,
+  sidePanelPaneZoomRef,
   // Session rename props
   onStartSessionRename,
   onSubmitSessionRename,
@@ -276,6 +277,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     splitPane: splitSidePanelPaneForTab,
     closePane: closeSidePanelPaneForTab,
     resizeSplit: resizeSidePanelSplitForTab,
+    maximizePane: maximizeSidePanelPaneForTab,
+    restoreLayout: restoreSidePanelLayoutForTab,
   } = useTerminalSidePanelLayoutState();
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
@@ -283,6 +286,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const activeWorkspaceRef = useRef<Workspace | undefined>(undefined);
   const activeSessionRef = useRef<TerminalSession | undefined>(undefined);
   const focusedSessionIdRef = useRef<string | undefined>(undefined);
+  const lastInteractedSidePanelPaneRef = useRef<Map<string, string>>(new Map());
   const terminalOsc7SignalBySessionRef = useRef<Map<string, number>>(new Map());
   const cwdProbeCancelersRef = useRef<Map<string, () => void>>(new Map());
   const cwdProbeGenerationRef = useRef<Map<string, number>>(new Map());
@@ -1394,8 +1398,85 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleFocusSidePanelPane = useCallback((paneId: string) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
+    lastInteractedSidePanelPaneRef.current.set(tabId, paneId);
     focusSidePanelPaneForTab(tabId, paneId);
   }, [focusSidePanelPaneForTab]);
+
+  useEffect(() => {
+    const clearWhenTerminalPaneTakesFocus = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (!target.closest('[data-section="terminal-split-pane"]')) return;
+      const tabId = activeTabIdRef.current;
+      if (tabId) lastInteractedSidePanelPaneRef.current.delete(tabId);
+    };
+    document.addEventListener('pointerdown', clearWhenTerminalPaneTakesFocus, true);
+    document.addEventListener('focusin', clearWhenTerminalPaneTakesFocus, true);
+    return () => {
+      document.removeEventListener('pointerdown', clearWhenTerminalPaneTakesFocus, true);
+      document.removeEventListener('focusin', clearWhenTerminalPaneTakesFocus, true);
+    };
+  }, []);
+
+  const handleMaximizeSidePanelPane = useCallback((paneId: string) => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    lastInteractedSidePanelPaneRef.current.set(tabId, paneId);
+    maximizeSidePanelPaneForTab(tabId, paneId);
+  }, [maximizeSidePanelPaneForTab]);
+
+  const handleRestoreSidePanelLayout = useCallback(() => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    restoreSidePanelLayoutForTab(tabId);
+  }, [restoreSidePanelLayoutForTab]);
+
+  useEffect(() => {
+    if (!sidePanelPaneZoomRef) return;
+    const getTarget = () => {
+      const tabId = activeTabIdRef.current;
+      if (!tabId) return null;
+      const layout = sidePanelLayoutsRef.current.get(tabId);
+      if (!layout) return null;
+      if (layout.maximizedPaneId) {
+        return { tabId, layout, paneId: layout.maximizedPaneId, state: 'focused' as const };
+      }
+      const paneId = lastInteractedSidePanelPaneRef.current.get(tabId);
+      if (!paneId) return null;
+      if (!collectSidePanelPanes(layout.root).some((pane) => pane.id === paneId)) return null;
+      return { tabId, layout, paneId, state: 'focusable' as const };
+    };
+    sidePanelPaneZoomRef.current = {
+      getState: () => getTarget()?.state ?? 'unavailable',
+      focus: () => {
+        const target = getTarget();
+        if (!target || target.state === 'focused') return false;
+        maximizeSidePanelPaneForTab(target.tabId, target.paneId);
+        return true;
+      },
+      unfocus: () => {
+        const target = getTarget();
+        if (!target || target.state !== 'focused') return false;
+        restoreSidePanelLayoutForTab(target.tabId);
+        return true;
+      },
+      toggle: () => {
+        const target = getTarget();
+        if (!target) return false;
+        if (target.state === 'focused') restoreSidePanelLayoutForTab(target.tabId);
+        else maximizeSidePanelPaneForTab(target.tabId, target.paneId);
+        return true;
+      },
+    };
+    return () => {
+      sidePanelPaneZoomRef.current = null;
+    };
+  }, [
+    maximizeSidePanelPaneForTab,
+    restoreSidePanelLayoutForTab,
+    sidePanelLayoutsRef,
+    sidePanelPaneZoomRef,
+  ]);
 
   const handleSplitSidePanelPane = useCallback((
     tool: SidePanelTab,
@@ -2037,6 +2118,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleOpenSystem,
     handleOpenNotes,
     handleFocusSidePanelPane,
+    handleMaximizeSidePanelPane,
+    handleRestoreSidePanelLayout,
     handleSplitSidePanelPane,
     handleCloseSidePanelPane,
     handleResizeSidePanelSplit,
@@ -2203,6 +2286,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     ThemeSidePanel,
     toggleScriptsSidePanelRef,
     toggleSidePanelRef,
+    sidePanelPaneZoomRef,
     Tooltip,
     TooltipContent,
     TooltipTrigger,

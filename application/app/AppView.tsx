@@ -36,6 +36,8 @@ import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { resolveEffectiveTerminalHost } from '../../domain/terminalHostResolution';
+import { collectSessionIds } from '../../domain/workspace';
+import { getAvailablePaneZoomController } from '../../domain/sidePanelLayout';
 import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabStore';
 import { buildPluginSettingScopeCatalog } from '../state/usePluginSettingScopeCatalog';
 import { useWorkSurfaceHostEditor } from '../state/useWorkSurfaceHostEditor';
@@ -276,7 +278,7 @@ function AppViewInner({ domains }: AppViewProps) {
     setWorkspaceFocusedSession, sftpAutoOpenSidebar, sftpFollowTerminalCwd, setSftpFollowTerminalCwd, sftpAutoSync, sftpDefaultViewMode, sftpDoubleClickBehavior,
     sftpShowHiddenFiles, sftpUseCompressedUpload, snippetPackages, snippets, splitSessionWithCurrentShell, startSessionRename,
     startWorkspaceRename, submitSessionRename, submitWorkspaceRename, t, terminalFontFamilyId, terminalFontSize, terminalSettings, terminalThemeId, themeById,
-    toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, unmanageSource,
+    toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, sidePanelPaneZoomRef, sftpPaneZoomRef, toggleWorkspaceViewMode, unmanageSource,
     readPersistedHosts, readPersistedManagedSources, updateCustomGroups, updateGroupConfigs, updateHostDistro, updateHosts, updateIdentities, updateKeys, updateKnownHosts, updateManagedSources,
     updateProxyProfiles, updateSnippetPackages, updateSnippets, updateSplitSizes, updateTerminalSetting, vaultFocusRequest, workspaceRenameTarget, workspaces,
     VaultViewContainer, SftpViewMount, TerminalLayerMount, LogViewWrapper,
@@ -465,6 +467,46 @@ function AppViewInner({ domains }: AppViewProps) {
     void netcattyBridge.get()?.setPluginScopeCatalog?.(catalog).catch(() => {});
   }, [hosts, sessions, t, workspaces]);
 
+  const activePaneZoomWorkspace = workspaces.find(
+    (workspace) => workspace.id === activeTabStore.getActiveTabId(),
+  );
+  const activePaneZoomController = getAvailablePaneZoomController([
+    sftpPaneZoomRef?.current,
+    sidePanelPaneZoomRef?.current,
+  ]);
+  const sidePanelPaneZoomState = activePaneZoomController?.getState() ?? 'unavailable';
+  const paneZoomState = sidePanelPaneZoomState !== 'unavailable'
+    ? sidePanelPaneZoomState
+    : activePaneZoomWorkspace && collectSessionIds(activePaneZoomWorkspace.root).length > 1
+      ? (activePaneZoomWorkspace.viewMode === 'focus' ? 'focused' : 'focusable')
+      : 'unavailable';
+  const handleFocusCurrentPane = () => {
+    if (getAvailablePaneZoomController([
+      sftpPaneZoomRef?.current,
+      sidePanelPaneZoomRef?.current,
+    ])?.focus()) return;
+    const workspace = workspaces.find(
+      (entry) => entry.id === activeTabStore.getActiveTabId(),
+    );
+    if (
+      workspace
+      && workspace.viewMode !== 'focus'
+      && collectSessionIds(workspace.root).length > 1
+    ) {
+      toggleWorkspaceViewMode(workspace.id);
+    }
+  };
+  const handleUnfocusPane = () => {
+    if (getAvailablePaneZoomController([
+      sftpPaneZoomRef?.current,
+      sidePanelPaneZoomRef?.current,
+    ])?.unfocus()) return;
+    const workspace = workspaces.find(
+      (entry) => entry.id === activeTabStore.getActiveTabId(),
+    );
+    if (workspace?.viewMode === 'focus') toggleWorkspaceViewMode(workspace.id);
+  };
+
   return (
     <SnippetExecutionProvider>
     <UnsavedChangesProvider>
@@ -644,6 +686,7 @@ function AppViewInner({ domains }: AppViewProps) {
           editorWordWrap={editorWordWrap}
           setEditorWordWrap={setEditorWordWrap}
           terminalSettings={terminalSettings}
+          paneZoomRef={sftpPaneZoomRef}
         />
 
         <TerminalLayerMount
@@ -738,6 +781,7 @@ function AppViewInner({ domains }: AppViewProps) {
           showHostTreeSidebar={showHostTreeSidebar}
           toggleScriptsSidePanelRef={toggleScriptsSidePanelRef}
           toggleSidePanelRef={toggleSidePanelRef}
+          sidePanelPaneZoomRef={sidePanelPaneZoomRef}
           onStartSessionRename={startSessionRename}
           onSubmitSessionRename={submitSessionRename}
           onRemoveSessionFromWorkspace={removeSessionFromWorkspace}
@@ -889,6 +933,9 @@ function AppViewInner({ domains }: AppViewProps) {
               }}
               keyBindings={keyBindings}
               terminalSettings={terminalSettings}
+              paneZoomState={paneZoomState}
+              onFocusCurrentPane={handleFocusCurrentPane}
+              onUnfocusPane={handleUnfocusPane}
             />
           </Suspense>
         </LazyLoadBoundary>

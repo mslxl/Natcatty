@@ -10,8 +10,10 @@ import {
 } from '../../application/state/terminalSidePanelTabs.ts';
 import {
   getTerminalSidePanelShellWidth,
+  getSidePanelSplitChildPresentation,
   listenForSidePanelPaneFocus,
 } from './TerminalLayerSidePanelSection.tsx';
+import { createSidePanelLayout, splitSidePanelPane } from '../../domain/sidePanelLayout.ts';
 import { resolveSidePanelPortalTarget } from './terminalLayerSidePanelSlots.tsx';
 
 test('AI side panel shell can be force-hidden for layout isolation', () => {
@@ -44,6 +46,18 @@ test('resize preview width is still honored for visible side panels', () => {
   }), 512);
 });
 
+test('a focused side-panel pane takes the full terminal work surface', () => {
+  assert.equal(getTerminalSidePanelShellWidth({
+    activeSidePanelTab: 'sftp',
+    availableSurfaceWidth: 1180,
+    forceHideAiShell: false,
+    isSidePanelOpenForCurrentTab: true,
+    maximizedPaneId: 'pane-1',
+    resizePreviewWidth: null,
+    sidePanelWidth: 420,
+  }), 1180);
+});
+
 test('closed side panel shell has no width', () => {
   assert.equal(getTerminalSidePanelShellWidth({
     activeSidePanelTab: null,
@@ -70,6 +84,29 @@ test('pointer and keyboard focus from portaled tool content focus the owning pan
   host.dispatchEvent(new Event('pointerdown'));
   host.dispatchEvent(new Event('focusin'));
   assert.equal(focusCount, 2);
+});
+
+test('maximized side panel rendering collapses siblings without replacing the layout tree', () => {
+  let layout = createSidePanelLayout('notes', 'pane-notes');
+  layout = splitSidePanelPane(layout, 'pane-notes', 'ai', 'vertical', {
+    paneId: 'pane-ai',
+    splitId: 'split-root',
+  }, 400);
+  assert.equal(layout.root.type, 'split');
+  if (layout.root.type !== 'split') return;
+
+  assert.deepEqual(
+    getSidePanelSplitChildPresentation(layout.root.children[0], 0.75, 'pane-ai'),
+    { flexGrow: 0, hidden: true },
+  );
+  assert.deepEqual(
+    getSidePanelSplitChildPresentation(layout.root.children[1], 0.25, 'pane-ai'),
+    { flexGrow: 1, hidden: false },
+  );
+  assert.deepEqual(
+    getSidePanelSplitChildPresentation(layout.root.children[0], 0.75, null),
+    { flexGrow: 0.75, hidden: false },
+  );
 });
 
 test('side panel tab order falls back to the default order', () => {
@@ -226,6 +263,13 @@ test('side panel layout state is initialized before callbacks read it', () => {
   assert.notEqual(layoutStateIndex, -1);
   assert.notEqual(statusCallbackIndex, -1);
   assert.ok(layoutStateIndex < statusCallbackIndex);
+});
+
+test('side panel focus actions are forwarded through the tab bridge', () => {
+  const bridgeSource = readFileSync(new URL('./TerminalLayerTabBridge.tsx', import.meta.url), 'utf8');
+
+  assert.match(bridgeSource, /handleMaximizeSidePanelPane: s\.handleMaximizeSidePanelPane/);
+  assert.match(bridgeSource, /handleRestoreSidePanelLayout: s\.handleRestoreSidePanelLayout/);
 });
 
 test('split dragging previews locally, commits once, and cleans up on every exit path', () => {

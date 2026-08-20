@@ -48,7 +48,7 @@ import {
 } from '../terminalPaneVisibility';
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
-import type { SidePanelTool } from '../../domain/sidePanelLayout';
+import type { SidePanelPaneZoomController, SidePanelTool } from '../../domain/sidePanelLayout';
 
 export type SidePanelTab = SidePanelTool;
 
@@ -724,6 +724,7 @@ export interface TerminalLayerProps {
   showHostTreeSidebar?: boolean;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;
+  sidePanelPaneZoomRef?: React.MutableRefObject<SidePanelPaneZoomController | null>;
   // Session rename
   onStartSessionRename?: (sessionId: string) => void;
   onSubmitSessionRename?: (sessionId?: string, name?: string) => void;

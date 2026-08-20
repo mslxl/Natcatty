@@ -51,6 +51,20 @@ test('terminal side panel layouts stay isolated and keep one pane per tool', asy
       ['scripts'],
     );
 
+    const splitRoot = state!.sidePanelLayouts.get('terminal-a')!.root;
+    await act(async () => {
+      state?.maximizePane('terminal-a', 'pane-ai');
+    });
+    assert.equal(state!.sidePanelLayouts.get('terminal-a')!.maximizedPaneId, 'pane-ai');
+    assert.equal(state!.sidePanelLayouts.get('terminal-a')!.root, splitRoot);
+    assert.equal(state!.sidePanelLayouts.get('terminal-b')!.maximizedPaneId, null);
+
+    await act(async () => {
+      state?.restoreLayout('terminal-a');
+    });
+    assert.equal(state!.sidePanelLayouts.get('terminal-a')!.maximizedPaneId, null);
+    assert.equal(state!.sidePanelLayouts.get('terminal-a')!.root, splitRoot);
+
     await act(async () => {
       state?.splitPane('terminal-a', 'notes', 'horizontal', {
         paneId: 'unused-pane',

@@ -10,11 +10,107 @@ import {
   focusSidePanelPane,
   getSidePanelNodeMinimumPixels,
   getSidePanelSplitResizeBounds,
+  maximizeSidePanelPane,
   resizeSidePanelSplit,
+  restoreSidePanelLayout,
   selectSidePanelTool,
+  sidePanelNodeContainsPane,
+  getAvailablePaneZoomController,
+  getPaneZoomShortcutLabel,
   sidePanelLayoutHasTool,
   splitSidePanelPane,
 } from './sidePanelLayout.ts';
+
+test('pane zoom routing selects the controller for the active surface', () => {
+  const unavailable = {
+    getState: () => 'unavailable' as const,
+    toggle: () => false,
+    focus: () => false,
+    unfocus: () => false,
+  };
+  const focused = {
+    getState: () => 'focused' as const,
+    toggle: () => true,
+    focus: () => false,
+    unfocus: () => true,
+  };
+
+  assert.equal(getAvailablePaneZoomController([null, unavailable, focused]), focused);
+  assert.equal(getAvailablePaneZoomController([null, unavailable]), null);
+});
+
+test('focus hints show the active configurable pane zoom shortcut', () => {
+  const bindings = [{
+    id: 'toggle-pane-zoom',
+    mac: '⌥ + M',
+    pc: 'Alt + M',
+  }];
+
+  assert.equal(getPaneZoomShortcutLabel(bindings, 'mac'), '⌥+M');
+  assert.equal(getPaneZoomShortcutLabel(bindings, 'pc'), 'Alt+M');
+  assert.equal(getPaneZoomShortcutLabel(bindings, 'disabled'), '');
+});
+
+test('maximizing and restoring a pane preserves the exact split tree and ratios', () => {
+  let layout = createSidePanelLayout('notes', 'pane-notes');
+  layout = splitSidePanelPane(layout, 'pane-notes', 'ai', 'vertical', {
+    paneId: 'pane-ai',
+    splitId: 'split-root',
+  }, 400);
+  layout = resizeSidePanelSplit(layout, 'split-root', [3, 1]);
+  const originalRoot = layout.root;
+
+  const maximized = maximizeSidePanelPane(layout, 'pane-notes');
+  assert.equal(maximized.maximizedPaneId, 'pane-notes');
+  assert.equal(maximized.focusedPaneId, 'pane-notes');
+  assert.equal(maximized.root, originalRoot);
+
+  const restored = restoreSidePanelLayout(maximized);
+  assert.equal(restored.maximizedPaneId, null);
+  assert.equal(restored.focusedPaneId, 'pane-notes');
+  assert.equal(restored.root, originalRoot);
+  assert.deepEqual(restored.root.type === 'split' ? restored.root.sizes : [], [0.75, 0.25]);
+});
+
+test('a single side-panel pane can focus over the terminal workspace', () => {
+  const layout = createSidePanelLayout('sftp', 'pane-sftp');
+  const maximized = maximizeSidePanelPane(layout, 'pane-sftp');
+
+  assert.equal(maximized.maximizedPaneId, 'pane-sftp');
+  assert.equal(restoreSidePanelLayout(maximized).root, layout.root);
+});
+
+test('closing the maximized pane restores the remaining layout with a valid focus', () => {
+  let layout = createSidePanelLayout('notes', 'pane-notes');
+  layout = splitSidePanelPane(layout, 'pane-notes', 'ai', 'vertical', {
+    paneId: 'pane-ai',
+    splitId: 'split-root',
+  }, 400);
+  layout = maximizeSidePanelPane(layout, 'pane-ai');
+
+  const closed = closeSidePanelPane(layout, 'pane-ai');
+  assert.ok(closed);
+  assert.equal(closed.maximizedPaneId, null);
+  assert.equal(closed.focusedPaneId, 'pane-notes');
+});
+
+test('maximized rendering can keep the full tree mounted and identify only its visible branch', () => {
+  let layout = createSidePanelLayout('notes', 'pane-notes');
+  layout = splitSidePanelPane(layout, 'pane-notes', 'ai', 'vertical', {
+    paneId: 'pane-ai',
+    splitId: 'split-root',
+  }, 400);
+  layout = splitSidePanelPane(layout, 'pane-ai', 'system', 'horizontal', {
+    paneId: 'pane-system',
+    splitId: 'split-nested',
+  }, 300);
+  assert.equal(layout.root.type, 'split');
+  if (layout.root.type !== 'split') return;
+
+  assert.equal(sidePanelNodeContainsPane(layout.root.children[0], 'pane-system'), false);
+  assert.equal(sidePanelNodeContainsPane(layout.root.children[1], 'pane-system'), true);
+  assert.equal(sidePanelNodeContainsPane(layout.root, 'missing-pane'), false);
+});
 
 test('panes smaller than two minimum cells cannot be split again', () => {
   const layout = createSidePanelLayout('notes', 'pane-notes');

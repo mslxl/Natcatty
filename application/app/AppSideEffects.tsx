@@ -52,6 +52,7 @@ import {
 } from '../../domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from '../../domain/connectionLog';
 import { collectSessionIds } from '../../domain/workspace';
+import type { SidePanelPaneZoomController } from '../../domain/sidePanelLayout';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
 import { resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
@@ -580,6 +581,10 @@ export function AppSideEffects() {
 
   // Window controls - must be before update toast effect which uses openSettingsWindow
   const { openSettingsWindow } = useWindowControls();
+  const toggleScriptsSidePanelRef = useRef<(() => void) | null>(null);
+  const toggleSidePanelRef = useRef<(() => void) | null>(null);
+  const sidePanelPaneZoomRef = useRef<SidePanelPaneZoomController | null>(null);
+  const sftpPaneZoomRef = useRef<SidePanelPaneZoomController | null>(null);
   const _handleTrayJumpToSession = useEffectEvent((sessionId: string) => {
     return handleTrayJumpToSessionImpl(() => ({
       sessionId,
@@ -596,7 +601,7 @@ export function AppSideEffects() {
   const _handleTrayPanelConnect = useEffectEvent((hostId: string) => { return handleTrayPanelConnectImpl(() => ({ addConnectionLog, connectToHost, hostId, hosts, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef, t, toast }), hostId); });
   const _handleTrayPanelConnectRequest = useEffectEvent((hostId: string) => { return handleTrayPanelConnectRequestImpl(() => ({ connectNow: _handleTrayPanelConnect, hostId, isVaultInitialized, queueConnect: (queuedHostId: string) => setPendingTrayPanelConnectHostIds((prev) => [...prev, queuedHostId]) }), hostId); });
   const _handleGlobalHotkeyKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleGlobalHotkeyKeyDownImpl(() => ({ HOTKEY_DEBUG, closeTabKeyStr, e, executeHotkeyAction, hotkeyScheme, keyBindings, matchesKeyBinding }), e); });
-  const _handleEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleEscapeKeyDownImpl(() => ({ e, isQuickSwitcherOpen, setIsQuickSwitcherOpen }), e); });
+  const _handleEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleEscapeKeyDownImpl(() => ({ activeTabStore, e, isQuickSwitcherOpen, setIsQuickSwitcherOpen, sidePanelPaneZoomRef, sftpPaneZoomRef, toggleWorkspaceViewMode, workspaces }), e); });
 
   // Vault hosts for tray / auto-start; terminalHosts (vault + ephemeral) only for
   // dedicated transfer resume so quick-connect rows do not break tray connect.
@@ -921,8 +926,6 @@ export function AppSideEffects() {
   isQuickSwitcherOpenRef.current = isQuickSwitcherOpen;
   const orderedTabsRef = useRef<string[]>([]);
 
-  const toggleScriptsSidePanelRef = useRef<(() => void) | null>(null);
-  const toggleSidePanelRef = useRef<(() => void) | null>(null);
   const openNoteRequestIdRef = useRef(0);
   const [openNoteRequest, setOpenNoteRequest] = useState<{
     tabId: string;
@@ -1071,6 +1074,8 @@ export function AppSideEffects() {
       toggleBroadcast,
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
+      sidePanelPaneZoomRef,
+      sftpPaneZoomRef,
       toggleWorkspaceViewMode,
       workspaces: workspacesRefForHotkeys.current,
     }), action, e);
@@ -1853,6 +1858,8 @@ export function AppSideEffects() {
       splitSessionWithCurrentShell,
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
+      sidePanelPaneZoomRef,
+      sftpPaneZoomRef,
       // Chrome glue
       handleEndSessionDrag,
       handleOpenQuickSwitcher,

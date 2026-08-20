@@ -125,6 +125,8 @@ test('TerminalHost builds from session snapshot + terminal settings store', () =
   assert.match(source, /useSessionSnapshot/);
   assert.match(source, /useSessionSnapshotActions|getSessionSnapshotActions/);
   assert.match(source, /useTerminalSettingsStore|getTerminalSettingsSnapshot/);
+  assert.match(source, /sidePanelPaneZoomRef:\s*handlers\.sidePanelPaneZoomRef/);
+  assert.match(source, /sftpPaneZoomRef:\s*handlers\.sftpPaneZoomRef/);
   assert.doesNotMatch(source, /\buseSessionState\s*\(/);
   assert.doesNotMatch(source, /\buseAppSessionRuntime\s*\(/);
 });

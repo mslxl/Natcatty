@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type React from 'react';
-import type { Host, HostProtocol, TerminalSession } from '../../types';
+import type { Host, HostProtocol, TerminalSession, Workspace } from '../../types';
 import type { PassphraseRequest } from '../../components/PassphraseModal';
 import type { TerminalPopupPayload } from '../../domain/systemManager/types';
 import { getEffectiveHostDistro, classifyDistroId, shouldProbeSessionCwd } from '../../domain/host';
+import { getAvailablePaneZoomController } from '../../domain/sidePanelLayout';
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
@@ -315,10 +316,35 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
 }
 
 export function handleEscapeKeyDownImpl(getCtx: AppContextGetter, e: KeyboardEvent) {
-  const { isQuickSwitcherOpen, setIsQuickSwitcherOpen } = getCtx();
+  const {
+    activeTabStore,
+    isQuickSwitcherOpen,
+    setIsQuickSwitcherOpen,
+    sidePanelPaneZoomRef,
+    sftpPaneZoomRef,
+    toggleWorkspaceViewMode,
+    workspaces,
+  } = getCtx();
 {
-    if (e.key === 'Escape' && isQuickSwitcherOpen) {
+    if (e.key !== 'Escape') return;
+    if (isQuickSwitcherOpen) {
       setIsQuickSwitcherOpen(false);
+      return;
+    }
+    if (getAvailablePaneZoomController([
+      sftpPaneZoomRef?.current,
+      sidePanelPaneZoomRef?.current,
+    ])?.unfocus()) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const currentId = activeTabStore?.getActiveTabId();
+    const activeWorkspace = workspaces?.find((workspace: Workspace) => workspace.id === currentId);
+    if (activeWorkspace?.viewMode === 'focus') {
+      toggleWorkspaceViewMode?.(activeWorkspace.id);
+      e.preventDefault();
+      e.stopPropagation();
     }
   }
 }
@@ -671,7 +697,7 @@ export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: st
 }
 
 export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string, e: KeyboardEvent) {
-  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, splitSessionWithCurrentShell, systemInfoRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, workspaces } = getCtx();
+  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, sidePanelPaneZoomRef, sftpPaneZoomRef, splitSessionWithCurrentShell, systemInfoRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, workspaces } = getCtx();
 {
     const shortcutTabs = buildNumberShortcutTabTargets({
       showSftpTab: settings.showSftpTab ?? true,
@@ -907,7 +933,11 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
         break;
       }
       case 'togglePaneZoom': {
-        // Toggle workspace between split and focus (zoom) mode
+        if (getAvailablePaneZoomController([
+          sftpPaneZoomRef?.current,
+          sidePanelPaneZoomRef?.current,
+        ])?.toggle()) break;
+        // Fall back to the terminal workspace when no side-panel pane was active.
         const currentId = activeTabStore.getActiveTabId();
         const activeWs = workspaces.find(w => w.id === currentId);
         if (activeWs) {

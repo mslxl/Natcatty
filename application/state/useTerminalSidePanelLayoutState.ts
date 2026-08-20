@@ -5,7 +5,9 @@ import {
   createSidePanelLayout,
   focusSidePanelPane,
   getFocusedSidePanelPane,
+  maximizeSidePanelPane,
   resizeSidePanelSplit,
+  restoreSidePanelLayout,
   selectSidePanelTool,
   splitSidePanelPane,
   type SidePanelLayout,
@@ -118,6 +120,20 @@ export function useTerminalSidePanelLayoutState() {
     setSidePanelLayouts(layouts);
   }, []);
 
+  const maximizePane = useCallback((tabId: string, paneId: string) => {
+    const layout = sidePanelLayoutsRef.current.get(tabId);
+    if (!layout) return;
+    const nextLayout = maximizeSidePanelPane(layout, paneId);
+    if (nextLayout !== layout) commitLayout(tabId, nextLayout);
+  }, [commitLayout]);
+
+  const restoreLayout = useCallback((tabId: string) => {
+    const layout = sidePanelLayoutsRef.current.get(tabId);
+    if (!layout) return;
+    const nextLayout = restoreSidePanelLayout(layout);
+    if (nextLayout !== layout) commitLayout(tabId, nextLayout);
+  }, [commitLayout]);
+
   return {
     sidePanelOpenTabs,
     setSidePanelOpenTabs,
@@ -129,5 +145,7 @@ export function useTerminalSidePanelLayoutState() {
     splitPane,
     closePane,
     resizeSplit,
+    maximizePane,
+    restoreLayout,
   };
 }
