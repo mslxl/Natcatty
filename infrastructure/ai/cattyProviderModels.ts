@@ -45,6 +45,14 @@ function credentialFingerprint(value: string | undefined): string {
   return `${raw.length}:${(hash >>> 0).toString(16)}`;
 }
 
+export function readCachedProviderModelCatalog(
+  provider: ProviderConfig,
+): ComposerPickerModel[] | null {
+  const cached = catalogCache.get(providerModelCacheKey(provider));
+  if (!cached || cached.expiresAt <= Date.now()) return null;
+  return cached.models;
+}
+
 export function providerModelCacheKey(provider: ProviderConfig): string {
   return [
     provider.id,

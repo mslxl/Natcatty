@@ -68,6 +68,7 @@ import {
   buildSdkRuntimeModelCacheKey,
   sdkRuntimeModelCache,
   generateId,
+  agentModelPresetsShallowEqual,
   mergeFallbackThinkingLevels,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
@@ -766,14 +767,18 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     && Boolean(effectiveActiveProvider)
     && Boolean(effectiveActiveModelId.trim());
 
+  const providersRef = useRef(providers);
+  providersRef.current = providers;
+
   const handleAgentProviderModelSelect = useCallback(
     (providerId: string, modelId: string, contextWindow?: number) => {
       setAgentProvider(currentAgentId, providerId);
       setAgentModel(currentAgentId, modelId);
       const sanitized = sanitizeContextWindow(contextWindow);
       if (!updateProvider || sanitized == null) return;
-      const provider = providers.find((item) => item.id === providerId);
+      const provider = providersRef.current.find((item) => item.id === providerId);
       if (!provider) return;
+      if (provider.modelContextWindows?.[modelId] === sanitized) return;
       updateProvider(providerId, {
         modelContextWindows: {
           ...(provider.modelContextWindows ?? {}),
@@ -781,7 +786,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         },
       });
     },
-    [currentAgentId, providers, setAgentProvider, setAgentModel, updateProvider],
+    [currentAgentId, setAgentProvider, setAgentModel, updateProvider],
   );
 
   const providerDisplayName = effectiveActiveProvider?.name ?? '';
@@ -849,12 +854,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     };
   }, []);
 
+  const externalAgentsRef = useRef(externalAgents);
+  externalAgentsRef.current = externalAgents;
+
   const applySdkRuntimeModelCatalog = useCallback((
     agentId: string,
     catalog: SdkRuntimeModelCatalog,
     options: { adoptCurrentModel?: boolean } = {},
   ) => {
-    const agent = externalAgents.find((item) => item.id === agentId);
+    const agent = externalAgentsRef.current.find((item) => item.id === agentId);
     const runtimePresets = mergeFallbackThinkingLevels(
       normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
       getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
@@ -867,10 +875,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         return rest;
       });
     } else {
-      setRuntimeAgentModelPresets((prev) => ({
-        ...prev,
-        [agentId]: runtimePresets,
-      }));
+      setRuntimeAgentModelPresets((prev) => (
+        agentModelPresetsShallowEqual(prev[agentId], runtimePresets)
+          ? prev
+          : { ...prev, [agentId]: runtimePresets }
+      ));
     }
 
     const normalizedStoredModelId = normalizeStoredAgentModelSelection(
@@ -889,7 +898,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     ) {
       setAgentModel(agentId, catalog.currentModelId);
     }
-  }, [externalAgents, setAgentModel]);
+  }, [setAgentModel]);
 
   const loadSdkRuntimeModelCatalog = useCallback((
     target: SdkRuntimeModelTarget,

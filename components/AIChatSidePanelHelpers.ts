@@ -188,10 +188,12 @@ export function mergeFallbackThinkingLevels(
 ): AgentModelPreset[] {
   if (runtime.length === 0 || fallbacks.length === 0) return runtime;
   const byId = new Map(fallbacks.map((preset) => [preset.id, preset]));
-  return runtime.map((preset) => {
+  let changed = false;
+  const next = runtime.map((preset) => {
     if (preset.thinkingLevels?.length) return preset;
     const fallback = byId.get(preset.id);
     if (!fallback?.thinkingLevels?.length) return preset;
+    changed = true;
     return {
       ...preset,
       thinkingLevels: [...fallback.thinkingLevels],
@@ -202,6 +204,24 @@ export function mergeFallbackThinkingLevels(
         ? { encodeDefaultThinking: false }
         : {}),
     };
+  });
+  return changed ? next : runtime;
+}
+
+export function agentModelPresetsShallowEqual(
+  left: AgentModelPreset[] | undefined,
+  right: AgentModelPreset[] | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right || left.length !== right.length) return false;
+  return left.every((preset, index) => {
+    const other = right[index];
+    return (
+      preset.id === other.id
+      && preset.name === other.name
+      && preset.defaultThinkingLevel === other.defaultThinkingLevel
+      && (preset.thinkingLevels ?? []).join('\0') === (other.thinkingLevels ?? []).join('\0')
+    );
   });
 }
 

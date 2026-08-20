@@ -6,7 +6,7 @@ import { formatComposerThinkingLabel } from '../../infrastructure/ai/composerPic
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 
 export interface ComposerThinkingChipProps {
-  levels: string[];
+  levels: readonly string[];
   selectedLevel?: string;
   disabled?: boolean;
   open: boolean;
@@ -79,7 +79,10 @@ export const ComposerThinkingChip: React.FC<ComposerThinkingChipProps> = ({
                   type="button"
                   role="option"
                   aria-selected={isSelected}
-                  onClick={() => onSelect(level)}
+                  onClick={() => {
+                    if (!isSelected) onSelect(level);
+                    else onClose();
+                  }}
                   className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
                 >
                   {isSelected

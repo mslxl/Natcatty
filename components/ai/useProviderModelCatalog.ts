@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchProviderModelCatalog,
+  providerModelCacheKey,
+  readCachedProviderModelCatalog,
   seedProviderModelCatalog,
 } from '../../infrastructure/ai/cattyProviderModels';
 import type { ComposerPickerModel } from '../../infrastructure/ai/composerPicker';
@@ -18,24 +20,48 @@ export function useProviderModelCatalog(
   provider: ProviderConfig | undefined,
   enabled: boolean,
 ): ProviderModelCatalog {
+  const cacheKey = provider && enabled ? providerModelCacheKey(provider) : '';
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
   const seed = useMemo(
-    () => (provider ? seedProviderModelCatalog(provider) : { models: [], fetched: false }),
-    [provider],
+    () => {
+      if (!cacheKey) return { models: [], fetched: false };
+      const current = providerRef.current;
+      return current ? seedProviderModelCatalog(current) : { models: [], fetched: false };
+    },
+    [cacheKey],
   );
-  const [catalog, setCatalog] = useState<Omit<ProviderModelCatalog, 'loading'>>(seed);
-  const [loading, setLoading] = useState(false);
+  const [catalog, setCatalog] = useState<Omit<ProviderModelCatalog, 'loading'>>(() => {
+    const current = providerRef.current;
+    const hit = current && enabled ? readCachedProviderModelCatalog(current) : null;
+    return hit ? { models: hit, fetched: true } : seed;
+  });
+  const [loading, setLoading] = useState(() => {
+    const current = providerRef.current;
+    return Boolean(enabled && current && !readCachedProviderModelCatalog(current));
+  });
 
   useEffect(() => {
-    if (!enabled || !provider) {
+    const current = providerRef.current;
+    if (!enabled || !current) {
       setCatalog({ models: [], fetched: false });
       setLoading(false);
       return;
     }
 
+    const hit = readCachedProviderModelCatalog(current);
+    if (hit) {
+      setCatalog((prev) => (
+        prev.fetched && prev.models === hit ? prev : { models: hit, fetched: true }
+      ));
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
-    setCatalog(seedProviderModelCatalog(provider));
+    setCatalog(seedProviderModelCatalog(current));
     setLoading(true);
-    void fetchProviderModelCatalog(provider, getFetchBridge()).then((next) => {
+    void fetchProviderModelCatalog(current, getFetchBridge()).then((next) => {
       if (cancelled) return;
       setCatalog(next);
       setLoading(false);
@@ -44,7 +70,7 @@ export function useProviderModelCatalog(
     return () => {
       cancelled = true;
     };
-  }, [enabled, provider]);
+  }, [cacheKey, enabled]);
 
   return {
     models: catalog.models.length > 0 ? catalog.models : seed.models,

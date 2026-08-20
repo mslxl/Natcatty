@@ -74,6 +74,10 @@ test('cattyReasoningLevelsForSelection hides the chip unless the model can take 
   assert.deepEqual(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-4o'), []);
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.5').includes('high'));
   assert.ok(cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.5').includes('off'));
+  assert.equal(
+    cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.5'),
+    cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5.6'),
+  );
   assert.deepEqual(
     cattyReasoningLevelsForSelection({ providerId: 'openai' }, 'gpt-5'),
     ['minimal', 'low', 'medium', 'high'],

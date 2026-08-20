@@ -15,6 +15,10 @@ const GEMINI_25_THINKING_BUDGET: Record<'low' | 'medium' | 'high', number> = {
 };
 
 const REASONING_RANK = ['off', 'minimal', 'low', 'medium', 'high'] as const;
+const LEVELS_LOW_MEDIUM_HIGH = ['low', 'medium', 'high'] as const;
+const LEVELS_LOW_HIGH = ['low', 'high'] as const;
+const LEVELS_MINIMAL_LOW_MEDIUM_HIGH = ['minimal', 'low', 'medium', 'high'] as const;
+const LEVELS_MINIMAL_HIGH = ['minimal', 'high'] as const;
 
 export type CattyReasoningProviderOptions = Record<string, Record<string, unknown>>;
 
@@ -182,20 +186,20 @@ export function cattyReasoningLevelsForSelection(
   const style = resolveProviderStyle(provider);
   if (style === 'anthropic') {
     if (!modelId || !anthropicModelLikelySupportsThinking(modelId)) return [];
-    if (!anthropicAllowsDisabledThinking(modelId)) return ['low', 'medium', 'high'];
+    if (!anthropicAllowsDisabledThinking(modelId)) return LEVELS_LOW_MEDIUM_HIGH;
     return CATTY_REASONING_LEVELS;
   }
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return [];
     if (isGemini3Model(modelId)) return gemini3AdvertisedLevels(modelId);
-    if (!googleModelAllowsDisabledThinking(modelId)) return ['low', 'medium', 'high'];
+    if (!googleModelAllowsDisabledThinking(modelId)) return LEVELS_LOW_MEDIUM_HIGH;
     return CATTY_REASONING_LEVELS;
   }
   if (style === 'openai') {
     if (!modelId || !openaiModelLikelySupportsReasoning(modelId)) return [];
     if (openaiModelSupportsNoneReasoning(modelId)) return CATTY_REASONING_LEVELS;
-    if (openaiModelSupportsMinimalReasoning(modelId)) return ['minimal', 'low', 'medium', 'high'];
-    return ['low', 'medium', 'high'];
+    if (openaiModelSupportsMinimalReasoning(modelId)) return LEVELS_MINIMAL_LOW_MEDIUM_HIGH;
+    return LEVELS_LOW_MEDIUM_HIGH;
   }
   return [];
 }
@@ -237,13 +241,13 @@ function isGemini3Model(modelId: string): boolean {
 
 function gemini3AdvertisedLevels(modelId: string): readonly string[] {
   const id = modelId.trim().toLowerCase();
-  if (/flash-lite-image/.test(id)) return ['minimal', 'high'];
-  if (/gemini-3\.7/.test(id) && /flash/.test(id)) return ['low', 'medium', 'high'];
+  if (/flash-lite-image/.test(id)) return LEVELS_MINIMAL_HIGH;
+  if (/gemini-3\.7/.test(id) && /flash/.test(id)) return LEVELS_LOW_MEDIUM_HIGH;
   if (/pro/.test(id) && !/flash/.test(id)) {
-    return /gemini-3\.1/.test(id) ? ['low', 'medium', 'high'] : ['low', 'high'];
+    return /gemini-3\.1/.test(id) ? LEVELS_LOW_MEDIUM_HIGH : LEVELS_LOW_HIGH;
   }
-  if (/flash/.test(id)) return ['minimal', 'low', 'medium', 'high'];
-  return ['low', 'medium', 'high'];
+  if (/flash/.test(id)) return LEVELS_MINIMAL_LOW_MEDIUM_HIGH;
+  return LEVELS_LOW_MEDIUM_HIGH;
 }
 
 function googleModelAllowsDisabledThinking(modelId: string): boolean {

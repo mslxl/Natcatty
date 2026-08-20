@@ -72,7 +72,7 @@ import {
   resolveVisibleChatInputMaxHeight,
 } from './chatInputResize';
 
-const PERMISSION_PICKER_WIDTH = 250;
+const PERMISSION_PICKER_WIDTH = 200;
 const THINKING_PICKER_WIDTH = 168;
 const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
@@ -925,10 +925,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const thinkingLevels = useMemo(
     () => (
       hasProviderSwitcher && onThinkingLevelChange
-        ? [...cattyReasoningLevelsForSelection(
+        ? cattyReasoningLevelsForSelection(
           selectedSwitcherProvider,
           providerSwitcher?.selectedModelId,
-        )]
+        )
         : (selectedPreset?.thinkingLevels ?? [])
     ),
     [
@@ -1537,7 +1537,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     <div
                       role="listbox"
                       aria-label="Permission mode"
-                      className="fixed z-[1000] w-[250px] max-w-[calc(100vw-16px)] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
+                      className="fixed z-[1000] w-[200px] max-w-[calc(100vw-16px)] rounded-lg border border-border/50 bg-popover shadow-lg py-1"
                       style={{ left: menuPos.left, bottom: menuPos.bottom }}
                     >
                       {([
@@ -1555,16 +1555,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
                             onPermissionModeChange(mode);
                             closeAllMenus();
                           }}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
+                          className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer"
                         >
                           {permissionMode === mode
                             ? <Check size={11} className="text-primary shrink-0" />
                             : <span className="w-[11px] shrink-0" />
                           }
                           <Icon size={12} className={`${color} shrink-0`} />
-                          <div className="flex-1 min-w-0">
-                            <div className="text-foreground/85">{label}</div>
-                            <div className="text-[10px] text-muted-foreground/40 leading-tight">{desc}</div>
+                          <div className="flex-1 min-w-0 flex items-baseline gap-1.5">
+                            <span className="text-foreground/85 shrink-0">{label}</span>
+                            <span className="text-[11px] text-muted-foreground/45 truncate">{desc}</span>
                           </div>
                         </button>
                       ))}

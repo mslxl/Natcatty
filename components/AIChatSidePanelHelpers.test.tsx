@@ -6,6 +6,7 @@ import {
   buildSdkRuntimeModelCacheKey,
   canonicalizeEffortEncodedModelId,
   createSdkRuntimeModelCache,
+  agentModelPresetsShallowEqual,
   mergeFallbackThinkingLevels,
   modelPresetsContainId,
   normalizeStoredAgentModelSelection,
@@ -89,6 +90,24 @@ test('mergeFallbackThinkingLevels fills missing runtime effort catalogs', () => 
   );
   assert.deepEqual(partial[0]?.thinkingLevels, ['low']);
   assert.deepEqual(mergeFallbackThinkingLevels([], [{ id: 'gpt-5.5', name: 'GPT-5.5' }]), []);
+  const alreadyFilled = [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low'] }];
+  assert.equal(
+    mergeFallbackThinkingLevels(
+      alreadyFilled,
+      [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low', 'medium', 'high'] }],
+    ),
+    alreadyFilled,
+  );
+});
+
+test('agentModelPresetsShallowEqual ignores array identity when contents match', () => {
+  const left = [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low', 'high'] }];
+  const right = [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['low', 'high'] }];
+  assert.equal(agentModelPresetsShallowEqual(left, right), true);
+  assert.equal(
+    agentModelPresetsShallowEqual(left, [{ id: 'gpt-5.5', name: 'GPT-5.5', thinkingLevels: ['high'] }]),
+    false,
+  );
 });
 
 test('modelPresetsContainId matches plain and thinking-level model ids', () => {
