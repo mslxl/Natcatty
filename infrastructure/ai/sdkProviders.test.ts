@@ -28,7 +28,30 @@ test("createModelFromConfig routes by explicit style: google on top of custom pr
 
 test("createModelFromConfig defaults legacy custom providerId to the OpenAI-compatible client", () => {
   const model = createModelFromConfig(makeConfig({ providerId: "custom", defaultModel: "gpt-4o" }));
-  assert.match(String((model as { provider?: string }).provider ?? ""), /^openai/);
+  assert.match(String((model as { provider?: string }).provider ?? ""), /^openai\.chat/);
+});
+
+test("createModelFromConfig keeps Chat Completions as the OpenAI default", () => {
+  const model = createModelFromConfig(makeConfig({ providerId: "openai", defaultModel: "gpt-4o" }));
+  assert.equal((model as { provider?: string }).provider, "openai.chat");
+});
+
+test("createModelFromConfig uses Responses API when openaiApi is responses", () => {
+  const model = createModelFromConfig(makeConfig({
+    providerId: "openai",
+    defaultModel: "gpt-4o",
+    openaiApi: "responses",
+  }));
+  assert.equal((model as { provider?: string }).provider, "openai.responses");
+});
+
+test("createModelFromConfig ignores openaiApi when style is not openai", () => {
+  const model = createModelFromConfig(makeConfig({
+    style: "anthropic",
+    openaiApi: "responses",
+    defaultModel: "claude",
+  }));
+  assert.match(String((model as { provider?: string }).provider ?? ""), /^anthropic/);
 });
 
 test("createModelFromConfig keeps the Anthropic providerId fallback when style is unset", () => {

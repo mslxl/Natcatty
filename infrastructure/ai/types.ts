@@ -27,6 +27,14 @@ export type AIProviderId =
  */
 export type ProviderStyle = 'openai' | 'anthropic' | 'google';
 
+/**
+ * OpenAI-compatible request format. Chat Completions (`/v1/chat/completions`)
+ * is the default so existing providers and OpenAI-compat proxies keep working.
+ * Responses (`/v1/responses`) is opt-in for relays that cache better on that
+ * endpoint.
+ */
+export type OpenAIApiFormat = 'chat' | 'responses';
+
 export interface ProviderAdvancedParams {
   maxTokens?: number;
   temperature?: number;       // 0–2
@@ -41,6 +49,11 @@ export interface ProviderConfig {
   name: string;
   /** Override the wire-protocol family; defaults from `providerId` via {@link resolveProviderStyle}. */
   style?: ProviderStyle;
+  /**
+   * OpenAI-compatible endpoint family. Only used when style resolves to `openai`.
+   * Defaults to Chat Completions via {@link resolveOpenAIApi}.
+   */
+  openaiApi?: OpenAIApiFormat;
   /** Built-in icon key (slug under public/ai/providers/), independent of providerId. */
   iconId?: string;
   /** User-supplied icon as a data URL (compressed to 64x64 webp at write time). Wins over iconId. */
@@ -69,6 +82,11 @@ export function resolveProviderStyle(config: Pick<ProviderConfig, 'providerId' |
     default:
       return 'openai';
   }
+}
+
+/** Pick the OpenAI request format. Missing or unknown values stay on Chat Completions. */
+export function resolveOpenAIApi(config: Pick<ProviderConfig, 'openaiApi'>): OpenAIApiFormat {
+  return config.openaiApi === 'responses' ? 'responses' : 'chat';
 }
 
 export interface ModelInfo {

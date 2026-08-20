@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Upload, RotateCcw, X, RefreshCw } from "lucide-react";
-import type { ProviderConfig, ProviderAdvancedParams, ProviderStyle } from "../../../../infrastructure/ai/types";
-import { PROVIDER_PRESETS, resolveProviderStyle } from "../../../../infrastructure/ai/types";
+import type { ProviderConfig, ProviderAdvancedParams, OpenAIApiFormat, ProviderStyle } from "../../../../infrastructure/ai/types";
+import { PROVIDER_PRESETS, resolveOpenAIApi, resolveProviderStyle } from "../../../../infrastructure/ai/types";
 import { normalizeOllamaSdkBaseURL } from "../../../../infrastructure/ai/ollamaCompatBaseUrl";
 import { sanitizeContextWindow } from "../../../../infrastructure/ai/contextCompaction";
 import {
@@ -54,6 +54,7 @@ async function compressIconFileToDataUrl(file: File): Promise<string> {
 }
 
 const STYLE_OPTIONS: ReadonlyArray<ProviderStyle> = ["anthropic", "openai", "google"];
+const OPENAI_API_OPTIONS: ReadonlyArray<OpenAIApiFormat> = ["chat", "responses"];
 
 /** Same box as the h-8 fields above. Transparent border keeps primary aligned with outline. */
 const PROVIDER_ACTION_CLASS = "box-border h-8 px-3 gap-1.5 text-sm font-medium leading-none";
@@ -76,6 +77,7 @@ export const ProviderConfigForm: React.FC<{
     skipTLSVerify: provider.skipTLSVerify ?? false,
     advancedParams: provider.advancedParams ?? {},
     style: provider.style ?? "",
+    openaiApi: resolveOpenAIApi(provider),
     iconId: provider.iconId ?? "",
     iconDataUrl: provider.iconDataUrl ?? "",
   });
@@ -345,6 +347,7 @@ export const ProviderConfigForm: React.FC<{
       skipTLSVerify: form.skipTLSVerify || undefined,
       advancedParams: Object.keys(cleanedParams).length > 0 ? cleanedParams : undefined,
       style: form.style || undefined,
+      openaiApi: resolvedStyle === "openai" && form.openaiApi === "responses" ? "responses" : undefined,
       iconId: form.iconId || undefined,
       iconDataUrl: form.iconDataUrl || undefined,
     };
@@ -357,7 +360,7 @@ export const ProviderConfigForm: React.FC<{
     }
 
     onSave(updates);
-  }, [form, onSave, provider.providerId, resolvedBaseURL, t]);
+  }, [form, onSave, provider.providerId, resolvedBaseURL, resolvedStyle, t]);
 
   return (
     <div className="mt-3 space-y-3 border-t border-border/40 pt-3">
@@ -483,6 +486,34 @@ export const ProviderConfigForm: React.FC<{
         </div>
         <p className="text-[11px] text-muted-foreground/70">{t('ai.providers.style.help')}</p>
       </div>
+
+      {resolvedStyle === "openai" && (
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">{t('ai.providers.openaiApi')}</label>
+          <div className="flex items-center gap-1.5">
+            {OPENAI_API_OPTIONS.map((format) => {
+              const isSelected = form.openaiApi === format;
+              return (
+                <button
+                  key={format}
+                  type="button"
+                  onClick={() => setForm((prev) => ({ ...prev, openaiApi: format }))}
+                  className={cn(
+                    "h-7 px-2.5 rounded-md text-xs border transition-colors",
+                    isSelected
+                      ? "border-primary/70 bg-primary/15 text-foreground"
+                      : "border-border/50 bg-background text-muted-foreground hover:text-foreground hover:bg-muted/40",
+                  )}
+                  aria-pressed={isSelected}
+                >
+                  {t(`ai.providers.openaiApi.${format}`)}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-[11px] text-muted-foreground/70">{t('ai.providers.openaiApi.help')}</p>
+        </div>
+      )}
 
       {/* API Key */}
       <div className="space-y-1.5">
