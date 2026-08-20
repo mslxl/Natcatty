@@ -541,7 +541,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autoReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoReconnectLoopActiveRef = useRef(false);
   const autoReconnectAttemptRef = useRef(0);
-  const autoReconnectNoticeMessageRef = useRef<string | null>(null);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
   /** Connected wake for multi-tab snippet fan-out (reattaches session listeners). */
@@ -882,6 +881,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   } | null>(null);
   const [isConnectionAwaitingUserInput, setIsConnectionAwaitingUserInput] = useState(false);
   const [isConnectionPastTcpDial, setIsConnectionPastTcpDial] = useState(false);
+  const [autoReconnectNoticeMessage, setAutoReconnectNoticeMessage] = useState<string | null>(null);
 
   // pendingUploadEntries removed - drag-drop uploads now handled by SftpSidePanel
   const [isComposeBarOpen, setIsComposeBarOpen] = useStoredBoolean(
@@ -1358,7 +1358,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (options?.stopLoop !== false) {
       autoReconnectLoopActiveRef.current = false;
       autoReconnectAttemptRef.current = 0;
-      autoReconnectNoticeMessageRef.current = null;
+      setAutoReconnectNoticeMessage(null);
     }
   }, []);
 
@@ -1408,7 +1408,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     const attempt = autoReconnectAttemptRef.current;
     const seconds = Math.round(TERMINAL_AUTO_RECONNECT_DELAY_MS / 1000);
     const scheduledMessage = t("terminal.progress.autoReconnectScheduled", { seconds, attempt });
-    autoReconnectNoticeMessageRef.current = scheduledMessage;
+    setAutoReconnectNoticeMessage(scheduledMessage);
 
     setError(null);
     setShowLogs(true);
@@ -3414,6 +3414,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const startReconnect = async (mode: "manual" | "auto" = "manual") => {
     if (attachExistingSession) return;
+    const autoReconnectAttemptMessage = mode === "auto"
+      ? t("terminal.progress.autoReconnectAttempt", { attempt: autoReconnectAttemptRef.current })
+      : null;
+    setAutoReconnectNoticeMessage(autoReconnectAttemptMessage);
     if (!termRef.current && hibernatedRef.current) {
       if (reconnectWakeInFlightRef.current) return;
       const wakeForReconnect = wakeHibernatedRuntimeForReconnectRef.current;
@@ -3556,10 +3560,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setIsDisconnectedDialogDismissed(false);
     setConnectionReuseFellBack(false);
     setConnectionReuseAttemptSourceId(undefined);
-    const autoReconnectAttemptMessage = mode === "auto"
-      ? t("terminal.progress.autoReconnectAttempt", { attempt: autoReconnectAttemptRef.current })
-      : null;
-    autoReconnectNoticeMessageRef.current = autoReconnectAttemptMessage;
     updateStatus("connecting");
     setError(null);
     setProgressLogs((prev) => (
@@ -4246,7 +4246,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onDismiss={dismissScriptOverlay}
           compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
-      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showDisconnectedTerminalNotice, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, terminalReconnectAvailable: !attachExistingSession, autoReconnectNoticeMessage: autoReconnectNoticeMessageRef.current, timeLeft, toast, zmodem }} />
+      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showDisconnectedTerminalNotice, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, terminalReconnectAvailable: !attachExistingSession, autoReconnectNoticeMessage, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

@@ -60,6 +60,17 @@ test("automatic reconnect notice uses explicit lifecycle copy instead of a stale
   );
 });
 
+test("automatic reconnect switches to attempt copy before waking a hibernated terminal", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const startReconnect = source.indexOf('const startReconnect = async');
+  const updateNotice = source.indexOf('setAutoReconnectNoticeMessage(autoReconnectAttemptMessage)', startReconnect);
+  const wakeHibernated = source.indexOf('if (!termRef.current && hibernatedRef.current)', startReconnect);
+
+  assert.ok(startReconnect >= 0);
+  assert.ok(updateNotice > startReconnect);
+  assert.ok(wakeHibernated > updateNotice);
+});
+
 test("line timestamp toggle creates a persistent host update", () => {
   const host = {
     id: "host-1",
