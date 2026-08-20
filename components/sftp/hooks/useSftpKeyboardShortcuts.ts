@@ -555,6 +555,14 @@ export const useSftpKeyboardShortcuts = ({
         return;
       }
 
+      const isEditableTarget = isEditableShortcutTarget(target);
+      const isSftpSearchTarget = Boolean(target.closest?.(
+        '[data-section="terminal-sftp-path"], [data-section="terminal-sftp-filter-bar"]',
+      ));
+      if (isEditableTarget && !isSftpSearchTarget) {
+        return;
+      }
+
       if (hotkeyScheme !== "disabled") {
         const isMac = hotkeyScheme === "mac";
         const searchBinding = keyBindings.find((binding) => binding.action === "searchTerminal");
@@ -570,8 +578,8 @@ export const useSftpKeyboardShortcuts = ({
         }
       }
 
-      // Skip the remaining SFTP shortcuts when focus is on an input element.
-      if (isEditableShortcutTarget(target)) {
+      // Path/filter inputs may handle search above, but no other SFTP shortcut.
+      if (isEditableTarget) {
         return;
       }
 

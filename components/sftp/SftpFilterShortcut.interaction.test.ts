@@ -7,7 +7,7 @@ import type { HotkeyScheme, KeyBinding } from "../../domain/models/keyBindings.t
 
 test("Ctrl+F opens and refocuses the active SFTP pane filter without handling inactive panes", async () => {
   const dom = new JSDOM(
-    '<!doctype html><html><body><div id="root"></div><button id="terminal-focus" class="xterm">terminal</button></body></html>',
+    '<!doctype html><html><body><div id="root"></div><textarea id="terminal-focus" class="xterm"></textarea></body></html>',
     { pretendToBeVisual: true, url: "http://localhost" },
   );
   const window = dom.window;
@@ -107,7 +107,11 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
       React.Fragment,
       null,
       React.createElement("button", { id: "sftp-focus-target" }, "files"),
-      React.createElement("input", { id: "sftp-path-input", defaultValue: "/home/app" }),
+      React.createElement(
+        "div",
+        { "data-section": "terminal-sftp-path" },
+        React.createElement("input", { id: "sftp-path-input", defaultValue: "/home/app" }),
+      ),
       React.createElement(SftpPaneToolbar, {
         t: (key: string) => ({
           "sftp.filter": "Filter files",
@@ -239,7 +243,6 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
     assert.ok(reopenedCloseButton);
     await act(async () => reopenedCloseButton.click());
 
-    await act(async () => root.render(React.createElement(Harness, { isActive: false })));
     const terminalTarget = window.document.getElementById("terminal-focus");
     assert.ok(terminalTarget);
     terminalTarget.focus();
@@ -250,6 +253,19 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
       terminalReceiverSawPrevented = event.defaultPrevented;
     };
     window.addEventListener("keydown", terminalReceiver);
+    const staleActiveSftpEvent = await pressCtrlF(terminalTarget);
+    assert.equal(staleActiveSftpEvent.defaultPrevented, false, "SFTP must not intercept terminal input");
+    assert.equal(
+      window.document.querySelector('[data-section="terminal-sftp-filter-bar"]'),
+      null,
+      "terminal input must not reopen the SFTP filter when SFTP focus state is stale",
+    );
+    assert.equal(terminalReceiverCalled, true, "terminal listeners should receive Ctrl+F with stale SFTP focus");
+    assert.equal(terminalReceiverSawPrevented, false);
+    terminalReceiverCalled = false;
+    terminalReceiverSawPrevented = false;
+
+    await act(async () => root.render(React.createElement(Harness, { isActive: false })));
     const inactiveSftpEvent = await pressCtrlF(terminalTarget);
     window.removeEventListener("keydown", terminalReceiver);
     assert.equal(
