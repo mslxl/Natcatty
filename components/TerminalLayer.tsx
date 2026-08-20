@@ -1434,7 +1434,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   useEffect(() => {
     if (!sidePanelPaneZoomRef) return;
     const getTarget = () => {
-      const tabId = activeTabIdRef.current;
+      const tabId = activeTabStore.getActiveTabId();
       if (!tabId) return null;
       const layout = sidePanelLayoutsRef.current.get(tabId);
       if (!layout) return null;

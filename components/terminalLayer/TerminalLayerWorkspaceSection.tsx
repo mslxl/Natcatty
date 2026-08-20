@@ -5,6 +5,7 @@ import {
   getSidePanelLiveSnapshot,
   sidePanelLiveStore,
 } from '../../application/state/sidePanelLiveStore';
+import { getPaneZoomShortcutLabel } from '../../domain/sidePanelLayout';
 import { terminalLayerWorkspaceCtxEqual } from './terminalLayerViewMemo';
 
 type WorkspaceContext = Record<string, any>;
@@ -115,11 +116,26 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     onReorderTabs,
     onStartSessionDrag,
     onEndSessionDrag,
+    t,
   } = ctx;
+
+  const paneZoomShortcutLabel = getPaneZoomShortcutLabel(keyBindings, hotkeyScheme);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
     <div ref={workspaceInnerRef} className="flex-1 min-h-0 overflow-hidden relative">
+        {isFocusMode && activeWorkspace && (
+          <button
+            type="button"
+            data-section="terminal-workspace-focus-indicator"
+            className="absolute left-1/2 top-2 z-40 -translate-x-1/2 rounded-md border border-border/60 bg-background/95 px-3 py-1 text-xs text-muted-foreground shadow-sm"
+            aria-label={t('terminal.layer.restorePanes')}
+            onClick={() => workspaceFocusHandlersRef.current.get(activeWorkspace.id)?.()}
+          >
+            {t('terminal.layer.focusedPane')}: {t('terminal.layer.terminal')} ·{' '}
+            {paneZoomShortcutLabel ? `${paneZoomShortcutLabel} / ` : ''}Esc
+          </button>
+        )}
         {draggingSessionId && !isFocusMode && (
           <div
             ref={workspaceOverlayRef}

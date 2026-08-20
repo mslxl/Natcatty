@@ -559,6 +559,7 @@ export const esAiMessages: Messages = {
   'terminal.layer.addTerminal': 'Agregar terminal',
   'terminal.layer.switchToSplitView': 'Cambiar a vista dividida',
   'terminal.layer.sftp': 'SFTP',
+  'terminal.layer.terminal': 'Terminal',
   'terminal.layer.scripts': 'Scripts',
   'terminal.layer.history': 'Historial',
   'terminal.layer.theme': 'Tema',

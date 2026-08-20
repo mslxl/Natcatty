@@ -254,6 +254,26 @@ test('Escape exits side panel focus only after closing the command palette', () 
   assert.equal(sidePanelRestores, 1);
 });
 
+test('Escape leaves pane focus unchanged when an inner control already handled it', () => {
+  let sidePanelRestores = 0;
+
+  handleEscapeKeyDownImpl(() => ({
+    isQuickSwitcherOpen: false,
+    setIsQuickSwitcherOpen: () => {},
+    sidePanelPaneZoomRef: { current: {
+      getState: () => 'focused',
+      unfocus: () => { sidePanelRestores += 1; return true; },
+    } },
+  }), {
+    key: 'Escape',
+    defaultPrevented: true,
+    preventDefault: () => {},
+    stopPropagation: () => {},
+  } as unknown as KeyboardEvent);
+
+  assert.equal(sidePanelRestores, 0);
+});
+
 test('close tab hotkey routes native plugin view tabs through their owner', () => {
   let closedTabId = '';
   const pluginTabId = 'plugin-view:com.example.view:com.example.view.panel';

@@ -16,7 +16,7 @@
 
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
-import { useIsSftpActive } from "../application/state/activeTabStore";
+import { activeTabStore as globalActiveTabStore, useIsSftpActive } from "../application/state/activeTabStore";
 import { useSftpState } from "../application/state/useSftpState";
 import { useSftpBackend } from "../application/state/useSftpBackend";
 import { getParentPath, isConcreteTransferTargetPath } from "../application/state/sftp/utils";
@@ -241,10 +241,8 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
   const focusedSide = useSftpFocusedSide();
   const [maximizedSide, setMaximizedSide] = useState<SftpFocusedSide | null>(null);
   const paneZoomPresentation = getSftpPaneZoomPresentation(maximizedSide);
-  const isActiveRef = useRef(isActive);
   const focusedSideRef = useRef(focusedSide);
   const maximizedSideRef = useRef(maximizedSide);
-  isActiveRef.current = isActive;
   focusedSideRef.current = focusedSide;
   maximizedSideRef.current = maximizedSide;
 
@@ -252,21 +250,21 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     if (!paneZoomRef) return undefined;
     const controller: SidePanelPaneZoomController = {
       getState: () => {
-        if (!isActiveRef.current) return 'unavailable';
+        if (globalActiveTabStore.getActiveTabId() !== 'sftp') return 'unavailable';
         return maximizedSideRef.current ? 'focused' : 'focusable';
       },
       focus: () => {
-        if (!isActiveRef.current || maximizedSideRef.current) return false;
+        if (globalActiveTabStore.getActiveTabId() !== 'sftp' || maximizedSideRef.current) return false;
         setMaximizedSide(focusedSideRef.current);
         return true;
       },
       unfocus: () => {
-        if (!isActiveRef.current || !maximizedSideRef.current) return false;
+        if (globalActiveTabStore.getActiveTabId() !== 'sftp' || !maximizedSideRef.current) return false;
         setMaximizedSide(null);
         return true;
       },
       toggle: () => {
-        if (!isActiveRef.current) return false;
+        if (globalActiveTabStore.getActiveTabId() !== 'sftp') return false;
         setMaximizedSide((current) => current ? null : focusedSideRef.current);
         return true;
       },

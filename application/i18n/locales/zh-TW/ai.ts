@@ -558,6 +558,7 @@ export const zhTWAiMessages: Messages = {
   'terminal.layer.addTerminal': '新增終端',
   'terminal.layer.switchToSplitView': '切換到分割檢視',
   'terminal.layer.sftp': '檔案傳輸',
+  'terminal.layer.terminal': '終端',
   'terminal.layer.scripts': '指令碼',
   'terminal.layer.history': '指令歷史',
   'terminal.layer.theme': '主題',

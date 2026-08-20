@@ -559,6 +559,7 @@ export const zhCNAiMessages: Messages = {
   'terminal.layer.addTerminal': '添加终端',
   'terminal.layer.switchToSplitView': '切换到分屏视图',
   'terminal.layer.sftp': '文件传输',
+  'terminal.layer.terminal': '终端',
   'terminal.layer.scripts': '脚本',
   'terminal.layer.history': '命令历史',
   'terminal.layer.theme': '主题',

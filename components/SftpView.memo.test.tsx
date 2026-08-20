@@ -33,6 +33,8 @@ test("SFTP pane focus hides only the sibling while keeping both pane trees mount
   assert.match(source, /data-sftp-zoom-side="left"/);
   assert.match(source, /data-sftp-zoom-side="right"/);
   assert.doesNotMatch(source, /maximizedSide\s*===\s*['"]left['"]\s*&&\s*\(\s*<div[^>]+data-sftp-zoom-side/);
+  assert.match(source, /globalActiveTabStore\.getActiveTabId\(\) !== 'sftp'/);
+  assert.doesNotMatch(source, /isActiveRef/);
 });
 
 test("SftpView re-renders when host-key verification setting changes", async () => {

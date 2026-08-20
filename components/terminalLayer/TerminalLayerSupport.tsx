@@ -49,6 +49,7 @@ import {
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
 import type { SidePanelPaneZoomController, SidePanelTool } from '../../domain/sidePanelLayout';
+import { getTerminalPaneFocusTransition } from './terminalPaneFocusTransition';
 
 export type SidePanelTab = SidePanelTool;
 
@@ -1320,7 +1321,13 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   }, [deferPaneLayoutUpdate, isFocusedPane, isFocusMode, isSplitViewVisible, isVisible, livePaneLayoutKey]);
 
   const paneLayoutKey = paneLayoutKeyRef.current;
-  const style: React.CSSProperties = { ...layoutStyle };
+  const style: React.CSSProperties = {
+    ...layoutStyle,
+    transition: getTerminalPaneFocusTransition(
+      inActiveWorkspace,
+      isFocusedPane || (isFocusMode && isVisible),
+    ),
+  };
 
   useLayoutEffect(() => {
     const element = paneElementRef.current;

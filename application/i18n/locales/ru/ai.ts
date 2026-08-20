@@ -511,6 +511,7 @@ export const ruAiMessages: Messages = {
   'terminal.layer.addTerminal': 'Добавить терминал',
   'terminal.layer.switchToSplitView': 'Переключить в режим разделения',
   'terminal.layer.sftp': 'SFTP',
+  'terminal.layer.terminal': 'Терминал',
   'terminal.layer.scripts': 'Скрипты',
   'terminal.layer.history': 'История',
   'terminal.layer.theme': 'Тема',

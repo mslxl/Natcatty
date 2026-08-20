@@ -327,6 +327,7 @@ export function handleEscapeKeyDownImpl(getCtx: AppContextGetter, e: KeyboardEve
   } = getCtx();
 {
     if (e.key !== 'Escape') return;
+    if (e.defaultPrevented) return;
     if (isQuickSwitcherOpen) {
       setIsQuickSwitcherOpen(false);
       return;

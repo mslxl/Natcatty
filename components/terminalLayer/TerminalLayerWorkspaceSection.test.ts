@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -113,4 +114,12 @@ test("workspace section passes resolved session host ids to terminal panes", () 
   renderToStaticMarkup(React.createElement(TerminalLayerWorkspaceSection, { ctx }));
 
   assert.equal(sawResolvedIds, true);
+});
+
+test("focused terminal workspace exposes the same restore hint as other panes", () => {
+  const source = readFileSync(new URL("./TerminalLayerWorkspaceSection.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /data-section="terminal-workspace-focus-indicator"/);
+  assert.match(source, /getPaneZoomShortcutLabel\(keyBindings, hotkeyScheme\)/);
+  assert.match(source, /workspaceFocusHandlersRef\.current\.get\(activeWorkspace\.id\)\?\.\(\)/);
 });

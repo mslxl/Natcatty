@@ -173,6 +173,12 @@ test('notes side panel forwards repeated open-note requests', () => {
   assert.match(slotsSource, /openNoteRequestId=\{openNoteRequest\?\.requestId \?\? null\}/);
 });
 
+test('side panel focus controller reads the active tab at invocation time', () => {
+  const source = readFileSync(new URL('../TerminalLayer.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /const getTarget = \(\) => \{\s*const tabId = activeTabStore\.getActiveTabId\(\);/);
+});
+
 test('system monitoring only pauses for hidden remote tabs when hibernation is enabled', () => {
   const source = readFileSync(new URL('./terminalLayerSidePanelSlots.tsx', import.meta.url), 'utf8');
 
