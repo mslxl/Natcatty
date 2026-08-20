@@ -419,7 +419,11 @@ function registerProviderHandlers(ctx) {
         const isHttps = parsedUrl.protocol === "https:";
         const lib = isHttps ? https : http;
 
-        const fetchOpts = { method: method || "GET", headers: resolvedHeaders || {}, timeout: 30000 };
+        const fetchOpts = {
+          method: method || "GET",
+          headers: withContentLength(resolvedHeaders || {}, body),
+          timeout: 30000,
+        };
         if (skipTLS && isHttps) fetchOpts.rejectUnauthorized = false;
         if (proxyAgent) fetchOpts.agent = proxyAgent;
         const req = lib.request(parsedUrl, fetchOpts,

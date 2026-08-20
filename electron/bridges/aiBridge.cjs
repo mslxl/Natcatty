@@ -561,6 +561,22 @@ function raceAgainstAbort(promise, signal) {
   });
 }
 
+/**
+ * Node's http.request falls back to `Transfer-Encoding: chunked` when no
+ * Content-Length header is present. Some HTTP proxies mishandle large chunked
+ * request bodies — Xray's HTTP inbound drops the connection above ~8KB, which
+ * surfaces to the renderer as an opaque "socket hang up". The body is always a
+ * fully-buffered string here, so send an explicit Content-Length instead.
+ */
+function withContentLength(headers, body) {
+  if (body == null || body === "") return headers;
+  const alreadySet = Object.keys(headers).some(
+    (k) => k.toLowerCase() === "content-length",
+  );
+  if (alreadySet) return headers;
+  return { ...headers, "content-length": String(Buffer.byteLength(body)) };
+}
+
 async function streamRequest(url, options, event, requestId, skipTLS) {
   const parsedUrl = new URL(url);
   // Register cancellation before any await so Stop during PAC/proxy lookup works.
@@ -670,7 +686,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
 
     const reqOpts = {
         method: options.method || "POST",
-        headers: options.headers || {},
+        headers: withContentLength(options.headers || {}, options.body),
         timeout: 120000, // 2 min connection timeout
     };
     if (skipTLS && isHttps) reqOpts.rejectUnauthorized = false;
@@ -820,6 +836,7 @@ function createHandlerContext(ipcMain) {
     fs,
     existsSync,
     mcpServerBridge,
+    withContentLength,
     getExternalMcpController: () => externalMcpController,
     getCliLauncherPath,
     TOOL_CLI_DISCOVERY_ENV_VAR,
