@@ -111,11 +111,19 @@ test('split menu keeps custom shortcuts aligned with the matching split actions'
     await openMenu();
     const horizontalItem = findMenuItem('水平分屏');
     assert.match(horizontalItem.textContent ?? '', /水平分屏\s*⌘ H/);
+    const horizontalDivider = horizontalItem.querySelector('svg line');
+    assert.ok(horizontalDivider);
+    assert.equal(horizontalDivider.getAttribute('y1'), horizontalDivider.getAttribute('y2'));
+    assert.notEqual(horizontalDivider.getAttribute('x1'), horizontalDivider.getAttribute('x2'));
     await act(async () => horizontalItem.click());
 
     await openMenu();
     const verticalItem = findMenuItem('垂直分屏');
     assert.match(verticalItem.textContent ?? '', /垂直分屏\s*⌘ V/);
+    const verticalDivider = verticalItem.querySelector('svg line');
+    assert.ok(verticalDivider);
+    assert.equal(verticalDivider.getAttribute('x1'), verticalDivider.getAttribute('x2'));
+    assert.notEqual(verticalDivider.getAttribute('y1'), verticalDivider.getAttribute('y2'));
     await act(async () => verticalItem.click());
 
     assert.deepEqual(actions, ['horizontal', 'vertical']);
