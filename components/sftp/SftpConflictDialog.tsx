@@ -2,7 +2,7 @@
  * SFTP Conflict Resolution Dialog
  */
 
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, AlertTriangle } from 'lucide-react';
 import React, { memo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { canReplaceSftpConflict, getSftpConflictTypeKey } from '../../domain/sftpConflict';
@@ -26,6 +26,21 @@ interface ConflictItem {
 
 export const canReplaceConflict = (conflict: Pick<ConflictItem, 'isDirectory' | 'existingType'>): boolean => {
     return canReplaceSftpConflict(conflict.isDirectory, conflict.existingType);
+};
+
+export const getSftpConflictDialogPresentation = (
+    conflict: Pick<ConflictItem, 'isDirectory' | 'existingType'>,
+) => {
+    const isDestructiveDirectoryReplace = conflict.isDirectory && conflict.existingType === 'directory';
+
+    return {
+        titleKey: conflict.isDirectory ? 'sftp.conflict.folderTitle' : 'sftp.conflict.title',
+        descriptionKey: conflict.isDirectory ? 'sftp.conflict.folderDesc' : 'sftp.conflict.desc',
+        showFileMetadata: !conflict.isDirectory,
+        showDirectoryReplaceWarning: isDestructiveDirectoryReplace,
+        mergeVariant: isDestructiveDirectoryReplace ? 'default' : 'outline',
+        replaceVariant: isDestructiveDirectoryReplace ? 'outline' : 'default',
+    } as const;
 };
 
 const getConflictTypeKey = (conflict: Pick<ConflictItem, 'isDirectory' | 'existingType'>): string =>
@@ -88,6 +103,7 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
     );
     const canMerge = conflict.isDirectory && conflict.existingType === 'directory';
     const canReplace = canReplaceConflict(conflict);
+    const presentation = getSftpConflictDialogPresentation(conflict);
 
     const handleAction = (action: FileConflictAction) => {
         onResolve(conflict.transferId, action, applyToAll);
@@ -102,10 +118,10 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/70 text-muted-foreground">
                             <AlertCircle className="h-5 w-5" />
                         </span>
-                        {t('sftp.conflict.title')}
+                        {t(presentation.titleKey)}
                     </DialogTitle>
                     <DialogDescription className="text-[15px] leading-6">
-                        {t('sftp.conflict.desc')}
+                        {t(presentation.descriptionKey)}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -117,22 +133,36 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                         </div>
                     </div>
 
-                    <div className="space-y-3">
-                        <ConflictFileSummary
-                            title={t('sftp.conflict.existingFile')}
-                            sizeLabel={t('sftp.conflict.size')}
-                            modifiedLabel={t('sftp.conflict.modified')}
-                            size={formatFileSize(conflict.existingSize)}
-                            modified={formatDate(conflict.existingModified)}
-                        />
-                        <ConflictFileSummary
-                            title={t('sftp.conflict.newFile')}
-                            sizeLabel={t('sftp.conflict.size')}
-                            modifiedLabel={t('sftp.conflict.modified')}
-                            size={formatFileSize(conflict.newSize)}
-                            modified={formatDate(conflict.newModified)}
-                        />
-                    </div>
+                    {presentation.showFileMetadata && (
+                        <div className="space-y-3">
+                            <ConflictFileSummary
+                                title={t('sftp.conflict.existingFile')}
+                                sizeLabel={t('sftp.conflict.size')}
+                                modifiedLabel={t('sftp.conflict.modified')}
+                                size={formatFileSize(conflict.existingSize)}
+                                modified={formatDate(conflict.existingModified)}
+                            />
+                            <ConflictFileSummary
+                                title={t('sftp.conflict.newFile')}
+                                sizeLabel={t('sftp.conflict.size')}
+                                modifiedLabel={t('sftp.conflict.modified')}
+                                size={formatFileSize(conflict.newSize)}
+                                modified={formatDate(conflict.newModified)}
+                            />
+                        </div>
+                    )}
+
+                    {presentation.showDirectoryReplaceWarning && (
+                        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm leading-6">
+                            <div className="flex items-start gap-2 text-foreground">
+                                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                                <p>{t('sftp.conflict.folderMergeHint')}</p>
+                            </div>
+                            <p className="pl-6 font-medium text-destructive">
+                                {t('sftp.conflict.folderReplaceWarning')}
+                            </p>
+                        </div>
+                    )}
 
                     {sameTypeConflictCount > 1 && (
                         <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -171,9 +201,10 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                     </Button>
                     {conflict.isDirectory && (
                         <Button
-                            variant="outline"
+                            variant={presentation.mergeVariant}
                             onClick={() => handleAction('merge')}
                             disabled={!canMerge}
+                            autoFocus={presentation.showDirectoryReplaceWarning}
                             className="min-w-24 shrink-0"
                         >
                             {t('sftp.conflict.action.merge')}
@@ -181,9 +212,11 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                     )}
                     {canReplace && (
                         <Button
-                            variant="default"
+                            variant={presentation.replaceVariant}
                             onClick={() => handleAction('replace')}
-                            className="min-w-28 shrink-0"
+                            className={presentation.showDirectoryReplaceWarning
+                                ? 'min-w-28 shrink-0 border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive'
+                                : 'min-w-28 shrink-0'}
                         >
                             {t('sftp.conflict.action.replace')}
                         </Button>
