@@ -20,6 +20,7 @@ import {
   shouldShowLineTimestampToolbarToggle,
   shouldShowStatusBarConnectionControls,
   TerminalDisconnectedNotice,
+  resolveTerminalDisconnectedNoticeMessage,
 } from "./TerminalView.tsx";
 
 test("terminal disconnected notice keeps the reason and reconnect hint on one compact row", () => {
@@ -36,6 +37,27 @@ test("terminal disconnected notice keeps the reason and reconnect hint on one co
   assert.match(markup, /Connection timed out\./);
   assert.match(markup, /Press Enter to reconnect/);
   assert.match(markup, /h-7/);
+});
+
+test("automatic reconnect notice uses explicit lifecycle copy instead of a stale log line", () => {
+  assert.equal(
+    resolveTerminalDisconnectedNoticeMessage({
+      status: "connecting",
+      error: null,
+      autoReconnectMessage: "Auto reconnect attempt 2...",
+      disconnectedLabel: "Disconnected",
+    }),
+    "Auto reconnect attempt 2...",
+  );
+  assert.equal(
+    resolveTerminalDisconnectedNoticeMessage({
+      status: "disconnected",
+      error: "Connection timed out.",
+      autoReconnectMessage: "Waiting for host key confirmation",
+      disconnectedLabel: "Disconnected",
+    }),
+    "Connection timed out.",
+  );
 });
 
 test("line timestamp toggle creates a persistent host update", () => {
