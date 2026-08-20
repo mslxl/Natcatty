@@ -3,7 +3,7 @@
  */
 
 import { AlertCircle, AlertTriangle } from 'lucide-react';
-import React, { memo, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { canReplaceSftpConflict, getSftpConflictTypeKey } from '../../domain/sftpConflict';
 import { Button } from '../ui/button';
@@ -96,9 +96,17 @@ const ConflictFileSummary: React.FC<ConflictFileSummaryProps> = ({
 const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts, onResolve, formatFileSize }) => {
     const { t } = useI18n();
     const [applyToAll, setApplyToAll] = useState(false);
+    const mergeButtonRef = useRef<HTMLButtonElement>(null);
     const descriptionId = React.useId();
     const directoryWarningId = React.useId();
     const conflict = conflicts[0]; // Handle first conflict
+    const shouldFocusMerge = conflict?.isDirectory === true && conflict.existingType === 'directory';
+
+    useEffect(() => {
+        if (shouldFocusMerge) {
+            mergeButtonRef.current?.focus();
+        }
+    }, [conflict?.transferId, shouldFocusMerge]);
 
     if (!conflict) return null;
 
@@ -221,6 +229,7 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                     </Button>
                     {conflict.isDirectory && (
                         <Button
+                            ref={mergeButtonRef}
                             variant={presentation.mergeVariant}
                             onClick={() => handleAction('merge')}
                             disabled={!canMerge}
