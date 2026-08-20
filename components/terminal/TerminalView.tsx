@@ -434,6 +434,9 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     terminalBodyInset,
   });
   const terminalBottomInset = terminalBodyInset + (showDisconnectedTerminalNotice ? 28 : 0);
+  const disconnectedTerminalNoticeMessage = status === 'connecting'
+    ? progressLogs[progressLogs.length - 1] || t('terminal.progress.disconnected')
+    : error || t('terminal.progress.disconnected');
   // Optimistic override so the gutter paints immediately; host vault write can
   // lag behind without making the toolbar feel sticky.
   const [timestampOverride, setTimestampOverride] = useState<boolean | null>(null);
@@ -1026,7 +1029,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
           />
           {showDisconnectedTerminalNotice && (
             <TerminalDisconnectedNotice
-              message={error || t('terminal.progress.disconnected')}
+              message={disconnectedTerminalNoticeMessage}
               reconnectHint={showEnterReconnectHint ? t('terminal.progress.enterReconnectHint') : undefined}
               bottom={terminalBodyInset}
               left={terminalBodyInset}

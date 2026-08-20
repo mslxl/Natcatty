@@ -273,6 +273,8 @@ export function shouldShowTerminalConnectionDialog({
   disconnectedNoticeMode,
   hasEverConnected,
   restoreState,
+  isAutoReconnectActive,
+  requiresUserInput,
   hideConnectingDialogForConnectionReuse,
 }: {
   status: TerminalSession["status"];
@@ -282,6 +284,8 @@ export function shouldShowTerminalConnectionDialog({
   disconnectedNoticeMode?: TerminalSettings["disconnectedNoticeMode"];
   hasEverConnected?: boolean;
   restoreState?: TerminalSession["restoreState"];
+  isAutoReconnectActive?: boolean;
+  requiresUserInput?: boolean;
   hideConnectingDialogForConnectionReuse?: boolean;
 }): boolean {
   return status !== "connected"
@@ -292,6 +296,8 @@ export function shouldShowTerminalConnectionDialog({
       disconnectedNoticeMode,
       hasEverConnected,
       restoreState,
+      isAutoReconnectActive,
+      requiresUserInput,
     })
     && !(status === "disconnected" && isDisconnectedDialogDismissed);
 }
@@ -301,16 +307,23 @@ export function shouldShowTerminalDisconnectedNotice({
   disconnectedNoticeMode,
   hasEverConnected,
   restoreState,
+  isAutoReconnectActive,
+  requiresUserInput,
 }: {
   status: TerminalSession["status"];
   disconnectedNoticeMode?: TerminalSettings["disconnectedNoticeMode"];
   hasEverConnected?: boolean;
   restoreState?: TerminalSession["restoreState"];
+  isAutoReconnectActive?: boolean;
+  requiresUserInput?: boolean;
 }): boolean {
-  return status === "disconnected"
+  const isDisconnectedOrAutoReconnecting = status === "disconnected"
+    || (status === "connecting" && isAutoReconnectActive === true);
+  return isDisconnectedOrAutoReconnecting
     && disconnectedNoticeMode === "terminal"
     && hasEverConnected === true
-    && restoreState !== "restored-disconnected";
+    && restoreState !== "restored-disconnected"
+    && requiresUserInput !== true;
 }
 
 /**

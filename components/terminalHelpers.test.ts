@@ -503,7 +503,7 @@ test("terminal notice never hides first-connect failures or restored session gui
   );
 });
 
-test("terminal notice is absent while connected or reconnecting", () => {
+test("terminal notice is absent while connected or manually reconnecting", () => {
   for (const status of ["connected", "connecting"] as const) {
     assert.equal(
       shouldShowTerminalDisconnectedNotice({
@@ -514,6 +514,41 @@ test("terminal notice is absent while connected or reconnecting", () => {
       false,
     );
   }
+});
+
+test("established automatic reconnect stays non-blocking until input is required", () => {
+  const base = {
+    status: "connecting" as const,
+    disconnectedNoticeMode: "terminal" as const,
+    hasEverConnected: true,
+    isAutoReconnectActive: true,
+  };
+
+  assert.equal(shouldShowTerminalDisconnectedNotice(base), true);
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...base,
+      isLocalConnection: false,
+      isSerialConnection: false,
+      isDisconnectedDialogDismissed: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({ ...base, requiresUserInput: true }),
+    false,
+  );
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...base,
+      requiresUserInput: true,
+      isLocalConnection: false,
+      isSerialConnection: false,
+      isDisconnectedDialogDismissed: false,
+    }),
+    true,
+  );
 });
 
 test("connection reuse hides connecting dialog only while reuse is still possible", () => {

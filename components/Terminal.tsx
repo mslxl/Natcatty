@@ -3644,6 +3644,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disconnectedNoticeMode: terminalSettings.disconnectedNoticeMode,
     hasEverConnected: hasEverConnectedRef.current,
     restoreState,
+    isAutoReconnectActive: autoReconnectLoopActiveRef.current,
+    requiresUserInput: auth.needsAuth || needsHostKeyVerification || isConnectionAwaitingUserInput,
     hideConnectingDialogForConnectionReuse: shouldHideConnectingDialogForConnectionReuse({
       reuseConnectionFromSessionId: connectionReuseAttemptSourceId,
       host,
@@ -3655,6 +3657,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disconnectedNoticeMode: terminalSettings.disconnectedNoticeMode,
     hasEverConnected: hasEverConnectedRef.current,
     restoreState,
+    isAutoReconnectActive: autoReconnectLoopActiveRef.current,
+    requiresUserInput: auth.needsAuth || needsHostKeyVerification || isConnectionAwaitingUserInput,
   });
 
   const {
