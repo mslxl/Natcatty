@@ -347,6 +347,7 @@ function TransferRow({
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  const folderReplaceWarningId = React.useId();
   // Optimistic spinner from click until store status moves off paused/interrupted.
   const [resumeClicked, setResumeClicked] = useState(false);
   const isDirParent = isDirectoryParentTask(task);
@@ -712,6 +713,7 @@ function TransferRow({
                 presentation.destructiveReplace
                   && "border-destructive/50 text-destructive hover:bg-destructive/10 hover:text-destructive",
               )}
+              aria-describedby={presentation.destructiveReplace ? folderReplaceWarningId : undefined}
               onClick={() => { void sftpTransferCenterStore.resolveConflict(task.id, action, applyToAll); }}
             >
               {t(`sftp.conflict.action.${action}`)}
@@ -722,7 +724,10 @@ function TransferRow({
         return (
         <div className="mt-2 space-y-2">
           {destructiveDirectoryReplace && (
-            <div className="flex items-start gap-1.5 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] leading-4">
+            <div
+              id={folderReplaceWarningId}
+              className="flex items-start gap-1.5 rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] leading-4"
+            >
               <AlertTriangle size={12} className="mt-0.5 shrink-0 text-destructive" />
               <p>
                 {t("sftp.conflict.folderMergeHint")}{" "}
