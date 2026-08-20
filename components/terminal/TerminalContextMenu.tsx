@@ -425,15 +425,15 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
 
           <ContextMenuSeparator />
 
-          <ContextMenuItem onClick={onSplitVertical}>
+          <ContextMenuItem onClick={onSplitHorizontal}>
             <SplitSquareHorizontal size={14} className="mr-2" />
             {t('terminal.menu.splitHorizontal')}
-            <ContextMenuShortcut>{splitVShortcut}</ContextMenuShortcut>
+            <ContextMenuShortcut>{splitHShortcut}</ContextMenuShortcut>
           </ContextMenuItem>
-          <ContextMenuItem onClick={onSplitHorizontal}>
+          <ContextMenuItem onClick={onSplitVertical}>
             <SplitSquareVertical size={14} className="mr-2" />
             {t('terminal.menu.splitVertical')}
-            <ContextMenuShortcut>{splitHShortcut}</ContextMenuShortcut>
+            <ContextMenuShortcut>{splitVShortcut}</ContextMenuShortcut>
           </ContextMenuItem>
 
           <ContextMenuSeparator />
