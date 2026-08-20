@@ -132,6 +132,55 @@ export interface AutocompleteState {
   subDirFocusLevel: number;
 }
 
+function isSubsequence(query: string, target: string): boolean {
+  let queryIndex = 0;
+  for (let targetIndex = 0; targetIndex < target.length && queryIndex < query.length; targetIndex++) {
+    if (target[targetIndex] === query[queryIndex]) queryIndex++;
+  }
+  return queryIndex === query.length;
+}
+
+/**
+ * Remove history rows that no longer match the edited input while a debounced
+ * provider refresh is pending. Other sources keep their provider-specific
+ * matching semantics (snippet search, plugin replacement, etc.).
+ */
+export function reconcileAutocompletePopupState(
+  prev: AutocompleteState,
+  input: string | null,
+): AutocompleteState {
+  if (!prev.popupVisible || prev.suggestions.length === 0) return prev;
+  if (input === null) return { ...EMPTY_STATE };
+
+  const normalizedInput = input.toLowerCase();
+  const allowFuzzyHistory = parseCommandLine(input).wordIndex === 0;
+  const suggestions = prev.suggestions.filter((suggestion) => {
+    if (suggestion.source !== "history") return true;
+    const text = suggestion.text.toLowerCase();
+    if (text.length <= normalizedInput.length) return false;
+    return text.startsWith(normalizedInput)
+      || (allowFuzzyHistory && isSubsequence(normalizedInput, text));
+  });
+
+  if (suggestions.length === 0) return { ...EMPTY_STATE };
+  if (
+    prev.selectedIndex === -1
+    && prev.subDirFocusLevel === -1
+    && prev.subDirPanels.length === 0
+    && areSuggestionsEqual(prev.suggestions, suggestions)
+  ) {
+    return prev;
+  }
+
+  return {
+    ...prev,
+    suggestions,
+    selectedIndex: -1,
+    subDirPanels: [],
+    subDirFocusLevel: -1,
+  };
+}
+
 type HostCompletionProviderOptions = Parameters<typeof getCompletions>[1] & {
   /** Host-owned prompt identity used to gate third-party Provider access. */
   promptText: string;
@@ -410,6 +459,20 @@ export function useTerminalAutocomplete(
     setState((prev) =>
       prev.popupVisible || prev.suggestions.length > 0 ? { ...EMPTY_STATE } : prev,
     );
+  }, []);
+
+  /**
+   * Reconcile the visible popup with the newly edited input synchronously.
+   * The full provider refresh remains debounced, but rows from the previous
+   * query must not remain actionable while that refresh is pending.
+   */
+  const syncPopupToInput = useCallback((input: string | null) => {
+    completionAbortRef.current?.abort();
+    completionAbortRef.current = null;
+    fetchVersionRef.current++;
+    subDirFetchVersionRef.current++;
+
+    setState((prev) => reconcileAutocompletePopupState(prev, input));
   }, []);
 
   const repositionPopup = useCallback(() => {
@@ -1122,6 +1185,7 @@ export function useTerminalAutocomplete(
         lastAcceptedCommandRef,
         typedInputBufferRef,
         typedBufferReliableRef,
+        previewBaselineRef,
         previewActiveRef,
         termRef,
         hostIdRef,
@@ -1129,10 +1193,11 @@ export function useTerminalAutocomplete(
         ghostAddonRef,
         debounceTimerRef,
         clearState,
+        syncPopupToInput,
         fetchSuggestions,
       });
     },
-    [fetchSuggestions, termRef, clearState],
+    [fetchSuggestions, termRef, clearState, syncPopupToInput],
   );
 
   /**

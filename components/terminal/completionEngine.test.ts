@@ -163,6 +163,50 @@ test("getCompletions does not treat generator-only spec args as path contexts", 
   assert.equal(completions.some((entry) => entry.source === "path"), false);
 });
 
+test("history suggestions stop when an edited argument no longer matches the command prefix", async () => {
+  const historyCommand = "python3.14 -m robot -d /home/wx0043/Desktop/suite9";
+  recordCommand(historyCommand, "host-1");
+
+  const matching = await getCompletions("python3.14 -m r", {
+    hostId: "host-1",
+    historyScope: "host",
+    protocol: "ssh",
+    sessionId: "session-1",
+  });
+  assert.equal(
+    matching.some((entry) => entry.source === "history" && entry.text === historyCommand),
+    true,
+  );
+
+  const changedArgument = await getCompletions("python3.14 -m p", {
+    hostId: "host-1",
+    historyScope: "host",
+    protocol: "ssh",
+    sessionId: "session-1",
+  });
+  assert.equal(
+    changedArgument.some((entry) => entry.source === "history" && entry.text === historyCommand),
+    false,
+  );
+});
+
+test("single-token history queries retain fuzzy command-name matching", async () => {
+  const historyCommand = "docker compose up";
+  recordCommand(historyCommand, "host-1");
+
+  const completions = await getCompletions("dcu", {
+    hostId: "host-1",
+    historyScope: "host",
+    protocol: "ssh",
+    sessionId: "session-1",
+  });
+
+  assert.equal(
+    completions.some((entry) => entry.source === "history" && entry.text === historyCommand),
+    true,
+  );
+});
+
 test("removeCommandHistoryEntry removes only the matching host's autocomplete record", async () => {
   recordCommand("bad-command --flag", "host-1");
   recordCommand("bad-command --flag", "host-2");
