@@ -910,6 +910,8 @@ export const zhTWVaultMessages: Messages = {
   'sftp.conflict.desc': '目標位置已存在同名檔案',
   'sftp.conflict.folderTitle': '資料夾衝突',
   'sftp.conflict.folderDesc': '目標位置已存在同名資料夾',
+  'sftp.conflict.folderFileDesc': '目標位置已存在同名檔案，資料夾無法與檔案合併。',
+  'sftp.conflict.folderSymlinkDesc': '目標位置已存在同名符號連結，資料夾無法與符號連結合併。',
   'sftp.conflict.folderMergeHint': '合併會保留只存在於目標資料夾中的檔案和子資料夾。',
   'sftp.conflict.folderReplaceWarning': '替換會刪除目標資料夾中所有未出現在來源資料夾裡的檔案和子資料夾，刪除的資料無法復原。',
   'sftp.conflict.alreadyExistsSuffix': '已存在',

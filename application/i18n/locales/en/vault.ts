@@ -398,6 +398,8 @@ export const enVaultMessages: Messages = {
   'sftp.conflict.desc': 'A file with the same name already exists at the destination',
   'sftp.conflict.folderTitle': 'Folder Conflict',
   'sftp.conflict.folderDesc': 'A folder with the same name already exists at the destination',
+  'sftp.conflict.folderFileDesc': 'A file with the same name already exists at the destination. A folder cannot be merged with a file.',
+  'sftp.conflict.folderSymlinkDesc': 'A symbolic link with the same name already exists at the destination. A folder cannot be merged with a symbolic link.',
   'sftp.conflict.folderMergeHint': 'Merge keeps files and sub-folders that exist only in the destination.',
   'sftp.conflict.folderReplaceWarning': 'Replace deletes all destination files and sub-folders that are not in the source. Deleted data cannot be recovered.',
   'sftp.conflict.alreadyExistsSuffix': 'already exists',

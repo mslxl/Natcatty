@@ -32,10 +32,17 @@ export const getSftpConflictDialogPresentation = (
     conflict: Pick<ConflictItem, 'isDirectory' | 'existingType'>,
 ) => {
     const isDestructiveDirectoryReplace = conflict.isDirectory && conflict.existingType === 'directory';
+    const descriptionKey = !conflict.isDirectory
+        ? 'sftp.conflict.desc'
+        : conflict.existingType === 'file'
+            ? 'sftp.conflict.folderFileDesc'
+            : conflict.existingType === 'symlink'
+                ? 'sftp.conflict.folderSymlinkDesc'
+                : 'sftp.conflict.folderDesc';
 
     return {
         titleKey: conflict.isDirectory ? 'sftp.conflict.folderTitle' : 'sftp.conflict.title',
-        descriptionKey: conflict.isDirectory ? 'sftp.conflict.folderDesc' : 'sftp.conflict.desc',
+        descriptionKey,
         showFileMetadata: !conflict.isDirectory,
         showDirectoryReplaceWarning: isDestructiveDirectoryReplace,
         mergeVariant: isDestructiveDirectoryReplace ? 'default' : 'outline',
@@ -89,6 +96,8 @@ const ConflictFileSummary: React.FC<ConflictFileSummaryProps> = ({
 const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts, onResolve, formatFileSize }) => {
     const { t } = useI18n();
     const [applyToAll, setApplyToAll] = useState(false);
+    const descriptionId = React.useId();
+    const directoryWarningId = React.useId();
     const conflict = conflicts[0]; // Handle first conflict
 
     if (!conflict) return null;
@@ -104,6 +113,9 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
     const canMerge = conflict.isDirectory && conflict.existingType === 'directory';
     const canReplace = canReplaceConflict(conflict);
     const presentation = getSftpConflictDialogPresentation(conflict);
+    const describedBy = presentation.showDirectoryReplaceWarning
+        ? `${descriptionId} ${directoryWarningId}`
+        : descriptionId;
 
     const handleAction = (action: FileConflictAction) => {
         onResolve(conflict.transferId, action, applyToAll);
@@ -112,7 +124,10 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
 
     return (
         <Dialog open={!!conflict} onOpenChange={() => handleAction('skip')}>
-            <DialogContent className="gap-5 p-5 sm:max-w-[640px] sm:p-6">
+            <DialogContent
+                className="gap-5 p-5 sm:max-w-[640px] sm:p-6"
+                aria-describedby={describedBy}
+            >
                 <DialogHeader className="space-y-2 pr-8">
                     <DialogTitle className="flex items-center gap-3 text-xl leading-tight">
                         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/70 text-muted-foreground">
@@ -120,9 +135,11 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                         </span>
                         {t(presentation.titleKey)}
                     </DialogTitle>
-                    <DialogDescription className="text-[15px] leading-6">
-                        {t(presentation.descriptionKey)}
-                    </DialogDescription>
+                    <div id={descriptionId}>
+                        <DialogDescription className="text-[15px] leading-6">
+                            {t(presentation.descriptionKey)}
+                        </DialogDescription>
+                    </div>
                 </DialogHeader>
 
                 <div className="space-y-4">
@@ -153,7 +170,10 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                     )}
 
                     {presentation.showDirectoryReplaceWarning && (
-                        <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm leading-6">
+                        <div
+                            id={directoryWarningId}
+                            className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm leading-6"
+                        >
                             <div className="flex items-start gap-2 text-foreground">
                                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
                                 <p>{t('sftp.conflict.folderMergeHint')}</p>

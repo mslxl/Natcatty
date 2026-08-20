@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { canReplaceConflict, getSftpConflictDialogPresentation } from "./SftpConflictDialog.tsx";
+import {
+  canReplaceConflict,
+  getSftpConflictDialogPresentation,
+} from "./SftpConflictDialog.tsx";
 
 test("does not offer replace when a file upload conflicts with an existing directory", () => {
   assert.equal(canReplaceConflict({
@@ -73,6 +76,19 @@ test("does not show the directory deletion warning when replacing a symlink", ()
   });
 
   assert.equal(presentation.titleKey, "sftp.conflict.folderTitle");
+  assert.equal(presentation.descriptionKey, "sftp.conflict.folderSymlinkDesc");
   assert.equal(presentation.showDirectoryReplaceWarning, false);
   assert.equal(presentation.replaceVariant, "default");
+});
+
+test("explains why a folder cannot merge with an existing file", () => {
+  const presentation = getSftpConflictDialogPresentation({
+    isDirectory: true,
+    existingType: "file",
+  });
+
+  assert.equal(presentation.titleKey, "sftp.conflict.folderTitle");
+  assert.equal(presentation.descriptionKey, "sftp.conflict.folderFileDesc");
+  assert.equal(presentation.showDirectoryReplaceWarning, false);
+  assert.equal(presentation.mergeVariant, "outline");
 });

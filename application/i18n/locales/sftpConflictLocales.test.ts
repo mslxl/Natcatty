@@ -10,6 +10,8 @@ import { zhTWVaultMessages } from './zh-TW/vault.ts';
 const FOLDER_CONFLICT_KEYS = [
   'sftp.conflict.folderTitle',
   'sftp.conflict.folderDesc',
+  'sftp.conflict.folderFileDesc',
+  'sftp.conflict.folderSymlinkDesc',
   'sftp.conflict.folderMergeHint',
   'sftp.conflict.folderReplaceWarning',
 ] as const;
