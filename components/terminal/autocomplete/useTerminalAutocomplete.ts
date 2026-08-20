@@ -158,7 +158,6 @@ export function reconcileAutocompletePopupState(
   const suggestions = prev.suggestions.filter((suggestion) => {
     if (suggestion.source !== "history") return true;
     const text = suggestion.text.toLowerCase();
-    if (text.length <= normalizedInput.length) return false;
     if (suggestion.historyMatch === "path-argument") {
       const suggestionContext = parseCommandLine(suggestion.text);
       const currentArgument = inputContext.currentWord
@@ -174,6 +173,7 @@ export function reconcileAutocompletePopupState(
       return suggestionContext.commandName.toLowerCase() === inputContext.commandName.toLowerCase()
         && suggestionArgument.startsWith(currentArgument);
     }
+    if (text.length <= normalizedInput.length) return false;
     return text.startsWith(normalizedInput)
       || (allowFuzzyHistory && isSubsequence(normalizedInput, text));
   });

@@ -162,11 +162,14 @@ test("deleting below the fuzzy-history threshold removes a non-prefix row", () =
 
 test("path history follows the current argument instead of the whole line", () => {
   const suggestion: CompletionSuggestion = {
-    ...historySuggestion("cat --number package.json"),
+    ...historySuggestion("cat package.json"),
     historyMatch: "path-argument",
   };
 
-  const matching = reconcileAutocompletePopupState(popupState([suggestion], -1), "cat pack");
+  const matching = reconcileAutocompletePopupState(
+    popupState([suggestion], -1),
+    "cat --number pack",
+  );
   assert.deepEqual(matching.suggestions, [suggestion]);
 
   const changedArgument = reconcileAutocompletePopupState(matching, "cat src");

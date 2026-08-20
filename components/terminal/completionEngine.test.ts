@@ -149,6 +149,23 @@ test("getCompletions prioritizes spec-driven path suggestions over history", asy
   assert.equal(completions[historyIndex]?.historyMatch, "path-argument");
 });
 
+test("path completion marks a matching history replacement even when its full line is shorter", async () => {
+  const historyCommand = "story package.json";
+  const input = "story open --number p";
+  recordCommand(historyCommand, "host-1");
+
+  const completions = await getCompletions(input, {
+    hostId: "host-1",
+    protocol: "local",
+    cwd: "/repo",
+  });
+  const history = completions.find((entry) => entry.text === historyCommand);
+
+  assert.ok(history);
+  assert.ok(history.text.length < input.length);
+  assert.equal(history.historyMatch, "path-argument");
+});
+
 test("getCompletions does not treat generator-only spec args as path contexts", async () => {
   recordCommand("story pick package-choice", "host-1");
 
