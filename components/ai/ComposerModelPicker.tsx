@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
   filterComposerModels,
+  resolveComposerEnterModelId,
   resolvePinnedAndRecentModels,
   type ComposerModelPrefEntry,
   type ComposerModelPrefs,
@@ -217,10 +218,13 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
             onKeyDown={(event) => {
               if (event.key === 'Enter' && trimmedQuery) {
                 event.preventDefault();
-                const nextId = grouped.pinned[0]?.id
-                  ?? grouped.recent[0]?.id
-                  ?? filtered[0]?.id
-                  ?? (showCustom ? trimmedQuery : undefined);
+                const nextId = resolveComposerEnterModelId({
+                  query: trimmedQuery,
+                  models,
+                  grouped,
+                  filtered,
+                  showCustom,
+                });
                 if (nextId) selectModel(nextId);
               }
             }}

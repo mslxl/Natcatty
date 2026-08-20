@@ -10,5 +10,10 @@ export function normalizeOllamaSdkBaseURL(baseURL: string): string {
   if (/^https?:\/\/ollama\.com$/i.test(trimmed)) {
     return `${trimmed}/v1`;
   }
+  // Native Cloud docs use /api; the OpenAI SDK talks to /v1/chat/completions.
+  const nativeCloud = trimmed.match(/^(https?:\/\/ollama\.com)\/api$/i);
+  if (nativeCloud) {
+    return `${nativeCloud[1]}/v1`;
+  }
   return trimmed || baseURL;
 }

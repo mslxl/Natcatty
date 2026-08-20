@@ -100,6 +100,28 @@ function parsePrefEntries(value: unknown): ComposerModelPrefEntry[] {
   return entries;
 }
 
+export function resolveComposerEnterModelId(input: {
+  query: string;
+  models: ComposerPickerModel[];
+  grouped: {
+    pinned: ComposerPickerModel[];
+    recent: ComposerPickerModel[];
+    rest: ComposerPickerModel[];
+  };
+  filtered: ComposerPickerModel[];
+  showCustom: boolean;
+}): string | undefined {
+  const trimmed = input.query.trim();
+  if (!trimmed) return undefined;
+  const exact = input.models.find((model) => model.id.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact.id;
+  if (input.showCustom) return trimmed;
+  return input.grouped.pinned[0]?.id
+    ?? input.grouped.recent[0]?.id
+    ?? input.grouped.rest[0]?.id
+    ?? input.filtered[0]?.id;
+}
+
 export function filterComposerModels(
   models: ComposerPickerModel[],
   query: string,

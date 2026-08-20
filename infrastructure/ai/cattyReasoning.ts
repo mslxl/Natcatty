@@ -1,16 +1,20 @@
 import type { ProviderStyle } from './types';
 import { resolveProviderStyle, type ProviderConfig } from './types';
-import {
-  CATTY_REASONING_LEVELS,
-  normalizeCattyReasoningLevel,
-  type CattyReasoningLevel,
-} from './composerPicker';
+import { CATTY_REASONING_LEVELS } from './composerPicker';
 
-const ANTHROPIC_THINKING_BUDGET: Record<Exclude<CattyReasoningLevel, 'off'>, number> = {
+const ANTHROPIC_THINKING_BUDGET: Record<'low' | 'medium' | 'high', number> = {
   low: 4_000,
   medium: 10_000,
   high: 20_000,
 };
+
+const GEMINI_25_THINKING_BUDGET: Record<'low' | 'medium' | 'high', number> = {
+  low: 1_024,
+  medium: 8_192,
+  high: 16_384,
+};
+
+const REASONING_RANK = ['off', 'minimal', 'low', 'medium', 'high'] as const;
 
 export type CattyReasoningProviderOptions = Record<string, Record<string, unknown>>;
 
@@ -30,12 +34,6 @@ export function estimateReasoningOutputReserve(
   return 0;
 }
 
-const GEMINI_25_THINKING_BUDGET: Record<Exclude<CattyReasoningLevel, 'off'>, number> = {
-  low: 1_024,
-  medium: 8_192,
-  high: 16_384,
-};
-
 export function buildCattyReasoningProviderOptions(
   provider: Pick<ProviderConfig, 'providerId' | 'style'> | null | undefined,
   effort: string | null | undefined,
@@ -44,45 +42,67 @@ export function buildCattyReasoningProviderOptions(
   if (!provider) return undefined;
   const rawEffort = typeof effort === 'string' ? effort.trim() : '';
   if (!rawEffort) return undefined;
-  const level = normalizeCattyReasoningLevel(rawEffort);
   const style: ProviderStyle = resolveProviderStyle(provider);
+  const advertised = cattyReasoningLevelsForSelection(provider, modelId);
+  const resolved = advertised.length
+    ? resolveVisibleCattyThinkingLevel(advertised, rawEffort)
+    : rawEffort;
+  if (!resolved) return undefined;
+
   if (style === 'openai') {
     if (modelId && !openaiModelLikelySupportsReasoning(modelId)) return undefined;
-    if (level === 'off') {
+    if (resolved === 'off') {
       if (modelId && openaiModelSupportsNoneReasoning(modelId)) {
         return { openai: { reasoningEffort: 'none' } };
       }
       return undefined;
     }
-    return { openai: { reasoningEffort: level } };
+    return { openai: { reasoningEffort: resolved } };
   }
+
   if (style === 'anthropic') {
     if (modelId && !anthropicModelLikelySupportsThinking(modelId)) return undefined;
-    if (level === 'off') return undefined;
+    if (resolved === 'off') {
+      if (modelId && anthropicUsesAdaptiveThinking(modelId) && anthropicAllowsDisabledThinking(modelId)) {
+        return { anthropic: { thinking: { type: 'disabled' } } };
+      }
+      return undefined;
+    }
+    if (resolved !== 'low' && resolved !== 'medium' && resolved !== 'high') return undefined;
+    if (modelId && anthropicUsesAdaptiveThinking(modelId)) {
+      return {
+        anthropic: {
+          thinking: { type: 'adaptive' },
+          effort: resolved,
+        },
+      };
+    }
     return {
       anthropic: {
         thinking: {
           type: 'enabled',
-          budgetTokens: ANTHROPIC_THINKING_BUDGET[level],
+          budgetTokens: ANTHROPIC_THINKING_BUDGET[resolved],
         },
       },
     };
   }
+
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return undefined;
     if (isGemini3Model(modelId)) {
-      const thinkingLevel = gemini3ThinkingLevel(modelId, rawEffort);
-      if (!thinkingLevel) return undefined;
+      if (resolved !== 'minimal' && resolved !== 'low' && resolved !== 'medium' && resolved !== 'high') {
+        return undefined;
+      }
       return {
         google: {
           thinkingConfig: {
-            thinkingLevel,
-            includeThoughts: thinkingLevel !== 'minimal',
+            thinkingLevel: resolved,
+            includeThoughts: resolved !== 'minimal',
           },
         },
       };
     }
-    if (level === 'off') {
+    if (resolved === 'off') {
       if (!googleModelAllowsDisabledThinking(modelId)) return undefined;
       return {
         google: {
@@ -93,10 +113,11 @@ export function buildCattyReasoningProviderOptions(
         },
       };
     }
+    if (resolved !== 'low' && resolved !== 'medium' && resolved !== 'high') return undefined;
     return {
       google: {
         thinkingConfig: {
-          thinkingBudget: GEMINI_25_THINKING_BUDGET[level],
+          thinkingBudget: GEMINI_25_THINKING_BUDGET[resolved],
           includeThoughts: true,
         },
       },
@@ -105,14 +126,12 @@ export function buildCattyReasoningProviderOptions(
   return undefined;
 }
 
-/** Extended thinking is Claude 3.7+ / 4+; original Claude 3 Haiku/Sonnet reject it. */
+/** Extended thinking is Claude 3.7+ / 4+ / 5+; original Claude 3 Haiku/Sonnet reject it. */
 export function anthropicModelLikelySupportsThinking(modelId: string): boolean {
-  const id = modelId.trim().toLowerCase();
-  if (!id) return false;
-  return /claude-(?:opus|sonnet|haiku)-4/.test(id)
-    || /claude-4/.test(id)
-    || /claude-3-7/.test(id)
-    || /claude-3\.7/.test(id);
+  const parsed = parseClaudeModel(modelId);
+  if (!parsed) return false;
+  if (parsed.major >= 4) return true;
+  return parsed.major === 3 && parsed.minor >= 7;
 }
 
 export function googleModelLikelySupportsThinking(modelId: string): boolean {
@@ -123,18 +142,27 @@ export function googleModelLikelySupportsThinking(modelId: string): boolean {
 /**
  * `reasoning_effort: "none"` is only valid on GPT-5.1+ (and later minors).
  * Bare gpt-5 / o3 / o4-mini accept low|medium|high (and sometimes minimal),
- * but reject none.
+ * but reject none. Chat snapshots are not reasoners.
  */
 export function openaiModelSupportsNoneReasoning(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
+  if (!id || openaiModelIsChatSnapshot(id)) return false;
   return /gpt-5\.(?:[1-9]\d*)/.test(id);
+}
+
+/** Original GPT-5 (not 5.1+) accepts `minimal` as the floor instead of `none`. */
+export function openaiModelSupportsMinimalReasoning(modelId: string): boolean {
+  const id = modelId.trim().toLowerCase();
+  if (!id || openaiModelIsChatSnapshot(id)) return false;
+  if (openaiModelSupportsNoneReasoning(id)) return false;
+  return /gpt-5/.test(id);
 }
 
 /** OpenAI-compat models that accept `reasoning_effort` (o-series, GPT-5, reasoners). */
 export function openaiModelLikelySupportsReasoning(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
   if (!id) return false;
-  if (/gpt-5-chat/.test(id)) return false;
+  if (openaiModelIsChatSnapshot(id)) return false;
   return (
     /(^|[^a-z0-9])o[1-4]([^a-z0-9]|$)/.test(id)
     || /gpt-5/.test(id)
@@ -153,68 +181,126 @@ export function cattyReasoningLevelsForSelection(
   if (!provider) return [];
   const style = resolveProviderStyle(provider);
   if (style === 'anthropic') {
-    return modelId && anthropicModelLikelySupportsThinking(modelId) ? CATTY_REASONING_LEVELS : [];
+    if (!modelId || !anthropicModelLikelySupportsThinking(modelId)) return [];
+    if (!anthropicAllowsDisabledThinking(modelId)) return ['low', 'medium', 'high'];
+    return CATTY_REASONING_LEVELS;
   }
   if (style === 'google') {
     if (!modelId || !googleModelLikelySupportsThinking(modelId)) return [];
-    // Gemini 3 Flash cannot disable thinking; lowest advertised level is minimal.
-    if (isGemini3Flash(modelId)) return ['minimal', 'low', 'medium', 'high'];
-    // Original Gemini 3 Pro only accepts Low/High; 3.1 Pro keeps Medium.
-    if (isGemini3Pro(modelId) && !isGemini31Model(modelId)) return ['low', 'high'];
-    // Gemini 3.1 Pro / 2.5 Pro reject a true Off; omit it rather than lying.
+    if (isGemini3Model(modelId)) return gemini3AdvertisedLevels(modelId);
     if (!googleModelAllowsDisabledThinking(modelId)) return ['low', 'medium', 'high'];
     return CATTY_REASONING_LEVELS;
   }
   if (style === 'openai') {
-    return modelId && openaiModelLikelySupportsReasoning(modelId) ? CATTY_REASONING_LEVELS : [];
+    if (!modelId || !openaiModelLikelySupportsReasoning(modelId)) return [];
+    if (openaiModelSupportsNoneReasoning(modelId)) return CATTY_REASONING_LEVELS;
+    if (openaiModelSupportsMinimalReasoning(modelId)) return ['minimal', 'low', 'medium', 'high'];
+    return ['low', 'medium', 'high'];
   }
   return [];
 }
 
-/** Pick a level the current model actually advertises; never keep a stale chip value. */
+/**
+ * Pick a level the current model actually advertises; never keep a stale chip value.
+ * Missing mid-levels prefer the next higher advertised value (Gemini 3 Pro medium → high)
+ * so the chip, persisted pref, and request payload stay aligned.
+ */
 export function resolveVisibleCattyThinkingLevel(
   levels: readonly string[],
   selected: string | undefined,
 ): string | undefined {
   if (!levels.length) return undefined;
-  if (selected && levels.includes(selected)) return selected;
-  if (selected === 'off' && levels.includes('minimal')) return 'minimal';
+  const raw = selected?.trim().toLowerCase();
+  if (raw && levels.includes(raw)) return raw;
+  if (raw === 'off') {
+    if (levels.includes('minimal')) return 'minimal';
+    return levels[0];
+  }
+  const selectedRank = raw ? REASONING_RANK.indexOf(raw as typeof REASONING_RANK[number]) : -1;
+  if (selectedRank < 0) return levels[0];
+  for (let i = selectedRank + 1; i < REASONING_RANK.length; i += 1) {
+    if (levels.includes(REASONING_RANK[i])) return REASONING_RANK[i];
+  }
+  for (let i = selectedRank - 1; i >= 0; i -= 1) {
+    if (levels.includes(REASONING_RANK[i])) return REASONING_RANK[i];
+  }
   return levels[0];
+}
+
+function openaiModelIsChatSnapshot(modelId: string): boolean {
+  return /gpt-5(?:\.\d+)?-chat/.test(modelId);
 }
 
 function isGemini3Model(modelId: string): boolean {
   return modelId.trim().toLowerCase().includes('gemini-3');
 }
 
-function isGemini3Flash(modelId: string): boolean {
+function gemini3AdvertisedLevels(modelId: string): readonly string[] {
   const id = modelId.trim().toLowerCase();
-  return isGemini3Model(id) && /flash/.test(id);
-}
-
-function isGemini3Pro(modelId: string): boolean {
-  const id = modelId.trim().toLowerCase();
-  return isGemini3Model(id) && /pro/.test(id) && !/flash/.test(id);
-}
-
-function isGemini31Model(modelId: string): boolean {
-  return /gemini-3\.1/.test(modelId.trim().toLowerCase());
-}
-
-function gemini3ThinkingLevel(
-  modelId: string,
-  level: string,
-): 'minimal' | 'low' | 'medium' | 'high' | undefined {
-  const id = modelId.trim().toLowerCase();
-  const raw = level.trim().toLowerCase();
-  const isFlash = /flash/.test(id);
-  if (raw === 'minimal') return isFlash ? 'minimal' : 'low';
-  if (raw === 'off') return isFlash ? 'minimal' : undefined;
-  if (!isFlash && /pro/.test(id) && raw === 'medium' && !isGemini31Model(id)) return 'high';
-  if (raw === 'low' || raw === 'medium' || raw === 'high') return raw;
-  return undefined;
+  if (/flash-lite-image/.test(id)) return ['minimal', 'high'];
+  if (/gemini-3\.7/.test(id) && /flash/.test(id)) return ['low', 'medium', 'high'];
+  if (/pro/.test(id) && !/flash/.test(id)) {
+    return /gemini-3\.1/.test(id) ? ['low', 'medium', 'high'] : ['low', 'high'];
+  }
+  if (/flash/.test(id)) return ['minimal', 'low', 'medium', 'high'];
+  return ['low', 'medium', 'high'];
 }
 
 function googleModelAllowsDisabledThinking(modelId: string): boolean {
   const id = modelId.trim().toLowerCase();
   return /flash-lite|flash/.test(id) && !/pro/.test(id);
+}
+
+type ClaudeModel = {
+  family: string;
+  major: number;
+  minor: number;
+};
+
+function parseClaudeMinor(raw: string | undefined): number {
+  if (!raw) return 0;
+  const minor = Number.parseInt(raw, 10);
+  // Date suffixes like 20250514 are not minor versions.
+  return Number.isFinite(minor) && minor < 100 ? minor : 0;
+}
+
+function parseClaudeModel(modelId: string): ClaudeModel | null {
+  const id = modelId.trim().toLowerCase();
+  if (!id) return null;
+  const familyMatch = id.match(
+    /claude-(opus|sonnet|haiku|fable|mythos)(?:-preview)?(?:[-.](\d+)(?:[-.](\d+))?)?/,
+  );
+  if (familyMatch) {
+    return {
+      family: familyMatch[1],
+      major: familyMatch[2] ? Number.parseInt(familyMatch[2], 10) : 5,
+      minor: parseClaudeMinor(familyMatch[3]),
+    };
+  }
+  const threeSeven = id.match(/claude-3[-.]7/);
+  if (threeSeven) return { family: 'sonnet', major: 3, minor: 7 };
+  const bare = id.match(/claude-(\d+)(?:[-.](\d+))?/);
+  if (bare) {
+    return {
+      family: 'claude',
+      major: Number.parseInt(bare[1], 10),
+      minor: parseClaudeMinor(bare[2]),
+    };
+  }
+  return null;
+}
+
+/** 4.6+ and Claude 5 reject or deprecate manual `type: "enabled"`. */
+function anthropicUsesAdaptiveThinking(modelId: string): boolean {
+  const parsed = parseClaudeModel(modelId);
+  if (!parsed) return false;
+  if (parsed.major >= 5) return true;
+  return parsed.major === 4 && parsed.minor >= 6;
+}
+
+/** Fable 5 / Mythos 5 are always-on and reject `thinking.type: "disabled"`. */
+function anthropicAllowsDisabledThinking(modelId: string): boolean {
+  const parsed = parseClaudeModel(modelId);
+  if (!parsed) return true;
+  return parsed.family !== 'fable' && parsed.family !== 'mythos';
 }

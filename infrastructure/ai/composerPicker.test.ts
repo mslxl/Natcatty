@@ -8,6 +8,7 @@ import {
   mergeComposerModels,
   normalizeCattyReasoningLevel,
   parseComposerModelPrefs,
+  resolveComposerEnterModelId,
   resolveModelSelectionWithThinking,
   resolvePinnedAndRecentModels,
   resolveThinkingSelection,
@@ -19,6 +20,49 @@ test('normalizeCattyReasoningLevel falls back to off', () => {
   assert.equal(normalizeCattyReasoningLevel('high'), 'high');
   assert.equal(normalizeCattyReasoningLevel('nope'), 'off');
   assert.equal(normalizeCattyReasoningLevel(undefined), 'off');
+});
+
+test('resolveComposerEnterModelId prefers exact id, then the visible custom row', () => {
+  const models = [
+    { id: 'gpt-5.5', name: 'GPT-5.5' },
+    { id: 'gpt-5', name: 'GPT-5' },
+    { id: 'llama3', name: 'Llama 3' },
+  ];
+  const grouped = {
+    pinned: [{ id: 'gpt-5.5', name: 'GPT-5.5' }],
+    recent: [],
+    rest: [{ id: 'gpt-5', name: 'GPT-5' }, { id: 'llama3', name: 'Llama 3' }],
+  };
+  assert.equal(
+    resolveComposerEnterModelId({
+      query: 'gpt-5',
+      models,
+      grouped,
+      filtered: models,
+      showCustom: false,
+    }),
+    'gpt-5',
+  );
+  assert.equal(
+    resolveComposerEnterModelId({
+      query: 'gpt-5',
+      models: models.filter((model) => model.id !== 'gpt-5'),
+      grouped,
+      filtered: [{ id: 'gpt-5.5', name: 'GPT-5.5' }],
+      showCustom: true,
+    }),
+    'gpt-5',
+  );
+  assert.equal(
+    resolveComposerEnterModelId({
+      query: 'gpt',
+      models,
+      grouped,
+      filtered: [{ id: 'gpt-5.5', name: 'GPT-5.5' }, { id: 'gpt-5', name: 'GPT-5' }],
+      showCustom: false,
+    }),
+    'gpt-5.5',
+  );
 });
 
 test('filterComposerModels matches id, name, and description', () => {

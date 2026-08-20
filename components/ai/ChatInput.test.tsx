@@ -283,6 +283,26 @@ test('Catty thinking chip is hidden for OpenAI models that reject reasoningEffor
   );
   assert.doesNotMatch(gpt4o, /aria-label="ai\.chat\.thinkingLevel"/);
 
+  const gpt51Chat = renderToStaticMarkup(
+    <TooltipProvider>
+      <ChatInput
+        value=""
+        onChange={() => {}}
+        onSend={() => {}}
+        agentName="Catty Agent"
+        thinkingLevel="high"
+        onThinkingLevelChange={() => {}}
+        providerSwitcher={{
+          providers: [openai],
+          selectedProviderId: 'p1',
+          selectedModelId: 'gpt-5.1-chat-latest',
+          onSelect: () => {},
+        }}
+      />
+    </TooltipProvider>,
+  );
+  assert.doesNotMatch(gpt51Chat, /aria-label="ai\.chat\.thinkingLevel"/);
+
   const gpt55 = renderToStaticMarkup(
     <TooltipProvider>
       <ChatInput

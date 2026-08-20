@@ -198,4 +198,18 @@ test("resolveProviderEndpoint adds /v1 to a bare ollama.com Cloud host", () => {
     ).baseURL,
     "https://ollama.com/v1",
   );
+  assert.equal(
+    resolveProviderEndpoint(
+      {
+        id: "p",
+        providerId: "ollama",
+        name: "Ollama",
+        enabled: true,
+        baseURL: "https://ollama.com/api",
+      },
+      "openai",
+      "__IPC_SECURED__",
+    ).baseURL,
+    "https://ollama.com/v1",
+  );
 });

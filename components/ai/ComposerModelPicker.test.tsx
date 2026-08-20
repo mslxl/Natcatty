@@ -64,5 +64,5 @@ test('external agent picker lists presets without a provider column', () => {
 test('custom model action is only offered in Catty provider-switcher mode', () => {
   const source = readFileSync(new URL('./ComposerModelPicker.tsx', import.meta.url), 'utf8');
   assert.match(source, /const showCustom = Boolean\(\s*hasProviders/s);
-  assert.match(source, /showCustom \? trimmedQuery : undefined/);
+  assert.match(source, /resolveComposerEnterModelId/);
 });
