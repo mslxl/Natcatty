@@ -149,6 +149,17 @@ test("rapid command-name input keeps a valid fuzzy history row", () => {
   }
 });
 
+test("deleting below the fuzzy-history threshold removes a non-prefix row", () => {
+  const state = popupState([historySuggestion("docker compose up")], -1);
+
+  const fuzzyMatch = reconcileAutocompletePopupState(state, "oc");
+  assert.equal(fuzzyMatch.suggestions.length, 1);
+
+  const singleCharacter = reconcileAutocompletePopupState(fuzzyMatch, "o");
+  assert.deepEqual(singleCharacter.suggestions, []);
+  assert.equal(singleCharacter.popupVisible, false);
+});
+
 test("provider-specific non-history rows remain until their debounced refresh", () => {
   const snippet: CompletionSuggestion = {
     text: "deploy production",

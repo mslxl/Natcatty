@@ -153,7 +153,7 @@ export function reconcileAutocompletePopupState(
   if (input === null) return { ...EMPTY_STATE };
 
   const normalizedInput = input.toLowerCase();
-  const allowFuzzyHistory = parseCommandLine(input).wordIndex === 0;
+  const allowFuzzyHistory = input.length >= 2 && parseCommandLine(input).wordIndex === 0;
   const suggestions = prev.suggestions.filter((suggestion) => {
     if (suggestion.source !== "history") return true;
     const text = suggestion.text.toLowerCase();
