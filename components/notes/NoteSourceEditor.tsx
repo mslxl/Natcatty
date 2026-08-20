@@ -11,10 +11,12 @@ export interface NoteSourceEditorProps {
   placeholder?: string;
   onChange: (value: string) => void;
   className?: string;
+  noteFontFamily?: string;
+  noteFontSize?: number;
 }
 
 export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSourceEditorProps>(
-  ({ value, placeholder = "", onChange, className = "" }, ref) => {
+  ({ value, placeholder = "", onChange, className = "", noteFontFamily, noteFontSize }, ref) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const lineNumbersRef = useRef<HTMLDivElement>(null);
 
@@ -96,6 +98,10 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             spellCheck={false}
+            style={{
+              fontFamily: noteFontFamily || undefined,
+              fontSize: noteFontSize ? `${noteFontSize}px` : undefined,
+            }}
             className="w-full h-full py-3 px-4 bg-transparent text-foreground resize-none outline-none font-mono text-sm leading-6 whitespace-pre overflow-auto"
           />
         </div>

@@ -103,6 +103,8 @@ export interface InlineMarkdownEditorProps {
   onOpenExternalLink?: (url: string) => void | Promise<void>;
   previewEmptyLabel?: string;
   sourceEditorRef?: React.RefObject<NoteSourceEditorHandle | null>;
+  noteFontFamily?: string;
+  noteFontSize?: number;
 }
 
 export type NoteEditorMode = "edit" | "preview" | "source" | "live";
@@ -151,7 +153,9 @@ const NOTE_CODE_BLOCK_LANGUAGES = {
   js: "JavaScript",
   json: "JSON",
   jsx: "JavaScript (React)",
+  latex: "LaTeX",
   markdown: "Markdown",
+  math: "Math (LaTeX)",
   md: "Markdown",
   nginx: "Nginx",
   plaintext: "Plain text",
@@ -160,6 +164,7 @@ const NOTE_CODE_BLOCK_LANGUAGES = {
   sh: "Shell",
   shell: "Shell",
   sql: "SQL",
+  tex: "TeX",
   toml: "TOML",
   ts: "TypeScript",
   tsx: "TypeScript (React)",
@@ -626,6 +631,8 @@ export const InlineMarkdownEditor = React.memo(
       onOpenExternalLink,
       previewEmptyLabel,
       sourceEditorRef,
+      noteFontFamily,
+      noteFontSize,
     }: InlineMarkdownEditorProps,
     ref,
   ) {
@@ -653,6 +660,27 @@ export const InlineMarkdownEditor = React.memo(
     });
 
     const containerRef = useRef<HTMLDivElement>(null);
+
+    const getSelectedText = useCallback((): string => {
+      const domSelection = window.getSelection();
+      const domText = domSelection?.toString() || "";
+      if (domText) return domText;
+
+      const container = containerRef.current;
+      const editable = container?.querySelector("[contenteditable]");
+      const lexicalEditor = editable ? getNearestEditorFromDOMNode(editable) : null;
+      if (lexicalEditor) {
+        let lexicalText = "";
+        lexicalEditor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) {
+            lexicalText = selection.getTextContent();
+          }
+        });
+        if (lexicalText) return lexicalText;
+      }
+      return "";
+    }, []);
 
     useImperativeHandle(
       ref,
@@ -684,33 +712,34 @@ export const InlineMarkdownEditor = React.memo(
 
           const editor = editorRef.current;
           if (editor) {
+            const sel = getSelectedText().trim();
             switch (action) {
               case "h1":
-                editor.insertMarkdown("\n# 标题\n");
+                editor.insertMarkdown(`\n# ${sel || "一级标题"}\n`);
                 break;
               case "h2":
-                editor.insertMarkdown("\n## 标题\n");
+                editor.insertMarkdown(`\n## ${sel || "二级标题"}\n`);
                 break;
               case "h3":
-                editor.insertMarkdown("\n### 标题\n");
+                editor.insertMarkdown(`\n### ${sel || "三级标题"}\n`);
                 break;
               case "h4":
-                editor.insertMarkdown("\n#### 标题\n");
+                editor.insertMarkdown(`\n#### ${sel || "四级标题"}\n`);
                 break;
               case "quote":
-                editor.insertMarkdown("\n> 引用内容\n");
+                editor.insertMarkdown(`\n> ${sel || "引用内容"}\n`);
                 break;
               case "bullet":
-                editor.insertMarkdown("\n- 列表项\n");
+                editor.insertMarkdown(`\n- ${sel || "列表项"}\n`);
                 break;
               case "number":
-                editor.insertMarkdown("\n1. 列表项\n");
+                editor.insertMarkdown(`\n1. ${sel || "列表项"}\n`);
                 break;
               case "task":
-                editor.insertMarkdown("\n- [ ] 待办任务\n");
+                editor.insertMarkdown(`\n- [ ] ${sel || "待办任务"}\n`);
                 break;
               case "codeblock":
-                editor.insertMarkdown("\n```javascript\nconsole.log(\"hello\");\n```\n");
+                editor.insertMarkdown(`\n\`\`\`javascript\n${sel || 'console.log("hello");'}\n\`\`\`\n`);
                 break;
               case "table":
                 editor.insertMarkdown("\n| 列 1 | 列 2 | 列 3 |\n| :--- | :--- | :--- |\n| 单元格 1 | 单元格 2 | 单元格 3 |\n");
@@ -719,13 +748,13 @@ export const InlineMarkdownEditor = React.memo(
                 editor.insertMarkdown("\n---\n");
                 break;
               case "link":
-                editor.insertMarkdown("[链接文本](https://)");
+                editor.insertMarkdown(sel ? `[${sel}](https://)` : "[链接文本](https://)");
                 break;
               case "image":
-                editor.insertMarkdown("![图片描述](https://)");
+                editor.insertMarkdown(sel ? `![${sel}](https://)` : "![图片描述](https://)");
                 break;
               case "math":
-                editor.insertMarkdown("\n$$\nE = mc^2\n$$\n");
+                editor.insertMarkdown(`\n\`\`\`math\n${sel || "E = mc^2"}\n\`\`\`\n`);
                 break;
               default:
                 break;
@@ -736,7 +765,7 @@ export const InlineMarkdownEditor = React.memo(
           editorRef.current?.focus();
         },
       }),
-      [controlledEditorMode, sourceEditorRef],
+      [controlledEditorMode, getSelectedText, sourceEditorRef],
     );
   const lastLinkActivationRef = useRef<{ href: string; at: number } | null>(null);
   const [hostPicker, setHostPicker] = useState<HostPickerState>({
@@ -1554,6 +1583,10 @@ export const InlineMarkdownEditor = React.memo(
     <div
       ref={containerRef}
       className="relative flex h-full flex-col"
+      style={{
+        ["--note-font-family" as string]: noteFontFamily || undefined,
+        ["--note-font-size" as string]: noteFontSize ? `${noteFontSize}px` : undefined,
+      }}
       aria-busy={isContentSwapping || undefined}
       onBlurCapture={handleBlurCapture}
       onClickCapture={(event) => {
@@ -1664,6 +1697,8 @@ export const InlineMarkdownEditor = React.memo(
           value={value}
           placeholder={placeholder}
           onChange={commitMarkdown}
+          noteFontFamily={noteFontFamily}
+          noteFontSize={noteFontSize}
         />
       ) : editorMode === "preview" && !displayMarkdown.trim() ? (
         <div className="netcatty-note-preview-empty">

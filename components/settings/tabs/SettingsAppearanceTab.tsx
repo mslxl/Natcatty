@@ -4,11 +4,17 @@ import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, HelpCircle, Monitor, Moon, Palette, Sun } from "lucide-react";
 import { useI18n } from "../../../application/i18n/I18nProvider";
 import { useStoredBoolean } from "../../../application/state/useStoredBoolean";
+import { useStoredString } from "../../../application/state/useStoredString";
+import { useStoredNumber } from "../../../application/state/useStoredNumber";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
 import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { APP_ICON_VARIANT_ASSET_PATH, APP_ICON_VARIANT_GROUPS, APP_ICON_VARIANT_I18N_KEY } from "../../../infrastructure/config/appIconVariants";
-import { STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../infrastructure/config/storageKeys";
+import {
+  STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+  STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+  STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+} from "../../../infrastructure/config/storageKeys";
 import { resolveAppIconVariant, type AppIconVariant } from "../../../domain/appIconVariant";
 import { DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../domain/systemKnownHostsAutoImport";
 import { cn } from "../../../lib/utils";
@@ -65,6 +71,15 @@ function SettingsAppearanceTab(props: {
   const [autoImportSystemKnownHosts, setAutoImportSystemKnownHosts] = useStoredBoolean(
     STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
     DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
+  );
+  const [noteFontFamily, setNoteFontFamily] = useStoredString(
+    STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+    "",
+  );
+  const [noteFontSize, setNoteFontSize] = useStoredNumber(
+    STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+    14,
+    { min: 10, max: 32 },
   );
   const {
     theme,
@@ -463,6 +478,39 @@ function SettingsAppearanceTab(props: {
             checked={autoImportSystemKnownHosts}
             onChange={setAutoImportSystemKnownHosts}
           />
+        </SettingRow>
+        <SettingRow
+          anchorId="appearance-vault-notes-font"
+          label={t('settings.vault.notesFont', '笔记字体')}
+          description={t('settings.vault.notesFontDesc', '自定义笔记编辑器与预览中使用的字体')}
+        >
+          <FontSelect
+            value={noteFontFamily}
+            fonts={availableUIFonts}
+            onChange={(v) => setNoteFontFamily(v)}
+            className="w-48"
+            ariaLabel={t('settings.vault.notesFont', '笔记字体')}
+          />
+        </SettingRow>
+        <SettingRow
+          anchorId="appearance-vault-notes-font-size"
+          label={t('settings.vault.notesFontSize', '笔记字号')}
+          description={t('settings.vault.notesFontSizeDesc', '自定义笔记正文字体大小')}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={12}
+              max={22}
+              step={1}
+              value={noteFontSize}
+              onChange={(e) => setNoteFontSize(Number(e.target.value))}
+              className="w-28 accent-primary"
+            />
+            <span className="text-sm text-muted-foreground w-10 text-right tabular-nums">
+              {noteFontSize}px
+            </span>
+          </div>
         </SettingRow>
       </div>
 

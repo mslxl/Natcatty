@@ -1,5 +1,5 @@
-import type { Host, VaultNote } from "./models";
-import { getNextVaultOrder, normalizeVaultOrder, sortByVaultOrder } from "./vaultOrder";
+import type { Host, VaultNote } from "./models.ts";
+import { getNextVaultOrder, normalizeVaultOrder, sortByVaultOrder } from "./vaultOrder.ts";
 
 export type { Host, VaultNote };
 
@@ -823,11 +823,11 @@ export const wrapMarkdownSyntax = (
     }
     case "math": {
       const content = selected || "E = mc^2";
-      const insert = `\n$$\n${content}\n$$\n`;
+      const insert = `\n\`\`\`math\n${content}\n\`\`\`\n`;
       return {
         text: `${before}${insert}${after}`,
-        selectionStart: start + 4,
-        selectionEnd: start + 4 + content.length,
+        selectionStart: start + 8,
+        selectionEnd: start + 8 + content.length,
       };
     }
     default:

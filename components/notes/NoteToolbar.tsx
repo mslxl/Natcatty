@@ -1,5 +1,6 @@
 import {
   Bold,
+  Check,
   CheckSquare,
   Code,
   Eye,
@@ -22,6 +23,7 @@ import {
   SquareCode,
   Strikethrough,
   Table as TableIcon,
+  Type,
   Underline,
 } from "lucide-react";
 import React, { useMemo } from "react";
@@ -29,6 +31,7 @@ import { calculateNoteStats, type MarkdownActionType } from "../../domain/notes"
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
+import { cn } from "../../lib/utils";
 
 export interface NoteToolbarProps {
   content: string;
@@ -39,7 +42,25 @@ export interface NoteToolbarProps {
   showOutline?: boolean;
   onToggleOutline?: () => void;
   className?: string;
+  noteFontFamily?: string;
+  onChangeNoteFontFamily?: (font: string) => void;
+  noteFontSize?: number;
+  onChangeNoteFontSize?: (size: number) => void;
 }
+
+const FONT_PRESETS = [
+  { label: "默认字体 (System)", value: "" },
+  { label: "Mona Sans", value: '"Mona Sans", system-ui, sans-serif' },
+  { label: "Inter", value: '"Inter", system-ui, sans-serif' },
+  { label: "Space Grotesk", value: '"Space Grotesk", system-ui, sans-serif' },
+  { label: "JetBrains Mono", value: '"JetBrains Mono", monospace' },
+  { label: "微软雅黑 (Microsoft YaHei)", value: '"Microsoft YaHei", sans-serif' },
+  { label: "苹方 (PingFang SC)", value: '"PingFang SC", sans-serif' },
+  { label: "宋体 / 衬线体 (Serif)", value: 'Georgia, "Songti SC", "SimSun", serif' },
+  { label: "等宽代码体 (Monospace)", value: 'ui-monospace, "Cascadia Code", "Fira Code", monospace' },
+];
+
+const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20];
 
 export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   content,
@@ -49,6 +70,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   showOutline,
   onToggleOutline,
   className = "",
+  noteFontFamily = "",
+  onChangeNoteFontFamily,
+  noteFontSize = 14,
+  onChangeNoteFontSize,
 }) => {
   const stats = useMemo(() => calculateNoteStats(content), [content]);
 
@@ -275,7 +300,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("math")}
-            title="数学公式块 (LaTeX / $$)"
+            title="数学公式块 (LaTeX / Math)"
           >
             <Sigma size={14} />
           </button>
@@ -322,8 +347,78 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
         </div>
       )}
 
-      {/* Right Area: Document Stats & Outline */}
+      {/* Right Area: Font Settings, Document Stats & Outline */}
       <div className="flex items-center gap-2 shrink-0 text-muted-foreground text-[11px] ml-auto">
+        {/* Font & Typography Settings Dropdown */}
+        <Dropdown>
+          <DropdownTrigger asChild>
+            <button
+              type="button"
+              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              title="笔记字体与排版设置"
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              <Type size={14} />
+            </button>
+          </DropdownTrigger>
+          <DropdownContent align="end" className="w-56 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
+            <div>
+              <div className="text-[11px] font-medium text-muted-foreground mb-1">笔记字体</div>
+              <div className="space-y-0.5 max-h-44 overflow-y-auto pr-1">
+                {FONT_PRESETS.map((f) => (
+                  <button
+                    key={f.value}
+                    type="button"
+                    style={{ fontFamily: f.value || undefined }}
+                    className={cn(
+                      "w-full px-2 py-1 rounded text-left text-xs transition-colors flex items-center justify-between",
+                      (noteFontFamily || "") === f.value
+                        ? "bg-primary text-primary-foreground font-medium"
+                        : "hover:bg-secondary text-foreground",
+                    )}
+                    onClick={() => onChangeNoteFontFamily?.(f.value)}
+                  >
+                    <span className="truncate">{f.label}</span>
+                    {(noteFontFamily || "") === f.value && <Check size={12} className="shrink-0" />}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-border/60 pt-2">
+              <div className="text-[11px] font-medium text-muted-foreground mb-1">正文字号</div>
+              <div className="flex flex-wrap gap-1">
+                {FONT_SIZES.map((sz) => (
+                  <button
+                    key={sz}
+                    type="button"
+                    className={cn(
+                      "px-2 py-0.5 rounded text-xs border transition-colors",
+                      (noteFontSize || 14) === sz
+                        ? "bg-primary text-primary-foreground border-primary font-medium"
+                        : "border-border hover:bg-secondary text-foreground",
+                    )}
+                    onClick={() => onChangeNoteFontSize?.(sz)}
+                  >
+                    {sz}px
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-border/60 pt-2">
+              <div className="text-[11px] font-medium text-muted-foreground mb-1">自定义字体名称</div>
+              <input
+                type="text"
+                placeholder="如 Fira Code, 霞鹜文楷..."
+                value={noteFontFamily || ""}
+                onChange={(e) => onChangeNoteFontFamily?.(e.target.value)}
+                className="w-full px-2 py-1 rounded border border-border bg-background text-xs text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
+              />
+            </div>
+          </DropdownContent>
+        </Dropdown>
+
         <span className="opacity-70 whitespace-nowrap">
           {stats.words} 词 · {stats.chars} 字
         </span>

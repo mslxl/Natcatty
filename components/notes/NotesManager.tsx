@@ -50,6 +50,8 @@ import {
 import { getNextVaultOrder, reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from "../../domain/vaultOrder";
 import {
   STORAGE_KEY_VAULT_NOTES_EDITOR_MODE,
+  STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+  STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
   STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
 } from "../../infrastructure/config/storageKeys";
 import { logger } from "../../lib/logger";
@@ -409,6 +411,15 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
     NOTES_TREE_DEFAULT_WIDTH,
     { min: NOTES_TREE_MIN_WIDTH, max: NOTES_TREE_MAX_WIDTH },
+  );
+  const [noteFontFamily, setNoteFontFamily] = useStoredString(
+    STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+    "",
+  );
+  const [noteFontSize, setNoteFontSize] = useStoredNumber(
+    STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+    14,
+    { min: 10, max: 32 },
   );
   const treeAsideRef = useRef<HTMLElement | null>(null);
   const treeWidthRef = useRef(treeWidth);
@@ -1961,6 +1972,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 onAction={handleToolbarAction}
                 showOutline={showOutline}
                 onToggleOutline={() => setShowOutline((prev) => !prev)}
+                noteFontFamily={noteFontFamily}
+                onChangeNoteFontFamily={setNoteFontFamily}
+                noteFontSize={noteFontSize}
+                onChangeNoteFontSize={setNoteFontSize}
               />
 
               <div className="flex flex-1 min-h-0 min-w-0">
@@ -1987,6 +2002,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                           onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                           onOpenExternalLink={openExternal}
                           sourceEditorRef={sourceEditorRef}
+                          noteFontFamily={noteFontFamily}
+                          noteFontSize={noteFontSize}
                         />
                       </Suspense>
                     </LazyLoadBoundary>
@@ -2015,6 +2032,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                             onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                             onOpenExternalLink={openExternal}
                             sourceEditorRef={sourceEditorRef}
+                            noteFontFamily={noteFontFamily}
+                            noteFontSize={noteFontSize}
                           />
                         </Suspense>
                       </LazyLoadBoundary>
@@ -2128,6 +2147,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 setNoteEditorMode(mode);
               }}
               onAction={handleToolbarAction}
+              noteFontFamily={noteFontFamily}
+              onChangeNoteFontFamily={setNoteFontFamily}
+              noteFontSize={noteFontSize}
+              onChangeNoteFontSize={setNoteFontSize}
             />
 
             {noteEditorMode === "source" ? (
@@ -2153,6 +2176,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
                       onOpenExternalLink={openExternal}
                       sourceEditorRef={sourceEditorRef}
+                      noteFontFamily={noteFontFamily}
+                      noteFontSize={noteFontSize}
                     />
                   </Suspense>
                 </LazyLoadBoundary>
@@ -2181,6 +2206,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                         onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
                         onOpenExternalLink={openExternal}
                         sourceEditorRef={sourceEditorRef}
+                        noteFontFamily={noteFontFamily}
+                        noteFontSize={noteFontSize}
                       />
                     </Suspense>
                   </LazyLoadBoundary>

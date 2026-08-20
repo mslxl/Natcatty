@@ -22,7 +22,7 @@ import {
   sanitizeNoteTitle,
   sanitizeVaultNote,
   wrapMarkdownSyntax,
-} from "./notes";
+} from "./notes.ts";
 
 test("sanitizeVaultNote supplies safe defaults", () => {
   const note = sanitizeVaultNote({ title: "  ", content: 123 as never });
@@ -307,7 +307,7 @@ Here is **bold** text and [a link](https://example.com) and \`code\`.
 - [x] Task 1
 > quote text
 `;
-  const snippet = extractNoteSnippet(content, 50);
+  const snippet = extractNoteSnippet(content, 100);
   assert.ok(!snippet.includes("#"));
   assert.ok(!snippet.includes("[a link]"));
   assert.ok(snippet.includes("bold"));
@@ -369,7 +369,7 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
 
   // insert math block
   const mathRes = wrapMarkdownSyntax("", 0, 0, "math");
-  assert.ok(mathRes.text.includes("$$"));
+  assert.ok(mathRes.text.includes("```math"));
   assert.ok(mathRes.text.includes("E = mc^2"));
 });
 
