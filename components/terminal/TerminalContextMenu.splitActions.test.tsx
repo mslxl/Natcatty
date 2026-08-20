@@ -28,6 +28,8 @@ test('split menu keeps custom shortcuts aligned with the matching split actions'
   installGlobal('document', window.document);
   installGlobal('navigator', window.navigator);
   installGlobal('HTMLElement', window.HTMLElement);
+  installGlobal('HTMLInputElement', window.HTMLInputElement);
+  installGlobal('HTMLTextAreaElement', window.HTMLTextAreaElement);
   installGlobal('Element', window.Element);
   installGlobal('SVGElement', window.SVGElement);
   installGlobal('Node', window.Node);
