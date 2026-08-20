@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   formatTerminalHostInfoBarTitle,
@@ -17,7 +19,24 @@ import {
   shouldShowSelectionAIOverlay,
   shouldShowLineTimestampToolbarToggle,
   shouldShowStatusBarConnectionControls,
+  TerminalDisconnectedNotice,
 } from "./TerminalView.tsx";
+
+test("terminal disconnected notice keeps the reason and reconnect hint on one compact row", () => {
+  const markup = renderToStaticMarkup(React.createElement(TerminalDisconnectedNotice, {
+    message: "Connection timed out.",
+    reconnectHint: "Press Enter to reconnect",
+    bottom: 4,
+    left: 4,
+    right: 4,
+  }));
+
+  assert.match(markup, /data-terminal-disconnected-notice="true"/);
+  assert.match(markup, /role="status"/);
+  assert.match(markup, /Connection timed out\./);
+  assert.match(markup, /Press Enter to reconnect/);
+  assert.match(markup, /h-7/);
+});
 
 test("line timestamp toggle creates a persistent host update", () => {
   const host = {
@@ -250,9 +269,10 @@ test("terminal body keeps a slight inset from the surrounding chrome", () => {
   assert.match(source, /const terminalBodyInset = 4/);
   assert.match(source, /left: activeLineTimestampGutterWidth \+ terminalBodyInset/);
   assert.match(source, /right: terminalRightInset/);
-  assert.match(source, /bottom: terminalBodyInset/);
+  assert.match(source, /const terminalBottomInset = terminalBodyInset \+ \(showDisconnectedTerminalNotice \? 28 : 0\)/);
+  assert.match(source, /bottom: terminalBottomInset/);
   assert.match(source, /left=\{terminalBodyInset\}/);
-  assert.match(source, /bottom=\{terminalBodyInset\}/);
+  assert.match(source, /bottom=\{terminalBottomInset\}/);
 });
 
 test("hidden host information bar gives its vertical space back to the terminal", () => {

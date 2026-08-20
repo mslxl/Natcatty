@@ -11,6 +11,7 @@ import {
   shouldDelayAutoRunSnippetInput,
   shouldReconnectDisconnectedDialogOnEnterKey,
   shouldRestoreDisconnectedDialogTerminalFocus,
+  shouldShowTerminalDisconnectedNotice,
   shouldShowTerminalConnectionDialog,
 } from "./terminal/terminalHelpers";
 
@@ -418,6 +419,101 @@ test("connection dialog keeps existing local and disconnected behavior", () => {
     }),
     false,
   );
+});
+
+test("established sessions use the selected disconnected presentation", () => {
+  const base = {
+    status: "disconnected" as const,
+    hasEverConnected: true,
+  };
+
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({
+      ...base,
+      disconnectedNoticeMode: "terminal",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...base,
+      disconnectedNoticeMode: "terminal",
+      isLocalConnection: false,
+      isSerialConnection: false,
+      isDisconnectedDialogDismissed: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({
+      ...base,
+      disconnectedNoticeMode: "dialog",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...base,
+      disconnectedNoticeMode: "dialog",
+      isLocalConnection: false,
+      isSerialConnection: false,
+      isDisconnectedDialogDismissed: false,
+    }),
+    true,
+  );
+});
+
+test("terminal notice never hides first-connect failures or restored session guidance", () => {
+  const dialogArgs = {
+    status: "disconnected" as const,
+    disconnectedNoticeMode: "terminal" as const,
+    isLocalConnection: false,
+    isSerialConnection: false,
+    isDisconnectedDialogDismissed: false,
+  };
+
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({
+      status: "disconnected",
+      disconnectedNoticeMode: "terminal",
+      hasEverConnected: false,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowTerminalConnectionDialog({ ...dialogArgs, hasEverConnected: false }),
+    true,
+  );
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({
+      status: "disconnected",
+      disconnectedNoticeMode: "terminal",
+      hasEverConnected: true,
+      restoreState: "restored-disconnected",
+    }),
+    false,
+  );
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...dialogArgs,
+      hasEverConnected: true,
+      restoreState: "restored-disconnected",
+    }),
+    true,
+  );
+});
+
+test("terminal notice is absent while connected or reconnecting", () => {
+  for (const status of ["connected", "connecting"] as const) {
+    assert.equal(
+      shouldShowTerminalDisconnectedNotice({
+        status,
+        disconnectedNoticeMode: "terminal",
+        hasEverConnected: true,
+      }),
+      false,
+    );
+  }
 });
 
 test("connection reuse hides connecting dialog only while reuse is still possible", () => {

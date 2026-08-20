@@ -643,6 +643,11 @@ Highlight the focused split pane:
   'settings.terminal.behavior.autoCloseOnExit': 'Auto-close terminal on exit',
   'settings.terminal.behavior.autoCloseOnExit.desc':
     'Allow terminal tabs and windows to close automatically after session exit. Turn this off to keep them open after every exit.',
+  'settings.terminal.behavior.disconnectedNotice': 'When a connection disconnects',
+  'settings.terminal.behavior.disconnectedNotice.desc':
+    'Show a compact notice inside established terminals, or use the full disconnected dialog. Initial connection failures still use the dialog.',
+  'settings.terminal.behavior.disconnectedNotice.terminal': 'Terminal notice',
+  'settings.terminal.behavior.disconnectedNotice.dialog': 'Dialog',
   'settings.terminal.behavior.rightClick.menu': 'Show menu',
   'settings.terminal.behavior.rightClick.paste': 'Paste',
   'settings.terminal.behavior.rightClick.selectWord': 'Select word',

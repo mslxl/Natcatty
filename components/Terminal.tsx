@@ -249,6 +249,7 @@ import {
   MAX_CONNECTION_LOG_DATA_CHARS,
   shouldDelayAutoRunSnippetInput,
   shouldHideConnectingDialogForConnectionReuse,
+  shouldShowTerminalDisconnectedNotice,
   shouldShowTerminalConnectionDialog,
   type TerminalProps,
 } from "./terminal/terminalHelpers";
@@ -3640,11 +3641,20 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isLocalConnection,
     isSerialConnection,
     isDisconnectedDialogDismissed,
+    disconnectedNoticeMode: terminalSettings.disconnectedNoticeMode,
+    hasEverConnected: hasEverConnectedRef.current,
+    restoreState,
     hideConnectingDialogForConnectionReuse: shouldHideConnectingDialogForConnectionReuse({
       reuseConnectionFromSessionId: connectionReuseAttemptSourceId,
       host,
       connectionReuseFellBack,
     }),
+  });
+  const showDisconnectedTerminalNotice = shouldShowTerminalDisconnectedNotice({
+    status,
+    disconnectedNoticeMode: terminalSettings.disconnectedNoticeMode,
+    hasEverConnected: hasEverConnectedRef.current,
+    restoreState,
   });
 
   const {
@@ -4225,7 +4235,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onDismiss={dismissScriptOverlay}
           compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
-      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showDisconnectedTerminalNotice, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, terminalReconnectAvailable: !attachExistingSession, timeLeft, toast, zmodem }} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

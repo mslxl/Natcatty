@@ -270,18 +270,47 @@ export function shouldShowTerminalConnectionDialog({
   isLocalConnection,
   isSerialConnection,
   isDisconnectedDialogDismissed,
+  disconnectedNoticeMode,
+  hasEverConnected,
+  restoreState,
   hideConnectingDialogForConnectionReuse,
 }: {
   status: TerminalSession["status"];
   isLocalConnection: boolean;
   isSerialConnection: boolean;
   isDisconnectedDialogDismissed: boolean;
+  disconnectedNoticeMode?: TerminalSettings["disconnectedNoticeMode"];
+  hasEverConnected?: boolean;
+  restoreState?: TerminalSession["restoreState"];
   hideConnectingDialogForConnectionReuse?: boolean;
 }): boolean {
   return status !== "connected"
     && !(!!hideConnectingDialogForConnectionReuse && status === "connecting")
     && !((isLocalConnection || isSerialConnection) && status === "connecting")
+    && !shouldShowTerminalDisconnectedNotice({
+      status,
+      disconnectedNoticeMode,
+      hasEverConnected,
+      restoreState,
+    })
     && !(status === "disconnected" && isDisconnectedDialogDismissed);
+}
+
+export function shouldShowTerminalDisconnectedNotice({
+  status,
+  disconnectedNoticeMode,
+  hasEverConnected,
+  restoreState,
+}: {
+  status: TerminalSession["status"];
+  disconnectedNoticeMode?: TerminalSettings["disconnectedNoticeMode"];
+  hasEverConnected?: boolean;
+  restoreState?: TerminalSession["restoreState"];
+}): boolean {
+  return status === "disconnected"
+    && disconnectedNoticeMode === "terminal"
+    && hasEverConnected === true
+    && restoreState !== "restored-disconnected";
 }
 
 /**

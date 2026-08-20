@@ -33,6 +33,48 @@ type HostLineTimestampToggle = {
   showLineTimestamps?: boolean;
 };
 
+export function TerminalDisconnectedNotice({
+  message,
+  reconnectHint,
+  bottom,
+  left,
+  right,
+}: {
+  message: string;
+  reconnectHint?: string;
+  bottom: number;
+  left: number;
+  right: number;
+}) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      data-terminal-disconnected-notice="true"
+      className="absolute z-20 flex h-7 items-center gap-2 overflow-hidden rounded border px-2 text-[11px]"
+      style={{
+        bottom,
+        left,
+        right,
+        color: 'var(--terminal-ui-fg)',
+        borderColor: 'var(--terminal-ui-border)',
+        backgroundColor: 'var(--terminal-ui-bg)',
+      }}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-destructive" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate" title={message}>{message}</span>
+      {reconnectHint && (
+        <span
+          className="shrink-0"
+          style={{ color: 'color-mix(in srgb, var(--terminal-ui-fg) 62%, transparent)' }}
+        >
+          {reconnectHint}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function getLineTimestampToggleHostUpdate<T extends HostLineTimestampToggle>(
   host: T,
 ): Pick<T, "id"> & { showLineTimestamps: boolean } {
@@ -315,7 +357,7 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
-  const { Activity, Button, Clock3, Copy, Maximize2, Radio, RefreshCcw, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, Unplug, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showConnectionControls, showLogs, showSelectionAIAction, isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem } = ctx;
+  const { Activity, Button, Clock3, Copy, Maximize2, Radio, RefreshCcw, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, Unplug, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showDisconnectedTerminalNotice, showConnectionControls, showLogs, showSelectionAIAction, isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, terminalReconnectAvailable, timeLeft, toast, zmodem } = ctx;
   // Context menu only needs a snapshot at open; avoid selection state lifting into Terminal.
   const [contextMenuHasSelection, setContextMenuHasSelection] = useState(false);
   const isNetworkDevice = host.deviceType === 'network'
@@ -391,6 +433,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     isSearchOpen,
     terminalBodyInset,
   });
+  const terminalBottomInset = terminalBodyInset + (showDisconnectedTerminalNotice ? 28 : 0);
   // Optimistic override so the gutter paints immediately; host vault write can
   // lag behind without making the toolbar feel sticky.
   const [timestampOverride, setTimestampOverride] = useState<boolean | null>(null);
@@ -444,7 +487,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
   const showEnterReconnectHint = shouldReconnectTerminalOnEnterKey({
     key: "Enter",
     status,
-    hasRetryHandler: Boolean(handleRetry),
+    hasRetryHandler: Boolean(handleRetry) && terminalReconnectAvailable !== false,
     isComposeBarOpen,
     needsAuth: Boolean(auth.needsAuth),
     needsHostKeyVerification: Boolean(needsHostKeyVerification),
@@ -454,7 +497,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     if (!shouldReconnectTerminalOnEnterKey({
       key: event.key,
       status,
-      hasRetryHandler: Boolean(handleRetry),
+      hasRetryHandler: Boolean(handleRetry) && terminalReconnectAvailable !== false,
       isComposeBarOpen,
       needsAuth: Boolean(auth.needsAuth),
       needsHostKeyVerification: Boolean(needsHostKeyVerification),
@@ -480,6 +523,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
     isComposeBarOpen,
     needsHostKeyVerification,
     status,
+    terminalReconnectAvailable,
   ]);
   return (
     <TerminalContextMenu
@@ -506,8 +550,8 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
       onSplitVertical={onSplitVertical}
       onSendYmodem={ymodemActionEnabled ? handleSendYmodem : undefined}
       onReceiveYmodem={ymodemActionEnabled ? handleReceiveYmodem : undefined}
-      isReconnectable={status === "disconnected"}
-      onReconnect={handleRetry}
+      isReconnectable={status === "disconnected" && terminalReconnectAvailable !== false}
+      onReconnect={terminalReconnectAvailable !== false ? handleRetry : undefined}
       onClose={inWorkspace ? () => onCloseSession?.(sessionId) : undefined}
       onAddSelectionToAI={ctx.onAddSelectionToAI ? handleAddSelectionToAI : undefined}
       onRename={onRename}
@@ -960,7 +1004,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
               top: terminalContentTop,
               left: activeLineTimestampGutterWidth + terminalBodyInset,
               right: terminalRightInset,
-              bottom: terminalBodyInset,
+              bottom: terminalBottomInset,
               paddingLeft: 6,
               backgroundColor: 'var(--terminal-ui-bg)',
             }}
@@ -971,7 +1015,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             enabled={showLineTimestampGutter}
             top={terminalContentTop}
             left={terminalBodyInset}
-            bottom={terminalBodyInset}
+            bottom={terminalBottomInset}
             sessionId={sessionId}
             color={lineTimestampColor}
             fontFamily={resolvedFontFamily}
@@ -980,6 +1024,15 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
             width={lineTimestampGutterWidth}
             onWidthChange={handleLineTimestampGutterWidthChange}
           />
+          {showDisconnectedTerminalNotice && (
+            <TerminalDisconnectedNotice
+              message={error || t('terminal.progress.disconnected')}
+              reconnectHint={showEnterReconnectHint ? t('terminal.progress.enterReconnectHint') : undefined}
+              bottom={terminalBodyInset}
+              left={terminalBodyInset}
+              right={terminalRightInset}
+            />
+          )}
           <TerminalSelectionAIOverlay
             termRef={termRef}
             containerRef={containerRef}
@@ -1148,7 +1201,7 @@ function TerminalViewInner({ ctx }: { ctx: TerminalViewContext }) {
                   progressLogs,
                   onCancelConnect: handleCancelConnect,
                   onCloseSession: handleCloseDisconnectedSession,
-                  onRetry: handleRetry,
+                  onRetry: terminalReconnectAvailable !== false ? handleRetry : undefined,
                 }}
               />
             )}
