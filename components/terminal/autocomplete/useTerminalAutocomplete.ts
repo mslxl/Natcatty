@@ -153,11 +153,27 @@ export function reconcileAutocompletePopupState(
   if (input === null) return { ...EMPTY_STATE };
 
   const normalizedInput = input.toLowerCase();
-  const allowFuzzyHistory = input.length >= 2 && parseCommandLine(input).wordIndex === 0;
+  const inputContext = parseCommandLine(input);
+  const allowFuzzyHistory = input.length >= 2 && inputContext.wordIndex === 0;
   const suggestions = prev.suggestions.filter((suggestion) => {
     if (suggestion.source !== "history") return true;
     const text = suggestion.text.toLowerCase();
     if (text.length <= normalizedInput.length) return false;
+    if (suggestion.historyMatch === "path-argument") {
+      const suggestionContext = parseCommandLine(suggestion.text);
+      const currentArgument = inputContext.currentWord
+        .replace(/^['"]/, "")
+        .replace(/['"]$/, "")
+        .replace(/\\ /g, " ")
+        .toLowerCase();
+      const suggestionArgument = suggestionContext.currentWord
+        .replace(/^['"]/, "")
+        .replace(/['"]$/, "")
+        .replace(/\\ /g, " ")
+        .toLowerCase();
+      return suggestionContext.commandName.toLowerCase() === inputContext.commandName.toLowerCase()
+        && suggestionArgument.startsWith(currentArgument);
+    }
     return text.startsWith(normalizedInput)
       || (allowFuzzyHistory && isSubsequence(normalizedInput, text));
   });

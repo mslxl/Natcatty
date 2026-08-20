@@ -146,6 +146,7 @@ test("getCompletions prioritizes spec-driven path suggestions over history", asy
     entry.source === "history" && entry.text === "story open package-lock.json"
   );
   assert.ok(historyIndex > 0);
+  assert.equal(completions[historyIndex]?.historyMatch, "path-argument");
 });
 
 test("getCompletions does not treat generator-only spec args as path contexts", async () => {

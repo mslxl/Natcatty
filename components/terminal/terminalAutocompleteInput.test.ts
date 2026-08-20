@@ -160,6 +160,20 @@ test("deleting below the fuzzy-history threshold removes a non-prefix row", () =
   assert.equal(singleCharacter.popupVisible, false);
 });
 
+test("path history follows the current argument instead of the whole line", () => {
+  const suggestion: CompletionSuggestion = {
+    ...historySuggestion("cat --number package.json"),
+    historyMatch: "path-argument",
+  };
+
+  const matching = reconcileAutocompletePopupState(popupState([suggestion], -1), "cat pack");
+  assert.deepEqual(matching.suggestions, [suggestion]);
+
+  const changedArgument = reconcileAutocompletePopupState(matching, "cat src");
+  assert.deepEqual(changedArgument.suggestions, []);
+  assert.equal(changedArgument.popupVisible, false);
+});
+
 test("provider-specific non-history rows remain until their debounced refresh", () => {
   const snippet: CompletionSuggestion = {
     text: "deploy production",

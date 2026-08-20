@@ -50,6 +50,8 @@ export interface CompletionSuggestion {
   score: number;
   /** For history entries: execution frequency */
   frequency?: number;
+  /** Matching rule used by recent history surfaced during path completion. */
+  historyMatch?: "path-argument";
   /** For path suggestions: file type */
   fileType?: "file" | "directory" | "symlink";
   /** For snippet suggestions: the source snippet (used by the accept path). */
@@ -330,6 +332,7 @@ export async function getCompletions(
         source: "history",
         score: 720 - index,
         frequency: entry.frequency,
+        historyMatch: "path-argument",
       } satisfies CompletionSuggestion;
       suggestions.push(suggestion);
       seenSuggestionTexts.add(suggestion.text);
