@@ -10,6 +10,7 @@ import {
 } from '../../application/state/terminalSidePanelTabs.ts';
 import {
   getTerminalSidePanelShellWidth,
+  getSidePanelFocusTransition,
   getSidePanelSplitChildPresentation,
   listenForSidePanelPaneFocus,
 } from './TerminalLayerSidePanelSection.tsx';
@@ -106,6 +107,18 @@ test('maximized side panel rendering collapses siblings without replacing the la
   assert.deepEqual(
     getSidePanelSplitChildPresentation(layout.root.children[0], 0.75, null),
     { flexGrow: 0.75, hidden: false },
+  );
+});
+
+test('side panel focus animation is absent during ordinary and active resize layouts', () => {
+  assert.equal(getSidePanelFocusTransition('split', false, false), undefined);
+  assert.equal(getSidePanelFocusTransition('shell', false, false), undefined);
+  assert.equal(getSidePanelFocusTransition('split', true, true), undefined);
+  assert.equal(getSidePanelFocusTransition('shell', true, true), undefined);
+  assert.equal(getSidePanelFocusTransition('split', true, false), 'flex-grow 160ms ease');
+  assert.equal(
+    getSidePanelFocusTransition('shell', true, false),
+    'width 160ms ease, max-width 160ms ease',
   );
 });
 

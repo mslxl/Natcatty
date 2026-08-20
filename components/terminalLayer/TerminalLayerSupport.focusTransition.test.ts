@@ -9,12 +9,27 @@ import {
 test('focused terminal panes animate between split and full size within the issue limit', () => {
   assert.equal(TERMINAL_PANE_FOCUS_TRANSITION_MS, 160);
   assert.equal(
-    getTerminalPaneFocusTransition(true, true),
+    getTerminalPaneFocusTransition({
+      inActiveWorkspace: true,
+      isFocusTarget: true,
+      isFocusTransitionActive: true,
+      isResizing: false,
+    }),
     'left 160ms ease, top 160ms ease, width 160ms ease, height 160ms ease',
   );
 });
 
-test('terminal panes outside the focused workspace do not animate their layout', () => {
-  assert.equal(getTerminalPaneFocusTransition(false, true), undefined);
-  assert.equal(getTerminalPaneFocusTransition(true, false), undefined);
+test('ordinary split resizing never inherits the focus transition', () => {
+  assert.equal(getTerminalPaneFocusTransition({
+    inActiveWorkspace: true,
+    isFocusTarget: true,
+    isFocusTransitionActive: false,
+    isResizing: false,
+  }), undefined);
+  assert.equal(getTerminalPaneFocusTransition({
+    inActiveWorkspace: true,
+    isFocusTarget: true,
+    isFocusTransitionActive: true,
+    isResizing: true,
+  }), undefined);
 });

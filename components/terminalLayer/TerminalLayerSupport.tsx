@@ -49,7 +49,10 @@ import {
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
 import type { SidePanelPaneZoomController, SidePanelTool } from '../../domain/sidePanelLayout';
-import { getTerminalPaneFocusTransition } from './terminalPaneFocusTransition';
+import {
+  getTerminalPaneFocusTransition,
+  TERMINAL_PANE_FOCUS_TRANSITION_MS,
+} from './terminalPaneFocusTransition';
 
 export type SidePanelTab = SidePanelTool;
 
@@ -1321,12 +1324,28 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   }, [deferPaneLayoutUpdate, isFocusedPane, isFocusMode, isSplitViewVisible, isVisible, livePaneLayoutKey]);
 
   const paneLayoutKey = paneLayoutKeyRef.current;
+  const previousFocusModeRef = useRef(isFocusMode);
+  const [focusTransitionActive, setFocusTransitionActive] = useState(false);
+  const focusModeChanged = previousFocusModeRef.current !== isFocusMode;
+  useLayoutEffect(() => {
+    const changed = previousFocusModeRef.current !== isFocusMode;
+    previousFocusModeRef.current = isFocusMode;
+    if (!changed) return undefined;
+    setFocusTransitionActive(true);
+    const timerId = window.setTimeout(
+      () => setFocusTransitionActive(false),
+      TERMINAL_PANE_FOCUS_TRANSITION_MS,
+    );
+    return () => window.clearTimeout(timerId);
+  }, [isFocusMode]);
   const style: React.CSSProperties = {
     ...layoutStyle,
-    transition: getTerminalPaneFocusTransition(
+    transition: getTerminalPaneFocusTransition({
       inActiveWorkspace,
-      isFocusedPane || (isFocusMode && isVisible),
-    ),
+      isFocusTarget: isFocusedPane || (isFocusMode && isVisible),
+      isFocusTransitionActive: focusModeChanged || focusTransitionActive,
+      isResizing,
+    }),
   };
 
   useLayoutEffect(() => {
