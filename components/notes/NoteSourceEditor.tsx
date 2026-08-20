@@ -20,6 +20,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
 
     const lineCount = (value.match(/\n/g)?.length || 0) + 1;
     const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
+    const gutterWidth = Math.max(48, String(lineCount).length * 9 + 24);
 
     const handleScroll = () => {
       if (textareaRef.current && lineNumbersRef.current) {
@@ -70,10 +71,18 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
         {/* Line numbers gutter */}
         <div
           ref={lineNumbersRef}
-          className="shrink-0 w-12 py-4 select-none text-right pr-3 text-muted-foreground/40 border-r border-border/50 overflow-hidden text-xs font-mono leading-6"
+          style={{ width: `${gutterWidth}px` }}
+          className="shrink-0 py-3 select-none text-right pr-3 text-muted-foreground/40 border-r border-border/50 overflow-hidden font-mono text-sm leading-6"
+          onWheel={(e) => {
+            if (textareaRef.current) {
+              textareaRef.current.scrollTop += e.deltaY;
+            }
+          }}
         >
           {lineNumbers.map((num) => (
-            <div key={num}>{num}</div>
+            <div key={num} className="h-6 leading-6 text-right">
+              {num}
+            </div>
           ))}
         </div>
 
@@ -87,7 +96,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             spellCheck={false}
-            className="w-full h-full p-4 bg-transparent text-foreground resize-none outline-none font-mono text-sm leading-6 whitespace-pre-wrap break-words overflow-y-auto"
+            className="w-full h-full py-3 px-4 bg-transparent text-foreground resize-none outline-none font-mono text-sm leading-6 whitespace-pre overflow-auto"
           />
         </div>
       </div>

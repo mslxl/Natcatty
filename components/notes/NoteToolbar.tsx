@@ -74,6 +74,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
       <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/50 shrink-0">
         <button
           type="button"
+          data-note-mode-switch="live"
           className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
             editorMode === "edit" || editorMode === "live"
               ? "bg-background text-foreground shadow-sm"
@@ -88,6 +89,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
         <button
           type="button"
+          data-note-mode-switch="source"
           className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
             editorMode === "source"
               ? "bg-background text-foreground shadow-sm"
@@ -102,6 +104,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
         <button
           type="button"
+          data-note-mode-switch="preview"
           className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
             editorMode === "preview"
               ? "bg-background text-foreground shadow-sm"

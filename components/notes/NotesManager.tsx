@@ -1859,8 +1859,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
                 {/* Export Menu */}
                 <NoteExportMenu note={selectedNoteView} allNotes={sortedNotes} />
-                {renderNoteExportButton(selectedNoteView)}
-                {renderNoteModeToggle()}
 
                 {/* Delete Note */}
                 <Tooltip>
@@ -1964,9 +1962,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               />
 
               <div className="flex flex-1 min-h-0 min-w-0">
-                <ScrollArea className="min-h-0 flex-1">
+                {noteEditorMode === "source" ? (
                   <div
-                    className="min-h-full w-full px-8 pt-2 pb-6"
+                    className="flex-1 min-h-0 min-w-0 h-full"
                     onBlur={(event) => {
                       if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                         flushNoteDraft();
@@ -1990,7 +1988,35 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       </Suspense>
                     </LazyLoadBoundary>
                   </div>
-                </ScrollArea>
+                ) : (
+                  <ScrollArea className="min-h-0 flex-1">
+                    <div
+                      className="min-h-full w-full px-8 pt-2 pb-6"
+                      onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                          flushNoteDraft();
+                        }
+                      }}
+                    >
+                      <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
+                        <Suspense fallback={<InlineMarkdownEditorFallback />}>
+                          <InlineMarkdownEditor
+                            noteId={selectedNoteView.id}
+                            value={selectedNoteView.content}
+                            placeholder={t("notes.editor.placeholder")}
+                            editorMode={noteEditorMode}
+                            previewEmptyLabel={t("notes.preview.empty")}
+                            onChange={(content) => saveNoteContentDraft(selectedNoteView.id, content)}
+                            hosts={hosts}
+                            onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
+                            onOpenExternalLink={openExternal}
+                            sourceEditorRef={sourceEditorRef}
+                          />
+                        </Suspense>
+                      </LazyLoadBoundary>
+                    </div>
+                  </ScrollArea>
+                )}
 
                 {showOutline && (
                   <div className="w-60 shrink-0 h-full">
@@ -2087,8 +2113,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               </Tooltip>
 
               <NoteExportMenu note={overlayNoteView} allNotes={sortedNotes} />
-              {renderNoteExportButton(overlayNoteView)}
-              {renderNoteModeToggle()}
             </div>
 
             {/* Note Toolbar in Overlay */}
@@ -2102,9 +2126,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               onAction={handleToolbarAction}
             />
 
-            <ScrollArea className="min-h-0 flex-1">
+            {noteEditorMode === "source" ? (
               <div
-                className="min-h-full w-full px-4 pt-2 pb-6"
+                className="flex-1 min-h-0 min-w-0 h-full"
                 onBlur={(event) => {
                   if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                     flushNoteDraft();
@@ -2128,7 +2152,35 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   </Suspense>
                 </LazyLoadBoundary>
               </div>
-            </ScrollArea>
+            ) : (
+              <ScrollArea className="min-h-0 flex-1">
+                <div
+                  className="min-h-full w-full px-4 pt-2 pb-6"
+                  onBlur={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                      flushNoteDraft();
+                    }
+                  }}
+                >
+                  <LazyLoadBoundary name="Notes editor" resetKey="notes-overlay-editor">
+                    <Suspense fallback={<InlineMarkdownEditorFallback />}>
+                      <InlineMarkdownEditor
+                        noteId={overlayNoteView.id}
+                        value={overlayNoteView.content}
+                        placeholder={t("notes.editor.placeholder")}
+                        editorMode={noteEditorMode}
+                        onChange={(content) => saveNoteContentDraft(overlayNoteView.id, content)}
+                        previewEmptyLabel={t("notes.preview.empty")}
+                        hosts={hosts}
+                        onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
+                        onOpenExternalLink={openExternal}
+                        sourceEditorRef={sourceEditorRef}
+                      />
+                    </Suspense>
+                  </LazyLoadBoundary>
+                </div>
+              </ScrollArea>
+            )}
           </div>
         </div>
       )}

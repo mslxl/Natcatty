@@ -1439,6 +1439,9 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:hover .netcatty-note-code-copy,
+.netcatty-mdx-editor .cm-editor:hover .netcatty-note-code-copy,
+.netcatty-mdx-editor pre:hover .netcatty-note-code-copy,
+.netcatty-mdx-content pre:hover .netcatty-note-code-copy,
 .netcatty-note-code-copy[data-copied="true"],
 .netcatty-note-code-copy:focus-visible {
   opacity: 1;

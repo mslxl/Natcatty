@@ -525,9 +525,13 @@ export const annotateNoteCodeBlockCopyButtons = (
     onCopy: (text: string) => Promise<boolean>;
   },
 ): void => {
-  container.querySelectorAll('[class*="_codeMirrorWrapper_"]').forEach((wrapper) => {
+  container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
     if (!(wrapper instanceof HTMLElement)) return;
     if (wrapper.querySelector("[data-note-code-copy]")) return;
+
+    if (getComputedStyle(wrapper).position === "static") {
+      wrapper.style.position = "relative";
+    }
 
     const button = document.createElement("button");
     button.type = "button";
@@ -542,7 +546,10 @@ export const annotateNoteCodeBlockCopyButtons = (
       event.stopPropagation();
       void (async () => {
         clearNoteCodeBlockCopyResetTimer(button);
-        const text = getCodeMirrorBlockText(wrapper);
+        let text = getCodeMirrorBlockText(wrapper);
+        if (!text) {
+          text = wrapper.querySelector("code")?.textContent || wrapper.textContent || "";
+        }
         const ok = await onCopy(text);
         if (!ok) {
           toast.error(copyFailedLabel);
@@ -680,14 +687,8 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
       codeBlockLanguages: NOTE_CODE_BLOCK_LANGUAGES,
       codeMirrorExtensions: NOTE_CODE_MIRROR_EXTENSIONS,
     }),
-    ...(editorMode === "edit" || editorMode === "live" ? [
-      toolbarPlugin({
-        toolbarContents: () => <NoteMarkdownToolbar />,
-        toolbarClassName: "netcatty-note-markdown-toolbar",
-      }),
-    ] : []),
     markdownShortcutPlugin(),
-  ], [editorMode]);
+  ], []);
   const hostCandidates = useMemo(
     () => hosts.filter(isSshCandidateHost),
     [hosts],
@@ -982,29 +983,15 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
     const runDecorations = (includeHostLinks: boolean) => {
       annotateNoteImageSizes(container);
       if (includeHostLinks) annotateHostLinks();
-      if (editorMode === "preview") {
-        annotateCodeBlockCopyButtons();
-      } else {
-        removeNoteCodeBlockCopyButtons(container);
-      }
+      annotateCodeBlockCopyButtons();
     };
 
     const scheduleFromMutation = () => {
-      if (editorMode === "preview") {
-        if (frame) return;
-        frame = window.requestAnimationFrame(() => {
-          frame = 0;
-          runDecorations(true);
-        });
-        return;
-      }
-      // Debounced: still re-annotate host links after setMarkdown swaps in edit
-      // mode (childList) and after image width/height edits (attributes).
-      if (debounceTimer) window.clearTimeout(debounceTimer);
-      debounceTimer = window.setTimeout(() => {
-        debounceTimer = 0;
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
         runDecorations(true);
-      }, EDIT_DECORATION_DEBOUNCE_MS);
+      });
     };
 
     runDecorations(true);
@@ -1020,7 +1007,6 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
       observer.disconnect();
       if (frame) window.cancelAnimationFrame(frame);
       if (debounceTimer) window.clearTimeout(debounceTimer);
-      removeNoteCodeBlockCopyButtons(container);
     };
   }, [annotateCodeBlockCopyButtons, annotateHostLinks, editorMode]);
 
