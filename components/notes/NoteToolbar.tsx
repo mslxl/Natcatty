@@ -7,6 +7,7 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  Heading4,
   Heading,
   Image as ImageIcon,
   Italic,
@@ -17,15 +18,17 @@ import {
   Minus,
   PencilLine,
   Quote,
+  Sigma,
   SquareCode,
   Strikethrough,
   Table as TableIcon,
   Underline,
 } from "lucide-react";
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useMemo } from "react";
 import { calculateNoteStats, type MarkdownActionType } from "../../domain/notes";
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
 
 export interface NoteToolbarProps {
   content: string;
@@ -43,25 +46,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   editorMode,
   onChangeMode,
   onAction,
-  onOpenHostPicker,
   showOutline,
   onToggleOutline,
   className = "",
 }) => {
-  const [headingDropdownOpen, setHeadingDropdownOpen] = useState(false);
-  const headingMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!headingDropdownOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (headingMenuRef.current && !headingMenuRef.current.contains(e.target as Node)) {
-        setHeadingDropdownOpen(false);
-      }
-    };
-    window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
-  }, [headingDropdownOpen]);
-
   const stats = useMemo(() => calculateNoteStats(content), [content]);
 
   const isEditing = editorMode === "edit" || editorMode === "live" || editorMode === "source";
@@ -123,60 +111,63 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
         <div className="flex items-center gap-0.5 min-w-0">
           <div className="h-4 w-px bg-border mx-1 shrink-0" />
 
-          {/* Heading Dropdown */}
-          <div className="relative inline-block" ref={headingMenuRef}>
-            <button
-              type="button"
-              className="flex items-center gap-1 p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setHeadingDropdownOpen((prev) => !prev)}
-              title="标题层级"
-            >
-              <Heading size={14} />
-            </button>
-
-            {headingDropdownOpen && (
-              <div className="absolute left-0 top-full mt-1 w-32 bg-popover border border-border rounded-lg shadow-lg py-1 z-50 text-xs animate-in fade-in-50 zoom-in-95">
-                <button
-                  type="button"
-                  className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-muted text-foreground transition-colors text-left"
-                  onClick={() => {
-                    onAction?.("h1");
-                    setHeadingDropdownOpen(false);
-                  }}
-                >
-                  <Heading1 size={14} className="text-primary" />
-                  <span>一级标题</span>
-                </button>
-                <button
-                  type="button"
-                  className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-muted text-foreground transition-colors text-left"
-                  onClick={() => {
-                    onAction?.("h2");
-                    setHeadingDropdownOpen(false);
-                  }}
-                >
-                  <Heading2 size={14} className="text-primary" />
-                  <span>二级标题</span>
-                </button>
-                <button
-                  type="button"
-                  className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-muted text-foreground transition-colors text-left"
-                  onClick={() => {
-                    onAction?.("h3");
-                    setHeadingDropdownOpen(false);
-                  }}
-                >
-                  <Heading3 size={14} className="text-primary" />
-                  <span>三级标题</span>
-                </button>
-              </div>
-            )}
-          </div>
+          {/* Heading Dropdown (Using Portal Dropdown to avoid clipping) */}
+          <Dropdown>
+            <DropdownTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                onMouseDown={(e) => e.preventDefault()}
+                title="标题层级"
+              >
+                <Heading size={14} />
+              </button>
+            </DropdownTrigger>
+            <DropdownContent align="start" className="w-32 py-1 z-50 text-xs">
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-secondary text-foreground transition-colors text-left"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onAction?.("h1")}
+              >
+                <Heading1 size={14} className="text-primary" />
+                <span>一级标题</span>
+              </button>
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-secondary text-foreground transition-colors text-left"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onAction?.("h2")}
+              >
+                <Heading2 size={14} className="text-primary" />
+                <span>二级标题</span>
+              </button>
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-secondary text-foreground transition-colors text-left"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onAction?.("h3")}
+              >
+                <Heading3 size={14} className="text-primary" />
+                <span>三级标题</span>
+              </button>
+              <button
+                type="button"
+                className="w-full px-3 py-1.5 flex items-center gap-2 hover:bg-secondary text-foreground transition-colors text-left"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onAction?.("h4")}
+              >
+                <Heading4 size={14} className="text-primary" />
+                <span>四级标题</span>
+              </button>
+            </DropdownContent>
+          </Dropdown>
 
           {/* Inline Styles */}
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("bold")}
             title="加粗 (Ctrl+B)"
           >
@@ -186,6 +177,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("italic")}
             title="斜体 (Ctrl+I)"
           >
@@ -195,6 +187,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("strikethrough")}
             title="删除线"
           >
@@ -204,6 +197,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("underline")}
             title="下划线"
           >
@@ -213,6 +207,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("code")}
             title="行内代码"
           >
@@ -225,6 +220,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("bullet")}
             title="无序列表"
           >
@@ -234,6 +230,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("number")}
             title="有序列表"
           >
@@ -243,6 +240,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("task")}
             title="待办任务清单"
           >
@@ -255,6 +253,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("quote")}
             title="引用块"
           >
@@ -264,6 +263,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("codeblock")}
             title="代码块"
           >
@@ -273,8 +273,19 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onAction?.("math")}
+            title="数学公式块 (LaTeX / $$)"
+          >
+            <Sigma size={14} />
+          </button>
+
+          <button
+            type="button"
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("table")}
-            title="表格"
+            title="插入表格"
           >
             <TableIcon size={14} />
           </button>
@@ -282,6 +293,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("divider")}
             title="分割线"
           >
@@ -291,6 +303,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("link")}
             title="插入超链接"
           >
@@ -300,6 +313,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <button
             type="button"
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("image")}
             title="插入图片"
           >

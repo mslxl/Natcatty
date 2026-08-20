@@ -86,7 +86,11 @@ import {
   markVaultDropIndicator,
   markVaultInsideDropIndicator,
 } from "../vault/vaultReorderDrag";
-import type { NoteEditorMode } from "./InlineMarkdownEditor";
+import type {
+  InlineMarkdownEditorHandle,
+  NoteEditorMode,
+  NoteSourceEditorHandle,
+} from "./InlineMarkdownEditor";
 import { NoteTitleInput } from "./NoteTitleInput";
 
 const InlineMarkdownEditor = lazy(() =>
@@ -709,18 +713,16 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   }, [onOpenHost]);
 
   const sourceEditorRef = useRef<NoteSourceEditorHandle>(null);
+  const inlineEditorRef = useRef<InlineMarkdownEditorHandle>(null);
+  const overlayEditorRef = useRef<InlineMarkdownEditorHandle>(null);
 
   const handleToolbarAction = useCallback((action: MarkdownActionType) => {
-    if (noteEditorMode === "source") {
-      sourceEditorRef.current?.insertAction(action);
+    if (overlayNoteView) {
+      overlayEditorRef.current?.executeAction(action);
     } else {
-      const activeNote = selectedNoteView || overlayNoteView;
-      if (!activeNote) return;
-      const current = activeNote.content;
-      const result = wrapMarkdownSyntax(current, current.length, current.length, action);
-      saveNoteContentDraft(activeNote.id, result.text);
+      inlineEditorRef.current?.executeAction(action);
     }
-  }, [noteEditorMode, selectedNoteView, overlayNoteView, saveNoteContentDraft]);
+  }, [overlayNoteView]);
 
   const renderNoteModeToggle = () => {
     const isEditMode = noteEditorMode === "edit" || noteEditorMode === "live";
@@ -1974,6 +1976,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
                       <Suspense fallback={<InlineMarkdownEditorFallback />}>
                         <InlineMarkdownEditor
+                          ref={inlineEditorRef}
                           noteId={selectedNoteView.id}
                           value={selectedNoteView.content}
                           placeholder={t("notes.editor.placeholder")}
@@ -2001,6 +2004,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
                         <Suspense fallback={<InlineMarkdownEditorFallback />}>
                           <InlineMarkdownEditor
+                            ref={inlineEditorRef}
                             noteId={selectedNoteView.id}
                             value={selectedNoteView.content}
                             placeholder={t("notes.editor.placeholder")}
@@ -2138,6 +2142,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 <LazyLoadBoundary name="Notes editor" resetKey="notes-overlay-editor">
                   <Suspense fallback={<InlineMarkdownEditorFallback />}>
                     <InlineMarkdownEditor
+                      ref={overlayEditorRef}
                       noteId={overlayNoteView.id}
                       value={overlayNoteView.content}
                       placeholder={t("notes.editor.placeholder")}
@@ -2165,6 +2170,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   <LazyLoadBoundary name="Notes editor" resetKey="notes-overlay-editor">
                     <Suspense fallback={<InlineMarkdownEditorFallback />}>
                       <InlineMarkdownEditor
+                        ref={overlayEditorRef}
                         noteId={overlayNoteView.id}
                         value={overlayNoteView.content}
                         placeholder={t("notes.editor.placeholder")}

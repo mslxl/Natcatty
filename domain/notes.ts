@@ -654,7 +654,8 @@ export type MarkdownActionType =
   | "table"
   | "divider"
   | "link"
-  | "image";
+  | "image"
+  | "math";
 
 export interface WrapMarkdownResult {
   text: string;
@@ -818,6 +819,15 @@ export const wrapMarkdownSyntax = (
         text: `${before}${insert}${after}`,
         selectionStart: start + alt.length + 4,
         selectionEnd: start + alt.length + 12,
+      };
+    }
+    case "math": {
+      const content = selected || "E = mc^2";
+      const insert = `\n$$\n${content}\n$$\n`;
+      return {
+        text: `${before}${insert}${after}`,
+        selectionStart: start + 4,
+        selectionEnd: start + 4 + content.length,
       };
     }
     default:

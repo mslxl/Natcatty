@@ -36,12 +36,14 @@ import {
   $isTextNode,
   $setSelection,
   CLEAR_HISTORY_COMMAND,
+  FORMAT_TEXT_COMMAND,
   getNearestEditorFromDOMNode,
 } from "lexical";
 import React, {
   startTransition,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -80,8 +82,14 @@ export {
 } from "./noteClipboardPaste";
 
 import { NoteSourceEditor, type NoteSourceEditorHandle } from "./NoteSourceEditor";
+import { type MarkdownActionType } from "../../domain/notes";
 
 export { NoteSourceEditor, type NoteSourceEditorHandle };
+
+export interface InlineMarkdownEditorHandle {
+  executeAction: (action: MarkdownActionType) => void;
+  focus: () => void;
+}
 
 export interface InlineMarkdownEditorProps {
   value: string;
@@ -94,7 +102,7 @@ export interface InlineMarkdownEditorProps {
   onOpenHost?: (host: Host) => void;
   onOpenExternalLink?: (url: string) => void | Promise<void>;
   previewEmptyLabel?: string;
-  sourceEditorRef?: React.Ref<NoteSourceEditorHandle>;
+  sourceEditorRef?: React.RefObject<NoteSourceEditorHandle | null>;
 }
 
 export type NoteEditorMode = "edit" | "preview" | "source" | "live";
@@ -570,7 +578,12 @@ export const annotateNoteCodeBlockCopyButtons = (
       })();
     });
 
-    wrapper.appendChild(button);
+    const toolbar = wrapper.querySelector('[class*="_codeMirrorToolbar_"]');
+    if (toolbar instanceof HTMLElement) {
+      toolbar.insertBefore(button, toolbar.lastElementChild);
+    } else {
+      wrapper.appendChild(button);
+    }
   });
 };
 
@@ -600,42 +613,131 @@ const deleteLexicalTextRange = (range: Range, onUpdate: () => void): boolean => 
   return didDelete;
 };
 
-export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
-  value,
-  placeholder,
-  onChange,
-  noteId,
-  hosts = [],
-  editorMode: controlledEditorMode,
-  onOpenHost,
-  onOpenExternalLink,
-  previewEmptyLabel,
-  sourceEditorRef,
-}: InlineMarkdownEditorProps) {
-  const { t } = useI18n();
-  const editorRef = useRef<MDXEditorMethods>(null);
-  // Display-normalized space (same as setMarkdown / public-asset rewrite).
-  const latestMarkdownRef = useRef(normalizeNotePublicAssetPaths(value));
-  const syncedPropValueRef = useRef(normalizeNotePublicAssetPaths(value));
-  const noteIdRef = useRef(noteId);
-  // Bumped on unmount / external value sync so deferred paste recovery cannot
-  // commit into a switched or unmounted note.
-  const pasteRecoveryGenerationRef = useRef(0);
-  // Invalidates in-flight deferred setMarkdown when the user switches again.
-  const contentSwapTokenRef = useRef(0);
-  const contentSwapPendingRef = useRef(false);
-  /** Latest markdown the in-flight note-switch import should apply (refreshed on external value). */
-  const contentSwapScheduledRef = useRef<{
-    token: number;
-    noteId: string;
-    markdown: string;
-  } | null>(null);
-  const contentSwapFramesRef = useRef<{ outer: number; inner: number }>({
-    outer: 0,
-    inner: 0,
-  });
+export const InlineMarkdownEditor = React.memo(
+  React.forwardRef<InlineMarkdownEditorHandle, InlineMarkdownEditorProps>(function InlineMarkdownEditor(
+    {
+      value,
+      placeholder,
+      onChange,
+      noteId,
+      hosts = [],
+      editorMode: controlledEditorMode,
+      onOpenHost,
+      onOpenExternalLink,
+      previewEmptyLabel,
+      sourceEditorRef,
+    }: InlineMarkdownEditorProps,
+    ref,
+  ) {
+    const { t } = useI18n();
+    const editorRef = useRef<MDXEditorMethods>(null);
+    // Display-normalized space (same as setMarkdown / public-asset rewrite).
+    const latestMarkdownRef = useRef(normalizeNotePublicAssetPaths(value));
+    const syncedPropValueRef = useRef(normalizeNotePublicAssetPaths(value));
+    const noteIdRef = useRef(noteId);
+    // Bumped on unmount / external value sync so deferred paste recovery cannot
+    // commit into a switched or unmounted note.
+    const pasteRecoveryGenerationRef = useRef(0);
+    // Invalidates in-flight deferred setMarkdown when the user switches again.
+    const contentSwapTokenRef = useRef(0);
+    const contentSwapPendingRef = useRef(false);
+    /** Latest markdown the in-flight note-switch import should apply (refreshed on external value). */
+    const contentSwapScheduledRef = useRef<{
+      token: number;
+      noteId: string;
+      markdown: string;
+    } | null>(null);
+    const contentSwapFramesRef = useRef<{ outer: number; inner: number }>({
+      outer: 0,
+      inner: 0,
+    });
 
-  const containerRef = useRef<HTMLDivElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        executeAction: (action: MarkdownActionType) => {
+          if (controlledEditorMode === "source") {
+            if (sourceEditorRef && "current" in sourceEditorRef && sourceEditorRef.current) {
+              sourceEditorRef.current.insertAction(action);
+            }
+            return;
+          }
+
+          const container = containerRef.current;
+          const editable = container?.querySelector("[contenteditable]");
+          const lexicalEditor = editable ? getNearestEditorFromDOMNode(editable) : null;
+
+          if (
+            action === "bold" ||
+            action === "italic" ||
+            action === "underline" ||
+            action === "strikethrough" ||
+            action === "code"
+          ) {
+            if (lexicalEditor) {
+              lexicalEditor.dispatchCommand(FORMAT_TEXT_COMMAND, action);
+              return;
+            }
+          }
+
+          const editor = editorRef.current;
+          if (editor) {
+            switch (action) {
+              case "h1":
+                editor.insertMarkdown("\n# 标题\n");
+                break;
+              case "h2":
+                editor.insertMarkdown("\n## 标题\n");
+                break;
+              case "h3":
+                editor.insertMarkdown("\n### 标题\n");
+                break;
+              case "h4":
+                editor.insertMarkdown("\n#### 标题\n");
+                break;
+              case "quote":
+                editor.insertMarkdown("\n> 引用内容\n");
+                break;
+              case "bullet":
+                editor.insertMarkdown("\n- 列表项\n");
+                break;
+              case "number":
+                editor.insertMarkdown("\n1. 列表项\n");
+                break;
+              case "task":
+                editor.insertMarkdown("\n- [ ] 待办任务\n");
+                break;
+              case "codeblock":
+                editor.insertMarkdown("\n```javascript\nconsole.log(\"hello\");\n```\n");
+                break;
+              case "table":
+                editor.insertMarkdown("\n| 列 1 | 列 2 | 列 3 |\n| :--- | :--- | :--- |\n| 单元格 1 | 单元格 2 | 单元格 3 |\n");
+                break;
+              case "divider":
+                editor.insertMarkdown("\n---\n");
+                break;
+              case "link":
+                editor.insertMarkdown("[链接文本](https://)");
+                break;
+              case "image":
+                editor.insertMarkdown("![图片描述](https://)");
+                break;
+              case "math":
+                editor.insertMarkdown("\n$$\nE = mc^2\n$$\n");
+                break;
+              default:
+                break;
+            }
+          }
+        },
+        focus: () => {
+          editorRef.current?.focus();
+        },
+      }),
+      [controlledEditorMode, sourceEditorRef],
+    );
   const lastLinkActivationRef = useRef<{ href: string; at: number } | null>(null);
   const [hostPicker, setHostPicker] = useState<HostPickerState>({
     open: false,
@@ -1585,4 +1687,4 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
       )}
     </div>
   );
-});
+}));

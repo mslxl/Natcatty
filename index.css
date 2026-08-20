@@ -1456,15 +1456,14 @@ html[data-theme-transition] *::after {
   color: hsl(var(--foreground));
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] {
-  position: static !important;
-  right: auto !important;
-  top: auto !important;
-  z-index: auto !important;
-  gap: 0.125rem;
-  padding: 0.125rem;
-  border-bottom-left-radius: 0 !important;
-  background: transparent !important;
+.netcatty-mdx-editor [class*="_codeMirrorWrapper_"] {
+  position: relative !important;
+  margin: 0.85rem 0 1rem;
+  border: 0 !important;
+  border-radius: 6px;
+  background: hsl(var(--secondary) / 0.35) !important;
+  padding: 0 !important;
+  overflow: hidden;
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] {
@@ -1492,22 +1491,38 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] {
-  position: static !important;
-  top: auto !important;
-  right: auto !important;
-  left: auto !important;
-  z-index: auto;
-  display: flex !important;
-  flex-direction: row;
+  position: absolute !important;
+  top: 0.35rem !important;
+  right: 0.35rem !important;
+  z-index: 30 !important;
+  display: inline-flex !important;
+  align-items: center !important;
   justify-content: flex-end;
-  align-items: center;
-  align-self: stretch;
-  flex-shrink: 0;
-  gap: 0.125rem;
-  padding: 0.15rem 0.3rem 0 !important;
+  gap: 0.25rem !important;
+  padding: 0.15rem 0.25rem !important;
   margin: 0 !important;
   width: auto !important;
-  background: transparent !important;
+  border-radius: 6px !important;
+  background: hsl(var(--background) / 0.92) !important;
+  border: 1px solid hsl(var(--border) / 0.6) !important;
+  backdrop-filter: blur(6px) !important;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.18) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.15s ease !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"]:hover [class*="_codeMirrorToolbar_"],
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"]:focus-within [class*="_codeMirrorToolbar_"],
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"]:has([data-state="open"]) {
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] .netcatty-note-code-copy {
+  position: static !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 .netcatty-mdx-editor--preview [class*="_codeMirrorToolbar_"] {

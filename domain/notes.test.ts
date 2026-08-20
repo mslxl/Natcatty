@@ -366,6 +366,11 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
   // insert table when no selection (start 0, end 0)
   const tableRes = wrapMarkdownSyntax("", 0, 0, "table");
   assert.ok(tableRes.text.includes("| 列 1 | 列 2 | 列 3 |"));
+
+  // insert math block
+  const mathRes = wrapMarkdownSyntax("", 0, 0, "math");
+  assert.ok(mathRes.text.includes("$$"));
+  assert.ok(mathRes.text.includes("E = mc^2"));
 });
 
 
