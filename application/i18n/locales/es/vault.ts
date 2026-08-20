@@ -400,6 +400,7 @@ export const esVaultMessages: Messages = {
   'sftp.conflict.folderDesc': 'Ya existe una carpeta con el mismo nombre en el destino',
   'sftp.conflict.folderFileDesc': 'Ya existe un archivo con el mismo nombre en el destino. Una carpeta no se puede combinar con un archivo.',
   'sftp.conflict.folderSymlinkDesc': 'Ya existe un enlace simbólico con el mismo nombre en el destino. Una carpeta no se puede combinar con un enlace simbólico.',
+  'sftp.conflict.folderUnknownDesc': 'Ya existe un elemento con el mismo nombre en el destino, pero no se pudo confirmar su tipo. Reemplazar no está disponible para proteger los datos del destino.',
   'sftp.conflict.folderMergeHint': 'Combinar conserva los archivos y subcarpetas que solo existen en el destino.',
   'sftp.conflict.folderReplaceWarning': 'Reemplazar elimina todos los archivos y subcarpetas del destino que no estén en el origen. Los datos eliminados no se pueden recuperar.',
   'sftp.conflict.alreadyExistsSuffix': 'ya existe',

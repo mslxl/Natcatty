@@ -38,7 +38,9 @@ export const getSftpConflictDialogPresentation = (
             ? 'sftp.conflict.folderFileDesc'
             : conflict.existingType === 'symlink'
                 ? 'sftp.conflict.folderSymlinkDesc'
-                : 'sftp.conflict.folderDesc';
+                : conflict.existingType === 'directory'
+                    ? 'sftp.conflict.folderDesc'
+                    : 'sftp.conflict.folderUnknownDesc';
 
     return {
         titleKey: conflict.isDirectory ? 'sftp.conflict.folderTitle' : 'sftp.conflict.title',
@@ -96,17 +98,39 @@ const ConflictFileSummary: React.FC<ConflictFileSummaryProps> = ({
 const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts, onResolve, formatFileSize }) => {
     const { t } = useI18n();
     const [applyToAll, setApplyToAll] = useState(false);
+    const duplicateButtonRef = useRef<HTMLButtonElement>(null);
     const mergeButtonRef = useRef<HTMLButtonElement>(null);
+    const replaceButtonRef = useRef<HTMLButtonElement>(null);
+    const previousConflictIdRef = useRef<string | undefined>(undefined);
     const descriptionId = React.useId();
     const directoryWarningId = React.useId();
     const conflict = conflicts[0]; // Handle first conflict
-    const shouldFocusMerge = conflict?.isDirectory === true && conflict.existingType === 'directory';
+    const currentCanMerge = conflict?.isDirectory === true && conflict.existingType === 'directory';
+    const currentCanReplace = conflict ? canReplaceConflict(conflict) : false;
 
     useEffect(() => {
-        if (shouldFocusMerge) {
-            mergeButtonRef.current?.focus();
+        const currentConflictId = conflict?.transferId;
+        const previousConflictId = previousConflictIdRef.current;
+        previousConflictIdRef.current = currentConflictId;
+        if (!currentConflictId || !previousConflictId || currentConflictId === previousConflictId) return;
+
+        const nextAction = currentCanMerge
+            ? mergeButtonRef.current
+            : currentCanReplace
+                ? replaceButtonRef.current
+                : duplicateButtonRef.current;
+        if (!nextAction) return;
+
+        // If the previously focused action disappears or becomes disabled,
+        // Radix may restore focus to the first button after this effect. Focus
+        // on the next frame so the current conflict's safe action wins.
+        if (typeof globalThis.requestAnimationFrame === 'function') {
+            const frame = globalThis.requestAnimationFrame(() => nextAction.focus());
+            return () => globalThis.cancelAnimationFrame(frame);
         }
-    }, [conflict?.transferId, shouldFocusMerge]);
+        const timer = globalThis.setTimeout(() => nextAction.focus(), 0);
+        return () => globalThis.clearTimeout(timer);
+    }, [conflict?.transferId, currentCanMerge, currentCanReplace]);
 
     if (!conflict) return null;
 
@@ -118,8 +142,8 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
         conflict.applyToAllCount ?? 1,
         conflicts.filter((item) => getConflictTypeKey(item) === getConflictTypeKey(conflict)).length,
     );
-    const canMerge = conflict.isDirectory && conflict.existingType === 'directory';
-    const canReplace = canReplaceConflict(conflict);
+    const canMerge = currentCanMerge;
+    const canReplace = currentCanReplace;
     const presentation = getSftpConflictDialogPresentation(conflict);
     const describedBy = presentation.showDirectoryReplaceWarning
         ? `${descriptionId} ${directoryWarningId}`
@@ -221,6 +245,7 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                         {t('sftp.conflict.action.skip')}
                     </Button>
                     <Button
+                        ref={duplicateButtonRef}
                         variant="outline"
                         onClick={() => handleAction('duplicate')}
                         className="min-w-24 shrink-0"
@@ -241,6 +266,7 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                     )}
                     {canReplace && (
                         <Button
+                            ref={replaceButtonRef}
                             variant={presentation.replaceVariant}
                             onClick={() => handleAction('replace')}
                             className={presentation.showDirectoryReplaceWarning

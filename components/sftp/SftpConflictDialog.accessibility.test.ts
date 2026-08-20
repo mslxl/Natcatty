@@ -79,6 +79,54 @@ test("announces folder replacement risk and refocuses Merge for each queued conf
         existingModified: 3,
         newModified: 4,
       },
+      {
+        transferId: "symlink-folder-conflict",
+        fileName: "shortcut",
+        sourcePath: "/source/shortcut",
+        targetPath: "/destination/shortcut",
+        isDirectory: true,
+        existingType: "symlink",
+        existingSize: 0,
+        newSize: 4096,
+        existingModified: 5,
+        newModified: 6,
+      },
+      {
+        transferId: "file-folder-conflict",
+        fileName: "archive",
+        sourcePath: "/source/archive",
+        targetPath: "/destination/archive",
+        isDirectory: true,
+        existingType: "file",
+        existingSize: 1024,
+        newSize: 4096,
+        existingModified: 7,
+        newModified: 8,
+      },
+      {
+        transferId: "legacy-folder-conflict",
+        fileName: "legacy",
+        sourcePath: "/source/legacy",
+        targetPath: "/destination/legacy",
+        isDirectory: true,
+        existingType: undefined,
+        existingSize: 0,
+        newSize: 4096,
+        existingModified: 9,
+        newModified: 10,
+      },
+      {
+        transferId: "file-conflict",
+        fileName: "notes.txt",
+        sourcePath: "/source/notes.txt",
+        targetPath: "/destination/notes.txt",
+        isDirectory: false,
+        existingType: "file",
+        existingSize: 128,
+        newSize: 256,
+        existingModified: 11,
+        newModified: 12,
+      },
   ] satisfies React.ComponentProps<typeof SftpConflictDialog>["conflicts"];
   const QueueHarness = () => {
     const [conflicts, setConflicts] = React.useState(queuedConflicts);
@@ -115,15 +163,43 @@ test("announces folder replacement risk and refocuses Merge for each queued conf
   assert.ok(replaceButton, "folder replacement action should render");
   await dispatchDomEvent(replaceButton, new env.window.MouseEvent("click", { bubbles: true }));
   await flushEffects();
+  await new Promise((resolve) => setTimeout(resolve, 20));
 
   assert.deepEqual(resolvedActions, ["replace"]);
   assert.match(env.document.body.textContent ?? "", /photos/);
   assert.equal(env.document.activeElement?.textContent, "Merge");
 
-  const mergeButton = env.document.activeElement;
-  assert.ok(mergeButton, "next conflict should focus Merge");
-  await dispatchDomEvent(mergeButton, new env.window.MouseEvent("click", { bubbles: true }));
-  await flushEffects();
-  assert.deepEqual(resolvedActions, ["replace", "merge"]);
+  const clickFocusedAction = async (expectedLabel: string) => {
+    const focusedButton = env.document.activeElement;
+    assert.equal(focusedButton?.textContent, expectedLabel);
+    assert.ok(focusedButton, `${expectedLabel} should be focused`);
+    await dispatchDomEvent(focusedButton, new env.window.MouseEvent("click", { bubbles: true }));
+    await flushEffects();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+
+  await clickFocusedAction("Merge");
+  assert.match(env.document.body.textContent ?? "", /shortcut/);
+  assert.equal(env.document.activeElement?.textContent, "Replace");
+
+  await clickFocusedAction("Replace");
+  assert.match(env.document.body.textContent ?? "", /archive/);
+  assert.equal(env.document.activeElement?.textContent, "Duplicate");
+
+  await clickFocusedAction("Duplicate");
+  assert.match(env.document.body.textContent ?? "", /legacy/);
+  assert.match(env.document.body.textContent ?? "", /type could not be confirmed/);
+  assert.equal(env.document.activeElement?.textContent, "Duplicate");
+  assert.equal(
+    Array.from(env.document.querySelectorAll("button")).some((button) => button.textContent === "Replace"),
+    false,
+  );
+
+  await clickFocusedAction("Duplicate");
+  assert.match(env.document.body.textContent ?? "", /notes\.txt/);
+  assert.equal(env.document.activeElement?.textContent, "Replace");
+
+  await clickFocusedAction("Replace");
+  assert.deepEqual(resolvedActions, ["replace", "merge", "replace", "duplicate", "duplicate", "replace"]);
   assert.equal(env.document.querySelector("[role=dialog]"), null);
 });

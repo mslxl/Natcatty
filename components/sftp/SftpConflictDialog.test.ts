@@ -41,6 +41,21 @@ test("offers replace when a file upload conflicts with an existing symlink", () 
   }), true);
 });
 
+test("does not offer replace when a folder conflict has an unknown destination type", () => {
+  assert.equal(canReplaceConflict({
+    isDirectory: true,
+    existingType: undefined,
+  }), false);
+
+  const presentation = getSftpConflictDialogPresentation({
+    isDirectory: true,
+    existingType: undefined,
+  });
+  assert.equal(presentation.descriptionKey, "sftp.conflict.folderUnknownDesc");
+  assert.equal(presentation.showDirectoryReplaceWarning, false);
+  assert.equal(presentation.replaceVariant, "default");
+});
+
 test("makes merge the safe primary action for a same-named folder conflict", () => {
   assert.deepEqual(getSftpConflictDialogPresentation({
     isDirectory: true,

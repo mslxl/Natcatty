@@ -685,6 +685,7 @@ function TransferRow({
         const conflict = task.conflict!;
         const canMerge = conflict.isDirectory && conflict.existingType === "directory";
         const destructiveDirectoryReplace = canMerge;
+        const unresolvedFolderType = conflict.isDirectory && !conflict.existingType;
         const canReplace = canReplaceSftpConflict(conflict.isDirectory, conflict.existingType);
         const actions = [
           "stop",
@@ -729,6 +730,12 @@ function TransferRow({
                   {t("sftp.conflict.folderReplaceWarning")}
                 </span>
               </p>
+            </div>
+          )}
+          {unresolvedFolderType && (
+            <div className="flex items-start gap-1.5 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 text-[10px] leading-4">
+              <AlertTriangle size={12} className="mt-0.5 shrink-0 text-amber-600" />
+              <p>{t("sftp.conflict.folderUnknownDesc")}</p>
             </div>
           )}
           <div className="flex flex-wrap justify-end gap-1">
