@@ -77,7 +77,9 @@ export {
   resolveNoteClipboardPaste,
   shouldInterceptResolvedNotePaste,
   convertClipboardHtmlToMarkdown,
-} from "./noteClipboardPaste";
+import { NoteSourceEditor, type NoteSourceEditorHandle } from "./NoteSourceEditor";
+
+export { NoteSourceEditor, type NoteSourceEditorHandle };
 
 export interface InlineMarkdownEditorProps {
   value: string;
@@ -90,9 +92,10 @@ export interface InlineMarkdownEditorProps {
   onOpenHost?: (host: Host) => void;
   onOpenExternalLink?: (url: string) => void | Promise<void>;
   previewEmptyLabel?: string;
+  sourceEditorRef?: React.Ref<NoteSourceEditorHandle>;
 }
 
-export type NoteEditorMode = "edit" | "preview";
+export type NoteEditorMode = "edit" | "preview" | "source" | "live";
 
 type HostPickerState = {
   open: boolean;
@@ -598,6 +601,7 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
   onOpenHost,
   onOpenExternalLink,
   previewEmptyLabel,
+  sourceEditorRef,
 }: InlineMarkdownEditorProps) {
   const { t } = useI18n();
   const editorRef = useRef<MDXEditorMethods>(null);
@@ -674,7 +678,7 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
       codeBlockLanguages: NOTE_CODE_BLOCK_LANGUAGES,
       codeMirrorExtensions: NOTE_CODE_MIRROR_EXTENSIONS,
     }),
-    ...(editorMode === "edit" ? [
+    ...(editorMode === "edit" || editorMode === "live" ? [
       toolbarPlugin({
         toolbarContents: () => <NoteMarkdownToolbar />,
         toolbarClassName: "netcatty-note-markdown-toolbar",
@@ -1564,7 +1568,14 @@ export const InlineMarkdownEditor = React.memo(function InlineMarkdownEditor({
             </div>
         </div>
       )}
-      {editorMode === "preview" && !displayMarkdown.trim() ? (
+      {editorMode === "source" ? (
+        <NoteSourceEditor
+          ref={sourceEditorRef}
+          value={value}
+          placeholder={placeholder}
+          onChange={commitMarkdown}
+        />
+      ) : editorMode === "preview" && !displayMarkdown.trim() ? (
         <div className="netcatty-note-preview-empty">
           {previewEmptyLabel ?? placeholder}
         </div>

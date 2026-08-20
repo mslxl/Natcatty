@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildVaultNoteMarkdownExportFiles,
   buildVaultNoteFromMarkdownImport,
+  calculateNoteStats,
   deriveNoteImportTitle,
   extractAllNoteTags,
   extractNoteHeadings,
@@ -20,6 +21,7 @@ import {
   sanitizeNoteExportFileNamePart,
   sanitizeNoteTitle,
   sanitizeVaultNote,
+  wrapMarkdownSyntax,
 } from "./notes";
 
 test("sanitizeVaultNote supplies safe defaults", () => {
@@ -345,4 +347,25 @@ test("filterAndSortVaultNotes filters by pinned, tags, group and sorts according
   const tagFiltered = filterAndSortVaultNotes(notes, { tag: "ssh" });
   assert.equal(tagFiltered.length, 2);
 });
+
+test("calculateNoteStats calculates lines, chars, and word counts", () => {
+  const content = "Hello world\n这是中文测试内容\nThird line";
+  const stats = calculateNoteStats(content);
+  assert.equal(stats.lines, 3);
+  assert.equal(stats.chars, content.length);
+  // Hello(1) + world(1) + 8 CJK chars + Third(1) + line(1) = 12
+  assert.equal(stats.words, 12);
+});
+
+test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
+  const base = "Hello world";
+  // bold on 'world' (start 6, end 11)
+  const boldRes = wrapMarkdownSyntax(base, 6, 11, "bold");
+  assert.equal(boldRes.text, "Hello **world**");
+
+  // insert table when no selection (start 0, end 0)
+  const tableRes = wrapMarkdownSyntax("", 0, 0, "table");
+  assert.ok(tableRes.text.includes("| 列 1 | 列 2 | 列 3 |"));
+});
+
 

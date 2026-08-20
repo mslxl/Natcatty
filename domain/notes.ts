@@ -612,3 +612,213 @@ export const filterAndSortVaultNotes = (
     }
   });
 };
+
+export interface NoteStats {
+  words: number;
+  chars: number;
+  lines: number;
+}
+
+export const calculateNoteStats = (content: string): NoteStats => {
+  if (!content) return { words: 0, chars: 0, lines: 0 };
+  const lines = content.split("\n").length;
+  const chars = content.length;
+  const cjkMatches = content.match(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g);
+  const cjkChars = cjkMatches ? cjkMatches.length : 0;
+  const nonCjkWords = content
+    .replace(/[\u4e00-\u9fa5\u3040-\u30ff\uac00-\ud7af]/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const words = cjkChars + nonCjkWords;
+  return { words, chars, lines };
+};
+
+export type MarkdownActionType =
+  | "bold"
+  | "italic"
+  | "strikethrough"
+  | "underline"
+  | "code"
+  | "codeblock"
+  | "h1"
+  | "h2"
+  | "h3"
+  | "h4"
+  | "quote"
+  | "bullet"
+  | "number"
+  | "task"
+  | "table"
+  | "divider"
+  | "link"
+  | "image";
+
+export interface WrapMarkdownResult {
+  text: string;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
+export const wrapMarkdownSyntax = (
+  text: string,
+  start: number,
+  end: number,
+  action: MarkdownActionType,
+): WrapMarkdownResult => {
+  const before = text.slice(0, start);
+  const selected = text.slice(start, end);
+  const after = text.slice(end);
+
+  switch (action) {
+    case "bold": {
+      const content = selected || "粗体文字";
+      return {
+        text: `${before}**${content}**${after}`,
+        selectionStart: start + 2,
+        selectionEnd: start + 2 + content.length,
+      };
+    }
+    case "italic": {
+      const content = selected || "斜体文字";
+      return {
+        text: `${before}*${content}*${after}`,
+        selectionStart: start + 1,
+        selectionEnd: start + 1 + content.length,
+      };
+    }
+    case "strikethrough": {
+      const content = selected || "删除线文字";
+      return {
+        text: `${before}~~${content}~~${after}`,
+        selectionStart: start + 2,
+        selectionEnd: start + 2 + content.length,
+      };
+    }
+    case "underline": {
+      const content = selected || "下划线文字";
+      return {
+        text: `${before}<u>${content}</u>${after}`,
+        selectionStart: start + 3,
+        selectionEnd: start + 3 + content.length,
+      };
+    }
+    case "code": {
+      const content = selected || "代码";
+      return {
+        text: `${before}\`${content}\`${after}`,
+        selectionStart: start + 1,
+        selectionEnd: start + 1 + content.length,
+      };
+    }
+    case "codeblock": {
+      const content = selected || "console.log(\"hello\");";
+      const insert = `\n\`\`\`javascript\n${content}\n\`\`\`\n`;
+      return {
+        text: `${before}${insert}${after}`,
+        selectionStart: start + 15,
+        selectionEnd: start + 15 + content.length,
+      };
+    }
+    case "h1": {
+      const content = selected || "一级标题";
+      return {
+        text: `${before}\n# ${content}\n${after}`,
+        selectionStart: start + 3,
+        selectionEnd: start + 3 + content.length,
+      };
+    }
+    case "h2": {
+      const content = selected || "二级标题";
+      return {
+        text: `${before}\n## ${content}\n${after}`,
+        selectionStart: start + 4,
+        selectionEnd: start + 4 + content.length,
+      };
+    }
+    case "h3": {
+      const content = selected || "三级标题";
+      return {
+        text: `${before}\n### ${content}\n${after}`,
+        selectionStart: start + 5,
+        selectionEnd: start + 5 + content.length,
+      };
+    }
+    case "h4": {
+      const content = selected || "四级标题";
+      return {
+        text: `${before}\n#### ${content}\n${after}`,
+        selectionStart: start + 6,
+        selectionEnd: start + 6 + content.length,
+      };
+    }
+    case "quote": {
+      const content = selected || "引用文本";
+      return {
+        text: `${before}\n> ${content}\n${after}`,
+        selectionStart: start + 3,
+        selectionEnd: start + 3 + content.length,
+      };
+    }
+    case "bullet": {
+      const content = selected || "列表项";
+      return {
+        text: `${before}\n- ${content}\n${after}`,
+        selectionStart: start + 3,
+        selectionEnd: start + 3 + content.length,
+      };
+    }
+    case "number": {
+      const content = selected || "列表项";
+      return {
+        text: `${before}\n1. ${content}\n${after}`,
+        selectionStart: start + 4,
+        selectionEnd: start + 4 + content.length,
+      };
+    }
+    case "task": {
+      const content = selected || "待办任务";
+      return {
+        text: `${before}\n- [ ] ${content}\n${after}`,
+        selectionStart: start + 7,
+        selectionEnd: start + 7 + content.length,
+      };
+    }
+    case "divider": {
+      const insert = `\n---\n`;
+      return {
+        text: `${before}${insert}${after}`,
+        selectionStart: start + insert.length,
+        selectionEnd: start + insert.length,
+      };
+    }
+    case "table": {
+      const tableMarkdown = `\n| 列 1 | 列 2 | 列 3 |\n| :--- | :--- | :--- |\n| 单元格 1 | 单元格 2 | 单元格 3 |\n`;
+      return {
+        text: `${before}${tableMarkdown}${after}`,
+        selectionStart: start + tableMarkdown.length,
+        selectionEnd: start + tableMarkdown.length,
+      };
+    }
+    case "link": {
+      const title = selected || "链接文本";
+      const insert = `[${title}](https://)`;
+      return {
+        text: `${before}${insert}${after}`,
+        selectionStart: start + title.length + 3,
+        selectionEnd: start + title.length + 11,
+      };
+    }
+    case "image": {
+      const alt = selected || "图片描述";
+      const insert = `![${alt}](https://)`;
+      return {
+        text: `${before}${insert}${after}`,
+        selectionStart: start + alt.length + 4,
+        selectionEnd: start + alt.length + 12,
+      };
+    }
+    default:
+      return { text, selectionStart: start, selectionEnd: end };
+  }
+};

@@ -26,6 +26,8 @@ import { useStoredNumber } from "../../application/state/useStoredNumber";
 import { useStoredString } from "../../application/state/useStoredString";
 import { NoteOutline } from "./NoteOutline";
 import { NoteExportMenu } from "./NoteExportMenu";
+import { NoteToolbar } from "./NoteToolbar";
+import type { NoteSourceEditorHandle } from "./NoteSourceEditor";
 import {
   ancestorNoteGroupPaths,
   buildVaultNoteMarkdownExportFiles,
@@ -41,7 +43,9 @@ import {
   replaceNoteGroupPrefix,
   resolveMovedNoteGroupPath,
   sanitizeNoteExportFileNamePart,
+  type MarkdownActionType,
   type VaultNotesExportScope,
+  wrapMarkdownSyntax,
 } from "../../domain/notes";
 import { getNextVaultOrder, reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from "../../domain/vaultOrder";
 import {
@@ -117,7 +121,7 @@ export function clampNotesTreeWidth(value: number): number {
 }
 
 export const normalizeNoteEditorMode = (value: string | null): NoteEditorMode | null =>
-  value === "edit" || value === "preview" ? value : null;
+  value === "edit" || value === "preview" || value === "source" || value === "live" ? value : null;
 
 const isNoteEditorMode = (value: string | null): value is NoteEditorMode =>
   normalizeNoteEditorMode(value) !== null;
@@ -704,9 +708,24 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     onOpenHost?.(host, { noteId });
   }, [onOpenHost]);
 
+  const sourceEditorRef = useRef<NoteSourceEditorHandle>(null);
+
+  const handleToolbarAction = useCallback((action: MarkdownActionType) => {
+    if (noteEditorMode === "source") {
+      sourceEditorRef.current?.insertAction(action);
+    } else {
+      const activeNote = selectedNoteView || overlayNoteView;
+      if (!activeNote) return;
+      const current = activeNote.content;
+      const result = wrapMarkdownSyntax(current, current.length, current.length, action);
+      saveNoteContentDraft(activeNote.id, result.text);
+    }
+  }, [noteEditorMode, selectedNoteView, overlayNoteView, saveNoteContentDraft]);
+
   const renderNoteModeToggle = () => {
-    const label = noteEditorMode === "edit" ? t("notes.mode.preview") : t("notes.mode.edit");
-    const Icon = noteEditorMode === "edit" ? Glasses : PencilLine;
+    const isEditMode = noteEditorMode === "edit" || noteEditorMode === "live";
+    const label = isEditMode ? t("notes.mode.preview") : t("notes.mode.edit");
+    const Icon = isEditMode ? Glasses : PencilLine;
 
     return (
       <Tooltip>
@@ -721,7 +740,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             onClick={() => {
               flushNoteDraft();
               setNoteEditorMode((currentMode) => (
-                currentMode === "edit" ? "preview" : "edit"
+                currentMode === "edit" || currentMode === "live" ? "preview" : "edit"
               ));
             }}
           >
@@ -1931,6 +1950,19 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 )}
               </div>
 
+              {/* Cherry Studio Style Note Toolbar */}
+              <NoteToolbar
+                content={selectedNoteView.content}
+                editorMode={noteEditorMode}
+                onChangeMode={(mode) => {
+                  flushNoteDraft();
+                  setNoteEditorMode(mode);
+                }}
+                onAction={handleToolbarAction}
+                showOutline={showOutline}
+                onToggleOutline={() => setShowOutline((prev) => !prev)}
+              />
+
               <div className="flex flex-1 min-h-0 min-w-0">
                 <ScrollArea className="min-h-0 flex-1">
                   <div
@@ -1953,6 +1985,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                           hosts={hosts}
                           onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                           onOpenExternalLink={openExternal}
+                          sourceEditorRef={sourceEditorRef}
                         />
                       </Suspense>
                     </LazyLoadBoundary>
@@ -2057,6 +2090,18 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               {renderNoteExportButton(overlayNoteView)}
               {renderNoteModeToggle()}
             </div>
+
+            {/* Note Toolbar in Overlay */}
+            <NoteToolbar
+              content={overlayNoteView.content}
+              editorMode={noteEditorMode}
+              onChangeMode={(mode) => {
+                flushNoteDraft();
+                setNoteEditorMode(mode);
+              }}
+              onAction={handleToolbarAction}
+            />
+
             <ScrollArea className="min-h-0 flex-1">
               <div
                 className="min-h-full w-full px-4 pt-2 pb-6"
@@ -2078,6 +2123,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       hosts={hosts}
                       onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
                       onOpenExternalLink={openExternal}
+                      sourceEditorRef={sourceEditorRef}
                     />
                   </Suspense>
                 </LazyLoadBoundary>
