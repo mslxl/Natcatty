@@ -3,6 +3,7 @@ import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import type { SftpStateApi } from "../../application/state/useSftpState.ts";
+import type { HotkeyScheme, KeyBinding } from "../../domain/models/keyBindings.ts";
 
 test("Ctrl+F opens and refocuses the active SFTP pane filter without handling inactive panes", async () => {
   const dom = new JSDOM(
@@ -78,7 +79,15 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
     transferMutationToken: 0,
   };
 
-  const Harness = ({ isActive }: { isActive: boolean }) => {
+  const Harness = ({
+    isActive,
+    hotkeyScheme = "pc",
+    keyBindings = DEFAULT_KEY_BINDINGS,
+  }: {
+    isActive: boolean;
+    hotkeyScheme?: HotkeyScheme;
+    keyBindings?: KeyBinding[];
+  }) => {
     const [showFilterBar, setShowFilterBar] = React.useState(false);
     const filterInputRef = React.useRef<HTMLInputElement>(null);
     const sftpRef = React.useRef({
@@ -87,8 +96,8 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
     } as unknown as SftpStateApi);
 
     useSftpKeyboardShortcuts({
-      keyBindings: DEFAULT_KEY_BINDINGS,
-      hotkeyScheme: "pc",
+      keyBindings,
+      hotkeyScheme,
       sftpRef,
       dialogActionScopeId: "test-scope",
       isActive,
@@ -153,18 +162,27 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
   const rootNode = window.document.getElementById("root");
   assert.ok(rootNode);
   const root = createRoot(rootNode);
-  const pressCtrlF = async (target: Element) => {
+  const pressShortcut = async (
+    target: Element,
+    init: Pick<KeyboardEventInit, "key" | "code" | "ctrlKey" | "metaKey">,
+  ) => {
+    const event = new window.KeyboardEvent("keydown", {
+      ...init,
+      bubbles: true,
+      cancelable: true,
+    });
     await act(async () => {
-      target.dispatchEvent(new window.KeyboardEvent("keydown", {
-        key: "f",
-        code: "KeyF",
-        ctrlKey: true,
-        bubbles: true,
-        cancelable: true,
-      }));
+      target.dispatchEvent(event);
       await new Promise((resolve) => window.setTimeout(resolve, 0));
     });
+    return event;
   };
+  const pressCtrlF = (target: Element) => pressShortcut(target, {
+    key: "f",
+    code: "KeyF",
+    ctrlKey: true,
+    metaKey: false,
+  });
 
   try {
     sftpFocusStore.setFocusedSide("left");
@@ -173,7 +191,8 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
     const sftpTarget = window.document.getElementById("sftp-focus-target");
     assert.ok(sftpTarget);
     sftpTarget.focus();
-    await pressCtrlF(sftpTarget);
+    const activeSftpEvent = await pressCtrlF(sftpTarget);
+    assert.equal(activeSftpEvent.defaultPrevented, true, "active SFTP should consume its search shortcut");
 
     const filterInput = window.document.querySelector<HTMLInputElement>(
       '[data-section="terminal-sftp-filter-bar"] input',
@@ -218,12 +237,65 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
     const terminalTarget = window.document.getElementById("terminal-focus");
     assert.ok(terminalTarget);
     terminalTarget.focus();
-    await pressCtrlF(terminalTarget);
+    let terminalReceiverCalled = false;
+    let terminalReceiverSawPrevented = false;
+    const terminalReceiver = (event: KeyboardEvent) => {
+      terminalReceiverCalled = true;
+      terminalReceiverSawPrevented = event.defaultPrevented;
+    };
+    window.addEventListener("keydown", terminalReceiver);
+    const inactiveSftpEvent = await pressCtrlF(terminalTarget);
+    window.removeEventListener("keydown", terminalReceiver);
     assert.equal(
       window.document.querySelector('[data-section="terminal-sftp-filter-bar"]'),
       null,
       "an inactive SFTP pane must not consume terminal Ctrl+F",
     );
+    assert.equal(inactiveSftpEvent.defaultPrevented, false, "inactive SFTP must not prevent terminal Ctrl+F");
+    assert.equal(terminalReceiverCalled, true, "terminal listeners should still receive Ctrl+F");
+    assert.equal(terminalReceiverSawPrevented, false, "terminal listeners should receive an unhandled Ctrl+F");
+
+    const customKeyBindings = DEFAULT_KEY_BINDINGS.map((binding) => (
+      binding.action === "searchTerminal" ? { ...binding, pc: "Ctrl + G" } : binding
+    ));
+    await act(async () => root.render(React.createElement(Harness, {
+      isActive: true,
+      keyBindings: customKeyBindings,
+    })));
+    sftpTarget.focus();
+    assert.equal((await pressCtrlF(sftpTarget)).defaultPrevented, false);
+    assert.equal(window.document.querySelector('[data-section="terminal-sftp-filter-bar"]'), null);
+    assert.equal((await pressShortcut(sftpTarget, {
+      key: "g",
+      code: "KeyG",
+      ctrlKey: true,
+      metaKey: false,
+    })).defaultPrevented, true, "the configured PC search shortcut should open the filter");
+    assert.ok(window.document.querySelector('[data-section="terminal-sftp-filter-bar"]'));
+
+    await act(async () => root.render(React.createElement(Harness, {
+      isActive: true,
+      hotkeyScheme: "disabled",
+    })));
+    const disabledCloseButton = window.document.querySelector<HTMLButtonElement>(
+      '[data-section="terminal-sftp-filter-bar"] button',
+    );
+    assert.ok(disabledCloseButton);
+    await act(async () => disabledCloseButton.click());
+    assert.equal((await pressCtrlF(sftpTarget)).defaultPrevented, false);
+    assert.equal(window.document.querySelector('[data-section="terminal-sftp-filter-bar"]'), null);
+
+    await act(async () => root.render(React.createElement(Harness, {
+      isActive: true,
+      hotkeyScheme: "mac",
+    })));
+    assert.equal((await pressShortcut(sftpTarget, {
+      key: "f",
+      code: "KeyF",
+      ctrlKey: false,
+      metaKey: true,
+    })).defaultPrevented, true, "the configured Mac search shortcut should open the filter");
+    assert.ok(window.document.querySelector('[data-section="terminal-sftp-filter-bar"]'));
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
