@@ -38,6 +38,7 @@ export const sanitizeVaultNote = (note: Partial<VaultNote>): VaultNote => {
     createdAt,
     updatedAt,
     order: typeof note.order === "number" && Number.isFinite(note.order) ? note.order : undefined,
+    isPinned: note.isPinned ? true : undefined,
   };
 };
 
@@ -461,4 +462,153 @@ export const importMarkdownFilesToVaultNotes = async (
     importedCount,
     skippedCount,
   };
+};
+
+export interface NoteHeadingItem {
+  id: string;
+  level: number;
+  text: string;
+  line: number;
+}
+
+export const extractNoteHeadings = (content: string): NoteHeadingItem[] => {
+  if (!content) return [];
+  const lines = content.split("\n");
+  const headings: NoteHeadingItem[] = [];
+  let inCodeBlock = false;
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.trim().startsWith("```")) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) continue;
+
+    const match = /^(#{1,6})\s+(.+)$/.exec(line.trim());
+    if (match) {
+      const level = match[1].length;
+      const text = match[2].trim();
+      headings.push({
+        id: `heading-${i}-${text.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, "-")}`,
+        level,
+        text,
+        line: i + 1,
+      });
+    }
+  }
+  return headings;
+};
+
+export const extractNoteSnippet = (content: string, maxLength = 100): string => {
+  if (!content) return "";
+  let text = content.replace(/```[\s\S]*?```/g, " ");
+  text = text.replace(/`([^`]+)`/g, "$1");
+  text = text.replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1");
+  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1");
+  text = text.replace(/^#{1,6}\s+/gm, "");
+  text = text.replace(/^>\s+/gm, "");
+  text = text.replace(/^[-*+]\s+(\[[ xX]\]\s+)?/gm, "");
+  text = text.replace(/^\d+\.\s+/gm, "");
+  text = text.replace(/\s+/g, " ").trim();
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trim()}...`;
+};
+
+export const extractAllNoteTags = (notes: VaultNote[]): { tag: string; count: number }[] => {
+  const map = new Map<string, number>();
+  for (const note of notes) {
+    if (note.tags) {
+      for (const t of note.tags) {
+        const clean = t.trim();
+        if (clean) {
+          map.set(clean, (map.get(clean) || 0) + 1);
+        }
+      }
+    }
+  }
+  return Array.from(map.entries())
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+};
+
+export type NoteSortOption =
+  | "updatedDesc"
+  | "updatedAsc"
+  | "createdDesc"
+  | "createdAsc"
+  | "titleAsc"
+  | "titleDesc"
+  | "custom";
+
+export type NoteFilterMode = "all" | "pinned" | "recent" | "uncategorized";
+
+export const filterAndSortVaultNotes = (
+  notes: VaultNote[],
+  options: {
+    search?: string;
+    group?: string | null;
+    tag?: string | null;
+    filterMode?: NoteFilterMode;
+    sort?: NoteSortOption;
+    hosts?: Host[];
+  } = {},
+): VaultNote[] => {
+  const {
+    search = "",
+    group = null,
+    tag = null,
+    filterMode = "all",
+    sort = "updatedDesc",
+    hosts = [],
+  } = options;
+
+  const filtered = notes.filter((note) => {
+    if (filterMode === "pinned" && !note.isPinned) return false;
+    if (filterMode === "uncategorized" && note.group) return false;
+    if (filterMode === "recent") {
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      if (note.updatedAt < sevenDaysAgo) return false;
+    }
+
+    if (group) {
+      if (!note.group || !isNoteGroupInside(note.group, group)) return false;
+    }
+
+    if (tag) {
+      if (!note.tags || !note.tags.includes(tag)) return false;
+    }
+
+    if (search.trim() && !matchesVaultNoteSearch(note, search, hosts)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return [...filtered].sort((a, b) => {
+    if (sort !== "custom") {
+      if (a.isPinned !== b.isPinned) {
+        return a.isPinned ? -1 : 1;
+      }
+    }
+
+    switch (sort) {
+      case "updatedDesc":
+        return b.updatedAt - a.updatedAt;
+      case "updatedAsc":
+        return a.updatedAt - b.updatedAt;
+      case "createdDesc":
+        return b.createdAt - a.createdAt;
+      case "createdAsc":
+        return a.createdAt - b.createdAt;
+      case "titleAsc":
+        return (a.title || "").localeCompare(b.title || "");
+      case "titleDesc":
+        return (b.title || "").localeCompare(a.title || "");
+      case "custom":
+      default:
+        return (a.order ?? 0) - (b.order ?? 0);
+    }
+  });
 };

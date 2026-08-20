@@ -4,6 +4,10 @@ import {
   buildVaultNoteMarkdownExportFiles,
   buildVaultNoteFromMarkdownImport,
   deriveNoteImportTitle,
+  extractAllNoteTags,
+  extractNoteHeadings,
+  extractNoteSnippet,
+  filterAndSortVaultNotes,
   getVaultNotesForExportScope,
   importMarkdownFilesToVaultNotes,
   importMarkdownPayloadsToVaultNotes,
@@ -275,3 +279,70 @@ test("importMarkdownFilesToVaultNotes appends notes and skips unsupported files"
   assert.equal(result.notes[1].title, "Imported");
   assert.equal(result.notes[1].group, "Ops");
 });
+
+test("extractNoteHeadings extracts markdown headings ignoring code blocks", () => {
+  const content = `# Title 1
+Some intro text
+\`\`\`ts
+# Not a heading
+\`\`\`
+## Subtitle 1.1
+### Deep section
+`;
+  const headings = extractNoteHeadings(content);
+  assert.equal(headings.length, 3);
+  assert.equal(headings[0].text, "Title 1");
+  assert.equal(headings[0].level, 1);
+  assert.equal(headings[1].text, "Subtitle 1.1");
+  assert.equal(headings[1].level, 2);
+  assert.equal(headings[2].text, "Deep section");
+  assert.equal(headings[2].level, 3);
+});
+
+test("extractNoteSnippet extracts clean plain text from markdown", () => {
+  const content = `# Title
+Here is **bold** text and [a link](https://example.com) and \`code\`.
+- [x] Task 1
+> quote text
+`;
+  const snippet = extractNoteSnippet(content, 50);
+  assert.ok(!snippet.includes("#"));
+  assert.ok(!snippet.includes("[a link]"));
+  assert.ok(snippet.includes("bold"));
+  assert.ok(snippet.includes("Task 1"));
+});
+
+test("extractAllNoteTags aggregates and sorts tags by frequency", () => {
+  const notes = [
+    sanitizeVaultNote({ tags: ["dev", "prod"] }),
+    sanitizeVaultNote({ tags: ["dev", "staging"] }),
+    sanitizeVaultNote({ tags: ["dev"] }),
+  ];
+  const tags = extractAllNoteTags(notes);
+  assert.equal(tags[0].tag, "dev");
+  assert.equal(tags[0].count, 3);
+});
+
+test("filterAndSortVaultNotes filters by pinned, tags, group and sorts accordingly", () => {
+  const notes = [
+    sanitizeVaultNote({ id: "1", title: "B Note", isPinned: false, updatedAt: 100, tags: ["ssh"] }),
+    sanitizeVaultNote({ id: "2", title: "A Note", isPinned: true, updatedAt: 50, tags: ["ssh"] }),
+    sanitizeVaultNote({ id: "3", title: "C Note", isPinned: false, updatedAt: 200, group: "Ops" }),
+  ];
+
+  // Pinned first
+  const sorted = filterAndSortVaultNotes(notes, { sort: "updatedDesc" });
+  assert.equal(sorted[0].id, "2"); // Pinned note first
+  assert.equal(sorted[1].id, "3"); // 200 updatedAt
+  assert.equal(sorted[2].id, "1"); // 100 updatedAt
+
+  // Filter pinned only
+  const pinnedOnly = filterAndSortVaultNotes(notes, { filterMode: "pinned" });
+  assert.equal(pinnedOnly.length, 1);
+  assert.equal(pinnedOnly[0].id, "2");
+
+  // Filter by tag
+  const tagFiltered = filterAndSortVaultNotes(notes, { tag: "ssh" });
+  assert.equal(tagFiltered.length, 2);
+});
+

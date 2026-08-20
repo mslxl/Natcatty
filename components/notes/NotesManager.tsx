@@ -7,11 +7,15 @@ import {
   Folder,
   FolderPlus,
   Glasses,
+  Hash,
+  ListTree,
   MoreHorizontal,
   Minimize2,
   PencilLine,
+  Pin,
   Plus,
   Search,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -20,6 +24,8 @@ import { useI18n } from "../../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../../application/state/useApplicationBackend";
 import { useStoredNumber } from "../../application/state/useStoredNumber";
 import { useStoredString } from "../../application/state/useStoredString";
+import { NoteOutline } from "./NoteOutline";
+import { NoteExportMenu } from "./NoteExportMenu";
 import {
   ancestorNoteGroupPaths,
   buildVaultNoteMarkdownExportFiles,
@@ -388,6 +394,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     id: string;
     name: string;
   } | null>(null);
+  const [showOutline, setShowOutline] = useState(false);
+  const [tagInputOpen, setTagInputOpen] = useState(false);
+  const [newTagText, setNewTagText] = useState("");
   const [treeWidth, setTreeWidth, persistTreeWidth] = useStoredNumber(
     STORAGE_KEY_VAULT_NOTES_TREE_WIDTH,
     NOTES_TREE_DEFAULT_WIDTH,
@@ -417,6 +426,34 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     onUpdateNotes(cleaned);
     return cleaned;
   }, [onUpdateNotes]);
+
+  const togglePinNoteById = useCallback((noteId: string) => {
+    commitNotes(sortedNotesRef.current.map((n) => {
+      if (n.id !== noteId) return n;
+      const isPinned = !n.isPinned;
+      return { ...n, isPinned: isPinned ? true : undefined, updatedAt: Date.now() };
+    }));
+  }, [commitNotes]);
+
+  const addTagToNote = useCallback((noteId: string, tag: string) => {
+    const clean = tag.trim();
+    if (!clean) return;
+    commitNotes(sortedNotesRef.current.map((n) => {
+      if (n.id !== noteId) return n;
+      const existing = n.tags ?? [];
+      if (existing.includes(clean)) return n;
+      return { ...n, tags: [...existing, clean], updatedAt: Date.now() };
+    }));
+  }, [commitNotes]);
+
+  const removeTagFromNote = useCallback((noteId: string, tagToRemove: string) => {
+    commitNotes(sortedNotesRef.current.map((n) => {
+      if (n.id !== noteId) return n;
+      const existing = n.tags ?? [];
+      const nextTags = existing.filter((t) => t !== tagToRemove);
+      return { ...n, tags: nextTags.length ? nextTags : undefined, updatedAt: Date.now() };
+    }));
+  }, [commitNotes]);
 
   const NOTE_DRAFT_DEBOUNCE_MS = 300;
   const draftNoteIdRef = useRef<string | null>(null);
@@ -1125,6 +1162,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const renderNoteActions = (note: VaultNote, mode: "dropdown" | "context", closeMenu?: () => void) => {
     const actions = [
       {
+        label: note.isPinned ? "取消置顶" : "置顶笔记",
+        action: () => togglePinNoteById(note.id),
+      },
+      {
         label: t("common.rename"),
         action: () => setEditingNoteId(note.id),
       },
@@ -1742,7 +1783,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         >
           {selectedNoteView ? (
             <>
-              <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-8 pt-6 pb-1" data-note-title-row>
+              <div className="flex min-h-[54px] shrink-0 items-center gap-2 px-8 pt-6 pb-1" data-note-title-row>
                 <div className="min-w-0 flex-1">
                   <NoteTitleInput
                     noteId={selectedNoteView.id}
@@ -1754,35 +1795,179 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     onBlur={() => flushNoteDraft()}
                   />
                 </div>
+
+                {/* Pin Toggle */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={selectedNoteView.isPinned ? "取消置顶" : "置顶笔记"}
+                      className={cn(
+                        "app-no-drag h-8 w-8 shrink-0 rounded-md p-0 transition-colors hover:bg-secondary/70",
+                        selectedNoteView.isPinned ? "text-amber-500" : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => togglePinNoteById(selectedNoteView.id)}
+                    >
+                      <Pin size={16} className={selectedNoteView.isPinned ? "fill-amber-500" : ""} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {selectedNoteView.isPinned ? "取消置顶" : "置顶笔记"}
+                  </TooltipContent>
+                </Tooltip>
+
+                {/* Outline Toggle */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label="大纲目录"
+                      className={cn(
+                        "app-no-drag h-8 w-8 shrink-0 rounded-md p-0 transition-colors hover:bg-secondary/70",
+                        showOutline ? "bg-secondary text-primary font-medium" : "text-muted-foreground hover:text-foreground",
+                      )}
+                      onClick={() => setShowOutline((prev) => !prev)}
+                    >
+                      <ListTree size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">大纲目录</TooltipContent>
+                </Tooltip>
+
+                {/* Export Menu */}
+                <NoteExportMenu note={selectedNoteView} allNotes={sortedNotes} />
                 {renderNoteExportButton(selectedNoteView)}
                 {renderNoteModeToggle()}
+
+                {/* Delete Note */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={t("action.delete")}
+                      className="app-no-drag h-8 w-8 shrink-0 rounded-md p-0 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => requestDeleteNoteById(selectedNoteView.id)}
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t("action.delete")}</TooltipContent>
+                </Tooltip>
               </div>
-              <ScrollArea className="min-h-0 flex-1">
-                <div
-                  className="min-h-full w-full px-8 pt-2 pb-6"
-                  onBlur={(event) => {
-                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-                      flushNoteDraft();
-                    }
-                  }}
-                >
-                  <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
-                    <Suspense fallback={<InlineMarkdownEditorFallback />}>
-                      <InlineMarkdownEditor
-                        noteId={selectedNoteView.id}
-                        value={selectedNoteView.content}
-                        placeholder={t("notes.editor.placeholder")}
-                        editorMode={noteEditorMode}
-                        previewEmptyLabel={t("notes.preview.empty")}
-                        onChange={(content) => saveNoteContentDraft(selectedNoteView.id, content)}
-                        hosts={hosts}
-                        onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
-                        onOpenExternalLink={openExternal}
-                      />
-                    </Suspense>
-                  </LazyLoadBoundary>
-                </div>
-              </ScrollArea>
+
+              {/* Tags & Folder Breadcrumb Header */}
+              <div className="flex flex-wrap items-center gap-1.5 px-8 pb-2 text-xs text-muted-foreground">
+                {selectedNoteView.group && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-muted/70 rounded-md text-[11px] text-foreground font-medium">
+                    <Folder size={12} className="text-amber-500" />
+                    <span>{selectedNoteView.group}</span>
+                  </span>
+                )}
+
+                {selectedNoteView.tags?.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-md text-[11px] font-medium"
+                  >
+                    <Hash size={11} className="opacity-70" />
+                    <span>{tag}</span>
+                    <button
+                      type="button"
+                      className="p-0.5 rounded-full hover:bg-primary/20 text-primary/70 hover:text-primary transition-colors"
+                      onClick={() => removeTagFromNote(selectedNoteView.id, tag)}
+                      title="移除标签"
+                    >
+                      <X size={10} />
+                    </button>
+                  </span>
+                ))}
+
+                {tagInputOpen ? (
+                  <div className="inline-flex items-center gap-1 bg-background border border-primary/60 rounded-md px-1.5 py-0.5">
+                    <Hash size={11} className="text-muted-foreground" />
+                    <input
+                      type="text"
+                      autoFocus
+                      value={newTagText}
+                      onChange={(e) => setNewTagText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          if (newTagText.trim()) {
+                            addTagToNote(selectedNoteView.id, newTagText.trim());
+                            setNewTagText("");
+                            setTagInputOpen(false);
+                          }
+                        } else if (e.key === "Escape") {
+                          setTagInputOpen(false);
+                          setNewTagText("");
+                        }
+                      }}
+                      onBlur={() => {
+                        if (newTagText.trim()) {
+                          addTagToNote(selectedNoteView.id, newTagText.trim());
+                        }
+                        setTagInputOpen(false);
+                        setNewTagText("");
+                      }}
+                      placeholder="标签名..."
+                      className="w-20 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60"
+                    />
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-muted text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                    onClick={() => setTagInputOpen(true)}
+                  >
+                    <Plus size={11} />
+                    <span>添加标签</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex flex-1 min-h-0 min-w-0">
+                <ScrollArea className="min-h-0 flex-1">
+                  <div
+                    className="min-h-full w-full px-8 pt-2 pb-6"
+                    onBlur={(event) => {
+                      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        flushNoteDraft();
+                      }
+                    }}
+                  >
+                    <LazyLoadBoundary name="Notes editor" resetKey="notes-editor">
+                      <Suspense fallback={<InlineMarkdownEditorFallback />}>
+                        <InlineMarkdownEditor
+                          noteId={selectedNoteView.id}
+                          value={selectedNoteView.content}
+                          placeholder={t("notes.editor.placeholder")}
+                          editorMode={noteEditorMode}
+                          previewEmptyLabel={t("notes.preview.empty")}
+                          onChange={(content) => saveNoteContentDraft(selectedNoteView.id, content)}
+                          hosts={hosts}
+                          onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
+                          onOpenExternalLink={openExternal}
+                        />
+                      </Suspense>
+                    </LazyLoadBoundary>
+                  </div>
+                </ScrollArea>
+
+                {showOutline && (
+                  <div className="w-60 shrink-0 h-full">
+                    <NoteOutline
+                      content={selectedNoteView.content}
+                      onClose={() => setShowOutline(false)}
+                    />
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <div className="flex flex-1 items-center justify-center px-4">
@@ -1833,7 +2018,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
             </div>
           </div>
           <div className="flex min-h-0 flex-1 flex-col bg-background">
-            <div className="flex min-h-[54px] shrink-0 items-center gap-3 px-4 pt-5 pb-1" data-note-title-row>
+            <div className="flex min-h-[54px] shrink-0 items-center gap-2 px-4 pt-5 pb-1" data-note-title-row>
               <div className="min-w-0 flex-1">
                 <NoteTitleInput
                   noteId={overlayNoteView.id}
@@ -1845,6 +2030,30 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   onBlur={() => flushNoteDraft()}
                 />
               </div>
+
+              {/* Pin Toggle */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={overlayNoteView.isPinned ? "取消置顶" : "置顶笔记"}
+                    className={cn(
+                      "app-no-drag h-8 w-8 shrink-0 rounded-md p-0 transition-colors hover:bg-secondary/70",
+                      overlayNoteView.isPinned ? "text-amber-500" : "text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => togglePinNoteById(overlayNoteView.id)}
+                  >
+                    <Pin size={16} className={overlayNoteView.isPinned ? "fill-amber-500" : ""} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {overlayNoteView.isPinned ? "取消置顶" : "置顶笔记"}
+                </TooltipContent>
+              </Tooltip>
+
+              <NoteExportMenu note={overlayNoteView} allNotes={sortedNotes} />
               {renderNoteExportButton(overlayNoteView)}
               {renderNoteModeToggle()}
             </div>

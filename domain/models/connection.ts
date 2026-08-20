@@ -380,6 +380,7 @@ export interface VaultNote {
   createdAt: number;
   updatedAt: number;
   order?: number;
+  isPinned?: boolean;
 }
 
 export interface ChatMessage {
