@@ -547,11 +547,7 @@ export const useSftpKeyboardShortcuts = ({
       // even if the user has disabled global/custom hotkeys.
       if (!isActive) return;
 
-      // Skip if focus is on an input element
       const target = e.target as HTMLElement;
-      if (isEditableShortcutTarget(target)) {
-        return;
-      }
 
       // Skip when a dialog or overlay is open to prevent SFTP shortcuts from
       // firing while interacting with unrelated dialogs (e.g. settings, confirm).
@@ -572,6 +568,11 @@ export const useSftpKeyboardShortcuts = ({
           sftpFilterFocusStore.request(pane.id);
           return;
         }
+      }
+
+      // Skip the remaining SFTP shortcuts when focus is on an input element.
+      if (isEditableShortcutTarget(target)) {
+        return;
       }
 
       // ── Printable keys: select the first visible name with this prefix ──

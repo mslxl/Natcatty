@@ -107,6 +107,7 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
       React.Fragment,
       null,
       React.createElement("button", { id: "sftp-focus-target" }, "files"),
+      React.createElement("input", { id: "sftp-path-input", defaultValue: "/home/app" }),
       React.createElement(SftpPaneToolbar, {
         t: (key: string) => ({
           "sftp.filter": "Filter files",
@@ -200,6 +201,9 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
     assert.ok(filterInput, "Ctrl+F should open the SFTP filter bar");
     assert.equal(window.document.activeElement, filterInput, "Ctrl+F should focus the SFTP filter input");
 
+    assert.equal((await pressCtrlF(filterInput)).defaultPrevented, true);
+    assert.equal(window.document.activeElement, filterInput, "Ctrl+F in the filter should keep it focused");
+
     sftpTarget.focus();
     await pressCtrlF(sftpTarget);
     assert.equal(window.document.activeElement, filterInput, "repeated Ctrl+F should refocus the open filter");
@@ -215,8 +219,10 @@ test("Ctrl+F opens and refocuses the active SFTP pane filter without handling in
       "the filter should close normally",
     );
 
-    sftpTarget.focus();
-    await pressCtrlF(sftpTarget);
+    const pathInput = window.document.getElementById("sftp-path-input");
+    assert.ok(pathInput);
+    pathInput.focus();
+    assert.equal((await pressCtrlF(pathInput)).defaultPrevented, true);
     const reopenedFilterInput = window.document.querySelector<HTMLInputElement>(
       '[data-section="terminal-sftp-filter-bar"] input',
     );
