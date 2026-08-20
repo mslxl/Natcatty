@@ -39,6 +39,7 @@ import {
   tryBeginSendForKey,
 } from './ai/draftSendGate';
 import { draftsByScopeEqualIgnoringComposerText, selectDraftForAgentSwitch } from '../application/state/aiDraftState';
+import { sanitizeContextWindow } from '../infrastructure/ai/contextCompaction';
 import {
   buildPromptWithTerminalSelectionAttachments,
   isTerminalSelectionAttachment,
@@ -67,6 +68,8 @@ import {
   buildSdkRuntimeModelCacheKey,
   sdkRuntimeModelCache,
   generateId,
+  agentModelPresetsShallowEqual,
+  mergeFallbackThinkingLevels,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
@@ -272,6 +275,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   setAgentModel,
   agentProviderMap,
   setAgentProvider,
+  agentThinkingMap,
+  setAgentThinking,
+  updateProvider,
   globalPermissionMode,
   setGlobalPermissionMode,
   commandBlocklist,
@@ -761,12 +767,26 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     && Boolean(effectiveActiveProvider)
     && Boolean(effectiveActiveModelId.trim());
 
+  const providersRef = useRef(providers);
+  providersRef.current = providers;
+
   const handleAgentProviderModelSelect = useCallback(
-    (providerId: string, modelId: string) => {
+    (providerId: string, modelId: string, contextWindow?: number) => {
       setAgentProvider(currentAgentId, providerId);
       setAgentModel(currentAgentId, modelId);
+      const sanitized = sanitizeContextWindow(contextWindow);
+      if (!updateProvider || sanitized == null) return;
+      const provider = providersRef.current.find((item) => item.id === providerId);
+      if (!provider) return;
+      if (provider.modelContextWindows?.[modelId] === sanitized) return;
+      updateProvider(providerId, {
+        modelContextWindows: {
+          ...(provider.modelContextWindows ?? {}),
+          [modelId]: sanitized,
+        },
+      });
     },
-    [currentAgentId, setAgentProvider, setAgentModel],
+    [currentAgentId, setAgentProvider, setAgentModel, updateProvider],
   );
 
   const providerDisplayName = effectiveActiveProvider?.name ?? '';
@@ -834,12 +854,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     };
   }, []);
 
+  const externalAgentsRef = useRef(externalAgents);
+  externalAgentsRef.current = externalAgents;
+
   const applySdkRuntimeModelCatalog = useCallback((
     agentId: string,
     catalog: SdkRuntimeModelCatalog,
     options: { adoptCurrentModel?: boolean } = {},
   ) => {
-    const runtimePresets = normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId);
+    const agent = externalAgentsRef.current.find((item) => item.id === agentId);
+    const runtimePresets = mergeFallbackThinkingLevels(
+      normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
+      getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
+    );
     const storedModelId = agentModelMapRef.current[agentId];
     if (runtimePresets.length === 0) {
       setRuntimeAgentModelPresets((prev) => {
@@ -848,10 +875,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         return rest;
       });
     } else {
-      setRuntimeAgentModelPresets((prev) => ({
-        ...prev,
-        [agentId]: runtimePresets,
-      }));
+      setRuntimeAgentModelPresets((prev) => (
+        agentModelPresetsShallowEqual(prev[agentId], runtimePresets)
+          ? prev
+          : { ...prev, [agentId]: runtimePresets }
+      ));
     }
 
     const normalizedStoredModelId = normalizeStoredAgentModelSelection(
@@ -1023,6 +1051,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     setAgentModel(currentAgentId, modelId);
   }, [currentAgentId, setAgentModel]);
 
+  const selectedCattyThinking = agentThinkingMap.catty;
+  const handleCattyThinkingSelect = useCallback((level: string) => {
+    setAgentThinking('catty', level);
+  }, [setAgentThinking]);
+
 
   const handleNewChat = useCallback(() => {
     clearScopeDraft();
@@ -1158,7 +1191,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           const catalog = await loadSdkRuntimeModelCatalog(runtimeTarget);
           if (catalog) {
             applySdkRuntimeModelCatalog(runtimeTarget.agentId, catalog, { adoptCurrentModel: true });
-            const runtimePresets = normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId);
+            const runtimePresets = mergeFallbackThinkingLevels(
+              normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
+              getAgentModelPresets(
+                currentAgentConfig.command,
+                getExternalAgentSdkBackend(currentAgentConfig),
+              ),
+            );
             const storedModelId = agentModelMapRef.current[sendAgentId];
             if (
               catalog.currentModelId
@@ -1306,6 +1345,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         await sendToCattyAgent(sessionId, sendScopeKey, modelPrompt, abortController, currentSession ?? undefined, assistantMsgId, {
           activeProvider: sendActiveProvider,
           activeModelId: sendActiveModelId,
+          reasoningEffort: selectedCattyThinking,
           scopeType,
           scopeTargetId,
           scopeLabel,
@@ -1328,7 +1368,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
     }
   }, [
-    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, scopeKey, currentAgentId,
+    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
     activeModelId, externalAgents,
     createSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope,
@@ -1370,6 +1410,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         {
           activeProvider: effectiveActiveProvider,
           activeModelId: effectiveActiveModelId,
+          reasoningEffort: selectedCattyThinking,
           scopeType,
           scopeTargetId,
           scopeLabel,
@@ -1403,6 +1444,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     currentAgentId,
     effectiveActiveModelId,
     effectiveActiveProvider,
+    selectedCattyThinking,
     globalPermissionMode,
     isStreaming,
     scopeKey,
@@ -1655,6 +1697,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         effectiveActiveProvider={effectiveActiveProvider}
         effectiveActiveModelId={effectiveActiveModelId}
         handleAgentProviderModelSelect={handleAgentProviderModelSelect}
+        selectedCattyThinking={selectedCattyThinking}
+        handleCattyThinkingSelect={handleCattyThinkingSelect}
         files={files}
         addFiles={addFiles}
         removeFile={removeFile}
@@ -1712,6 +1756,9 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'setAgentModel',
   'agentProviderMap',
   'setAgentProvider',
+  'agentThinkingMap',
+  'setAgentThinking',
+  'updateProvider',
   'globalPermissionMode',
   'setGlobalPermissionMode',
   'commandBlocklist',

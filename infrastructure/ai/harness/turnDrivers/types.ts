@@ -54,6 +54,7 @@ export interface TurnUiCallbacks {
 export interface CattyTurnContext {
   activeProvider: ProviderConfig | undefined;
   activeModelId: string;
+  reasoningEffort?: string;
   scopeType: 'terminal' | 'workspace';
   scopeTargetId?: string;
   scopeLabel?: string;

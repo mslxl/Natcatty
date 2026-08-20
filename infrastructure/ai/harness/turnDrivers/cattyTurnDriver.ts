@@ -9,6 +9,10 @@ import {
 } from '../../contextCompaction';
 import { buildSystemPrompt } from '../../cattyAgent/systemPrompt';
 import { isWebSearchReady, normalizeCommandTimeoutSeconds } from '../../types';
+import {
+  buildCattyReasoningProviderOptions,
+  estimateReasoningOutputReserve,
+} from '../../cattyReasoning';
 import { createModelFromConfig } from '../../sdk/providers';
 import { createCattyToolsFromCatalog } from '../capabilityTools';
 import { createInitialCattyRuntimeContext } from '../cattyRuntimeContext';
@@ -242,6 +246,16 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       defaultContextWindow: DEFAULT_CONTEXT_WINDOW_TOKENS,
     });
     const maxOutputTokens = context.activeProvider.advancedParams?.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+    const reasoningProviderOptions = buildCattyReasoningProviderOptions(
+      context.activeProvider,
+      context.reasoningEffort,
+      activeModelId,
+    );
+    const reasoningReserveTokens = estimateReasoningOutputReserve(reasoningProviderOptions);
+    // Fold thinking budget into compaction maxOutput only. reservedTokens is
+    // added to estimated input separately, so adding the budget there too
+    // would count the same 10k/20k twice.
+    const compactionMaxOutputTokens = maxOutputTokens + reasoningReserveTokens;
     const providerId = context.activeProvider.providerId;
     const outputReserveTokens = Math.min(maxOutputTokens, Math.ceil(contextWindow * 0.05));
     const getRequestReserveTokens = () => outputReserveTokens + estimateUnknownTokens({
@@ -276,7 +290,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         provider: context.activeProvider,
         modelId: activeModelId || context.activeProvider?.defaultModel,
         reservedTokens: getRequestReserveTokens,
-        maxOutputTokens,
+        maxOutputTokens: compactionMaxOutputTokens,
         model,
         toolOutputStore: ctx.toolOutputStore,
         abortSignal: signal,
@@ -409,6 +423,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         currentAssistantMsgId: streamAssistantMsgId,
         maxIterations,
         advancedParams: context.activeProvider?.advancedParams,
+        reasoningProviderOptions,
         continuationContext,
         turnId: ctx.turnId,
         commandTimeoutMs,
@@ -424,7 +439,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
             modelId: activeModelId,
             contextWindow,
             reservedTokens: getRequestReserveTokens(),
-            maxOutputTokens,
+            maxOutputTokens: compactionMaxOutputTokens,
             toolOutputStore: ctx.toolOutputStore,
             runtimeContext: stepRuntimeContext,
             onEvent: (event) => ctx.emit(event),
