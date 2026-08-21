@@ -240,6 +240,13 @@ test('moving a stable portal host restores focus to its active input', () => {
   }
 });
 
+test('the covered side-panel shell cannot receive keyboard focus', () => {
+  const source = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /const activeMagnifiedPane =/);
+  assert.match(source, /inert=\{activeMagnifiedPane \? true : undefined\}/);
+});
+
 test('split pane hosts strictly clip each tool and do not use the side panel root as a portal fallback', () => {
   const sectionSource = readFileSync(new URL('./TerminalLayerSidePanelSection.tsx', import.meta.url), 'utf8');
   const slotsSource = readFileSync(new URL('./terminalLayerSidePanelSlots.tsx', import.meta.url), 'utf8');

@@ -11,6 +11,8 @@ test("terminal keyboard focus updates the pane selected for magnification", () =
 
   assert.match(source, /onClick=\{handlePaneClick\}/);
   assert.match(source, /onFocusCapture=\{handlePaneClick\}/);
+  assert.match(source, /const isCoveredByMagnification = isVisible/);
+  assert.match(source, /inert=\{isVisible && !isCoveredByMagnification \? undefined : true\}/);
 });
 
 test("workspace section passes resolved session host ids to terminal panes", () => {

@@ -565,7 +565,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
             className="absolute min-w-0 border-r border-border/70 bg-background flex flex-col transition-[left,top,width,height] duration-150 ease-out"
             style={resolveTwoPaneMagnificationStyle('left', isWideSplit, magnifiedSide === 'left')}
             data-sftp-pane-side="left"
+            inert={magnifiedSide === 'right' ? true : undefined}
             onClick={() => handlePaneFocus("left")}
+            onFocusCapture={() => handlePaneFocus("left")}
           >
             {/* Focus indicator triangle */}
             {focusedSide === "left" && (
@@ -628,7 +630,9 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
             className="absolute min-w-0 bg-background flex flex-col transition-[left,top,width,height] duration-150 ease-out"
             style={resolveTwoPaneMagnificationStyle('right', isWideSplit, magnifiedSide === 'right')}
             data-sftp-pane-side="right"
+            inert={magnifiedSide === 'left' ? true : undefined}
             onClick={() => handlePaneFocus("right")}
+            onFocusCapture={() => handlePaneFocus("right")}
           >
             {/* Focus indicator triangle */}
             {focusedSide === "right" && (

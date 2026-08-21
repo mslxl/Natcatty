@@ -1338,6 +1338,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     && magnifiedPane?.target.kind === 'terminal'
     && magnifiedPane.target.sessionId === session.id
     && magnifiedPane.tabId === (activeWorkspaceId ?? session.id);
+  const isCoveredByMagnification = isVisible
+    && magnifiedPane?.tabId === (activeWorkspaceId ?? session.id)
+    && !isMagnified;
   const [magnifiedSurfaceBounds, setMagnifiedSurfaceBounds] = useState<{
     left: number;
     top: number;
@@ -1506,7 +1509,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       data-session-id={session.id}
       data-section="terminal-split-pane"
       data-focused={isFocusedPane ? 'true' : undefined}
-      inert={isVisible ? undefined : true}
+      inert={isVisible && !isCoveredByMagnification ? undefined : true}
       className={cn(
         "absolute bg-background",
         inActiveWorkspace && "workspace-pane",

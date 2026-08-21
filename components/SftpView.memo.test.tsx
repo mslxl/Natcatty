@@ -24,6 +24,13 @@ test("SFTP magnification overlays one side while preserving the original two-pan
   });
 });
 
+test("SFTP keyboard focus tracks the active side and blocks the covered sibling", () => {
+  const source = readFileSync(new URL("./SftpView.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /inert=\{magnifiedSide === 'right' \? true : undefined\}[\s\S]*onFocusCapture=\{\(\) => handlePaneFocus\("left"\)\}/);
+  assert.match(source, /inert=\{magnifiedSide === 'left' \? true : undefined\}[\s\S]*onFocusCapture=\{\(\) => handlePaneFocus\("right"\)\}/);
+});
+
 test("SftpView re-renders when host-key verification setting changes", async () => {
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,

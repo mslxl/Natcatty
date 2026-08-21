@@ -887,9 +887,11 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     () => activeSidePanelLayout ? collectSidePanelPanes(activeSidePanelLayout.root) : [],
     [activeSidePanelLayout],
   );
-  const magnifiedSidePane = !!activeTabId && magnifiedPane?.tabId === activeTabId
-    && magnifiedPane.target.kind === 'side-panel'
-    ? activeSidePanelPanes.find((pane) => pane.id === magnifiedPane.target.paneId) ?? null
+  const activeMagnifiedPane = !!activeTabId && magnifiedPane?.tabId === activeTabId
+    ? magnifiedPane
+    : null;
+  const magnifiedSidePane = activeMagnifiedPane?.target.kind === 'side-panel'
+    ? activeSidePanelPanes.find((pane) => pane.id === activeMagnifiedPane.target.paneId) ?? null
     : null;
   const paneMagnificationShortcutLabel = getPaneMagnificationShortcutLabel(keyBindings, hotkeyScheme);
   const [showMagnificationHint, setShowMagnificationHint] = useState(false);
@@ -997,6 +999,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     <>
     <div
       ref={shellRef}
+      inert={activeMagnifiedPane ? true : undefined}
       style={{
         width: shellWidth,
         maxWidth: getTerminalSidePanelMaxWidth(availableSurfaceWidth),
