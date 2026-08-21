@@ -8,7 +8,11 @@ import {
   resolveContextWindow,
 } from '../../contextCompaction';
 import { buildSystemPrompt } from '../../cattyAgent/systemPrompt';
-import { isWebSearchReady, normalizeCommandTimeoutSeconds } from '../../types';
+import {
+  isWebSearchReady,
+  normalizeCommandTimeoutSeconds,
+  normalizeResponseIdleTimeoutSeconds,
+} from '../../types';
 import {
   buildCattyReasoningProviderOptions,
   estimateReasoningOutputReserve,
@@ -223,6 +227,11 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       fieldsByMessage: openAIChatAssistantFieldsByMessage,
     });
 
+    const responseIdleTimeoutSeconds = normalizeResponseIdleTimeoutSeconds(
+      context.responseIdleTimeout ?? Number.NaN,
+    );
+    const responseIdleTimeoutMs = responseIdleTimeoutSeconds * 1000;
+
     let model;
     try {
       model = createModelFromConfig(
@@ -232,6 +241,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         },
         {
           getOpenAIChatAssistantFields: () => continuationContext.openAIChatAssistantFields,
+          streamIdleTimeoutMs: responseIdleTimeoutMs,
         },
       );
     } catch (e) {
@@ -427,6 +437,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         continuationContext,
         turnId: ctx.turnId,
         commandTimeoutMs,
+        responseIdleTimeoutMs,
         runtimeContext,
         onAgentEvent: (event) => ctx.emit(event),
         prepareStep: async ({ stepNumber, messages, runtimeContext: stepRuntimeContext }) => {
