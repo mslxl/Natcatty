@@ -397,6 +397,6 @@ test("note preview uses MDX readOnly with code-copy chrome", () => {
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+button\s+svg\s*\{[^}]*width:\s*13px\s*!important;/s,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+button\s+svg\s*\{[^}]*width:\s*10px\s*!important;/s,
   );
 });

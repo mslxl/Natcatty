@@ -1680,8 +1680,8 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button svg {
-  width: 13px !important;
-  height: 13px !important;
+  width: 10px !important;
+  height: 10px !important;
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([class*="_codeMirrorToolbar_"]) > .netcatty-note-code-copy {
