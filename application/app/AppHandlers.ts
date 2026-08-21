@@ -938,6 +938,11 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
         break;
       }
       case 'moveFocus': {
+        const magnificationController = getAvailablePaneMagnificationController([
+          sftpPaneMagnificationRef?.current,
+          terminalPaneMagnificationRef?.current,
+        ]);
+        if (magnificationController?.getState() === 'focused') break;
         // Debounce to prevent double-triggering when focus switches between terminals
         const now = Date.now();
         if (now - lastMoveFocusTimeRef.current < MOVE_FOCUS_DEBOUNCE_MS) {

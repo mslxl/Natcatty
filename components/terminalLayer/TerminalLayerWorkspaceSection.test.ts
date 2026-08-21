@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TerminalLayerWorkspaceSection } from "./TerminalLayerWorkspaceSection.tsx";
+
+test("terminal keyboard focus updates the pane selected for magnification", () => {
+  const source = readFileSync(new URL("./TerminalLayerSupport.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /onClick=\{handlePaneClick\}/);
+  assert.match(source, /onFocusCapture=\{handlePaneClick\}/);
+});
 
 test("workspace section passes resolved session host ids to terminal panes", () => {
   const resolvedSessionHostIds = new Set(["session-1"]);

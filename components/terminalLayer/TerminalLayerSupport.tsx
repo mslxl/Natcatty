@@ -1516,6 +1516,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
       style={style}
       tabIndex={-1}
       onClick={handlePaneClick}
+      onFocusCapture={handlePaneClick}
     >
       <Terminal
         host={host}

@@ -264,6 +264,38 @@ test('pane zoom hotkey delegates to the active in-app magnification surface', ()
   assert.equal(toggles, 1);
 });
 
+test('move-focus shortcut cannot send input behind a magnified pane', () => {
+  let moveCalls = 0;
+  executeHotkeyActionImpl(() => ({
+    IS_DEV: false,
+    MOVE_FOCUS_DEBOUNCE_MS: 0,
+    activeTabStore: { getActiveTabId: () => 'workspace-1' },
+    editorTabs: [],
+    lastMoveFocusTimeRef: { current: 0 },
+    moveFocusInWorkspace: () => {
+      moveCalls += 1;
+      return true;
+    },
+    orderedTabs: [],
+    settings: { showSftpTab: true, shellOnlyTabNumberShortcuts: false },
+    sftpPaneMagnificationRef: { current: null },
+    terminalPaneMagnificationRef: {
+      current: {
+        getState: () => 'focused' as const,
+        focus: () => false,
+        restore: () => true,
+        toggle: () => true,
+      },
+    },
+    toEditorTabId: (id: string) => `editor:${id}`,
+    workspaces: [{ id: 'workspace-1', title: 'Workspace' }],
+  }), 'moveFocus', {
+    key: 'ArrowRight',
+  } as KeyboardEvent);
+
+  assert.equal(moveCalls, 0);
+});
+
 test('Escape restores magnification after transient dialogs are closed', () => {
   let restores = 0;
   let prevented = false;
