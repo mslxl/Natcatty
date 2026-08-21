@@ -1792,7 +1792,7 @@ export const InlineMarkdownEditor = React.memo(
               {filteredHosts.length === 0 ? (
                 <div className="px-3 py-2 text-sm text-muted-foreground">没有匹配的主机</div>
               ) : (
-                <FixedSizeVirtualList
+                <FixedSizeVirtualList<Host>
                   ref={hostPickerListRef}
                   items={filteredHosts}
                   itemHeight={HOST_PICKER_ROW_HEIGHT}
