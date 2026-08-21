@@ -1967,15 +1967,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
               {/* Cherry Studio Style Note Toolbar */}
               <NoteToolbar
-                content={selectedNoteView.content}
                 editorMode={noteEditorMode}
                 onChangeMode={(mode) => {
                   flushNoteDraft();
                   setNoteEditorMode(mode);
                 }}
                 onAction={handleToolbarAction}
-                showOutline={showOutline}
-                onToggleOutline={() => setShowOutline((prev) => !prev)}
                 noteFontFamily={noteFontFamily}
                 onChangeNoteFontFamily={setNoteFontFamily}
                 noteFontSize={noteFontSize}
@@ -2144,7 +2141,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
             {/* Note Toolbar in Overlay */}
             <NoteToolbar
-              content={overlayNoteView.content}
               editorMode={noteEditorMode}
               onChangeMode={(mode) => {
                 flushNoteDraft();

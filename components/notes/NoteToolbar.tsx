@@ -15,7 +15,6 @@ import {
   Link as LinkIcon,
   List,
   ListOrdered,
-  ListTree,
   Minus,
   PencilLine,
   Quote,
@@ -30,21 +29,17 @@ import {
   Undo2,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
-import { calculateNoteStats, type MarkdownActionType } from "../../domain/notes";
+import { type MarkdownActionType } from "../../domain/notes";
 import { useAvailableUIFonts } from "../../application/state/uiFontStore";
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
 import { cn } from "../../lib/utils";
 
 export interface NoteToolbarProps {
-  content: string;
   editorMode: NoteEditorMode;
   onChangeMode: (mode: NoteEditorMode) => void;
   onAction?: (action: MarkdownActionType) => void;
   onOpenHostPicker?: () => void;
-  showOutline?: boolean;
-  onToggleOutline?: () => void;
   className?: string;
   noteFontFamily?: string;
   onChangeNoteFontFamily?: (font: string) => void;
@@ -55,12 +50,9 @@ export interface NoteToolbarProps {
 const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20];
 
 export const NoteToolbar: React.FC<NoteToolbarProps> = ({
-  content,
   editorMode,
   onChangeMode,
   onAction,
-  showOutline,
-  onToggleOutline,
   className = "",
   noteFontFamily = "",
   onChangeNoteFontFamily,
@@ -79,8 +71,6 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
     }));
     return [defaultOption, ...list];
   }, [availableSystemFonts]);
-
-  const stats = useMemo(() => calculateNoteStats(content), [content]);
 
   const filteredFonts = useMemo(() => {
     if (!fontSearch.trim()) return systemFontList;
@@ -171,6 +161,86 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           </button>
 
           <div className="h-4 w-px bg-border mx-1 shrink-0" />
+
+          {/* Font & Typography Settings Dropdown */}
+          <Dropdown>
+            <DropdownTrigger asChild>
+              <button
+                type="button"
+                className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                title="笔记字体与排版设置"
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <Type size={14} />
+              </button>
+            </DropdownTrigger>
+            <DropdownContent align="start" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                  <span>系统字体</span>
+                  <span className="text-[10px] opacity-70">共 {systemFontList.length} 款可用字体</span>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative flex items-center">
+                  <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
+                  <input
+                    type="text"
+                    placeholder="搜索系统字体..."
+                    value={fontSearch}
+                    onChange={(e) => setFontSearch(e.target.value)}
+                    className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
+                  />
+                </div>
+
+                {/* Scrollable Font List */}
+                <div className="space-y-0.5 max-h-52 overflow-y-auto pr-1">
+                  {filteredFonts.length === 0 ? (
+                    <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配的系统字体</div>
+                  ) : (
+                    filteredFonts.map((f) => (
+                      <button
+                        key={f.value}
+                        type="button"
+                        style={{ fontFamily: f.value || undefined }}
+                        className={cn(
+                          "w-full px-2 py-1 rounded text-left text-xs transition-colors flex items-center justify-between gap-1.5",
+                          (noteFontFamily || "") === f.value
+                            ? "bg-primary text-primary-foreground font-medium"
+                            : "hover:bg-secondary text-foreground",
+                        )}
+                        onClick={() => onChangeNoteFontFamily?.(f.value)}
+                      >
+                        <span className="truncate">{f.label}</span>
+                        {(noteFontFamily || "") === f.value && <Check size={12} className="shrink-0" />}
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t border-border/60 pt-2">
+                <div className="text-[11px] font-medium text-muted-foreground mb-1">正文字号</div>
+                <div className="flex flex-wrap gap-1">
+                  {FONT_SIZES.map((sz) => (
+                    <button
+                      key={sz}
+                      type="button"
+                      className={cn(
+                        "px-2 py-0.5 rounded text-xs border transition-colors",
+                        (noteFontSize || 14) === sz
+                          ? "bg-primary text-primary-foreground border-primary font-medium"
+                          : "border-border hover:bg-secondary text-foreground",
+                      )}
+                      onClick={() => onChangeNoteFontSize?.(sz)}
+                    >
+                      {sz}px
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </DropdownContent>
+          </Dropdown>
 
           {/* Heading Dropdown (Using Portal Dropdown to avoid clipping) */}
           <Dropdown>
@@ -382,123 +452,6 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           </button>
         </div>
       )}
-
-      {/* Right Area: Font Settings, Document Stats & Outline */}
-      <div className="flex items-center gap-2 shrink-0 text-muted-foreground text-[11px] ml-auto">
-        {/* Font & Typography Settings Dropdown */}
-        <Dropdown>
-          <DropdownTrigger asChild>
-            <button
-              type="button"
-              className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-              title="笔记字体与排版设置"
-              onMouseDown={(e) => e.preventDefault()}
-            >
-              <Type size={14} />
-            </button>
-          </DropdownTrigger>
-          <DropdownContent align="end" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                <span>系统字体</span>
-                <span className="text-[10px] opacity-70">共 {systemFontList.length} 款可用字体</span>
-              </div>
-
-              {/* Search Bar */}
-              <div className="relative flex items-center">
-                <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  placeholder="搜索系统字体..."
-                  value={fontSearch}
-                  onChange={(e) => setFontSearch(e.target.value)}
-                  className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
-                />
-              </div>
-
-              {/* Scrollable Font List */}
-              <div className="space-y-0.5 max-h-52 overflow-y-auto pr-1">
-                {filteredFonts.length === 0 ? (
-                  <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配的系统字体</div>
-                ) : (
-                  filteredFonts.map((f) => (
-                    <button
-                      key={f.value}
-                      type="button"
-                      style={{ fontFamily: f.value || undefined }}
-                      className={cn(
-                        "w-full px-2 py-1 rounded text-left text-xs transition-colors flex items-center justify-between gap-1.5",
-                        (noteFontFamily || "") === f.value
-                          ? "bg-primary text-primary-foreground font-medium"
-                          : "hover:bg-secondary text-foreground",
-                      )}
-                      onClick={() => onChangeNoteFontFamily?.(f.value)}
-                    >
-                      <span className="truncate">{f.label}</span>
-                      {(noteFontFamily || "") === f.value && <Check size={12} className="shrink-0" />}
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-border/60 pt-2">
-              <div className="text-[11px] font-medium text-muted-foreground mb-1">正文字号</div>
-              <div className="flex flex-wrap gap-1">
-                {FONT_SIZES.map((sz) => (
-                  <button
-                    key={sz}
-                    type="button"
-                    className={cn(
-                      "px-2 py-0.5 rounded text-xs border transition-colors",
-                      (noteFontSize || 14) === sz
-                        ? "bg-primary text-primary-foreground border-primary font-medium"
-                        : "border-border hover:bg-secondary text-foreground",
-                    )}
-                    onClick={() => onChangeNoteFontSize?.(sz)}
-                  >
-                    {sz}px
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-border/60 pt-2">
-              <div className="text-[11px] font-medium text-muted-foreground mb-1">自定义字体名称</div>
-              <input
-                type="text"
-                placeholder="如 Fira Code, 霞鹜文楷..."
-                value={noteFontFamily || ""}
-                onChange={(e) => onChangeNoteFontFamily?.(e.target.value)}
-                className="w-full px-2 py-1 rounded border border-border bg-background text-xs text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
-              />
-            </div>
-          </DropdownContent>
-        </Dropdown>
-
-        <span className="hidden md:inline opacity-70 whitespace-nowrap">
-          {stats.words} 词 · {stats.chars} 字
-        </span>
-
-        {onToggleOutline && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className={`p-1.5 rounded-md transition-colors ${
-                  showOutline
-                    ? "bg-secondary text-primary font-medium"
-                    : "hover:bg-muted text-muted-foreground hover:text-foreground"
-                }`}
-                onClick={onToggleOutline}
-              >
-                <ListTree size={14} />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">大纲目录</TooltipContent>
-          </Tooltip>
-        )}
-      </div>
     </div>
   );
 };
