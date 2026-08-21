@@ -528,6 +528,60 @@ export const removeNoteCodeBlockCopyButtons = (container: HTMLElement): void => 
 const COPY_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 const CHECK_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 
+function createCopyButton(
+  wrapper: HTMLElement,
+  {
+    copyLabel,
+    copiedLabel,
+    copyFailedLabel,
+    onCopy,
+  }: {
+    copyLabel: string;
+    copiedLabel: string;
+    copyFailedLabel: string;
+    onCopy: (text: string) => Promise<boolean>;
+  },
+): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.dataset.noteCodeCopy = "true";
+  button.className = "netcatty-note-code-copy";
+  button.title = copyLabel;
+  button.setAttribute("aria-label", copyLabel);
+  button.innerHTML = COPY_ICON_SVG;
+
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void (async () => {
+      clearNoteCodeBlockCopyResetTimer(button);
+      let text = getCodeMirrorBlockText(wrapper);
+      if (!text) {
+        text = wrapper.querySelector("code")?.textContent || wrapper.textContent || "";
+      }
+      const ok = await onCopy(text);
+      if (!ok) {
+        toast.error(copyFailedLabel);
+        return;
+      }
+      button.dataset.copied = "true";
+      button.innerHTML = CHECK_ICON_SVG;
+      button.title = copiedLabel;
+      button.setAttribute("aria-label", copiedLabel);
+      const timerId = window.setTimeout(() => {
+        delete button.dataset.copied;
+        delete button.dataset.resetTimerId;
+        button.innerHTML = COPY_ICON_SVG;
+        button.title = copyLabel;
+        button.setAttribute("aria-label", copyLabel);
+      }, 1500);
+      button.dataset.resetTimerId = String(timerId);
+    })();
+  });
+
+  return button;
+}
+
 export const annotateNoteCodeBlockCopyButtons = (
   container: HTMLElement,
   {
@@ -542,61 +596,47 @@ export const annotateNoteCodeBlockCopyButtons = (
     onCopy: (text: string) => Promise<boolean>;
   },
 ): void => {
-  container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre, .cm-editor').forEach((rawNode) => {
+  container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((rawNode) => {
     if (!(rawNode instanceof HTMLElement)) return;
 
-    // If rawNode is .cm-editor and its parent is _codeMirrorWrapper_, target the parent wrapper
-    const wrapper = rawNode.classList.contains("cm-editor") && rawNode.parentElement?.matches('[class*="_codeMirrorWrapper_"]')
-      ? rawNode.parentElement
-      : rawNode;
-
-    if (wrapper.querySelector("[data-note-code-copy]")) return;
-
-    if (getComputedStyle(wrapper).position === "static") {
-      wrapper.style.position = "relative";
-    }
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.dataset.noteCodeCopy = "true";
-    button.className = "netcatty-note-code-copy";
-    button.title = copyLabel;
-    button.setAttribute("aria-label", copyLabel);
-    button.innerHTML = COPY_ICON_SVG;
-
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      void (async () => {
-        clearNoteCodeBlockCopyResetTimer(button);
-        let text = getCodeMirrorBlockText(wrapper);
-        if (!text) {
-          text = wrapper.querySelector("code")?.textContent || wrapper.textContent || "";
-        }
-        const ok = await onCopy(text);
-        if (!ok) {
-          toast.error(copyFailedLabel);
-          return;
-        }
-        button.dataset.copied = "true";
-        button.innerHTML = CHECK_ICON_SVG;
-        button.title = copiedLabel;
-        button.setAttribute("aria-label", copiedLabel);
-        const timerId = window.setTimeout(() => {
-          delete button.dataset.copied;
-          delete button.dataset.resetTimerId;
-          button.innerHTML = COPY_ICON_SVG;
-          button.title = copyLabel;
-          button.setAttribute("aria-label", copyLabel);
-        }, 1500);
-        button.dataset.resetTimerId = String(timerId);
-      })();
-    });
-
+    const wrapper = rawNode;
     const toolbar = wrapper.querySelector('[class*="_codeMirrorToolbar_"]');
+
     if (toolbar instanceof HTMLElement) {
-      toolbar.insertBefore(button, toolbar.lastElementChild);
+      // Live edit mode with toolbar
+      const existingInToolbar = toolbar.querySelector("[data-note-code-copy]");
+      wrapper.querySelectorAll("[data-note-code-copy]").forEach((btn) => {
+        if (btn !== existingInToolbar) {
+          clearNoteCodeBlockCopyResetTimer(btn as HTMLElement);
+          btn.remove();
+        }
+      });
+
+      if (existingInToolbar) {
+        if (toolbar.lastElementChild !== existingInToolbar) {
+          toolbar.appendChild(existingInToolbar);
+        }
+        return;
+      }
+
+      const button = createCopyButton(wrapper, { copyLabel, copiedLabel, copyFailedLabel, onCopy });
+      toolbar.appendChild(button);
     } else {
+      // Reading / preview mode without toolbar
+      const existingButtons = wrapper.querySelectorAll("[data-note-code-copy]");
+      if (existingButtons.length > 0) {
+        for (let idx = 1; idx < existingButtons.length; idx++) {
+          clearNoteCodeBlockCopyResetTimer(existingButtons[idx] as HTMLElement);
+          existingButtons[idx].remove();
+        }
+        return;
+      }
+
+      if (getComputedStyle(wrapper).position === "static") {
+        wrapper.style.position = "relative";
+      }
+
+      const button = createCopyButton(wrapper, { copyLabel, copiedLabel, copyFailedLabel, onCopy });
       wrapper.appendChild(button);
     }
   });

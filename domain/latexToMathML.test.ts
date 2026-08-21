@@ -44,3 +44,15 @@ test("latexToMathML converts matrices", () => {
   assert.ok(mathml.includes("<mtr>"));
   assert.ok(mathml.includes("<mtd>"));
 });
+
+test("latexToMathML converts n-th root \\sqrt[3]{3} correctly using mroot", () => {
+  const mathml = latexToMathML("\\sqrt[3]{3}");
+  assert.ok(mathml.includes("<mroot>"));
+  assert.ok(mathml.includes("<mn>3</mn>"));
+});
+
+test("latexToMathML converts binomial and overline", () => {
+  const mathml = latexToMathML("\\binom{n}{k} + \\overline{z}");
+  assert.ok(mathml.includes("linethickness=\"0\""));
+  assert.ok(mathml.includes("<mover>"));
+});

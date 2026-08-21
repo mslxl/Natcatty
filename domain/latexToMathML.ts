@@ -112,12 +112,23 @@ const SYMBOL_MAP: Record<string, string> = {
   vdots: "⋮",
   ddots: "⋱",
   quad: " ",
-  qquad: "  ",
-  neg: "¬",
-  degree: "°",
-  angle: "∠",
-  triangle: "△",
   prime: "′",
+  langle: "⟨",
+  rangle: "⟩",
+  lbrace: "{",
+  rbrace: "}",
+  lceil: "⌈",
+  rceil: "⌉",
+  lfloor: "⌊",
+  rfloor: "⌋",
+  hbar: "ℏ",
+  ell: "ℓ",
+  aleph: "ℵ",
+  top: "⊤",
+  bot: "⊥",
+  iff: "⟺",
+  implies: "⟹",
+  dots: "…",
 };
 
 const OPERATOR_MAP: Record<string, string> = {
@@ -280,6 +291,35 @@ function getNextArg(tokens: LatexToken[], index: number): { arg: LatexToken | nu
   return { arg: tok, nextIndex: index + 1 };
 }
 
+function getNextOptionalBracketArg(tokens: LatexToken[], index: number): {
+  hasOpt: boolean;
+  optTokens: LatexToken[];
+  nextIndex: number;
+} {
+  if (index >= tokens.length) return { hasOpt: false, optTokens: [], nextIndex: index };
+  const first = tokens[index];
+  if (first.value === "[") {
+    const optTokens: LatexToken[] = [];
+    let j = index + 1;
+    let depth = 1;
+    while (j < tokens.length && depth > 0) {
+      const t = tokens[j];
+      if (t.value === "[") depth++;
+      else if (t.value === "]") {
+        depth--;
+        if (depth === 0) {
+          j++;
+          break;
+        }
+      }
+      optTokens.push(t);
+      j++;
+    }
+    return { hasOpt: true, optTokens, nextIndex: j };
+  }
+  return { hasOpt: false, optTokens: [], nextIndex: index };
+}
+
 function renderTokensToMathML(tokens: LatexToken[]): string {
   let result = "";
   let i = 0;
@@ -303,22 +343,68 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
         const denXml = denRes.arg ? renderTokensToMathML(denRes.arg.children || [denRes.arg]) : "";
         baseXml = `<mfrac><mrow>${numXml}</mrow><mrow>${denXml}</mrow></mfrac>`;
         consumed = true;
+      } else if (cmd === "binom" || cmd === "tbinom" || cmd === "dbinom") {
+        const topRes = getNextArg(tokens, i + 1);
+        const botRes = getNextArg(tokens, topRes.nextIndex);
+        i = botRes.nextIndex;
+
+        const topXml = topRes.arg ? renderTokensToMathML(topRes.arg.children || [topRes.arg]) : "";
+        const botXml = botRes.arg ? renderTokensToMathML(botRes.arg.children || [botRes.arg]) : "";
+        baseXml = `<mrow><mo fence="true">(</mo><mfrac linethickness="0"><mrow>${topXml}</mrow><mrow>${botXml}</mrow></mfrac><mo fence="true">)</mo></mrow>`;
+        consumed = true;
       } else if (cmd === "sqrt") {
+        const optRes = getNextOptionalBracketArg(tokens, i + 1);
+        const argRes = getNextArg(tokens, optRes.nextIndex);
+        i = argRes.nextIndex;
+
+        const argXml = argRes.arg ? renderTokensToMathML(argRes.arg.children || [argRes.arg]) : "";
+        if (optRes.hasOpt) {
+          const indexXml = renderTokensToMathML(optRes.optTokens);
+          baseXml = `<mroot><mrow>${argXml}</mrow><mrow>${indexXml}</mrow></mroot>`;
+        } else {
+          baseXml = `<msqrt><mrow>${argXml}</mrow></msqrt>`;
+        }
+        consumed = true;
+      } else if (cmd === "overline") {
         const argRes = getNextArg(tokens, i + 1);
         i = argRes.nextIndex;
         const argXml = argRes.arg ? renderTokensToMathML(argRes.arg.children || [argRes.arg]) : "";
-        baseXml = `<msqrt><mrow>${argXml}</mrow></msqrt>`;
+        baseXml = `<mover><mrow>${argXml}</mrow><mo stretchy="true">¯</mo></mover>`;
         consumed = true;
-      } else if (cmd === "text" || cmd === "mathrm" || cmd === "mathbf" || cmd === "mathit" || cmd === "mathbb" || cmd === "mathcal") {
+      } else if (cmd === "underline") {
         const argRes = getNextArg(tokens, i + 1);
         i = argRes.nextIndex;
-        const rawText = argRes.arg ? argRes.arg.value : "";
+        const argXml = argRes.arg ? renderTokensToMathML(argRes.arg.children || [argRes.arg]) : "";
+        baseXml = `<munder><mrow>${argXml}</mrow><mo stretchy="true">_</mo></munder>`;
+        consumed = true;
+      } else if (
+        cmd === "text" ||
+        cmd === "mathrm" ||
+        cmd === "mathbf" ||
+        cmd === "mathit" ||
+        cmd === "mathbb" ||
+        cmd === "mathcal" ||
+        cmd === "bm" ||
+        cmd === "boldsymbol" ||
+        cmd === "operatorname"
+      ) {
+        const argRes = getNextArg(tokens, i + 1);
+        i = argRes.nextIndex;
+        const rawText = argRes.arg
+          ? argRes.arg.children
+            ? renderTokensToMathML(argRes.arg.children)
+            : argRes.arg.value
+          : "";
         if (cmd === "mathbb") {
           const bboardMap: Record<string, string> = {
             R: "ℝ", N: "ℕ", Z: "ℤ", Q: "ℚ", C: "ℂ", P: "ℙ", H: "ℍ", E: "𝔼",
           };
           const bboard = bboardMap[rawText.trim()] || rawText;
           baseXml = `<mi>${escapeXml(bboard)}</mi>`;
+        } else if (cmd === "mathrm" || cmd === "operatorname") {
+          baseXml = `<mi mathvariant="normal">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+        } else if (cmd === "mathbf" || cmd === "bm" || cmd === "boldsymbol") {
+          baseXml = `<mi mathvariant="bold">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
         } else {
           baseXml = `<mtext>${escapeXml(rawText)}</mtext>`;
         }
@@ -388,8 +474,12 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
           baseXml = `<mo fence="true">(</mo>${matrixXml}<mo fence="true">)</mo>`;
         } else if (envName === "bmatrix") {
           baseXml = `<mo fence="true">[</mo>${matrixXml}<mo fence="true">]</mo>`;
+        } else if (envName === "Bmatrix") {
+          baseXml = `<mo fence="true">{</mo>${matrixXml}<mo fence="true">}</mo>`;
         } else if (envName === "vmatrix") {
           baseXml = `<mo fence="true">|</mo>${matrixXml}<mo fence="true">|</mo>`;
+        } else if (envName === "Vmatrix") {
+          baseXml = `<mo fence="true">‖</mo>${matrixXml}<mo fence="true">‖</mo>`;
         } else if (envName === "cases") {
           baseXml = `<mo fence="true">{</mo>${matrixXml}`;
         } else {

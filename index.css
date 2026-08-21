@@ -1568,13 +1568,13 @@ html[data-theme-transition] *::after {
   align-items: center !important;
   justify-content: flex-end;
   gap: 0.25rem !important;
-  padding: 0.15rem 0.25rem !important;
+  padding: 0.2rem 0.25rem !important;
   margin: 0 !important;
   width: auto !important;
   border-radius: 6px !important;
-  background: hsl(var(--background) / 0.92) !important;
-  border: 1px solid hsl(var(--border) / 0.6) !important;
-  backdrop-filter: blur(6px) !important;
+  background: hsl(var(--background) / 0.94) !important;
+  border: 1px solid hsl(var(--border) / 0.65) !important;
+  backdrop-filter: blur(8px) !important;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.18) !important;
   opacity: 0 !important;
   pointer-events: none !important;
@@ -1588,57 +1588,40 @@ html[data-theme-transition] *::after {
   pointer-events: auto !important;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] .netcatty-note-code-copy {
-  position: static !important;
-  border: 0 !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  width: 1.35rem !important;
-  height: 1.35rem !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-}
-
-.netcatty-mdx-editor--preview [class*="_codeMirrorToolbar_"] {
-  display: none !important;
-}
-
+/* Language selector trigger in toolbar */
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"],
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] {
-  height: 1.45rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  height: 1.4rem !important;
+  min-height: 1.4rem !important;
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
-  padding: 0 0.4rem !important;
-  font-size: 11px !important;
-  line-height: 1 !important;
-}
-
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"],
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] {
-  display: inline-flex !important;
-  align-items: center !important;
-  justify-content: flex-start;
-  height: 1.35rem !important;
-  width: auto !important;
-  min-width: fit-content !important;
-  max-width: none !important;
-  padding: 0 0.35rem !important;
+  padding: 0 0.45rem !important;
   margin: 0 !important;
-  gap: 0.2rem;
+  gap: 0.25rem !important;
   font-size: 11px !important;
-  font-weight: 400 !important;
+  font-weight: 500 !important;
   line-height: 1 !important;
-  white-space: nowrap;
+  white-space: nowrap !important;
   border: 0 !important;
   border-radius: 4px !important;
-  background: hsl(var(--background) / 0.88) !important;
+  background: hsl(var(--muted) / 0.7) !important;
+  color: hsl(var(--foreground)) !important;
   box-shadow: none !important;
-  filter: none !important;
+  cursor: pointer !important;
+  transition: background-color 0.15s ease, color 0.15s ease !important;
 }
 
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] [data-radix-select-value],
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] > span:first-child {
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"]:hover,
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"]:hover {
+  background: hsl(var(--secondary)) !important;
+}
+
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] [data-radix-select-value],
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] > span:first-child {
   flex: 0 0 auto;
   overflow: visible;
   max-width: none;
@@ -1647,48 +1630,66 @@ html[data-theme-transition] *::after {
   white-space: nowrap;
 }
 
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"][data-state="open"] {
-  border-radius: 4px !important;
-  background: hsl(var(--background) / 0.88) !important;
-  box-shadow: none !important;
-  filter: none !important;
-}
-
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectDropdownArrow_"] {
-  margin-left: 0 !important;
-  flex-shrink: 0;
-}
-
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"] svg,
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] svg {
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectDropdownArrow_"] svg,
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"] svg,
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] svg {
   width: 10px !important;
   height: 10px !important;
   flex-shrink: 0;
+  opacity: 0.75;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button {
-  min-height: 1.45rem !important;
-  height: 1.45rem !important;
-  min-width: 1.45rem !important;
-  width: auto !important;
-  padding: 0 0.35rem !important;
-  background: hsl(var(--background) / 0.88) !important;
-}
-
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] button {
-  min-height: 1.35rem !important;
-  height: 1.35rem !important;
-  min-width: 1.35rem !important;
-  width: 1.35rem !important;
-  padding: 0 !important;
+/* Base style for all action buttons (Delete & Copy) in toolbar */
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button:not([class*="_selectTrigger_"]):not([class*="_toolbarCodeBlockLanguageSelectTrigger_"]) {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+  height: 1.4rem !important;
+  min-height: 1.4rem !important;
+  max-height: 1.4rem !important;
+  width: 1.4rem !important;
+  min-width: 1.4rem !important;
+  max-width: 1.4rem !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  background: transparent !important;
+  color: hsl(var(--muted-foreground)) !important;
+  box-shadow: none !important;
+  cursor: pointer !important;
+  transition: background-color 0.15s ease, color 0.15s ease !important;
 }
 
-.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] button svg {
-  width: 14px !important;
-  height: 14px !important;
+/* Delete Button specific hover */
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button:not([class*="_selectTrigger_"]):not([class*="_toolbarCodeBlockLanguageSelectTrigger_"]):not(.netcatty-note-code-copy):hover {
+  background: hsl(var(--destructive) / 0.15) !important;
+  color: hsl(var(--destructive)) !important;
+}
+
+/* Copy Button inside toolbar */
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] .netcatty-note-code-copy {
+  position: static !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+}
+
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] .netcatty-note-code-copy:hover {
+  background: hsl(var(--secondary)) !important;
+  color: hsl(var(--foreground)) !important;
+}
+
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button svg {
+  width: 13px !important;
+  height: 13px !important;
+}
+
+.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([class*="_codeMirrorToolbar_"]) > .netcatty-note-code-copy {
+  display: none !important;
+}
+
+.netcatty-mdx-editor--preview [class*="_codeMirrorToolbar_"] {
+  display: none !important;
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"] span {
