@@ -364,6 +364,16 @@ test("annotateNoteCodeBlockCopyButtons adds a copy action to code blocks", () =>
   assert.match(source, /onCopy\(text\)/);
 });
 
+test("annotateNoteCodeBlockDeleteButtons swaps the delete icon to a stroke SVG", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /export const annotateNoteCodeBlockDeleteButtons/);
+  assert.match(source, /data-note-code-delete/);
+  assert.match(source, /DELETE_ICON_SVG/);
+  assert.match(source, /stroke="currentColor"/);
+  assert.match(source, /stroke-width="2"/);
+});
+
 test("note preview uses MDX readOnly with code-copy chrome", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
   const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");

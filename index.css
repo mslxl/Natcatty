@@ -1675,8 +1675,8 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] .netcatty-note-code-copy:hover {
-  background: hsl(var(--secondary)) !important;
-  color: hsl(var(--foreground)) !important;
+  background: hsl(160 84% 39% / 0.15) !important;
+  color: hsl(160 84% 39%) !important;
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] button svg {

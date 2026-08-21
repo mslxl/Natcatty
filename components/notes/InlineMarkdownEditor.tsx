@@ -527,6 +527,7 @@ export const removeNoteCodeBlockCopyButtons = (container: HTMLElement): void => 
 
 const COPY_ICON_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 const CHECK_ICON_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+const DELETE_ICON_SVG = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>`;
 
 function createCopyButton(
   wrapper: HTMLElement,
@@ -639,6 +640,29 @@ export const annotateNoteCodeBlockCopyButtons = (
       const button = createCopyButton(wrapper, { copyLabel, copiedLabel, copyFailedLabel, onCopy });
       wrapper.appendChild(button);
     }
+  });
+};
+
+/**
+ * Replaces MDXEditor's built-in filled-path delete icon with a standard
+ * lucide-style stroke SVG so it matches the copy button in the toolbar.
+ * The click handler (lexicalNode.remove()) is left untouched.
+ */
+export const annotateNoteCodeBlockDeleteButtons = (container: HTMLElement): void => {
+  container.querySelectorAll('[class*="_codeMirrorToolbar_"]').forEach((toolbar) => {
+    if (!(toolbar instanceof HTMLElement)) return;
+
+    const deleteButton = Array.from(toolbar.querySelectorAll("button")).find(
+      (button) =>
+        !button.hasAttribute("data-note-code-copy") &&
+        !button.hasAttribute("data-note-code-delete") &&
+        !button.className.includes("_selectTrigger_") &&
+        !button.className.includes("_toolbarCodeBlockLanguageSelectTrigger_"),
+    );
+    if (!deleteButton) return;
+
+    deleteButton.dataset.noteCodeDelete = "true";
+    deleteButton.innerHTML = DELETE_ICON_SVG;
   });
 };
 
@@ -1237,6 +1261,7 @@ export const InlineMarkdownEditor = React.memo(
       annotateNoteImageSizes(container);
       if (includeHostLinks) annotateHostLinks();
       annotateCodeBlockCopyButtons();
+      annotateNoteCodeBlockDeleteButtons(container);
       annotateMathFormulaBlocks(container, editorMode);
     };
 
