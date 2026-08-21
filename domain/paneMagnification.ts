@@ -102,3 +102,35 @@ export function resolvePaneMagnificationStyle(
     zIndex: 50,
   };
 }
+
+export function resolveTwoPaneMagnificationStyle(
+  side: 'left' | 'right',
+  wide: boolean,
+  magnified: boolean,
+): React.CSSProperties {
+  if (magnified) {
+    return {
+      left: '12px',
+      top: '12px',
+      width: 'calc(100% - 24px)',
+      height: 'calc(100% - 24px)',
+      zIndex: 50,
+    };
+  }
+  if (wide) {
+    return {
+      left: side === 'left' ? '0%' : '50%',
+      top: '0%',
+      width: '50%',
+      height: '100%',
+      zIndex: 10,
+    };
+  }
+  return {
+    left: '0%',
+    top: side === 'left' ? '0%' : '50%',
+    width: '100%',
+    height: '50%',
+    zIndex: 10,
+  };
+}

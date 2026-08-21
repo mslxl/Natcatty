@@ -23,6 +23,7 @@ import { getParentPath, isConcreteTransferTargetPath } from "../application/stat
 import { HotkeyScheme, KeyBinding, TerminalSession } from "../domain/models";
 import {
   getPaneMagnificationShortcutLabel,
+  resolveTwoPaneMagnificationStyle,
   type PaneMagnificationController,
 } from "../domain/paneMagnification";
 import { listSftpConnectedHosts, resolveSftpTransferSourceSessionId, sftpPickerSessionsEqual } from "../domain/sftpConnectedHosts";
@@ -78,38 +79,6 @@ interface SftpViewProps {
   setEditorWordWrap: (enabled: boolean) => void;
   terminalSettings?: { verifyHostKeys: boolean; keepaliveInterval: number; keepaliveCountMax: number };
   paneMagnificationRef?: React.MutableRefObject<PaneMagnificationController | null>;
-}
-
-export function getSftpPaneLayoutStyle(
-  side: SftpFocusedSide,
-  wide: boolean,
-  magnified: boolean,
-): React.CSSProperties {
-  if (magnified) {
-    return {
-      left: '12px',
-      top: '12px',
-      width: 'calc(100% - 24px)',
-      height: 'calc(100% - 24px)',
-      zIndex: 50,
-    };
-  }
-  if (wide) {
-    return {
-      left: side === 'left' ? '0%' : '50%',
-      top: '0%',
-      width: '50%',
-      height: '100%',
-      zIndex: 10,
-    };
-  }
-  return {
-    left: '0%',
-    top: side === 'left' ? '0%' : '50%',
-    width: '100%',
-    height: '50%',
-    zIndex: 10,
-  };
 }
 
 const SftpViewInner: React.FC<SftpViewProps> = ({
@@ -594,7 +563,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
           )}
           <div
             className="absolute min-w-0 border-r border-border/70 bg-background flex flex-col transition-[left,top,width,height] duration-150 ease-out"
-            style={getSftpPaneLayoutStyle('left', isWideSplit, magnifiedSide === 'left')}
+            style={resolveTwoPaneMagnificationStyle('left', isWideSplit, magnifiedSide === 'left')}
             data-sftp-pane-side="left"
             onClick={() => handlePaneFocus("left")}
           >
@@ -657,7 +626,7 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
           </div>
           <div
             className="absolute min-w-0 bg-background flex flex-col transition-[left,top,width,height] duration-150 ease-out"
-            style={getSftpPaneLayoutStyle('right', isWideSplit, magnifiedSide === 'right')}
+            style={resolveTwoPaneMagnificationStyle('right', isWideSplit, magnifiedSide === 'right')}
             data-sftp-pane-side="right"
             onClick={() => handlePaneFocus("right")}
           >

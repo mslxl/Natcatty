@@ -6,6 +6,7 @@ import {
   getPaneMagnificationShortcutLabel,
   resolvePaneMagnificationCandidate,
   resolvePaneMagnificationStyle,
+  resolveTwoPaneMagnificationStyle,
   type PaneMagnificationController,
 } from './paneMagnification.ts';
 
@@ -67,6 +68,18 @@ test('magnification overlays the original layout without changing its rect', () 
     width: '1376px',
     height: '876px',
     zIndex: 50,
+  });
+});
+
+test('two-pane magnification keeps the dormant pane geometry unchanged', () => {
+  assert.deepEqual(resolveTwoPaneMagnificationStyle('left', true, true), {
+    left: '12px', top: '12px', width: 'calc(100% - 24px)', height: 'calc(100% - 24px)', zIndex: 50,
+  });
+  assert.deepEqual(resolveTwoPaneMagnificationStyle('right', true, false), {
+    left: '50%', top: '0%', width: '50%', height: '100%', zIndex: 10,
+  });
+  assert.deepEqual(resolveTwoPaneMagnificationStyle('right', false, false), {
+    left: '0%', top: '50%', width: '100%', height: '50%', zIndex: 10,
   });
 });
 
