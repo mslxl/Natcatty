@@ -600,12 +600,21 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
   container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
     if (!(wrapper instanceof HTMLElement)) return;
 
-    const select = wrapper.querySelector('select[class*="_codeMirrorSelect_"]') as HTMLSelectElement | null;
-    const lang = (select?.value || wrapper.getAttribute("data-language") || wrapper.className || "").toLowerCase();
+    const langTrigger = wrapper.querySelector('[class*="_toolbarCodeBlockLanguageSelectTrigger_"], [class*="_selectTrigger_"], select');
+    const lang = (
+      langTrigger?.textContent ||
+      (langTrigger as HTMLSelectElement)?.value ||
+      wrapper.getAttribute("data-language") ||
+      wrapper.querySelector("code")?.className ||
+      wrapper.className ||
+      ""
+    ).toLowerCase().trim();
+
     const isMathBlock =
-      lang === "math" ||
-      lang === "latex" ||
-      lang === "tex" ||
+      lang.includes("math") ||
+      lang.includes("latex") ||
+      lang.includes("tex") ||
+      lang.includes("公式") ||
       lang.includes("language-math") ||
       lang.includes("language-latex") ||
       lang.includes("language-tex");
@@ -1199,8 +1208,9 @@ export const InlineMarkdownEditor = React.memo(
     observer.observe(container, {
       childList: true,
       subtree: true,
+      characterData: true,
       attributes: true,
-      attributeFilter: ["width", "height", "src", "href"],
+      attributeFilter: ["width", "height", "src", "href", "data-language"],
     });
     return () => {
       observer.disconnect();

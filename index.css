@@ -1410,61 +1410,54 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"] {
-  position: relative;
-  margin: 0.85rem 0 1rem;
+  position: relative !important;
+  min-height: 2.85rem !important;
+  margin: 0.5rem 0 0.85rem;
   border: 0 !important;
   border-radius: 6px;
-  background: transparent !important;
-  padding: 0 !important;
-  overflow: hidden;
+  background: hsl(var(--secondary) / 0.35) !important;
+  padding: 0.2rem 0 !important;
+  overflow: visible !important;
 }
 
 .netcatty-note-code-copy {
-  position: absolute;
-  top: 0.35rem;
-  right: 0.35rem;
-  z-index: 20;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 1.45rem;
-  padding: 0 0.45rem;
-  border: 0;
-  border-radius: 4px;
-  background: hsl(var(--background) / 0.92);
-  color: hsl(var(--muted-foreground));
-  font-size: 11px;
-  line-height: 1;
+  position: absolute !important;
+  top: 0.35rem !important;
+  right: 0.35rem !important;
+  z-index: 40 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 1.45rem !important;
+  height: 1.45rem !important;
+  padding: 0 !important;
+  border: 1px solid hsl(var(--border) / 0.7) !important;
+  border-radius: 4px !important;
+  background: hsl(var(--background) / 0.95) !important;
+  color: hsl(var(--muted-foreground)) !important;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12) !important;
   opacity: 0;
+  cursor: pointer !important;
   transition: opacity 0.15s, color 0.15s, background-color 0.15s;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:hover .netcatty-note-code-copy,
-.netcatty-mdx-editor .cm-editor:hover .netcatty-note-code-copy,
+.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:hover > .netcatty-note-code-copy,
+.netcatty-mdx-editor--preview [class*="_codeMirrorWrapper_"]:hover .netcatty-note-code-copy,
 .netcatty-mdx-editor pre:hover .netcatty-note-code-copy,
 .netcatty-mdx-content pre:hover .netcatty-note-code-copy,
 .netcatty-note-code-copy[data-copied="true"],
 .netcatty-note-code-copy:focus-visible {
-  opacity: 1;
+  opacity: 1 !important;
+  pointer-events: auto !important;
 }
 
 .netcatty-note-code-copy:hover {
-  background: hsl(var(--secondary));
-  color: hsl(var(--foreground));
+  background: hsl(var(--secondary)) !important;
+  color: hsl(var(--foreground)) !important;
 }
 
 .netcatty-note-code-copy[data-copied="true"] {
-  color: hsl(var(--foreground));
-}
-
-.netcatty-mdx-editor [class*="_codeMirrorWrapper_"] {
-  position: relative !important;
-  margin: 0.85rem 0 1rem;
-  border: 0 !important;
-  border-radius: 6px;
-  background: hsl(var(--secondary) / 0.35) !important;
-  padding: 0 !important;
-  overflow: hidden;
+  color: hsl(var(--foreground)) !important;
 }
 
 .netcatty-mdx-editor .cm-editor,
@@ -1491,10 +1484,10 @@ html[data-theme-transition] *::after {
   align-items: center;
   justify-content: center;
   padding: 0.85rem 1rem;
-  margin-top: 0.35rem;
+  margin: 0.35rem 0.5rem 0.35rem;
   border-radius: 6px;
-  background: hsl(var(--card) / 0.7);
-  border: 1px solid hsl(var(--border) / 0.5);
+  background: hsl(var(--card) / 0.85);
+  border: 1px solid hsl(var(--border) / 0.6);
   font-size: 1.15em;
   color: hsl(var(--foreground));
   overflow-x: auto;
@@ -1518,7 +1511,7 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-math-reading-mode .netcatty-math-formula-preview {
-  margin-top: 0;
+  margin: 0;
   background: hsl(var(--secondary) / 0.25);
 }
 
@@ -1541,7 +1534,7 @@ html[data-theme-transition] *::after {
   margin: 0.3rem 0 0.65rem;
   border-radius: 6px;
   background: hsl(var(--secondary) / 0.35) !important;
-  overflow: hidden;
+  overflow: visible !important;
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) .netcatty-mdx-content p:has(+ [class*="_codeMirrorWrapper_"]) {
@@ -1549,12 +1542,18 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] .cm-editor {
+  min-height: 2.2rem !important;
   background: transparent !important;
   border-radius: 0 !important;
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] .cm-content {
   padding: 0 !important;
+}
+
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] .cm-scroller {
+  padding-right: 4.8rem !important;
+  min-height: 2.2rem !important;
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorToolbar_"] {
@@ -1588,6 +1587,11 @@ html[data-theme-transition] *::after {
 
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] .netcatty-note-code-copy {
   position: static !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  width: 1.35rem !important;
+  height: 1.35rem !important;
   opacity: 1 !important;
   pointer-events: auto !important;
 }

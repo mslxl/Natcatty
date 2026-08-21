@@ -19,6 +19,7 @@ import {
   Minus,
   PencilLine,
   Quote,
+  Search,
   Sigma,
   SquareCode,
   Strikethrough,
@@ -26,8 +27,13 @@ import {
   Type,
   Underline,
 } from "lucide-react";
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { calculateNoteStats, type MarkdownActionType } from "../../domain/notes";
+import {
+  COMPREHENSIVE_NOTE_FONTS,
+  NOTE_FONT_CATEGORIES,
+  type NoteFontCategory,
+} from "../../domain/noteFonts";
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
@@ -48,18 +54,6 @@ export interface NoteToolbarProps {
   onChangeNoteFontSize?: (size: number) => void;
 }
 
-const FONT_PRESETS = [
-  { label: "默认字体 (System)", value: "" },
-  { label: "Mona Sans", value: '"Mona Sans", system-ui, sans-serif' },
-  { label: "Inter", value: '"Inter", system-ui, sans-serif' },
-  { label: "Space Grotesk", value: '"Space Grotesk", system-ui, sans-serif' },
-  { label: "JetBrains Mono", value: '"JetBrains Mono", monospace' },
-  { label: "微软雅黑 (Microsoft YaHei)", value: '"Microsoft YaHei", sans-serif' },
-  { label: "苹方 (PingFang SC)", value: '"PingFang SC", sans-serif' },
-  { label: "宋体 / 衬线体 (Serif)", value: 'Georgia, "Songti SC", "SimSun", serif' },
-  { label: "等宽代码体 (Monospace)", value: 'ui-monospace, "Cascadia Code", "Fira Code", monospace' },
-];
-
 const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20];
 
 export const NoteToolbar: React.FC<NoteToolbarProps> = ({
@@ -75,7 +69,19 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   noteFontSize = 14,
   onChangeNoteFontSize,
 }) => {
+  const [fontSearch, setFontSearch] = useState("");
+  const [selectedFontCategory, setSelectedFontCategory] = useState<NoteFontCategory>("全部");
+
   const stats = useMemo(() => calculateNoteStats(content), [content]);
+
+  const filteredFonts = useMemo(() => {
+    return COMPREHENSIVE_NOTE_FONTS.filter((f) => {
+      if (selectedFontCategory !== "全部" && f.category !== selectedFontCategory) return false;
+      if (!fontSearch.trim()) return true;
+      const query = fontSearch.trim().toLowerCase();
+      return f.label.toLowerCase().includes(query) || f.value.toLowerCase().includes(query);
+    });
+  }, [fontSearch, selectedFontCategory]);
 
   const isEditing = editorMode === "edit" || editorMode === "live" || editorMode === "source";
 
@@ -361,27 +367,67 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               <Type size={14} />
             </button>
           </DropdownTrigger>
-          <DropdownContent align="end" className="w-56 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
-            <div>
-              <div className="text-[11px] font-medium text-muted-foreground mb-1">笔记字体</div>
-              <div className="space-y-0.5 max-h-44 overflow-y-auto pr-1">
-                {FONT_PRESETS.map((f) => (
+          <DropdownContent align="end" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
+                <span>笔记字体</span>
+                <span className="text-[10px] opacity-70">共 {COMPREHENSIVE_NOTE_FONTS.length} 款预设</span>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative flex items-center">
+                <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  placeholder="搜索字体..."
+                  value={fontSearch}
+                  onChange={(e) => setFontSearch(e.target.value)}
+                  className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
+                />
+              </div>
+
+              {/* Category Filter Chips */}
+              <div className="flex flex-wrap gap-1 pt-0.5">
+                {NOTE_FONT_CATEGORIES.map((cat) => (
                   <button
-                    key={f.value}
+                    key={cat}
                     type="button"
-                    style={{ fontFamily: f.value || undefined }}
                     className={cn(
-                      "w-full px-2 py-1 rounded text-left text-xs transition-colors flex items-center justify-between",
-                      (noteFontFamily || "") === f.value
-                        ? "bg-primary text-primary-foreground font-medium"
-                        : "hover:bg-secondary text-foreground",
+                      "px-1.5 py-0.5 rounded text-[10px] transition-colors border",
+                      selectedFontCategory === cat
+                        ? "bg-primary text-primary-foreground border-primary font-medium"
+                        : "border-border/60 hover:bg-secondary text-muted-foreground hover:text-foreground",
                     )}
-                    onClick={() => onChangeNoteFontFamily?.(f.value)}
+                    onClick={() => setSelectedFontCategory(cat)}
                   >
-                    <span className="truncate">{f.label}</span>
-                    {(noteFontFamily || "") === f.value && <Check size={12} className="shrink-0" />}
+                    {cat}
                   </button>
                 ))}
+              </div>
+
+              {/* Scrollable Font List */}
+              <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
+                {filteredFonts.length === 0 ? (
+                  <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配字体</div>
+                ) : (
+                  filteredFonts.map((f) => (
+                    <button
+                      key={f.value}
+                      type="button"
+                      style={{ fontFamily: f.value || undefined }}
+                      className={cn(
+                        "w-full px-2 py-1 rounded text-left text-xs transition-colors flex items-center justify-between gap-1.5",
+                        (noteFontFamily || "") === f.value
+                          ? "bg-primary text-primary-foreground font-medium"
+                          : "hover:bg-secondary text-foreground",
+                      )}
+                      onClick={() => onChangeNoteFontFamily?.(f.value)}
+                    >
+                      <span className="truncate">{f.label}</span>
+                      {(noteFontFamily || "") === f.value && <Check size={12} className="shrink-0" />}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
 
