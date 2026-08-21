@@ -19,6 +19,7 @@ import {
   Minus,
   PencilLine,
   Quote,
+  Redo2,
   Search,
   Sigma,
   SquareCode,
@@ -26,6 +27,7 @@ import {
   Table as TableIcon,
   Type,
   Underline,
+  Undo2,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { calculateNoteStats, type MarkdownActionType } from "../../domain/notes";
@@ -144,7 +146,30 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
       {/* Middle Area: Formatting Tools (Available in Live Preview & Source Mode) */}
       {isEditing && (
-        <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex flex-1 items-center gap-0.5 min-w-0 overflow-x-auto [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 [&::-webkit-scrollbar-track]:bg-transparent">
+          <div className="h-4 w-px bg-border mx-1 shrink-0" />
+
+          {/* Undo / Redo */}
+          <button
+            type="button"
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onAction?.("undo")}
+            title="撤销 (Ctrl+Z)"
+          >
+            <Undo2 size={14} />
+          </button>
+
+          <button
+            type="button"
+            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => onAction?.("redo")}
+            title="重做 (Ctrl+Y)"
+          >
+            <Redo2 size={14} />
+          </button>
+
           <div className="h-4 w-px bg-border mx-1 shrink-0" />
 
           {/* Heading Dropdown (Using Portal Dropdown to avoid clipping) */}

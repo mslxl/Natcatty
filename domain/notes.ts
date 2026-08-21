@@ -637,6 +637,8 @@ export const calculateNoteStats = (content: string): NoteStats => {
 };
 
 export type MarkdownActionType =
+  | "undo"
+  | "redo"
   | "bold"
   | "italic"
   | "strikethrough"

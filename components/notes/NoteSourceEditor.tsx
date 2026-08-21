@@ -1,4 +1,4 @@
-import React, { useImperativeHandle, useRef } from "react";
+import React, { useEffect, useImperativeHandle, useRef } from "react";
 import { type MarkdownActionType, wrapMarkdownSyntax } from "../../domain/notes";
 
 export interface NoteSourceEditorHandle {
@@ -19,6 +19,24 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
   ({ value, placeholder = "", onChange, className = "", noteFontFamily, noteFontSize }, ref) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const lineNumbersRef = useRef<HTMLDivElement>(null);
+    // Undo/redo history for the source textarea (native textarea undo is
+    // unreliable once the value is controlled by React).
+    const undoStackRef = useRef<string[]>([]);
+    const redoStackRef = useRef<string[]>([]);
+    // Tracks whether the latest value change originated from a user edit
+    // (toolbar action / Tab) so external value swaps (e.g. switching notes)
+    // can reset the history stacks instead of leaking into the next note.
+    const userEditRef = useRef(false);
+
+    // When the external value changes without a user edit (e.g. switching
+    // notes), reset the undo/redo history so it never applies to another note.
+    useEffect(() => {
+      if (!userEditRef.current) {
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+      }
+      userEditRef.current = false;
+    }, [value]);
 
     const lineCount = (value.match(/\n/g)?.length || 0) + 1;
     const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
@@ -40,6 +58,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
         const nextValue = `${value.substring(0, start)}  ${value.substring(end)}`;
+        userEditRef.current = true;
         onChange(nextValue);
         requestAnimationFrame(() => {
           textarea.selectionStart = start + 2;
@@ -52,9 +71,33 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
       insertAction: (action: MarkdownActionType) => {
         const textarea = textareaRef.current;
         if (!textarea) return;
+
+        if (action === "undo" || action === "redo") {
+          const stack = action === "undo" ? undoStackRef.current : redoStackRef.current;
+          const target = stack.pop();
+          if (target === undefined) return;
+          if (action === "undo") {
+            redoStackRef.current.push(value);
+          } else {
+            undoStackRef.current.push(value);
+          }
+          userEditRef.current = true;
+          onChange(target);
+          requestAnimationFrame(() => {
+            textarea.focus();
+            textarea.setSelectionRange(target.length, target.length);
+          });
+          return;
+        }
+
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
         const result = wrapMarkdownSyntax(value, start, end, action);
+        if (result.text !== value) {
+          undoStackRef.current.push(value);
+          redoStackRef.current = [];
+        }
+        userEditRef.current = true;
         onChange(result.text);
         requestAnimationFrame(() => {
           textarea.focus();

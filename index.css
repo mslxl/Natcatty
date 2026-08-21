@@ -985,88 +985,6 @@ html[data-theme-transition] *::after {
   line-height: 1.75;
 }
 
-.netcatty-note-markdown-toolbar {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  width: 100%;
-  min-width: 0;
-  max-width: 100%;
-  box-sizing: border-box;
-  display: flex !important;
-  flex-wrap: nowrap !important;
-  align-content: flex-start !important;
-  height: auto !important;
-  overflow-x: auto !important;
-  overflow-y: hidden !important;
-  align-items: center !important;
-  min-height: 2rem !important;
-  margin-bottom: 0.75rem;
-  border: 1px solid hsl(var(--border) / 0.6) !important;
-  border-radius: 6px !important;
-  background: hsl(var(--background) / 0.96) !important;
-  color: hsl(var(--foreground)) !important;
-  box-shadow: none !important;
-  scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border) / 0.8) transparent;
-}
-
-.netcatty-note-markdown-toolbar > * {
-  flex-shrink: 0;
-}
-
-.netcatty-note-markdown-toolbar button,
-.netcatty-note-markdown-toolbar [role="button"],
-.netcatty-note-markdown-toolbar [role="combobox"] {
-  color: hsl(var(--muted-foreground)) !important;
-}
-
-.netcatty-note-markdown-toolbar button:hover,
-.netcatty-note-markdown-toolbar [role="button"]:hover,
-.netcatty-note-markdown-toolbar [role="combobox"]:hover,
-.netcatty-note-markdown-toolbar button[data-state="on"],
-.netcatty-note-markdown-toolbar button[data-state="open"] {
-  background: hsl(var(--secondary)) !important;
-  color: hsl(var(--foreground)) !important;
-}
-
-.netcatty-note-markdown-toolbar [role="separator"] {
-  flex-shrink: 0;
-  background: hsl(var(--border) / 0.7) !important;
-}
-
-@container (max-width: 34rem) {
-  .netcatty-note-markdown-toolbar {
-    gap: 0.125rem !important;
-    row-gap: 0.125rem !important;
-    flex-wrap: nowrap !important;
-    align-content: flex-start !important;
-    min-height: 1.9rem !important;
-    padding: 0.125rem !important;
-    overflow-x: auto !important;
-    overflow-y: hidden !important;
-  }
-
-  .netcatty-note-markdown-toolbar button,
-  .netcatty-note-markdown-toolbar [role="button"] {
-    width: 1.75rem !important;
-    min-width: 1.75rem !important;
-    height: 1.75rem !important;
-    padding: 0 !important;
-  }
-
-  .netcatty-note-markdown-toolbar [role="combobox"] {
-    min-width: 7.25rem !important;
-    max-width: 8.5rem !important;
-    height: 1.75rem !important;
-    padding: 0 0.45rem !important;
-  }
-
-  .netcatty-note-markdown-toolbar [role="separator"] {
-    margin: 0 0.125rem !important;
-  }
-}
-
 .netcatty-mdx-editor,
 .netcatty-mdx-editor .mdxeditor-root-contenteditable {
   min-height: 100%;
@@ -1702,10 +1620,6 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor--preview [class*="_codeMirrorToolbar_"] {
-  display: none !important;
-}
-
-.netcatty-mdx-editor--preview .netcatty-note-markdown-toolbar {
   display: none !important;
 }
 

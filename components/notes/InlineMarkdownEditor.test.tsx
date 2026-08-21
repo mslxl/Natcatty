@@ -144,25 +144,26 @@ test("note editor registers a code block editor for pasted fenced code", () => {
 test("note editor enables image plugin for remote markdown images", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
   assert.match(source, /imagePlugin\(\{\s*allowSetImageDimensions:\s*true/);
-  assert.match(source, /InsertImage/);
 });
 
 test("note editor exposes preview and edit modes with a markdown toolbar in edit mode", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
   const managerSource = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
+  const toolbarSource = readFileSync(new URL("./NoteToolbar.tsx", import.meta.url), "utf8");
 
   assert.match(source, /type NoteEditorMode = "edit" \| "preview"/);
-  assert.match(source, /toolbarPlugin\(\{\s*toolbarContents:/s);
+  // The app-owned NoteToolbar (not MDXEditor's toolbarPlugin) hosts the
+  // formatting controls; MDXEditor must not render its own toolbar.
+  assert.doesNotMatch(source, /toolbarPlugin\(/);
+  assert.match(toolbarSource, /onAction\?\.\("undo"\)/);
+  assert.match(toolbarSource, /onAction\?\.\("redo"\)/);
+  assert.match(toolbarSource, /<Undo2 size=\{14\} \/>/);
+  assert.match(toolbarSource, /<Redo2 size=\{14\} \/>/);
   // Preview and edit both use MDXEditor (readOnly in preview).
   assert.match(source, /readOnly=\{editorMode === "preview"\}/);
   assert.match(source, /key=\{editorMode\}/);
   assert.match(source, /netcatty-mdx-editor--preview/);
   assert.doesNotMatch(source, /NoteMarkdownPreview|react-markdown|github-markdown/);
-  assert.match(source, /<BlockTypeSelect \/>/);
-  assert.match(source, /<BoldItalicUnderlineToggles /);
-  assert.match(source, /<ListsToggle /);
-  assert.match(source, /<InsertCodeBlock \/>/);
-  assert.match(source, /<InsertTable \/>/);
   assert.match(source, /editorMode = controlledEditorMode \?\? "edit"/);
   assert.doesNotMatch(source, /data-note-mode-switch/);
   assert.doesNotMatch(source, /absolute -top-9/);
@@ -182,6 +183,7 @@ test("note editor exposes preview and edit modes with a markdown toolbar in edit
 test("note markdown toolbar remains usable in narrow panes", () => {
   const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+  const toolbarSource = readFileSync(new URL("./NoteToolbar.tsx", import.meta.url), "utf8");
 
   assert.doesNotMatch(source, /MoreHorizontal|data-note-toolbar-more|netcatty-note-toolbar-more/);
 
@@ -195,29 +197,23 @@ test("note markdown toolbar remains usable in narrow panes", () => {
     styles,
     /\.netcatty-mdx-editor\s*\{[^}]*transform:\s*translateZ\(0\);/s,
   );
+  // The app-owned NoteToolbar scrolls horizontally when the pane is narrow so
+  // formatting buttons are never clipped; the scrollbar stays visible.
   assert.match(
-    styles,
-    /\.netcatty-note-markdown-toolbar\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto\s*!important;[^}]*overflow-x:\s*auto\s*!important;/s,
+    toolbarSource,
+    /overflow-x-auto [^"]*\[scrollbar-width:thin\]/,
   );
   assert.match(
-    styles,
-    /\.netcatty-note-markdown-toolbar\s*\{[^}]*box-sizing:\s*border-box;[^}]*display:\s*flex\s*!important;[^}]*flex-wrap:\s*nowrap\s*!important;[^}]*align-content:\s*flex-start\s*!important;/s,
+    toolbarSource,
+    /\[&::-webkit-scrollbar\]:h-1\.5/,
   );
   assert.match(
-    styles,
-    /\.netcatty-note-markdown-toolbar\s*>\s*\*\s*\{[^}]*flex-shrink:\s*0;/s,
+    toolbarSource,
+    /\[&::-webkit-scrollbar-thumb\]:bg-border\/70/,
   );
   assert.match(
-    styles,
-    /@container\s*\(max-width:\s*34rem\)\s*\{[\s\S]*\.netcatty-note-markdown-toolbar\s*\{[^}]*gap:\s*0\.125rem\s*!important;/s,
-  );
-  assert.match(
-    styles,
-    /@container\s*\(max-width:\s*34rem\)\s*\{[\s\S]*\.netcatty-note-markdown-toolbar\s*\{[^}]*flex-wrap:\s*nowrap\s*!important;[^}]*align-content:\s*flex-start\s*!important;/s,
-  );
-  assert.match(
-    styles,
-    /@container\s*\(max-width:\s*34rem\)\s*\{[\s\S]*\.netcatty-note-markdown-toolbar\s+button,[\s\S]*\.netcatty-note-markdown-toolbar\s+\[role="button"\][\s\S]*height:\s*1\.75rem\s*!important;/s,
+    toolbarSource,
+    /flex flex-1 items-center gap-0\.5 min-w-0 overflow-x-auto/,
   );
 });
 
@@ -348,10 +344,6 @@ test("note code block frame is borderless and language picker is compact", () =>
   assert.match(
     styles,
     /\.netcatty-mdx-editor--preview\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*display:\s*none\s*!important;/s,
-  );
-  assert.match(
-    styles,
-    /\.netcatty-mdx-editor--preview\s+\.netcatty-note-markdown-toolbar\s*\{[^}]*display:\s*none\s*!important;/s,
   );
 });
 

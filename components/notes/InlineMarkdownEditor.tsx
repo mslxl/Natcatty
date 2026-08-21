@@ -1,13 +1,4 @@
 import {
-  BlockTypeSelect,
-  BoldItalicUnderlineToggles,
-  CodeToggle,
-  CreateLink,
-  InsertCodeBlock,
-  InsertImage,
-  InsertTable,
-  InsertThematicBreak,
-  ListsToggle,
   codeBlockPlugin,
   codeMirrorPlugin,
   headingsPlugin,
@@ -19,11 +10,8 @@ import {
   MDXEditor,
   type MDXEditorMethods,
   quotePlugin,
-  Separator,
   tablePlugin,
   thematicBreakPlugin,
-  toolbarPlugin,
-  UndoRedo,
 } from "@mdxeditor/editor";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -37,6 +25,8 @@ import {
   $setSelection,
   CLEAR_HISTORY_COMMAND,
   FORMAT_TEXT_COMMAND,
+  REDO_COMMAND,
+  UNDO_COMMAND,
   getNearestEditorFromDOMNode,
 } from "lexical";
 import React, {
@@ -196,27 +186,6 @@ const noteCodeHighlightStyle = HighlightStyle.define([
 const NOTE_CODE_MIRROR_EXTENSIONS = [syntaxHighlighting(noteCodeHighlightStyle)];
 
 type RectLike = Pick<DOMRect, "bottom" | "height" | "left" | "top" | "width">;
-
-const NoteMarkdownToolbar = React.memo(function NoteMarkdownToolbar() {
-  return (
-    <>
-      <UndoRedo />
-      <Separator />
-      <BlockTypeSelect />
-      <Separator />
-      <BoldItalicUnderlineToggles options={["Bold", "Italic"]} />
-      <CodeToggle />
-      <Separator />
-      <ListsToggle options={["bullet", "number", "check"]} />
-      <Separator />
-      <CreateLink />
-      <InsertImage />
-      <InsertCodeBlock />
-      <InsertTable />
-      <InsertThematicBreak />
-    </>
-  );
-});
 
 const isSshCandidateHost = (host: Host): boolean =>
   Boolean(host.hostname?.trim()) && (host.protocol === undefined || host.protocol === "ssh");
@@ -854,6 +823,13 @@ export const InlineMarkdownEditor = React.memo(
           const editable = container?.querySelector("[contenteditable]");
           const lexicalEditor = editable ? getNearestEditorFromDOMNode(editable) : null;
 
+          if (action === "undo" || action === "redo") {
+            if (lexicalEditor) {
+              lexicalEditor.dispatchCommand(action === "undo" ? UNDO_COMMAND : REDO_COMMAND, undefined);
+            }
+            return;
+          }
+
           if (
             action === "bold" ||
             action === "italic" ||
@@ -958,10 +934,6 @@ export const InlineMarkdownEditor = React.memo(
   );
 
   const plugins = useMemo(() => [
-    toolbarPlugin({
-      toolbarContents: () => <NoteMarkdownToolbar />,
-      toolbarClassName: "netcatty-note-markdown-toolbar",
-    }),
     headingsPlugin(),
     listsPlugin(),
     quotePlugin(),
