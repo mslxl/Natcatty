@@ -76,11 +76,15 @@ function SettingsAppearanceTab(props: {
     STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
     "",
   );
-  const [noteFontSize, setNoteFontSize] = useStoredNumber(
+  const [noteFontSize, setNoteFontSize, persistNoteFontSize] = useStoredNumber(
     STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
     14,
     { min: 10, max: 32 },
   );
+  const handleSetNoteFontSize = useCallback((size: number) => {
+    setNoteFontSize(size);
+    persistNoteFontSize(size);
+  }, [persistNoteFontSize, setNoteFontSize]);
   const {
     theme,
     resolvedTheme,
@@ -504,7 +508,7 @@ function SettingsAppearanceTab(props: {
               max={22}
               step={1}
               value={noteFontSize}
-              onChange={(e) => setNoteFontSize(Number(e.target.value))}
+              onChange={(e) => handleSetNoteFontSize(Number(e.target.value))}
               className="w-28 accent-primary"
             />
             <span className="text-sm text-muted-foreground w-10 text-right tabular-nums">

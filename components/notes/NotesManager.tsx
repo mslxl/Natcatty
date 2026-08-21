@@ -416,11 +416,15 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
     "",
   );
-  const [noteFontSize, setNoteFontSize] = useStoredNumber(
+  const [noteFontSize, setNoteFontSize, persistNoteFontSize] = useStoredNumber(
     STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
     14,
     { min: 10, max: 32 },
   );
+  const handleSetNoteFontSize = useCallback((size: number) => {
+    setNoteFontSize(size);
+    persistNoteFontSize(size);
+  }, [persistNoteFontSize, setNoteFontSize]);
   const treeAsideRef = useRef<HTMLElement | null>(null);
   const treeWidthRef = useRef(treeWidth);
   treeWidthRef.current = treeWidth;
@@ -1975,7 +1979,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 noteFontFamily={noteFontFamily}
                 onChangeNoteFontFamily={setNoteFontFamily}
                 noteFontSize={noteFontSize}
-                onChangeNoteFontSize={setNoteFontSize}
+                onChangeNoteFontSize={handleSetNoteFontSize}
               />
 
               <div className="flex flex-1 min-h-0 min-w-0">
@@ -2150,7 +2154,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               noteFontFamily={noteFontFamily}
               onChangeNoteFontFamily={setNoteFontFamily}
               noteFontSize={noteFontSize}
-              onChangeNoteFontSize={setNoteFontSize}
+              onChangeNoteFontSize={handleSetNoteFontSize}
             />
 
             {noteEditorMode === "source" ? (
