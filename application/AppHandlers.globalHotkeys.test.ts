@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { executeHotkeyActionImpl, getLogHostVisualSnapshot, handleEscapeKeyDownImpl, handleGlobalHotkeyKeyDownImpl } from './app/AppHandlers.ts';
+import { executeHotkeyActionImpl, getLogHostVisualSnapshot, handleGlobalHotkeyKeyDownImpl } from './app/AppHandlers.ts';
 import { matchesKeyBinding } from '../domain/models.ts';
 import { DEFAULT_KEY_BINDINGS } from '../domain/models/keyBindings.ts';
 
@@ -168,110 +168,6 @@ test('quick switch hotkey toggles the quick switcher open state', () => {
 
   executeHotkeyActionImpl(() => ({ ...baseCtx, isQuickSwitcherOpen: true }), 'quickSwitch', event);
   assert.equal(isQuickSwitcherOpen, false);
-});
-
-test('pane zoom hotkey prefers the active side panel split before workspace focus mode', () => {
-  let sidePanelToggles = 0;
-  let workspaceToggles = 0;
-  const workspace = { id: 'workspace-1' };
-  const noop = () => {};
-
-  executeHotkeyActionImpl(() => ({
-    IS_DEV: false,
-    MOVE_FOCUS_DEBOUNCE_MS: 0,
-    activeTabStore: { getActiveTabId: () => workspace.id },
-    addConnectionLogRef: { current: noop },
-    closeSession: noop,
-    closeTabInFlightRef: { current: false },
-    closeWorkspace: noop,
-    collectSessionIds: () => [],
-    confirmIfBusyLocalTerminal: async () => true,
-    createLocalTerminalWithCurrentShell: noop,
-    editorTabs: [],
-    fromEditorTabId: () => null,
-    handleOpenSettingsRef: { current: noop },
-    handleRequestCloseEditorTabRef: { current: noop },
-    isEditorTabId: () => false,
-    isQuickSwitcherOpen: false,
-    lastMoveFocusTimeRef: { current: 0 },
-    moveFocusInWorkspace: noop,
-    orderedTabs: [],
-    resolveCloseIntent: () => ({ kind: 'noop' }),
-    resolveSnippetsShortcutIntent: () => ({ kind: 'noop' }),
-    sessions: [],
-    setActiveTabId: noop,
-    setAddToWorkspaceDialog: noop,
-    setIsQuickSwitcherOpen: noop,
-    setNavigateToSection: noop,
-    settings: { showSftpTab: true, shellOnlyTabNumberShortcuts: false },
-    sidePanelPaneZoomRef: { current: {
-      getState: () => 'focusable',
-      toggle: () => { sidePanelToggles += 1; return true; },
-    } },
-    splitSessionWithCurrentShell: noop,
-    systemInfoRef: { current: { username: 'user', hostname: 'host' } },
-    toEditorTabId: (id: string) => `editor:${id}`,
-    toggleBroadcast: noop,
-    toggleScriptsSidePanelRef: { current: noop },
-    toggleSidePanelRef: { current: noop },
-    toggleWorkspaceViewMode: () => { workspaceToggles += 1; },
-    workspaces: [workspace],
-  }), 'togglePaneZoom', { key: 'Enter' } as KeyboardEvent);
-
-  assert.equal(sidePanelToggles, 1);
-  assert.equal(workspaceToggles, 0);
-});
-
-test('Escape exits side panel focus only after closing the command palette', () => {
-  let quickSwitcherClosed = 0;
-  let sidePanelRestores = 0;
-  const event = {
-    key: 'Escape',
-    preventDefault: noop,
-    stopPropagation: noop,
-  } as unknown as KeyboardEvent;
-  function noop() {}
-
-  handleEscapeKeyDownImpl(() => ({
-    isQuickSwitcherOpen: true,
-    setIsQuickSwitcherOpen: () => { quickSwitcherClosed += 1; },
-    sidePanelPaneZoomRef: { current: {
-      getState: () => 'focused',
-      unfocus: () => { sidePanelRestores += 1; return true; },
-    } },
-  }), event);
-  assert.equal(quickSwitcherClosed, 1);
-  assert.equal(sidePanelRestores, 0);
-
-  handleEscapeKeyDownImpl(() => ({
-    isQuickSwitcherOpen: false,
-    setIsQuickSwitcherOpen: noop,
-    sidePanelPaneZoomRef: { current: {
-      getState: () => 'focused',
-      unfocus: () => { sidePanelRestores += 1; return true; },
-    } },
-  }), event);
-  assert.equal(sidePanelRestores, 1);
-});
-
-test('Escape leaves pane focus unchanged when an inner control already handled it', () => {
-  let sidePanelRestores = 0;
-
-  handleEscapeKeyDownImpl(() => ({
-    isQuickSwitcherOpen: false,
-    setIsQuickSwitcherOpen: () => {},
-    sidePanelPaneZoomRef: { current: {
-      getState: () => 'focused',
-      unfocus: () => { sidePanelRestores += 1; return true; },
-    } },
-  }), {
-    key: 'Escape',
-    defaultPrevented: true,
-    preventDefault: () => {},
-    stopPropagation: () => {},
-  } as unknown as KeyboardEvent);
-
-  assert.equal(sidePanelRestores, 0);
 });
 
 test('close tab hotkey routes native plugin view tabs through their owner', () => {

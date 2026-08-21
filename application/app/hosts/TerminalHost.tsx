@@ -239,8 +239,6 @@ export function TerminalHost() {
       toggleBroadcast: sessionActions?.toggleBroadcast,
       toggleScriptsSidePanelRef: handlers.toggleScriptsSidePanelRef,
       toggleSidePanelRef: handlers.toggleSidePanelRef,
-      sidePanelPaneZoomRef: handlers.sidePanelPaneZoomRef,
-      sftpPaneZoomRef: handlers.sftpPaneZoomRef,
       toggleWorkspaceViewMode: sessionActions?.toggleWorkspaceViewMode,
       updateHostDistro: vaultActions?.updateHostDistro,
       updateSplitSizes: sessionActions?.updateSplitSizes,

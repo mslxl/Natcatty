@@ -5,28 +5,8 @@ import test from 'node:test';
 import {
   buildPluginPaletteItems,
   getQuickSwitcherRowStateClass,
-  buildPaneZoomPaletteAction,
   shouldUseQuickSwitcherPointerNavigation,
 } from './QuickSwitcher';
-
-test('command palette exposes the matching focus or restore action', () => {
-  const t = (key: string) => ({
-    'terminal.layer.focusPane': 'Focus current pane',
-    'terminal.layer.unfocusPane': 'Unfocus pane',
-  }[key] ?? key);
-
-  assert.deepEqual(buildPaneZoomPaletteAction('focusable', t), {
-    type: 'action',
-    id: 'focus-current-pane',
-    title: 'Focus current pane',
-  });
-  assert.deepEqual(buildPaneZoomPaletteAction('focused', t), {
-    type: 'action',
-    id: 'unfocus-pane',
-    title: 'Unfocus pane',
-  });
-  assert.equal(buildPaneZoomPaletteAction('unavailable', t), null);
-});
 
 test('keeps the new workspace action outside the scrollable results', () => {
   const source = readFileSync(new URL('./QuickSwitcher.tsx', import.meta.url), 'utf8');

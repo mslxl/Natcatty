@@ -48,11 +48,7 @@ import {
 } from '../terminalPaneVisibility';
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
-import type { SidePanelPaneZoomController, SidePanelTool } from '../../domain/sidePanelLayout';
-import {
-  getTerminalPaneFocusTransition,
-  TERMINAL_PANE_FOCUS_TRANSITION_MS,
-} from './terminalPaneFocusTransition';
+import type { SidePanelTool } from '../../domain/sidePanelLayout';
 
 export type SidePanelTab = SidePanelTool;
 
@@ -728,7 +724,6 @@ export interface TerminalLayerProps {
   showHostTreeSidebar?: boolean;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;
-  sidePanelPaneZoomRef?: React.MutableRefObject<SidePanelPaneZoomController | null>;
   // Session rename
   onStartSessionRename?: (sessionId: string) => void;
   onSubmitSessionRename?: (sessionId?: string, name?: string) => void;
@@ -1324,29 +1319,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   }, [deferPaneLayoutUpdate, isFocusedPane, isFocusMode, isSplitViewVisible, isVisible, livePaneLayoutKey]);
 
   const paneLayoutKey = paneLayoutKeyRef.current;
-  const previousFocusModeRef = useRef(isFocusMode);
-  const [focusTransitionActive, setFocusTransitionActive] = useState(false);
-  const focusModeChanged = previousFocusModeRef.current !== isFocusMode;
-  useLayoutEffect(() => {
-    const changed = previousFocusModeRef.current !== isFocusMode;
-    previousFocusModeRef.current = isFocusMode;
-    if (!changed) return undefined;
-    setFocusTransitionActive(true);
-    const timerId = window.setTimeout(
-      () => setFocusTransitionActive(false),
-      TERMINAL_PANE_FOCUS_TRANSITION_MS,
-    );
-    return () => window.clearTimeout(timerId);
-  }, [isFocusMode]);
-  const style: React.CSSProperties = {
-    ...layoutStyle,
-    transition: getTerminalPaneFocusTransition({
-      inActiveWorkspace,
-      isFocusTarget: isFocusedPane || (isFocusMode && isVisible),
-      isFocusTransitionActive: focusModeChanged || focusTransitionActive,
-      isResizing,
-    }),
-  };
+  const style: React.CSSProperties = { ...layoutStyle };
 
   useLayoutEffect(() => {
     const element = paneElementRef.current;

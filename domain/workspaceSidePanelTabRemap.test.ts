@@ -30,8 +30,8 @@ test('promote copies preferred member open tool onto the new workspace tab', () 
 });
 
 test('promote copies split layouts onto the new workspace tab', () => {
-  const layoutA = { focusedPaneId: 'pane-a', maximizedPaneId: null, root: { type: 'pane', id: 'pane-a', tool: 'ai' } };
-  const layoutB = { focusedPaneId: 'pane-b', maximizedPaneId: null, root: { type: 'pane', id: 'pane-b', tool: 'sftp' } };
+  const layoutA = { focusedPaneId: 'pane-a', root: { type: 'pane', id: 'pane-a', tool: 'ai' } };
+  const layoutB = { focusedPaneId: 'pane-b', root: { type: 'pane', id: 'pane-b', tool: 'sftp' } };
   const source = new Map([
     ['term-a', layoutA],
     ['term-b', layoutB],

@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { Activity, FolderTree, History, Maximize2, MessageSquare, Minimize2, NotebookText, Palette, PanelLeft, PanelRight, Play, SplitSquareHorizontal, SplitSquareVertical, X } from 'lucide-react';
+import { Activity, FolderTree, History, MessageSquare, NotebookText, Palette, PanelLeft, PanelRight, Play, SplitSquareHorizontal, SplitSquareVertical, X } from 'lucide-react';
 import {
   buildSidePanelChromeThemeFromTerminalTheme,
   buildTerminalSidePanelCssVars,
@@ -41,10 +41,8 @@ import {
   canSplitSidePanelPaneAtSize,
   collectSidePanelPanes,
   getFocusedSidePanelPane,
-  getPaneZoomShortcutLabel,
   getSidePanelNodeMinimumPixels,
   getSidePanelSplitResizeBounds,
-  sidePanelNodeContainsPane,
   SIDE_PANEL_SPLIT_DIVIDER_PIXELS,
   type SidePanelLayout,
   type SidePanelLayoutNode,
@@ -66,29 +64,6 @@ MemoizedSidePanelMountedContent.displayName = 'MemoizedSidePanelMountedContent';
 
 type SidePanelContext = Record<string, any>;
 const SIDE_PANEL_TAB_DRAG_MIME = 'application/x-netcatty-sidepanel-tab';
-export const SIDE_PANEL_FOCUS_TRANSITION_MS = 160;
-
-export function getSidePanelFocusTransition(
-  kind: 'split' | 'shell',
-  isFocusTransitionActive: boolean,
-  isResizeActive: boolean,
-): string | undefined {
-  if (!isFocusTransitionActive || isResizeActive) return undefined;
-  const timing = `${SIDE_PANEL_FOCUS_TRANSITION_MS}ms ease`;
-  return kind === 'split'
-    ? `flex-grow ${timing}`
-    : `width ${timing}, max-width ${timing}`;
-}
-
-export function getSidePanelSplitChildPresentation(
-  child: SidePanelLayoutNode,
-  normalFlexGrow: number,
-  maximizedPaneId: string | null,
-): { flexGrow: number; hidden: boolean } {
-  if (!maximizedPaneId) return { flexGrow: normalFlexGrow, hidden: false };
-  const visible = sidePanelNodeContainsPane(child, maximizedPaneId);
-  return { flexGrow: visible ? 1 : 0, hidden: !visible };
-}
 
 type SidePanelTabItem = {
   id: SidePanelTab;
@@ -194,16 +169,12 @@ function SidePanelPaneHost({
 function SidePanelSplitView({
   node,
   children,
-  maximizedPaneId,
-  focusTransitionActive,
   onResize,
   separator,
   resizeLabel,
 }: {
   node: SidePanelSplitNode;
   children: React.ReactNode[];
-  maximizedPaneId: string | null;
-  focusTransitionActive: boolean;
   onResize: (splitId: string, sizes: number[]) => void;
   separator: string;
   resizeLabel: string;
@@ -215,7 +186,6 @@ function SidePanelSplitView({
     return node.children.map((_, index) => (node.sizes[index] ?? 1) / total);
   }, [node.children, node.sizes]);
   const [previewSizes, setPreviewSizes] = useState<number[] | null>(null);
-  const [resizeActive, setResizeActive] = useState(false);
   const renderedSizes = previewSizes ?? normalizedSizes;
 
   useLayoutEffect(() => () => {
@@ -233,7 +203,6 @@ function SidePanelSplitView({
     if (axisLength <= 0) return;
 
     resizeCleanupRef.current?.();
-    setResizeActive(true);
     terminalLayoutSuppressStore.begin();
     const startClient = node.direction === 'vertical' ? event.clientX : event.clientY;
     const startSizes = [...normalizedSizes];
@@ -273,7 +242,6 @@ function SidePanelSplitView({
       window.removeEventListener('mouseup', onMouseUp);
       window.removeEventListener('blur', finish);
       if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
-      setResizeActive(false);
     };
     const finish = () => {
       if (frame !== null) {
@@ -303,35 +271,12 @@ function SidePanelSplitView({
     >
       {children.map((child, index) => (
         <React.Fragment key={node.children[index].id}>
-          {(() => {
-            const presentation = getSidePanelSplitChildPresentation(
-              node.children[index],
-              renderedSizes[index],
-              maximizedPaneId,
-            );
-            return (
-              <div
-                className="min-h-0 min-w-0 overflow-hidden relative"
-                style={{
-                  flexBasis: 0,
-                  flexGrow: presentation.flexGrow,
-                  visibility: presentation.hidden ? 'hidden' : undefined,
-                  pointerEvents: presentation.hidden ? 'none' : undefined,
-                  transition: getSidePanelFocusTransition(
-                    'split',
-                    focusTransitionActive,
-                    resizeActive,
-                  ),
-                }}
-                aria-hidden={presentation.hidden ? true : undefined}
-                data-maximized-branch={maximizedPaneId
-                  ? (presentation.hidden ? 'hidden' : 'visible')
-                  : undefined}
-              >
-                {child}
-              </div>
-            );
-          })()}
+          <div
+            className="min-h-0 min-w-0 overflow-hidden relative"
+            style={{ flexBasis: 0, flexGrow: renderedSizes[index] }}
+          >
+            {child}
+          </div>
           {index < children.length - 1 && (
             <div
               className={node.direction === 'vertical'
@@ -348,7 +293,6 @@ function SidePanelSplitView({
                 (renderedSizes[index] / (renderedSizes[index] + renderedSizes[index + 1])) * 100,
               )}
               onMouseDown={(event) => startResize(event, index)}
-              style={{ display: maximizedPaneId ? 'none' : undefined }}
               onKeyDown={(event) => {
                 const decrease = node.direction === 'vertical'
                   ? event.key === 'ArrowLeft'
@@ -407,7 +351,6 @@ function SidePanelLayoutTree({
   accent,
   closePaneLabel,
   resizeLabel,
-  focusTransitionActive,
 }: {
   node: SidePanelLayoutNode;
   layout: SidePanelLayout;
@@ -421,7 +364,6 @@ function SidePanelLayoutTree({
   accent: string;
   closePaneLabel: string;
   resizeLabel: string;
-  focusTransitionActive: boolean;
 }): React.ReactNode {
   if (node.type === 'pane') {
     return (
@@ -443,8 +385,6 @@ function SidePanelLayoutTree({
   return (
     <SidePanelSplitView
       node={node}
-      maximizedPaneId={layout.maximizedPaneId}
-      focusTransitionActive={focusTransitionActive}
       onResize={onResize}
       separator={separator}
       resizeLabel={resizeLabel}
@@ -464,7 +404,6 @@ function SidePanelLayoutTree({
           accent={accent}
           closePaneLabel={closePaneLabel}
           resizeLabel={resizeLabel}
-          focusTransitionActive={focusTransitionActive}
         />
       ))}
     </SidePanelSplitView>
@@ -536,23 +475,18 @@ function SidePanelSplitMenu({
 
 export function getTerminalSidePanelShellWidth({
   activeSidePanelTab,
-  availableSurfaceWidth,
   forceHideAiShell,
   isSidePanelOpenForCurrentTab,
-  maximizedPaneId,
   resizePreviewWidth,
   sidePanelWidth,
 }: {
   activeSidePanelTab: SidePanelTab | null;
-  availableSurfaceWidth?: number;
   forceHideAiShell: boolean;
   isSidePanelOpenForCurrentTab: boolean;
-  maximizedPaneId?: string | null;
   resizePreviewWidth: number | null;
   sidePanelWidth: number;
 }): number {
   if (forceHideAiShell && activeSidePanelTab === 'ai') return 0;
-  if (maximizedPaneId && availableSurfaceWidth !== undefined) return availableSurfaceWidth;
   return isSidePanelOpenForCurrentTab
     ? (resizePreviewWidth ?? sidePanelWidth)
     : 0;
@@ -640,8 +574,6 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     handleFocusSidePanelPane,
     handleSplitSidePanelPane,
     handleCloseSidePanelPane,
-    handleMaximizeSidePanelPane,
-    handleRestoreSidePanelLayout,
     handleResizeSidePanelSplit,
     handleToggleSftpFromBar,
     resolvedPreviewTheme: ctxResolvedPreviewTheme,
@@ -652,10 +584,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     sidePanelWidth,
     t,
     terminalTheme,
-    hotkeyScheme,
-    keyBindings,
   } = ctx;
-  const paneZoomShortcutLabel = getPaneZoomShortcutLabel(keyBindings, hotkeyScheme);
 
   // Live theme for chrome when panel is open and not follow-app — stable memo
   // no longer receives focus-driven resolvedPreviewTheme via ctx.
@@ -672,7 +601,6 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       : ctxResolvedPreviewTheme);
 
   const [resizePreviewWidth, setResizePreviewWidth] = useState<number | null>(null);
-  const [shellResizeActive, setShellResizeActive] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const shellResizeCleanupRef = useRef<(() => void) | null>(null);
   const [availableSurfaceWidth, setAvailableSurfaceWidth] = useState(0);
@@ -777,31 +705,13 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
   const activePaneCount = activeSidePanelLayout
     ? collectSidePanelPanes(activeSidePanelLayout.root).length
     : 0;
-  const maximizedPaneId = activeSidePanelLayout?.maximizedPaneId ?? null;
-  const previousMaximizedPaneIdRef = useRef(maximizedPaneId);
-  const [focusTransitionActive, setFocusTransitionActive] = useState(false);
-  const focusStateChanged = previousMaximizedPaneIdRef.current !== maximizedPaneId;
-  useLayoutEffect(() => {
-    const changed = previousMaximizedPaneIdRef.current !== maximizedPaneId;
-    previousMaximizedPaneIdRef.current = maximizedPaneId;
-    if (!changed) return undefined;
-    setFocusTransitionActive(true);
-    const timerId = window.setTimeout(
-      () => setFocusTransitionActive(false),
-      SIDE_PANEL_FOCUS_TRANSITION_MS,
-    );
-    return () => window.clearTimeout(timerId);
-  }, [maximizedPaneId]);
-  const isFocusTransitionActive = focusStateChanged || focusTransitionActive;
   const isAiShellForceHidden = AI_PANEL_FORCE_HIDE_SHELL
     && activeSidePanelTab === 'ai'
     && activePaneCount <= 1;
   const requestedShellWidth = getTerminalSidePanelShellWidth({
     activeSidePanelTab,
-    availableSurfaceWidth,
     forceHideAiShell: AI_PANEL_FORCE_HIDE_SHELL && activePaneCount <= 1,
     isSidePanelOpenForCurrentTab,
-    maximizedPaneId,
     resizePreviewWidth,
     sidePanelWidth,
   });
@@ -809,20 +719,17 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     ? getSidePanelNodeMinimumPixels(activeSidePanelLayout.root, 'vertical')
     : 0;
   const shellWidth = requestedShellWidth > 0
-    ? (maximizedPaneId
-      ? requestedShellWidth
-      : clampTerminalSidePanelWidth(
-        requestedShellWidth,
-        availableSurfaceWidth,
-        sidePanelContentMinimumWidth,
-      ))
+    ? clampTerminalSidePanelWidth(
+      requestedShellWidth,
+      availableSurfaceWidth,
+      sidePanelContentMinimumWidth,
+    )
     : 0;
 
   const handleSidePanelResizeStart = useCallback((event: React.MouseEvent) => {
     if (!isSidePanelOpenForCurrentTab) return;
     event.preventDefault();
     shellResizeCleanupRef.current?.();
-    setShellResizeActive(true);
     terminalLayoutSuppressStore.begin();
     const startX = event.clientX;
     const startWidth = shellRef.current?.getBoundingClientRect().width ?? shellWidth;
@@ -853,7 +760,6 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       window.removeEventListener('mouseup', finish);
       window.removeEventListener('blur', finish);
       if (shellResizeCleanupRef.current === cleanup) shellResizeCleanupRef.current = null;
-      setShellResizeActive(false);
     };
     const finish = () => {
       setSidePanelWidth(lastWidth);
@@ -957,10 +863,6 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
     ? getFocusedSidePanelPane(activeSidePanelLayout)
     : null;
   const focusedPaneHost = focusedPane ? paneHosts.get(focusedPane.tool) ?? null : null;
-  const maximizedPane = activeSidePanelLayout?.maximizedPaneId
-    ? collectSidePanelPanes(activeSidePanelLayout.root)
-      .find((pane) => pane.id === activeSidePanelLayout.maximizedPaneId) ?? null
-    : null;
   const [focusedPaneSplitAvailability, setFocusedPaneSplitAvailability] = useState({
     horizontal: false,
     vertical: false,
@@ -1054,15 +956,8 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       ref={shellRef}
       style={{
         width: shellWidth,
-        maxWidth: maximizedPaneId
-          ? availableSurfaceWidth
-          : getTerminalSidePanelMaxWidth(availableSurfaceWidth),
+        maxWidth: getTerminalSidePanelMaxWidth(availableSurfaceWidth),
         contain: 'layout paint style',
-        transition: getSidePanelFocusTransition(
-          'shell',
-          isFocusTransitionActive,
-          shellResizeActive,
-        ),
       }}
       className={cn(
         'flex-shrink-0 h-full relative z-20',
@@ -1072,7 +967,7 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
       data-section="terminal-side-panel-shell"
       data-side-panel-position={sidePanelPosition}
     >
-      {isSidePanelOpenForCurrentTab && !isAiShellForceHidden && !maximizedPaneId && (
+      {isSidePanelOpenForCurrentTab && !isAiShellForceHidden && (
         <div
           className={cn(
             'absolute top-0 h-full w-2 cursor-ew-resize z-30',
@@ -1216,77 +1111,33 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
                   })}
                 </div>
               </ToolbarOverflowMenu>
-              <div className="flex-1 min-w-0" />
-              {maximizedPane && (
-                <div
-                  className="hidden min-[520px]:flex min-w-0 items-center gap-1 px-1 text-[10px]"
-                  style={{ color: sidePanelTheme.mutedFg }}
-                  data-section="terminal-side-panel-focus-indicator"
-                >
-                  <span className="truncate">
-                    {t('terminal.layer.focusedPane')}: {sidePanelToolLabels.get(maximizedPane.tool) ?? maximizedPane.tool}
-                  </span>
-                  <span className="shrink-0">
-                    · {paneZoomShortcutLabel ? `${paneZoomShortcutLabel} / ` : ''}Esc
-                  </span>
-                </div>
-              )}
-              {focusedPane && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Btn
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 rounded-md p-0 hover:bg-transparent"
-                      style={{ color: sidePanelTheme.mutedFg }}
-                      aria-label={maximizedPane
-                        ? t('terminal.layer.restorePanes')
-                        : t('terminal.layer.focusPane')}
-                      onClick={() => {
-                        if (maximizedPane) handleRestoreSidePanelLayout();
-                        else handleMaximizeSidePanelPane(focusedPane.id);
-                      }}
-                    >
-                      {maximizedPane ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-                    </Btn>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {maximizedPane
-                      ? t('terminal.layer.restorePanes')
-                      : t('terminal.layer.focusPane')}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {!maximizedPane && (
-                <>
-                  <SidePanelSplitMenu
-                    direction="horizontal"
-                    items={sidePanelTabItems}
-                    occupiedTools={occupiedSidePanelTools}
-                    disabled={
-                      !activeSidePanelLayout
-                      || activePaneCount >= MAX_SIDE_PANEL_PANES
-                      || !focusedPaneSplitAvailability.horizontal
-                    }
-                    onSelect={handleSplitSidePanelSelect}
-                    t={t}
-                    buttonColor={sidePanelTheme.mutedFg}
-                  />
-                  <SidePanelSplitMenu
-                    direction="vertical"
-                    items={sidePanelTabItems}
-                    occupiedTools={occupiedSidePanelTools}
-                    disabled={
-                      !activeSidePanelLayout
-                      || activePaneCount >= MAX_SIDE_PANEL_PANES
-                      || !focusedPaneSplitAvailability.vertical
-                    }
-                    onSelect={handleSplitSidePanelSelect}
-                    t={t}
-                    buttonColor={sidePanelTheme.mutedFg}
-                  />
-                </>
-              )}
+              <div className="flex-1" />
+              <SidePanelSplitMenu
+                direction="horizontal"
+                items={sidePanelTabItems}
+                occupiedTools={occupiedSidePanelTools}
+                disabled={
+                  !activeSidePanelLayout
+                  || activePaneCount >= MAX_SIDE_PANEL_PANES
+                  || !focusedPaneSplitAvailability.horizontal
+                }
+                onSelect={handleSplitSidePanelSelect}
+                t={t}
+                buttonColor={sidePanelTheme.mutedFg}
+              />
+              <SidePanelSplitMenu
+                direction="vertical"
+                items={sidePanelTabItems}
+                occupiedTools={occupiedSidePanelTools}
+                disabled={
+                  !activeSidePanelLayout
+                  || activePaneCount >= MAX_SIDE_PANEL_PANES
+                  || !focusedPaneSplitAvailability.vertical
+                }
+                onSelect={handleSplitSidePanelSelect}
+                t={t}
+                buttonColor={sidePanelTheme.mutedFg}
+              />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Btn
@@ -1334,7 +1185,6 @@ function TerminalLayerSidePanelInner({ ctx }: { ctx: SidePanelContext }) {
               accent={sidePanelTheme.accent}
               closePaneLabel={t('terminal.layer.closePane')}
               resizeLabel={t('terminal.layer.resizeSplit')}
-              focusTransitionActive={isFocusTransitionActive}
             />
           )}
           <div

@@ -2,8 +2,6 @@ import {
   Folder,
   FolderLock,
   LayoutGrid,
-  Maximize2,
-  Minimize2,
   Plus,
   Search,
   Terminal,
@@ -13,7 +11,6 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from "
 import { useI18n } from "../application/i18n/I18nProvider";
 import { Host, TerminalSession, TerminalSettings, Workspace } from "../types";
 import { KeyBinding } from "../domain/models";
-import type { SidePanelPaneZoomState } from "../domain/sidePanelLayout";
 import { matchesSearchQuery } from "../lib/searchMatcher";
 import { buildQuickSwitcherShells, useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
 import { usePluginContributions } from "../application/state/usePluginContributions";
@@ -36,19 +33,6 @@ type QuickSwitcherItem = QuickSwitcherItemBase & (
   | { type: "plugin-command"; commandId: string }
   | { type: "host" | "tab" | "workspace" | "action" | "shell" | "plugin-view"; commandId?: never }
 );
-
-export function buildPaneZoomPaletteAction(
-  state: SidePanelPaneZoomState,
-  t: (key: string) => string,
-): QuickSwitcherItem | null {
-  if (state === 'focusable') {
-    return { type: 'action', id: 'focus-current-pane', title: t('terminal.layer.focusPane') };
-  }
-  if (state === 'focused') {
-    return { type: 'action', id: 'unfocus-pane', title: t('terminal.layer.unfocusPane') };
-  }
-  return null;
-}
 
 export function getQuickSwitcherRowStateClass(
   isSelected: boolean,
@@ -162,9 +146,6 @@ interface QuickSwitcherProps {
   keyBindings?: KeyBinding[];
   showSftpTab: boolean;
   terminalSettings?: Pick<TerminalSettings, "localShell" | "localShellArgs">;
-  paneZoomState?: SidePanelPaneZoomState;
-  onFocusCurrentPane?: () => void;
-  onUnfocusPane?: () => void;
 }
 
 const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
@@ -183,9 +164,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   keyBindings,
   showSftpTab,
   terminalSettings,
-  paneZoomState = 'unavailable',
-  onFocusCurrentPane,
-  onUnfocusPane,
 }) => {
   const { t } = useI18n();
   const discoveredShells = useDiscoveredShells();
@@ -309,10 +287,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     pluginContributions.snapshot.plugins,
     trimmedQuery,
   ), [pluginContributions.snapshot.plugins, trimmedQuery]);
-  const paneZoomPaletteAction = useMemo(
-    () => buildPaneZoomPaletteAction(paneZoomState, t),
-    [paneZoomState, t],
-  );
 
   // Memoize flat selectable items + visual rows (headers + items) for virtualization.
   const { flatItems, visualRows, itemIndexToVisualIndex } = useMemo(() => {
@@ -369,14 +343,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       pushItem({ type: "action", id: "local-terminal" });
     }
 
-    if (paneZoomPaletteAction && (
-      !trimmedQuery
-      || matchesSearchQuery(trimmedQuery, paneZoomPaletteAction.title ?? '', 'pane', 'focus', 'zoom')
-    )) {
-      pushHeader("header:actions", t("settings.shortcuts.category.navigation"));
-      pushItem(paneZoomPaletteAction);
-    }
-
     if (pluginPaletteItems.length > 0) {
       pushHeader("header:plugins", t("settings.tab.plugins"));
       pluginPaletteItems.forEach((item) => pushItem(item));
@@ -393,11 +359,9 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
     filteredShells,
     filteredWorkspaces,
     pluginPaletteItems,
-    paneZoomPaletteAction,
     results,
     shouldShowLocalTerminalFallback,
     t,
-    trimmedQuery,
   ]);
 
   useEffect(() => {
@@ -456,12 +420,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       case "action":
         if (item.id === "local-terminal" && onCreateLocalTerminal) {
           onCreateLocalTerminal();
-          onClose();
-        } else if (item.id === 'focus-current-pane' && onFocusCurrentPane) {
-          onFocusCurrentPane();
-          onClose();
-        } else if (item.id === 'unfocus-pane' && onUnfocusPane) {
-          onUnfocusPane();
           onClose();
         }
         break;
@@ -718,27 +676,6 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
                     </div>
                     <span className="truncate text-sm font-medium">{t("qs.localTerminal")}</span>
                   </div>
-                );
-              }
-
-              if (item.type === 'action' && (
-                item.id === 'focus-current-pane' || item.id === 'unfocus-pane'
-              )) {
-                const isRestore = item.id === 'unfocus-pane';
-                return (
-                  <button
-                    type="button"
-                    className={`${rowClass} w-full text-left`}
-                    onClick={() => handleItemSelect(item)}
-                  >
-                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground">
-                      {isRestore ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-                    </div>
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</span>
-                    <kbd className="shrink-0 text-[10px] text-muted-foreground">
-                      {getHotkeyLabel('toggle-pane-zoom').replace(/ \+ /g, '+')}
-                    </kbd>
-                  </button>
                 );
               }
 

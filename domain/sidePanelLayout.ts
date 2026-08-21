@@ -28,34 +28,7 @@ export type SidePanelLayoutNode = SidePanelPaneNode | SidePanelSplitNode;
 export type SidePanelLayout = {
   root: SidePanelLayoutNode;
   focusedPaneId: string;
-  maximizedPaneId: string | null;
 };
-
-export type SidePanelPaneZoomState = 'unavailable' | 'focusable' | 'focused';
-
-export type SidePanelPaneZoomController = {
-  getState: () => SidePanelPaneZoomState;
-  toggle: () => boolean;
-  focus: () => boolean;
-  unfocus: () => boolean;
-};
-
-export function getAvailablePaneZoomController(
-  controllers: Array<SidePanelPaneZoomController | null | undefined>,
-): SidePanelPaneZoomController | null {
-  return controllers.find((controller) => (
-    controller && controller.getState() !== 'unavailable'
-  )) ?? null;
-}
-
-export function getPaneZoomShortcutLabel(
-  keyBindings: Array<{ id: string; mac: string; pc: string }> | undefined,
-  hotkeyScheme: 'mac' | 'pc' | 'disabled' | undefined,
-): string {
-  if (!keyBindings || !hotkeyScheme || hotkeyScheme === 'disabled') return '';
-  const binding = keyBindings.find((entry) => entry.id === 'toggle-pane-zoom');
-  return (hotkeyScheme === 'mac' ? binding?.mac : binding?.pc)?.replace(/ \+ /g, '+') ?? '';
-}
 
 export const MAX_SIDE_PANEL_PANES = 8;
 export const MIN_SIDE_PANEL_PANE_PIXELS = 80;
@@ -120,21 +93,12 @@ export function createSidePanelLayout(
   return {
     root: { id: paneId, type: 'pane', tool },
     focusedPaneId: paneId,
-    maximizedPaneId: null,
   };
 }
 
 export function collectSidePanelPanes(node: SidePanelLayoutNode): SidePanelPaneNode[] {
   if (node.type === 'pane') return [node];
   return node.children.flatMap(collectSidePanelPanes);
-}
-
-export function sidePanelNodeContainsPane(
-  node: SidePanelLayoutNode,
-  paneId: string,
-): boolean {
-  if (node.type === 'pane') return node.id === paneId;
-  return node.children.some((child) => sidePanelNodeContainsPane(child, paneId));
 }
 
 export function sidePanelLayoutHasTool(
@@ -155,30 +119,7 @@ export function focusSidePanelPane(
 ): SidePanelLayout {
   if (layout.focusedPaneId === paneId) return layout;
   if (!collectSidePanelPanes(layout.root).some((pane) => pane.id === paneId)) return layout;
-  return {
-    ...layout,
-    focusedPaneId: paneId,
-    maximizedPaneId: layout.maximizedPaneId ? paneId : null,
-  };
-}
-
-export function maximizeSidePanelPane(
-  layout: SidePanelLayout,
-  paneId: string,
-): SidePanelLayout {
-  if (layout.maximizedPaneId === paneId) return layout;
-  if (!collectSidePanelPanes(layout.root).some((pane) => pane.id === paneId)) return layout;
-  return {
-    ...layout,
-    focusedPaneId: paneId,
-    maximizedPaneId: paneId,
-  };
-}
-
-export function restoreSidePanelLayout(layout: SidePanelLayout): SidePanelLayout {
-  return layout.maximizedPaneId === null
-    ? layout
-    : { ...layout, maximizedPaneId: null };
+  return { ...layout, focusedPaneId: paneId };
 }
 
 export function selectSidePanelTool(
@@ -211,7 +152,6 @@ export function splitSidePanelPane(
   availableAxisLength: number,
 ): SidePanelLayout {
   const panes = collectSidePanelPanes(layout.root);
-  if (layout.maximizedPaneId) return layout;
   const occupied = panes.find((pane) => pane.tool === tool);
   if (occupied) return focusSidePanelPane(layout, occupied.id);
   if (panes.length >= MAX_SIDE_PANEL_PANES) return layout;
@@ -239,7 +179,6 @@ export function splitSidePanelPane(
   return {
     root: insert(layout.root),
     focusedPaneId: ids.paneId,
-    maximizedPaneId: null,
   };
 }
 
@@ -284,7 +223,6 @@ export function closeSidePanelPane(
   return {
     root,
     focusedPaneId: existingFocus?.id ?? remaining[fallbackIndex].id,
-    maximizedPaneId: null,
   };
 }
 
