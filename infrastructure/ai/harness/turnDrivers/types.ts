@@ -62,6 +62,7 @@ export interface CattyTurnContext {
   permissionMode?: AIPermissionMode;
   commandBlocklist?: string[];
   commandTimeout?: number;
+  responseIdleTimeout?: number;
   terminalSessions: TerminalSessionInfo[];
   webSearchConfig?: WebSearchConfig | null;
   getExecutorContext?: () => ExecutorContext;

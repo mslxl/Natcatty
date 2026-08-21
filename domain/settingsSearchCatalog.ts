@@ -724,6 +724,15 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "ai.safety.title",
   },
   {
+    id: "ai-safety-response-idle-timeout",
+    tab: "ai",
+    aiSubTab: "safety",
+    labelKey: "ai.safety.responseIdleTimeout",
+    descriptionKey: "ai.safety.responseIdleTimeout.description",
+    sectionKey: "ai.safety.title",
+    keywords: ["response", "request", "idle", "timeout", "响应", "请求", "超时"],
+  },
+  {
     id: "ai-safety-blocklist",
     tab: "ai",
     aiSubTab: "safety",
