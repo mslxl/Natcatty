@@ -1589,6 +1589,14 @@ html[data-theme-transition] *::after {
 }
 
 /* Language selector trigger in toolbar */
+/* Align the TooltipWrap span wrapper so the language select sits level with action buttons */
+.netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_tooltipTrigger_"] {
+  display: inline-flex !important;
+  align-items: center !important;
+  align-self: center !important;
+  line-height: 1 !important;
+}
+
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_toolbarCodeBlockLanguageSelectTrigger_"],
 .netcatty-mdx-editor [class*="_codeMirrorToolbar_"] [class*="_selectTrigger_"] {
   display: inline-flex !important;

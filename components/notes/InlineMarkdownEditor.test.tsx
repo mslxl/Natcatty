@@ -307,6 +307,10 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
+    /\.netcatty-mdx-editor \[class\*="_codeMirrorToolbar_"\] \[class\*="_tooltipTrigger_"\]\s*\{[^}]*display:\s*inline-flex\s*!important;[^}]*align-items:\s*center\s*!important;[^}]*align-self:\s*center\s*!important;/s,
+  );
+  assert.match(
+    styles,
     /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*width:\s*auto\s*!important;[^}]*min-width:\s*fit-content\s*!important;/s,
   );
   assert.match(
