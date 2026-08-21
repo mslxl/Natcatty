@@ -29,11 +29,7 @@ import {
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { calculateNoteStats, type MarkdownActionType } from "../../domain/notes";
-import {
-  COMPREHENSIVE_NOTE_FONTS,
-  NOTE_FONT_CATEGORIES,
-  type NoteFontCategory,
-} from "../../domain/noteFonts";
+import { useAvailableUIFonts } from "../../application/state/uiFontStore";
 import type { NoteEditorMode } from "./InlineMarkdownEditor";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
@@ -70,18 +66,27 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   onChangeNoteFontSize,
 }) => {
   const [fontSearch, setFontSearch] = useState("");
-  const [selectedFontCategory, setSelectedFontCategory] = useState<NoteFontCategory>("全部");
+
+  const availableSystemFonts = useAvailableUIFonts();
+
+  const systemFontList = useMemo(() => {
+    const defaultOption = { label: "默认系统字体 (Default)", value: "" };
+    const list = availableSystemFonts.map((f) => ({
+      label: f.name,
+      value: f.family,
+    }));
+    return [defaultOption, ...list];
+  }, [availableSystemFonts]);
 
   const stats = useMemo(() => calculateNoteStats(content), [content]);
 
   const filteredFonts = useMemo(() => {
-    return COMPREHENSIVE_NOTE_FONTS.filter((f) => {
-      if (selectedFontCategory !== "全部" && f.category !== selectedFontCategory) return false;
-      if (!fontSearch.trim()) return true;
-      const query = fontSearch.trim().toLowerCase();
-      return f.label.toLowerCase().includes(query) || f.value.toLowerCase().includes(query);
-    });
-  }, [fontSearch, selectedFontCategory]);
+    if (!fontSearch.trim()) return systemFontList;
+    const query = fontSearch.trim().toLowerCase();
+    return systemFontList.filter(
+      (f) => f.label.toLowerCase().includes(query) || f.value.toLowerCase().includes(query),
+    );
+  }, [fontSearch, systemFontList]);
 
   const isEditing = editorMode === "edit" || editorMode === "live" || editorMode === "source";
 
@@ -370,8 +375,8 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           <DropdownContent align="end" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
             <div className="space-y-1.5">
               <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                <span>笔记字体</span>
-                <span className="text-[10px] opacity-70">共 {COMPREHENSIVE_NOTE_FONTS.length} 款预设</span>
+                <span>系统字体</span>
+                <span className="text-[10px] opacity-70">共 {systemFontList.length} 款可用字体</span>
               </div>
 
               {/* Search Bar */}
@@ -379,36 +384,17 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="搜索字体..."
+                  placeholder="搜索系统字体..."
                   value={fontSearch}
                   onChange={(e) => setFontSearch(e.target.value)}
                   className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
                 />
               </div>
 
-              {/* Category Filter Chips */}
-              <div className="flex flex-wrap gap-1 pt-0.5">
-                {NOTE_FONT_CATEGORIES.map((cat) => (
-                  <button
-                    key={cat}
-                    type="button"
-                    className={cn(
-                      "px-1.5 py-0.5 rounded text-[10px] transition-colors border",
-                      selectedFontCategory === cat
-                        ? "bg-primary text-primary-foreground border-primary font-medium"
-                        : "border-border/60 hover:bg-secondary text-muted-foreground hover:text-foreground",
-                    )}
-                    onClick={() => setSelectedFontCategory(cat)}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-
               {/* Scrollable Font List */}
-              <div className="space-y-0.5 max-h-48 overflow-y-auto pr-1">
+              <div className="space-y-0.5 max-h-52 overflow-y-auto pr-1">
                 {filteredFonts.length === 0 ? (
-                  <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配字体</div>
+                  <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配的系统字体</div>
                 ) : (
                   filteredFonts.map((f) => (
                     <button

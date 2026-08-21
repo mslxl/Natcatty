@@ -542,8 +542,14 @@ export const annotateNoteCodeBlockCopyButtons = (
     onCopy: (text: string) => Promise<boolean>;
   },
 ): void => {
-  container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
-    if (!(wrapper instanceof HTMLElement)) return;
+  container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre, .cm-editor').forEach((rawNode) => {
+    if (!(rawNode instanceof HTMLElement)) return;
+
+    // If rawNode is .cm-editor and its parent is _codeMirrorWrapper_, target the parent wrapper
+    const wrapper = rawNode.classList.contains("cm-editor") && rawNode.parentElement?.matches('[class*="_codeMirrorWrapper_"]')
+      ? rawNode.parentElement
+      : rawNode;
+
     if (wrapper.querySelector("[data-note-code-copy]")) return;
 
     if (getComputedStyle(wrapper).position === "static") {
@@ -1204,6 +1210,9 @@ export const InlineMarkdownEditor = React.memo(
 
     runDecorations(true);
 
+    const timer1 = window.setTimeout(() => runDecorations(true), 80);
+    const timer2 = window.setTimeout(() => runDecorations(true), 300);
+
     const observer = new MutationObserver(scheduleFromMutation);
     observer.observe(container, {
       childList: true,
@@ -1214,6 +1223,8 @@ export const InlineMarkdownEditor = React.memo(
     });
     return () => {
       observer.disconnect();
+      window.clearTimeout(timer1);
+      window.clearTimeout(timer2);
       if (frame) window.cancelAnimationFrame(frame);
       if (debounceTimer) window.clearTimeout(debounceTimer);
     };

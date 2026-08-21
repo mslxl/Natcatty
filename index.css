@@ -1441,17 +1441,20 @@ html[data-theme-transition] *::after {
   transition: opacity 0.15s, color 0.15s, background-color 0.15s;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:hover > .netcatty-note-code-copy,
-.netcatty-mdx-editor--preview [class*="_codeMirrorWrapper_"]:hover .netcatty-note-code-copy,
+.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:hover .netcatty-note-code-copy,
+.netcatty-mdx-editor .cm-editor:hover ~ .netcatty-note-code-copy,
 .netcatty-mdx-editor pre:hover .netcatty-note-code-copy,
 .netcatty-mdx-content pre:hover .netcatty-note-code-copy,
+.netcatty-mdx-editor--preview .netcatty-note-code-copy,
 .netcatty-note-code-copy[data-copied="true"],
 .netcatty-note-code-copy:focus-visible {
-  opacity: 1 !important;
+  opacity: 0.85 !important;
   pointer-events: auto !important;
 }
 
-.netcatty-note-code-copy:hover {
+.netcatty-note-code-copy:hover,
+.netcatty-mdx-editor--preview .netcatty-note-code-copy:hover {
+  opacity: 1 !important;
   background: hsl(var(--secondary)) !important;
   color: hsl(var(--foreground)) !important;
 }

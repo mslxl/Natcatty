@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import { applyCustomCssToDocument } from "../../../lib/customCss";
 import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, HelpCircle, Monitor, Moon, Palette, Sun } from "lucide-react";
@@ -17,7 +17,6 @@ import {
 } from "../../../infrastructure/config/storageKeys";
 import { resolveAppIconVariant, type AppIconVariant } from "../../../domain/appIconVariant";
 import { DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../domain/systemKnownHostsAutoImport";
-import { COMPREHENSIVE_NOTE_FONTS } from "../../../domain/noteFonts";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsAnchor, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
 import { FontSelect } from "../FontSelect";
@@ -86,26 +85,6 @@ function SettingsAppearanceTab(props: {
     setNoteFontSize(size);
     persistNoteFontSize(size);
   }, [persistNoteFontSize, setNoteFontSize]);
-
-  const noteFontOptions = useMemo(() => {
-    const customList = COMPREHENSIVE_NOTE_FONTS.map((f) => ({
-      id: f.value,
-      name: f.label,
-      family: f.value || "inherit",
-    }));
-    const existingValues = new Set(customList.map((f) => f.id));
-    for (const f of availableUIFonts) {
-      if (!existingValues.has(f.family)) {
-        customList.push({
-          id: f.family,
-          name: f.name,
-          family: f.family,
-        });
-        existingValues.add(f.family);
-      }
-    }
-    return customList;
-  }, [availableUIFonts]);
   const {
     theme,
     resolvedTheme,
@@ -511,7 +490,7 @@ function SettingsAppearanceTab(props: {
         >
           <FontSelect
             value={noteFontFamily}
-            fonts={noteFontOptions}
+            fonts={availableUIFonts}
             onChange={(v) => setNoteFontFamily(v)}
             className="w-48"
             ariaLabel={t('settings.vault.notesFont', '笔记字体')}
