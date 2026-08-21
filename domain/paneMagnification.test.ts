@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   getAvailablePaneMagnificationController,
   getPaneMagnificationShortcutLabel,
+  isPaneMagnificationSelectionValid,
   resolvePaneMagnificationCandidate,
   resolvePaneMagnificationStyle,
   resolveTwoPaneMagnificationStyle,
@@ -29,6 +30,24 @@ test('selects the first controller that can magnify the active surface', () => {
     focusable,
   );
   assert.equal(getAvailablePaneMagnificationController([unavailable]), null);
+});
+
+test('invalidates magnification when its pane closes or changes tab ownership', () => {
+  const selection = {
+    tabId: 'workspace-1',
+    target: { kind: 'terminal' as const, sessionId: 'session-1' },
+  };
+  assert.equal(isPaneMagnificationSelectionValid(
+    selection,
+    [{ tabId: 'workspace-1', sessionId: 'session-1' }],
+    [],
+  ), true);
+  assert.equal(isPaneMagnificationSelectionValid(
+    selection,
+    [{ tabId: 'session-1', sessionId: 'session-1' }],
+    [],
+  ), false);
+  assert.equal(isPaneMagnificationSelectionValid(selection, [], []), false);
 });
 
 test('uses the configured shortcut label for the current platform', () => {

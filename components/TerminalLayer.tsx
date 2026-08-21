@@ -114,6 +114,7 @@ import {
   type SidePanelSplitDirection,
 } from '../domain/sidePanelLayout';
 import {
+  isPaneMagnificationSelectionValid,
   resolvePaneMagnificationCandidate,
   type PaneMagnificationController,
   type PaneMagnificationTarget,
@@ -290,6 +291,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     closePane: closeSidePanelPaneForTab,
     resizeSplit: resizeSidePanelSplitForTab,
   } = useTerminalSidePanelLayoutState();
+  useEffect(() => {
+    setMagnifiedPane((current) => {
+      if (!current) return current;
+      const terminalPanes = sessions.map((session) => ({
+        tabId: session.workspaceId ?? session.id,
+        sessionId: session.id,
+      }));
+      const sidePanelPanes = Array.from(sidePanelLayouts.entries()).flatMap(([tabId, layout]) => (
+        collectSidePanelPanes(layout.root).map((pane) => ({ tabId, paneId: pane.id }))
+      ));
+      return isPaneMagnificationSelectionValid(current, terminalPanes, sidePanelPanes)
+        ? current
+        : null;
+    });
+  }, [sessions, sidePanelLayouts]);
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
   const activeTabIdRef = useRef(activeTabStore.getActiveTabId());
@@ -381,6 +397,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // Stable callback references for Terminal components
   const handleCloseSession = useCallback((sessionId: string) => {
+    setMagnifiedPane((current) => (
+      current?.target.kind === 'terminal' && current.target.sessionId === sessionId
+        ? null
+        : current
+    ));
+    for (const [tabId, target] of lastInteractedPaneRef.current) {
+      if (target.kind === 'terminal' && target.sessionId === sessionId) {
+        lastInteractedPaneRef.current.delete(tabId);
+      }
+    }
     clearTerminalSessionRuntimeState({
       terminalRendererCwdBySessionRef,
       terminalOsc7SignalBySessionRef,

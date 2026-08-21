@@ -13,6 +13,20 @@ export type PaneMagnificationTarget =
   | { kind: 'terminal'; sessionId: string }
   | { kind: 'side-panel'; paneId: string; tool: string };
 
+export function isPaneMagnificationSelectionValid(
+  selection: { tabId: string; target: PaneMagnificationTarget },
+  terminalPanes: Array<{ tabId: string; sessionId: string }>,
+  sidePanelPanes: Array<{ tabId: string; paneId: string }>,
+): boolean {
+  return selection.target.kind === 'terminal'
+    ? terminalPanes.some((pane) => (
+      pane.tabId === selection.tabId && pane.sessionId === selection.target.sessionId
+    ))
+    : sidePanelPanes.some((pane) => (
+      pane.tabId === selection.tabId && pane.paneId === selection.target.paneId
+    ));
+}
+
 export function resolvePaneMagnificationCandidate({
   tabId,
   terminalSessionIds,

@@ -15,6 +15,13 @@ test("terminal keyboard focus updates the pane selected for magnification", () =
   assert.match(source, /inert=\{isVisible && !isCoveredByMagnification \? undefined : true\}/);
 });
 
+test("closing a magnified terminal clears the overlay selection", () => {
+  const source = readFileSync(new URL("../TerminalLayer.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /isPaneMagnificationSelectionValid\(current, terminalPanes, sidePanelPanes\)/);
+  assert.match(source, /current\?\.target\.kind === 'terminal' && current\.target\.sessionId === sessionId/);
+});
+
 test("workspace section passes resolved session host ids to terminal panes", () => {
   const resolvedSessionHostIds = new Set(["session-1"]);
   let sawResolvedIds = false;
