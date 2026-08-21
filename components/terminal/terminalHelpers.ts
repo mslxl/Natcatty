@@ -119,6 +119,7 @@ export interface TerminalProps {
   inWorkspace?: boolean;
   isResizing?: boolean;
   isFocusMode?: boolean;
+  isPaneMagnified?: boolean;
   isFocused?: boolean;
   /**
    * Split-pane keyboard ownership for disconnected-dialog focus claims.

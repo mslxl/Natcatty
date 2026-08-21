@@ -4,6 +4,7 @@ import type { Host, HostProtocol, TerminalSession } from '../../types';
 import type { PassphraseRequest } from '../../components/PassphraseModal';
 import type { TerminalPopupPayload } from '../../domain/systemManager/types';
 import { getEffectiveHostDistro, classifyDistroId, shouldProbeSessionCwd } from '../../domain/host';
+import { getAvailablePaneMagnificationController } from '../../domain/paneMagnification';
 import { sanitizeHostIconFields } from '../../domain/hostIcon';
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { getTerminalPassthroughActions } from '../state/useGlobalHotkeys';
@@ -259,8 +260,17 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
     const quickSwitchBinding = keyBindings.find((binding) => binding.action === 'quickSwitch');
     const quickSwitchKeyStr = quickSwitchBinding ? (isMac ? quickSwitchBinding.mac : quickSwitchBinding.pc) : null;
     const isQuickSwitchHotkey = quickSwitchKeyStr ? matchesKeyBinding(e, quickSwitchKeyStr, isMac) : false;
+    const paneZoomBinding = keyBindings.find((binding) => binding.action === 'togglePaneZoom');
+    const paneZoomKeyStr = paneZoomBinding ? (isMac ? paneZoomBinding.mac : paneZoomBinding.pc) : null;
+    const isPaneZoomHotkey = paneZoomKeyStr ? matchesKeyBinding(e, paneZoomKeyStr, isMac) : false;
 
-    if ((isFormElement || isMonacoElement) && !isXtermInput && e.key !== 'Escape' && !isQuickSwitchHotkey) {
+    if (
+      (isFormElement || isMonacoElement)
+      && !isXtermInput
+      && e.key !== 'Escape'
+      && !isQuickSwitchHotkey
+      && !isPaneZoomHotkey
+    ) {
       return;
     }
 
@@ -315,10 +325,24 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
 }
 
 export function handleEscapeKeyDownImpl(getCtx: AppContextGetter, e: KeyboardEvent) {
-  const { isQuickSwitcherOpen, setIsQuickSwitcherOpen } = getCtx();
+  const {
+    isQuickSwitcherOpen,
+    setIsQuickSwitcherOpen,
+    sftpPaneMagnificationRef,
+    terminalPaneMagnificationRef,
+  } = getCtx();
 {
-    if (e.key === 'Escape' && isQuickSwitcherOpen) {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (isQuickSwitcherOpen) {
       setIsQuickSwitcherOpen(false);
+      return;
+    }
+    if (getAvailablePaneMagnificationController([
+      sftpPaneMagnificationRef?.current,
+      terminalPaneMagnificationRef?.current,
+    ])?.restore()) {
+      e.preventDefault();
+      e.stopPropagation();
     }
   }
 }
@@ -671,7 +695,7 @@ export async function closeTabsBatchImpl(getCtx: AppContextGetter, targetIds: st
 }
 
 export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string, e: KeyboardEvent) {
-  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, splitSessionWithCurrentShell, systemInfoRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, toggleWorkspaceViewMode, workspaces } = getCtx();
+  const { IS_DEV, MOVE_FOCUS_DEBOUNCE_MS, activeTabStore, addConnectionLogRef, closePluginViewTab, closeSession, closeTabInFlightRef, closeWorkspace, collectSessionIds, confirmIfBusyLocalTerminal, createLocalTerminalWithCurrentShell, editorTabs, fromEditorTabId, handleOpenSettingsRef, handleRequestCloseEditorTabRef, isEditorTabId, isPluginViewTabId, isQuickSwitcherOpen, lastMoveFocusTimeRef, moveFocusInWorkspace, orderedTabs, resolveCloseIntent, resolveSnippetsShortcutIntent, sessions, setActiveTabId, setAddToWorkspaceDialog, setIsQuickSwitcherOpen, setNavigateToSection, settings, sftpPaneMagnificationRef, splitSessionWithCurrentShell, systemInfoRef, terminalPaneMagnificationRef, toEditorTabId, toggleBroadcast, toggleScriptsSidePanelRef, toggleSidePanelRef, workspaces } = getCtx();
 {
     const shortcutTabs = buildNumberShortcutTabTargets({
       showSftpTab: settings.showSftpTab ?? true,
@@ -907,12 +931,10 @@ export function executeHotkeyActionImpl(getCtx: AppContextGetter, action: string
         break;
       }
       case 'togglePaneZoom': {
-        // Toggle workspace between split and focus (zoom) mode
-        const currentId = activeTabStore.getActiveTabId();
-        const activeWs = workspaces.find(w => w.id === currentId);
-        if (activeWs) {
-          toggleWorkspaceViewMode(activeWs.id);
-        }
+        getAvailablePaneMagnificationController([
+          sftpPaneMagnificationRef?.current,
+          terminalPaneMagnificationRef?.current,
+        ])?.toggle();
         break;
       }
       case 'moveFocus': {

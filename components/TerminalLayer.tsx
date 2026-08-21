@@ -113,6 +113,11 @@ import {
   sidePanelLayoutHasTool,
   type SidePanelSplitDirection,
 } from '../domain/sidePanelLayout';
+import {
+  resolvePaneMagnificationCandidate,
+  type PaneMagnificationController,
+  type PaneMagnificationTarget,
+} from '../domain/paneMagnification';
 import { useTerminalSidePanelLayoutState } from '../application/state/useTerminalSidePanelLayoutState';
 import {
   TERMINAL_SIDE_PANEL_MAX_WIDTH,
@@ -257,12 +262,20 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   showHostTreeSidebar = true,
   toggleScriptsSidePanelRef,
   toggleSidePanelRef,
+  paneMagnificationRef,
   // Session rename props
   onStartSessionRename,
   onSubmitSessionRename,
   onRemoveSessionFromWorkspace,
 }) => {
   const { t } = useI18n();
+  const [magnifiedPane, setMagnifiedPane] = useState<{
+    tabId: string;
+    target: PaneMagnificationTarget;
+  } | null>(null);
+  const magnifiedPaneRef = useRef(magnifiedPane);
+  magnifiedPaneRef.current = magnifiedPane;
+  const lastInteractedPaneRef = useRef<Map<string, PaneMagnificationTarget>>(new Map());
   // Side panel state must be initialized before any callbacks reference its
   // setters or refs in their dependency arrays.
   const {
@@ -1302,6 +1315,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleCloseSidePanel = useCallback(() => {
     const activeTabId = activeTabIdRef.current;
     if (!activeTabId) return;
+    setMagnifiedPane((current) => (
+      current?.tabId === activeTabId && current.target.kind === 'side-panel'
+        ? null
+        : current
+    ));
     const sessionIdToRefocus = getActiveTerminalSessionId();
     syncWorkspaceFocusIfNeeded(sessionIdToRefocus);
     closeTerminalSidePanelTab(activeTabId);
@@ -1394,8 +1412,123 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleFocusSidePanelPane = useCallback((paneId: string) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
+    const layout = sidePanelLayoutsRef.current.get(tabId);
+    const pane = layout
+      ? collectSidePanelPanes(layout.root).find((candidate) => candidate.id === paneId)
+      : undefined;
+    if (pane) {
+      lastInteractedPaneRef.current.set(tabId, {
+        kind: 'side-panel',
+        paneId: pane.id,
+        tool: pane.tool,
+      });
+    }
     focusSidePanelPaneForTab(tabId, paneId);
-  }, [focusSidePanelPaneForTab]);
+  }, [focusSidePanelPaneForTab, sidePanelLayoutsRef]);
+
+  const handleTerminalPaneInteraction = useCallback((tabId: string, sessionId: string) => {
+    lastInteractedPaneRef.current.set(tabId, { kind: 'terminal', sessionId });
+  }, []);
+
+  const handleMagnifyTerminalPane = useCallback((tabId: string, sessionId: string) => {
+    const target: PaneMagnificationTarget = { kind: 'terminal', sessionId };
+    lastInteractedPaneRef.current.set(tabId, target);
+    setMagnifiedPane((current) => (
+      current?.tabId === tabId
+      && current.target.kind === 'terminal'
+      && current.target.sessionId === sessionId
+        ? null
+        : { tabId, target }
+    ));
+  }, []);
+
+  const handleMagnifySidePanelPane = useCallback((paneId: string) => {
+    const tabId = activeTabIdRef.current;
+    if (!tabId) return;
+    const layout = sidePanelLayoutsRef.current.get(tabId);
+    const pane = layout
+      ? collectSidePanelPanes(layout.root).find((candidate) => candidate.id === paneId)
+      : undefined;
+    if (!pane) return;
+    const target: PaneMagnificationTarget = {
+      kind: 'side-panel',
+      paneId: pane.id,
+      tool: pane.tool,
+    };
+    lastInteractedPaneRef.current.set(tabId, target);
+    setMagnifiedPane((current) => (
+      current?.tabId === tabId
+      && current.target.kind === 'side-panel'
+      && current.target.paneId === paneId
+        ? null
+        : { tabId, target }
+    ));
+  }, [sidePanelLayoutsRef]);
+
+  const handleRestoreMagnifiedPane = useCallback(() => {
+    const tabId = activeTabIdRef.current;
+    setMagnifiedPane((current) => current?.tabId === tabId ? null : current);
+  }, []);
+
+  useEffect(() => {
+    if (!paneMagnificationRef) return undefined;
+    const getTarget = (): { tabId: string; target: PaneMagnificationTarget; focused: boolean } | null => {
+      const tabId = activeTabStore.getActiveTabId();
+      if (!tabId) return null;
+      const workspace = workspacesRef.current.find((candidate) => candidate.id === tabId);
+      const workspaceSessionIds = workspace ? collectSessionIds(workspace.root) : [];
+      const standaloneSession = sessionsRef.current.find((candidate) => (
+        candidate.id === tabId && !candidate.workspaceId
+      ));
+      const terminalSessionIds = workspaceSessionIds.length > 0
+        ? workspaceSessionIds
+        : standaloneSession ? [standaloneSession.id] : [];
+      const layout = sidePanelLayoutsRef.current.get(tabId);
+      const sidePanelPanes = layout ? collectSidePanelPanes(layout.root) : [];
+      const focusedSidePanelPane = sidePanelPanes.find((candidate) => (
+        candidate.id === layout?.focusedPaneId
+      ));
+      const candidate = resolvePaneMagnificationCandidate({
+        tabId,
+        terminalSessionIds,
+        focusedSessionId: workspace?.focusedSessionId,
+        sidePanelPanes: focusedSidePanelPane
+          ? [focusedSidePanelPane, ...sidePanelPanes.filter((pane) => pane !== focusedSidePanelPane)]
+          : sidePanelPanes,
+        lastTarget: lastInteractedPaneRef.current.get(tabId),
+        current: magnifiedPaneRef.current,
+      });
+      return candidate ? { tabId, ...candidate } : null;
+    };
+    const controller: PaneMagnificationController = {
+      getState: () => {
+        const target = getTarget();
+        return target ? (target.focused ? 'focused' : 'focusable') : 'unavailable';
+      },
+      focus: () => {
+        const target = getTarget();
+        if (!target || target.focused) return false;
+        setMagnifiedPane({ tabId: target.tabId, target: target.target });
+        return true;
+      },
+      restore: () => {
+        const target = getTarget();
+        if (!target?.focused) return false;
+        setMagnifiedPane(null);
+        return true;
+      },
+      toggle: () => {
+        const target = getTarget();
+        if (!target) return false;
+        setMagnifiedPane(target.focused ? null : { tabId: target.tabId, target: target.target });
+        return true;
+      },
+    };
+    paneMagnificationRef.current = controller;
+    return () => {
+      if (paneMagnificationRef.current === controller) paneMagnificationRef.current = null;
+    };
+  }, [paneMagnificationRef, sidePanelLayoutsRef]);
 
   const handleSplitSidePanelPane = useCallback((
     tool: SidePanelTab,
@@ -1421,6 +1554,13 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const closingPane = layout
       ? collectSidePanelPanes(layout.root).find((pane) => pane.id === paneId)
       : undefined;
+    setMagnifiedPane((current) => (
+      current?.tabId === tabId
+      && current.target.kind === 'side-panel'
+      && current.target.paneId === paneId
+        ? null
+        : current
+    ));
     const closesWholePanel = closeSidePanelPaneForTab(tabId, paneId);
     if (closesWholePanel) {
       handleCloseSidePanel();
@@ -2037,6 +2177,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleOpenSystem,
     handleOpenNotes,
     handleFocusSidePanelPane,
+    handleMagnifySidePanelPane,
+    handleRestoreMagnifiedPane,
+    handleMagnifyTerminalPane,
+    handleTerminalPaneInteraction,
     handleSplitSidePanelPane,
     handleCloseSidePanelPane,
     handleResizeSidePanelSplit,
@@ -2093,6 +2237,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     lastSidePanelTabRef,
     mountedAiTabIds: aiMountedTabIds,
     mountedSftpTabIds,
+    magnifiedPane,
     notesMountedTabIds,
     notesOpenNoteByTab,
     scriptsMountedTabIds,

@@ -10,6 +10,24 @@ test("main SftpView keeps browse sessions across top-tab switches", () => {
   assert.doesNotMatch(source, /interactive:\s*isActive/);
 });
 
+test("SFTP magnification overlays one side while preserving the original two-pane geometry", async () => {
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  });
+  const { getSftpPaneLayoutStyle } = await import("./SftpView.tsx");
+
+  assert.deepEqual(getSftpPaneLayoutStyle('left', true, false), {
+    left: '0%', top: '0%', width: '50%', height: '100%', zIndex: 10,
+  });
+  assert.deepEqual(getSftpPaneLayoutStyle('right', true, false), {
+    left: '50%', top: '0%', width: '50%', height: '100%', zIndex: 10,
+  });
+  assert.deepEqual(getSftpPaneLayoutStyle('right', true, true), {
+    left: '12px', top: '12px', width: 'calc(100% - 24px)', height: 'calc(100% - 24px)', zIndex: 50,
+  });
+});
+
 test("SftpView re-renders when host-key verification setting changes", async () => {
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,

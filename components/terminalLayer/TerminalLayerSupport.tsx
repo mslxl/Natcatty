@@ -49,6 +49,11 @@ import {
 import type { ResolvedAppearance, TerminalAppearanceHostScope } from '../../domain/terminalAppearanceRuntime';
 import type { TerminalSidePanelAutoOpenTab } from '../../domain/terminalSidePanelAutoOpen';
 import type { SidePanelTool } from '../../domain/sidePanelLayout';
+import {
+  resolvePaneMagnificationStyle,
+  type PaneMagnificationController,
+  type PaneMagnificationTarget,
+} from '../../domain/paneMagnification';
 
 export type SidePanelTab = SidePanelTool;
 
@@ -725,6 +730,7 @@ export interface TerminalLayerProps {
   showHostTreeSidebar?: boolean;
   toggleScriptsSidePanelRef?: React.MutableRefObject<(() => void) | null>;
   toggleSidePanelRef?: React.MutableRefObject<(() => void) | null>;
+  paneMagnificationRef?: React.MutableRefObject<PaneMagnificationController | null>;
   // Session rename
   onStartSessionRename?: (sessionId: string) => void;
   onSubmitSessionRename?: (sessionId?: string, name?: string) => void;
@@ -740,6 +746,9 @@ interface TerminalPaneProps {
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
+  magnifiedPane: { tabId: string; target: PaneMagnificationTarget } | null;
+  onMagnifyTerminalPane: (tabId: string, sessionId: string) => void;
+  onTerminalPaneInteraction: (tabId: string, sessionId: string) => void;
   workspaceFocusHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   workspaceBroadcastHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   splitHorizontalHandlersRef: React.MutableRefObject<Map<string, () => void>>;
@@ -869,6 +878,9 @@ const terminalPanePropsAreEqual = (
   prev.workspaceById === next.workspaceById &&
   workspaceRectsEqual(getPaneRenderedWorkspaceRect(prev), getPaneRenderedWorkspaceRect(next)) &&
   prev.isTerminalLayerVisible === next.isTerminalLayerVisible &&
+  prev.magnifiedPane === next.magnifiedPane &&
+  prev.onMagnifyTerminalPane === next.onMagnifyTerminalPane &&
+  prev.onTerminalPaneInteraction === next.onTerminalPaneInteraction &&
   prev.workspaceFocusHandlersRef === next.workspaceFocusHandlersRef &&
   prev.workspaceBroadcastHandlersRef === next.workspaceBroadcastHandlersRef &&
   prev.splitHorizontalHandlersRef === next.splitHorizontalHandlersRef &&
@@ -1162,7 +1174,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   workspaceById,
   workspaceRectsById,
   isTerminalLayerVisible,
-  workspaceFocusHandlersRef,
+  magnifiedPane,
+  onMagnifyTerminalPane,
+  onTerminalPaneInteraction,
   workspaceBroadcastHandlersRef,
   splitHorizontalHandlersRef,
   splitVerticalHandlersRef,
@@ -1320,7 +1334,44 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   }, [deferPaneLayoutUpdate, isFocusedPane, isFocusMode, isSplitViewVisible, isVisible, livePaneLayoutKey]);
 
   const paneLayoutKey = paneLayoutKeyRef.current;
-  const style: React.CSSProperties = { ...layoutStyle };
+  const isMagnified = isVisible
+    && magnifiedPane?.target.kind === 'terminal'
+    && magnifiedPane.target.sessionId === session.id
+    && magnifiedPane.tabId === (activeWorkspaceId ?? session.id);
+  const [magnifiedSurfaceBounds, setMagnifiedSurfaceBounds] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  useLayoutEffect(() => {
+    if (!isMagnified) {
+      setMagnifiedSurfaceBounds(null);
+      return undefined;
+    }
+    const pane = paneElementRef.current;
+    const surface = pane?.closest<HTMLElement>('[data-section="terminal-workspace"]');
+    if (!surface) return undefined;
+    const update = () => {
+      const bounds = surface.getBoundingClientRect();
+      setMagnifiedSurfaceBounds({
+        left: bounds.left,
+        top: bounds.top,
+        width: bounds.width,
+        height: bounds.height,
+      });
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(update);
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, [isMagnified]);
+  const style: React.CSSProperties = resolvePaneMagnificationStyle(
+    layoutStyle,
+    isMagnified && !!magnifiedSurfaceBounds,
+    magnifiedSurfaceBounds,
+  );
 
   useLayoutEffect(() => {
     const element = paneElementRef.current;
@@ -1389,9 +1440,6 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     ));
   }
 
-  const workspaceFocusHandler = activeWorkspaceId
-    ? workspaceFocusHandlersRef.current.get(activeWorkspaceId)
-    : undefined;
   const workspaceBroadcastHandler = activeWorkspaceId
     ? workspaceBroadcastHandlersRef.current.get(activeWorkspaceId)
     : undefined;
@@ -1406,10 +1454,15 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const sessionAppearanceTheme = sessionAppearance.theme;
 
   const handlePaneClick = useCallback(() => {
+    const tabId = activeWorkspaceId ?? session.id;
+    onTerminalPaneInteraction(tabId, session.id);
     if (activeWorkspaceId && !isFocusMode) {
       onSetWorkspaceFocusedSession?.(activeWorkspaceId, session.id);
     }
-  }, [activeWorkspaceId, isFocusMode, onSetWorkspaceFocusedSession, session.id]);
+  }, [activeWorkspaceId, isFocusMode, onSetWorkspaceFocusedSession, onTerminalPaneInteraction, session.id]);
+  const handleTogglePaneMagnification = useCallback(() => {
+    onMagnifyTerminalPane(activeWorkspaceId ?? session.id, session.id);
+  }, [activeWorkspaceId, onMagnifyTerminalPane, session.id]);
   const handleOpenSystemForPane = useCallback(() => {
     if (activeWorkspaceId && !isFocusMode) {
       onSetWorkspaceFocusedSession?.(activeWorkspaceId, session.id);
@@ -1458,6 +1511,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         "absolute bg-background",
         inActiveWorkspace && "workspace-pane",
         isVisible && "z-10",
+        isMagnified && magnifiedSurfaceBounds && "animate-in fade-in zoom-in-95 duration-150",
       )}
       style={style}
       tabIndex={-1}
@@ -1476,6 +1530,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         inWorkspace={keepsWorkspacePresentation}
         isResizing={isResizing}
         isFocusMode={layoutWorkspace?.viewMode === 'focus'}
+        isPaneMagnified={isMagnified}
         isFocused={isFocusedPane}
         isFocusedPane={isSplitViewVisible ? isFocusedPane : undefined}
         fontFamilyId={terminalFontFamilyId}
@@ -1523,7 +1578,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onAddKnownHost={onAddKnownHost}
         onCommandExecuted={onCommandExecuted}
         onCommandSubmitted={onCommandSubmitted}
-        onExpandToFocus={inActiveWorkspace && !isFocusMode ? workspaceFocusHandler : undefined}
+        onExpandToFocus={inActiveWorkspace && !isFocusMode ? handleTogglePaneMagnification : undefined}
         onSplitHorizontal={onSplitSession ? splitHorizontalHandler : undefined}
         onSplitVertical={onSplitSession ? splitVerticalHandler : undefined}
         isBroadcastEnabled={broadcastEnabled}
@@ -1567,6 +1622,9 @@ interface TerminalPanesHostProps {
   workspaceById: Map<string, Workspace>;
   workspaceRectsById: Map<string, Record<string, WorkspaceRect>>;
   isTerminalLayerVisible: boolean;
+  magnifiedPane: { tabId: string; target: PaneMagnificationTarget } | null;
+  onMagnifyTerminalPane: (tabId: string, sessionId: string) => void;
+  onTerminalPaneInteraction: (tabId: string, sessionId: string) => void;
   workspaceFocusHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   workspaceBroadcastHandlersRef: React.MutableRefObject<Map<string, () => void>>;
   splitHorizontalHandlersRef: React.MutableRefObject<Map<string, () => void>>;
@@ -1652,6 +1710,9 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.resolvedSessionHostIds !== next.resolvedSessionHostIds) return false;
   if (prev.workspaceById !== next.workspaceById) return false;
   if (prev.isTerminalLayerVisible !== next.isTerminalLayerVisible) return false;
+  if (prev.magnifiedPane !== next.magnifiedPane) return false;
+  if (prev.onMagnifyTerminalPane !== next.onMagnifyTerminalPane) return false;
+  if (prev.onTerminalPaneInteraction !== next.onTerminalPaneInteraction) return false;
   if (prev.workspaceFocusHandlersRef !== next.workspaceFocusHandlersRef) return false;
   if (prev.workspaceBroadcastHandlersRef !== next.workspaceBroadcastHandlersRef) return false;
   if (prev.splitHorizontalHandlersRef !== next.splitHorizontalHandlersRef) return false;
