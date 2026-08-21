@@ -602,8 +602,13 @@ export const annotateNoteCodeBlockCopyButtons = (
 
     const wrapper = rawNode;
     const toolbar = wrapper.querySelector('[class*="_codeMirrorToolbar_"]');
+    // In preview/read-only mode MDXEditor still renders the CodeMirror toolbar
+    // in the DOM but CSS hides it (display: none). A copy button appended to a
+    // hidden toolbar would never be visible, so treat a hidden toolbar as absent.
+    const toolbarVisible =
+      toolbar instanceof HTMLElement && getComputedStyle(toolbar).display !== "none";
 
-    if (toolbar instanceof HTMLElement) {
+    if (toolbarVisible) {
       // Live edit mode with toolbar
       const existingInToolbar = toolbar.querySelector("[data-note-code-copy]");
       wrapper.querySelectorAll("[data-note-code-copy]").forEach((btn) => {
@@ -623,9 +628,15 @@ export const annotateNoteCodeBlockCopyButtons = (
       const button = createCopyButton(wrapper, { copyLabel, copiedLabel, copyFailedLabel, onCopy });
       toolbar.appendChild(button);
     } else {
-      // Reading / preview mode without toolbar
+      // Reading / preview mode without toolbar (or toolbar hidden by CSS)
       const existingButtons = wrapper.querySelectorAll("[data-note-code-copy]");
       if (existingButtons.length > 0) {
+        // A button may have been appended to the hidden toolbar earlier; move it
+        // onto the wrapper so it is visible in read-only mode.
+        const firstButton = existingButtons[0] as HTMLElement;
+        if (firstButton.parentElement !== wrapper) {
+          wrapper.appendChild(firstButton);
+        }
         for (let idx = 1; idx < existingButtons.length; idx++) {
           clearNoteCodeBlockCopyResetTimer(existingButtons[idx] as HTMLElement);
           existingButtons[idx].remove();
@@ -947,6 +958,10 @@ export const InlineMarkdownEditor = React.memo(
   );
 
   const plugins = useMemo(() => [
+    toolbarPlugin({
+      toolbarContents: () => <NoteMarkdownToolbar />,
+      toolbarClassName: "netcatty-note-markdown-toolbar",
+    }),
     headingsPlugin(),
     listsPlugin(),
     quotePlugin(),

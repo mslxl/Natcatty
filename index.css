@@ -994,10 +994,11 @@ html[data-theme-transition] *::after {
   max-width: 100%;
   box-sizing: border-box;
   display: flex !important;
-  flex-wrap: wrap !important;
+  flex-wrap: nowrap !important;
   align-content: flex-start !important;
   height: auto !important;
-  overflow: visible !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
   align-items: center !important;
   min-height: 2rem !important;
   margin-bottom: 0.75rem;
@@ -1006,6 +1007,8 @@ html[data-theme-transition] *::after {
   background: hsl(var(--background) / 0.96) !important;
   color: hsl(var(--foreground)) !important;
   box-shadow: none !important;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border) / 0.8) transparent;
 }
 
 .netcatty-note-markdown-toolbar > * {
@@ -1036,10 +1039,12 @@ html[data-theme-transition] *::after {
   .netcatty-note-markdown-toolbar {
     gap: 0.125rem !important;
     row-gap: 0.125rem !important;
-    flex-wrap: wrap !important;
+    flex-wrap: nowrap !important;
     align-content: flex-start !important;
     min-height: 1.9rem !important;
     padding: 0.125rem !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
   }
 
   .netcatty-note-markdown-toolbar button,
@@ -1697,6 +1702,10 @@ html[data-theme-transition] *::after {
 }
 
 .netcatty-mdx-editor--preview [class*="_codeMirrorToolbar_"] {
+  display: none !important;
+}
+
+.netcatty-mdx-editor--preview .netcatty-note-markdown-toolbar {
   display: none !important;
 }
 

@@ -197,11 +197,11 @@ test("note markdown toolbar remains usable in narrow panes", () => {
   );
   assert.match(
     styles,
-    /\.netcatty-note-markdown-toolbar\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto\s*!important;[^}]*overflow:\s*visible\s*!important;/s,
+    /\.netcatty-note-markdown-toolbar\s*\{[^}]*max-width:\s*100%;[^}]*height:\s*auto\s*!important;[^}]*overflow-x:\s*auto\s*!important;/s,
   );
   assert.match(
     styles,
-    /\.netcatty-note-markdown-toolbar\s*\{[^}]*box-sizing:\s*border-box;[^}]*display:\s*flex\s*!important;[^}]*flex-wrap:\s*wrap\s*!important;[^}]*align-content:\s*flex-start\s*!important;/s,
+    /\.netcatty-note-markdown-toolbar\s*\{[^}]*box-sizing:\s*border-box;[^}]*display:\s*flex\s*!important;[^}]*flex-wrap:\s*nowrap\s*!important;[^}]*align-content:\s*flex-start\s*!important;/s,
   );
   assert.match(
     styles,
@@ -213,7 +213,7 @@ test("note markdown toolbar remains usable in narrow panes", () => {
   );
   assert.match(
     styles,
-    /@container\s*\(max-width:\s*34rem\)\s*\{[\s\S]*\.netcatty-note-markdown-toolbar\s*\{[^}]*flex-wrap:\s*wrap\s*!important;[^}]*align-content:\s*flex-start\s*!important;/s,
+    /@container\s*\(max-width:\s*34rem\)\s*\{[\s\S]*\.netcatty-note-markdown-toolbar\s*\{[^}]*flex-wrap:\s*nowrap\s*!important;[^}]*align-content:\s*flex-start\s*!important;/s,
   );
   assert.match(
     styles,
@@ -349,6 +349,10 @@ test("note code block frame is borderless and language picker is compact", () =>
     styles,
     /\.netcatty-mdx-editor--preview\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*display:\s*none\s*!important;/s,
   );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-editor--preview\s+\.netcatty-note-markdown-toolbar\s*\{[^}]*display:\s*none\s*!important;/s,
+  );
 });
 
 test("getCodeMirrorBlockText reads rendered code block lines", () => {
@@ -366,6 +370,15 @@ test("annotateNoteCodeBlockCopyButtons adds a copy action to code blocks", () =>
   assert.match(source, /data-note-code-copy/);
   assert.match(source, /getCodeMirrorBlockText\(wrapper\)/);
   assert.match(source, /onCopy\(text\)/);
+});
+
+test("annotateNoteCodeBlockCopyButtons treats a CSS-hidden toolbar as absent so preview shows the copy button", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /getComputedStyle\(toolbar\)\.display !== "none"/);
+  assert.match(source, /toolbarVisible/);
+  assert.match(source, /firstButton\.parentElement !== wrapper/);
+  assert.match(source, /wrapper\.appendChild\(firstButton\)/);
 });
 
 test("annotateNoteCodeBlockDeleteButtons swaps the delete icon to a stroke SVG", () => {
