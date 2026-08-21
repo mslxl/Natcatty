@@ -1467,11 +1467,70 @@ html[data-theme-transition] *::after {
   overflow: hidden;
 }
 
+.netcatty-mdx-editor .cm-editor,
+.netcatty-mdx-editor .cm-content,
+.netcatty-mdx-editor [class*="_codeMirrorWrapper_"],
+.netcatty-mdx-editor pre,
+.netcatty-mdx-editor code,
+.netcatty-mdx-content pre,
+.netcatty-mdx-content code,
+.netcatty-source-editor,
+.netcatty-source-editor textarea {
+  font-family: var(--note-font-family, var(--font-mono)) !important;
+}
+
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="math"]),
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="latex"]),
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="tex"]) {
   border-left: 3px solid hsl(var(--primary)) !important;
   background: hsl(var(--secondary) / 0.25) !important;
+}
+
+.netcatty-math-formula-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.85rem 1rem;
+  margin-top: 0.35rem;
+  border-radius: 6px;
+  background: hsl(var(--card) / 0.7);
+  border: 1px solid hsl(var(--border) / 0.5);
+  font-size: 1.15em;
+  color: hsl(var(--foreground));
+  overflow-x: auto;
+  user-select: text;
+}
+
+.netcatty-math-formula-preview math,
+.netcatty-math-block-p math {
+  font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "KaTeX_Main", serif;
+  letter-spacing: 0.02em;
+}
+
+.netcatty-math-reading-mode .cm-editor {
+  display: none !important;
+}
+
+.netcatty-math-reading-mode {
+  background: transparent !important;
+  border: none !important;
+  margin: 0.5rem 0 !important;
+}
+
+.netcatty-math-reading-mode .netcatty-math-formula-preview {
+  margin-top: 0;
+  background: hsl(var(--secondary) / 0.25);
+}
+
+.netcatty-math-block-p {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0.6rem 1rem;
+  margin: 0.75rem 0;
+  font-size: 1.15em;
+  background: hsl(var(--secondary) / 0.2);
+  border-radius: 6px;
 }
 
 .netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"] {

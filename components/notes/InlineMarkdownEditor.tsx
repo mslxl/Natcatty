@@ -49,6 +49,7 @@ import React, {
   useState,
 } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
+import { latexToMathML } from "../../domain/latexToMathML";
 import { resolveRenderedMarkdownLinkHref } from "../../domain/notes";
 import {
   isPointerOnTaskCheckbox,
@@ -522,7 +523,8 @@ export const removeNoteCodeBlockCopyButtons = (container: HTMLElement): void => 
     }
     button.remove();
   });
-};
+const COPY_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
+const CHECK_ICON_SVG = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 
 export const annotateNoteCodeBlockCopyButtons = (
   container: HTMLElement,
@@ -552,7 +554,7 @@ export const annotateNoteCodeBlockCopyButtons = (
     button.className = "netcatty-note-code-copy";
     button.title = copyLabel;
     button.setAttribute("aria-label", copyLabel);
-    button.textContent = copyLabel;
+    button.innerHTML = COPY_ICON_SVG;
 
     button.addEventListener("click", (event) => {
       event.preventDefault();
@@ -569,13 +571,13 @@ export const annotateNoteCodeBlockCopyButtons = (
           return;
         }
         button.dataset.copied = "true";
-        button.textContent = copiedLabel;
+        button.innerHTML = CHECK_ICON_SVG;
         button.title = copiedLabel;
         button.setAttribute("aria-label", copiedLabel);
         const timerId = window.setTimeout(() => {
           delete button.dataset.copied;
           delete button.dataset.resetTimerId;
-          button.textContent = copyLabel;
+          button.innerHTML = COPY_ICON_SVG;
           button.title = copyLabel;
           button.setAttribute("aria-label", copyLabel);
         }, 1500);
@@ -590,6 +592,69 @@ export const annotateNoteCodeBlockCopyButtons = (
       wrapper.appendChild(button);
     }
   });
+};
+
+export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: string): void => {
+  container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
+    if (!(wrapper instanceof HTMLElement)) return;
+
+    const select = wrapper.querySelector('select[class*="_codeMirrorSelect_"]') as HTMLSelectElement | null;
+    const lang = (select?.value || wrapper.getAttribute("data-language") || wrapper.className || "").toLowerCase();
+    const isMathBlock =
+      lang === "math" ||
+      lang === "latex" ||
+      lang === "tex" ||
+      lang.includes("language-math") ||
+      lang.includes("language-latex") ||
+      lang.includes("language-tex");
+
+    let text = getCodeMirrorBlockText(wrapper);
+    if (!text) {
+      text = wrapper.querySelector("code")?.textContent || wrapper.textContent || "";
+    }
+    text = text.trim();
+
+    const isDollarMath = text.startsWith("$$") && text.endsWith("$$") && text.length > 4;
+    if (!isMathBlock && !isDollarMath) {
+      const existingPreview = wrapper.querySelector(".netcatty-math-formula-preview");
+      if (existingPreview) existingPreview.remove();
+      wrapper.classList.remove("netcatty-math-reading-mode");
+      return;
+    }
+
+    const formulaSource = isDollarMath ? text.slice(2, -2).trim() : text;
+    if (!formulaSource) return;
+
+    let preview = wrapper.querySelector(".netcatty-math-formula-preview") as HTMLElement | null;
+    if (!preview) {
+      preview = document.createElement("div");
+      preview.className = "netcatty-math-formula-preview";
+      wrapper.appendChild(preview);
+    }
+
+    if (preview.dataset.formulaSource !== formulaSource) {
+      preview.dataset.formulaSource = formulaSource;
+      preview.innerHTML = latexToMathML(formulaSource, true);
+    }
+
+    if (editorMode === "preview") {
+      wrapper.classList.add("netcatty-math-reading-mode");
+    } else {
+      wrapper.classList.remove("netcatty-math-reading-mode");
+    }
+  });
+
+  if (editorMode === "preview") {
+    container.querySelectorAll("p").forEach((p) => {
+      const pText = p.textContent?.trim() || "";
+      if (pText.startsWith("$$") && pText.endsWith("$$") && pText.length > 4) {
+        if (p.querySelector("math")) return;
+        const formula = pText.slice(2, -2).trim();
+        p.innerHTML = latexToMathML(formula, true);
+        p.classList.add("netcatty-math-block-p");
+      }
+    });
+  }
 };
 
 const deleteLexicalTextRange = (range: Range, onUpdate: () => void): boolean => {
@@ -1115,6 +1180,7 @@ export const InlineMarkdownEditor = React.memo(
       annotateNoteImageSizes(container);
       if (includeHostLinks) annotateHostLinks();
       annotateCodeBlockCopyButtons();
+      annotateMathFormulaBlocks(container, editorMode);
     };
 
     const scheduleFromMutation = () => {

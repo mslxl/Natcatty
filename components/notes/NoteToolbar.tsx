@@ -81,14 +81,14 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
   return (
     <div
-      className={`flex items-center justify-between gap-1 px-3 py-1.5 border-b border-border/70 bg-card/40 text-xs select-none overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
+      className={`flex items-center justify-between gap-1.5 px-3 py-1.5 border-b border-border/70 bg-card/40 text-xs select-none min-w-0 ${className}`}
     >
       {/* Left Area: View Mode Segmented Control */}
-      <div className="flex items-center gap-1 bg-muted/60 p-0.5 rounded-lg border border-border/50 shrink-0">
+      <div className="flex items-center gap-0.5 bg-muted/60 p-0.5 rounded-lg border border-border/50 shrink-0">
         <button
           type="button"
           data-note-mode-switch="live"
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
             editorMode === "edit" || editorMode === "live"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -97,13 +97,13 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           title="实时预览模式 (WYSIWYG)"
         >
           <PencilLine size={13} />
-          <span>实时预览</span>
+          <span className="hidden sm:inline">实时预览</span>
         </button>
 
         <button
           type="button"
           data-note-mode-switch="source"
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
             editorMode === "source"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -112,13 +112,13 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           title="源码模式 (Markdown 代码)"
         >
           <SquareCode size={13} />
-          <span>源码模式</span>
+          <span className="hidden sm:inline">源码模式</span>
         </button>
 
         <button
           type="button"
           data-note-mode-switch="preview"
-          className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
+          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
             editorMode === "preview"
               ? "bg-background text-foreground shadow-sm"
               : "text-muted-foreground hover:text-foreground"
@@ -127,13 +127,13 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           title="阅读模式 (只读排版)"
         >
           <Eye size={13} />
-          <span>阅读模式</span>
+          <span className="hidden sm:inline">阅读模式</span>
         </button>
       </div>
 
       {/* Middle Area: Formatting Tools (Available in Live Preview & Source Mode) */}
       {isEditing && (
-        <div className="flex items-center gap-0.5 min-w-0">
+        <div className="flex items-center gap-0.5 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="h-4 w-px bg-border mx-1 shrink-0" />
 
           {/* Heading Dropdown (Using Portal Dropdown to avoid clipping) */}
@@ -419,7 +419,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           </DropdownContent>
         </Dropdown>
 
-        <span className="opacity-70 whitespace-nowrap">
+        <span className="hidden md:inline opacity-70 whitespace-nowrap">
           {stats.words} 词 · {stats.chars} 字
         </span>
 
