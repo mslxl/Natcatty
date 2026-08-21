@@ -220,6 +220,8 @@ const SettingsAITabContainer: React.FC = () => {
                 setCommandBlocklist={aiState.setCommandBlocklist}
                 commandTimeout={aiState.commandTimeout}
                 setCommandTimeout={aiState.setCommandTimeout}
+                responseIdleTimeout={aiState.responseIdleTimeout}
+                setResponseIdleTimeout={aiState.setResponseIdleTimeout}
                 maxIterations={aiState.maxIterations}
                 setMaxIterations={aiState.setMaxIterations}
                 webSearchConfig={aiState.webSearchConfig}

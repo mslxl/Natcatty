@@ -381,6 +381,7 @@ export interface AISettings {
   defaultAgentId: string;
   commandBlocklist: string[];    // global command blocklist patterns
   commandTimeout: number;        // seconds, default 60
+  responseIdleTimeout: number;   // seconds without response data, default 120
   maxIterations: number;         // doom loop prevention, default 20
   webSearchConfig?: WebSearchConfig;
 }
@@ -391,10 +392,17 @@ export const DEFAULT_COMMAND_BLOCKLIST = [
 
 export const DEFAULT_COMMAND_TIMEOUT_SECONDS = 60;
 export const MAX_COMMAND_TIMEOUT_SECONDS = 24 * 60 * 60;
+export const DEFAULT_RESPONSE_IDLE_TIMEOUT_SECONDS = 2 * 60;
+export const MAX_RESPONSE_IDLE_TIMEOUT_SECONDS = 24 * 60 * 60;
 
 export function normalizeCommandTimeoutSeconds(value: number): number {
   if (!Number.isFinite(value)) return DEFAULT_COMMAND_TIMEOUT_SECONDS;
   return Math.min(MAX_COMMAND_TIMEOUT_SECONDS, Math.max(1, value));
+}
+
+export function normalizeResponseIdleTimeoutSeconds(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_RESPONSE_IDLE_TIMEOUT_SECONDS;
+  return Math.min(MAX_RESPONSE_IDLE_TIMEOUT_SECONDS, Math.max(1, value));
 }
 
 export const DEFAULT_AI_SETTINGS: AISettings = {
@@ -407,6 +415,7 @@ export const DEFAULT_AI_SETTINGS: AISettings = {
   defaultAgentId: 'catty',
   commandBlocklist: [...DEFAULT_COMMAND_BLOCKLIST],
   commandTimeout: DEFAULT_COMMAND_TIMEOUT_SECONDS,
+  responseIdleTimeout: DEFAULT_RESPONSE_IDLE_TIMEOUT_SECONDS,
   maxIterations: 20,
 };
 

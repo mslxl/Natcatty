@@ -358,6 +358,7 @@ export interface SyncPayload {
       defaultAgentId?: string;
       commandBlocklist?: string[];
       commandTimeout?: number;
+      responseIdleTimeout?: number;
       maxIterations?: number;
       agentModelMap?: Record<string, string>;
       agentProviderMap?: Record<string, string>;

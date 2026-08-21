@@ -309,6 +309,20 @@ test("AI stream default total timeout is long enough for extended reasoning", ()
   }
 });
 
+test("AI stream total timeout never undercuts the configured idle timeout", () => {
+  const { bridge, restore } = loadBridgeWithMocks();
+  try {
+    const timeouts = bridge._resolveAIStreamTimeoutsForTests({
+      idleTimeoutMs: 60 * 60 * 1000,
+      totalTimeoutMs: 30 * 60 * 1000,
+    });
+    assert.equal(timeouts.idleTimeoutMs, 60 * 60 * 1000);
+    assert.ok(timeouts.totalTimeoutMs > timeouts.idleTimeoutMs);
+  } finally {
+    restore();
+  }
+});
+
 test("streaming requests enforce a total deadline even while bytes keep arriving", async () => {
   let requestClosed = false;
   let resolveRequestClosed;
@@ -513,6 +527,74 @@ test("streaming requests abort after the idle deadline when no more bytes arrive
     restore();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("streaming chat handler forwards the configured idle deadline", { timeout: 5_000 }, async (t) => {
+  const sentEvents = [];
+  const server = http.createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.write('data:{"choices":[{"delta":{"content":"start"}}]}\n\n');
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+
+  const { bridge, restore } = loadBridgeWithMocks({
+    safeSend: (_sender, channel, payload) => sentEvents.push({ channel, payload }),
+  });
+  t.after(restore);
+  const ipcMain = createIpcMainStub();
+  bridge.init({
+    sessions: new Map(),
+    sftpClients: new Map(),
+    electronModule: { app: { getPath: () => process.cwd() }, session: {} },
+  });
+  bridge.registerHandlers(ipcMain);
+
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const baseURL = `http://127.0.0.1:${address.port}`;
+  const sender = { id: 1 };
+  await ipcMain.handlers.get("netcatty:ai:sync-providers")(
+    { sender },
+    { providers: [{ id: "custom-idle", baseURL }] },
+  );
+
+  const result = await ipcMain.handlers.get("netcatty:ai:chat:stream")(
+    { sender },
+    {
+      requestId: "custom-idle-request",
+      url: `${baseURL}/v1/chat/completions`,
+      headers: { "content-type": "application/json" },
+      body: '{"stream":true}',
+      providerId: "custom-idle",
+      idleTimeoutMs: 40,
+    },
+  );
+  assert.equal(result.ok, true);
+
+  const error = await new Promise((resolve, reject) => {
+    const started = Date.now();
+    const poll = () => {
+      const event = sentEvents.find(({ channel }) => channel === "netcatty:ai:stream:error");
+      if (event) {
+        resolve(event.payload.error);
+        return;
+      }
+      if (Date.now() - started > 1_000) {
+        reject(new Error("configured stream idle deadline was not forwarded"));
+        return;
+      }
+      setTimeout(poll, 10);
+    };
+    poll();
+  });
+  assert.match(error, /idle deadline exceeded|request timeout/i);
 });
 
 test("mcp attachment update handler forwards current chat attachments", async () => {
