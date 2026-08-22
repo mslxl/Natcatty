@@ -334,7 +334,20 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
     if (tok.type === "command") {
       const cmd = tok.value;
 
-      if (cmd === "frac" || cmd === "dfrac" || cmd === "tfrac") {
+      if (cmd === "displaystyle" || cmd === "textstyle" || cmd === "scriptstyle" || cmd === "scriptscriptstyle") {
+        const remainingTokens = tokens.slice(i + 1);
+        const innerXml = renderTokensToMathML(remainingTokens);
+        const styleAttrs =
+          cmd === "displaystyle"
+            ? 'displaystyle="true" scriptlevel="0"'
+            : cmd === "textstyle"
+            ? 'displaystyle="false" scriptlevel="0"'
+            : cmd === "scriptstyle"
+            ? 'displaystyle="false" scriptlevel="1"'
+            : 'displaystyle="false" scriptlevel="2"';
+        result += `<mstyle ${styleAttrs}>${innerXml}</mstyle>`;
+        return result;
+      } else if (cmd === "frac" || cmd === "dfrac" || cmd === "tfrac") {
         const numRes = getNextArg(tokens, i + 1);
         const denRes = getNextArg(tokens, numRes.nextIndex);
         i = denRes.nextIndex;
@@ -382,18 +395,31 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
         cmd === "mathrm" ||
         cmd === "mathbf" ||
         cmd === "mathit" ||
+        cmd === "mathsf" ||
+        cmd === "mathtt" ||
         cmd === "mathbb" ||
         cmd === "mathcal" ||
+        cmd === "mathfrak" ||
+        cmd === "frak" ||
         cmd === "bm" ||
         cmd === "boldsymbol" ||
-        cmd === "operatorname"
+        cmd === "operatorname" ||
+        cmd === "textbf" ||
+        cmd === "textit" ||
+        cmd === "texttt" ||
+        cmd === "textsf" ||
+        cmd === "textnormal"
       ) {
         const argRes = getNextArg(tokens, i + 1);
         i = argRes.nextIndex;
+        const isTextCommand = cmd.startsWith("text");
+        const rawContent = argRes.arg ? argRes.arg.value : "";
         const rawText = argRes.arg
-          ? argRes.arg.children
+          ? isTextCommand
+            ? rawContent
+            : argRes.arg.children
             ? renderTokensToMathML(argRes.arg.children)
-            : argRes.arg.value
+            : rawContent
           : "";
         if (cmd === "mathbb") {
           const bboardMap: Record<string, string> = {
@@ -405,6 +431,22 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
           baseXml = `<mi mathvariant="normal">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
         } else if (cmd === "mathbf" || cmd === "bm" || cmd === "boldsymbol") {
           baseXml = `<mi mathvariant="bold">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+        } else if (cmd === "mathit") {
+          baseXml = `<mi mathvariant="italic">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+        } else if (cmd === "mathsf") {
+          baseXml = `<mi mathvariant="sans-serif">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+        } else if (cmd === "mathtt") {
+          baseXml = `<mi mathvariant="monospace">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+        } else if (cmd === "mathfrak" || cmd === "frak") {
+          baseXml = `<mi mathvariant="fraktur">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+        } else if (cmd === "textbf") {
+          baseXml = `<mtext mathvariant="bold">${escapeXml(rawText)}</mtext>`;
+        } else if (cmd === "textit") {
+          baseXml = `<mtext mathvariant="italic">${escapeXml(rawText)}</mtext>`;
+        } else if (cmd === "texttt") {
+          baseXml = `<mtext mathvariant="monospace">${escapeXml(rawText)}</mtext>`;
+        } else if (cmd === "textsf") {
+          baseXml = `<mtext mathvariant="sans-serif">${escapeXml(rawText)}</mtext>`;
         } else {
           baseXml = `<mtext>${escapeXml(rawText)}</mtext>`;
         }

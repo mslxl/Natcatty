@@ -56,3 +56,25 @@ test("latexToMathML converts binomial and overline", () => {
   assert.ok(mathml.includes("linethickness=\"0\""));
   assert.ok(mathml.includes("<mover>"));
 });
+
+test("latexToMathML converts \\textstyle, \\displaystyle, and script styles", () => {
+  const textstyleMath = latexToMathML("\\textstyle \\sum_{i=1}^n x_i");
+  assert.ok(textstyleMath.includes("<mstyle displaystyle=\"false\" scriptlevel=\"0\">"));
+  assert.ok(textstyleMath.includes("∑"));
+
+  const groupedTextstyle = latexToMathML("{\\textstyle \\frac{1}{2}} + \\frac{3}{4}");
+  assert.ok(groupedTextstyle.includes("<mstyle displaystyle=\"false\" scriptlevel=\"0\"><mfrac>"));
+
+  const displaystyleMath = latexToMathML("\\displaystyle \\int_0^1 f(x) dx");
+  assert.ok(displaystyleMath.includes("<mstyle displaystyle=\"true\" scriptlevel=\"0\">"));
+
+  const scriptstyleMath = latexToMathML("\\scriptstyle a + b");
+  assert.ok(scriptstyleMath.includes("<mstyle displaystyle=\"false\" scriptlevel=\"1\">"));
+});
+
+test("latexToMathML converts text formatting commands", () => {
+  const mathml = latexToMathML("\\text{hello world} + \\textbf{bold} + \\textit{italic}");
+  assert.ok(mathml.includes("<mtext>hello world</mtext>"));
+  assert.ok(mathml.includes("<mtext mathvariant=\"bold\">bold</mtext>"));
+  assert.ok(mathml.includes("<mtext mathvariant=\"italic\">italic</mtext>"));
+});
