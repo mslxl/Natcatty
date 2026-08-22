@@ -1351,7 +1351,7 @@ html[data-theme-transition] *::after {
   background: hsl(var(--secondary) / 0.8);
   padding: 0.12rem 0.3rem;
   font-family: var(--note-font-family, var(--font-mono));
-  font-size: 0.86em;
+  font-size: var(--note-code-font-size, 0.88em);
 }
 
 .netcatty-mdx-content pre {
@@ -1433,6 +1433,14 @@ html[data-theme-transition] *::after {
 .netcatty-source-editor,
 .netcatty-source-editor textarea {
   font-family: var(--note-font-family, var(--font-mono)) !important;
+}
+
+.netcatty-mdx-editor .cm-editor,
+.netcatty-mdx-editor .cm-content,
+.netcatty-mdx-editor pre,
+.netcatty-mdx-content pre,
+.netcatty-source-editor textarea {
+  font-size: var(--note-code-font-size, 13px) !important;
 }
 
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="math"]),

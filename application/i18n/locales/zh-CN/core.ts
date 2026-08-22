@@ -359,6 +359,8 @@ export const zhCNCoreMessages: Messages = {
   'settings.vault.notesFontDesc': '自定义笔记中代码块与行内代码使用的字体',
   'settings.vault.notesFontSize': '笔记字号',
   'settings.vault.notesFontSizeDesc': '自定义笔记正文字体大小',
+  'settings.vault.notesCodeFontSize': '代码字号',
+  'settings.vault.notesCodeFontSizeDesc': '自定义笔记中代码块与行内代码的字体大小',
 
   // Update notifications
   'update.available.title': '发现新版本',

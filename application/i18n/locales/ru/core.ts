@@ -346,6 +346,8 @@ export const ruCoreMessages: Messages = {
   'settings.vault.notesFontDesc': 'Шрифт для блоков кода и встроенного кода в заметках',
   'settings.vault.notesFontSize': 'Размер шрифта заметок',
   'settings.vault.notesFontSizeDesc': 'Размер шрифта для основного текста заметок',
+  'settings.vault.notesCodeFontSize': 'Размер шрифта кода',
+  'settings.vault.notesCodeFontSizeDesc': 'Размер шрифта для блоков кода и встроенного кода в заметках',
 
   // Update notifications
   'update.available.title': 'Доступно обновление',

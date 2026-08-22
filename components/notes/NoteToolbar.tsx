@@ -46,11 +46,14 @@ export interface NoteToolbarProps {
   onChangeNoteFontFamily?: (font: string) => void;
   noteFontSize?: number;
   onChangeNoteFontSize?: (size: number) => void;
+  noteCodeFontSize?: number;
+  onChangeNoteCodeFontSize?: (size: number) => void;
   /** Active text-format toggles at the current selection (button highlight). */
   activeFormats?: ActiveTextFormats;
 }
 
 const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20];
+const CODE_FONT_SIZES = [11, 12, 13, 14, 15, 16, 18];
 
 export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   editorMode,
@@ -61,6 +64,8 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   onChangeNoteFontFamily,
   noteFontSize = 14,
   onChangeNoteFontSize,
+  noteCodeFontSize = 13,
+  onChangeNoteCodeFontSize,
   activeFormats = EMPTY_ACTIVE_FORMATS,
 }) => {
   const [fontSearch, setFontSearch] = useState("");
@@ -192,7 +197,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             <DropdownContent align="start" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                  <span>等宽字体</span>
+                  <span>自定义代码字体</span>
                   <span className="text-[10px] opacity-70">共 {systemFontList.length} 款可用字体</span>
                 </div>
 
@@ -201,7 +206,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                   <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="搜索等宽字体..."
+                    placeholder="搜索字体..."
                     value={fontSearch}
                     onChange={(e) => setFontSearch(e.target.value)}
                     className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
@@ -248,6 +253,27 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                           : "border-border hover:bg-secondary text-foreground",
                       )}
                       onClick={() => onChangeNoteFontSize?.(sz)}
+                    >
+                      {sz}px
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="border-t border-border/60 pt-2">
+                <div className="text-[11px] font-medium text-muted-foreground mb-1">代码字号</div>
+                <div className="flex flex-wrap gap-1">
+                  {CODE_FONT_SIZES.map((sz) => (
+                    <button
+                      key={sz}
+                      type="button"
+                      className={cn(
+                        "px-2 py-0.5 rounded text-xs border transition-colors font-mono",
+                        (noteCodeFontSize || 13) === sz
+                          ? "bg-primary text-primary-foreground border-primary font-medium"
+                          : "border-border hover:bg-secondary text-foreground",
+                      )}
+                      onClick={() => onChangeNoteCodeFontSize?.(sz)}
                     >
                       {sz}px
                     </button>

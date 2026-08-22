@@ -99,6 +99,7 @@ export interface InlineMarkdownEditorProps {
   sourceEditorRef?: React.RefObject<NoteSourceEditorHandle | null>;
   noteFontFamily?: string;
   noteFontSize?: number;
+  noteCodeFontSize?: number;
   /** Reports the active text-format toggles at the current selection (toolbar highlight). */
   onActiveFormatsChange?: (formats: ActiveTextFormats) => void;
 }
@@ -792,6 +793,7 @@ export const InlineMarkdownEditor = React.memo(
       sourceEditorRef,
       noteFontFamily,
       noteFontSize,
+      noteCodeFontSize,
       onActiveFormatsChange,
     }: InlineMarkdownEditorProps,
     ref,
@@ -1822,6 +1824,7 @@ export const InlineMarkdownEditor = React.memo(
       style={{
         ["--note-font-family" as string]: noteFontFamily || undefined,
         ["--note-font-size" as string]: noteFontSize ? `${noteFontSize}px` : undefined,
+        ["--note-code-font-size" as string]: noteCodeFontSize ? `${noteCodeFontSize}px` : undefined,
       }}
       aria-busy={isContentSwapping || undefined}
       onBlurCapture={handleBlurCapture}
@@ -1934,7 +1937,7 @@ export const InlineMarkdownEditor = React.memo(
           placeholder={placeholder}
           onChange={commitMarkdown}
           noteFontFamily={noteFontFamily}
-          noteFontSize={noteFontSize}
+          noteFontSize={noteCodeFontSize || noteFontSize}
         />
       ) : editorMode === "preview" && !displayMarkdown.trim() ? (
         <div className="netcatty-note-preview-empty">

@@ -280,6 +280,8 @@ export const zhTWCoreMessages: Messages = {
   'settings.vault.notesFontDesc': '自訂筆記中程式碼區塊與行內程式碼使用的字型',
   'settings.vault.notesFontSize': '筆記字級',
   'settings.vault.notesFontSizeDesc': '自訂筆記內文字型大小',
+  'settings.vault.notesCodeFontSize': '程式碼字級',
+  'settings.vault.notesCodeFontSizeDesc': '自訂筆記中程式碼區塊與行內程式碼的文字大小',
 
   // Update notifications
   'update.available.title': '發現新版本',

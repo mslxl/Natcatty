@@ -362,6 +362,8 @@ export const enCoreMessages: Messages = {
   'settings.vault.notesFontDesc': 'Font family used for code blocks and inline code in notes',
   'settings.vault.notesFontSize': 'Note font size',
   'settings.vault.notesFontSizeDesc': 'Font size used for note body text',
+  'settings.vault.notesCodeFontSize': 'Code font size',
+  'settings.vault.notesCodeFontSizeDesc': 'Font size used for code blocks and inline code in notes',
 
   // Update notifications
   'update.available.title': 'Update Available',

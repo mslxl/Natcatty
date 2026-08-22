@@ -283,6 +283,8 @@ export const esCoreMessages: Messages = {
   'settings.vault.notesFontDesc': 'Familia tipográfica para bloques de código y código en línea en notas',
   'settings.vault.notesFontSize': 'Tamaño de fuente de notas',
   'settings.vault.notesFontSizeDesc': 'Tamaño de fuente para el cuerpo de texto de las notas',
+  'settings.vault.notesCodeFontSize': 'Tamaño de fuente de código',
+  'settings.vault.notesCodeFontSizeDesc': 'Tamaño de fuente para bloques de código y código en línea en notas',
 
   // Update notifications
   'update.available.title': 'Actualización disponible',

@@ -15,6 +15,7 @@ import {
   STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
   STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
   STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+  STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
 } from "../../../infrastructure/config/storageKeys";
 import { resolveAppIconVariant, type AppIconVariant } from "../../../domain/appIconVariant";
 import { DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../domain/systemKnownHostsAutoImport";
@@ -89,6 +90,15 @@ function SettingsAppearanceTab(props: {
     setNoteFontSize(size);
     persistNoteFontSize(size);
   }, [persistNoteFontSize, setNoteFontSize]);
+  const [noteCodeFontSize, setNoteCodeFontSize, persistNoteCodeFontSize] = useStoredNumber(
+    STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
+    13,
+    { min: 10, max: 32 },
+  );
+  const handleSetNoteCodeFontSize = useCallback((size: number) => {
+    setNoteCodeFontSize(size);
+    persistNoteCodeFontSize(size);
+  }, [persistNoteCodeFontSize, setNoteCodeFontSize]);
   const {
     theme,
     resolvedTheme,
@@ -517,6 +527,26 @@ function SettingsAppearanceTab(props: {
             />
             <span className="text-sm text-muted-foreground w-10 text-right tabular-nums">
               {noteFontSize}px
+            </span>
+          </div>
+        </SettingRow>
+        <SettingRow
+          anchorId="appearance-vault-notes-code-font-size"
+          label={t('settings.vault.notesCodeFontSize')}
+          description={t('settings.vault.notesCodeFontSizeDesc')}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={10}
+              max={22}
+              step={1}
+              value={noteCodeFontSize}
+              onChange={(e) => handleSetNoteCodeFontSize(Number(e.target.value))}
+              className="w-28 accent-primary"
+            />
+            <span className="text-sm text-muted-foreground w-10 text-right tabular-nums">
+              {noteCodeFontSize}px
             </span>
           </div>
         </SettingRow>

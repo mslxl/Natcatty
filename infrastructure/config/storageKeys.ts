@@ -60,6 +60,7 @@ export const STORAGE_KEY_VAULT_NOTES_SELECTED_GROUP = 'netcatty_vault_notes_sele
 export const STORAGE_KEY_VAULT_NOTES_TREE_WIDTH = 'netcatty_vault_notes_tree_width_v1';
 export const STORAGE_KEY_VAULT_NOTES_FONT_FAMILY = 'netcatty_vault_notes_font_family_v1';
 export const STORAGE_KEY_VAULT_NOTES_FONT_SIZE = 'netcatty_vault_notes_font_size_v1';
+export const STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE = 'netcatty_vault_notes_code_font_size_v1';
 /** Inline snippet/script edit panel width (px). */
 export const STORAGE_KEY_SNIPPETS_PANEL_WIDTH = 'netcatty_snippets_panel_width_v1';
 /** Inline vault host/group details panel width (px). */
