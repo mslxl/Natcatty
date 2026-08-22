@@ -358,6 +358,10 @@ export const enCoreMessages: Messages = {
   'settings.vault.showHostTreeSidebarDesc': 'Display the host list sidebar and its top-bar toggle on terminal and editor tabs.',
   'settings.vault.autoImportSystemKnownHosts': 'Auto-import system known_hosts',
   'settings.vault.autoImportSystemKnownHostsDesc': 'When Vault loads, silently import entries from the OpenSSH known_hosts file. Turn this off to keep Netcatty known hosts separate; Scan System still imports on demand.',
+  'settings.vault.notesFont': 'Code font',
+  'settings.vault.notesFontDesc': 'Font family used for code blocks and inline code in notes',
+  'settings.vault.notesFontSize': 'Note font size',
+  'settings.vault.notesFontSizeDesc': 'Font size used for note body text',
 
   // Update notifications
   'update.available.title': 'Update Available',

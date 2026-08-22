@@ -355,6 +355,10 @@ export const zhCNCoreMessages: Messages = {
   'settings.vault.showHostTreeSidebarDesc': '在终端和编辑器标签页显示主机列表侧栏及顶部开关。',
   'settings.vault.autoImportSystemKnownHosts': '自动导入系统 known_hosts',
   'settings.vault.autoImportSystemKnownHostsDesc': '打开主机库时静默导入 OpenSSH known_hosts 中的记录。关闭后，Netcatty 已知主机与系统信任库保持独立；仍可通过「扫描系统」手动导入。',
+  'settings.vault.notesFont': '代码字体',
+  'settings.vault.notesFontDesc': '自定义笔记中代码块与行内代码使用的字体',
+  'settings.vault.notesFontSize': '笔记字号',
+  'settings.vault.notesFontSizeDesc': '自定义笔记正文字体大小',
 
   // Update notifications
   'update.available.title': '发现新版本',

@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useMemo, useState } from "react";
+import React, { memo, useCallback, useState } from "react";
 import { applyCustomCssToDocument } from "../../../lib/customCss";
 import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, HelpCircle, Monitor, Moon, Palette, Sun } from "lucide-react";
@@ -489,21 +489,21 @@ function SettingsAppearanceTab(props: {
         </SettingRow>
         <SettingRow
           anchorId="appearance-vault-notes-font"
-          label={t('settings.vault.notesFont', '代码字体')}
-          description={t('settings.vault.notesFontDesc', '自定义笔记中代码块与行内代码使用的字体')}
+          label={t('settings.vault.notesFont')}
+          description={t('settings.vault.notesFontDesc')}
         >
           <FontSelect
             value={noteFontFamily}
             fonts={availableMonoFonts}
             onChange={(v) => setNoteFontFamily(v)}
             className="w-48"
-            ariaLabel={t('settings.vault.notesFont', '代码字体')}
+            ariaLabel={t('settings.vault.notesFont')}
           />
         </SettingRow>
         <SettingRow
           anchorId="appearance-vault-notes-font-size"
-          label={t('settings.vault.notesFontSize', '笔记字号')}
-          description={t('settings.vault.notesFontSizeDesc', '自定义笔记正文字体大小')}
+          label={t('settings.vault.notesFontSize')}
+          description={t('settings.vault.notesFontSizeDesc')}
         >
           <div className="flex items-center gap-2">
             <input
