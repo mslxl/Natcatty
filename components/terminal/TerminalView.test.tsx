@@ -71,6 +71,17 @@ test("automatic reconnect switches to attempt copy before waking a hibernated te
   assert.ok(wakeHibernated > updateNotice);
 });
 
+test("programmatic input during hibernated reconnect does not clear reconnect presentation", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const scrollStart = source.indexOf("const scrollToBottomAfterProgrammaticInput");
+  const scrollEnd = source.indexOf("useEffect(() =>", scrollStart);
+  const scrollBody = source.slice(scrollStart, scrollEnd);
+
+  assert.notEqual(scrollStart, -1);
+  assert.notEqual(scrollEnd, -1);
+  assert.doesNotMatch(scrollBody, /manualReconnectActiveRef|setReconnectNoticeMessage/);
+});
+
 test("line timestamp toggle creates a persistent host update", () => {
   const host = {
     id: "host-1",

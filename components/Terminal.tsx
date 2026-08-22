@@ -2997,11 +2997,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   autoUploadClipboardImageOnPasteRef.current = terminalSettings?.autoUploadClipboardImageOnPaste ?? false;
 
   const scrollToBottomAfterProgrammaticInput = useCallback((data: string) => {
-    if (!termRef.current) {
-      manualReconnectActiveRef.current = false;
-      setReconnectNoticeMessage(null);
-      return;
-    }
+    if (!termRef.current) return;
     scrollTerminalToBottomAfterInputIfEnabled(
       termRef.current,
       terminalSettingsRef.current,
@@ -3468,7 +3464,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       });
       return;
     }
-    if (!termRef.current) return;
+    if (!termRef.current) {
+      manualReconnectActiveRef.current = false;
+      setReconnectNoticeMessage(null);
+      return;
+    }
     // Claim the retry before awaiting either script cancellation or backend
     // cleanup. A second reconnect/cancel invalidates this continuation.
     const retryToken = Symbol("retry");

@@ -208,6 +208,8 @@ export const ruTerminalMessages: Messages = {
   'terminal.progress.startOver': 'Начать заново',
   'terminal.progress.enterReconnectHint': 'Нажмите Enter, чтобы подключиться снова',
   'terminal.progress.reconnecting': 'Повторное подключение...',
+  'terminal.progress.autoReconnectScheduled': 'Соединение потеряно. Повторное подключение через {seconds} с (попытка {attempt}).',
+  'terminal.progress.autoReconnectAttempt': 'Попытка автоматического подключения {attempt}...',
   'terminal.connection.dismissDisconnectedDialog': 'Закрыть уведомление об отключении',
   'terminal.connection.chainOf': 'Цепочка {current} из {total}',
   'terminal.connection.showLogs': 'Показать журналы',
