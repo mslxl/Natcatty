@@ -542,7 +542,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const reconnectPreparationTokenRef = useRef<symbol | null>(null);
   const autoReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoReconnectLoopActiveRef = useRef(false);
-  const manualReconnectActiveRef = useRef(false);
   const [manualReconnectActive, setManualReconnectActive] = useState(false);
   const autoReconnectAttemptRef = useRef(0);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
@@ -1371,7 +1370,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     setStatus(next);
     hasConnectedRef.current = next === "connected";
     if (next !== "connecting") {
-      manualReconnectActiveRef.current = false;
       setManualReconnectActive(false);
     }
     if (next === "connected") {
@@ -3426,17 +3424,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       reconnectPreparationTokenRef.current !== null
       || reconnectWakeInFlightRef.current
     ) return;
-    manualReconnectActiveRef.current = mode === "manual";
     setManualReconnectActive(mode === "manual");
     const reconnectAttemptMessage = mode === "auto"
       ? t("terminal.progress.autoReconnectAttempt", { attempt: autoReconnectAttemptRef.current })
       : t("terminal.progress.reconnecting");
     setReconnectNoticeMessage(reconnectAttemptMessage);
+    const restoreDisconnectedAfterReconnectFailure = () => {
+      if (mode === "manual") setReconnectNoticeMessage(null);
+      updateStatus("disconnected");
+    };
+    if (mode === "manual") updateStatus("connecting");
     if (!termRef.current && hibernatedRef.current) {
       if (reconnectWakeInFlightRef.current) return;
       const wakeForReconnect = wakeHibernatedRuntimeForReconnectRef.current;
       if (!wakeForReconnect) {
-        updateStatus("disconnected");
+        restoreDisconnectedAfterReconnectFailure();
         return;
       }
       reconnectWakeInFlightRef.current = true;
@@ -3458,7 +3460,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           startReconnectRef.current?.(mode);
           return;
         }
-        updateStatus("disconnected");
+        restoreDisconnectedAfterReconnectFailure();
       }).catch(() => {
         if (reconnectWakeTokenRef.current !== wakeToken) {
           reconnectWakeInFlightRef.current = false;
@@ -3469,14 +3471,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         }
         reconnectWakeTokenRef.current = null;
         reconnectWakeInFlightRef.current = false;
-        updateStatus("disconnected");
+        restoreDisconnectedAfterReconnectFailure();
       });
       return;
     }
     if (!termRef.current) {
-      manualReconnectActiveRef.current = false;
-      setManualReconnectActive(false);
-      setReconnectNoticeMessage(null);
+      restoreDisconnectedAfterReconnectFailure();
       return;
     }
     // Claim the retry before awaiting either script cancellation or backend
@@ -3504,9 +3504,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           // schedule another attempt, including another exact stop request.
           updateStatus("disconnected");
         } else if (mode === "manual" && retryTokenStillCurrent()) {
-          manualReconnectActiveRef.current = false;
-          setManualReconnectActive(false);
-          setReconnectNoticeMessage(null);
+          restoreDisconnectedAfterReconnectFailure();
         }
         return;
       }
@@ -3553,9 +3551,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     } catch (error) {
       finishReconnectPreparation();
       if (mode === "manual" && retryTokenStillCurrent()) {
-        manualReconnectActiveRef.current = false;
-        setManualReconnectActive(false);
-        setReconnectNoticeMessage(null);
+        restoreDisconnectedAfterReconnectFailure();
       }
       throw error;
     }
@@ -3567,9 +3563,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     if (!term) {
       finishReconnectPreparation();
       if (mode === "manual" && retryTokenStillCurrent()) {
-        manualReconnectActiveRef.current = false;
-        setManualReconnectActive(false);
-        setReconnectNoticeMessage(null);
+        restoreDisconnectedAfterReconnectFailure();
       }
       return;
     }

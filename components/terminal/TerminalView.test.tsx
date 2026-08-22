@@ -100,7 +100,7 @@ test("hibernated manual reconnect can continue after its runtime wakes", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const startReconnect = source.indexOf("const startReconnect = async");
   const markManualReconnect = source.indexOf(
-    'manualReconnectActiveRef.current = mode === "manual"',
+    'setManualReconnectActive(mode === "manual")',
     startReconnect,
   );
   const initialGuard = source.slice(startReconnect, markManualReconnect);
@@ -114,9 +114,32 @@ test("hibernated manual reconnect can continue after its runtime wakes", () => {
   assert.ok(markManualReconnect > startReconnect);
   assert.match(initialGuard, /reconnectPreparationTokenRef\.current !== null/);
   assert.match(initialGuard, /reconnectWakeInFlightRef\.current/);
-  assert.doesNotMatch(initialGuard, /manualReconnectActiveRef\.current/);
+  assert.doesNotMatch(initialGuard, /manualReconnectActive/);
   assert.ok(clearWakeInFlight > markManualReconnect);
   assert.ok(continueReconnect > clearWakeInFlight);
+});
+
+test("manual reconnect publishes connecting before asynchronous cleanup", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const startReconnect = source.indexOf("const startReconnect = async");
+  const publishConnecting = source.indexOf(
+    'if (mode === "manual") updateStatus("connecting")',
+    startReconnect,
+  );
+  const cleanupSession = source.indexOf(
+    "await cleanupSession({ retainOwnership: true })",
+    startReconnect,
+  );
+  const restoreDisconnected = source.indexOf(
+    'updateStatus("disconnected")',
+    startReconnect,
+  );
+
+  assert.ok(startReconnect >= 0);
+  assert.ok(publishConnecting > startReconnect);
+  assert.ok(cleanupSession > publishConnecting);
+  assert.ok(restoreDisconnected > startReconnect);
+  assert.ok(restoreDisconnected < cleanupSession);
 });
 
 test("programmatic input during hibernated reconnect does not clear reconnect presentation", () => {
