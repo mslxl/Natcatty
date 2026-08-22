@@ -495,8 +495,21 @@ export const getCodeMirrorBlockText = (wrapper: Element): string => {
       .join("\n");
   }
 
-  const content = wrapper.querySelector(".cm-content");
-  return content?.textContent?.replace(/\u00a0/g, " ") ?? "";
+  const cmContent = wrapper.querySelector(".cm-content");
+  if (cmContent) {
+    return cmContent.textContent?.replace(/\u00a0/g, " ") ?? "";
+  }
+
+  const codeEl = wrapper.querySelector("code");
+  if (codeEl) {
+    return codeEl.textContent?.replace(/\u00a0/g, " ") ?? "";
+  }
+
+  if (wrapper.tagName.toLowerCase() === "pre") {
+    return wrapper.textContent?.replace(/\u00a0/g, " ") ?? "";
+  }
+
+  return "";
 };
 
 const clearNoteCodeBlockCopyResetTimer = (button: HTMLElement): void => {
@@ -547,10 +560,7 @@ function createCopyButton(
     event.stopPropagation();
     void (async () => {
       clearNoteCodeBlockCopyResetTimer(button);
-      let text = getCodeMirrorBlockText(wrapper);
-      if (!text) {
-        text = wrapper.querySelector("code")?.textContent || wrapper.textContent || "";
-      }
+      const text = getCodeMirrorBlockText(wrapper);
       const ok = await onCopy(text);
       if (!ok) {
         toast.error(copyFailedLabel);
@@ -691,11 +701,7 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
       lang.includes("language-latex") ||
       lang.includes("language-tex");
 
-    let text = getCodeMirrorBlockText(wrapper);
-    if (!text) {
-      text = wrapper.querySelector("code")?.textContent || wrapper.textContent || "";
-    }
-    text = text.trim();
+    const text = getCodeMirrorBlockText(wrapper).trim();
 
     const isDollarMath = text.startsWith("$$") && text.endsWith("$$") && text.length > 4;
     if (!isMathBlock && !isDollarMath) {
@@ -706,7 +712,12 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
     }
 
     const formulaSource = isDollarMath ? text.slice(2, -2).trim() : text;
-    if (!formulaSource) return;
+    if (!formulaSource) {
+      const existingPreview = wrapper.querySelector(".netcatty-math-formula-preview");
+      if (existingPreview) existingPreview.remove();
+      wrapper.classList.remove("netcatty-math-reading-mode");
+      return;
+    }
 
     let preview = wrapper.querySelector(".netcatty-math-formula-preview") as HTMLElement | null;
     if (!preview) {

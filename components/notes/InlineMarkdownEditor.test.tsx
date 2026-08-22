@@ -419,3 +419,12 @@ test("note preview uses MDX readOnly with code-copy chrome", () => {
     /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorToolbar_"\][^{]*svg\s*\{[^}]*width:\s*10px\s*!important;/s,
   );
 });
+
+test("annotateMathFormulaBlocks handles empty math blocks and avoids reading toolbar text", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /export const annotateMathFormulaBlocks/);
+  assert.match(source, /const text = getCodeMirrorBlockText\(wrapper\)\.trim\(\);/);
+  assert.match(source, /if \(!formulaSource\) \{/);
+  assert.match(source, /existingPreview\.remove\(\)/);
+});
