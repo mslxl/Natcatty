@@ -89,10 +89,12 @@ import {
   markVaultInsideDropIndicator,
 } from "../vault/vaultReorderDrag";
 import type {
+  ActiveTextFormats,
   InlineMarkdownEditorHandle,
   NoteEditorMode,
   NoteSourceEditorHandle,
 } from "./InlineMarkdownEditor";
+import { EMPTY_ACTIVE_FORMATS } from "./InlineMarkdownEditor";
 import { NoteTitleInput } from "./NoteTitleInput";
 
 const InlineMarkdownEditor = lazy(() =>
@@ -388,6 +390,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     "edit",
     isNoteEditorMode,
   );
+  const [activeFormats, setActiveFormats] = useState<ActiveTextFormats>(EMPTY_ACTIVE_FORMATS);
   const [overlayNoteId, setOverlayNoteId] = useState<string | null>(() => initialOpenNoteId);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
     () => new Set(notes.flatMap((note) => note.group ? ancestorNoteGroupPaths(note.group) : [])),
@@ -1973,6 +1976,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   setNoteEditorMode(mode);
                 }}
                 onAction={handleToolbarAction}
+                activeFormats={activeFormats}
                 noteFontFamily={noteFontFamily}
                 onChangeNoteFontFamily={setNoteFontFamily}
                 noteFontSize={noteFontSize}
@@ -2005,6 +2009,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                           sourceEditorRef={sourceEditorRef}
                           noteFontFamily={noteFontFamily}
                           noteFontSize={noteFontSize}
+                          onActiveFormatsChange={setActiveFormats}
                         />
                       </Suspense>
                     </LazyLoadBoundary>
@@ -2035,6 +2040,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                             sourceEditorRef={sourceEditorRef}
                             noteFontFamily={noteFontFamily}
                             noteFontSize={noteFontSize}
+                            onActiveFormatsChange={setActiveFormats}
                           />
                         </Suspense>
                       </LazyLoadBoundary>
@@ -2147,6 +2153,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 setNoteEditorMode(mode);
               }}
               onAction={handleToolbarAction}
+              activeFormats={activeFormats}
               noteFontFamily={noteFontFamily}
               onChangeNoteFontFamily={setNoteFontFamily}
               noteFontSize={noteFontSize}
@@ -2178,6 +2185,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       sourceEditorRef={sourceEditorRef}
                       noteFontFamily={noteFontFamily}
                       noteFontSize={noteFontSize}
+                      onActiveFormatsChange={setActiveFormats}
                     />
                   </Suspense>
                 </LazyLoadBoundary>
@@ -2208,6 +2216,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                         sourceEditorRef={sourceEditorRef}
                         noteFontFamily={noteFontFamily}
                         noteFontSize={noteFontSize}
+                        onActiveFormatsChange={setActiveFormats}
                       />
                     </Suspense>
                   </LazyLoadBoundary>

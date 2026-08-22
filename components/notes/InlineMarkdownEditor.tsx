@@ -24,8 +24,10 @@ import {
   $isTextNode,
   $setSelection,
   CLEAR_HISTORY_COMMAND,
+  COMMAND_PRIORITY_LOW,
   FORMAT_TEXT_COMMAND,
   REDO_COMMAND,
+  SELECTION_CHANGE_COMMAND,
   UNDO_COMMAND,
   getNearestEditorFromDOMNode,
 } from "lexical";
@@ -96,9 +98,28 @@ export interface InlineMarkdownEditorProps {
   sourceEditorRef?: React.RefObject<NoteSourceEditorHandle | null>;
   noteFontFamily?: string;
   noteFontSize?: number;
+  /** Reports the active text-format toggles at the current selection (toolbar highlight). */
+  onActiveFormatsChange?: (formats: ActiveTextFormats) => void;
 }
 
 export type NoteEditorMode = "edit" | "preview" | "source" | "live";
+
+/** Active text-format toggles at the current selection (toolbar highlight). */
+export type ActiveTextFormats = {
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  code: boolean;
+};
+
+export const EMPTY_ACTIVE_FORMATS: ActiveTextFormats = {
+  bold: false,
+  italic: false,
+  underline: false,
+  strikethrough: false,
+  code: false,
+};
 
 type HostPickerState = {
   open: boolean;
@@ -759,6 +780,7 @@ export const InlineMarkdownEditor = React.memo(
       sourceEditorRef,
       noteFontFamily,
       noteFontSize,
+      onActiveFormatsChange,
     }: InlineMarkdownEditorProps,
     ref,
   ) {
@@ -919,6 +941,57 @@ export const InlineMarkdownEditor = React.memo(
   const hostPickerListRef = useRef<FixedSizeVirtualListHandle>(null);
   const hostsRef = useRef(hosts);
   hostsRef.current = hosts;
+
+  // Report active text-format toggles (bold/italic/underline/strikethrough/
+  // code) at the current selection so the toolbar can highlight enabled
+  // buttons. Listens to Lexical selection/update changes in edit/live modes.
+  useEffect(() => {
+    if (!onActiveFormatsChange) return;
+    if (editorMode !== "edit" && editorMode !== "live") {
+      onActiveFormatsChange(EMPTY_ACTIVE_FORMATS);
+      return;
+    }
+
+    const container = containerRef.current;
+    const editable = container?.querySelector("[contenteditable]");
+    const lexicalEditor = editable ? getNearestEditorFromDOMNode(editable) : null;
+    if (!lexicalEditor) return;
+
+    const readFormats = (): ActiveTextFormats => {
+      const formats: ActiveTextFormats = { ...EMPTY_ACTIVE_FORMATS };
+      lexicalEditor.getEditorState().read(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) {
+          formats.bold = selection.hasFormat("bold");
+          formats.italic = selection.hasFormat("italic");
+          formats.underline = selection.hasFormat("underline");
+          formats.strikethrough = selection.hasFormat("strikethrough");
+          formats.code = selection.hasFormat("code");
+        }
+      });
+      return formats;
+    };
+
+    const report = () => {
+      onActiveFormatsChange(readFormats());
+    };
+
+    const unregisterUpdate = lexicalEditor.registerUpdateListener(report);
+    const unregisterSelection = lexicalEditor.registerCommand(
+      SELECTION_CHANGE_COMMAND,
+      () => {
+        report();
+        return false;
+      },
+      COMMAND_PRIORITY_LOW,
+    );
+    report();
+
+    return () => {
+      unregisterUpdate();
+      unregisterSelection();
+    };
+  }, [editorMode, onActiveFormatsChange]);
 
   const setLinkActionIfChanged = useCallback((next: LinkActionState | null) => {
     if (linkActionStatesEqual(linkActionRef.current, next)) return;

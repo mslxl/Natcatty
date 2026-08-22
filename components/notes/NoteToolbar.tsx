@@ -30,8 +30,9 @@ import {
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
 import { type MarkdownActionType } from "../../domain/notes";
-import { useAvailableUIFonts } from "../../application/state/uiFontStore";
-import type { NoteEditorMode } from "./InlineMarkdownEditor";
+import { useAvailableFonts } from "../../application/state/fontStore";
+import type { ActiveTextFormats, NoteEditorMode } from "./InlineMarkdownEditor";
+import { EMPTY_ACTIVE_FORMATS } from "./InlineMarkdownEditor";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
 import { cn } from "../../lib/utils";
 
@@ -45,6 +46,8 @@ export interface NoteToolbarProps {
   onChangeNoteFontFamily?: (font: string) => void;
   noteFontSize?: number;
   onChangeNoteFontSize?: (size: number) => void;
+  /** Active text-format toggles at the current selection (button highlight). */
+  activeFormats?: ActiveTextFormats;
 }
 
 const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20];
@@ -58,13 +61,16 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   onChangeNoteFontFamily,
   noteFontSize = 14,
   onChangeNoteFontSize,
+  activeFormats = EMPTY_ACTIVE_FORMATS,
 }) => {
   const [fontSearch, setFontSearch] = useState("");
 
-  const availableSystemFonts = useAvailableUIFonts();
+  // The font tool only controls code block / inline code fonts, so it lists
+  // system monospace fonts (fontStore) rather than the UI font set.
+  const availableSystemFonts = useAvailableFonts();
 
   const systemFontList = useMemo(() => {
-    const defaultOption = { label: "默认系统字体 (Default)", value: "" };
+    const defaultOption = { label: "默认等宽字体 (Default)", value: "" };
     const list = availableSystemFonts.map((f) => ({
       label: f.name,
       value: f.family,
@@ -81,6 +87,15 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   }, [fontSearch, systemFontList]);
 
   const isEditing = editorMode === "edit" || editorMode === "live" || editorMode === "source";
+
+  // Highlight style for toggles that are active at the current selection.
+  const formatButtonClass = (active: boolean) =>
+    cn(
+      "p-1.5 rounded-md transition-colors",
+      active
+        ? "bg-primary/15 text-primary hover:bg-primary/20 hover:text-primary"
+        : "hover:bg-muted text-muted-foreground hover:text-foreground",
+    );
 
   return (
     <div
@@ -162,13 +177,13 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
           <div className="h-4 w-px bg-border mx-1 shrink-0" />
 
-          {/* Font & Typography Settings Dropdown */}
+          {/* Code Font & Typography Settings Dropdown */}
           <Dropdown>
             <DropdownTrigger asChild>
               <button
                 type="button"
                 className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                title="笔记字体与排版设置"
+                title="代码字体与排版设置"
                 onMouseDown={(e) => e.preventDefault()}
               >
                 <Type size={14} />
@@ -177,7 +192,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             <DropdownContent align="start" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                  <span>系统字体</span>
+                  <span>等宽字体</span>
                   <span className="text-[10px] opacity-70">共 {systemFontList.length} 款可用字体</span>
                 </div>
 
@@ -186,7 +201,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                   <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="搜索系统字体..."
+                    placeholder="搜索等宽字体..."
                     value={fontSearch}
                     onChange={(e) => setFontSearch(e.target.value)}
                     className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
@@ -196,7 +211,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 {/* Scrollable Font List */}
                 <div className="space-y-0.5 max-h-52 overflow-y-auto pr-1">
                   {filteredFonts.length === 0 ? (
-                    <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配的系统字体</div>
+                    <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配的等宽字体</div>
                   ) : (
                     filteredFonts.map((f) => (
                       <button
@@ -297,7 +312,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           {/* Inline Styles */}
           <button
             type="button"
-            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className={formatButtonClass(activeFormats.bold)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("bold")}
             title="加粗 (Ctrl+B)"
@@ -307,7 +322,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
           <button
             type="button"
-            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className={formatButtonClass(activeFormats.italic)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("italic")}
             title="斜体 (Ctrl+I)"
@@ -317,7 +332,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
           <button
             type="button"
-            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className={formatButtonClass(activeFormats.strikethrough)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("strikethrough")}
             title="删除线"
@@ -327,7 +342,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
           <button
             type="button"
-            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className={formatButtonClass(activeFormats.underline)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("underline")}
             title="下划线"
@@ -337,7 +352,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
           <button
             type="button"
-            className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className={formatButtonClass(activeFormats.code)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("code")}
             title="行内代码"

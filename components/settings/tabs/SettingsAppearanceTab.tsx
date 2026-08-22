@@ -8,6 +8,7 @@ import { useStoredString } from "../../../application/state/useStoredString";
 import { useStoredNumber } from "../../../application/state/useStoredNumber";
 import { DARK_UI_THEMES, LIGHT_UI_THEMES } from "../../../infrastructure/config/uiThemes";
 import { useAvailableUIFonts } from "../../../application/state/uiFontStore";
+import { useAvailableFonts } from "../../../application/state/fontStore";
 import { SUPPORTED_UI_LOCALES } from "../../../infrastructure/config/i18n";
 import { APP_ICON_VARIANT_ASSET_PATH, APP_ICON_VARIANT_GROUPS, APP_ICON_VARIANT_I18N_KEY } from "../../../infrastructure/config/appIconVariants";
 import {
@@ -67,6 +68,9 @@ function SettingsAppearanceTab(props: {
 }) {
   const { t } = useI18n();
   const availableUIFonts = useAvailableUIFonts();
+  // Note code fonts come from the monospace-only store (fontStore); the note
+  // body font follows the UI font setting instead.
+  const availableMonoFonts = useAvailableFonts();
   const [customCssHelpOpen, setCustomCssHelpOpen] = useState(false);
   const [autoImportSystemKnownHosts, setAutoImportSystemKnownHosts] = useStoredBoolean(
     STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
@@ -485,15 +489,15 @@ function SettingsAppearanceTab(props: {
         </SettingRow>
         <SettingRow
           anchorId="appearance-vault-notes-font"
-          label={t('settings.vault.notesFont', '笔记字体')}
-          description={t('settings.vault.notesFontDesc', '自定义笔记编辑器与预览中使用的字体')}
+          label={t('settings.vault.notesFont', '代码字体')}
+          description={t('settings.vault.notesFontDesc', '自定义笔记中代码块与行内代码使用的字体')}
         >
           <FontSelect
             value={noteFontFamily}
-            fonts={availableUIFonts}
+            fonts={availableMonoFonts}
             onChange={(v) => setNoteFontFamily(v)}
             className="w-48"
-            ariaLabel={t('settings.vault.notesFont', '笔记字体')}
+            ariaLabel={t('settings.vault.notesFont', '代码字体')}
           />
         </SettingRow>
         <SettingRow

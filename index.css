@@ -1176,7 +1176,9 @@ html[data-theme-transition] *::after {
   min-height: calc(100vh - 15rem);
   padding: 0;
   color: hsl(var(--foreground) / 0.9);
-  font-family: var(--note-font-family, inherit);
+  /* Note body follows the UI font (Settings > Appearance > Interface Font);
+     the note font tool only controls code block / inline code fonts. */
+  font-family: var(--font-sans);
   font-size: var(--note-font-size, 15px);
   line-height: 1.75;
   outline: none;
