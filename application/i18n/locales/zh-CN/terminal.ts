@@ -30,6 +30,7 @@ export const zhCNTerminalMessages: Messages = {
   'terminal.toolbar.timestampsEnable': '显示时间戳',
   'terminal.toolbar.timestampsDisable': '隐藏时间戳',
   'terminal.progress.enterReconnectHint': '按 Enter 重新连接',
+  'terminal.progress.reconnecting': '正在重新连接...',
   'terminal.progress.autoReconnectScheduled': '连接已断开，将在 {seconds} 秒后自动重连（第 {attempt} 次）。',
   'terminal.progress.autoReconnectAttempt': '正在自动重连（第 {attempt} 次）...',
   'terminal.connection.protocol.et': 'EternalTerminal',

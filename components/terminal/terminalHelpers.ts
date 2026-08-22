@@ -119,6 +119,7 @@ export interface TerminalProps {
   inWorkspace?: boolean;
   isResizing?: boolean;
   isFocusMode?: boolean;
+  isPaneMagnified?: boolean;
   isFocused?: boolean;
   /**
    * Split-pane keyboard ownership for disconnected-dialog focus claims.
@@ -175,6 +176,7 @@ export interface TerminalProps {
   onUpdateHost?: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onExpandToFocus?: () => void;
+  onTogglePaneMagnification?: () => void;
   onCommandExecuted?: (
     command: string,
     hostId: string,
@@ -273,7 +275,7 @@ export function shouldShowTerminalConnectionDialog({
   disconnectedNoticeMode,
   hasEverConnected,
   restoreState,
-  isAutoReconnectActive,
+  isReconnectActive,
   requiresUserInput,
   hideConnectingDialogForConnectionReuse,
 }: {
@@ -284,7 +286,7 @@ export function shouldShowTerminalConnectionDialog({
   disconnectedNoticeMode?: TerminalSettings["disconnectedNoticeMode"];
   hasEverConnected?: boolean;
   restoreState?: TerminalSession["restoreState"];
-  isAutoReconnectActive?: boolean;
+  isReconnectActive?: boolean;
   requiresUserInput?: boolean;
   hideConnectingDialogForConnectionReuse?: boolean;
 }): boolean {
@@ -296,7 +298,7 @@ export function shouldShowTerminalConnectionDialog({
       disconnectedNoticeMode,
       hasEverConnected,
       restoreState,
-      isAutoReconnectActive,
+      isReconnectActive,
       requiresUserInput,
     })
     && !(status === "disconnected" && isDisconnectedDialogDismissed);
@@ -307,19 +309,19 @@ export function shouldShowTerminalDisconnectedNotice({
   disconnectedNoticeMode,
   hasEverConnected,
   restoreState,
-  isAutoReconnectActive,
+  isReconnectActive,
   requiresUserInput,
 }: {
   status: TerminalSession["status"];
   disconnectedNoticeMode?: TerminalSettings["disconnectedNoticeMode"];
   hasEverConnected?: boolean;
   restoreState?: TerminalSession["restoreState"];
-  isAutoReconnectActive?: boolean;
+  isReconnectActive?: boolean;
   requiresUserInput?: boolean;
 }): boolean {
-  const isDisconnectedOrAutoReconnecting = status === "disconnected"
-    || (status === "connecting" && isAutoReconnectActive === true);
-  return isDisconnectedOrAutoReconnecting
+  const isDisconnectedOrReconnecting = status === "disconnected"
+    || (status === "connecting" && isReconnectActive === true);
+  return isDisconnectedOrReconnecting
     && disconnectedNoticeMode === "terminal"
     && hasEverConnected === true
     && restoreState !== "restored-disconnected"

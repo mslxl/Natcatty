@@ -18,6 +18,7 @@ import {
 
 export interface ProviderRequestContext {
   getOpenAIChatAssistantFields?: () => Array<OpenAIChatAssistantFields | undefined>;
+  streamIdleTimeoutMs?: number;
 }
 
 /**
@@ -42,6 +43,7 @@ interface BridgeAPI {
     headers: Record<string, string>,
     body: string,
     providerId?: string,
+    idleTimeoutMs?: number,
   ): Promise<{ ok: boolean; statusCode?: number; statusText?: string; error?: string; aborted?: boolean }>;
   onAiStreamData(requestId: string, cb: (data: string) => void): () => void;
   onAiStreamEnd(requestId: string, cb: () => void): () => void;
@@ -552,6 +554,7 @@ export function createBridgeFetchForSDK(
         headers,
         requestBody || '',
         providerId,
+        requestContext?.streamIdleTimeoutMs,
       );
 
       if (!result.ok) {

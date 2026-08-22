@@ -503,17 +503,50 @@ test("terminal notice never hides first-connect failures or restored session gui
   );
 });
 
-test("terminal notice is absent while connected or manually reconnecting", () => {
-  for (const status of ["connected", "connecting"] as const) {
-    assert.equal(
-      shouldShowTerminalDisconnectedNotice({
-        status,
-        disconnectedNoticeMode: "terminal",
-        hasEverConnected: true,
-      }),
-      false,
-    );
-  }
+test("terminal notice is absent while connected", () => {
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({
+      status: "connected",
+      disconnectedNoticeMode: "terminal",
+      hasEverConnected: true,
+    }),
+    false,
+  );
+});
+
+test("established manual reconnect stays non-blocking until input is required", () => {
+  const base = {
+    status: "connecting" as const,
+    disconnectedNoticeMode: "terminal" as const,
+    hasEverConnected: true,
+    isReconnectActive: true,
+  };
+
+  assert.equal(shouldShowTerminalDisconnectedNotice(base), true);
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...base,
+      isLocalConnection: false,
+      isSerialConnection: false,
+      isDisconnectedDialogDismissed: false,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldShowTerminalDisconnectedNotice({ ...base, requiresUserInput: true }),
+    false,
+  );
+  assert.equal(
+    shouldShowTerminalConnectionDialog({
+      ...base,
+      requiresUserInput: true,
+      isLocalConnection: false,
+      isSerialConnection: false,
+      isDisconnectedDialogDismissed: false,
+    }),
+    true,
+  );
 });
 
 test("established automatic reconnect stays non-blocking until input is required", () => {
@@ -521,7 +554,7 @@ test("established automatic reconnect stays non-blocking until input is required
     status: "connecting" as const,
     disconnectedNoticeMode: "terminal" as const,
     hasEverConnected: true,
-    isAutoReconnectActive: true,
+    isReconnectActive: true,
   };
 
   assert.equal(shouldShowTerminalDisconnectedNotice(base), true);

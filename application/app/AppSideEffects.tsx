@@ -52,6 +52,7 @@ import {
 } from '../../domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from '../../domain/connectionLog';
 import { collectSessionIds } from '../../domain/workspace';
+import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
 import { resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
@@ -596,7 +597,7 @@ export function AppSideEffects() {
   const _handleTrayPanelConnect = useEffectEvent((hostId: string) => { return handleTrayPanelConnectImpl(() => ({ addConnectionLog, connectToHost, hostId, hosts, identities, keys, resolveEffectiveHost, resolveHostAuth, systemInfoRef, t, toast }), hostId); });
   const _handleTrayPanelConnectRequest = useEffectEvent((hostId: string) => { return handleTrayPanelConnectRequestImpl(() => ({ connectNow: _handleTrayPanelConnect, hostId, isVaultInitialized, queueConnect: (queuedHostId: string) => setPendingTrayPanelConnectHostIds((prev) => [...prev, queuedHostId]) }), hostId); });
   const _handleGlobalHotkeyKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleGlobalHotkeyKeyDownImpl(() => ({ HOTKEY_DEBUG, closeTabKeyStr, e, executeHotkeyAction, hotkeyScheme, keyBindings, matchesKeyBinding }), e); });
-  const _handleEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleEscapeKeyDownImpl(() => ({ e, isQuickSwitcherOpen, setIsQuickSwitcherOpen }), e); });
+  const _handleEscapeKeyDown = useEffectEvent((e: KeyboardEvent) => { return handleEscapeKeyDownImpl(() => ({ e, isQuickSwitcherOpen, setIsQuickSwitcherOpen, sftpPaneMagnificationRef, terminalPaneMagnificationRef }), e); });
 
   // Vault hosts for tray / auto-start; terminalHosts (vault + ephemeral) only for
   // dedicated transfer resume so quick-connect rows do not break tray connect.
@@ -923,6 +924,8 @@ export function AppSideEffects() {
 
   const toggleScriptsSidePanelRef = useRef<(() => void) | null>(null);
   const toggleSidePanelRef = useRef<(() => void) | null>(null);
+  const terminalPaneMagnificationRef = useRef<PaneMagnificationController | null>(null);
+  const sftpPaneMagnificationRef = useRef<PaneMagnificationController | null>(null);
   const openNoteRequestIdRef = useRef(0);
   const [openNoteRequest, setOpenNoteRequest] = useState<{
     tabId: string;
@@ -1065,8 +1068,10 @@ export function AppSideEffects() {
         showSftpTab: showSftpTabRef.current,
         shellOnlyTabNumberShortcuts: shellOnlyTabNumberShortcutsRef.current,
       },
+      sftpPaneMagnificationRef,
       splitSessionWithCurrentShell,
       systemInfoRef,
+      terminalPaneMagnificationRef,
       toEditorTabId,
       toggleBroadcast,
       toggleScriptsSidePanelRef,
@@ -1148,11 +1153,21 @@ export function AppSideEffects() {
 
   useEffect(() => {
     if (appLockLocked) return;
+    const onCaptureKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      const target = e.target;
+      if (!(target instanceof HTMLElement) || !target.closest('.xterm')) return;
+      _handleEscapeKeyDown(e);
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       _handleEscapeKeyDown(e);
     };
+    window.addEventListener('keydown', onCaptureKeyDown, true);
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onCaptureKeyDown, true);
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [appLockLocked]);
 
   const handleDeleteHost = useCallback((hostId: string) => {
@@ -1853,6 +1868,8 @@ export function AppSideEffects() {
       splitSessionWithCurrentShell,
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
+      terminalPaneMagnificationRef,
+      sftpPaneMagnificationRef,
       // Chrome glue
       handleEndSessionDrag,
       handleOpenQuickSwitcher,

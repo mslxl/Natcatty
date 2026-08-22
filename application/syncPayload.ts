@@ -99,6 +99,7 @@ import {
   STORAGE_KEY_AI_DEFAULT_AGENT,
   STORAGE_KEY_AI_COMMAND_BLOCKLIST,
   STORAGE_KEY_AI_COMMAND_TIMEOUT,
+  STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT,
   STORAGE_KEY_AI_MAX_ITERATIONS,
   STORAGE_KEY_AI_AGENT_MODEL_MAP,
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
@@ -311,6 +312,7 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_AI_DEFAULT_AGENT,
   STORAGE_KEY_AI_COMMAND_BLOCKLIST,
   STORAGE_KEY_AI_COMMAND_TIMEOUT,
+  STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT,
   STORAGE_KEY_AI_MAX_ITERATIONS,
   STORAGE_KEY_AI_AGENT_MODEL_MAP,
   STORAGE_KEY_AI_AGENT_PROVIDER_MAP,
@@ -558,6 +560,10 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (Array.isArray(commandBlocklist)) ai.commandBlocklist = commandBlocklist;
   const commandTimeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT);
   if (commandTimeout != null && Number.isFinite(commandTimeout)) ai.commandTimeout = commandTimeout;
+  const responseIdleTimeout = localStorageAdapter.readNumber(STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT);
+  if (responseIdleTimeout != null && Number.isFinite(responseIdleTimeout)) {
+    ai.responseIdleTimeout = responseIdleTimeout;
+  }
   const maxIterations = localStorageAdapter.readNumber(STORAGE_KEY_AI_MAX_ITERATIONS);
   if (maxIterations != null && Number.isFinite(maxIterations)) ai.maxIterations = maxIterations;
   const agentModelMap = readRecordSetting<Record<string, string>>(STORAGE_KEY_AI_AGENT_MODEL_MAP);
@@ -797,6 +803,9 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
     if (ai.defaultAgentId != null) localStorageAdapter.writeString(STORAGE_KEY_AI_DEFAULT_AGENT, ai.defaultAgentId);
     if (ai.commandBlocklist != null) localStorageAdapter.write(STORAGE_KEY_AI_COMMAND_BLOCKLIST, ai.commandBlocklist);
     if (ai.commandTimeout != null) localStorageAdapter.writeNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT, ai.commandTimeout);
+    if (ai.responseIdleTimeout != null) {
+      localStorageAdapter.writeNumber(STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT, ai.responseIdleTimeout);
+    }
     if (ai.maxIterations != null) localStorageAdapter.writeNumber(STORAGE_KEY_AI_MAX_ITERATIONS, ai.maxIterations);
     if (ai.agentModelMap != null) localStorageAdapter.write(STORAGE_KEY_AI_AGENT_MODEL_MAP, ai.agentModelMap);
     if (ai.agentProviderMap != null) localStorageAdapter.write(STORAGE_KEY_AI_AGENT_PROVIDER_MAP, ai.agentProviderMap);
@@ -850,6 +859,7 @@ function notifyAIStateAfterSync(ai: NonNullable<SyncPayload['settings']>['ai']):
   if (ai.defaultAgentId != null) touched.push(STORAGE_KEY_AI_DEFAULT_AGENT);
   if (ai.commandBlocklist != null) touched.push(STORAGE_KEY_AI_COMMAND_BLOCKLIST);
   if (ai.commandTimeout != null) touched.push(STORAGE_KEY_AI_COMMAND_TIMEOUT);
+  if (ai.responseIdleTimeout != null) touched.push(STORAGE_KEY_AI_RESPONSE_IDLE_TIMEOUT);
   if (ai.maxIterations != null) touched.push(STORAGE_KEY_AI_MAX_ITERATIONS);
   if (ai.agentModelMap != null) touched.push(STORAGE_KEY_AI_AGENT_MODEL_MAP);
   if (ai.agentThinkingMap != null) touched.push(STORAGE_KEY_AI_AGENT_THINKING_MAP);

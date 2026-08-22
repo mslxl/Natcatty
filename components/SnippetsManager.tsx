@@ -1881,6 +1881,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                           draggingPackagePathRef.current = pkg.path;
                           setDraggingPackagePath(pkg.path);
                           lastPreviewReorderRef.current = null;
+                          const sourceNode = e.currentTarget as HTMLElement;
+                          const handleNativeDragEnd = () => {
+                            sourceNode.removeEventListener('dragend', handleNativeDragEnd);
+                            resetSnippetDragState();
+                          };
+                          sourceNode.addEventListener('dragend', handleNativeDragEnd);
                         }}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => {
@@ -1965,6 +1971,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                           draggingSnippetIdRef.current = snippet.id;
                           setDraggingSnippetId(snippet.id);
                           lastPreviewReorderRef.current = null;
+                          const sourceNode = e.currentTarget as HTMLElement;
+                          const handleNativeDragEnd = () => {
+                            sourceNode.removeEventListener('dragend', handleNativeDragEnd);
+                            resetSnippetDragState();
+                          };
+                          sourceNode.addEventListener('dragend', handleNativeDragEnd);
                         }}
                         onClick={() => {
                           if (isMultiSelectMode) {

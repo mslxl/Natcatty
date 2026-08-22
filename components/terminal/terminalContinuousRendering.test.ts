@@ -26,7 +26,10 @@ test("renderer activity follows the hibernate setting instead of active-tab visi
 
 test("inactive terminal surfaces remain painted and non-interactive without hibernate", () => {
   assert.match(supportSource, /resolveTerminalHibernateEnabledForProtocol\(terminalSettings, host\.protocol\)/);
-  assert.match(supportSource, /inert=\{isVisible \? undefined : true\}/);
+  assert.match(
+    supportSource,
+    /inert=\{isVisible && !isCoveredByMagnification \? undefined : true\}/,
+  );
   assert.match(viewSource, /ctx\.hibernateHiddenTabs/);
   assert.match(viewSource, /inert=\{ctx\.isTerminalLayerVisible \? undefined : true\}/);
 });

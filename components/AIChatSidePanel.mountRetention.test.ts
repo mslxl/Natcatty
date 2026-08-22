@@ -279,6 +279,18 @@ test('AI side panel re-renders when command timeout changes', () => {
   ), false);
 });
 
+test('AI side panel re-renders when response wait time changes', () => {
+  const props = baseProps({
+    isVisible: true,
+    responseIdleTimeout: 120,
+  });
+
+  assert.equal(aiChatSidePanelPropsAreEqual(
+    props,
+    { ...props, responseIdleTimeout: 600 },
+  ), false);
+});
+
 test('AI side panel skips re-render when only a sibling scope session object changes', () => {
   const own = session({ id: 'session-1', scope: { type: 'terminal', targetId: 'terminal-1' } });
   const siblingA = session({ id: 'session-2', scope: { type: 'terminal', targetId: 'terminal-2' } });
