@@ -413,7 +413,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     NOTES_TREE_DEFAULT_WIDTH,
     { min: NOTES_TREE_MIN_WIDTH, max: NOTES_TREE_MAX_WIDTH },
   );
-  const [noteFontFamily, setNoteFontFamily] = useStoredString(
+  const [noteFontFamily, setNoteFontFamily] = useStoredString<string>(
     STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
     "",
   );
@@ -1954,7 +1954,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 onAction={handleToolbarAction}
                 activeFormats={activeFormats}
                 noteFontFamily={noteFontFamily}
-                onChangeNoteFontFamily={setNoteFontFamily}
+                onChangeNoteFontFamily={(font) => setNoteFontFamily(font)}
                 noteFontSize={noteFontSize}
                 onChangeNoteFontSize={handleSetNoteFontSize}
               />
@@ -2109,7 +2109,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               onAction={handleToolbarAction}
               activeFormats={activeFormats}
               noteFontFamily={noteFontFamily}
-              onChangeNoteFontFamily={setNoteFontFamily}
+              onChangeNoteFontFamily={(font) => setNoteFontFamily(font)}
               noteFontSize={noteFontSize}
               onChangeNoteFontSize={handleSetNoteFontSize}
             />

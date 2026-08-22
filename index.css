@@ -1652,7 +1652,7 @@ html[data-theme-transition] *::after {
   height: 10px !important;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([class*="_codeMirrorToolbar_"]) > .netcatty-note-code-copy {
+.netcatty-mdx-editor:not(.netcatty-mdx-editor--preview) [class*="_codeMirrorWrapper_"]:has([class*="_codeMirrorToolbar_"]) > .netcatty-note-code-copy {
   display: none !important;
 }
 

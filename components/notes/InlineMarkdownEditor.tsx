@@ -895,7 +895,7 @@ export const InlineMarkdownEditor = React.memo(
                 editor.insertMarkdown(`\n- [ ] ${sel || "待办任务"}\n`);
                 break;
               case "codeblock":
-                editor.insertMarkdown(`\n\`\`\`javascript\n${sel || 'console.log("hello");'}\n\`\`\`\n`);
+                editor.insertMarkdown(`\n\`\`\`bash\n${sel}\n\`\`\`\n`);
                 break;
               case "table":
                 editor.insertMarkdown("\n| 列 1 | 列 2 | 列 3 |\n| :--- | :--- | :--- |\n| 单元格 1 | 单元格 2 | 单元格 3 |\n");
@@ -920,7 +920,7 @@ export const InlineMarkdownEditor = React.memo(
                 }
                 break;
               case "math":
-                editor.insertMarkdown(`\n\`\`\`math\n${sel || "E = mc^2"}\n\`\`\`\n`);
+                editor.insertMarkdown(`\n\`\`\`math\n${sel}\n\`\`\`\n`);
                 break;
               default:
                 break;

@@ -76,7 +76,7 @@ function SettingsAppearanceTab(props: {
     STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
     DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
   );
-  const [noteFontFamily, setNoteFontFamily] = useStoredString(
+  const [noteFontFamily, setNoteFontFamily] = useStoredString<string>(
     STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
     "",
   );

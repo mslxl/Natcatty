@@ -717,8 +717,8 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "codeblock": {
-      const content = selected || "console.log(\"hello\");";
-      const insert = `\n\`\`\`javascript\n${content}\n\`\`\`\n`;
+      const content = selected || "";
+      const insert = `\n\`\`\`bash\n${content}\n\`\`\`\n`;
       return {
         text: `${before}${insert}${after}`,
         selectionStart: start + 15,
@@ -824,7 +824,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "math": {
-      const content = selected || "E = mc^2";
+      const content = selected || "";
       const insert = `\n\`\`\`math\n${content}\n\`\`\`\n`;
       return {
         text: `${before}${insert}${after}`,

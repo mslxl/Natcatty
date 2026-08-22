@@ -367,10 +367,17 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
   const tableRes = wrapMarkdownSyntax("", 0, 0, "table");
   assert.ok(tableRes.text.includes("| 列 1 | 列 2 | 列 3 |"));
 
+  // insert code block
+  const codeRes = wrapMarkdownSyntax("", 0, 0, "codeblock");
+  assert.ok(codeRes.text.includes("```bash"));
+  assert.equal(codeRes.selectionStart, 15);
+  assert.equal(codeRes.selectionEnd, 15);
+
   // insert math block
   const mathRes = wrapMarkdownSyntax("", 0, 0, "math");
   assert.ok(mathRes.text.includes("```math"));
-  assert.ok(mathRes.text.includes("E = mc^2"));
+  assert.equal(mathRes.selectionStart, 8);
+  assert.equal(mathRes.selectionEnd, 8);
 });
 
 
