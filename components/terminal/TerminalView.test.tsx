@@ -119,11 +119,11 @@ test("hibernated manual reconnect can continue after its runtime wakes", () => {
   assert.ok(continueReconnect > clearWakeInFlight);
 });
 
-test("manual reconnect publishes connecting before asynchronous cleanup", () => {
+test("manual reconnect publishes preparation without starting the connection timeout", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const startReconnect = source.indexOf("const startReconnect = async");
-  const publishConnecting = source.indexOf(
-    'if (mode === "manual") updateStatus("connecting")',
+  const publishPreparation = source.indexOf(
+    "terminalReconnectRegistry.setActive(sessionId, true)",
     startReconnect,
   );
   const cleanupSession = source.indexOf(
@@ -136,8 +136,12 @@ test("manual reconnect publishes connecting before asynchronous cleanup", () => 
   );
 
   assert.ok(startReconnect >= 0);
-  assert.ok(publishConnecting > startReconnect);
-  assert.ok(cleanupSession > publishConnecting);
+  assert.ok(publishPreparation > startReconnect);
+  assert.ok(cleanupSession > publishPreparation);
+  assert.equal(
+    source.indexOf('if (mode === "manual") updateStatus("connecting")', startReconnect),
+    -1,
+  );
   assert.ok(restoreDisconnected > startReconnect);
   assert.ok(restoreDisconnected < cleanupSession);
 });

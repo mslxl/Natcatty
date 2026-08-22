@@ -1371,6 +1371,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     hasConnectedRef.current = next === "connected";
     if (next !== "connecting") {
       setManualReconnectActive(false);
+      terminalReconnectRegistry.setActive(sessionId, false);
     }
     if (next === "connected") {
       hasEverConnectedRef.current = true;
@@ -3425,6 +3426,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       || reconnectWakeInFlightRef.current
     ) return;
     setManualReconnectActive(mode === "manual");
+    if (mode === "manual") terminalReconnectRegistry.setActive(sessionId, true);
     const reconnectAttemptMessage = mode === "auto"
       ? t("terminal.progress.autoReconnectAttempt", { attempt: autoReconnectAttemptRef.current })
       : t("terminal.progress.reconnecting");
@@ -3433,7 +3435,6 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (mode === "manual") setReconnectNoticeMessage(null);
       updateStatus("disconnected");
     };
-    if (mode === "manual") updateStatus("connecting");
     if (!termRef.current && hibernatedRef.current) {
       if (reconnectWakeInFlightRef.current) return;
       const wakeForReconnect = wakeHibernatedRuntimeForReconnectRef.current;
@@ -3445,7 +3446,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       const wakeToken = Symbol();
       reconnectWakeInvalidateModeRef.current = "dispose";
       reconnectWakeTokenRef.current = wakeToken;
-      updateStatus("connecting");
+      if (mode === "auto") updateStatus("connecting");
       void wakeForReconnect().then((woke) => {
         if (reconnectWakeTokenRef.current !== wakeToken) {
           reconnectWakeInFlightRef.current = false;

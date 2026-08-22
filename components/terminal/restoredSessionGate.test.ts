@@ -76,7 +76,10 @@ test("manual reconnect resets connect automation before opening a new session", 
     "await cancelConnectAutomationBatch(connectAutomationBatch)",
     reconnectIndex,
   );
-  const manualBranchIndex = source.indexOf('if (mode === "manual")', cancelBatchIndex);
+  const manualBranchIndex = source.indexOf(
+    'if (mode === "manual") {\n      clearAutoReconnect',
+    cancelBatchIndex,
+  );
   const stopFailureRetryIndex = source.indexOf(
     'if (mode === "auto" && retryTokenStillCurrent())',
     cancelBatchIndex,
