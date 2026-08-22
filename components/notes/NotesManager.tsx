@@ -12,7 +12,6 @@ import {
   MoreHorizontal,
   Minimize2,
   PencilLine,
-  Pin,
   Plus,
   Search,
   Trash2,
@@ -1834,28 +1833,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   />
                 </div>
 
-                {/* Pin Toggle */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={selectedNoteView.isPinned ? "取消置顶" : "置顶笔记"}
-                      className={cn(
-                        "app-no-drag h-8 w-8 shrink-0 rounded-md p-0 transition-colors hover:bg-secondary/70",
-                        selectedNoteView.isPinned ? "text-amber-500" : "text-muted-foreground hover:text-foreground",
-                      )}
-                      onClick={() => togglePinNoteById(selectedNoteView.id)}
-                    >
-                      <Pin size={16} className={selectedNoteView.isPinned ? "fill-amber-500" : ""} />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {selectedNoteView.isPinned ? "取消置顶" : "置顶笔记"}
-                  </TooltipContent>
-                </Tooltip>
-
                 {/* Outline Toggle */}
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -2118,28 +2095,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   onBlur={() => flushNoteDraft()}
                 />
               </div>
-
-              {/* Pin Toggle */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={overlayNoteView.isPinned ? "取消置顶" : "置顶笔记"}
-                    className={cn(
-                      "app-no-drag h-8 w-8 shrink-0 rounded-md p-0 transition-colors hover:bg-secondary/70",
-                      overlayNoteView.isPinned ? "text-amber-500" : "text-muted-foreground hover:text-foreground",
-                    )}
-                    onClick={() => togglePinNoteById(overlayNoteView.id)}
-                  >
-                    <Pin size={16} className={overlayNoteView.isPinned ? "fill-amber-500" : ""} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {overlayNoteView.isPinned ? "取消置顶" : "置顶笔记"}
-                </TooltipContent>
-              </Tooltip>
 
               <NoteExportMenu note={overlayNoteView} allNotes={sortedNotes} />
             </div>

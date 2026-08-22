@@ -1239,6 +1239,30 @@ html[data-theme-transition] *::after {
   padding-left: 1.35rem;
 }
 
+.netcatty-mdx-content ul {
+  list-style-type: disc;
+}
+
+.netcatty-mdx-content ul ul {
+  list-style-type: circle;
+}
+
+.netcatty-mdx-content ul ul ul {
+  list-style-type: square;
+}
+
+.netcatty-mdx-content ol {
+  list-style-type: decimal;
+}
+
+.netcatty-mdx-content ol ol {
+  list-style-type: lower-alpha;
+}
+
+.netcatty-mdx-content ol ol ol {
+  list-style-type: lower-roman;
+}
+
 .netcatty-mdx-content li {
   margin: 0.25rem 0;
 }
@@ -1250,8 +1274,11 @@ html[data-theme-transition] *::after {
  * margin so label text lines up cleanly with the control.
  */
 .netcatty-mdx-content ul:has(> li[role="checkbox"]),
-.netcatty-mdx-content ul:has(> li[aria-checked]) {
-  list-style: none;
+.netcatty-mdx-content ul:has(> li[aria-checked]),
+.netcatty-mdx-content ul:has(> li[class*="_listItemChecked_"]),
+.netcatty-mdx-content ul:has(> li[class*="_listItemUnchecked_"]) {
+  list-style: none !important;
+  list-style-type: none !important;
   padding-left: 0.15rem;
   margin-left: 0;
 }

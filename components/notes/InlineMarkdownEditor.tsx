@@ -9,6 +9,7 @@ import {
   markdownShortcutPlugin,
   MDXEditor,
   type MDXEditorMethods,
+  openNewImageDialog$,
   quotePlugin,
   tablePlugin,
   thematicBreakPlugin,
@@ -906,7 +907,17 @@ export const InlineMarkdownEditor = React.memo(
                 editor.insertMarkdown(sel ? `[${sel}](https://)` : "[链接文本](https://)");
                 break;
               case "image":
-                editor.insertMarkdown(sel ? `![${sel}](https://)` : "![图片描述](https://)");
+                try {
+                  editor.focus();
+                  const realm = (editor as unknown as { _realm?: { pub: (action: unknown) => void } })._realm;
+                  if (realm && typeof realm.pub === "function") {
+                    realm.pub(openNewImageDialog$);
+                  } else {
+                    editor.insertMarkdown(sel ? `![${sel}](https://)` : "![图片描述](https://)");
+                  }
+                } catch {
+                  editor.insertMarkdown(sel ? `![${sel}](https://)` : "![图片描述](https://)");
+                }
                 break;
               case "math":
                 editor.insertMarkdown(`\n\`\`\`math\n${sel || "E = mc^2"}\n\`\`\`\n`);
