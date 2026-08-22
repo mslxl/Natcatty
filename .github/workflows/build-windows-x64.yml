@@ -39,21 +39,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@main
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
+      - name: Setup Node.js 24
+        uses: actions/setup-node@main
         with:
-          node-version: 22
+          node-version: 24
           cache: "npm"
 
       - name: Set up MSVC Developer Command Prompt
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@main
         with:
           arch: x64
 
       - name: Restore Electron Cache
-        uses: actions/cache@v4
+        uses: actions/cache@main
         with:
           path: |
             ~/AppData/Local/electron/Cache
@@ -81,7 +81,7 @@ jobs:
 
       - name: Upload Windows x64 Artifacts
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.upload_artifact != false }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@main
         with:
           name: Netcatty-Windows-x64
           path: |
