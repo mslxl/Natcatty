@@ -1446,21 +1446,23 @@ html[data-theme-transition] *::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0.85rem 1rem;
+  padding: 1rem 1.25rem;
   margin: 0.35rem 0.5rem 0.35rem;
   border-radius: 6px;
   background: hsl(var(--card) / 0.85);
   border: 1px solid hsl(var(--border) / 0.6);
-  font-size: 1.15em;
+  font-size: 1.45em;
   color: hsl(var(--foreground));
   overflow-x: auto;
   user-select: text;
+  min-height: 2.75rem;
 }
 
 .netcatty-math-formula-preview math,
 .netcatty-math-block-p math {
   font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "KaTeX_Main", serif;
   letter-spacing: 0.02em;
+  line-height: normal;
 }
 
 .netcatty-math-reading-mode .cm-editor {
@@ -1482,9 +1484,9 @@ html[data-theme-transition] *::after {
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 0.6rem 1rem;
+  padding: 0.85rem 1.25rem;
   margin: 0.75rem 0;
-  font-size: 1.15em;
+  font-size: 1.45em;
   background: hsl(var(--secondary) / 0.2);
   border-radius: 6px;
 }
