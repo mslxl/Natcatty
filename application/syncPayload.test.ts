@@ -1299,6 +1299,26 @@ test("terminal auto-close preference survives sync round-trip", async () => {
   assert.equal(restored.autoCloseOnExit, false);
 });
 
+test("terminal disconnected notice preference survives sync round-trip", async () => {
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ disconnectedNoticeMode: "dialog" }),
+  );
+
+  const payload = buildSyncPayload(vault());
+  const termSettings = (payload.settings?.terminalSettings ?? {}) as Record<string, unknown>;
+  assert.equal(termSettings.disconnectedNoticeMode, "dialog");
+
+  localStorage.setItem(
+    storageKeys.STORAGE_KEY_TERM_SETTINGS,
+    JSON.stringify({ disconnectedNoticeMode: "terminal" }),
+  );
+  await applySyncPayload(payload, { importVaultData: () => {} });
+
+  const restored = JSON.parse(localStorage.getItem(storageKeys.STORAGE_KEY_TERM_SETTINGS)!);
+  assert.equal(restored.disconnectedNoticeMode, "dialog");
+});
+
 test("applySyncPayload restores the terminal host information bar preference", async () => {
   localStorage.setItem(
     storageKeys.STORAGE_KEY_TERM_SETTINGS,

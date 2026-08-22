@@ -308,6 +308,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.terminal.section.behavior",
   },
   {
+    id: "terminal-disconnected-notice",
+    tab: "terminal",
+    labelKey: "settings.terminal.behavior.disconnectedNotice",
+    descriptionKey: "settings.terminal.behavior.disconnectedNotice.desc",
+    sectionKey: "settings.terminal.section.behavior",
+    keywords: ["disconnect", "connection lost", "dialog", "popup", "断开连接", "断线", "弹窗", "提醒"],
+  },
+  {
     id: "terminal-right-click",
     tab: "terminal",
     labelKey: "settings.terminal.behavior.rightClick",

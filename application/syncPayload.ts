@@ -252,7 +252,7 @@ const SYNCABLE_TERMINAL_KEYS = [
   'keepaliveInterval', 'keepaliveCountMax', 'disableBracketedPaste', 'clearWipesScrollback',
   'autoUploadClipboardImageOnPaste',
   'preserveSelectionOnInput', 'forcePromptNewLine', 'osc52Clipboard', 'oscNotifications', 'dynamicTabTitleMode',
-  'autoCloseOnExit',
+  'autoCloseOnExit', 'disconnectedNoticeMode',
   'showHostInfoBar', 'hostInfoBarTitleMode', 'showServerStats',
   'serverStatsRefreshInterval',
   'systemManagerProcessRefreshInterval', 'systemManagerTmuxRefreshInterval',

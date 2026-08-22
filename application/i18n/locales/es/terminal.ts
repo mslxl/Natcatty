@@ -186,6 +186,7 @@ export const esTerminalMessages: Messages = {
   'terminal.progress.cancelling': 'Cancelando...',
   'terminal.progress.startOver': 'Empezar de nuevo',
   'terminal.progress.enterReconnectHint': 'Presiona Enter para reconectar',
+  'terminal.progress.reconnecting': 'Reconectando...',
   'terminal.progress.autoReconnectScheduled': 'Conexión perdida. Reconectando en {seconds}s (intento {attempt}).',
   'terminal.progress.autoReconnectAttempt': 'Intento de reconexión automática {attempt}...',
   'terminal.connection.dismissDisconnectedDialog': 'Descartar aviso de desconexión',

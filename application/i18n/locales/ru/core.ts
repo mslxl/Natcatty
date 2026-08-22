@@ -600,6 +600,11 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.behavior.autoCloseOnExit': 'Автоматически закрывать терминал при выходе',
   'settings.terminal.behavior.autoCloseOnExit.desc':
     'Разрешить автоматическое закрытие вкладок и окон терминала после завершения сеанса. Отключите, чтобы сохранять их после любого выхода.',
+  'settings.terminal.behavior.disconnectedNotice': 'При разрыве соединения',
+  'settings.terminal.behavior.disconnectedNotice.desc':
+    'Показывать компактное уведомление внутри уже подключённого терминала или полный диалог. Ошибки первого подключения по-прежнему показываются в диалоге.',
+  'settings.terminal.behavior.disconnectedNotice.terminal': 'В терминале',
+  'settings.terminal.behavior.disconnectedNotice.dialog': 'Диалог',
   'settings.terminal.behavior.rightClick.menu': 'Показать меню',
   'settings.terminal.behavior.rightClick.paste': 'Вставить',
   'settings.terminal.behavior.rightClick.selectWord': 'Выбрать слово',

@@ -564,6 +564,11 @@ Resalta el panel dividido enfocado:
   'settings.terminal.behavior.autoCloseOnExit': 'Cerrar la terminal automáticamente al salir',
   'settings.terminal.behavior.autoCloseOnExit.desc':
     'Permite que las pestañas y ventanas de terminal se cierren automáticamente después de que la sesión termina. Desactívalo para mantenerlas abiertas después de cada salida.',
+  'settings.terminal.behavior.disconnectedNotice': 'Cuando se desconecta una conexión',
+  'settings.terminal.behavior.disconnectedNotice.desc':
+    'Muestra un aviso compacto en terminales ya conectadas o usa el diálogo completo. Los fallos de conexión iniciales siguen usando el diálogo.',
+  'settings.terminal.behavior.disconnectedNotice.terminal': 'Aviso en terminal',
+  'settings.terminal.behavior.disconnectedNotice.dialog': 'Diálogo',
   'settings.terminal.behavior.rightClick.menu': 'Mostrar menú',
   'settings.terminal.behavior.rightClick.paste': 'Pegar',
   'settings.terminal.behavior.rightClick.selectWord': 'Seleccionar palabra',
