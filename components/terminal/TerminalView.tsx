@@ -828,7 +828,7 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
                       </TooltipContent>
                     </Tooltip>
                   )}
-                  {renderControls({ showClose: inWorkspace })}
+                  {renderControls({ showClose: inWorkspace, restorePaneLayout: isPaneMagnified })}
                 </div>
               </>
             );

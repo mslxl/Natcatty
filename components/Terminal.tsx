@@ -3789,7 +3789,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     window.dispatchEvent(new CustomEvent('netcatty:script:recording:start', { detail: { sessionId } }));
   }, [sessionId, t]);
 
-  const renderControls = useCallback((opts?: { showClose?: boolean }) => (
+  const renderControls = useCallback((opts?: { showClose?: boolean; restorePaneLayout?: boolean }) => (
     <TerminalToolbar
       sessionId={sessionId}
       workspaceId={workspaceId}
@@ -3814,9 +3814,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }) ? () => setOsc7SetupOpen(true) : undefined}
       onUpdateHost={handleUpdateHostFromTerminal}
       showClose={opts?.showClose}
-      // Workspace toolbar X closes/destroys this pane session. Detach to a
-      // standalone tab remains a separate control (SquareArrowOutUpRight).
-      onClose={() => onCloseSession?.(sessionId)}
+      onClose={() => {
+        if (opts?.restorePaneLayout) {
+          onTogglePaneMagnification?.();
+          return;
+        }
+        onCloseSession?.(sessionId);
+      }}
+      closeLabel={t(opts?.restorePaneLayout
+        ? 'terminal.paneMagnification.restore'
+        : 'terminal.toolbar.closeSession')}
       isSearchOpen={isSearchOpen}
       onToggleSearch={handleToggleSearch}
       showLogButton
@@ -3868,6 +3875,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onOpenHistory,
     onOpenTheme,
     onToggleComposeBar,
+    onTogglePaneMagnification,
     setIsComposeBarOpen,
     handleUpdateHostFromTerminal,
     sessionId,
@@ -3875,6 +3883,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     snippets,
     status,
     terminalEncoding,
+    t,
     recorder,
     workspaceId,
   ]);

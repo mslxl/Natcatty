@@ -28,7 +28,7 @@ test("terminal panes expose focus mode and temporary magnification as separate a
   assert.match(source, /workspaceFocusHandlersRef,\s+workspaceBroadcastHandlersRef,/);
   assert.match(source, /if \(isMagnified\) \{\s+handleTogglePaneMagnification\(\);\s+\}\s+workspaceFocusHandler\?\.\(\);/);
   assert.match(source, /onExpandToFocus=\{inActiveWorkspace && !isFocusMode \? handleExpandToFocus : undefined\}/);
-  assert.match(source, /onTogglePaneMagnification=\{inActiveWorkspace && !isFocusMode \? handleTogglePaneMagnification : undefined\}/);
+  assert.match(source, /onTogglePaneMagnification=\{inActiveWorkspace && \(!isFocusMode \|\| isMagnified\) \? handleTogglePaneMagnification : undefined\}/);
 });
 
 test("focus mode cannot start temporary magnification but can restore stale magnification", () => {
@@ -36,6 +36,18 @@ test("focus mode cannot start temporary magnification but can restore stale magn
 
   assert.match(source, /const hasCurrentMagnification = magnifiedPaneRef\.current\?\.tabId === tabId;/);
   assert.match(source, /if \(workspace\?\.viewMode === 'focus' && !hasCurrentMagnification\) return null;/);
+});
+
+test("closing a magnified terminal restores its pane instead of ending the session", () => {
+  const terminalSource = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const viewSource = readFileSync(new URL("../terminal/TerminalView.tsx", import.meta.url), "utf8");
+  const toolbarSource = readFileSync(new URL("../terminal/TerminalToolbar.tsx", import.meta.url), "utf8");
+
+  assert.match(viewSource, /renderControls\(\{ showClose: inWorkspace, restorePaneLayout: isPaneMagnified \}\)/);
+  assert.match(terminalSource, /opts\?: \{ showClose\?: boolean; restorePaneLayout\?: boolean \}/);
+  assert.match(terminalSource, /if \(opts\?\.restorePaneLayout\) \{\s+onTogglePaneMagnification\?\.\(\);\s+return;\s+\}/);
+  assert.match(terminalSource, /closeLabel=\{t\(opts\?\.restorePaneLayout\s+\? 'terminal\.paneMagnification\.restore'\s+: 'terminal\.toolbar\.closeSession'\)\}/);
+  assert.match(toolbarSource, /aria-label=\{closeLabel \?\? t\('terminal\.toolbar\.closeSession'\)\}/);
 });
 
 test("workspace section passes resolved session host ids to terminal panes", () => {

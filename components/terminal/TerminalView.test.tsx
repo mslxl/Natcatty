@@ -323,7 +323,7 @@ test("hidden host information keeps terminal actions rendered", () => {
   const disconnectAction = source.indexOf('aria-label={t("terminal.statusbar.disconnect.label")}', systemAction);
   const reconnectAction = source.indexOf('aria-label={t("terminal.statusbar.reconnect.label")}', disconnectAction);
   const actionsStart = source.indexOf('className="flex items-center gap-0.5 flex-shrink-0"');
-  const controls = source.indexOf("{renderControls({ showClose: inWorkspace })}");
+  const controls = source.indexOf("{renderControls({ showClose: inWorkspace, restorePaneLayout: isPaneMagnified })}");
   const compactDragHandle = source.indexOf('data-terminal-detach-drag-handle="true"');
 
   assert.notEqual(hostInfoStart, -1);
