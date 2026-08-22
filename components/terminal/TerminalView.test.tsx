@@ -8,6 +8,7 @@ import {
   formatTerminalHostInfoBarTitle,
   formatTerminalHostInfoBarTooltip,
   formatTerminalTitleConnectionAddress,
+  focusTerminalFromDisconnectedNotice,
   getLineTimestampToggleHostUpdate,
   resolveNetworkDeviceTipRightInset,
   resolveTerminalRightInset,
@@ -37,7 +38,20 @@ test("terminal disconnected notice keeps the reason and reconnect hint on one co
   assert.match(markup, /Connection timed out\./);
   assert.match(markup, /Press Enter to reconnect/);
   assert.match(markup, /h-7/);
-  assert.match(markup, /pointer-events-none/);
+  assert.doesNotMatch(markup, /pointer-events-none/);
+});
+
+test("clicking the disconnected notice preserves terminal keyboard focus", () => {
+  let prevented = false;
+  let focused = false;
+
+  focusTerminalFromDisconnectedNotice(
+    { preventDefault: () => { prevented = true; } },
+    () => { focused = true; },
+  );
+
+  assert.equal(prevented, true);
+  assert.equal(focused, true);
 });
 
 test("automatic reconnect notice uses explicit lifecycle copy instead of a stale log line", () => {
@@ -59,6 +73,16 @@ test("automatic reconnect notice uses explicit lifecycle copy instead of a stale
     }),
     "Connection timed out.",
   );
+  assert.equal(
+    resolveTerminalDisconnectedNoticeMessage({
+      status: "disconnected",
+      error: "Connection timed out.",
+      reconnectMessage: "Reconnecting...",
+      disconnectedLabel: "Disconnected",
+      isReconnectActive: true,
+    }),
+    "Reconnecting...",
+  );
 });
 
 test("automatic reconnect switches to attempt copy before waking a hibernated terminal", () => {
@@ -70,6 +94,29 @@ test("automatic reconnect switches to attempt copy before waking a hibernated te
   assert.ok(startReconnect >= 0);
   assert.ok(updateNotice > startReconnect);
   assert.ok(wakeHibernated > updateNotice);
+});
+
+test("hibernated manual reconnect can continue after its runtime wakes", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const startReconnect = source.indexOf("const startReconnect = async");
+  const markManualReconnect = source.indexOf(
+    'manualReconnectActiveRef.current = mode === "manual"',
+    startReconnect,
+  );
+  const initialGuard = source.slice(startReconnect, markManualReconnect);
+  const clearWakeInFlight = source.indexOf(
+    "reconnectWakeInFlightRef.current = false",
+    markManualReconnect,
+  );
+  const continueReconnect = source.indexOf("startReconnectRef.current?.(mode)", clearWakeInFlight);
+
+  assert.ok(startReconnect >= 0);
+  assert.ok(markManualReconnect > startReconnect);
+  assert.match(initialGuard, /reconnectPreparationTokenRef\.current !== null/);
+  assert.match(initialGuard, /reconnectWakeInFlightRef\.current/);
+  assert.doesNotMatch(initialGuard, /manualReconnectActiveRef\.current/);
+  assert.ok(clearWakeInFlight > markManualReconnect);
+  assert.ok(continueReconnect > clearWakeInFlight);
 });
 
 test("programmatic input during hibernated reconnect does not clear reconnect presentation", () => {
@@ -175,6 +222,7 @@ test("terminal enter reconnect ignores active controls and non-disconnected stat
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, needsAuth: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, needsHostKeyVerification: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, hasBlockingOverlay: true }), false);
+  assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, isReconnectActive: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, altKey: true }), false);
 });
 

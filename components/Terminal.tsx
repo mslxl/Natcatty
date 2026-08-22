@@ -543,6 +543,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const autoReconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoReconnectLoopActiveRef = useRef(false);
   const manualReconnectActiveRef = useRef(false);
+  const [manualReconnectActive, setManualReconnectActive] = useState(false);
   const autoReconnectAttemptRef = useRef(0);
   const startReconnectRef = useRef<((mode: "manual" | "auto") => void) | null>(null);
   const wakeHibernatedRuntimeForReconnectRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -1369,7 +1370,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     statusRef.current = next;
     setStatus(next);
     hasConnectedRef.current = next === "connected";
-    if (next !== "connecting") manualReconnectActiveRef.current = false;
+    if (next !== "connecting") {
+      manualReconnectActiveRef.current = false;
+      setManualReconnectActive(false);
+    }
     if (next === "connected") {
       hasEverConnectedRef.current = true;
       clearAutoReconnect();
@@ -3418,7 +3422,12 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   const startReconnect = async (mode: "manual" | "auto" = "manual") => {
     if (attachExistingSession) return;
+    if (
+      reconnectPreparationTokenRef.current !== null
+      || reconnectWakeInFlightRef.current
+    ) return;
     manualReconnectActiveRef.current = mode === "manual";
+    setManualReconnectActive(mode === "manual");
     const reconnectAttemptMessage = mode === "auto"
       ? t("terminal.progress.autoReconnectAttempt", { attempt: autoReconnectAttemptRef.current })
       : t("terminal.progress.reconnecting");
@@ -3466,6 +3475,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     }
     if (!termRef.current) {
       manualReconnectActiveRef.current = false;
+      setManualReconnectActive(false);
       setReconnectNoticeMessage(null);
       return;
     }
@@ -3495,6 +3505,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           updateStatus("disconnected");
         } else if (mode === "manual" && retryTokenStillCurrent()) {
           manualReconnectActiveRef.current = false;
+          setManualReconnectActive(false);
           setReconnectNoticeMessage(null);
         }
         return;
@@ -3541,6 +3552,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       await cleanupSession({ retainOwnership: true });
     } catch (error) {
       finishReconnectPreparation();
+      if (mode === "manual" && retryTokenStillCurrent()) {
+        manualReconnectActiveRef.current = false;
+        setManualReconnectActive(false);
+        setReconnectNoticeMessage(null);
+      }
       throw error;
     }
     if (!retryTokenStillCurrent()) {
@@ -3550,6 +3566,11 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     const term = termRef.current;
     if (!term) {
       finishReconnectPreparation();
+      if (mode === "manual" && retryTokenStillCurrent()) {
+        manualReconnectActiveRef.current = false;
+        setManualReconnectActive(false);
+        setReconnectNoticeMessage(null);
+      }
       return;
     }
     // closeSession wiped preload ready listeners; re-arm before startMosh so a
@@ -3653,6 +3674,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     );
   }, [attachExistingSession, sessionId]);
 
+  const isReconnectActive = autoReconnectLoopActiveRef.current || manualReconnectActive;
   const shouldShowConnectionDialog = shouldShowTerminalConnectionDialog({
     status,
     isLocalConnection,
@@ -3661,7 +3683,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disconnectedNoticeMode: terminalSettings.disconnectedNoticeMode,
     hasEverConnected: hasEverConnectedRef.current,
     restoreState,
-    isReconnectActive: autoReconnectLoopActiveRef.current || manualReconnectActiveRef.current,
+    isReconnectActive,
     requiresUserInput: auth.needsAuth || needsHostKeyVerification || isConnectionAwaitingUserInput,
     hideConnectingDialogForConnectionReuse: shouldHideConnectingDialogForConnectionReuse({
       reuseConnectionFromSessionId: connectionReuseAttemptSourceId,
@@ -3674,7 +3696,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     disconnectedNoticeMode: terminalSettings.disconnectedNoticeMode,
     hasEverConnected: hasEverConnectedRef.current,
     restoreState,
-    isReconnectActive: autoReconnectLoopActiveRef.current || manualReconnectActiveRef.current,
+    isReconnectActive,
     requiresUserInput: auth.needsAuth || needsHostKeyVerification || isConnectionAwaitingUserInput,
   });
 
@@ -4256,7 +4278,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   return (
     <>
-      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, RefreshCcw, Sparkles, SquareArrowOutUpRight, Unplug, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost: !!onUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI: onAddSelectionToAI ? handleAddSelectionToAI : undefined, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect: (attachExistingSession || compactToolbar) ? undefined : handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onTogglePaneMagnification, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
+      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, RefreshCcw, Sparkles, SquareArrowOutUpRight, Unplug, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost: !!onUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI: onAddSelectionToAI ? handleAddSelectionToAI : undefined, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect: (attachExistingSession || compactToolbar) ? undefined : handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isReconnectActive, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onTogglePaneMagnification, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
         <ScriptExecutionOverlay
           run={activeScriptRun}
           onPause={() => { void pauseScriptRun(activeScriptRun.runId); }}
