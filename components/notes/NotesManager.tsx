@@ -92,7 +92,6 @@ import type {
   ActiveTextFormats,
   InlineMarkdownEditorHandle,
   NoteEditorMode,
-  NoteSourceEditorHandle,
 } from "./InlineMarkdownEditor";
 import { EMPTY_ACTIVE_FORMATS } from "./InlineMarkdownEditor";
 import { NoteTitleInput } from "./NoteTitleInput";

@@ -172,7 +172,7 @@ test("note editor exposes preview and edit modes with a markdown toolbar in edit
   assert.match(managerSource, /Glasses/);
   assert.match(managerSource, /PencilLine/);
   assert.match(managerSource, /setNoteEditorMode\(\(currentMode\) => \(/);
-  assert.match(managerSource, /currentMode === "edit" \? "preview" : "edit"/);
+  assert.match(managerSource, /currentMode === "edit" \|\| currentMode === "live" \? "preview" : "edit"/);
   assert.match(managerSource, /editorMode=\{noteEditorMode\}/);
   assert.match(managerSource, /className="app-no-drag h-8 w-8 shrink-0 rounded-md p-0 text-muted-foreground transition-colors hover:bg-secondary\/70 hover:text-foreground"/);
   assert.doesNotMatch(managerSource, /data-note-mode-switch[\s\S]{0,500}border/);
@@ -287,7 +287,7 @@ test("note code block frame is borderless and language picker is compact", () =>
 
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*border:\s*0\s*!important;[^}]*padding:\s*0\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*border:\s*0\s*!important;[^}]*padding:\s*0\.2rem\s+0\s*!important;/s,
   );
   assert.match(
     styles,
@@ -295,7 +295,7 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*position:\s*static\s*!important;[^}]*padding:\s*0\.125rem;/s,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*position:\s*absolute\s*!important;/s,
   );
   assert.match(
     styles,
@@ -307,7 +307,7 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*width:\s*auto\s*!important;[^}]*min-width:\s*fit-content\s*!important;/s,
+    /\.netcatty-mdx-editor \[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*width:\s*auto\s*!important;[^}]*min-width:\s*0\s*!important;/s,
   );
   assert.match(
     styles,
@@ -408,14 +408,14 @@ test("note preview uses MDX readOnly with code-copy chrome", () => {
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*font-size:\s*11px\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorToolbar_"\]\s+\[class\*="_selectTrigger_"\]\s*\{[^}]*font-size:\s*11px\s*!important;/s,
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+button\s*\{[^}]*height:\s*1\.4rem\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorToolbar_"\]\s+button[^{]*\{[^}]*height:\s*1\.4rem\s*!important;/s,
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorToolbar_"\]\s+button\s+svg\s*\{[^}]*width:\s*10px\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorToolbar_"\][^{]*svg\s*\{[^}]*width:\s*10px\s*!important;/s,
   );
 });

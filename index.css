@@ -1323,7 +1323,7 @@ html[data-theme-transition] *::after {
   border-radius: 4px;
   background: hsl(var(--secondary) / 0.8);
   padding: 0.12rem 0.3rem;
-  font-family: var(--font-mono);
+  font-family: var(--note-font-family, var(--font-mono));
   font-size: 0.86em;
 }
 
@@ -1393,8 +1393,16 @@ html[data-theme-transition] *::after {
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"],
 .netcatty-mdx-editor pre,
 .netcatty-mdx-editor code,
+.netcatty-mdx-editor [class*="_code_"],
+.netcatty-mdx-editor [class*="code_"],
+.netcatty-mdx-editor kbd,
+.netcatty-mdx-editor samp,
 .netcatty-mdx-content pre,
 .netcatty-mdx-content code,
+.netcatty-mdx-content [class*="_code_"],
+.netcatty-mdx-content [class*="code_"],
+.netcatty-mdx-content kbd,
+.netcatty-mdx-content samp,
 .netcatty-source-editor,
 .netcatty-source-editor textarea {
   font-family: var(--note-font-family, var(--font-mono)) !important;
@@ -1527,8 +1535,8 @@ html[data-theme-transition] *::after {
   display: inline-flex !important;
   align-items: center !important;
   justify-content: flex-start !important;
-  height: 1.4rem !important;
-  min-height: 1.4rem !important;
+  height: 1.45rem !important;
+  min-height: 1.45rem !important;
   width: auto !important;
   min-width: 0 !important;
   max-width: none !important;
