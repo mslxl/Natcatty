@@ -294,7 +294,7 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 4. 推送到分支 (`git push origin feature/amazing-feature`)
 5. 打开一个 Pull Request
 
-查看 [agents.md](agents.md) 了解架构概述和编码规范。
+查看 [AGENTS.md](AGENTS.md) 了解架构概述和编码规范。
 
 ---
 

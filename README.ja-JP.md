@@ -295,7 +295,7 @@ npm run pack:linux   # Linux (AppImage + DEB + RPM)
 4. ブランチにプッシュ (`git push origin feature/amazing-feature`)
 5. Pull Request をオープン
 
-アーキテクチャの概要とコーディング規約については [agents.md](agents.md) を参照してください。
+アーキテクチャの概要とコーディング規約については [AGENTS.md](AGENTS.md) を参照してください。
 
 ---
 

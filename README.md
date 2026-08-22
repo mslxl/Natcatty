@@ -296,7 +296,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-See [agents.md](agents.md) for architecture overview and coding conventions.
+See [AGENTS.md](AGENTS.md) for architecture overview and coding conventions.
 
 ---
 
