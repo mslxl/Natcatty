@@ -273,6 +273,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   inWorkspace,
   isResizing,
   isFocusMode,
+  isPaneMagnified,
   isFocused,
   isFocusedPane,
   fontFamilyId,
@@ -311,6 +312,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   onUpdateHost,
   onAddKnownHost,
   onExpandToFocus,
+  onTogglePaneMagnification,
   onCommandExecuted,
   onCommandSubmitted,
   onSplitHorizontal,
@@ -3787,7 +3789,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     window.dispatchEvent(new CustomEvent('netcatty:script:recording:start', { detail: { sessionId } }));
   }, [sessionId, t]);
 
-  const renderControls = useCallback((opts?: { showClose?: boolean }) => (
+  const renderControls = useCallback((opts?: { showClose?: boolean; restorePaneLayout?: boolean }) => (
     <TerminalToolbar
       sessionId={sessionId}
       workspaceId={workspaceId}
@@ -3812,9 +3814,16 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       }) ? () => setOsc7SetupOpen(true) : undefined}
       onUpdateHost={handleUpdateHostFromTerminal}
       showClose={opts?.showClose}
-      // Workspace toolbar X closes/destroys this pane session. Detach to a
-      // standalone tab remains a separate control (SquareArrowOutUpRight).
-      onClose={() => onCloseSession?.(sessionId)}
+      onClose={() => {
+        if (opts?.restorePaneLayout) {
+          onTogglePaneMagnification?.();
+          return;
+        }
+        onCloseSession?.(sessionId);
+      }}
+      closeLabel={t(opts?.restorePaneLayout
+        ? 'terminal.paneMagnification.restore'
+        : 'terminal.toolbar.closeSession')}
       isSearchOpen={isSearchOpen}
       onToggleSearch={handleToggleSearch}
       showLogButton
@@ -3866,6 +3875,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onOpenHistory,
     onOpenTheme,
     onToggleComposeBar,
+    onTogglePaneMagnification,
     setIsComposeBarOpen,
     handleUpdateHostFromTerminal,
     sessionId,
@@ -3873,6 +3883,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     snippets,
     status,
     terminalEncoding,
+    t,
     recorder,
     workspaceId,
   ]);
@@ -4216,7 +4227,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
   return (
     <>
-      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, RefreshCcw, Sparkles, SquareArrowOutUpRight, Unplug, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost: !!onUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI: onAddSelectionToAI ? handleAddSelectionToAI : undefined, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect: (attachExistingSession || compactToolbar) ? undefined : handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
+      <TerminalView ctx={{ Activity, ArrowDownToLine, ArrowUpFromLine, Button, Clock3, Copy, Cpu, HardDrive, HoverCard, HoverCardContent, HoverCardTrigger, Maximize2, MemoryStick, Radio, RefreshCcw, Sparkles, SquareArrowOutUpRight, Unplug, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost: !!onUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI: onAddSelectionToAI ? handleAddSelectionToAI : undefined, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect: (attachExistingSession || compactToolbar) ? undefined : handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen: effectiveComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onAddSelectionToAI, onBroadcastInput, onCloseSession, onDetach, onDetachDragEnd, onDetachDragStart, onDetachPointerDown, onEndSessionDrag, onExpandToFocus, onTogglePaneMagnification, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onStartSessionDrag, onToggleBroadcast, onUpdateHost: handleUpdateHostFromTerminal, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scrollToBottomAfterProgrammaticInput, searchMatchCount, searchFocusToken, scriptExecutionOverlay: activeScriptRun ? (
         <ScriptExecutionOverlay
           run={activeScriptRun}
           onPause={() => { void pauseScriptRun(activeScriptRun.runId); }}
@@ -4225,7 +4236,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
           onDismiss={dismissScriptOverlay}
           compactTopChrome={terminalSettings?.showHostInfoBar === false}
         />
-      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} />
+      ) : null, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showConnectionControls: !attachExistingSession && !compactToolbar, showLogs, showSelectionAIAction: Boolean(showSelectionAIAction && onAddSelectionToAI), isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect: handlePasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalBackend, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, timeLeft, toast, zmodem }} isPaneMagnified={isPaneMagnified} />
       <ScriptSaveRecordingDialog
         open={saveRecordingOpen}
         code={recordedCode}

@@ -119,6 +119,7 @@ export interface TerminalProps {
   inWorkspace?: boolean;
   isResizing?: boolean;
   isFocusMode?: boolean;
+  isPaneMagnified?: boolean;
   isFocused?: boolean;
   /**
    * Split-pane keyboard ownership for disconnected-dialog focus claims.
@@ -175,6 +176,7 @@ export interface TerminalProps {
   onUpdateHost?: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onExpandToFocus?: () => void;
+  onTogglePaneMagnification?: () => void;
   onCommandExecuted?: (
     command: string,
     hostId: string,

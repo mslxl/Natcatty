@@ -238,6 +238,18 @@ test("terminal title keeps the copy host action beside the address", () => {
   assert.ok(copyAction < timestampToggle);
 });
 
+test("focus mode and temporary pane magnification use separate toolbar actions", () => {
+  const source = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+  const focusAction = source.indexOf("onClick={onExpandToFocus}");
+  const magnifyAction = source.indexOf("onClick={onTogglePaneMagnification}");
+
+  assert.notEqual(focusAction, -1);
+  assert.notEqual(magnifyAction, -1);
+  assert.ok(focusAction < magnifyAction);
+  assert.match(source.slice(focusAction, magnifyAction), /terminal\.toolbar\.focusMode/);
+  assert.match(source.slice(magnifyAction), /terminal\.paneMagnification\.(restore|magnify)/);
+});
+
 test("popup terminals disable line timestamp controls", () => {
   const source = readFileSync(new URL("../TerminalPopupPage.tsx", import.meta.url), "utf8");
 
@@ -311,7 +323,7 @@ test("hidden host information keeps terminal actions rendered", () => {
   const disconnectAction = source.indexOf('aria-label={t("terminal.statusbar.disconnect.label")}', systemAction);
   const reconnectAction = source.indexOf('aria-label={t("terminal.statusbar.reconnect.label")}', disconnectAction);
   const actionsStart = source.indexOf('className="flex items-center gap-0.5 flex-shrink-0"');
-  const controls = source.indexOf("{renderControls({ showClose: inWorkspace })}");
+  const controls = source.indexOf("{renderControls({ showClose: inWorkspace, restorePaneLayout: isPaneMagnified })}");
   const compactDragHandle = source.indexOf('data-terminal-detach-drag-handle="true"');
 
   assert.notEqual(hostInfoStart, -1);
