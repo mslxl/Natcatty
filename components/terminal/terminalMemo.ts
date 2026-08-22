@@ -69,6 +69,7 @@ export const terminalPropsAreEqual = (
   && prev.onUpdateHost === next.onUpdateHost
   && prev.onAddKnownHost === next.onAddKnownHost
   && prev.onExpandToFocus === next.onExpandToFocus
+  && prev.onTogglePaneMagnification === next.onTogglePaneMagnification
   && prev.onCommandExecuted === next.onCommandExecuted
   && prev.onCommandSubmitted === next.onCommandSubmitted
   && prev.onSplitHorizontal === next.onSplitHorizontal

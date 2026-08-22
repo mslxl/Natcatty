@@ -120,12 +120,12 @@ test('global hotkey handler magnifies panes from focused form inputs', () => {
   const target = new FakeInputHTMLElement();
   const handledActions: string[] = [];
   const event = {
-    key: 'Enter',
-    code: 'Enter',
-    ctrlKey: true,
+    key: 'm',
+    code: 'KeyM',
+    ctrlKey: false,
     metaKey: false,
-    altKey: false,
-    shiftKey: true,
+    altKey: true,
+    shiftKey: false,
     target,
     composedPath: () => [target],
     preventDefault: () => {},

@@ -176,6 +176,7 @@ export interface TerminalProps {
   onUpdateHost?: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
   onExpandToFocus?: () => void;
+  onTogglePaneMagnification?: () => void;
   onCommandExecuted?: (
     command: string,
     hostId: string,

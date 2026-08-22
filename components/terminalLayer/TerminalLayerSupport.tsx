@@ -1177,6 +1177,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   magnifiedPane,
   onMagnifyTerminalPane,
   onTerminalPaneInteraction,
+  workspaceFocusHandlersRef,
   workspaceBroadcastHandlersRef,
   splitHorizontalHandlersRef,
   splitVerticalHandlersRef,
@@ -1446,6 +1447,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const workspaceBroadcastHandler = activeWorkspaceId
     ? workspaceBroadcastHandlersRef.current.get(activeWorkspaceId)
     : undefined;
+  const workspaceFocusHandler = activeWorkspaceId
+    ? workspaceFocusHandlersRef.current.get(activeWorkspaceId)
+    : undefined;
   const splitHorizontalHandler = splitHorizontalHandlersRef.current.get(session.id);
   const splitVerticalHandler = splitVerticalHandlersRef.current.get(session.id);
   const broadcastEnabled = activeWorkspaceId ? !!isBroadcastEnabled?.(activeWorkspaceId) : false;
@@ -1466,6 +1470,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const handleTogglePaneMagnification = useCallback(() => {
     onMagnifyTerminalPane(activeWorkspaceId ?? session.id, session.id);
   }, [activeWorkspaceId, onMagnifyTerminalPane, session.id]);
+  const handleExpandToFocus = useCallback(() => {
+    if (isMagnified) {
+      handleTogglePaneMagnification();
+    }
+    workspaceFocusHandler?.();
+  }, [handleTogglePaneMagnification, isMagnified, workspaceFocusHandler]);
   const handleOpenSystemForPane = useCallback(() => {
     if (activeWorkspaceId && !isFocusMode) {
       onSetWorkspaceFocusedSession?.(activeWorkspaceId, session.id);
@@ -1582,7 +1592,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onAddKnownHost={onAddKnownHost}
         onCommandExecuted={onCommandExecuted}
         onCommandSubmitted={onCommandSubmitted}
-        onExpandToFocus={inActiveWorkspace && !isFocusMode ? handleTogglePaneMagnification : undefined}
+        onExpandToFocus={inActiveWorkspace && !isFocusMode ? handleExpandToFocus : undefined}
+        onTogglePaneMagnification={inActiveWorkspace && !isFocusMode ? handleTogglePaneMagnification : undefined}
         onSplitHorizontal={onSplitSession ? splitHorizontalHandler : undefined}
         onSplitVertical={onSplitSession ? splitVerticalHandler : undefined}
         isBroadcastEnabled={broadcastEnabled}

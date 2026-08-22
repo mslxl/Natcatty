@@ -238,6 +238,18 @@ test("terminal title keeps the copy host action beside the address", () => {
   assert.ok(copyAction < timestampToggle);
 });
 
+test("focus mode and temporary pane magnification use separate toolbar actions", () => {
+  const source = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+  const focusAction = source.indexOf("onClick={onExpandToFocus}");
+  const magnifyAction = source.indexOf("onClick={onTogglePaneMagnification}");
+
+  assert.notEqual(focusAction, -1);
+  assert.notEqual(magnifyAction, -1);
+  assert.ok(focusAction < magnifyAction);
+  assert.match(source.slice(focusAction, magnifyAction), /terminal\.toolbar\.focusMode/);
+  assert.match(source.slice(magnifyAction), /terminal\.paneMagnification\.(restore|magnify)/);
+});
+
 test("popup terminals disable line timestamp controls", () => {
   const source = readFileSync(new URL("../TerminalPopupPage.tsx", import.meta.url), "utf8");
 

@@ -22,6 +22,22 @@ test("closing a magnified terminal clears the overlay selection", () => {
   assert.match(source, /current\?\.target\.kind === 'terminal' && current\.target\.sessionId === sessionId/);
 });
 
+test("terminal panes expose focus mode and temporary magnification as separate actions", () => {
+  const source = readFileSync(new URL("TerminalLayerSupport.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /workspaceFocusHandlersRef,\s+workspaceBroadcastHandlersRef,/);
+  assert.match(source, /if \(isMagnified\) \{\s+handleTogglePaneMagnification\(\);\s+\}\s+workspaceFocusHandler\?\.\(\);/);
+  assert.match(source, /onExpandToFocus=\{inActiveWorkspace && !isFocusMode \? handleExpandToFocus : undefined\}/);
+  assert.match(source, /onTogglePaneMagnification=\{inActiveWorkspace && !isFocusMode \? handleTogglePaneMagnification : undefined\}/);
+});
+
+test("focus mode cannot start temporary magnification but can restore stale magnification", () => {
+  const source = readFileSync(new URL("../TerminalLayer.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const hasCurrentMagnification = magnifiedPaneRef\.current\?\.tabId === tabId;/);
+  assert.match(source, /if \(workspace\?\.viewMode === 'focus' && !hasCurrentMagnification\) return null;/);
+});
+
 test("workspace section passes resolved session host ids to terminal panes", () => {
   const resolvedSessionHostIds = new Set(["session-1"]);
   let sawResolvedIds = false;

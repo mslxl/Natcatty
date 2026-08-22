@@ -1502,6 +1502,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       const tabId = activeTabStore.getActiveTabId();
       if (!tabId) return null;
       const workspace = workspacesRef.current.find((candidate) => candidate.id === tabId);
+      const hasCurrentMagnification = magnifiedPaneRef.current?.tabId === tabId;
+      if (workspace?.viewMode === 'focus' && !hasCurrentMagnification) return null;
       const workspaceSessionIds = workspace ? collectSessionIds(workspace.root) : [];
       const standaloneSession = sessionsRef.current.find((candidate) => (
         candidate.id === tabId && !candidate.workspaceId
