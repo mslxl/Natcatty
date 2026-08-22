@@ -51,7 +51,7 @@ export function TerminalDisconnectedNotice({
       role="status"
       aria-live="polite"
       data-terminal-disconnected-notice="true"
-      className="absolute z-20 flex h-7 items-center gap-2 overflow-hidden rounded border px-2 text-[11px]"
+      className="pointer-events-none absolute z-20 flex h-7 items-center gap-2 overflow-hidden rounded border px-2 text-[11px]"
       style={{
         bottom,
         left,

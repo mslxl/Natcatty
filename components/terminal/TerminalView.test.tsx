@@ -37,6 +37,7 @@ test("terminal disconnected notice keeps the reason and reconnect hint on one co
   assert.match(markup, /Connection timed out\./);
   assert.match(markup, /Press Enter to reconnect/);
   assert.match(markup, /h-7/);
+  assert.match(markup, /pointer-events-none/);
 });
 
 test("automatic reconnect notice uses explicit lifecycle copy instead of a stale log line", () => {
