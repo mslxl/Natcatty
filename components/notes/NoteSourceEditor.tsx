@@ -22,36 +22,35 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
     const lineNumbersRef = useRef<HTMLDivElement>(null);
     const [localValue, setLocalValue] = useState(value);
     const prevNoteIdRef = useRef(noteId);
-    const lastSyncedValueRef = useRef(value);
+    const prevValueRef = useRef(value);
 
     // Undo/redo history for the source textarea (native textarea undo is
     // unreliable once the value is controlled by React).
     const undoStackRef = useRef<string[]>([]);
     const redoStackRef = useRef<string[]>([]);
-    // Tracks whether the latest value change originated from a user edit
-    // (toolbar action / Tab) so external value swaps (e.g. switching notes)
-    // can reset the history stacks instead of leaking into the next note.
-    const userEditRef = useRef(false);
 
-    // Synchronize localValue when noteId switches or when external value changes
+    // Adopt the external value only for genuine external changes:
+    // - noteId switch → always adopt (new note).
+    // - prop value changed AND differs from localValue → external edit.
+    // The parent debounces our own edits and echoes them back with
+    // value === localValue; those echoes must NOT reset the textarea, or the
+    // keystroke would be reverted and the caret would jump to the end.
     useEffect(() => {
       if (noteId !== prevNoteIdRef.current) {
         prevNoteIdRef.current = noteId;
+        prevValueRef.current = value;
         setLocalValue(value);
-        lastSyncedValueRef.current = value;
         undoStackRef.current = [];
         redoStackRef.current = [];
-        userEditRef.current = false;
         return;
       }
-      if (value !== lastSyncedValueRef.current && value !== localValue) {
-        setLocalValue(value);
-        lastSyncedValueRef.current = value;
-        if (!userEditRef.current) {
+      if (value !== prevValueRef.current) {
+        prevValueRef.current = value;
+        if (value !== localValue) {
+          setLocalValue(value);
           undoStackRef.current = [];
           redoStackRef.current = [];
         }
-        userEditRef.current = false;
       }
     }, [noteId, value, localValue]);
 
@@ -67,9 +66,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
 
     const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const nextValue = e.target.value;
-      userEditRef.current = true;
       setLocalValue(nextValue);
-      lastSyncedValueRef.current = nextValue;
       onChange(nextValue);
     };
 
@@ -85,9 +82,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
         const nextValue = `${localValue.substring(0, start)}  ${localValue.substring(end)}`;
         undoStackRef.current.push(localValue);
         redoStackRef.current = [];
-        userEditRef.current = true;
         setLocalValue(nextValue);
-        lastSyncedValueRef.current = nextValue;
         onChange(nextValue);
         requestAnimationFrame(() => {
           textarea.selectionStart = start + 2;
@@ -110,9 +105,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
           } else {
             undoStackRef.current.push(localValue);
           }
-          userEditRef.current = true;
           setLocalValue(target);
-          lastSyncedValueRef.current = target;
           onChange(target);
           requestAnimationFrame(() => {
             textarea.focus();
@@ -129,9 +122,7 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
           undoStackRef.current.push(localValue);
           redoStackRef.current = [];
         }
-        userEditRef.current = true;
         setLocalValue(result.text);
-        lastSyncedValueRef.current = result.text;
         onChange(result.text);
         requestAnimationFrame(() => {
           textarea.focus();

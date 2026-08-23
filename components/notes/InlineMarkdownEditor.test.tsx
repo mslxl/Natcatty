@@ -432,5 +432,5 @@ test("NoteSourceEditor manages local draft state to prevent cursor jumping on de
   assert.match(source, /value=\{localValue\}/);
   assert.match(source, /onChange=\{handleChange\}/);
   assert.match(source, /prevNoteIdRef\.current/);
-  assert.match(source, /lastSyncedValueRef\.current/);
+  assert.match(source, /prevValueRef\.current/);
 });
