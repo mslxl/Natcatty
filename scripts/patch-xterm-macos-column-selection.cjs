@@ -6,6 +6,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const EXPECTED_XTERM_VERSION = "6.1.0-beta.292";
+const FORCE_SELECTION_OPTION = "macOptionClickForcesSelection";
+const META_OPTION = "macOptionIsMeta".padEnd(FORCE_SELECTION_OPTION.length, " ");
 
 // xterm normally treats macOptionClickForcesSelection and column selection as
 // mutually exclusive. Netcatty needs both when Option is not Meta: Option must
@@ -17,31 +19,31 @@ const PATCHES = [
   {
     file: "node_modules/@xterm/xterm/lib/xterm.js",
     original: "!(f.isMac&&this._optionsService.rawOptions.macOptionClickForcesSelection)",
-    replacement: "(!f.isMac||!this._optionsService.rawOptions.macOptionIsMeta)",
+    replacement: `!(f.isMac&&this._optionsService.rawOptions.${META_OPTION})`,
     preserveLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.mjs",
     original: "!(ie&&this._optionsService.rawOptions.macOptionClickForcesSelection)",
-    replacement: "(!ie||!this._optionsService.rawOptions.macOptionIsMeta)",
+    replacement: `!(ie&&this._optionsService.rawOptions.${META_OPTION})`,
     preserveLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/src/browser/services/SelectionService.ts",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionIsMeta);",
+    replacement: `return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.${META_OPTION});`,
     preserveStatementLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.js.map",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionIsMeta);",
+    replacement: `return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.${META_OPTION});`,
     preserveStatementLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.mjs.map",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionIsMeta);",
+    replacement: `return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.${META_OPTION});`,
     preserveStatementLength: true,
   },
 ];

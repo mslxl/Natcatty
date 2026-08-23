@@ -36,6 +36,19 @@ test("patches readable xterm sources and source-map content", () => {
   }
 });
 
+test("keeps source-map token columns stable inside every patched expression", () => {
+  for (const patch of PATCHES) {
+    const replacement = replacementForPatch(patch);
+    for (const token of ["this", "_optionsService", "rawOptions", ")", ";"]) {
+      assert.equal(
+        replacement.lastIndexOf(token),
+        patch.original.lastIndexOf(token),
+        `${patch.file}: ${token} moved to a different generated column`,
+      );
+    }
+  }
+});
+
 test("is idempotent and fails closed on an unknown package shape", () => {
   for (const patch of PATCHES) {
     const replacement = replacementForPatch(patch);
