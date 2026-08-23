@@ -1,11 +1,14 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
   PATCHES,
+  invalidateViteCache,
   patchXtermSource,
+  replacementForPatch,
   sameLengthExpression,
 } = require("./patch-xterm-macos-column-selection.cjs");
 
@@ -25,17 +28,17 @@ test("patches both distributed bundles without shifting source-map offsets", () 
 
 test("patches readable xterm sources and source-map content", () => {
   for (const patch of PATCHES.filter((entry) => !entry.preserveLength)) {
-    const result = patchXtermSource(`before:${patch.original}:after`, patch);
+    const input = `before:${patch.original}:after`;
+    const result = patchXtermSource(input, patch);
     assert.equal(result.changed, true);
-    assert.equal(result.source, `before:${patch.replacement}:after`);
+    assert.equal(result.source, `before:${replacementForPatch(patch)}:after`);
+    assert.equal(result.source.length, input.length);
   }
 });
 
 test("is idempotent and fails closed on an unknown package shape", () => {
   for (const patch of PATCHES) {
-    const replacement = patch.preserveLength
-      ? sameLengthExpression(patch.replacement, patch.original.length)
-      : patch.replacement;
+    const replacement = replacementForPatch(patch);
     assert.deepEqual(patchXtermSource(`before:${replacement}:after`, patch), {
       source: `before:${replacement}:after`,
       changed: false,
@@ -52,4 +55,19 @@ test("fails closed when a generated-bundle replacement would shift offsets", () 
     () => sameLengthExpression("replacement is longer", 4),
     /replacement expression is too long/,
   );
+});
+
+test("invalidates Vite's optimized dependency cache after patching xterm", () => {
+  const calls = [];
+  const cachePath = invalidateViteCache("/repo", {
+    rmSync(target, options) {
+      calls.push({ target, options });
+    },
+  });
+
+  assert.equal(cachePath, path.resolve("/repo/node_modules/.vite"));
+  assert.deepEqual(calls, [{
+    target: cachePath,
+    options: { recursive: true, force: true },
+  }]);
 });

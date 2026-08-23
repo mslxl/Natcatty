@@ -13,6 +13,7 @@ if (!process.versions.electron) {
   const assert = require("node:assert/strict");
   const fs = require("node:fs");
   const path = require("node:path");
+  const { pathToFileURL } = require("node:url");
   const electron = require("electron");
   const tempDirBridge = require("../electron/bridges/tempDirBridge.cjs");
 
@@ -46,6 +47,8 @@ if (!process.versions.electron) {
         contextIsolation: false,
         nodeIntegration: true,
         sandbox: false,
+        // The harness imports the shipped ESM bundle directly from disk.
+        webSecurity: false,
         backgroundThrottling: false,
       },
     });
@@ -56,8 +59,9 @@ if (!process.versions.electron) {
     );
 
     const xtermPath = require.resolve("@xterm/xterm", { paths: [appRoot] });
-    await window.webContents.executeJavaScript(`(() => {
-      const { Terminal } = require(${JSON.stringify(xtermPath)});
+    const xtermEsmUrl = pathToFileURL(path.join(path.dirname(xtermPath), "xterm.mjs")).href;
+    await window.webContents.executeJavaScript(`(async () => {
+      const { Terminal } = await import(${JSON.stringify(xtermEsmUrl)});
       const term = new Terminal({
         cols: 20,
         rows: 6,
@@ -114,8 +118,10 @@ if (!process.versions.electron) {
       const end = point(5, 2);
       /** @type {Array<"alt">} */
       const modifiers = alt ? ["alt"] : [];
+      /** @type {Array<"alt" | "leftbuttondown">} */
+      const moveModifiers = alt ? ["alt", "leftbuttondown"] : ["leftbuttondown"];
       window.webContents.sendInputEvent({ type: "mouseDown", ...start, button: "left", clickCount: 1, modifiers });
-      window.webContents.sendInputEvent({ type: "mouseMove", ...end, button: "left", modifiers });
+      window.webContents.sendInputEvent({ type: "mouseMove", ...end, button: "left", modifiers: moveModifiers });
       window.webContents.sendInputEvent({ type: "mouseUp", ...end, button: "left", clickCount: 1, modifiers });
       await delay(100);
       return window.webContents.executeJavaScript("window.harness.state()");
