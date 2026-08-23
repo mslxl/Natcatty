@@ -8,47 +8,50 @@ const path = require("node:path");
 const EXPECTED_XTERM_VERSION = "6.1.0-beta.292";
 
 // xterm normally treats macOptionClickForcesSelection and column selection as
-// mutually exclusive. Netcatty needs both: Option must keep forcing local
-// selection inside mouse-aware programs, and that local selection must retain
-// the standard macOS rectangular shape. Patch the pinned bundles at install
-// time and fail closed if upstream changes the expected code shape.
+// mutually exclusive. Netcatty needs both when Option is not Meta: Option must
+// keep forcing local selection inside mouse-aware programs, and that local
+// selection must retain the standard macOS rectangular shape. Patch the pinned
+// bundles at install time and fail closed if upstream changes the expected code
+// shape.
 const PATCHES = [
   {
     file: "node_modules/@xterm/xterm/lib/xterm.js",
     original: "!(f.isMac&&this._optionsService.rawOptions.macOptionClickForcesSelection)",
+    replacement: "(!f.isMac||!this._optionsService.rawOptions.macOptionIsMeta)",
     preserveLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.mjs",
     original: "!(ie&&this._optionsService.rawOptions.macOptionClickForcesSelection)",
+    replacement: "(!ie||!this._optionsService.rawOptions.macOptionIsMeta)",
     preserveLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/src/browser/services/SelectionService.ts",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey;",
+    replacement: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionIsMeta);",
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.js.map",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey;",
+    replacement: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionIsMeta);",
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.mjs.map",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey;",
+    replacement: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionIsMeta);",
   },
 ];
 
-function sameLengthTrueExpression(length) {
-  if (length < 4) throw new Error("replacement target is too short");
+function sameLengthExpression(expression, length) {
+  if (expression.length > length) throw new Error("replacement expression is too long");
   // Keep generated bundle offsets stable so the shipped source maps remain valid.
-  return `(!0${" ".repeat(length - 4)})`;
+  return `${expression}${" ".repeat(length - expression.length)}`;
 }
 
 function patchXtermSource(source, patch) {
   const replacement = patch.preserveLength
-    ? sameLengthTrueExpression(patch.original.length)
+    ? sameLengthExpression(patch.replacement, patch.original.length)
     : patch.replacement;
   if (!replacement) throw new Error(`missing replacement for ${patch.file}`);
 
@@ -106,5 +109,5 @@ module.exports = {
   PATCHES,
   patchInstalledXterm,
   patchXtermSource,
-  sameLengthTrueExpression,
+  sameLengthExpression,
 };
