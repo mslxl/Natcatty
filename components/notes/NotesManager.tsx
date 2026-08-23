@@ -458,14 +458,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     return cleaned;
   }, [onUpdateNotes]);
 
-  const togglePinNoteById = useCallback((noteId: string) => {
-    commitNotes(sortedNotesRef.current.map((n) => {
-      if (n.id !== noteId) return n;
-      const isPinned = !n.isPinned;
-      return { ...n, isPinned: isPinned ? true : undefined, updatedAt: Date.now() };
-    }));
-  }, [commitNotes]);
-
   const addTagToNote = useCallback((noteId: string, tag: string) => {
     const clean = tag.trim();
     if (!clean) return;
@@ -1160,10 +1152,6 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
 
   const renderNoteActions = (note: VaultNote, mode: "dropdown" | "context", closeMenu?: () => void) => {
     const actions = [
-      {
-        label: note.isPinned ? t("notes.action.unpin") : t("notes.action.pin"),
-        action: () => togglePinNoteById(note.id),
-      },
       {
         label: t("common.rename"),
         action: () => setEditingNoteId(note.id),

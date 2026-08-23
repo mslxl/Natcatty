@@ -1338,8 +1338,6 @@ export const InlineMarkdownEditor = React.memo(
     if (!container) return;
 
     let frame = 0;
-    let debounceTimer = 0;
-    const EDIT_DECORATION_DEBOUNCE_MS = 180;
 
     const runDecorations = (includeHostLinks: boolean) => {
       annotateNoteImageSizes(container);
@@ -1375,7 +1373,6 @@ export const InlineMarkdownEditor = React.memo(
       window.clearTimeout(timer1);
       window.clearTimeout(timer2);
       if (frame) window.cancelAnimationFrame(frame);
-      if (debounceTimer) window.clearTimeout(debounceTimer);
     };
   }, [annotateCodeBlockCopyButtons, annotateHostLinks, editorMode]);
 
