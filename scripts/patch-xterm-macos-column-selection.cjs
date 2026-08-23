@@ -1,0 +1,110 @@
+#!/usr/bin/env node
+/* global process, console */
+"use strict";
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+const EXPECTED_XTERM_VERSION = "6.1.0-beta.292";
+
+// xterm normally treats macOptionClickForcesSelection and column selection as
+// mutually exclusive. Netcatty needs both: Option must keep forcing local
+// selection inside mouse-aware programs, and that local selection must retain
+// the standard macOS rectangular shape. Patch the pinned bundles at install
+// time and fail closed if upstream changes the expected code shape.
+const PATCHES = [
+  {
+    file: "node_modules/@xterm/xterm/lib/xterm.js",
+    original: "!(f.isMac&&this._optionsService.rawOptions.macOptionClickForcesSelection)",
+    preserveLength: true,
+  },
+  {
+    file: "node_modules/@xterm/xterm/lib/xterm.mjs",
+    original: "!(ie&&this._optionsService.rawOptions.macOptionClickForcesSelection)",
+    preserveLength: true,
+  },
+  {
+    file: "node_modules/@xterm/xterm/src/browser/services/SelectionService.ts",
+    original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
+    replacement: "return event.altKey;",
+  },
+  {
+    file: "node_modules/@xterm/xterm/lib/xterm.js.map",
+    original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
+    replacement: "return event.altKey;",
+  },
+  {
+    file: "node_modules/@xterm/xterm/lib/xterm.mjs.map",
+    original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
+    replacement: "return event.altKey;",
+  },
+];
+
+function sameLengthTrueExpression(length) {
+  if (length < 4) throw new Error("replacement target is too short");
+  // Keep generated bundle offsets stable so the shipped source maps remain valid.
+  return `(!0${" ".repeat(length - 4)})`;
+}
+
+function patchXtermSource(source, patch) {
+  const replacement = patch.preserveLength
+    ? sameLengthTrueExpression(patch.original.length)
+    : patch.replacement;
+  if (!replacement) throw new Error(`missing replacement for ${patch.file}`);
+
+  const originalCount = source.split(patch.original).length - 1;
+  const patchedCount = source.split(replacement).length - 1;
+  if (originalCount === 1 && patchedCount === 0) {
+    return { source: source.replace(patch.original, replacement), changed: true };
+  }
+  if (originalCount === 0 && patchedCount === 1) {
+    return { source, changed: false };
+  }
+  throw new Error(
+    `${patch.file}: expected exactly one original or patched selection predicate ` +
+      `(original=${originalCount}, patched=${patchedCount})`,
+  );
+}
+
+function patchInstalledXterm(root = process.cwd()) {
+  const packageJsonPath = path.resolve(root, "node_modules/@xterm/xterm/package.json");
+  const version = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version;
+  if (version !== EXPECTED_XTERM_VERSION) {
+    throw new Error(
+      `unsupported @xterm/xterm version ${version}; expected ${EXPECTED_XTERM_VERSION}`,
+    );
+  }
+
+  let changed = 0;
+  for (const patch of PATCHES) {
+    const absolutePath = path.resolve(root, patch.file);
+    const source = fs.readFileSync(absolutePath, "utf8");
+    const result = patchXtermSource(source, patch);
+    if (result.changed) {
+      fs.writeFileSync(absolutePath, result.source);
+      changed++;
+    }
+  }
+  return { changed, checked: PATCHES.length, version };
+}
+
+if (require.main === module) {
+  try {
+    const result = patchInstalledXterm();
+    console.log(
+      `[patch-xterm-macos-column-selection] version=${result.version} ` +
+        `changed=${result.changed} checked=${result.checked}`,
+    );
+  } catch (error) {
+    console.error(`[patch-xterm-macos-column-selection] ERROR: ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+
+module.exports = {
+  EXPECTED_XTERM_VERSION,
+  PATCHES,
+  patchInstalledXterm,
+  patchXtermSource,
+  sameLengthTrueExpression,
+};
