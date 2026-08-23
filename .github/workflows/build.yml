@@ -71,6 +71,7 @@ on:
       - "scripts/linux/**"
       - "scripts/mosh-extra-resources.cjs"
       - "scripts/nodePtyConptyPatch.cjs"
+      - "scripts/patch-xterm-macos-column-selection.cjs"
       - "scripts/patch-xterm-webgl-atlas.cjs"
       - "scripts/patch-xterm-macos-column-selection.cjs"
       - "scripts/rebuildPatchedNodePty.cjs"

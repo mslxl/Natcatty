@@ -1,10 +1,12 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
   PATCHES,
+  invalidateViteCache,
   patchXtermSource,
   replacementForPatch,
   sameLengthExpression,
@@ -53,4 +55,19 @@ test("fails closed when a generated-bundle replacement would shift offsets", () 
     () => sameLengthExpression("replacement is longer", 4),
     /replacement expression is too long/,
   );
+});
+
+test("invalidates Vite's optimized dependency cache after patching xterm", () => {
+  const calls = [];
+  const cachePath = invalidateViteCache("/repo", {
+    rmSync(target, options) {
+      calls.push({ target, options });
+    },
+  });
+
+  assert.equal(cachePath, path.resolve("/repo/node_modules/.vite"));
+  assert.deepEqual(calls, [{
+    target: cachePath,
+    options: { recursive: true, force: true },
+  }]);
 });

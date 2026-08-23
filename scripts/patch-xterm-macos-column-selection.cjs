@@ -87,6 +87,16 @@ function patchXtermSource(source, patch) {
   );
 }
 
+/**
+ * @param {string} root
+ * @param {Pick<typeof fs, "rmSync">} fsImpl
+ */
+function invalidateViteCache(root = process.cwd(), fsImpl = fs) {
+  const cachePath = path.resolve(root, "node_modules/.vite");
+  fsImpl.rmSync(cachePath, { recursive: true, force: true });
+  return cachePath;
+}
+
 function patchInstalledXterm(root = process.cwd()) {
   const packageJsonPath = path.resolve(root, "node_modules/@xterm/xterm/package.json");
   const version = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version;
@@ -106,7 +116,8 @@ function patchInstalledXterm(root = process.cwd()) {
       changed++;
     }
   }
-  return { changed, checked: PATCHES.length, version };
+  const viteCachePath = invalidateViteCache(root);
+  return { changed, checked: PATCHES.length, version, viteCachePath };
 }
 
 if (require.main === module) {
@@ -114,7 +125,7 @@ if (require.main === module) {
     const result = patchInstalledXterm();
     console.log(
       `[patch-xterm-macos-column-selection] version=${result.version} ` +
-        `changed=${result.changed} checked=${result.checked}`,
+        `changed=${result.changed} checked=${result.checked} vite-cache=invalidated`,
     );
   } catch (error) {
     console.error(`[patch-xterm-macos-column-selection] ERROR: ${error.message}`);
@@ -125,6 +136,7 @@ if (require.main === module) {
 module.exports = {
   EXPECTED_XTERM_VERSION,
   PATCHES,
+  invalidateViteCache,
   patchInstalledXterm,
   patchXtermSource,
   replacementForPatch,
