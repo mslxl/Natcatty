@@ -55,7 +55,7 @@ import { collectSessionIds } from '../../domain/workspace';
 import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
-import { resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
+import { isPrimaryModifierWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
 import type { SyncPayload } from '../../domain/sync';
 import { applySyncPayload, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
 import {
@@ -90,7 +90,7 @@ import { isScriptSnippet } from '../../domain/snippetScript.ts';
 import { collectSnippetDeleteIds } from '../../domain/snippetSelection.ts';
 import { shouldOpenLocalTerminalOnStartup, resolveStartupLandingSetting } from '../../domain/startupLanding';
 import { useAppStartupEffects } from './useAppStartupEffects';
-import { handleTrayJumpToSessionImpl, handleTrayTogglePortForwardImpl, handleTrayPanelConnectImpl, handleTrayPanelConnectRequestImpl, flushQueuedTrayPanelConnectHostsImpl, handleGlobalHotkeyKeyDownImpl, handleEscapeKeyDownImpl, handleKeyboardInteractiveSubmitImpl, handleKeyboardInteractiveCancelImpl, handlePassphraseSubmitImpl, handlePassphraseCancelImpl, handlePassphraseSkipImpl, createLocalTerminalWithCurrentShellImpl, splitSessionWithCurrentShellImpl, copySessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, copySessionToNewWindowWithCurrentShellImpl, confirmIfBusyLocalTerminalImpl, closeTabsBatchImpl, executeHotkeyActionImpl, handleCreateLocalTerminalImpl, handleConnectToHostImpl, handleTerminalDataCaptureImpl, hasMultipleProtocolsImpl, handleHostConnectWithProtocolCheckImpl, handleProtocolSelectImpl, handleRootContextMenuImpl } from './AppHandlers';
+import { handleTrayJumpToSessionImpl, handleTrayTogglePortForwardImpl, handleTrayPanelConnectImpl, handleTrayPanelConnectRequestImpl, flushQueuedTrayPanelConnectHostsImpl, handleGlobalHotkeyKeyDownImpl, handleEscapeKeyDownImpl, handleKeyboardInteractiveSubmitImpl, handleKeyboardInteractiveCancelImpl, handlePassphraseSubmitImpl, handlePassphraseCancelImpl, handlePassphraseSkipImpl, createLocalTerminalWithCurrentShellImpl, splitSessionWithCurrentShellImpl, copySessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, copySessionToNewWindowWithCurrentShellImpl, confirmIfBusyLocalTerminalImpl, closeTabsBatchImpl, executeHotkeyActionImpl, handleCreateLocalTerminalImpl, handleConnectToHostImpl, handleTerminalDataCaptureImpl, hasMultipleProtocolsImpl, handleHostConnectWithProtocolCheckImpl, handleProtocolSelectImpl, handleRootContextMenuImpl, markForwardedNativeShortcutEvent } from './AppHandlers';
 
 type OpenSessionInNewWindowPayload = {
   title?: string;
@@ -1096,10 +1096,6 @@ export function AppSideEffects() {
     const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][data-state="open"]'));
     const topmostOpenDialog = openDialogs[openDialogs.length - 1] ?? null;
     const topmostDialogClose = topmostOpenDialog?.querySelector<HTMLElement>('[data-dialog-close="true"]');
-    if (topmostDialogClose) {
-      topmostDialogClose.click();
-      return;
-    }
 
     const intent = resolveWindowCommandCloseIntent({
       activeTabId: activeTabStore.getActiveTabId(),
@@ -1108,7 +1104,28 @@ export function AppSideEffects() {
       workspaceIds: workspaces.map((workspace) => workspace.id),
       logViewIds: logViews.map((logView) => logView.id),
       pluginViewTabIds: pluginViewTabs.map((tab) => tab.id),
+      hasOpenDialog: Boolean(topmostDialogClose),
+      closeTabShortcutEnabled: isPrimaryModifierWBinding(closeTabKeyStr, matchesKeyBinding, true),
     });
+
+    if (intent.kind === 'forwardShortcut') {
+      // The native macOS menu accelerator consumed the original key event.
+      // Re-dispatch it so a freed Cmd+W can still be assigned to another action.
+      const forwardedEvent = markForwardedNativeShortcutEvent(new KeyboardEvent('keydown', {
+        key: 'w',
+        code: 'KeyW',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+      (document.activeElement ?? window).dispatchEvent(forwardedEvent);
+      return;
+    }
+
+    if (intent.kind === 'closeDialog') {
+      topmostDialogClose?.click();
+      return;
+    }
 
     if (intent.kind === 'closeTab') {
       executeHotkeyAction('closeTab', new KeyboardEvent('keydown', { key: 'w', metaKey: true }));
@@ -1121,7 +1138,7 @@ export function AppSideEffects() {
     }
 
     await netcattyBridge.get()?.windowClose?.();
-  }, [closeLogView, editorTabs, executeHotkeyAction, logViews, pluginViewTabs, sessions, workspaces]);
+  }, [closeLogView, closeTabKeyStr, editorTabs, executeHotkeyAction, logViews, pluginViewTabs, sessions, workspaces]);
 
   useEffect(() => {
     // Cmd/Ctrl+W from the app menu arrives via IPC, not the keydown listener.

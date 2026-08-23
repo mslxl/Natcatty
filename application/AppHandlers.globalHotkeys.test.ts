@@ -6,6 +6,7 @@ import {
   getLogHostVisualSnapshot,
   handleEscapeKeyDownImpl,
   handleGlobalHotkeyKeyDownImpl,
+  markForwardedNativeShortcutEvent,
 } from './app/AppHandlers.ts';
 import { matchesKeyBinding } from '../domain/models.ts';
 import { DEFAULT_KEY_BINDINGS } from '../domain/models/keyBindings.ts';
@@ -32,6 +33,14 @@ class FakeHTMLElement {
 
   hasAttribute(name: string): boolean {
     return name === 'data-session-id';
+  }
+}
+
+class FakeMonacoHTMLElement extends FakeHTMLElement {
+  tagName = 'TEXTAREA';
+
+  closest(selector: string): FakeMonacoHTMLElement | null {
+    return selector.includes('monaco') ? this : null;
   }
 }
 
@@ -147,6 +156,48 @@ test('global hotkey handler magnifies panes from focused form inputs', () => {
   );
 
   assert.deepEqual(handledActions, ['togglePaneZoom']);
+});
+
+test('forwarded native shortcut can run a reassigned global action from Monaco', () => {
+  const target = new FakeMonacoHTMLElement();
+  const handledActions: string[] = [];
+  let prevented = false;
+  const event = markForwardedNativeShortcutEvent({
+    key: 'w',
+    code: 'KeyW',
+    ctrlKey: false,
+    metaKey: true,
+    altKey: false,
+    shiftKey: false,
+    target,
+    composedPath: () => [target],
+    preventDefault: () => {
+      prevented = true;
+    },
+    stopPropagation: () => {},
+  } as unknown as KeyboardEvent);
+  const keyBindings = DEFAULT_KEY_BINDINGS.map((binding) => {
+    if (binding.action === 'closeTab') return { ...binding, mac: 'Disabled' };
+    if (binding.action === 'newTab') return { ...binding, mac: '⌘ + W' };
+    return binding;
+  });
+
+  handleGlobalHotkeyKeyDownImpl(
+    () => ({
+      HOTKEY_DEBUG: false,
+      closeTabKeyStr: 'Disabled',
+      executeHotkeyAction: (action: string) => {
+        handledActions.push(action);
+      },
+      hotkeyScheme: 'mac',
+      keyBindings,
+      matchesKeyBinding,
+    }),
+    event,
+  );
+
+  assert.deepEqual(handledActions, ['newTab']);
+  assert.equal(prevented, true);
 });
 
 test('quick switch hotkey toggles the quick switcher open state', () => {
