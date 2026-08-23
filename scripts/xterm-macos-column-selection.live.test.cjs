@@ -150,7 +150,9 @@ if (!process.versions.electron) {
     );
     assert.equal(option.selection, expectedColumn, `Option drag must select columns: ${JSON.stringify(option)}`);
     assert.equal(remote.selection, "", `remote drag must not create a local selection: ${JSON.stringify(remote)}`);
-    assert.match(remote.data, /\x1b\[</, `remote drag must emit mouse reports: ${JSON.stringify(remote)}`);
+    assert.match(remote.data, /\x1b\[<0;\d+;\d+M/, `remote drag must report mouse down: ${JSON.stringify(remote)}`);
+    assert.match(remote.data, /\x1b\[<32;\d+;\d+M/, `remote drag must report mouse movement: ${JSON.stringify(remote)}`);
+    assert.match(remote.data, /\x1b\[<0;\d+;\d+m/, `remote drag must report mouse up: ${JSON.stringify(remote)}`);
     assert.equal(
       remoteOption.selection,
       expectedColumn,
