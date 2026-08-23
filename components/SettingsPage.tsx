@@ -25,6 +25,8 @@ import { useExternalMcpGrantPersister } from "./ai/useExternalMcpGrantPersister"
 import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate";
 import { usePluginContributions } from "../application/state/usePluginContributions";
 import { PluginContributionHost } from "./plugins/PluginContributionHost";
+import { matchesKeyBinding } from "../domain/models";
+import { isMacCommandWBinding } from "../application/state/windowCommandClose";
 
 const LazySettingsApplicationTab = lazy(() => import("./SettingsApplicationTab"));
 const LazySettingsAppearanceTab = lazy(() => import("./settings/tabs/SettingsAppearanceTab"));
@@ -314,6 +316,13 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
     const [activeTab, setActiveTab] = useState("application");
     const [mountedTabs, setMountedTabs] = useState(() => new Set(["application"]));
     const { available: pluginRuntimeAvailable } = usePluginContributions();
+    const closeTabKeyStr = useMemo(() => {
+        if (settings.hotkeyScheme === "disabled") return null;
+        const binding = settings.keyBindings.find((item) => item.action === "closeTab");
+        if (!binding) return null;
+        return settings.hotkeyScheme === "mac" ? binding.mac : binding.pc;
+    }, [settings.hotkeyScheme, settings.keyBindings]);
+    const nativeCommandWClosesSettings = isMacCommandWBinding(closeTabKeyStr, matchesKeyBinding);
 
     useEffect(() => {
         notifyRendererReady();
@@ -338,10 +347,11 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
 
     useEffect(() => {
         const unsubscribe = onWindowCommandCloseRequested(() => {
+            if (!nativeCommandWClosesSettings) return;
             void closeSettingsWindow();
         });
         return () => unsubscribe?.();
-    }, [closeSettingsWindow, onWindowCommandCloseRequested]);
+    }, [closeSettingsWindow, nativeCommandWClosesSettings, onWindowCommandCloseRequested]);
 
     useEffect(() => {
         setMountedTabs((prev) => {

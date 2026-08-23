@@ -1,7 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { resolveWindowCommandCloseIntent } from "./windowCommandClose.ts";
+import { matchesKeyBinding } from "../../domain/models.ts";
+import { isMacCommandWBinding, resolveWindowCommandCloseIntent } from "./windowCommandClose.ts";
+
+test("native Cmd+W only belongs to the matching macOS close-tab binding", () => {
+  assert.equal(isMacCommandWBinding("⌘ + W", matchesKeyBinding), true);
+  assert.equal(isMacCommandWBinding("⌘ + E", matchesKeyBinding), false);
+  assert.equal(isMacCommandWBinding("Disabled", matchesKeyBinding), false);
+  assert.equal(isMacCommandWBinding(null, matchesKeyBinding), false);
+});
 
 test("Cmd+W closes the active closable tab first", () => {
   assert.deepEqual(

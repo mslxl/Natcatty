@@ -5,6 +5,22 @@ export type WindowCommandCloseIntent =
   | { kind: 'closeLogView'; tabId: string }
   | { kind: 'closeWindow' };
 
+type KeyBindingMatcher = (event: KeyboardEvent, binding: string, isMac: boolean) => boolean;
+
+export function isMacCommandWBinding(binding: string | null, matcher: KeyBindingMatcher): boolean {
+  return Boolean(
+    binding
+    && matcher({
+      key: 'w',
+      code: 'KeyW',
+      metaKey: true,
+      ctrlKey: false,
+      altKey: false,
+      shiftKey: false,
+    } as KeyboardEvent, binding, true),
+  );
+}
+
 interface ResolveWindowCommandCloseIntentInput {
   activeTabId: string | null;
   editorTabIds: string[];

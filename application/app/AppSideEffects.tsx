@@ -55,7 +55,7 @@ import { collectSessionIds } from '../../domain/workspace';
 import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
-import { resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
+import { isMacCommandWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
 import type { SyncPayload } from '../../domain/sync';
 import { applySyncPayload, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
 import {
@@ -1105,23 +1105,13 @@ export function AppSideEffects() {
       logViewIds: logViews.map((logView) => logView.id),
       pluginViewTabIds: pluginViewTabs.map((tab) => tab.id),
       hasOpenDialog: Boolean(topmostDialogClose),
-      closeTabShortcutEnabled: Boolean(
-        closeTabKeyStr
-        && matchesKeyBinding({
-          key: 'w',
-          code: 'KeyW',
-          metaKey: true,
-          ctrlKey: false,
-          altKey: false,
-          shiftKey: false,
-        } as KeyboardEvent, closeTabKeyStr, true),
-      ),
+      closeTabShortcutEnabled: isMacCommandWBinding(closeTabKeyStr, matchesKeyBinding),
     });
 
     if (intent.kind === 'forwardShortcut') {
       // The native macOS menu accelerator consumed the original key event.
       // Re-dispatch it so a freed Cmd+W can still be assigned to another action.
-      window.dispatchEvent(new KeyboardEvent('keydown', {
+      (document.activeElement ?? window).dispatchEvent(new KeyboardEvent('keydown', {
         key: 'w',
         code: 'KeyW',
         metaKey: true,
