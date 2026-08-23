@@ -7,17 +7,21 @@ export type WindowCommandCloseIntent =
 
 type KeyBindingMatcher = (event: KeyboardEvent, binding: string, isMac: boolean) => boolean;
 
-export function isMacCommandWBinding(binding: string | null, matcher: KeyBindingMatcher): boolean {
+export function isPrimaryModifierWBinding(
+  binding: string | null,
+  matcher: KeyBindingMatcher,
+  isMac: boolean,
+): boolean {
   return Boolean(
     binding
     && matcher({
       key: 'w',
       code: 'KeyW',
-      metaKey: true,
-      ctrlKey: false,
+      metaKey: isMac,
+      ctrlKey: !isMac,
       altKey: false,
       shiftKey: false,
-    } as KeyboardEvent, binding, true),
+    } as KeyboardEvent, binding, isMac),
   );
 }
 

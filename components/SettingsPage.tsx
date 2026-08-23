@@ -26,7 +26,7 @@ import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate
 import { usePluginContributions } from "../application/state/usePluginContributions";
 import { PluginContributionHost } from "./plugins/PluginContributionHost";
 import { matchesKeyBinding } from "../domain/models";
-import { isMacCommandWBinding } from "../application/state/windowCommandClose";
+import { isPrimaryModifierWBinding } from "../application/state/windowCommandClose";
 
 const LazySettingsApplicationTab = lazy(() => import("./SettingsApplicationTab"));
 const LazySettingsAppearanceTab = lazy(() => import("./settings/tabs/SettingsAppearanceTab"));
@@ -322,7 +322,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
         if (!binding) return null;
         return settings.hotkeyScheme === "mac" ? binding.mac : binding.pc;
     }, [settings.hotkeyScheme, settings.keyBindings]);
-    const nativeCommandWClosesSettings = isMacCommandWBinding(closeTabKeyStr, matchesKeyBinding);
+    const nativeCommandWClosesSettings = isPrimaryModifierWBinding(closeTabKeyStr, matchesKeyBinding, true);
 
     useEffect(() => {
         notifyRendererReady();

@@ -6,10 +6,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   canPromoteTextEditor,
   getTextEditorContentStats,
+  isTextEditorCommandWEnabled,
   isTextEditorReadOnly,
   TextEditorPromoteButton,
 } from "./TextEditorPane.tsx";
 import { TooltipProvider } from "../ui/tooltip.tsx";
+import { DEFAULT_KEY_BINDINGS } from "../../domain/models/keyBindings.ts";
 
 const wrap = (child: React.ReactElement) =>
   React.createElement(TooltipProvider, null, child);
@@ -48,4 +50,16 @@ test("renders the promote button disabled while a save is running", () => {
 test("counts editor content without allocating line arrays", () => {
   assert.deepEqual(getTextEditorContentStats(""), { lineCount: 1, charCount: 0 });
   assert.deepEqual(getTextEditorContentStats("one\ntwo\n"), { lineCount: 3, charCount: 8 });
+});
+
+test("Monaco Cmd+W follows the current close-tab binding", () => {
+  const closeTabBinding = DEFAULT_KEY_BINDINGS.find((binding) => binding.action === "closeTab");
+  assert.ok(closeTabBinding);
+
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "mac", closeTabBinding }), true);
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "disabled", closeTabBinding }), false);
+  assert.equal(isTextEditorCommandWEnabled({
+    hotkeyScheme: "mac",
+    closeTabBinding: { ...closeTabBinding, mac: "⌘ + E" },
+  }), false);
 });

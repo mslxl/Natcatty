@@ -55,7 +55,7 @@ import { collectSessionIds } from '../../domain/workspace';
 import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
-import { isMacCommandWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
+import { isPrimaryModifierWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
 import type { SyncPayload } from '../../domain/sync';
 import { applySyncPayload, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
 import {
@@ -1105,7 +1105,7 @@ export function AppSideEffects() {
       logViewIds: logViews.map((logView) => logView.id),
       pluginViewTabIds: pluginViewTabs.map((tab) => tab.id),
       hasOpenDialog: Boolean(topmostDialogClose),
-      closeTabShortcutEnabled: isMacCommandWBinding(closeTabKeyStr, matchesKeyBinding),
+      closeTabShortcutEnabled: isPrimaryModifierWBinding(closeTabKeyStr, matchesKeyBinding, true),
     });
 
     if (intent.kind === 'forwardShortcut') {
