@@ -21,6 +21,7 @@ const monacoBasePath = viteEnv.DEV
   ? './node_modules/monaco-editor/min/vs'
   : `${viteEnv.BASE_URL}monaco/vs`;
 loader.config({ paths: { vs: monacoBasePath } });
+const isMacPlatform = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { useClipboardBackend } from '../../application/state/useClipboardBackend';
@@ -120,14 +121,15 @@ export function getTextEditorContentStats(content: string): { lineCount: number;
 export function isTextEditorCommandWEnabled({
   hotkeyScheme,
   closeTabBinding,
+  isMac,
 }: {
   hotkeyScheme: HotkeyScheme;
   closeTabBinding?: KeyBinding;
+  isMac: boolean;
 }): boolean {
   if (hotkeyScheme === 'disabled' || !closeTabBinding) return false;
-  const isMac = hotkeyScheme === 'mac';
   return isPrimaryModifierWBinding(
-    isMac ? closeTabBinding.mac : closeTabBinding.pc,
+    hotkeyScheme === 'mac' ? closeTabBinding.mac : closeTabBinding.pc,
     matchesKeyBinding,
     isMac,
   );
@@ -191,7 +193,11 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
     () => keyBindings.find((binding) => binding.action === 'closeTab'),
     [keyBindings],
   );
-  closeTabCommandWEnabledRef.current = isTextEditorCommandWEnabled({ hotkeyScheme, closeTabBinding });
+  closeTabCommandWEnabledRef.current = isTextEditorCommandWEnabled({
+    hotkeyScheme,
+    closeTabBinding,
+    isMac: isMacPlatform,
+  });
 
   const handleSave = useCallback(() => {
     if (saving) return;

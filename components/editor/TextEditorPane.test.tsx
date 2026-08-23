@@ -56,10 +56,14 @@ test("Monaco Cmd+W follows the current close-tab binding", () => {
   const closeTabBinding = DEFAULT_KEY_BINDINGS.find((binding) => binding.action === "closeTab");
   assert.ok(closeTabBinding);
 
-  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "mac", closeTabBinding }), true);
-  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "disabled", closeTabBinding }), false);
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "mac", closeTabBinding, isMac: true }), true);
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "pc", closeTabBinding, isMac: false }), true);
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "pc", closeTabBinding, isMac: true }), false);
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "mac", closeTabBinding, isMac: false }), false);
+  assert.equal(isTextEditorCommandWEnabled({ hotkeyScheme: "disabled", closeTabBinding, isMac: true }), false);
   assert.equal(isTextEditorCommandWEnabled({
     hotkeyScheme: "mac",
     closeTabBinding: { ...closeTabBinding, mac: "⌘ + E" },
+    isMac: true,
   }), false);
 });
