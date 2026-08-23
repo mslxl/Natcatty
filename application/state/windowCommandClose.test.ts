@@ -16,6 +16,92 @@ test("Cmd+W closes the active closable tab first", () => {
   );
 });
 
+test("disabled close-tab binding forwards native Cmd+W to other custom shortcuts", () => {
+  assert.deepEqual(
+    resolveWindowCommandCloseIntent({
+      activeTabId: "s1",
+      editorTabIds: [],
+      sessionIds: ["s1"],
+      workspaceIds: [],
+      logViewIds: [],
+      closeTabShortcutEnabled: false,
+    }),
+    { kind: "forwardShortcut" },
+  );
+});
+
+test("disabled close-tab binding forwards native Cmd+W while a dialog is open", () => {
+  assert.deepEqual(
+    resolveWindowCommandCloseIntent({
+      activeTabId: "s1",
+      editorTabIds: [],
+      sessionIds: ["s1"],
+      workspaceIds: [],
+      logViewIds: [],
+      closeTabShortcutEnabled: false,
+      hasOpenDialog: true,
+    }),
+    { kind: "forwardShortcut" },
+  );
+});
+
+test("enabled close-tab binding closes the topmost dialog before the active tab", () => {
+  assert.deepEqual(
+    resolveWindowCommandCloseIntent({
+      activeTabId: "s1",
+      editorTabIds: [],
+      sessionIds: ["s1"],
+      workspaceIds: [],
+      logViewIds: [],
+      closeTabShortcutEnabled: true,
+      hasOpenDialog: true,
+    }),
+    { kind: "closeDialog" },
+  );
+});
+
+test("disabled close-tab binding also forwards native Cmd+W on a log tab", () => {
+  assert.deepEqual(
+    resolveWindowCommandCloseIntent({
+      activeTabId: "log-1",
+      editorTabIds: [],
+      sessionIds: [],
+      workspaceIds: [],
+      logViewIds: ["log-1"],
+      closeTabShortcutEnabled: false,
+    }),
+    { kind: "forwardShortcut" },
+  );
+});
+
+test("disabled close-tab binding forwards native Cmd+W instead of closing the window", () => {
+  assert.deepEqual(
+    resolveWindowCommandCloseIntent({
+      activeTabId: "vault",
+      editorTabIds: [],
+      sessionIds: [],
+      workspaceIds: [],
+      logViewIds: [],
+      closeTabShortcutEnabled: false,
+    }),
+    { kind: "forwardShortcut" },
+  );
+});
+
+test("disabled close-tab binding forwards native Cmd+W when nothing is active", () => {
+  assert.deepEqual(
+    resolveWindowCommandCloseIntent({
+      activeTabId: null,
+      editorTabIds: [],
+      sessionIds: [],
+      workspaceIds: [],
+      logViewIds: [],
+      closeTabShortcutEnabled: false,
+    }),
+    { kind: "forwardShortcut" },
+  );
+});
+
 test("Cmd+W on a log view closes the log view", () => {
   assert.deepEqual(
     resolveWindowCommandCloseIntent({

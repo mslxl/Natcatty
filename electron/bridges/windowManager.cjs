@@ -1264,7 +1264,7 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage, options = {}
         ? menuDeps.setAppLockWindowTitle
         : undefined),
   };
-  const closeFocusedWindow = (_menuItem, browserWindow) => {
+  const closeFocusedWindow = (_menuItem, browserWindow, event) => {
     // Block native Close while app lock is visible so popups/sessions are not
     // torn down behind the overlay (Codex P2 on 79603979).
     try {
@@ -1275,6 +1275,14 @@ function buildAppMenu(Menu, app, isMac, language = currentLanguage, options = {}
     // 只有主窗口/设置窗口会接收 command-close；其他 BrowserWindow 直接关闭。
     if (browserWindow && !isMainWindow(browserWindow) && browserWindow !== settingsWindow) {
       closeBrowserWindow(browserWindow);
+      return;
+    }
+
+    // Selecting Close Window with the mouse remains an explicit window-close
+    // action. Only the menu accelerator is routed through the configurable
+    // close-tab shortcut in the renderer.
+    if (event?.triggeredByAccelerator === false) {
+      closeBrowserWindow(browserWindow || getMainWindow());
       return;
     }
 

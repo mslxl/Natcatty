@@ -1,4 +1,6 @@
 export type WindowCommandCloseIntent =
+  | { kind: 'forwardShortcut' }
+  | { kind: 'closeDialog' }
   | { kind: 'closeTab' }
   | { kind: 'closeLogView'; tabId: string }
   | { kind: 'closeWindow' };
@@ -10,6 +12,8 @@ interface ResolveWindowCommandCloseIntentInput {
   workspaceIds: string[];
   logViewIds: string[];
   pluginViewTabIds?: string[];
+  closeTabShortcutEnabled?: boolean;
+  hasOpenDialog?: boolean;
 }
 
 export function resolveWindowCommandCloseIntent({
@@ -19,7 +23,17 @@ export function resolveWindowCommandCloseIntent({
   workspaceIds,
   logViewIds,
   pluginViewTabIds = [],
+  closeTabShortcutEnabled = true,
+  hasOpenDialog = false,
 }: ResolveWindowCommandCloseIntentInput): WindowCommandCloseIntent {
+  if (!closeTabShortcutEnabled) {
+    return { kind: 'forwardShortcut' };
+  }
+
+  if (hasOpenDialog) {
+    return { kind: 'closeDialog' };
+  }
+
   if (!activeTabId) {
     return { kind: 'closeWindow' };
   }

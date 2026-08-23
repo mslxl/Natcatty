@@ -1096,10 +1096,6 @@ export function AppSideEffects() {
     const openDialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"][data-state="open"]'));
     const topmostOpenDialog = openDialogs[openDialogs.length - 1] ?? null;
     const topmostDialogClose = topmostOpenDialog?.querySelector<HTMLElement>('[data-dialog-close="true"]');
-    if (topmostDialogClose) {
-      topmostDialogClose.click();
-      return;
-    }
 
     const intent = resolveWindowCommandCloseIntent({
       activeTabId: activeTabStore.getActiveTabId(),
@@ -1108,7 +1104,37 @@ export function AppSideEffects() {
       workspaceIds: workspaces.map((workspace) => workspace.id),
       logViewIds: logViews.map((logView) => logView.id),
       pluginViewTabIds: pluginViewTabs.map((tab) => tab.id),
+      hasOpenDialog: Boolean(topmostDialogClose),
+      closeTabShortcutEnabled: Boolean(
+        closeTabKeyStr
+        && matchesKeyBinding({
+          key: 'w',
+          code: 'KeyW',
+          metaKey: true,
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: false,
+        } as KeyboardEvent, closeTabKeyStr, true),
+      ),
     });
+
+    if (intent.kind === 'forwardShortcut') {
+      // The native macOS menu accelerator consumed the original key event.
+      // Re-dispatch it so a freed Cmd+W can still be assigned to another action.
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'w',
+        code: 'KeyW',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+      return;
+    }
+
+    if (intent.kind === 'closeDialog') {
+      topmostDialogClose?.click();
+      return;
+    }
 
     if (intent.kind === 'closeTab') {
       executeHotkeyAction('closeTab', new KeyboardEvent('keydown', { key: 'w', metaKey: true }));
@@ -1121,7 +1147,7 @@ export function AppSideEffects() {
     }
 
     await netcattyBridge.get()?.windowClose?.();
-  }, [closeLogView, editorTabs, executeHotkeyAction, logViews, pluginViewTabs, sessions, workspaces]);
+  }, [closeLogView, closeTabKeyStr, editorTabs, executeHotkeyAction, logViews, pluginViewTabs, sessions, workspaces]);
 
   useEffect(() => {
     // Cmd/Ctrl+W from the app menu arrives via IPC, not the keydown listener.
