@@ -40,14 +40,14 @@ export const NoteOutline: React.FC<NoteOutlineProps> = ({
       <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border/80 shrink-0">
         <div className="flex items-center gap-2 text-xs font-semibold text-foreground uppercase tracking-wider">
           <ListTree size={14} className="text-primary" />
-          <span>大纲目录 ({headings.length})</span>
+          <span>{t("notes.outline.titleWithCount", { count: headings.length })}</span>
         </div>
         {onClose && (
           <button
             type="button"
             className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onClick={onClose}
-            title={t("common.close") || "关闭"}
+            title={t("common.close")}
           >
             <X size={14} />
           </button>
@@ -58,9 +58,9 @@ export const NoteOutline: React.FC<NoteOutlineProps> = ({
         {headings.length === 0 ? (
           <div className="py-8 text-center text-xs text-muted-foreground px-4">
             <Hash size={24} className="mx-auto mb-2 opacity-30" />
-            <p>暂无标题大纲</p>
+            <p>{t("notes.outline.empty")}</p>
             <p className="mt-1 text-[11px] opacity-70">
-              在 Markdown 中使用 #、## 编写各级标题
+              {t("notes.outline.emptyHint")}
             </p>
           </div>
         ) : (

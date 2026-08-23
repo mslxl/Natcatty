@@ -1161,7 +1161,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const renderNoteActions = (note: VaultNote, mode: "dropdown" | "context", closeMenu?: () => void) => {
     const actions = [
       {
-        label: note.isPinned ? "取消置顶" : "置顶笔记",
+        label: note.isPinned ? t("notes.action.unpin") : t("notes.action.pin"),
         action: () => togglePinNoteById(note.id),
       },
       {
@@ -1802,7 +1802,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       type="button"
                       variant="ghost"
                       size="icon"
-                      aria-label="大纲目录"
+                      aria-label={t("notes.outline.title")}
                       className={cn(
                         "app-no-drag h-8 w-8 shrink-0 rounded-md p-0 transition-colors hover:bg-secondary/70",
                         showOutline ? "bg-secondary text-primary font-medium" : "text-muted-foreground hover:text-foreground",
@@ -1812,7 +1812,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       <ListTree size={16} />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">大纲目录</TooltipContent>
+                  <TooltipContent side="bottom">{t("notes.outline.title")}</TooltipContent>
                 </Tooltip>
 
                 {/* Export Menu */}
@@ -1856,7 +1856,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       type="button"
                       className="p-0.5 rounded-full hover:bg-primary/20 text-primary/70 hover:text-primary transition-colors"
                       onClick={() => removeTagFromNote(selectedNoteView.id, tag)}
-                      title="移除标签"
+                      title={t("notes.tag.remove")}
                     >
                       <X size={10} />
                     </button>
@@ -1890,7 +1890,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                         setTagInputOpen(false);
                         setNewTagText("");
                       }}
-                      placeholder="标签名..."
+                      placeholder={t("notes.tag.placeholder")}
                       className="w-20 bg-transparent text-[11px] text-foreground outline-none placeholder:text-muted-foreground/60"
                     />
                   </div>
@@ -1901,7 +1901,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                     onClick={() => setTagInputOpen(true)}
                   >
                     <Plus size={11} />
-                    <span>添加标签</span>
+                    <span>{t("notes.tag.add")}</span>
                   </button>
                 )}
               </div>

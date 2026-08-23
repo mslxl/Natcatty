@@ -31,6 +31,7 @@ import {
 import React, { useMemo, useState } from "react";
 import { type MarkdownActionType } from "../../domain/notes";
 import { useAvailableFonts } from "../../application/state/fontStore";
+import { useI18n } from "../../application/i18n/I18nProvider";
 import type { ActiveTextFormats, NoteEditorMode } from "./InlineMarkdownEditor";
 import { EMPTY_ACTIVE_FORMATS } from "./InlineMarkdownEditor";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
@@ -68,6 +69,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   onChangeNoteCodeFontSize,
   activeFormats = EMPTY_ACTIVE_FORMATS,
 }) => {
+  const { t } = useI18n();
   const [fontSearch, setFontSearch] = useState("");
 
   // The font tool only controls code block / inline code fonts, so it lists
@@ -75,13 +77,13 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
   const availableSystemFonts = useAvailableFonts();
 
   const systemFontList = useMemo(() => {
-    const defaultOption = { label: "默认等宽字体 (Default)", value: "" };
+    const defaultOption = { label: t("notes.toolbar.defaultFont"), value: "" };
     const list = availableSystemFonts.map((f) => ({
       label: f.name,
       value: f.family,
     }));
     return [defaultOption, ...list];
-  }, [availableSystemFonts]);
+  }, [availableSystemFonts, t]);
 
   const filteredFonts = useMemo(() => {
     if (!fontSearch.trim()) return systemFontList;
@@ -117,10 +119,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               : "text-muted-foreground hover:text-foreground"
           }`}
           onClick={() => onChangeMode("edit")}
-          title="实时预览模式 (WYSIWYG)"
+          title={t("notes.toolbar.modeLiveTitle")}
         >
           <PencilLine size={13} />
-          <span className="hidden sm:inline">实时预览</span>
+          <span className="hidden sm:inline">{t("notes.toolbar.modeLive")}</span>
         </button>
 
         <button
@@ -132,10 +134,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               : "text-muted-foreground hover:text-foreground"
           }`}
           onClick={() => onChangeMode("source")}
-          title="源码模式 (Markdown 代码)"
+          title={t("notes.toolbar.modeSourceTitle")}
         >
           <SquareCode size={13} />
-          <span className="hidden sm:inline">源码模式</span>
+          <span className="hidden sm:inline">{t("notes.toolbar.modeSource")}</span>
         </button>
 
         <button
@@ -147,10 +149,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               : "text-muted-foreground hover:text-foreground"
           }`}
           onClick={() => onChangeMode("preview")}
-          title="阅读模式 (只读排版)"
+          title={t("notes.toolbar.modePreviewTitle")}
         >
           <Eye size={13} />
-          <span className="hidden sm:inline">阅读模式</span>
+          <span className="hidden sm:inline">{t("notes.toolbar.modePreview")}</span>
         </button>
       </div>
 
@@ -165,7 +167,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("undo")}
-            title="撤销 (Ctrl+Z)"
+            title={t("notes.toolbar.undo")}
           >
             <Undo2 size={14} />
           </button>
@@ -175,7 +177,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("redo")}
-            title="重做 (Ctrl+Y)"
+            title={t("notes.toolbar.redo")}
           >
             <Redo2 size={14} />
           </button>
@@ -188,7 +190,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               <button
                 type="button"
                 className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors shrink-0"
-                title="代码字体与排版设置"
+                title={t("notes.toolbar.typography")}
                 onMouseDown={(e) => e.preventDefault()}
               >
                 <Type size={14} />
@@ -197,8 +199,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             <DropdownContent align="start" className="w-64 p-2.5 space-y-2.5 z-50 text-xs shadow-lg">
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-[11px] font-medium text-muted-foreground">
-                  <span>自定义代码字体</span>
-                  <span className="text-[10px] opacity-70">共 {systemFontList.length} 款可用字体</span>
+                  <span>{t("notes.toolbar.customCodeFont")}</span>
+                  <span className="text-[10px] opacity-70">
+                    {t("notes.toolbar.fontsAvailable", { count: systemFontList.length })}
+                  </span>
                 </div>
 
                 {/* Search Bar */}
@@ -206,7 +210,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                   <Search size={12} className="absolute left-2 text-muted-foreground pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="搜索字体..."
+                    placeholder={t("notes.toolbar.searchFont")}
                     value={fontSearch}
                     onChange={(e) => setFontSearch(e.target.value)}
                     className="w-full pl-6 pr-2 py-1 rounded border border-border bg-background text-[11px] text-foreground outline-none focus:border-primary placeholder:text-muted-foreground/60"
@@ -216,7 +220,9 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 {/* Scrollable Font List */}
                 <div className="space-y-0.5 max-h-52 overflow-y-auto pr-1">
                   {filteredFonts.length === 0 ? (
-                    <div className="py-2 text-center text-muted-foreground text-[11px]">未找到匹配的等宽字体</div>
+                    <div className="py-2 text-center text-muted-foreground text-[11px]">
+                      {t("notes.toolbar.noFontsFound")}
+                    </div>
                   ) : (
                     filteredFonts.map((f) => (
                       <button
@@ -240,7 +246,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               </div>
 
               <div className="border-t border-border/60 pt-2">
-                <div className="text-[11px] font-medium text-muted-foreground mb-1">正文字号</div>
+                <div className="text-[11px] font-medium text-muted-foreground mb-1">{t("notes.toolbar.bodyFontSize")}</div>
                 <div className="flex flex-wrap gap-1">
                   {FONT_SIZES.map((sz) => (
                     <button
@@ -261,7 +267,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
               </div>
 
               <div className="border-t border-border/60 pt-2">
-                <div className="text-[11px] font-medium text-muted-foreground mb-1">代码字号</div>
+                <div className="text-[11px] font-medium text-muted-foreground mb-1">{t("notes.toolbar.codeFontSize")}</div>
                 <div className="flex flex-wrap gap-1">
                   {CODE_FONT_SIZES.map((sz) => (
                     <button
@@ -290,7 +296,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 type="button"
                 className="flex items-center gap-1 p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
                 onMouseDown={(e) => e.preventDefault()}
-                title="标题层级"
+                title={t("notes.toolbar.headingLevel")}
               >
                 <Heading size={14} />
               </button>
@@ -303,7 +309,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 onClick={() => onAction?.("h1")}
               >
                 <Heading1 size={14} className="text-primary" />
-                <span>一级标题</span>
+                <span>{t("notes.toolbar.h1")}</span>
               </button>
               <button
                 type="button"
@@ -312,7 +318,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 onClick={() => onAction?.("h2")}
               >
                 <Heading2 size={14} className="text-primary" />
-                <span>二级标题</span>
+                <span>{t("notes.toolbar.h2")}</span>
               </button>
               <button
                 type="button"
@@ -321,7 +327,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 onClick={() => onAction?.("h3")}
               >
                 <Heading3 size={14} className="text-primary" />
-                <span>三级标题</span>
+                <span>{t("notes.toolbar.h3")}</span>
               </button>
               <button
                 type="button"
@@ -330,7 +336,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
                 onClick={() => onAction?.("h4")}
               >
                 <Heading4 size={14} className="text-primary" />
-                <span>四级标题</span>
+                <span>{t("notes.toolbar.h4")}</span>
               </button>
             </DropdownContent>
           </Dropdown>
@@ -341,7 +347,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className={formatButtonClass(activeFormats.bold)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("bold")}
-            title="加粗 (Ctrl+B)"
+            title={t("notes.toolbar.bold")}
           >
             <Bold size={14} />
           </button>
@@ -351,7 +357,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className={formatButtonClass(activeFormats.italic)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("italic")}
-            title="斜体 (Ctrl+I)"
+            title={t("notes.toolbar.italic")}
           >
             <Italic size={14} />
           </button>
@@ -361,7 +367,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className={formatButtonClass(activeFormats.strikethrough)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("strikethrough")}
-            title="删除线"
+            title={t("notes.toolbar.strikethrough")}
           >
             <Strikethrough size={14} />
           </button>
@@ -371,7 +377,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className={formatButtonClass(activeFormats.underline)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("underline")}
-            title="下划线"
+            title={t("notes.toolbar.underline")}
           >
             <Underline size={14} />
           </button>
@@ -381,7 +387,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className={formatButtonClass(activeFormats.code)}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("code")}
-            title="行内代码"
+            title={t("notes.toolbar.inlineCode")}
           >
             <Code size={14} />
           </button>
@@ -394,7 +400,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("bullet")}
-            title="无序列表"
+            title={t("notes.toolbar.bulletList")}
           >
             <List size={14} />
           </button>
@@ -404,7 +410,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("number")}
-            title="有序列表"
+            title={t("notes.toolbar.orderedList")}
           >
             <ListOrdered size={14} />
           </button>
@@ -414,7 +420,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("task")}
-            title="待办任务清单"
+            title={t("notes.toolbar.taskList")}
           >
             <CheckSquare size={14} />
           </button>
@@ -427,7 +433,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("quote")}
-            title="引用块"
+            title={t("notes.toolbar.quote")}
           >
             <Quote size={14} />
           </button>
@@ -437,7 +443,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("codeblock")}
-            title="代码块"
+            title={t("notes.toolbar.codeBlock")}
           >
             <FileCode size={14} />
           </button>
@@ -447,7 +453,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("math")}
-            title="数学公式块 (LaTeX / Math)"
+            title={t("notes.toolbar.mathFormula")}
           >
             <Sigma size={14} />
           </button>
@@ -457,7 +463,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("table")}
-            title="插入表格"
+            title={t("notes.toolbar.table")}
           >
             <TableIcon size={14} />
           </button>
@@ -467,7 +473,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("divider")}
-            title="分割线"
+            title={t("notes.toolbar.divider")}
           >
             <Minus size={14} />
           </button>
@@ -477,7 +483,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("link")}
-            title="插入超链接"
+            title={t("notes.toolbar.link")}
           >
             <LinkIcon size={14} />
           </button>
@@ -487,7 +493,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
             className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => onAction?.("image")}
-            title="插入图片"
+            title={t("notes.toolbar.image")}
           >
             <ImageIcon size={14} />
           </button>

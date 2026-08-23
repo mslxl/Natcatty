@@ -52,7 +52,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(t("notes.exportSuccess") || "已导出 Markdown 文件");
+    toast.success(t("notes.export.toast.markdownSuccess"));
     setOpen(false);
   };
 
@@ -87,7 +87,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
     a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(t("notes.exportSuccess") || "已导出 HTML 文件");
+    toast.success(t("notes.export.toast.htmlSuccess"));
     setOpen(false);
   };
 
@@ -110,7 +110,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
     a.download = `netcatty-notes-backup-${new Date().toISOString().slice(0, 10)}.zip`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(t("notes.exportAllSuccess") || "已导出全部笔记备份 ZIP");
+    toast.success(t("notes.export.toast.zipSuccess"));
     setOpen(false);
   };
 
@@ -119,7 +119,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
       <button
         type="button"
         className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-        title={t("notes.export") || "导出与分享"}
+        title={t("notes.export.share")}
         onClick={() => setOpen((prev) => !prev)}
       >
         <Share2 size={16} />
@@ -130,7 +130,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
           {note && (
             <>
               <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                当前笔记
+                {t("notes.export.currentNote")}
               </div>
               <button
                 type="button"
@@ -138,7 +138,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
                 onClick={handleExportSingleMarkdown}
               >
                 <FileText size={14} className="text-primary" />
-                <span>导出为 Markdown (.md)</span>
+                <span>{t("notes.export.exportMarkdown")}</span>
               </button>
               <button
                 type="button"
@@ -146,7 +146,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
                 onClick={handleExportSingleHtml}
               >
                 <FileCode size={14} className="text-primary" />
-                <span>导出为 HTML (.html)</span>
+                <span>{t("notes.export.exportHtml")}</span>
               </button>
               <button
                 type="button"
@@ -154,14 +154,14 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
                 onClick={handleCopyMarkdown}
               >
                 <Copy size={14} className="text-muted-foreground" />
-                <span>复制 Markdown 源码</span>
+                <span>{t("notes.export.copyMarkdown")}</span>
               </button>
               <div className="my-1 border-t border-border" />
             </>
           )}
 
           <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-            全部笔记
+            {t("notes.export.allNotes")}
           </div>
           <button
             type="button"
@@ -170,7 +170,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
             disabled={!allNotes.length}
           >
             <Download size={14} className="text-emerald-500" />
-            <span>导出全部为 ZIP 压缩包</span>
+            <span>{t("notes.export.exportAllZip")}</span>
           </button>
         </div>
       )}

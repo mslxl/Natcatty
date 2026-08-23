@@ -168,14 +168,10 @@ test("note editor exposes preview and edit modes with a markdown toolbar in edit
   assert.doesNotMatch(source, /data-note-mode-switch/);
   assert.doesNotMatch(source, /absolute -top-9/);
   assert.match(managerSource, /data-note-title-row/);
-  assert.match(managerSource, /data-note-mode-switch/);
-  assert.match(managerSource, /Glasses/);
-  assert.match(managerSource, /PencilLine/);
-  assert.match(managerSource, /setNoteEditorMode\(\(currentMode\) => \(/);
-  assert.match(managerSource, /currentMode === "edit" \|\| currentMode === "live" \? "preview" : "edit"/);
+  assert.match(toolbarSource, /data-note-mode-switch="live"/);
+  assert.match(toolbarSource, /data-note-mode-switch="source"/);
+  assert.match(toolbarSource, /data-note-mode-switch="preview"/);
   assert.match(managerSource, /editorMode=\{noteEditorMode\}/);
-  assert.match(managerSource, /className="app-no-drag h-8 w-8 shrink-0 rounded-md p-0 text-muted-foreground transition-colors hover:bg-secondary\/70 hover:text-foreground"/);
-  assert.doesNotMatch(managerSource, /data-note-mode-switch[\s\S]{0,500}border/);
   assert.doesNotMatch(`${source}\n${managerSource}`, /role="tablist"|role="tab"|renderModeButton/);
   assert.doesNotMatch(`${source}\n${managerSource}`, /className="mb-2 flex shrink-0 items-center justify-end"/);
 });
