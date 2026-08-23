@@ -347,7 +347,16 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
 
     useEffect(() => {
         const unsubscribe = onWindowCommandCloseRequested(() => {
-            if (!nativeCommandWClosesSettings) return;
+            if (!nativeCommandWClosesSettings) {
+                (document.activeElement ?? window).dispatchEvent(new KeyboardEvent("keydown", {
+                    key: "w",
+                    code: "KeyW",
+                    metaKey: true,
+                    bubbles: true,
+                    cancelable: true,
+                }));
+                return;
+            }
             void closeSettingsWindow();
         });
         return () => unsubscribe?.();
