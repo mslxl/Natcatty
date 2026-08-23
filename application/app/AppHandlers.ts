@@ -14,6 +14,12 @@ import { captureInheritedCwd } from '../state/inheritedCwd';
 
 type AppContextGetter = () => Record<string, any>;
 const TERMINAL_PASSTHROUGH_ACTIONS = getTerminalPassthroughActions();
+const forwardedNativeShortcutEvents = new WeakSet<KeyboardEvent>();
+
+export function markForwardedNativeShortcutEvent(event: KeyboardEvent): KeyboardEvent {
+  forwardedNativeShortcutEvents.add(event);
+  return event;
+}
 
 async function deliverKeyboardInteractiveResponse(
   ctx: Record<string, any>,
@@ -270,6 +276,7 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
       && e.key !== 'Escape'
       && !isQuickSwitchHotkey
       && !isPaneZoomHotkey
+      && !forwardedNativeShortcutEvents.has(e)
     ) {
       return;
     }
