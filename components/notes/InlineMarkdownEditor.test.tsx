@@ -424,3 +424,13 @@ test("annotateMathFormulaBlocks handles empty math blocks and avoids reading too
   assert.match(source, /if \(!formulaSource\) \{/);
   assert.match(source, /existingPreview\.remove\(\)/);
 });
+
+test("NoteSourceEditor manages local draft state to prevent cursor jumping on debounced commits", () => {
+  const source = readFileSync(new URL("./NoteSourceEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const \[localValue, setLocalValue\] = useState\(value\);/);
+  assert.match(source, /value=\{localValue\}/);
+  assert.match(source, /onChange=\{handleChange\}/);
+  assert.match(source, /prevNoteIdRef\.current/);
+  assert.match(source, /lastSyncedValueRef\.current/);
+});

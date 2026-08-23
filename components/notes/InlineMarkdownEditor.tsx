@@ -1930,6 +1930,7 @@ export const InlineMarkdownEditor = React.memo(
       {editorMode === "source" ? (
         <NoteSourceEditor
           ref={sourceEditorRef}
+          noteId={noteId}
           value={value}
           placeholder={placeholder}
           onChange={commitMarkdown}

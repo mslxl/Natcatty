@@ -7,6 +7,7 @@ export interface NoteSourceEditorHandle {
 }
 
 export interface NoteSourceEditorProps {
+  noteId?: string;
   value: string;
   placeholder?: string;
   onChange: (value: string) => void;
@@ -16,9 +17,13 @@ export interface NoteSourceEditorProps {
 }
 
 export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSourceEditorProps>(
-  ({ value, placeholder = "", onChange, className = "", noteFontFamily, noteFontSize }, ref) => {
+  ({ noteId, value, placeholder = "", onChange, className = "", noteFontFamily, noteFontSize }, ref) => {
     const textareaRef = useRef<HTMLTextAreaElement>(null);
     const lineNumbersRef = useRef<HTMLDivElement>(null);
+    const [localValue, setLocalValue] = useState(value);
+    const prevNoteIdRef = useRef(noteId);
+    const lastSyncedValueRef = useRef(value);
+
     // Undo/redo history for the source textarea (native textarea undo is
     // unreliable once the value is controlled by React).
     const undoStackRef = useRef<string[]>([]);
@@ -28,17 +33,29 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
     // can reset the history stacks instead of leaking into the next note.
     const userEditRef = useRef(false);
 
-    // When the external value changes without a user edit (e.g. switching
-    // notes), reset the undo/redo history so it never applies to another note.
+    // Synchronize localValue when noteId switches or when external value changes
     useEffect(() => {
-      if (!userEditRef.current) {
+      if (noteId !== prevNoteIdRef.current) {
+        prevNoteIdRef.current = noteId;
+        setLocalValue(value);
+        lastSyncedValueRef.current = value;
         undoStackRef.current = [];
         redoStackRef.current = [];
+        userEditRef.current = false;
+        return;
       }
-      userEditRef.current = false;
-    }, [value]);
+      if (value !== lastSyncedValueRef.current && value !== localValue) {
+        setLocalValue(value);
+        lastSyncedValueRef.current = value;
+        if (!userEditRef.current) {
+          undoStackRef.current = [];
+          redoStackRef.current = [];
+        }
+        userEditRef.current = false;
+      }
+    }, [noteId, value, localValue]);
 
-    const lineCount = (value.match(/\n/g)?.length || 0) + 1;
+    const lineCount = (localValue.match(/\n/g)?.length || 0) + 1;
     const lineNumbers = Array.from({ length: lineCount }, (_, i) => i + 1);
     const gutterWidth = Math.max(48, String(lineCount).length * 9 + 24);
 
@@ -46,6 +63,14 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
       if (textareaRef.current && lineNumbersRef.current) {
         lineNumbersRef.current.scrollTop = textareaRef.current.scrollTop;
       }
+    };
+
+    const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+      const nextValue = e.target.value;
+      userEditRef.current = true;
+      setLocalValue(nextValue);
+      lastSyncedValueRef.current = nextValue;
+      onChange(nextValue);
     };
 
     const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -57,8 +82,12 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
         e.preventDefault();
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        const nextValue = `${value.substring(0, start)}  ${value.substring(end)}`;
+        const nextValue = `${localValue.substring(0, start)}  ${localValue.substring(end)}`;
+        undoStackRef.current.push(localValue);
+        redoStackRef.current = [];
         userEditRef.current = true;
+        setLocalValue(nextValue);
+        lastSyncedValueRef.current = nextValue;
         onChange(nextValue);
         requestAnimationFrame(() => {
           textarea.selectionStart = start + 2;
@@ -77,27 +106,32 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
           const target = stack.pop();
           if (target === undefined) return;
           if (action === "undo") {
-            redoStackRef.current.push(value);
+            redoStackRef.current.push(localValue);
           } else {
-            undoStackRef.current.push(value);
+            undoStackRef.current.push(localValue);
           }
           userEditRef.current = true;
+          setLocalValue(target);
+          lastSyncedValueRef.current = target;
           onChange(target);
           requestAnimationFrame(() => {
             textarea.focus();
-            textarea.setSelectionRange(target.length, target.length);
+            const curPos = Math.min(textarea.selectionStart, target.length);
+            textarea.setSelectionRange(curPos, curPos);
           });
           return;
         }
 
         const start = textarea.selectionStart;
         const end = textarea.selectionEnd;
-        const result = wrapMarkdownSyntax(value, start, end, action);
-        if (result.text !== value) {
-          undoStackRef.current.push(value);
+        const result = wrapMarkdownSyntax(localValue, start, end, action);
+        if (result.text !== localValue) {
+          undoStackRef.current.push(localValue);
           redoStackRef.current = [];
         }
         userEditRef.current = true;
+        setLocalValue(result.text);
+        lastSyncedValueRef.current = result.text;
         onChange(result.text);
         requestAnimationFrame(() => {
           textarea.focus();
@@ -135,8 +169,8 @@ export const NoteSourceEditor = React.forwardRef<NoteSourceEditorHandle, NoteSou
         <div className="relative flex-1 h-full min-w-0">
           <textarea
             ref={textareaRef}
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
+            value={localValue}
+            onChange={handleChange}
             onScroll={handleScroll}
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
