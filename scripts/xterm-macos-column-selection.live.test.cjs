@@ -12,24 +12,33 @@ if (!process.versions.electron) {
 } else {
   const assert = require("node:assert/strict");
   const fs = require("node:fs");
-  const os = require("node:os");
   const path = require("node:path");
   const { pathToFileURL } = require("node:url");
   const electron = require("electron");
+  const tempDirBridge = require("../electron/bridges/tempDirBridge.cjs");
 
   const appRoot = path.resolve(__dirname, "..");
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-xterm-macos-selection-"));
+  const userData = fs.mkdtempSync(
+    `${tempDirBridge.getTempFilePath("xterm-macos-selection")}-`,
+  );
   electron.app.setPath("userData", userData);
   electron.app.on("window-all-closed", () => {});
+  let window = null;
 
   const cleanup = (exitCode) => {
-    fs.rmSync(userData, { recursive: true, force: true });
-    electron.app.exit(exitCode);
+    if (window && !window.isDestroyed()) window.destroy();
+    try {
+      fs.rmSync(userData, { recursive: true, force: true });
+    } catch (error) {
+      console.warn("Unable to remove xterm selection test data:", error);
+    } finally {
+      electron.app.exit(exitCode);
+    }
   };
   const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
   void electron.app.whenReady().then(async () => {
-    const window = new electron.BrowserWindow({
+    window = new electron.BrowserWindow({
       show: process.env.NETCATTY_XTERM_SELECTION_SHOW_WINDOW === "1",
       width: 860,
       height: 400,
@@ -60,6 +69,7 @@ if (!process.versions.electron) {
         fontSize: 18,
         allowProposedApi: true,
         macOptionClickForcesSelection: true,
+        macOptionIsMeta: false,
         altClickMovesCursor: true,
       });
       let data = "";
@@ -72,10 +82,12 @@ if (!process.versions.electron) {
         "!@#$%^&*()_+-=[]{}|;",
       ].join("\\r\\n");
       window.harness = {
-        reset: mouseTracking => new Promise(resolve => {
+        reset: (mouseTracking, optionAsMeta) => new Promise(resolve => {
           data = "";
           term.reset();
           term.clearSelection();
+          term.options.macOptionIsMeta = optionAsMeta;
+          term.options.altClickMovesCursor = !optionAsMeta;
           term.write((mouseTracking ? "\\x1b[?1002h\\x1b[?1006h" : "\\x1b[?1002l\\x1b[?1006l") + content, resolve);
         }),
         geometry: () => {
@@ -91,6 +103,7 @@ if (!process.versions.electron) {
           selection: term.getSelection(),
           data,
           mouseTrackingMode: term.modes.mouseTrackingMode,
+          optionAsMeta: term.options.macOptionIsMeta,
         }),
       };
     })()`);
@@ -113,8 +126,10 @@ if (!process.versions.electron) {
       await delay(100);
       return window.webContents.executeJavaScript("window.harness.state()");
     };
-    const runScenario = async (mouseTracking, alt) => {
-      await window.webContents.executeJavaScript(`window.harness.reset(${mouseTracking})`);
+    const runScenario = async (mouseTracking, alt, optionAsMeta = false) => {
+      await window.webContents.executeJavaScript(
+        `window.harness.reset(${mouseTracking}, ${optionAsMeta})`,
+      );
       return drag({ alt });
     };
 
@@ -122,11 +137,15 @@ if (!process.versions.electron) {
     const option = await runScenario(false, true);
     const remote = await runScenario(true, false);
     const remoteOption = await runScenario(true, true);
+    const optionAsMeta = await runScenario(false, true, true);
+    const remoteOptionAsMeta = await runScenario(true, true, true);
+    const optionAfterMeta = await runScenario(false, true, false);
     const expectedColumn = "BCDEF\nbcdef\n12345";
+    const expectedNormal = "BCDEFGHIJKLMNOPQRST\nabcdefghijklmnopqrst\n012345";
 
     assert.equal(
       normal.selection,
-      "BCDEFGHIJKLMNOPQRST\nabcdefghijklmnopqrst\n012345",
+      expectedNormal,
       `ordinary drag must remain a normal selection: ${JSON.stringify(normal)}`,
     );
     assert.equal(option.selection, expectedColumn, `Option drag must select columns: ${JSON.stringify(option)}`);
@@ -138,11 +157,30 @@ if (!process.versions.electron) {
       `Option drag must force rectangular selection in mouse mode: ${JSON.stringify(remoteOption)}`,
     );
     assert.equal(remoteOption.data, "", `forced local selection must not emit mouse reports: ${JSON.stringify(remoteOption)}`);
+    assert.equal(
+      optionAsMeta.selection,
+      expectedNormal,
+      `Option-as-Meta must disable rectangular selection: ${JSON.stringify(optionAsMeta)}`,
+    );
+    assert.equal(
+      remoteOptionAsMeta.selection,
+      expectedNormal,
+      `Option-as-Meta must disable rectangular selection in mouse mode: ${JSON.stringify(remoteOptionAsMeta)}`,
+    );
+    assert.equal(
+      remoteOptionAsMeta.data,
+      "",
+      `Option must still force local selection in mouse mode: ${JSON.stringify(remoteOptionAsMeta)}`,
+    );
+    assert.equal(
+      optionAfterMeta.selection,
+      expectedColumn,
+      `turning Option-as-Meta off must restore rectangular selection: ${JSON.stringify(optionAfterMeta)}`,
+    );
 
     process.stdout.write(
-      `XTERM_MACOS_COLUMN_SELECTION_OK ${JSON.stringify({ normal, option, remote, remoteOption })}\n`,
+      `XTERM_MACOS_COLUMN_SELECTION_OK ${JSON.stringify({ normal, option, remote, remoteOption, optionAsMeta, remoteOptionAsMeta, optionAfterMeta })}\n`,
     );
-    window.destroy();
     cleanup(0);
   }).catch((error) => {
     console.error(error);

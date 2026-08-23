@@ -7,7 +7,7 @@ const {
   PATCHES,
   patchXtermSource,
   replacementForPatch,
-  sameLengthTrueExpression,
+  sameLengthExpression,
 } = require("./patch-xterm-macos-column-selection.cjs");
 
 test("patches both distributed bundles without shifting source-map offsets", () => {
@@ -18,7 +18,7 @@ test("patches both distributed bundles without shifting source-map offsets", () 
     assert.equal(result.source.length, input.length);
     assert.equal(result.source.includes(patch.original), false);
     assert.equal(
-      result.source.includes(sameLengthTrueExpression(patch.original.length)),
+      result.source.includes(sameLengthExpression(patch.replacement, patch.original.length)),
       true,
     );
   }
@@ -46,4 +46,11 @@ test("is idempotent and fails closed on an unknown package shape", () => {
       /expected exactly one original or patched selection predicate/,
     );
   }
+});
+
+test("fails closed when a generated-bundle replacement would shift offsets", () => {
+  assert.throws(
+    () => sameLengthExpression("replacement is longer", 4),
+    /replacement expression is too long/,
+  );
 });
