@@ -72,10 +72,12 @@ on:
       - "scripts/mosh-extra-resources.cjs"
       - "scripts/nodePtyConptyPatch.cjs"
       - "scripts/patch-xterm-webgl-atlas.cjs"
+      - "scripts/patch-xterm-macos-column-selection.cjs"
       - "scripts/rebuildPatchedNodePty.cjs"
       - "scripts/resolve-et-bin-release.cjs"
       - "scripts/resolve-mosh-bin-release.cjs"
       - "scripts/verify-linux-*.sh"
+      - "scripts/xterm-macos-column-selection.live.test.cjs"
       - "skills/**"
 
 # A newer run for the same main push or PR cancels older in-progress work.
@@ -242,6 +244,10 @@ jobs:
 
       - name: Install deps
         run: npm ci
+
+      - name: Test macOS Option column selection
+        if: matrix.name == 'macos'
+        run: npm run test:xterm-macos-selection
 
       - name: Compile ConPTY test helpers
         if: matrix.name == 'windows'

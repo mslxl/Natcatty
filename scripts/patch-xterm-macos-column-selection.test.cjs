@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   PATCHES,
   patchXtermSource,
+  replacementForPatch,
   sameLengthTrueExpression,
 } = require("./patch-xterm-macos-column-selection.cjs");
 
@@ -25,17 +26,17 @@ test("patches both distributed bundles without shifting source-map offsets", () 
 
 test("patches readable xterm sources and source-map content", () => {
   for (const patch of PATCHES.filter((entry) => !entry.preserveLength)) {
-    const result = patchXtermSource(`before:${patch.original}:after`, patch);
+    const input = `before:${patch.original}:after`;
+    const result = patchXtermSource(input, patch);
     assert.equal(result.changed, true);
-    assert.equal(result.source, `before:${patch.replacement}:after`);
+    assert.equal(result.source, `before:${replacementForPatch(patch)}:after`);
+    assert.equal(result.source.length, input.length);
   }
 });
 
 test("is idempotent and fails closed on an unknown package shape", () => {
   for (const patch of PATCHES) {
-    const replacement = patch.preserveLength
-      ? sameLengthTrueExpression(patch.original.length)
-      : patch.replacement;
+    const replacement = replacementForPatch(patch);
     assert.deepEqual(patchXtermSource(`before:${replacement}:after`, patch), {
       source: `before:${replacement}:after`,
       changed: false,

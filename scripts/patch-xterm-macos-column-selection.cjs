@@ -26,17 +26,20 @@ const PATCHES = [
   {
     file: "node_modules/@xterm/xterm/src/browser/services/SelectionService.ts",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey;",
+    replacement: "return event.altKey && true;",
+    preserveStatementLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.js.map",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey;",
+    replacement: "return event.altKey && true;",
+    preserveStatementLength: true,
   },
   {
     file: "node_modules/@xterm/xterm/lib/xterm.mjs.map",
     original: "return event.altKey && !(Browser.isMac && this._optionsService.rawOptions.macOptionClickForcesSelection);",
-    replacement: "return event.altKey;",
+    replacement: "return event.altKey && true;",
+    preserveStatementLength: true,
   },
 ];
 
@@ -46,11 +49,24 @@ function sameLengthTrueExpression(length) {
   return `(!0${" ".repeat(length - 4)})`;
 }
 
+function sameLengthStatement(statement, length) {
+  if (!statement.endsWith(";") || statement.length > length) {
+    throw new Error("replacement statement cannot preserve the target length");
+  }
+  return `${statement.slice(0, -1)}${" ".repeat(length - statement.length)};`;
+}
+
+function replacementForPatch(patch) {
+  if (patch.preserveLength) return sameLengthTrueExpression(patch.original.length);
+  if (!patch.replacement) throw new Error(`missing replacement for ${patch.file}`);
+  if (patch.preserveStatementLength) {
+    return sameLengthStatement(patch.replacement, patch.original.length);
+  }
+  return patch.replacement;
+}
+
 function patchXtermSource(source, patch) {
-  const replacement = patch.preserveLength
-    ? sameLengthTrueExpression(patch.original.length)
-    : patch.replacement;
-  if (!replacement) throw new Error(`missing replacement for ${patch.file}`);
+  const replacement = replacementForPatch(patch);
 
   const originalCount = source.split(patch.original).length - 1;
   const patchedCount = source.split(replacement).length - 1;
@@ -106,5 +122,7 @@ module.exports = {
   PATCHES,
   patchInstalledXterm,
   patchXtermSource,
+  replacementForPatch,
+  sameLengthStatement,
   sameLengthTrueExpression,
 };
