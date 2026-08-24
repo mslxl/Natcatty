@@ -753,6 +753,37 @@ test("origin mode is remembered while keyword highlighting is disabled", async (
   term.dispose();
 });
 
+test("multi-parameter origin mode is recognized at every transport split", async () => {
+  for (const control of ["\x1b[?6;25h", "\x1b[?25;6h"]) {
+    for (let split = 1; split < control.length; split += 1) {
+      const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+      const highlighter = new KeywordHighlighter(term);
+      highlighter.setRules(rule(), true);
+      await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+      await write(term, "\x1b[2;4r");
+      await write(term, control.slice(0, split));
+      await write(term, control.slice(split));
+      await write(term, "\x1b[2;1Htarget ERROR\x1b[1;1H");
+
+      assert.equal(cellRgb(term, 2, "ERROR"), RED, `${JSON.stringify(control)} split ${split}`);
+      await write(term, `${control.slice(0, -1)}l`);
+      const internal = highlighter as unknown as {
+        recolorRange(startY: number, endY: number, refresh: boolean, force: boolean): void;
+      };
+      const originalRecolorRange = internal.recolorRange.bind(highlighter);
+      let scannedRows = 0;
+      internal.recolorRange = (startY, endY, refresh, force) => {
+        scannedRows += Math.abs(endY - startY) + 1;
+        originalRecolorRange(startY, endY, refresh, force);
+      };
+      await write(term, "\x1b[5;1Hnormal ERROR");
+      assert.ok(scannedRows <= 2, `${JSON.stringify(control)} disable split ${split}: ${scannedRows}`);
+      highlighter.dispose();
+      term.dispose();
+    }
+  }
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;

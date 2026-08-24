@@ -536,11 +536,24 @@ export class KeywordHighlighter implements IDisposable {
         this.absoluteOriginControlTail = suffix.slice(-32);
       }
     }
+    const originModeControls = [
+      ...controls.matchAll(/\x1bc|\x1b\[!p|\x1b\[\?[\d;]*[hl]/g), // eslint-disable-line no-control-regex
+    ];
+    const privateModeIncludesOrigin = (control: string): boolean => {
+      const parameters = /^\x1b\[\?([\d;]*)[hl]$/.exec(control)?.[1]; // eslint-disable-line no-control-regex
+      return parameters?.split(";").some((parameter) => Number.parseInt(parameter, 10) === 6)
+        ?? false;
+    };
     const originModeNeedsSafety = this.absoluteOriginMode !== false
-      || controls.includes("\x1b[?6h");
-    const originModeControls = /\x1bc|\x1b\[!p|\x1b\[\?6[hl]/g; // eslint-disable-line no-control-regex
-    for (const match of controls.matchAll(originModeControls)) {
-      this.absoluteOriginMode = match[0] === "\x1b[?6h";
+      || originModeControls.some((match) => (
+        match[0].endsWith("h") && privateModeIncludesOrigin(match[0])
+      ));
+    for (const match of originModeControls) {
+      if (match[0] === "\x1bc" || match[0] === "\x1b[!p") {
+        this.absoluteOriginMode = false;
+      } else if (privateModeIncludesOrigin(match[0])) {
+        this.absoluteOriginMode = match[0].endsWith("h");
+      }
     }
     return originModeNeedsSafety;
   }
