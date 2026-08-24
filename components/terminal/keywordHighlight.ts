@@ -435,7 +435,7 @@ export class KeywordHighlighter implements IDisposable {
             : Math.min(ordinaryFromY, active.baseY + absoluteRepaintRange.startRow);
           const toY = absoluteRepaintRange === null
             ? endY
-            : Math.max(endY, active.baseY + absoluteRepaintRange.endRow);
+            : Math.max(ordinaryFromY, endY, active.baseY + absoluteRepaintRange.endRow);
           if (this.compiledPatterns.length === 0) {
             if (this.hasStoredOriginalsInRange(fromY, toY)) {
               this.markCatchUp(fromY);

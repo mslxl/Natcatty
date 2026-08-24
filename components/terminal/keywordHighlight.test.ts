@@ -558,14 +558,35 @@ test("Mosh-style full-screen cursor-addressed repaint keeps highlights", async (
   await write(
     term,
     "1Hsplit ERROR\x1b[2;1Hrow-4 ERROR"
-      + "\x1b[3;1Hprompt ERROR\x1b[4;1Hdone ERROR\x1b[1;1H",
+      + "\x1b[3;1Hprompt ERROR\x1b[4;1Hdone ER",
   );
+  await write(term, "ROR\x1b[1;1H");
   assert.deepEqual(
     Array.from({ length: 4 }, (_, y) => cellRgb(term, y, "ERROR")),
     [RED, RED, RED, RED],
   );
   highlighter.dispose();
   term.dispose();
+});
+
+test("Mosh repaint highlights survive every transport split point", async () => {
+  const frame = "\x1b[1;1Hnew-1 ERROR\x1b[2;1Hnew-2 ERROR"
+    + "\x1b[3;1Hnew-3 ERROR\x1b[4;1Hnew-4 ERROR\x1b[1;1H";
+  for (let split = 1; split < frame.length; split += 1) {
+    const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 4, scrollback: 20 });
+    const highlighter = new KeywordHighlighter(term);
+    highlighter.setRules(rule(), true);
+    await write(term, "old-1 ERROR\r\nold-2 ERROR\r\nold-3 ERROR\r\nold-4 ERROR");
+    await write(term, frame.slice(0, split));
+    await write(term, frame.slice(split));
+    assert.deepEqual(
+      Array.from({ length: 4 }, (_, y) => cellRgb(term, y, "ERROR")),
+      [RED, RED, RED, RED],
+      `split ${split}`,
+    );
+    highlighter.dispose();
+    term.dispose();
+  }
 });
 
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
