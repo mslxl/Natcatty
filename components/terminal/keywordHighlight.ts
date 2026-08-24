@@ -374,7 +374,7 @@ export class KeywordHighlighter implements IDisposable {
     const bypass = !startedOnNormal || this.shouldBypassWrite(data);
     if (bypass) {
       if (startedOnNormal && (this.enabled || this.compiledPatterns.length > 0 || this.hasPendingCatchUp())) {
-        this.markCatchUp(startY);
+        this.markCatchUp(absoluteRepaintRange === null ? startY : Math.min(startY, startBaseY));
         this.scheduleCatchUp();
       }
       return this.originalWrite(data, () => {

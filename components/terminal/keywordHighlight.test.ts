@@ -625,6 +625,24 @@ test("cursor-addressed repaint keeps pre-scroll rows highlighted", async () => {
   term.dispose();
 });
 
+test("pressured cursor-addressed repaint catches up from the pre-scroll viewport", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 4, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4");
+  noteTerminalOutputPressureData(term, "x".repeat(20_000));
+  await write(
+    term,
+    "\x1b[1;1Hscrolled ERROR\r\nline-2\r\nline-3\r\nline-4\r\nline-5\x1b[1;1H",
+  );
+  await highlighter.whenSettled();
+
+  assert.equal(cellRgb(term, 0, "ERROR"), RED);
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;
