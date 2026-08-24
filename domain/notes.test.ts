@@ -125,6 +125,9 @@ test("sanitizeNoteExportFileNamePart removes unsafe path characters", () => {
   assert.equal(sanitizeNoteExportFileNamePart("a\u0001b", "note"), "a-b");
   assert.equal(sanitizeNoteExportFileNamePart("..", "note"), "note");
   assert.equal(sanitizeNoteExportFileNamePart("CON", "note"), "CON_");
+  assert.equal(sanitizeNoteExportFileNamePart("CON.txt", "note"), "CON_.txt");
+  assert.equal(sanitizeNoteExportFileNamePart("com1.backup.md", "note"), "com1_.backup.md");
+  assert.equal(sanitizeNoteExportFileNamePart("release.CON", "note"), "release.CON");
 });
 
 test("getVaultNotesForExportScope includes only selected folder descendants", () => {

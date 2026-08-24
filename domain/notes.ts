@@ -179,7 +179,12 @@ export const sanitizeNoteExportFileNamePart = (value: string | undefined, fallba
     .replace(/\.+$/g, "")
     .trim();
   const safe = cleaned && cleaned !== "." && cleaned !== ".." ? cleaned : fallback;
-  const withoutReservedName = NOTE_EXPORT_RESERVED_WINDOWS_NAMES.test(safe) ? `${safe}_` : safe;
+  const firstDotIndex = safe.indexOf(".");
+  const windowsStem = (firstDotIndex >= 0 ? safe.slice(0, firstDotIndex) : safe).trimEnd();
+  const extension = firstDotIndex >= 0 ? safe.slice(firstDotIndex) : "";
+  const withoutReservedName = NOTE_EXPORT_RESERVED_WINDOWS_NAMES.test(windowsStem)
+    ? `${windowsStem}_${extension}`
+    : safe;
   return withoutReservedName.slice(0, 120) || fallback;
 };
 
