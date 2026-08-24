@@ -204,13 +204,36 @@ export const buildVaultNoteMarkdownExportFiles = (
   notes: VaultNote[],
   scope: VaultNotesExportScope = { type: "all" },
 ): VaultNoteMarkdownExportFile[] => {
-  const exportEntries = getVaultNotesForExportScope(notes, scope).map((note, index) => ({
+  const notesForExport = getVaultNotesForExportScope(notes, scope);
+  const groupPaths = Array.from(new Set(
+  notesForExport.flatMap((note) => note.group ? ancestorNoteGroupPaths(note.group) : []),
+  )).sort((left, right) => {
+    return left.split("/").length - right.split("/").length;
+  });
+  const exportedGroupSegments = new Map<string, string[]>();
+  const usedDirectoryNamesByParent = new Map<string, Set<string>>();
+
+  for (const groupPath of groupPaths) {
+    const parentPath = getNoteGroupParentPath(groupPath);
+    const parentSegments = parentPath ? exportedGroupSegments.get(parentPath) ?? [] : [];
+    const parentKey = parentSegments.join("/").toLowerCase();
+    const usedDirectoryNames = usedDirectoryNamesByParent.get(parentKey) ?? new Set<string>();
+    const baseName = sanitizeNoteExportFileNamePart(getNoteGroupLeafName(groupPath), "folder");
+    let candidate = baseName;
+    let suffix = 2;
+    while (usedDirectoryNames.has(candidate.toLowerCase())) {
+      candidate = `${baseName}-${suffix}`;
+      suffix += 1;
+    }
+    usedDirectoryNames.add(candidate.toLowerCase());
+    usedDirectoryNamesByParent.set(parentKey, usedDirectoryNames);
+    exportedGroupSegments.set(groupPath, [...parentSegments, candidate]);
+  }
+
+  const exportEntries = notesForExport.map((note, index) => ({
     note,
     groupSegments: note.group
-      ? cleanNoteGroupPath(note.group)
-        .split("/")
-        .filter(Boolean)
-        .map((part) => sanitizeNoteExportFileNamePart(part, "folder"))
+      ? exportedGroupSegments.get(cleanNoteGroupPath(note.group)) ?? []
       : [],
     baseName: sanitizeNoteExportFileNamePart(note.title, `note-${index + 1}`),
   }));
@@ -711,6 +734,34 @@ export const formatMarkdownListSelection = (
       : () => "- ",
 ).formatted;
 
+const formatSelectedMarkdownQuoteLines = (content: string): {
+  formatted: string;
+  selectionStartOffset: number;
+  selectionEndOffset: number;
+} => {
+  let cursor = 0;
+  let selectionStartOffset: number | null = null;
+  let selectionEndOffset: number | null = null;
+  const formattedLines = content.split("\n").map((line) => {
+    const prefix = line ? "> " : ">";
+    const formattedLine = `${prefix}${line}`;
+    if (line) {
+      if (selectionStartOffset === null) selectionStartOffset = cursor + prefix.length;
+      selectionEndOffset = cursor + formattedLine.length;
+    }
+    cursor += formattedLine.length + 1;
+    return formattedLine;
+  });
+  return {
+    formatted: formattedLines.join("\n"),
+    selectionStartOffset: selectionStartOffset ?? 0,
+    selectionEndOffset: selectionEndOffset ?? 0,
+  };
+};
+
+export const formatMarkdownQuoteSelection = (content: string): string =>
+  formatSelectedMarkdownQuoteLines(content).formatted;
+
 export const wrapMarkdownSyntax = (
   text: string,
   start: number,
@@ -720,6 +771,7 @@ export const wrapMarkdownSyntax = (
   const before = text.slice(0, start);
   const selected = text.slice(start, end);
   const after = text.slice(end);
+  const selectedBlockContent = (fallback: string): string => selected.trim() ? selected : fallback;
 
   switch (action) {
     case "bold": {
@@ -805,15 +857,16 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "quote": {
-      const content = selected || "Quote";
+      const content = selectedBlockContent("Quote");
+      const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownQuoteLines(content);
       return {
-        text: `${before}\n> ${content}\n${after}`,
-        selectionStart: start + 3,
-        selectionEnd: start + 3 + content.length,
+        text: `${before}\n${formatted}\n${after}`,
+        selectionStart: start + 1 + selectionStartOffset,
+        selectionEnd: start + 1 + selectionEndOffset,
       };
     }
     case "bullet": {
-      const content = selected || "List item";
+      const content = selectedBlockContent("List item");
       const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownListLines(
         content,
         () => "- ",
@@ -825,7 +878,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "number": {
-      const content = selected || "List item";
+      const content = selectedBlockContent("List item");
       const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownListLines(
         content,
         (index) => `${index + 1}. `,
@@ -837,7 +890,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "task": {
-      const content = selected || "Task";
+      const content = selectedBlockContent("Task");
       const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownListLines(
         content,
         () => "- [ ] ",

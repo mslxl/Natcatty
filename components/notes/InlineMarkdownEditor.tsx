@@ -81,6 +81,7 @@ import { NoteSourceEditor, type NoteSourceEditorHandle } from "./NoteSourceEdito
 import {
   extractNoteHeadings,
   formatMarkdownListSelection,
+  formatMarkdownQuoteSelection,
   normalizeNoteHeadingText,
   type MarkdownActionType,
   type NoteHeadingItem,
@@ -997,7 +998,9 @@ export const InlineMarkdownEditor = React.memo(
 
           const editor = editorRef.current;
           if (editor) {
-            const sel = getSelectedText().trim();
+            const rawSelection = getSelectedText();
+            const sel = rawSelection.trim();
+            const blockSelection = (fallback: string): string => sel ? rawSelection : fallback;
             switch (action) {
               case "h1":
                 editor.insertMarkdown(`\n# ${sel || "Heading 1"}\n`);
@@ -1012,16 +1015,16 @@ export const InlineMarkdownEditor = React.memo(
                 editor.insertMarkdown(`\n#### ${sel || "Heading 4"}\n`);
                 break;
               case "quote":
-                editor.insertMarkdown(`\n> ${sel || "Quote"}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownQuoteSelection(blockSelection("Quote"))}\n`);
                 break;
               case "bullet":
-                editor.insertMarkdown(`\n${formatMarkdownListSelection(sel || "List item", "bullet")}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownListSelection(blockSelection("List item"), "bullet")}\n`);
                 break;
               case "number":
-                editor.insertMarkdown(`\n${formatMarkdownListSelection(sel || "List item", "number")}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownListSelection(blockSelection("List item"), "number")}\n`);
                 break;
               case "task":
-                editor.insertMarkdown(`\n${formatMarkdownListSelection(sel || "Task", "task")}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownListSelection(blockSelection("Task"), "task")}\n`);
                 break;
               case "codeblock":
                 editor.insertMarkdown(`\n\`\`\`bash\n${sel}\n\`\`\`\n`);

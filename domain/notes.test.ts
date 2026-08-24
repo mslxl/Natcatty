@@ -10,6 +10,7 @@ import {
   extractNoteSnippet,
   filterAndSortVaultNotes,
   formatMarkdownListSelection,
+  formatMarkdownQuoteSelection,
   getVaultNotesForExportScope,
   importMarkdownFilesToVaultNotes,
   importMarkdownPayloadsToVaultNotes,
@@ -171,6 +172,22 @@ test("buildVaultNoteMarkdownExportFiles keeps file names distinct from directory
   assert.deepEqual(buildVaultNoteMarkdownExportFiles(notes), [
     { name: "docs-2.md", content: "root" },
     { name: "DOCS.md/child.md", content: "nested" },
+  ]);
+});
+
+test("buildVaultNoteMarkdownExportFiles keeps sanitized group paths distinct", () => {
+  const notes = [
+    sanitizeVaultNote({ id: "n1", title: "US", content: "one", group: "Prod:US/Apps", createdAt: 1, updatedAt: 1, order: 1000 }),
+    sanitizeVaultNote({ id: "n2", title: "US", content: "two", group: "Prod?US/Apps", createdAt: 1, updatedAt: 1, order: 2000 }),
+    sanitizeVaultNote({ id: "n3", title: "EU", content: "three", group: "Prod:US/Apps?EU", createdAt: 1, updatedAt: 1, order: 3000 }),
+    sanitizeVaultNote({ id: "n4", title: "EU", content: "four", group: "Prod:US/Apps:EU", createdAt: 1, updatedAt: 1, order: 4000 }),
+  ];
+
+  assert.deepEqual(buildVaultNoteMarkdownExportFiles(notes), [
+    { name: "Prod-US/Apps/US.md", content: "one" },
+    { name: "Prod-US-2/Apps/US.md", content: "two" },
+    { name: "Prod-US/Apps-EU/EU.md", content: "three" },
+    { name: "Prod-US/Apps-EU-2/EU.md", content: "four" },
   ]);
 });
 
@@ -518,6 +535,40 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
     "one\n- [ ] two",
   );
 
+  const quoteRes = wrapMarkdownSyntax("one\n\ntwo", 0, 8, "quote");
+  assert.equal(quoteRes.text, "\n> one\n>\n> two\n");
+  assert.equal(
+    quoteRes.text.slice(quoteRes.selectionStart, quoteRes.selectionEnd),
+    "one\n>\n> two",
+  );
+
+  const trailingNewlineQuoteRes = wrapMarkdownSyntax("one\ntwo\nthree", 0, 8, "quote");
+  assert.equal(trailingNewlineQuoteRes.text, "\n> one\n> two\n>\nthree");
+  assert.equal(
+    trailingNewlineQuoteRes.text.slice(
+      trailingNewlineQuoteRes.selectionStart,
+      trailingNewlineQuoteRes.selectionEnd,
+    ),
+    "one\n> two",
+  );
+
+  const leadingNewlineQuoteRes = wrapMarkdownSyntax("\none", 0, 4, "quote");
+  assert.equal(leadingNewlineQuoteRes.text, "\n>\n> one\n");
+  assert.equal(
+    leadingNewlineQuoteRes.text.slice(
+      leadingNewlineQuoteRes.selectionStart,
+      leadingNewlineQuoteRes.selectionEnd,
+    ),
+    "one",
+  );
+
+  const newlineOnlyQuoteRes = wrapMarkdownSyntax("\n", 0, 1, "quote");
+  assert.equal(newlineOnlyQuoteRes.text, "\n> Quote\n");
+  assert.equal(
+    newlineOnlyQuoteRes.text.slice(newlineOnlyQuoteRes.selectionStart, newlineOnlyQuoteRes.selectionEnd),
+    "Quote",
+  );
+
   const trailingNewlineBulletRes = wrapMarkdownSyntax("one\ntwo\nthree", 0, 8, "bullet");
   assert.equal(trailingNewlineBulletRes.text, "\n- one\n- two\n\nthree");
   assert.equal(
@@ -548,9 +599,12 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
 
   for (const action of ["bullet", "number", "task"] as const) {
     const newlineOnlyRes = wrapMarkdownSyntax("\n", 0, 1, action);
-    assert.equal(newlineOnlyRes.text, "\n\n\n");
-    assert.equal(newlineOnlyRes.selectionStart, 1);
-    assert.equal(newlineOnlyRes.selectionEnd, 1);
+    const expected = action === "bullet" ? "- List item" : action === "number" ? "1. List item" : "- [ ] Task";
+    assert.equal(newlineOnlyRes.text, `\n${expected}\n`);
+    assert.equal(
+      newlineOnlyRes.text.slice(newlineOnlyRes.selectionStart, newlineOnlyRes.selectionEnd),
+      action === "task" ? "Task" : "List item",
+    );
   }
 });
 
@@ -558,4 +612,8 @@ test("formatMarkdownListSelection prefixes every non-empty selected line", () =>
   assert.equal(formatMarkdownListSelection("one\ntwo", "bullet"), "- one\n- two");
   assert.equal(formatMarkdownListSelection("one\n\ntwo", "number"), "1. one\n\n2. two");
   assert.equal(formatMarkdownListSelection("one\ntwo", "task"), "- [ ] one\n- [ ] two");
+});
+
+test("formatMarkdownQuoteSelection prefixes every selected line", () => {
+  assert.equal(formatMarkdownQuoteSelection("one\n\ntwo"), "> one\n>\n> two");
 });
