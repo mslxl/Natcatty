@@ -279,6 +279,12 @@ export const esCoreMessages: Messages = {
   'settings.vault.showHostTreeSidebarDesc': 'Muestra la barra lateral de lista de hosts y su alternador en la barra superior en las pestañas de terminal y editor.',
   'settings.vault.autoImportSystemKnownHosts': 'Importar automáticamente known_hosts del sistema',
   'settings.vault.autoImportSystemKnownHostsDesc': 'Cuando se carga el Vault, importa en silencio las entradas del archivo known_hosts de OpenSSH. Desactívalo para mantener los hosts conocidos de Netcatty separados; Escanear sistema sigue importando a pedido.',
+  'settings.vault.notesFont': 'Fuente de código',
+  'settings.vault.notesFontDesc': 'Familia tipográfica para bloques de código y código en línea en notas',
+  'settings.vault.notesFontSize': 'Tamaño de fuente de notas',
+  'settings.vault.notesFontSizeDesc': 'Tamaño de fuente para el cuerpo de texto de las notas',
+  'settings.vault.notesCodeFontSize': 'Tamaño de fuente de código',
+  'settings.vault.notesCodeFontSizeDesc': 'Tamaño de fuente para bloques de código y código en línea en notas',
 
   // Update notifications
   'update.available.title': 'Actualización disponible',

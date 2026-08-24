@@ -292,6 +292,30 @@ test("terminal side panel auto-open settings are syncable for auto-sync detectio
   );
 });
 
+test("note appearance settings survive sync and trigger auto-sync", async () => {
+  localStorage.setItem(storageKeys.STORAGE_KEY_VAULT_NOTES_FONT_FAMILY, "Menlo, monospace");
+  localStorage.setItem(storageKeys.STORAGE_KEY_VAULT_NOTES_FONT_SIZE, "16");
+  localStorage.setItem(storageKeys.STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE, "14");
+
+  const payload = buildSyncPayload(vault([]));
+  assert.equal(payload.settings?.noteFontFamily, "Menlo, monospace");
+  assert.equal(payload.settings?.noteFontSize, 16);
+  assert.equal(payload.settings?.noteCodeFontSize, 14);
+  for (const key of [
+    storageKeys.STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+    storageKeys.STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+    storageKeys.STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
+  ]) {
+    assert.ok((SYNCABLE_SETTING_STORAGE_KEYS as readonly string[]).includes(key));
+  }
+
+  localStorage.clear();
+  await applySyncPayload(payload, { importVaultData: () => {} });
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_VAULT_NOTES_FONT_FAMILY), "Menlo, monospace");
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_VAULT_NOTES_FONT_SIZE), "16");
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE), "14");
+});
+
 test("buildSyncPayload includes host tree sidebar visibility setting", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, "false");
   localStorage.setItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, "true");

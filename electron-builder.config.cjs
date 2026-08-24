@@ -115,6 +115,7 @@ module.exports = {
         '!node_modules/lexical/**/*',
         '!node_modules/@lexical/**/*',
         '!node_modules/@codemirror/**/*',
+        '!node_modules/katex/**/*',
         '!node_modules/shiki/**/*',
         '!node_modules/@shiki/**/*',
         // Heavy cloud completion specs are intentionally not bundled. The main
