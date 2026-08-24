@@ -95,17 +95,26 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
 }
 
 async function openBoundedSshShell(sshClient, windowOptions, shellOptions, options = {}) {
+  const hasRateLimitRetryTimeout = Number.isFinite(options.rateLimitRetryTimeoutMs);
+  const hasExplicitRateLimitRetries = Number.isFinite(options.rateLimitRetries);
   const rateLimitRetries = Math.max(
     0,
-    Number.isFinite(options.rateLimitRetries)
+    hasExplicitRateLimitRetries
       ? Number(options.rateLimitRetries)
-      : DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_RETRIES,
+      : hasRateLimitRetryTimeout
+        ? Number.POSITIVE_INFINITY
+        : DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_RETRIES,
   );
+  const rateLimitRetryTimeoutMs = hasRateLimitRetryTimeout
+    ? Math.max(0, Number(options.rateLimitRetryTimeoutMs))
+    : null;
   const rateLimitBackoffMs = Math.max(
     1,
     Number(options.rateLimitBackoffMs) || DEFAULT_SSH_CHANNEL_OPEN_RATE_LIMIT_BACKOFF_MS,
   );
   const sleepFn = options.sleepFn || null;
+  const nowFn = typeof options.nowFn === "function" ? options.nowFn : Date.now;
+  const retryStartedAt = nowFn();
   let attempt = 0;
 
   for (;;) {
@@ -120,15 +129,19 @@ async function openBoundedSshShell(sshClient, windowOptions, shellOptions, optio
         },
       );
     } catch (error) {
+      const nextDelayMs = rateLimitBackoffMs * (attempt + 1);
+      const retryTimeoutExpired = rateLimitRetryTimeoutMs !== null
+        && nowFn() - retryStartedAt + nextDelayMs > rateLimitRetryTimeoutMs;
       if (
         attempt >= rateLimitRetries
+        || retryTimeoutExpired
         || !isSshChannelOpenRateLimitedError(error)
         || options.signal?.aborted
       ) {
         throw error;
       }
       attempt += 1;
-      await sleep(rateLimitBackoffMs * attempt, sleepFn);
+      await sleep(nextDelayMs, sleepFn);
     }
   }
 }

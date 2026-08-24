@@ -30,6 +30,7 @@ const {
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
 const MAX_SSH_CONNECTION_TIMEOUT_MS = 3600000;
+const COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS = 30000;
 
 /**
  * Fan out netcatty:exit to the primary contents plus any attach-home owner
@@ -1023,8 +1024,11 @@ function createStartSessionApi(ctx) {
               });
             },
             Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
-              ? { rateLimitBackoffMs }
-              : {},
+              ? {
+                  rateLimitBackoffMs,
+                  rateLimitRetryTimeoutMs: COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS,
+                }
+              : { rateLimitRetryTimeoutMs: COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS },
           );
         } catch (syncErr) {
           // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
