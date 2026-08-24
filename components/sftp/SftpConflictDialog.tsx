@@ -162,7 +162,10 @@ const SftpConflictDialogInner: React.FC<SftpConflictDialogProps> = ({ conflicts,
                 aria-describedby={describedBy}
             >
                 <DialogHeader className="space-y-1.5 pr-8">
-                    <DialogTitle className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-lg leading-tight">
+                    <DialogTitle
+                        className="flex min-w-0 flex-wrap items-baseline gap-x-2 text-lg leading-tight"
+                        aria-label={`${t(presentation.titleKey)}: ${conflict.fileName} ${t('sftp.conflict.alreadyExistsSuffix')}`}
+                    >
                         <span className="min-w-0 break-words">{conflict.fileName}</span>
                         {' '}
                         <span className="text-base font-normal text-muted-foreground">

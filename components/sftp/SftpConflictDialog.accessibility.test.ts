@@ -158,7 +158,9 @@ test("announces folder replacement risk and refocuses Merge for each queued conf
   assert.match(describedText, /Merge: keeps destination-only content/);
   assert.match(describedText, /Replace: deletes destination-only content and cannot be undone/);
   assert.doesNotMatch(env.document.body.textContent ?? "", /A folder with the same name already exists/);
-  assert.equal(env.document.querySelector("[role=dialog] h2")?.textContent, "docs already exists");
+  const dialogTitle = env.document.querySelector("[role=dialog] h2");
+  assert.equal(dialogTitle?.textContent, "docs already exists");
+  assert.equal(dialogTitle?.getAttribute("aria-label"), "Folder Conflict: docs already exists");
   const warning = env.document.getElementById(describedBy.split(/\s+/).at(-1) ?? "");
   assert.ok(warning, "folder action guidance should render");
   assert.equal(warning.querySelectorAll("svg").length, 2, "both guidance rows should use matching icons");
