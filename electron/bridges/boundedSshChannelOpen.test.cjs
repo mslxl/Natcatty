@@ -113,20 +113,68 @@ test("channel open keeps its deadline referenced and clears it after success", a
 test("shell open caps each attempt to the remaining rate-limit retry window", async () => {
   const timers = trackedTimerApi();
   const controller = new AbortController();
+  let elapsedMs = 0;
+  let attempts = 0;
   const client = {
-    shell() {},
+    shell(_window, _options, next) {
+      attempts += 1;
+      if (attempts === 1) {
+        next(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      }
+    },
   };
   const pending = openBoundedSshShell(client, {}, {}, {
     signal: controller.signal,
     timeoutMs: 1_000,
     rateLimitRetryTimeoutMs: 5,
-    nowFn: () => 0,
+    rateLimitBackoffMs: 1,
+    nowFn: () => elapsedMs,
+    sleepFn: async (ms) => { elapsedMs += ms; },
     ...timers,
   });
 
-  assert.equal(timers.delays[0], 5);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(attempts, 2);
+  assert.deepEqual(timers.delays, [1_000, 4]);
   controller.abort(new Error("cancelled"));
   await assert.rejects(pending, /cancelled/);
+});
+
+test("a retry-budget timeout preserves the transport and returns the rate-limit error", async () => {
+  let attempts = 0;
+  let invalidations = 0;
+  let elapsedMs = 0;
+  const client = {
+    shell(_window, _options, next) {
+      attempts += 1;
+      if (attempts === 1) {
+        next(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      }
+    },
+    destroy() { invalidations += 1; },
+  };
+
+  await assert.rejects(
+    openBoundedSshShell(client, {}, {}, {
+      timeoutMs: 1_000,
+      rateLimitRetryTimeoutMs: 5,
+      rateLimitBackoffMs: 1,
+      nowFn: () => elapsedMs,
+      sleepFn: async (ms) => { elapsedMs += ms; },
+      setTimeoutFn(callback, ms) {
+        if (ms < 1_000) {
+          elapsedMs += ms;
+          setImmediate(callback);
+        }
+        return { unref() {} };
+      },
+      clearTimeoutFn() {},
+    }),
+    /channelOpen too offen/,
+  );
+
+  assert.equal(attempts, 2);
+  assert.equal(invalidations, 0);
 });
 
 test("detects bastion channelOpen rate-limit errors including the offen typo", () => {

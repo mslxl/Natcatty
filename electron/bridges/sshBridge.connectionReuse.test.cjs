@@ -1418,6 +1418,92 @@ test("cancelling Copy Tab during rate-limit backoff stops retries and keeps the 
   assert.equal(source.connRef.count, 1);
 });
 
+test("cancelling Copy Tab during reused-shell liveness does not register a stale session", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  sourceConn._remoteVer = "CustomBastion_1.0";
+  let openedStream = null;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    openedStream = makeStream();
+    sourceConn.openedShells.push(openedStream);
+    setImmediate(() => {
+      cb(null, openedStream);
+      setTimeout(() => abortPendingBoot("copy", 1), 5);
+    });
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  source.connRef.pendingShellReconnectRisk = {
+    oldShellPids: [],
+    hasUnknownOldShell: true,
+  };
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        bootEpoch: 1,
+        sshReusedShellLivenessMs: 100,
+      },
+    ),
+    /aborted/,
+  );
+
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sessions.has("copy"), false);
+  assert.equal(openedStream.closed, true);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(source.connRef.count, 1);
+});
+
+test("cancelling ordinary parked reuse does not start a fresh login", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => {
+      cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      setImmediate(() => abortPendingBoot("ordinary", 1));
+    });
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "ordinary",
+        hostname: "bastion.example",
+        username: "alice",
+        bootEpoch: 1,
+        sshChannelOpenRateLimitBackoffMs: 50,
+      },
+    ),
+    /aborted/,
+  );
+
+  assert.equal(shellAttempts, 1);
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(source.connRef.count, 1);
+});
+
 test("a shared connection error during Copy Tab backoff stops queued retries", async (t) => {
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();

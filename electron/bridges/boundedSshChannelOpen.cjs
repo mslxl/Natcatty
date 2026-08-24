@@ -82,6 +82,7 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
   const closeLateResult = options.closeLateResult || closeLateChannel;
   const timeoutCode = options.timeoutCode || "SSH_CHANNEL_OPEN_TIMEOUT";
   const invalidateOnAbort = options.invalidateOnAbort !== false;
+  const invalidateOnTimeout = options.invalidateOnTimeout !== false;
   const setTimeoutFn = options.setTimeoutFn || setTimeout;
   const clearTimeoutFn = options.clearTimeoutFn || clearTimeout;
 
@@ -123,7 +124,7 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
     timer = setTimeoutFn(() => {
       const error = new Error(`${label} timed out after ${timeoutMs} ms`);
       error.code = timeoutCode;
-      finish(error, null, { invalidate: true });
+      finish(error, null, { invalidate: invalidateOnTimeout });
     }, timeoutMs);
 
     try {
@@ -174,12 +175,15 @@ async function openBoundedSshShell(sshClient, windowOptions, shellOptions, optio
       1,
       Number(options.timeoutMs) || DEFAULT_SSH_CHANNEL_OPEN_TIMEOUT_MS,
     );
-    const attemptTimeoutMs = retryDeadline === null
+    const isRateLimitRetry = lastRateLimitError !== null;
+    const attemptTimeoutMs = retryDeadline === null || !isRateLimitRetry
       ? configuredAttemptTimeoutMs
       : Math.max(
           1,
           Math.min(configuredAttemptTimeoutMs, Math.ceil(retryDeadline - attemptStartedAt)),
         );
+    const retryBudgetConstrainsAttempt = isRateLimitRetry
+      && attemptTimeoutMs < configuredAttemptTimeoutMs;
     try {
       return await openBoundedSshChannel(
         sshClient,
@@ -187,11 +191,21 @@ async function openBoundedSshShell(sshClient, windowOptions, shellOptions, optio
         {
           ...options,
           timeoutMs: attemptTimeoutMs,
+          invalidateOnTimeout: retryBudgetConstrainsAttempt
+            ? false
+            : options.invalidateOnTimeout,
           label: options.label || "SSH shell channel open",
           timeoutCode: "SSH_SHELL_OPEN_TIMEOUT",
         },
       );
     } catch (error) {
+      if (
+        retryBudgetConstrainsAttempt
+        && error?.code === "SSH_SHELL_OPEN_TIMEOUT"
+        && lastRateLimitError
+      ) {
+        throw lastRateLimitError;
+      }
       if (!isSshChannelOpenRateLimitedError(error) || options.signal?.aborted) {
         throw error;
       }
