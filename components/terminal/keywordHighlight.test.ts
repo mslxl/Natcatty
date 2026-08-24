@@ -742,6 +742,21 @@ test("C1 CUP repaints an earlier viewport row", async () => {
   term.dispose();
 });
 
+test("out-of-range cursor addresses repaint the clamped viewport row", async () => {
+  for (const control of ["\x1b[999;1H", "\x1b[999d", "\x9b999;1H", "\x9b999d"]) {
+    const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+    const highlighter = new KeywordHighlighter(term);
+    highlighter.setRules(rule(), true);
+    await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5\x1b[2;1H");
+
+    await write(term, `${control}target ERROR\x1b[2;1H`);
+
+    assert.equal(cellRgb(term, 4, "ERROR"), RED, JSON.stringify(control));
+    highlighter.dispose();
+    term.dispose();
+  }
+});
+
 test("cursor-addressed repaint follows VPR and inserted-line row changes", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
   const highlighter = new KeywordHighlighter(term);

@@ -627,7 +627,10 @@ export class KeywordHighlighter implements IDisposable {
   ): AbsoluteRepaintRange | null {
     const rows = new Set<number>();
     const noteRow = (raw: string | undefined) => {
-      const row = Math.max(0, (Number.parseInt(raw || "1", 10) || 1) - 1);
+      const row = Math.min(
+        this.term.rows - 1,
+        Math.max(0, (Number.parseInt(raw || "1", 10) || 1) - 1),
+      );
       rows.add(row);
     };
     // CUP/HVP and VPA address a viewport row directly. Mosh's framebuffer
