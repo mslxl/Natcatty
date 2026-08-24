@@ -711,21 +711,35 @@ test("cursor-restoring Mosh row writes keep repaint work linear", async () => {
 });
 
 test("CUP fragments survive enabling highlighting between writes", async () => {
-  const control = "\x1b[2;1H";
-  for (let split = 1; split < control.length; split += 1) {
-    const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
-    const highlighter = new KeywordHighlighter(term);
-    highlighter.setRules(rule(), false);
-    await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
-    await write(term, control.slice(0, split));
-    highlighter.setRules(rule(), true);
-    await highlighter.whenSettled();
-    await write(term, `${control.slice(split)}target ERROR\x1b[1;1H`);
+  for (const control of ["\x1b[2;1H", "\x9b2;1H"]) {
+    for (let split = 1; split < control.length; split += 1) {
+      const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+      const highlighter = new KeywordHighlighter(term);
+      highlighter.setRules(rule(), false);
+      await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+      await write(term, control.slice(0, split));
+      highlighter.setRules(rule(), true);
+      await highlighter.whenSettled();
+      await write(term, `${control.slice(split)}target ERROR\x1b[1;1H`);
 
-    assert.equal(cellRgb(term, 1, "ERROR"), RED, `split ${split}`);
-    highlighter.dispose();
-    term.dispose();
+      assert.equal(cellRgb(term, 1, "ERROR"), RED, `${JSON.stringify(control)} split ${split}`);
+      highlighter.dispose();
+      term.dispose();
+    }
   }
+});
+
+test("C1 CUP repaints an earlier viewport row", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+
+  await write(term, "\x9b2;1Htarget ERROR\x9b5;1H");
+
+  assert.equal(cellRgb(term, 1, "ERROR"), RED);
+  highlighter.dispose();
+  term.dispose();
 });
 
 test("cursor-addressed repaint follows VPR and inserted-line row changes", async () => {
@@ -736,6 +750,19 @@ test("cursor-addressed repaint follows VPR and inserted-line row changes", async
 
   await write(term, "\x1b[1;1Hfirst ERROR\x1b[2ethird ERROR\x1b[1;1H");
   await write(term, "\x1b[2;1H\x1b[1Linserted ERROR\x1b[1;1H");
+
+  assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), []);
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("C1 cursor traversal recolors every visited row", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+
+  await write(term, "\x9b1;1Hfirst ERROR\x9b2ethird ERROR\x9b1;1H");
 
   assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), []);
   highlighter.dispose();
@@ -876,6 +903,20 @@ test("saved origin mode is restored across every cursor-control split", async ()
       }
     }
   }
+});
+
+test("C1 cursor save and restore preserves origin mode", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+  await write(term, "\x9b2;4r\x9b?6;25h\x9bs\x9b?6l\x9bu");
+
+  await write(term, "\x9b2;1Htarget ERROR\x9b1;1H");
+
+  assert.equal(cellRgb(term, 2, "ERROR"), RED);
+  highlighter.dispose();
+  term.dispose();
 });
 
 test("normal-buffer origin mode survives an alternate-screen round trip", async () => {

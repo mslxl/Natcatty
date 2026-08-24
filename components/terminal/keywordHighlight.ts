@@ -185,6 +185,18 @@ const collectMatches = (
 
 const yieldToRenderer = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+const trailingIncompleteCsi = (controls: string): string => {
+  const escapeCsi = controls.lastIndexOf("\x1b[");
+  const c1Csi = controls.lastIndexOf("\x9b");
+  const csiStart = Math.max(escapeCsi, c1Csi);
+  if (csiStart >= 0) {
+    const suffix = controls.slice(csiStart);
+    const body = suffix.startsWith("\x1b[") ? suffix.slice(2) : suffix.slice(1);
+    if (!/[\x40-\x7e]/.test(body)) return suffix.slice(-32);
+  }
+  return controls.endsWith("\x1b") ? "\x1b" : "";
+};
+
 /**
  * Keyword highlighting mutates already-parsed cell foregrounds. Writes stay
  * pristine, so ordinary Enter/output never rebuilds history, and serialize can
@@ -532,15 +544,7 @@ export class KeywordHighlighter implements IDisposable {
       return true;
     }
     const controls = this.absoluteOriginControlTail + data;
-    this.absoluteOriginControlTail = "";
-    const lastEscape = controls.lastIndexOf("\x1b");
-    if (lastEscape >= 0) {
-      const suffix = controls.slice(lastEscape);
-      const csiBody = suffix.startsWith("\x1b[") ? suffix.slice(2) : null;
-      if (suffix === "\x1b" || (csiBody !== null && !/[\x40-\x7e]/.test(csiBody))) {
-        this.absoluteOriginControlTail = suffix.slice(-32);
-      }
-    }
+    this.absoluteOriginControlTail = trailingIncompleteCsi(controls);
     const saveOriginMode = () => {
       if (this.absoluteActiveBuffer === "normal") {
         this.absoluteNormalSavedOriginMode = this.absoluteOriginMode;
@@ -560,7 +564,7 @@ export class KeywordHighlighter implements IDisposable {
     };
     const originModeControls = [
       ...controls.matchAll(
-        /\x1bc|\x1b[78]|\x1b\[!p|\x1b\[[\d;]*[su]|\x1b\[\?[\d;]*[hl]/g, // eslint-disable-line no-control-regex
+        /\x1bc|\x1b[78]|(?:\x1b\[|\x9b)(?:!p|[\d;]*[su]|\?[\d;]*[hl])/g, // eslint-disable-line no-control-regex
       ),
     ];
     let originModeNeedsSafety = this.absoluteOriginMode !== false;
@@ -571,14 +575,14 @@ export class KeywordHighlighter implements IDisposable {
         this.absoluteActiveBuffer = "normal";
         this.absoluteNormalSavedOriginMode = false;
         this.absoluteAlternateSavedOriginMode = false;
-      } else if (control === "\x1b[!p") {
+      } else if (control === "\x1b[!p" || control === "\x9b!p") {
         this.absoluteOriginMode = false;
       } else if (control === "\x1b7" || control.endsWith("s")) {
         saveOriginMode();
       } else if (control === "\x1b8" || control.endsWith("u")) {
         restoreOriginMode();
       } else {
-        const parameters = /^\x1b\[\?([\d;]*)[hl]$/.exec(control)?.[1] // eslint-disable-line no-control-regex
+        const parameters = /^(?:\x1b\[|\x9b)\?([\d;]*)[hl]$/.exec(control)?.[1] // eslint-disable-line no-control-regex
           ?.split(";")
           .map((parameter) => Number.parseInt(parameter, 10))
           ?? [];
@@ -613,15 +617,7 @@ export class KeywordHighlighter implements IDisposable {
       return null;
     }
     const controls = this.absoluteControlTail + data;
-    this.absoluteControlTail = "";
-    const lastEscape = controls.lastIndexOf("\x1b");
-    if (lastEscape >= 0) {
-      const suffix = controls.slice(lastEscape);
-      const csiBody = suffix.startsWith("\x1b[") ? suffix.slice(2) : null;
-      if (suffix === "\x1b" || (csiBody !== null && !/[\x40-\x7e]/.test(csiBody))) {
-        this.absoluteControlTail = suffix.slice(-32);
-      }
-    }
+    this.absoluteControlTail = trailingIncompleteCsi(controls);
     return controls;
   }
 
@@ -637,14 +633,14 @@ export class KeywordHighlighter implements IDisposable {
     // CUP/HVP and VPA address a viewport row directly. Mosh's framebuffer
     // diff uses these controls to repaint rows above the current cursor once
     // the remote screen fills, without emitting a newline or changing buffer.
-    const cup = /\x1b\[(\d*)(?:;\d*)?[Hf]/g; // eslint-disable-line no-control-regex
-    const vpa = /\x1b\[(\d*)d/g; // eslint-disable-line no-control-regex
+    const cup = /(?:\x1b\[|\x9b)(\d*)(?:;\d*)?[Hf]/g; // eslint-disable-line no-control-regex
+    const vpa = /(?:\x1b\[|\x9b)(\d*)d/g; // eslint-disable-line no-control-regex
     for (const match of controls.matchAll(cup)) noteRow(match[1]);
     for (const match of controls.matchAll(vpa)) noteRow(match[1]);
     // These controls can visit rows that are not named by CUP/VPA. Keep the
     // wider safety range only for writes that actually contain such movement.
     const mayTraverseRows = originModeNeedsSafety
-      || /[\n\v\f]|\x1b(?:[DEM8]|\[[\d;?]*[ABEFIJLMSTehlru])/.test(controls); // eslint-disable-line no-control-regex
+      || /[\n\v\f]|\x1b[DEM8]|(?:\x1b\[|\x9b)[\d;?]*[ABEFIJLMSTehlru]/.test(controls); // eslint-disable-line no-control-regex
     return rows.size === 0
       ? null
       : { rows: [...rows].sort((left, right) => left - right), mayTraverseRows };
