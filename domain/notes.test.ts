@@ -480,4 +480,60 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
     selectedMathRes.text.slice(selectedMathRes.selectionStart, selectedMathRes.selectionEnd),
     "x^2",
   );
+
+  const bulletRes = wrapMarkdownSyntax("one\ntwo", 0, 7, "bullet");
+  assert.equal(bulletRes.text, "\n- one\n- two\n");
+  assert.equal(
+    bulletRes.text.slice(bulletRes.selectionStart, bulletRes.selectionEnd),
+    "one\n- two",
+  );
+
+  const numberRes = wrapMarkdownSyntax("one\ntwo", 0, 7, "number");
+  assert.equal(numberRes.text, "\n1. one\n2. two\n");
+  assert.equal(
+    numberRes.text.slice(numberRes.selectionStart, numberRes.selectionEnd),
+    "one\n2. two",
+  );
+
+  const taskRes = wrapMarkdownSyntax("one\ntwo", 0, 7, "task");
+  assert.equal(taskRes.text, "\n- [ ] one\n- [ ] two\n");
+  assert.equal(
+    taskRes.text.slice(taskRes.selectionStart, taskRes.selectionEnd),
+    "one\n- [ ] two",
+  );
+
+  const trailingNewlineBulletRes = wrapMarkdownSyntax("one\ntwo\nthree", 0, 8, "bullet");
+  assert.equal(trailingNewlineBulletRes.text, "\n- one\n- two\n\nthree");
+  assert.equal(
+    trailingNewlineBulletRes.text.slice(
+      trailingNewlineBulletRes.selectionStart,
+      trailingNewlineBulletRes.selectionEnd,
+    ),
+    "one\n- two",
+  );
+  assert.doesNotMatch(
+    wrapMarkdownSyntax("one\ntwo\nthree", 0, 8, "number").text,
+    /^3\.\s*$/m,
+  );
+  assert.doesNotMatch(
+    wrapMarkdownSyntax("one\ntwo\nthree", 0, 8, "task").text,
+    /^- \[ \]\s*$/m,
+  );
+
+  const blankLinesNumberRes = wrapMarkdownSyntax("one\n\ntwo\n\n\nthree", 0, 11, "number");
+  assert.equal(blankLinesNumberRes.text, "\n1. one\n\n2. two\n\n\n\nthree");
+  assert.equal(
+    blankLinesNumberRes.text.slice(
+      blankLinesNumberRes.selectionStart,
+      blankLinesNumberRes.selectionEnd,
+    ),
+    "one\n\n2. two",
+  );
+
+  for (const action of ["bullet", "number", "task"] as const) {
+    const newlineOnlyRes = wrapMarkdownSyntax("\n", 0, 1, action);
+    assert.equal(newlineOnlyRes.text, "\n\n\n");
+    assert.equal(newlineOnlyRes.selectionStart, 1);
+    assert.equal(newlineOnlyRes.selectionEnd, 1);
+  }
 });

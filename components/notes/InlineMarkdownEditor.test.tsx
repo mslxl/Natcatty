@@ -14,6 +14,7 @@ import {
   NOTE_SMALL_IMAGE_MAX_WIDTH,
   resolveHostPickerPopupPosition,
   scrollNoteHeadingIntoView,
+  shouldRenderNoteMathFormula,
   shouldInsertClipboardTextAsMarkdown,
   shouldHandleHostPickerNavigationKey,
 } from "./InlineMarkdownEditor.tsx";
@@ -40,6 +41,10 @@ test("math language detection does not mistake plain text blocks for TeX", () =>
   assert.equal(isNoteMathLanguageLabel("text"), false);
   assert.equal(isNoteMathLanguageLabel("plaintext"), false);
   assert.equal(isNoteMathLanguageLabel("typescript"), false);
+  assert.equal(shouldRenderNoteMathFormula("Plain text", true, "$$E=mc^2$$"), false);
+  assert.equal(shouldRenderNoteMathFormula("plaintext", true, "$$E=mc^2$$"), false);
+  assert.equal(shouldRenderNoteMathFormula("", false, "$$E=mc^2$$"), true);
+  assert.equal(shouldRenderNoteMathFormula("Math (LaTeX)", true, "E=mc^2"), true);
 });
 
 test("note link and image actions open the editor dialogs", () => {

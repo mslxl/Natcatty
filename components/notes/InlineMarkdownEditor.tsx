@@ -754,32 +754,49 @@ export const isNoteMathLanguageLabel = (value: string): boolean => {
     || /^(?:math|latex|tex|公式)(?:\s|\(|$)/.test(normalized);
 };
 
+export const shouldRenderNoteMathFormula = (
+  languageLabel: string,
+  hasExplicitLanguage: boolean,
+  content: string,
+): boolean => isNoteMathLanguageLabel(languageLabel)
+  || (!hasExplicitLanguage
+    && content.startsWith("$$")
+    && content.endsWith("$$")
+    && content.length > 4);
+
 export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: string): void => {
   container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
     if (!(wrapper instanceof HTMLElement)) return;
 
     const langTrigger = wrapper.querySelector('[class*="_toolbarCodeBlockLanguageSelectTrigger_"], [class*="_selectTrigger_"], select');
-    const lang = (
-      langTrigger?.textContent ||
-      (langTrigger as HTMLSelectElement)?.value ||
-      wrapper.getAttribute("data-language") ||
-      wrapper.querySelector("code")?.className ||
-      wrapper.className ||
-      ""
-    ).toLowerCase().trim();
-
-    const isMathBlock = isNoteMathLanguageLabel(lang);
+    const triggerText = langTrigger?.textContent?.trim() ?? "";
+    const triggerPlaceholder = langTrigger?.getAttribute("aria-label")?.trim() ?? "";
+    const dataLanguage = wrapper.getAttribute("data-language")?.trim() ?? "";
+    const codeLanguage = /(?:^|\s)language-([^\s]+)/i.exec(
+      wrapper.querySelector("code")?.className ?? "",
+    )?.[1] ?? "";
+    const selectLanguage = langTrigger instanceof HTMLSelectElement
+      ? langTrigger.value.trim()
+      : "";
+    const hasExplicitLanguage = Boolean(
+      dataLanguage
+      || codeLanguage
+      || selectLanguage
+      || (triggerText && triggerText !== triggerPlaceholder),
+    );
+    const lang = (dataLanguage || codeLanguage || selectLanguage || triggerText).toLowerCase();
 
     const text = getCodeMirrorBlockText(wrapper).trim();
 
-    const isDollarMath = text.startsWith("$$") && text.endsWith("$$") && text.length > 4;
-    if (!isMathBlock && !isDollarMath) {
+    const isMathBlock = shouldRenderNoteMathFormula(lang, hasExplicitLanguage, text);
+    if (!isMathBlock) {
       const existingPreview = wrapper.querySelector(".netcatty-math-formula-preview");
       if (existingPreview) existingPreview.remove();
       wrapper.classList.remove("netcatty-math-reading-mode");
       return;
     }
 
+    const isDollarMath = !isNoteMathLanguageLabel(lang);
     const formulaSource = isDollarMath ? text.slice(2, -2).trim() : text;
     if (!formulaSource) {
       const existingPreview = wrapper.querySelector(".netcatty-math-formula-preview");

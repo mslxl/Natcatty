@@ -657,6 +657,34 @@ export interface WrapMarkdownResult {
   selectionEnd: number;
 }
 
+const formatSelectedMarkdownListLines = (
+  content: string,
+  marker: (index: number) => string,
+): { formatted: string; selectionStartOffset: number; selectionEndOffset: number } => {
+  let itemIndex = 0;
+  let cursor = 0;
+  let selectionStartOffset: number | null = null;
+  let selectionEndOffset: number | null = null;
+  const formattedLines = content.split("\n").map((line) => {
+    if (!line.trim()) {
+      cursor += line.length + 1;
+      return line;
+    }
+    const prefix = marker(itemIndex);
+    itemIndex += 1;
+    const formattedLine = `${prefix}${line}`;
+    if (selectionStartOffset === null) selectionStartOffset = cursor + prefix.length;
+    selectionEndOffset = cursor + formattedLine.length;
+    cursor += formattedLine.length + 1;
+    return formattedLine;
+  });
+  return {
+    formatted: formattedLines.join("\n"),
+    selectionStartOffset: selectionStartOffset ?? 0,
+    selectionEndOffset: selectionEndOffset ?? 0,
+  };
+};
+
 export const wrapMarkdownSyntax = (
   text: string,
   start: number,
@@ -760,26 +788,38 @@ export const wrapMarkdownSyntax = (
     }
     case "bullet": {
       const content = selected || "List item";
+      const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownListLines(
+        content,
+        () => "- ",
+      );
       return {
-        text: `${before}\n- ${content}\n${after}`,
-        selectionStart: start + 3,
-        selectionEnd: start + 3 + content.length,
+        text: `${before}\n${formatted}\n${after}`,
+        selectionStart: start + 1 + selectionStartOffset,
+        selectionEnd: start + 1 + selectionEndOffset,
       };
     }
     case "number": {
       const content = selected || "List item";
+      const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownListLines(
+        content,
+        (index) => `${index + 1}. `,
+      );
       return {
-        text: `${before}\n1. ${content}\n${after}`,
-        selectionStart: start + 4,
-        selectionEnd: start + 4 + content.length,
+        text: `${before}\n${formatted}\n${after}`,
+        selectionStart: start + 1 + selectionStartOffset,
+        selectionEnd: start + 1 + selectionEndOffset,
       };
     }
     case "task": {
       const content = selected || "Task";
+      const { formatted, selectionStartOffset, selectionEndOffset } = formatSelectedMarkdownListLines(
+        content,
+        () => "- [ ] ",
+      );
       return {
-        text: `${before}\n- [ ] ${content}\n${after}`,
-        selectionStart: start + 7,
-        selectionEnd: start + 7 + content.length,
+        text: `${before}\n${formatted}\n${after}`,
+        selectionStart: start + 1 + selectionStartOffset,
+        selectionEnd: start + 1 + selectionEndOffset,
       };
     }
     case "divider": {
