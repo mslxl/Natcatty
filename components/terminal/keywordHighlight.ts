@@ -366,7 +366,8 @@ export class KeywordHighlighter implements IDisposable {
     if (this.compiledPatterns.length === 0 && !this.hasPendingCatchUp() && startedOnNormal) {
       return this.originalWrite(data, callback);
     }
-    const startY = this.term.buffer.active.baseY + this.term.buffer.active.cursorY;
+    const startBaseY = this.term.buffer.active.baseY;
+    const startY = startBaseY + this.term.buffer.active.cursorY;
     const absoluteRepaintRange = typeof data === "string"
       ? this.resolveAbsoluteRepaintRange(data)
       : null;
@@ -430,12 +431,21 @@ export class KeywordHighlighter implements IDisposable {
           const ordinaryFromY = skipStartRow && !startRowMutated
             ? Math.min(endY, writeMarker.line + 1)
             : writeMarker.line;
+          // An absolute-positioned update can traverse rows via CRLF/IND and
+          // can scroll before restoring its final cursor. Cover both the
+          // pre-write and post-write viewports instead of inferring every
+          // intermediate cursor position from a potentially split stream.
           const fromY = absoluteRepaintRange === null
             ? ordinaryFromY
-            : Math.min(ordinaryFromY, active.baseY + absoluteRepaintRange.startRow);
+            : Math.min(ordinaryFromY, startBaseY, active.baseY);
           const toY = absoluteRepaintRange === null
             ? endY
-            : Math.max(ordinaryFromY, endY, active.baseY + absoluteRepaintRange.endRow);
+            : Math.max(
+              ordinaryFromY,
+              endY,
+              startBaseY + this.term.rows - 1,
+              active.baseY + this.term.rows - 1,
+            );
           if (this.compiledPatterns.length === 0) {
             if (this.hasStoredOriginalsInRange(fromY, toY)) {
               this.markCatchUp(fromY);

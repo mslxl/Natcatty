@@ -589,6 +589,42 @@ test("Mosh repaint highlights survive every transport split point", async () => 
   }
 });
 
+test("cursor-addressed repaint follows CRLF rows before restoring the cursor", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 4, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4");
+  await write(term, "\x1b[1;1Hnew-1 ERROR\r\nnew-2 ERROR\r\nnew-3 ERROR\x1b[1;1H");
+
+  assert.deepEqual(
+    Array.from({ length: 3 }, (_, y) => cellRgb(term, y, "ERROR")),
+    [RED, RED, RED],
+  );
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("cursor-addressed repaint keeps pre-scroll rows highlighted", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 4, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4");
+  await write(
+    term,
+    "\x1b[1;1Hscrolled ERROR\r\nline-2\r\nline-3\r\nline-4\r\nline-5\x1b[1;1H",
+  );
+
+  const highlightedRows: number[] = [];
+  for (let y = 0; y < term.buffer.active.length; y += 1) {
+    if (cellRgb(term, y, "ERROR") === RED) highlightedRows.push(y);
+  }
+  assert.deepEqual(highlightedRows, [0]);
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;
