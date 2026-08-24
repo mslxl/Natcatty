@@ -199,21 +199,30 @@ export const buildVaultNoteMarkdownExportFiles = (
   notes: VaultNote[],
   scope: VaultNotesExportScope = { type: "all" },
 ): VaultNoteMarkdownExportFile[] => {
-  const usedNames = new Set<string>();
-
-  return getVaultNotesForExportScope(notes, scope).map((note, index) => {
-    const groupSegments = note.group
+  const exportEntries = getVaultNotesForExportScope(notes, scope).map((note, index) => ({
+    note,
+    groupSegments: note.group
       ? cleanNoteGroupPath(note.group)
         .split("/")
         .filter(Boolean)
         .map((part) => sanitizeNoteExportFileNamePart(part, "folder"))
-      : [];
-    const baseName = sanitizeNoteExportFileNamePart(note.title, `note-${index + 1}`);
+      : [],
+    baseName: sanitizeNoteExportFileNamePart(note.title, `note-${index + 1}`),
+  }));
+  const directoryNames = new Set<string>();
+  for (const { groupSegments } of exportEntries) {
+    for (let depth = 1; depth <= groupSegments.length; depth += 1) {
+      directoryNames.add(groupSegments.slice(0, depth).join("/").toLowerCase());
+    }
+  }
+  const usedNames = new Set<string>();
+
+  return exportEntries.map(({ note, groupSegments, baseName }) => {
     const basePath = [...groupSegments, baseName].join("/");
     let candidate = `${basePath}.md`;
     let suffix = 2;
 
-    while (usedNames.has(candidate.toLowerCase())) {
+    while (usedNames.has(candidate.toLowerCase()) || directoryNames.has(candidate.toLowerCase())) {
       candidate = `${basePath}-${suffix}.md`;
       suffix += 1;
     }

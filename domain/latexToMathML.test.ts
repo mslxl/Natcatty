@@ -78,3 +78,12 @@ test("latexToMathML converts text formatting commands", () => {
   assert.ok(mathml.includes("<mtext mathvariant=\"bold\">bold</mtext>"));
   assert.ok(mathml.includes("<mtext mathvariant=\"italic\">italic</mtext>"));
 });
+
+test("latexToMathML preserves math font arguments without escaping rendered tokens", () => {
+  const mathml = latexToMathML("\\mathbb{R} + \\mathbf{x} + \\mathit{y} + \\mathcal{F}");
+  assert.ok(mathml.includes("<mi>ℝ</mi>"));
+  assert.ok(mathml.includes('<mstyle mathvariant="bold"><mrow><mi>x</mi></mrow></mstyle>'));
+  assert.ok(mathml.includes('<mstyle mathvariant="italic"><mrow><mi>y</mi></mrow></mstyle>'));
+  assert.ok(mathml.includes('<mstyle mathvariant="script"><mrow><mi>F</mi></mrow></mstyle>'));
+  assert.ok(!mathml.includes("&lt;mi&gt;"));
+});

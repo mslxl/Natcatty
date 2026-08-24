@@ -412,43 +412,42 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
       ) {
         const argRes = getNextArg(tokens, i + 1);
         i = argRes.nextIndex;
-        const isTextCommand = cmd.startsWith("text");
         const rawContent = argRes.arg ? argRes.arg.value : "";
-        const rawText = argRes.arg
-          ? isTextCommand
-            ? rawContent
-            : argRes.arg.children
-            ? renderTokensToMathML(argRes.arg.children)
-            : rawContent
-          : "";
+        const argXml = argRes.arg ? renderTokensToMathML(argRes.arg.children || [argRes.arg]) : "";
         if (cmd === "mathbb") {
           const bboardMap: Record<string, string> = {
             R: "ℝ", N: "ℕ", Z: "ℤ", Q: "ℚ", C: "ℂ", P: "ℙ", H: "ℍ", E: "𝔼",
           };
-          const bboard = bboardMap[rawText.trim()] || rawText;
-          baseXml = `<mi>${escapeXml(bboard)}</mi>`;
-        } else if (cmd === "mathrm" || cmd === "operatorname") {
-          baseXml = `<mi mathvariant="normal">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+          const bboard = bboardMap[rawContent.trim()];
+          baseXml = bboard
+            ? `<mi>${bboard}</mi>`
+            : `<mstyle mathvariant="double-struck"><mrow>${argXml}</mrow></mstyle>`;
+        } else if (cmd === "operatorname") {
+          baseXml = `<mi mathvariant="normal">${escapeXml(rawContent)}</mi>`;
+        } else if (cmd === "mathrm") {
+          baseXml = `<mstyle mathvariant="normal"><mrow>${argXml}</mrow></mstyle>`;
         } else if (cmd === "mathbf" || cmd === "bm" || cmd === "boldsymbol") {
-          baseXml = `<mi mathvariant="bold">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+          baseXml = `<mstyle mathvariant="bold"><mrow>${argXml}</mrow></mstyle>`;
         } else if (cmd === "mathit") {
-          baseXml = `<mi mathvariant="italic">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+          baseXml = `<mstyle mathvariant="italic"><mrow>${argXml}</mrow></mstyle>`;
         } else if (cmd === "mathsf") {
-          baseXml = `<mi mathvariant="sans-serif">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+          baseXml = `<mstyle mathvariant="sans-serif"><mrow>${argXml}</mrow></mstyle>`;
         } else if (cmd === "mathtt") {
-          baseXml = `<mi mathvariant="monospace">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+          baseXml = `<mstyle mathvariant="monospace"><mrow>${argXml}</mrow></mstyle>`;
+        } else if (cmd === "mathcal") {
+          baseXml = `<mstyle mathvariant="script"><mrow>${argXml}</mrow></mstyle>`;
         } else if (cmd === "mathfrak" || cmd === "frak") {
-          baseXml = `<mi mathvariant="fraktur">${rawText.includes("<") ? rawText : escapeXml(rawText)}</mi>`;
+          baseXml = `<mstyle mathvariant="fraktur"><mrow>${argXml}</mrow></mstyle>`;
         } else if (cmd === "textbf") {
-          baseXml = `<mtext mathvariant="bold">${escapeXml(rawText)}</mtext>`;
+          baseXml = `<mtext mathvariant="bold">${escapeXml(rawContent)}</mtext>`;
         } else if (cmd === "textit") {
-          baseXml = `<mtext mathvariant="italic">${escapeXml(rawText)}</mtext>`;
+          baseXml = `<mtext mathvariant="italic">${escapeXml(rawContent)}</mtext>`;
         } else if (cmd === "texttt") {
-          baseXml = `<mtext mathvariant="monospace">${escapeXml(rawText)}</mtext>`;
+          baseXml = `<mtext mathvariant="monospace">${escapeXml(rawContent)}</mtext>`;
         } else if (cmd === "textsf") {
-          baseXml = `<mtext mathvariant="sans-serif">${escapeXml(rawText)}</mtext>`;
+          baseXml = `<mtext mathvariant="sans-serif">${escapeXml(rawContent)}</mtext>`;
         } else {
-          baseXml = `<mtext>${escapeXml(rawText)}</mtext>`;
+          baseXml = `<mtext>${escapeXml(rawContent)}</mtext>`;
         }
         consumed = true;
       } else if (cmd === "left") {

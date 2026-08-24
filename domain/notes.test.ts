@@ -158,6 +158,18 @@ test("buildVaultNoteMarkdownExportFiles preserves groups and de-duplicates file 
   assert.equal(buildVaultNoteMarkdownExportFiles(notes)[2].name, "note-3.md");
 });
 
+test("buildVaultNoteMarkdownExportFiles keeps file names distinct from directory paths", () => {
+  const notes = [
+    sanitizeVaultNote({ id: "n1", title: "docs", content: "root", createdAt: 1, updatedAt: 1, order: 1000 }),
+    sanitizeVaultNote({ id: "n2", title: "child", content: "nested", group: "DOCS.md", createdAt: 1, updatedAt: 1, order: 2000 }),
+  ];
+
+  assert.deepEqual(buildVaultNoteMarkdownExportFiles(notes), [
+    { name: "docs-2.md", content: "root" },
+    { name: "DOCS.md/child.md", content: "nested" },
+  ]);
+});
+
 test("resolveRenderedMarkdownLinkHref recovers ssh links sanitized by the editor DOM", () => {
   assert.equal(
     resolveRenderedMarkdownLinkHref(
