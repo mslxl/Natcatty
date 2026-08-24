@@ -87,8 +87,7 @@ test("NotesManager balances folder and note tree icon sizes", () => {
 
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-folder/);
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-file-text/);
-  assert.match(markup, /<div class="flex h-5 w-5[^"]*mr-1">/);
-  assert.match(markup, /<div class="flex h-5 w-5 shrink-0 items-center justify-center[^"]*mr-1">/);
+  assert.match(markup, /<div class="flex shrink-0 items-center[^"]*mr-1">/);
   assert.doesNotMatch(markup, /lucide lucide-file-text[^"]*mr-2/);
 });
 
@@ -112,7 +111,7 @@ test("NotesManager gives folder and tag metadata pills the same compact style", 
     "px-2",
     "text-[11px]",
     "font-medium",
-    "leading-5",
+    "leading-none",
   ]) {
     assert.ok(folderPill.classList.contains(className), `folder pill should include ${className}`);
     assert.ok(tagPill.classList.contains(className), `tag pill should include ${className}`);
@@ -122,6 +121,11 @@ test("NotesManager gives folder and tag metadata pills the same compact style", 
   assert.ok(addTagPill.classList.contains("text-foreground"));
   assert.equal(tagPill.classList.contains("border"), false);
   assert.equal(tagPill.classList.contains("bg-primary/10"), false);
+  assert.equal(folderPill.querySelector("svg")?.classList.contains("-translate-y-px"), false);
+  assert.equal(tagPill.querySelector("svg")?.classList.contains("-translate-y-px"), false);
+  assert.ok([...folderPill.querySelectorAll("span")].some((node) => node.classList.contains("translate-y-px")));
+  assert.ok([...tagPill.querySelectorAll("span")].some((node) => node.classList.contains("translate-y-px")));
+  assert.ok([...addTagPill.querySelectorAll("span")].some((node) => node.classList.contains("translate-y-px")));
 });
 
 test("NotesManager tree scroll area constrains width so titles can truncate", () => {

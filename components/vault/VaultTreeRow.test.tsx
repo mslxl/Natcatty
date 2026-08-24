@@ -77,10 +77,10 @@ test("VaultTree rows can tighten the icon-to-label gap per surface", () => {
     <VaultTreeItemRow label="Failover checklist" depth={0} iconClassName="mr-1" />,
   );
 
-  assert.match(groupMarkup, /<div class="flex h-5 w-5[^"]*mr-1">/);
-  assert.match(itemMarkup, /<div class="flex h-5 w-5[^"]*mr-1">/);
-  assert.doesNotMatch(groupMarkup, /<div class="[^"]*mr-2[^"]*h-5 w-5/);
-  assert.doesNotMatch(itemMarkup, /<div class="[^"]*mr-2[^"]*h-5 w-5/);
+  assert.match(groupMarkup, /<div class="flex shrink-0 items-center[^"]*mr-1">/);
+  assert.match(itemMarkup, /<div class="flex shrink-0 items-center[^"]*mr-1">/);
+  assert.doesNotMatch(groupMarkup, /<div class="[^"]*mr-2[^"]*flex shrink-0/);
+  assert.doesNotMatch(itemMarkup, /<div class="[^"]*mr-2[^"]*flex shrink-0/);
 });
 
 test("VaultTree labels use CJK-safe line-height under truncate", () => {
@@ -96,9 +96,12 @@ test("VaultTree labels use CJK-safe line-height under truncate", () => {
   assert.doesNotMatch(groupMarkup, /leading-none/);
   assert.match(itemMarkup, /leading-5/);
   assert.doesNotMatch(itemMarkup, /leading-none/);
-  assert.match(groupMarkup, /flex h-5 min-w-0 flex-1 items-center/);
-  assert.match(itemMarkup, /flex h-5 min-w-0 items-center/);
-  assert.match(itemMarkup, /flex h-5 w-5 shrink-0 items-center justify-center/);
+  assert.match(groupMarkup, /flex min-w-0 flex-1 items-center/);
+  assert.match(itemMarkup, /min-w-0 flex-1 truncate leading-5/);
+  assert.match(groupMarkup, /min-w-0 truncate translate-y-px/);
+  assert.match(itemMarkup, /min-w-0 flex-1 truncate leading-5 translate-y-px/);
+  assert.doesNotMatch(groupMarkup, /-translate-y-px/);
+  assert.doesNotMatch(itemMarkup, /-translate-y-px/);
 });
 
 test("VaultTreeItemRow does not clip the inline rename input", () => {
