@@ -775,6 +775,7 @@ export const tryAttachSessionToTerminal = (
     onConnected?: (meta?: TerminalSessionDataMeta) => void;
     onExit?: (evt: TerminalSessionExitEvent) => void;
     requireExplicitConnectionReady?: boolean;
+    deferConnectionDuringMoshHandshake?: boolean;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
     sudoAutofillCandidates?: SudoPasswordAutofillCandidate[];
@@ -885,6 +886,13 @@ export const attachSessionToTerminal = (
   const markConnectedOnFirstOutput = (meta?: TerminalSessionDataMeta) => {
     const pluginConnectionReady = meta?.pluginConnectionReady === true;
     if (opts?.requireExplicitConnectionReady === true && !pluginConnectionReady) return;
+    if (
+      opts?.deferConnectionDuringMoshHandshake === true
+      && meta?.moshHandshake === true
+      && ctx.passwordPromptActiveRef?.current !== true
+    ) {
+      return;
+    }
     if (ctx.hasConnectedRef.current && !pluginConnectionReady) return;
     if (!ctx.hasConnectedRef.current) {
       ctx.updateStatus("connected");
@@ -945,11 +953,9 @@ export const attachSessionToTerminal = (
       data = sudoAutofill?.handleOutput(data) ?? data;
       writeSessionData(ctx, term, data, ingressBytes, meta);
       ctx.onTerminalOutput?.(data, meta);
-      // Mark connected on first visible output so the connection overlay
-      // dismisses and interactive Mosh handshake prompts (password/OTP)
-      // remain reachable. Startup commands / pending scripts are gated
-      // separately on netcatty:mosh:ready so they do not hit the handshake
-      // PTY (#2199).
+      // Ordinary transports connect on first visible output. Mosh can defer
+      // that transition until its explicit ready event; an interactive
+      // password/OTP prompt still dismisses the overlay so input is reachable.
       markConnectedOnFirstOutput(meta);
     },
     { replayBacklog: true },

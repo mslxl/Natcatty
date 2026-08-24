@@ -2449,3 +2449,51 @@ test("attachSessionToTerminal marks connected on metadata-only or visible first 
   assert.deepEqual(statuses, ["connected"]);
   assert.equal(ctx.hasConnectedRef.current, true);
 });
+
+test("Mosh handshake stays connecting until ready unless it needs terminal input", () => {
+  const { term } = createFakeTerm();
+  const statuses: string[] = [];
+  let onData: ((data: string, meta?: { moshHandshake?: boolean }) => void) | null = null;
+  const passwordPromptActiveRef = { current: false };
+  const ctx = {
+    ...createContext(false),
+    sessionId: "mosh-session",
+    sessionRef: { current: null as string | null },
+    hasConnectedRef: { current: false },
+    hasRunStartupCommandRef: { current: false },
+    disposeDataRef: { current: null as (() => void) | null },
+    disposeExitRef: { current: null as (() => void) | null },
+    fitAddonRef: { current: null },
+    serializeAddonRef: { current: null },
+    pendingAuthRef: { current: null },
+    passwordPromptActiveRef,
+    onTerminalOutput: (data: string) => {
+      if (data.includes("Password:")) passwordPromptActiveRef.current = true;
+    },
+    terminalBackend: {
+      onSessionData: (_id: string, cb: typeof onData) => {
+        onData = cb;
+        return () => {};
+      },
+      onSessionExit: () => () => {},
+      writeToSession: () => {},
+      resizeSession: () => {},
+      setSessionFlowPaused: () => {},
+      ackSessionFlow: () => {},
+    },
+    updateStatus: (status: string) => {
+      statuses.push(status);
+      if (status === "connected") ctx.hasConnectedRef.current = true;
+    },
+    setError: () => {},
+    onSessionExit: () => {},
+  };
+
+  attachSessionToTerminal(ctx as never, term, "mosh-session", {
+    deferConnectionDuringMoshHandshake: true,
+  });
+  onData?.("login banner\r\n", { moshHandshake: true });
+  assert.deepEqual(statuses, []);
+  onData?.("Password:", { moshHandshake: true });
+  assert.deepEqual(statuses, ["connected"]);
+});
