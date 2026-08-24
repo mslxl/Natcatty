@@ -12,9 +12,12 @@ const {
 
 function trackedTimerApi() {
   const active = new Set();
+  const delays = [];
   return {
     active,
+    delays,
     setTimeoutFn(callback, delay) {
+      delays.push(delay);
       let timer;
       timer = setTimeout(() => {
         active.delete(timer);
@@ -107,6 +110,25 @@ test("channel open keeps its deadline referenced and clears it after success", a
   assert.equal(getEventListeners(controller.signal, "abort").length, 0);
 });
 
+test("shell open caps each attempt to the remaining rate-limit retry window", async () => {
+  const timers = trackedTimerApi();
+  const controller = new AbortController();
+  const client = {
+    shell() {},
+  };
+  const pending = openBoundedSshShell(client, {}, {}, {
+    signal: controller.signal,
+    timeoutMs: 1_000,
+    rateLimitRetryTimeoutMs: 5,
+    nowFn: () => 0,
+    ...timers,
+  });
+
+  assert.equal(timers.delays[0], 5);
+  controller.abort(new Error("cancelled"));
+  await assert.rejects(pending, /cancelled/);
+});
+
 test("detects bastion channelOpen rate-limit errors including the offen typo", () => {
   assert.equal(
     isSshChannelOpenRateLimitedError(
@@ -167,7 +189,7 @@ test("shell open can use a bounded retry window for variable bastion cooldowns",
   };
 
   const stream = await openBoundedSshShell(client, {}, {}, {
-    rateLimitRetryTimeoutMs: 10,
+    rateLimitRetryTimeoutMs: 11,
     rateLimitBackoffMs: 1,
     nowFn: () => elapsedMs,
     sleepFn: async (ms) => {
@@ -209,7 +231,31 @@ test("shell open stops retrying when the bastion retry window is exhausted", asy
   assert.deepEqual(delays, [2]);
 });
 
+test("shell open does not start another attempt after a delayed retry wakes past the deadline", async () => {
+  let elapsedMs = 0;
+  let attempts = 0;
+  const client = {
+    shell(_window, _options, next) {
+      attempts += 1;
+      next(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+    },
+  };
+
+  await assert.rejects(
+    openBoundedSshShell(client, {}, {}, {
+      rateLimitRetryTimeoutMs: 5,
+      rateLimitBackoffMs: 1,
+      nowFn: () => elapsedMs,
+      sleepFn: async () => { elapsedMs = 10; },
+    }),
+    /channelOpen too offen/,
+  );
+
+  assert.equal(attempts, 1);
+});
+
 test("shell open does not retry unrelated channel open failures", async () => {
+  const delays = [];
   let attempts = 0;
   const client = {
     shell(_window, _options, next) {
@@ -220,11 +266,12 @@ test("shell open does not retry unrelated channel open failures", async () => {
 
   await assert.rejects(
     openBoundedSshShell(client, {}, {}, {
-      rateLimitRetries: 3,
+      rateLimitRetryTimeoutMs: 10,
       rateLimitBackoffMs: 5,
-      sleepFn: async () => {},
+      sleepFn: async (ms) => { delays.push(ms); },
     }),
     /administratively prohibited/,
   );
   assert.equal(attempts, 1);
+  assert.deepEqual(delays, []);
 });

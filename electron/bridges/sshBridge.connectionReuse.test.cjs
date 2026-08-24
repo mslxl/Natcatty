@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
+const { abortPendingBoot } = require("./sessionBootEpoch.cjs");
 
 const sshConnectionPool = require("./sshConnectionPool.cjs");
 const {
@@ -1340,6 +1341,118 @@ test("Copy Tab keeps reusing when a bastion rate limit outlasts the legacy retry
   assert.equal(getClientConstructCount(), 0);
   assert.equal(sourceConn.openedShells.length, 1);
   assert.equal(getConnectionReuseFallbackEvents(sender).length, 0);
+});
+
+test("ordinary parked reuse keeps the legacy retry bound", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session")));
+  };
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "ordinary",
+        hostname: "bastion.example",
+        username: "alice",
+        sshChannelOpenRateLimitBackoffMs: 1,
+      },
+    ),
+    /unexpected fresh connect/,
+  );
+
+  // The ordinary path can try the same live transport through its parked and
+  // coordinated-reuse stages. Each stage keeps the legacy four-attempt bound.
+  assert.equal(shellAttempts, 8);
+  assert.equal(getClientConstructCount(), 1);
+});
+
+test("cancelling Copy Tab during rate-limit backoff stops retries and keeps the source alive", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => {
+      cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      setImmediate(() => abortPendingBoot("copy", 1));
+    });
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        bootEpoch: 1,
+        sshChannelOpenRateLimitBackoffMs: 50,
+      },
+    ),
+    /aborted/,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 75));
+
+  assert.equal(shellAttempts, 1);
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(source.connRef.count, 1);
+});
+
+test("a shared connection error during Copy Tab backoff stops queued retries", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => {
+      cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      setImmediate(() => sourceConn.emit("error", new Error("transport lost")));
+    });
+  };
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        sshChannelOpenRateLimitBackoffMs: 50,
+      },
+    ),
+    /unexpected fresh connect/,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 75));
+
+  assert.equal(shellAttempts, 1);
+  assert.equal(getClientConstructCount(), 1);
 });
 
 test("Copy Tab opens the shell before PID discovery so bastion rate limits do not burn the session slot", async (t) => {

@@ -713,10 +713,30 @@ function createStartSessionApi(ctx) {
       // is restored.
       return new Promise((resolve, reject) => {
         let settled = false;
+        let onConnError = null;
+        const retryAbortController = new AbortController();
+        const pendingBootSignal = options._passphraseSignal || null;
+        const abortRetryFromPendingBoot = () => {
+          retryAbortController.abort(
+            pendingBootSignal?.reason || new Error("SSH session start was cancelled"),
+          );
+        };
+        const cleanupReuseGuards = () => {
+          if (onConnError) conn.removeListener("error", onConnError);
+          pendingBootSignal?.removeEventListener?.("abort", abortRetryFromPendingBoot);
+        };
+
+        if (pendingBootSignal?.aborted) {
+          abortRetryFromPendingBoot();
+        } else {
+          pendingBootSignal?.addEventListener?.("abort", abortRetryFromPendingBoot, { once: true });
+        }
 
         const failReuse = (err) => {
           if (settled) return;
           settled = true;
+          cleanupReuseGuards();
+          retryAbortController.abort(err);
           // Release the hold we took up-front so the source's reference count is
           // not leaked when we fall back to a fresh connection.
           releaseConnectionRef(refHolder);
@@ -728,7 +748,7 @@ function createStartSessionApi(ctx) {
         // connection. Removed once the channel opens so we don't leave a stray
         // listener on the shared connection (the owner's own error handler stays
         // responsible thereafter).
-        const onConnError = (connErr) => {
+        onConnError = (connErr) => {
           failReuse(connErr);
         };
         conn.once("error", onConnError);
@@ -750,7 +770,7 @@ function createStartSessionApi(ctx) {
             },
             shellOptions,
             (err, stream) => {
-              conn.removeListener("error", onConnError);
+              cleanupReuseGuards();
               if (settled) {
                 // Connection already failed; close any channel that still opened
                 // and drop the hold (failReuse already released, so guard with the
@@ -1023,19 +1043,24 @@ function createStartSessionApi(ctx) {
                 failReuse(livenessErr);
               });
             },
-            Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
-              ? {
-                  rateLimitBackoffMs,
-                  rateLimitRetryTimeoutMs: COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS,
-                }
-              : { rateLimitRetryTimeoutMs: COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS },
+            {
+              ...(Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
+                ? { rateLimitBackoffMs }
+                : {}),
+              ...(options.sourceSessionId
+                ? { rateLimitRetryTimeoutMs: COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS }
+                : {}),
+              signal: retryAbortController.signal,
+              // Cancelling one pending Copy Tab must not destroy the source
+              // tab's shared authenticated transport.
+              invalidateOnAbort: false,
+            },
           );
         } catch (syncErr) {
           // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
           // transport dropped between findReusableSession and conn.shell(). Make
           // sure we drop the listener and release the up-front ref so the count
           // isn't leaked, then fall back to a fresh connection.
-          conn.removeListener("error", onConnError);
           log("reused shell threw synchronously", { sessionId, hostname: options.hostname, error: syncErr?.message });
           failReuse(syncErr);
         }
@@ -1131,6 +1156,7 @@ function createStartSessionApi(ctx) {
           try {
             return await reuseShellSession(event, options, sourceSession, sessionId, log);
           } catch (reuseErr) {
+            if (options._passphraseSignal?.aborted) throw reuseErr;
             log("connection reuse failed, falling back to fresh connection", {
               sessionId,
               sourceSessionId: options.sourceSessionId,
