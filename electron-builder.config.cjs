@@ -65,6 +65,9 @@ module.exports = {
         // (terminalFlowAck.cjs). Must ship beside electron/ in app.asar.
         'infrastructure/config/terminalFlowConstants.cjs',
         'infrastructure/config/terminalFlowConstants.json',
+        // Renderer and Mosh's main-process bootstrap share the same
+        // fail-closed prompt classifier at runtime.
+        'domain/terminalPromptSecurity.shared.cjs',
         'lib/**/*.cjs',
         'lib/**/*.json',
         'skills/**/*',

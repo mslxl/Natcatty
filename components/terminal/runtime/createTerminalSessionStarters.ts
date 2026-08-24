@@ -1137,10 +1137,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       // handshake uses an ephemeral SSH PTY first; writing too early lands
       // input on that PTY and is lost on the swap (issue #2199).
       //
-      // Do not gate status=connected on ready: interactive password/OTP
-      // prompts during the SSH handshake need the overlay dismissed so the
-      // user can type into the terminal. Scripts wait on moshShellReady in
-      // Terminal.tsx instead.
+      // Keep the progress overlay until mosh-client is ready. The attachment
+      // path still dismisses it early for an interactive password/OTP prompt
+      // so the user can type into the terminal.
       //
       // Subscribe BEFORE startMoshSession: a fast passwordless handshake can
       // emit ready before the await returns, and the event is not replayed.
@@ -1156,6 +1155,8 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       const runMoshStartup = () => {
         disposeMoshReady?.();
         disposeMoshReady = undefined;
+        ctx.setIsConnectionAwaitingUserInput?.(false);
+        if (!ctx.hasConnectedRef.current) ctx.updateStatus("connected");
         cancelPendingStartupCommand = scheduleStartupCommand(ctx, term, attachedSessionId, () => {
           cancelPendingStartupCommand = undefined;
         });
@@ -1226,6 +1227,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         // hibernate detaches exit listeners without closing the session and
         // would otherwise cancel a still-pending startup command.
         onExit: cleanupMoshStartupWait,
+        deferConnectionDuringMoshHandshake: Boolean(ctx.terminalBackend.onMoshSessionReady),
         sudoAutofillPassword: resolveSavedSudoAutofillPassword(),
         sudoAutofillCandidates: resolveSudoAutofillCandidates(),
       })) {

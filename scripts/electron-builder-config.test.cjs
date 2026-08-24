@@ -29,6 +29,15 @@ test("build.files includes shared terminal flow constants for main process", () 
   );
 });
 
+test("build.files includes the prompt classifier required by Mosh", () => {
+  assert.ok(
+    config.files.includes("domain/terminalPromptSecurity.shared.cjs"),
+    "packaged Mosh bootstrap requires the shared prompt classifier",
+  );
+  const promptSecurity = require("../domain/terminalPromptSecurity.shared.cjs");
+  assert.equal(promptSecurity.isUntrustedTerminalInputPrompt("验证码："), true);
+});
+
 test("unpacked Tool CLI includes capability runtime dependencies", () => {
   assert.ok(
     config.asarUnpack.includes("electron/cli/**/*"),
