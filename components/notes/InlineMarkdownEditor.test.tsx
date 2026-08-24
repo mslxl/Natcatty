@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 
 import {
+  annotateNoteCodeBlockDeleteButtons,
   createNoteDecorationMutationScheduler,
   getHostPickerTriggerRange,
   getNoteDecorationMutationDelay,
@@ -632,8 +634,45 @@ test("annotateNoteCodeBlockCopyButtons treats a CSS-hidden toolbar as absent so 
   assert.match(source, /wrapper\.appendChild\(firstButton\)/);
 });
 
-test("annotateNoteCodeBlockDeleteButtons swaps the delete icon to a stroke SVG", () => {
+test("annotateNoteCodeBlockDeleteButtons swaps the delete icon only once", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+  const dom = new JSDOM(`
+    <div id="container">
+      <div class="_codeMirrorToolbar_test">
+        <button class="_toolbarCodeBlockLanguageSelectTrigger_test"></button>
+        <button id="delete"></button>
+      </div>
+    </div>
+  `);
+  const previousHTMLElement = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
+  Object.defineProperty(globalThis, "HTMLElement", {
+    configurable: true,
+    value: dom.window.HTMLElement,
+  });
+
+  try {
+    const container = dom.window.document.querySelector("#container") as HTMLElement;
+    const deleteButton = dom.window.document.querySelector("#delete") as HTMLButtonElement;
+    annotateNoteCodeBlockDeleteButtons(container);
+    const installedIcon = deleteButton.firstElementChild;
+    assert.equal(deleteButton.dataset.noteCodeDelete, "true");
+    assert.equal(installedIcon?.nodeName.toLowerCase(), "svg");
+    const observer = new dom.window.MutationObserver(() => {});
+    observer.observe(deleteButton, { attributes: true, childList: true, subtree: true });
+
+    annotateNoteCodeBlockDeleteButtons(container);
+
+    assert.equal(observer.takeRecords().length, 0);
+    assert.equal(deleteButton.firstElementChild, installedIcon);
+    observer.disconnect();
+  } finally {
+    if (previousHTMLElement) {
+      Object.defineProperty(globalThis, "HTMLElement", previousHTMLElement);
+    } else {
+      delete (globalThis as { HTMLElement?: unknown }).HTMLElement;
+    }
+    dom.window.close();
+  }
 
   assert.match(source, /export const annotateNoteCodeBlockDeleteButtons/);
   assert.match(source, /data-note-code-delete/);

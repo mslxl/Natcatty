@@ -780,6 +780,7 @@ export const annotateNoteCodeBlockCopyButtons = (
 export const annotateNoteCodeBlockDeleteButtons = (container: HTMLElement): void => {
   container.querySelectorAll('[class*="_codeMirrorToolbar_"]').forEach((toolbar) => {
     if (!(toolbar instanceof HTMLElement)) return;
+    if (toolbar.querySelector("[data-note-code-delete]")) return;
 
     const deleteButton = Array.from(toolbar.querySelectorAll("button")).find(
       (button) =>
