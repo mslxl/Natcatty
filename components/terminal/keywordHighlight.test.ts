@@ -769,6 +769,21 @@ test("C1 cursor traversal recolors every visited row", async () => {
   term.dispose();
 });
 
+test("single-byte C1 row moves recolor every visited row", async () => {
+  for (const control of ["\x84", "\x85", "\x8d"]) {
+    const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+    const highlighter = new KeywordHighlighter(term);
+    highlighter.setRules(rule(), true);
+    await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+
+    await write(term, `\x9b2;1Hfirst ERROR${control}second ERROR\x9b2;1H`);
+
+    assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), [], JSON.stringify(control));
+    highlighter.dispose();
+    term.dispose();
+  }
+});
+
 test("cursor-addressed auto-wrap scrolling keeps the pre-scroll row highlighted", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 12, rows: 4, scrollback: 20 });
   const highlighter = new KeywordHighlighter(term);

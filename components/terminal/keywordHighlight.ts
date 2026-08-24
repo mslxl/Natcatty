@@ -640,7 +640,7 @@ export class KeywordHighlighter implements IDisposable {
     // These controls can visit rows that are not named by CUP/VPA. Keep the
     // wider safety range only for writes that actually contain such movement.
     const mayTraverseRows = originModeNeedsSafety
-      || /[\n\v\f]|\x1b[DEM8]|(?:\x1b\[|\x9b)[\d;?]*[ABEFIJLMSTehlru]/.test(controls); // eslint-disable-line no-control-regex
+      || /[\n\v\f\x84\x85\x8d]|\x1b[DEM8]|(?:\x1b\[|\x9b)[\d;?]*[ABEFIJLMSTehlru]/.test(controls); // eslint-disable-line no-control-regex
     return rows.size === 0
       ? null
       : { rows: [...rows].sort((left, right) => left - right), mayTraverseRows };
