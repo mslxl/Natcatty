@@ -45,6 +45,11 @@ type LogicalLine = {
   cellAtStringOffset: Array<{ y: number; x: number }>;
 };
 
+type AbsoluteRepaintRange = {
+  rows: number[];
+  mayTraverseRows: boolean;
+};
+
 export type KeywordHighlighterOptions = {
   shouldBypassHighlight?: () => boolean;
   serializeAddon?: SerializeAddon;
@@ -180,6 +185,18 @@ const collectMatches = (
 
 const yieldToRenderer = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+const trailingIncompleteCsi = (controls: string): string => {
+  const escapeCsi = controls.lastIndexOf("\x1b[");
+  const c1Csi = controls.lastIndexOf("\x9b");
+  const csiStart = Math.max(escapeCsi, c1Csi);
+  if (csiStart >= 0) {
+    const suffix = controls.slice(csiStart);
+    const body = suffix.startsWith("\x1b[") ? suffix.slice(2) : suffix.slice(1);
+    if (!/[\x40-\x7e]/.test(body)) return suffix.slice(-32);
+  }
+  return controls.endsWith("\x1b") ? "\x1b" : "";
+};
+
 /**
  * Keyword highlighting mutates already-parsed cell foregrounds. Writes stay
  * pristine, so ordinary Enter/output never rebuilds history, and serialize can
@@ -217,6 +234,12 @@ export class KeywordHighlighter implements IDisposable {
   private lastViewportY = 0;
   private lastBaseY = 0;
   private hasOutput = false;
+  private absoluteControlTail = "";
+  private absoluteOriginControlTail = "";
+  private absoluteOriginMode: boolean | null = false;
+  private absoluteActiveBuffer: "normal" | "alternate" | null = "normal";
+  private absoluteNormalSavedOriginMode: boolean | null = false;
+  private absoluteAlternateSavedOriginMode: boolean | null = false;
 
   get pendingPristineBytes(): number {
     return 0;
@@ -357,6 +380,8 @@ export class KeywordHighlighter implements IDisposable {
 
   private readonly write: XTerm["write"] = (data, callback) => {
     if (this.disposed) return this.originalWrite(data, callback);
+    const originModeNeedsSafety = this.trackAbsoluteOriginMode(data);
+    const absoluteControls = this.collectAbsoluteControls(data);
     const startedOnNormal = this.term.buffer.active.type === "normal";
     if (!startedOnNormal && this.compiledPatterns.length === 0 && !this.hasPendingCatchUp()) {
       return this.originalWrite(data, callback);
@@ -365,11 +390,15 @@ export class KeywordHighlighter implements IDisposable {
     if (this.compiledPatterns.length === 0 && !this.hasPendingCatchUp() && startedOnNormal) {
       return this.originalWrite(data, callback);
     }
-    const startY = this.term.buffer.active.baseY + this.term.buffer.active.cursorY;
+    const startBaseY = this.term.buffer.active.baseY;
+    const startY = startBaseY + this.term.buffer.active.cursorY;
+    const absoluteRepaintRange = absoluteControls !== null
+      ? this.resolveAbsoluteRepaintRange(absoluteControls, originModeNeedsSafety)
+      : null;
     const bypass = !startedOnNormal || this.shouldBypassWrite(data);
     if (bypass) {
       if (startedOnNormal && (this.enabled || this.compiledPatterns.length > 0 || this.hasPendingCatchUp())) {
-        this.markCatchUp(startY);
+        this.markCatchUp(absoluteRepaintRange === null ? startY : Math.min(startY, startBaseY));
         this.scheduleCatchUp();
       }
       return this.originalWrite(data, () => {
@@ -423,16 +452,77 @@ export class KeywordHighlighter implements IDisposable {
         } else {
           const startRowMutated = startRowTextBefore !== undefined
             && active.getLine(writeMarker.line)?.translateToString(false) !== startRowTextBefore;
-          const fromY = skipStartRow && !startRowMutated
+          const ordinaryFromY = skipStartRow && !startRowMutated
             ? Math.min(endY, writeMarker.line + 1)
             : writeMarker.line;
-          if (this.compiledPatterns.length === 0) {
-            if (this.hasStoredOriginalsInRange(fromY, endY)) {
-              this.markCatchUp(fromY);
-              this.scheduleCatchUp();
+          if (
+            absoluteRepaintRange !== null
+            && !absoluteRepaintRange.mayTraverseRows
+            && active.baseY === startBaseY
+          ) {
+            // A normal Mosh framebuffer diff sends one absolute row update per
+            // write. Recolor the old cursor row and the addressed rows as
+            // separate ranges so N row-sized writes stay O(N), rather than
+            // rescanning the gaps between them for every write.
+            const repaintRanges = absoluteRepaintRange.rows.map((row) => ({
+              start: startBaseY + row,
+              end: startBaseY + row,
+            }));
+            const includesLine = (line: number) => repaintRanges.some((range) => (
+              line >= range.start && line <= range.end
+            ));
+            if (!includesLine(ordinaryFromY)) {
+              repaintRanges.push({ start: ordinaryFromY, end: ordinaryFromY });
+            }
+            if (!includesLine(endY) && endY !== ordinaryFromY) {
+              repaintRanges.push({ start: endY, end: endY });
+            }
+            repaintRanges.sort((left, right) => left.start - right.start);
+            for (let index = repaintRanges.length - 1; index > 0; index -= 1) {
+              const previous = repaintRanges[index - 1];
+              const current = repaintRanges[index];
+              if (current.start > previous.end + 1) continue;
+              previous.end = Math.max(previous.end, current.end);
+              repaintRanges.splice(index, 1);
+            }
+            if (this.compiledPatterns.length === 0) {
+              const catchUpFrom = repaintRanges.reduce<number | null>((earliest, range) => (
+                this.hasStoredOriginalsInRange(range.start, range.end)
+                  ? Math.min(earliest ?? range.start, range.start)
+                  : earliest
+              ), null);
+              if (catchUpFrom !== null) {
+                this.markCatchUp(catchUpFrom);
+                this.scheduleCatchUp();
+              }
+            } else {
+              for (const range of repaintRanges) {
+                this.recolorRange(range.start, range.end, true, true);
+              }
             }
           } else {
-            this.recolorRange(fromY, endY, true, true);
+            // An absolute-positioned update that also traverses rows via
+            // CRLF/IND can scroll before restoring its final cursor. Cover the
+            // pre-write and post-write viewports for that uncommon case.
+            const fromY = absoluteRepaintRange === null
+              ? ordinaryFromY
+              : Math.min(ordinaryFromY, startBaseY, active.baseY);
+            const toY = absoluteRepaintRange === null
+              ? endY
+              : Math.max(
+                ordinaryFromY,
+                endY,
+                startBaseY + this.term.rows - 1,
+                active.baseY + this.term.rows - 1,
+              );
+            if (this.compiledPatterns.length === 0) {
+              if (this.hasStoredOriginalsInRange(fromY, toY)) {
+                this.markCatchUp(fromY);
+                this.scheduleCatchUp();
+              }
+            } else {
+              this.recolorRange(fromY, toY, true, true);
+            }
           }
         }
       } else if (startedOnNormal && (this.enabled || this.compiledPatterns.length > 0)) {
@@ -444,10 +534,131 @@ export class KeywordHighlighter implements IDisposable {
     });
   };
 
+  private trackAbsoluteOriginMode(data: string | Uint8Array): boolean {
+    if (typeof data !== "string") {
+      this.absoluteOriginControlTail = "";
+      this.absoluteOriginMode = null;
+      this.absoluteActiveBuffer = null;
+      this.absoluteNormalSavedOriginMode = null;
+      this.absoluteAlternateSavedOriginMode = null;
+      return true;
+    }
+    const controls = this.absoluteOriginControlTail + data;
+    this.absoluteOriginControlTail = trailingIncompleteCsi(controls);
+    const saveOriginMode = () => {
+      if (this.absoluteActiveBuffer === "normal") {
+        this.absoluteNormalSavedOriginMode = this.absoluteOriginMode;
+      } else if (this.absoluteActiveBuffer === "alternate") {
+        this.absoluteAlternateSavedOriginMode = this.absoluteOriginMode;
+      } else {
+        this.absoluteNormalSavedOriginMode = null;
+        this.absoluteAlternateSavedOriginMode = null;
+      }
+    };
+    const restoreOriginMode = () => {
+      this.absoluteOriginMode = this.absoluteActiveBuffer === "normal"
+        ? this.absoluteNormalSavedOriginMode
+        : this.absoluteActiveBuffer === "alternate"
+          ? this.absoluteAlternateSavedOriginMode
+          : null;
+    };
+    const originModeControls = [
+      ...controls.matchAll(
+        /\x1bc|\x1b[78]|(?:\x1b\[|\x9b)(?:!p|[\d;]*[su]|\?[\d;]*[hl])/g, // eslint-disable-line no-control-regex
+      ),
+    ];
+    let originModeNeedsSafety = this.absoluteOriginMode !== false;
+    for (const match of originModeControls) {
+      const control = match[0];
+      if (control === "\x1bc") {
+        this.absoluteOriginMode = false;
+        this.absoluteActiveBuffer = "normal";
+        this.absoluteNormalSavedOriginMode = false;
+        this.absoluteAlternateSavedOriginMode = false;
+      } else if (control === "\x1b[!p" || control === "\x9b!p") {
+        this.absoluteOriginMode = false;
+      } else if (control === "\x1b7" || control.endsWith("s")) {
+        saveOriginMode();
+      } else if (control === "\x1b8" || control.endsWith("u")) {
+        restoreOriginMode();
+      } else {
+        const parameters = /^(?:\x1b\[|\x9b)\?([\d;]*)[hl]$/.exec(control)?.[1] // eslint-disable-line no-control-regex
+          ?.split(";")
+          .map((parameter) => Number.parseInt(parameter, 10))
+          ?? [];
+        const enabled = control.endsWith("h");
+        for (const parameter of parameters) {
+          if (parameter === 6) {
+            this.absoluteOriginMode = enabled;
+          } else if (parameter === 1048) {
+            if (enabled) saveOriginMode();
+            else restoreOriginMode();
+          } else if (parameter === 1049) {
+            if (enabled) {
+              saveOriginMode();
+              this.absoluteActiveBuffer = "alternate";
+            } else {
+              this.absoluteActiveBuffer = "normal";
+              restoreOriginMode();
+            }
+          } else if (parameter === 47 || parameter === 1047) {
+            this.absoluteActiveBuffer = enabled ? "alternate" : "normal";
+          }
+        }
+      }
+      originModeNeedsSafety ||= this.absoluteOriginMode !== false;
+    }
+    return originModeNeedsSafety;
+  }
+
+  private collectAbsoluteControls(data: string | Uint8Array): string | null {
+    if (typeof data !== "string") {
+      this.absoluteControlTail = "";
+      return null;
+    }
+    const controls = this.absoluteControlTail + data;
+    this.absoluteControlTail = trailingIncompleteCsi(controls);
+    return controls;
+  }
+
+  private resolveAbsoluteRepaintRange(
+    controls: string,
+    originModeNeedsSafety: boolean,
+  ): AbsoluteRepaintRange | null {
+    const rows = new Set<number>();
+    const noteRow = (raw: string | undefined) => {
+      const row = Math.min(
+        this.term.rows - 1,
+        Math.max(0, (Number.parseInt(raw || "1", 10) || 1) - 1),
+      );
+      rows.add(row);
+    };
+    // CUP/HVP and VPA address a viewport row directly. Mosh's framebuffer
+    // diff uses these controls to repaint rows above the current cursor once
+    // the remote screen fills, without emitting a newline or changing buffer.
+    const cup = /(?:\x1b\[|\x9b)(\d*)(?:;\d*)?[Hf]/g; // eslint-disable-line no-control-regex
+    const vpa = /(?:\x1b\[|\x9b)(\d*)d/g; // eslint-disable-line no-control-regex
+    for (const match of controls.matchAll(cup)) noteRow(match[1]);
+    for (const match of controls.matchAll(vpa)) noteRow(match[1]);
+    // These controls can visit rows that are not named by CUP/VPA. Keep the
+    // wider safety range only for writes that actually contain such movement.
+    const mayTraverseRows = originModeNeedsSafety
+      || /[\n\v\f\x84\x85\x8d]|\x1b[DEM8]|(?:\x1b\[|\x9b)[\d;?]*[ABEFIJLMSTehlru]/.test(controls); // eslint-disable-line no-control-regex
+    return rows.size === 0
+      ? null
+      : { rows: [...rows].sort((left, right) => left - right), mayTraverseRows };
+  }
+
   private readonly reset: XTerm["reset"] = () => {
     this.clearStoredOriginals();
     this.cancelCatchUp();
     this.hasOutput = false;
+    this.absoluteControlTail = "";
+    this.absoluteOriginControlTail = "";
+    this.absoluteOriginMode = false;
+    this.absoluteActiveBuffer = "normal";
+    this.absoluteNormalSavedOriginMode = false;
+    this.absoluteAlternateSavedOriginMode = false;
     return this.originalReset();
   };
 
