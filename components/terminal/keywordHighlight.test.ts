@@ -528,6 +528,46 @@ test("a keyword written on a saturated scrollback is still colored", async () =>
   term.dispose();
 });
 
+test("Mosh-style full-screen cursor-addressed repaint keeps highlights", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 4, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+
+  await write(term, "row-1 ERROR\r\nrow-2 ERROR\r\nrow-3 ERROR\r\nrow-4 ERROR");
+  assert.deepEqual(
+    Array.from({ length: 4 }, (_, y) => cellRgb(term, y, "ERROR")),
+    [RED, RED, RED, RED],
+  );
+
+  // Mosh redraws a numbered remote framebuffer with absolute cursor moves.
+  // Once the remote screen fills, an Enter can repaint rows above the local
+  // cursor without emitting newlines or leaving the primary buffer.
+  await write(
+    term,
+    "\x1b[1;1Hrow-2 ERROR\x1b[2;1Hrow-3 ERROR"
+      + "\x1b[3;1Hrow-4 ERROR\x1b[4;1Hprompt ERROR",
+  );
+
+  assert.deepEqual(
+    Array.from({ length: 4 }, (_, y) => cellRgb(term, y, "ERROR")),
+    [RED, RED, RED, RED],
+  );
+
+  // PTY chunking can split a cursor-addressing sequence at any byte.
+  await write(term, "\x1b[1;");
+  await write(
+    term,
+    "1Hsplit ERROR\x1b[2;1Hrow-4 ERROR"
+      + "\x1b[3;1Hprompt ERROR\x1b[4;1Hdone ERROR",
+  );
+  assert.deepEqual(
+    Array.from({ length: 4 }, (_, y) => cellRgb(term, y, "ERROR")),
+    [RED, RED, RED, RED],
+  );
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;

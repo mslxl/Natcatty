@@ -217,6 +217,7 @@ export class KeywordHighlighter implements IDisposable {
   private lastViewportY = 0;
   private lastBaseY = 0;
   private hasOutput = false;
+  private absoluteControlTail = "";
 
   get pendingPristineBytes(): number {
     return 0;
@@ -366,6 +367,9 @@ export class KeywordHighlighter implements IDisposable {
       return this.originalWrite(data, callback);
     }
     const startY = this.term.buffer.active.baseY + this.term.buffer.active.cursorY;
+    const absoluteRepaintRow = typeof data === "string"
+      ? this.resolveAbsoluteRepaintRow(data)
+      : null;
     const bypass = !startedOnNormal || this.shouldBypassWrite(data);
     if (bypass) {
       if (startedOnNormal && (this.enabled || this.compiledPatterns.length > 0 || this.hasPendingCatchUp())) {
@@ -423,9 +427,12 @@ export class KeywordHighlighter implements IDisposable {
         } else {
           const startRowMutated = startRowTextBefore !== undefined
             && active.getLine(writeMarker.line)?.translateToString(false) !== startRowTextBefore;
-          const fromY = skipStartRow && !startRowMutated
+          const ordinaryFromY = skipStartRow && !startRowMutated
             ? Math.min(endY, writeMarker.line + 1)
             : writeMarker.line;
+          const fromY = absoluteRepaintRow === null
+            ? ordinaryFromY
+            : Math.min(ordinaryFromY, active.baseY + absoluteRepaintRow);
           if (this.compiledPatterns.length === 0) {
             if (this.hasStoredOriginalsInRange(fromY, endY)) {
               this.markCatchUp(fromY);
@@ -444,10 +451,37 @@ export class KeywordHighlighter implements IDisposable {
     });
   };
 
+  private resolveAbsoluteRepaintRow(data: string): number | null {
+    const controls = this.absoluteControlTail + data;
+    this.absoluteControlTail = "";
+    const lastEscape = controls.lastIndexOf("\x1b");
+    if (lastEscape >= 0) {
+      const suffix = controls.slice(lastEscape);
+      const csiBody = suffix.startsWith("\x1b[") ? suffix.slice(2) : null;
+      if (suffix === "\x1b" || (csiBody !== null && !/[\x40-\x7e]/.test(csiBody))) {
+        this.absoluteControlTail = suffix.slice(-32);
+      }
+    }
+    let earliest: number | null = null;
+    const noteRow = (raw: string | undefined) => {
+      const row = Math.max(0, (Number.parseInt(raw || "1", 10) || 1) - 1);
+      earliest = earliest === null ? row : Math.min(earliest, row);
+    };
+    // CUP/HVP and VPA address a viewport row directly. Mosh's framebuffer
+    // diff uses these controls to repaint rows above the current cursor once
+    // the remote screen fills, without emitting a newline or changing buffer.
+    const cup = /\x1b\[(\d*)(?:;\d*)?[Hf]/g; // eslint-disable-line no-control-regex
+    const vpa = /\x1b\[(\d*)d/g; // eslint-disable-line no-control-regex
+    for (const match of controls.matchAll(cup)) noteRow(match[1]);
+    for (const match of controls.matchAll(vpa)) noteRow(match[1]);
+    return earliest;
+  }
+
   private readonly reset: XTerm["reset"] = () => {
     this.clearStoredOriginals();
     this.cancelCatchUp();
     this.hasOutput = false;
+    this.absoluteControlTail = "";
     return this.originalReset();
   };
 

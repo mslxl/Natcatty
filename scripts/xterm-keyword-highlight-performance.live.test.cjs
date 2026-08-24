@@ -107,6 +107,18 @@ if (!process.versions.electron) {
       highlighter.setRules(redRules, true);
       const write = data => new Promise(resolve => term.write(data, resolve));
       const waitPaint = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      await write("row-1 ERROR\\r\\nrow-2 ERROR\\r\\nrow-3 ERROR\\r\\nrow-4 ERROR");
+      await write("\\x1b[1;");
+      await write(
+        "1Hrow-2 ERROR\\x1b[2;1Hrow-3 ERROR"
+          + "\\x1b[3;1Hrow-4 ERROR\\x1b[4;1Hprompt ERROR",
+      );
+      await waitPaint();
+      const moshFrame = serializer.serialize({ scrollback: 0 });
+      const moshHighlightCount = (moshFrame.match(/38;2;248;113;113m/g) || []).length;
+      term.reset();
+
       let history = "";
       for (let line = 0; line < 10000; line += 1) {
         history += "2026-08-13 worker=" + (line % 32) + " ERROR failed from 10.2." + (line % 255) + "." + ((line * 7) % 255) + "\\r\\n";
@@ -141,6 +153,7 @@ if (!process.versions.electron) {
       const pristine = highlighter.serializeAddon.serialize({ scrollback: 10000 });
       const state = {
         renderer,
+        moshHighlightCount,
         rawChars: history.length,
         initialWriteMs,
         rebuildsBeforeEnter,
@@ -159,6 +172,7 @@ if (!process.versions.electron) {
     if (process.env.NETCATTY_TERMINAL_PERF_REQUIRE_WEBGL === "1") {
       assert.equal(result.renderer, "webgl", JSON.stringify(result));
     }
+    assert.ok(result.moshHighlightCount >= 4, JSON.stringify(result));
     assert.equal(result.enterRebuildCount, result.rebuildsBeforeEnter, JSON.stringify(result));
     assert.equal(result.rebuildCount, result.rebuildsBeforeEnter + 1, JSON.stringify(result));
     assert.ok(result.blueMatchCount >= 10000, JSON.stringify(result));
