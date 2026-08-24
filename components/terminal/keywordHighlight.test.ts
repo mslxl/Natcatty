@@ -558,7 +558,7 @@ test("Mosh-style full-screen cursor-addressed repaint keeps highlights", async (
   await write(
     term,
     "1Hsplit ERROR\x1b[2;1Hrow-4 ERROR"
-      + "\x1b[3;1Hprompt ERROR\x1b[4;1Hdone ERROR",
+      + "\x1b[3;1Hprompt ERROR\x1b[4;1Hdone ERROR\x1b[1;1H",
   );
   assert.deepEqual(
     Array.from({ length: 4 }, (_, y) => cellRgb(term, y, "ERROR")),

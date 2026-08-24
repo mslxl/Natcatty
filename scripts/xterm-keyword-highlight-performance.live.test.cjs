@@ -112,7 +112,7 @@ if (!process.versions.electron) {
       await write("\\x1b[1;");
       await write(
         "1Hrow-2 ERROR\\x1b[2;1Hrow-3 ERROR"
-          + "\\x1b[3;1Hrow-4 ERROR\\x1b[4;1Hprompt ERROR",
+          + "\\x1b[3;1Hrow-4 ERROR\\x1b[4;1Hprompt ERROR\\x1b[1;1H",
       );
       await waitPaint();
       const moshFrame = serializer.serialize({ scrollback: 0 });
