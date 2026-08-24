@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useState } from "react";
+import React, { memo, useCallback, useMemo, useState } from "react";
 import { applyCustomCssToDocument } from "../../../lib/customCss";
 import { DebouncedTextarea } from "../DebouncedTextarea";
 import { Check, HelpCircle, Monitor, Moon, Palette, Sun } from "lucide-react";
@@ -18,10 +18,12 @@ import {
   STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
 } from "../../../infrastructure/config/storageKeys";
 import { resolveAppIconVariant, type AppIconVariant } from "../../../domain/appIconVariant";
+import { resolveNoteFontSelectionFamily, resolveNoteFontSelectionId } from "../../../domain/noteFonts";
 import { DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../domain/systemKnownHostsAutoImport";
 import { cn } from "../../../lib/utils";
 import { SectionHeader, SettingsAnchor, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
 import { FontSelect } from "../FontSelect";
+import { TerminalFontSelect } from "../TerminalFontSelect";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import {
   Dialog,
@@ -72,6 +74,10 @@ function SettingsAppearanceTab(props: {
   // Note code fonts come from the monospace-only store (fontStore); the note
   // body font follows the UI font setting instead.
   const availableMonoFonts = useAvailableFonts();
+  const noteFontOptions = useMemo(() => [
+    { id: "", name: t("notes.toolbar.defaultFont"), family: "", description: "", category: "monospace" as const },
+    ...availableMonoFonts,
+  ], [availableMonoFonts, t]);
   const [customCssHelpOpen, setCustomCssHelpOpen] = useState(false);
   const [autoImportSystemKnownHosts, setAutoImportSystemKnownHosts] = useStoredBoolean(
     STORAGE_KEY_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS,
@@ -502,10 +508,10 @@ function SettingsAppearanceTab(props: {
           label={t('settings.vault.notesFont')}
           description={t('settings.vault.notesFontDesc')}
         >
-          <FontSelect
-            value={noteFontFamily}
-            fonts={availableMonoFonts}
-            onChange={(v) => setNoteFontFamily(v)}
+          <TerminalFontSelect
+            value={resolveNoteFontSelectionId(noteFontOptions, noteFontFamily)}
+            fonts={noteFontOptions}
+            onChange={(v) => setNoteFontFamily(resolveNoteFontSelectionFamily(noteFontOptions, v))}
             className="w-48"
             ariaLabel={t('settings.vault.notesFont')}
           />

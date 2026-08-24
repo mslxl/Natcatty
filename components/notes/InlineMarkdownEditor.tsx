@@ -10,7 +10,9 @@ import {
   MDXEditor,
   type MDXEditorMethods,
   openNewImageDialog$,
+  openLinkEditDialog$,
   quotePlugin,
+  realmPlugin,
   tablePlugin,
   thematicBreakPlugin,
 } from "@mdxeditor/editor";
@@ -76,14 +78,48 @@ export {
 } from "./noteClipboardPaste";
 
 import { NoteSourceEditor, type NoteSourceEditorHandle } from "./NoteSourceEditor";
-import { type MarkdownActionType } from "../../domain/notes";
+import { extractNoteHeadings, normalizeNoteHeadingText, type MarkdownActionType, type NoteHeadingItem } from "../../domain/notes";
 
 export { NoteSourceEditor, type NoteSourceEditorHandle };
 
 export interface InlineMarkdownEditorHandle {
   executeAction: (action: MarkdownActionType) => void;
   focus: () => void;
+  scrollToHeading: (heading: NoteHeadingItem, headingIndex: number) => boolean;
 }
+
+const NOTE_HEADING_SELECTOR = [1, 2, 3, 4, 5, 6]
+  .map((level) => `.netcatty-mdx-content h${level}`)
+  .join(", ");
+
+export const getRenderedNoteHeadingText = (element: HTMLElement): string => {
+  const readNode = (node: Node): string => {
+    if (node.nodeType === 3) return node.textContent ?? "";
+    const nodeElement = node as Element;
+    if (nodeElement.tagName?.toLowerCase() === "img") {
+      return nodeElement.getAttribute("alt") ?? "";
+    }
+    return Array.from(node.childNodes ?? []).map(readNode).join("");
+  };
+  const childNodes = Array.from(element.childNodes ?? []);
+  return childNodes.length > 0
+    ? childNodes.map(readNode).join("")
+    : element.textContent ?? "";
+};
+
+export const scrollNoteHeadingIntoView = (
+  root: { querySelectorAll: (selector: string) => ArrayLike<HTMLElement> } | null,
+  heading: Pick<NoteHeadingItem, "level" | "text">,
+  occurrence = 0,
+): boolean => {
+  if (!root || occurrence < 0) return false;
+  const target = Array.from(root.querySelectorAll(NOTE_HEADING_SELECTOR))
+    .filter((element) => element.tagName.toLowerCase() === `h${heading.level}`
+      && normalizeNoteHeadingText(getRenderedNoteHeadingText(element)) === normalizeNoteHeadingText(heading.text))[occurrence];
+  if (!target) return false;
+  target.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+  return true;
+};
 
 export interface InlineMarkdownEditorProps {
   value: string;
@@ -122,6 +158,38 @@ export const EMPTY_ACTIVE_FORMATS: ActiveTextFormats = {
   strikethrough: false,
   code: false,
 };
+
+export interface NoteEditorDialogActions {
+  openImageDialog: () => void;
+  openLinkDialog: () => void;
+}
+
+export const invokeNoteEditorDialogAction = (
+  action: MarkdownActionType,
+  dialogActions: NoteEditorDialogActions | null,
+): boolean => {
+  if (!dialogActions) return false;
+  if (action === "image") {
+    dialogActions.openImageDialog();
+    return true;
+  }
+  if (action === "link") {
+    dialogActions.openLinkDialog();
+    return true;
+  }
+  return false;
+};
+
+const noteEditorDialogBridgePlugin = realmPlugin<{
+  setDialogActions: (actions: NoteEditorDialogActions) => void;
+}>({
+  init: (realm, params) => {
+    params?.setDialogActions({
+      openImageDialog: () => realm.pub(openNewImageDialog$),
+      openLinkDialog: () => realm.pub(openLinkEditDialog$),
+    });
+  },
+});
 
 type HostPickerState = {
   open: boolean;
@@ -679,6 +747,13 @@ export const annotateNoteCodeBlockDeleteButtons = (container: HTMLElement): void
   });
 };
 
+export const isNoteMathLanguageLabel = (value: string): boolean => {
+  const normalized = value.toLowerCase().trim();
+  if (!normalized) return false;
+  return /(?:^|\s)language-(?:math|latex|tex)(?:\s|$)/.test(normalized)
+    || /^(?:math|latex|tex|公式)(?:\s|\(|$)/.test(normalized);
+};
+
 export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: string): void => {
   container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
     if (!(wrapper instanceof HTMLElement)) return;
@@ -693,14 +768,7 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
       ""
     ).toLowerCase().trim();
 
-    const isMathBlock =
-      lang.includes("math") ||
-      lang.includes("latex") ||
-      lang.includes("tex") ||
-      lang.includes("公式") ||
-      lang.includes("language-math") ||
-      lang.includes("language-latex") ||
-      lang.includes("language-tex");
+    const isMathBlock = isNoteMathLanguageLabel(lang);
 
     const text = getCodeMirrorBlockText(wrapper).trim();
 
@@ -800,6 +868,7 @@ export const InlineMarkdownEditor = React.memo(
   ) {
     const { t } = useI18n();
     const editorRef = useRef<MDXEditorMethods>(null);
+    const dialogActionsRef = useRef<NoteEditorDialogActions | null>(null);
     // Display-normalized space (same as setMarkdown / public-asset rewrite).
     const latestMarkdownRef = useRef(normalizeNotePublicAssetPaths(value));
     const syncedPropValueRef = useRef(normalizeNotePublicAssetPaths(value));
@@ -884,53 +953,43 @@ export const InlineMarkdownEditor = React.memo(
             const sel = getSelectedText().trim();
             switch (action) {
               case "h1":
-                editor.insertMarkdown(`\n# ${sel || "一级标题"}\n`);
+                editor.insertMarkdown(`\n# ${sel || "Heading 1"}\n`);
                 break;
               case "h2":
-                editor.insertMarkdown(`\n## ${sel || "二级标题"}\n`);
+                editor.insertMarkdown(`\n## ${sel || "Heading 2"}\n`);
                 break;
               case "h3":
-                editor.insertMarkdown(`\n### ${sel || "三级标题"}\n`);
+                editor.insertMarkdown(`\n### ${sel || "Heading 3"}\n`);
                 break;
               case "h4":
-                editor.insertMarkdown(`\n#### ${sel || "四级标题"}\n`);
+                editor.insertMarkdown(`\n#### ${sel || "Heading 4"}\n`);
                 break;
               case "quote":
-                editor.insertMarkdown(`\n> ${sel || "引用内容"}\n`);
+                editor.insertMarkdown(`\n> ${sel || "Quote"}\n`);
                 break;
               case "bullet":
-                editor.insertMarkdown(`\n- ${sel || "列表项"}\n`);
+                editor.insertMarkdown(`\n- ${sel || "List item"}\n`);
                 break;
               case "number":
-                editor.insertMarkdown(`\n1. ${sel || "列表项"}\n`);
+                editor.insertMarkdown(`\n1. ${sel || "List item"}\n`);
                 break;
               case "task":
-                editor.insertMarkdown(`\n- [ ] ${sel || "待办任务"}\n`);
+                editor.insertMarkdown(`\n- [ ] ${sel || "Task"}\n`);
                 break;
               case "codeblock":
                 editor.insertMarkdown(`\n\`\`\`bash\n${sel}\n\`\`\`\n`);
                 break;
               case "table":
-                editor.insertMarkdown("\n| 列 1 | 列 2 | 列 3 |\n| :--- | :--- | :--- |\n| 单元格 1 | 单元格 2 | 单元格 3 |\n");
+                editor.insertMarkdown("\n| Column 1 | Column 2 | Column 3 |\n| :--- | :--- | :--- |\n| Cell 1 | Cell 2 | Cell 3 |\n");
                 break;
               case "divider":
                 editor.insertMarkdown("\n---\n");
                 break;
               case "link":
-                editor.insertMarkdown(sel ? `[${sel}](https://)` : "[链接文本](https://)");
+                invokeNoteEditorDialogAction(action, dialogActionsRef.current);
                 break;
               case "image":
-                try {
-                  editor.focus();
-                  const realm = (editor as unknown as { _realm?: { pub: (action: unknown) => void } })._realm;
-                  if (realm && typeof realm.pub === "function") {
-                    realm.pub(openNewImageDialog$);
-                  } else {
-                    editor.insertMarkdown(sel ? `![${sel}](https://)` : "![图片描述](https://)");
-                  }
-                } catch {
-                  editor.insertMarkdown(sel ? `![${sel}](https://)` : "![图片描述](https://)");
-                }
+                invokeNoteEditorDialogAction(action, dialogActionsRef.current);
                 break;
               case "math":
                 editor.insertMarkdown(`\n\`\`\`math\n${sel}\n\`\`\`\n`);
@@ -943,8 +1002,18 @@ export const InlineMarkdownEditor = React.memo(
         focus: () => {
           editorRef.current?.focus();
         },
+        scrollToHeading: (heading: NoteHeadingItem, headingIndex: number) => {
+          if (controlledEditorMode === "source") {
+            return sourceEditorRef?.current?.scrollToLine(heading.line) ?? false;
+          }
+          const occurrence = extractNoteHeadings(value)
+            .slice(0, headingIndex)
+            .filter((item) => item.level === heading.level && item.text === heading.text)
+            .length;
+          return scrollNoteHeadingIntoView(containerRef.current, heading, occurrence);
+        },
       }),
-      [controlledEditorMode, getSelectedText, sourceEditorRef],
+      [controlledEditorMode, getSelectedText, sourceEditorRef, value],
     );
   const lastLinkActivationRef = useRef<{ href: string; at: number } | null>(null);
   const [hostPicker, setHostPicker] = useState<HostPickerState>({
@@ -1049,6 +1118,11 @@ export const InlineMarkdownEditor = React.memo(
       codeMirrorExtensions: NOTE_CODE_MIRROR_EXTENSIONS,
     }),
     markdownShortcutPlugin(),
+    noteEditorDialogBridgePlugin({
+      setDialogActions: (actions) => {
+        dialogActionsRef.current = actions;
+      },
+    }),
   ], []);
   const hostCandidates = useMemo(
     () => hosts.filter(isSshCandidateHost),

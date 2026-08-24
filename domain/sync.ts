@@ -302,6 +302,9 @@ export interface SyncPayload {
     uiFontFamilyId?: string;
     uiLanguage?: string;
     customCSS?: string;
+    noteFontFamily?: string;
+    noteFontSize?: number;
+    noteCodeFontSize?: number;
     // Terminal
     terminalTheme?: string;
     followAppTerminalTheme?: boolean;

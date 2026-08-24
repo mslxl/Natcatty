@@ -102,6 +102,7 @@ type VaultTreeGroupRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childr
   labelActions?: React.ReactNode;
   icon?: React.ReactNode;
   iconSize?: number;
+  iconClassName?: string;
   meta?: React.ReactNode;
   rowRef?: React.Ref<HTMLDivElement>;
   onToggle?: () => void;
@@ -122,6 +123,7 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
   labelActions,
   icon,
   iconSize = 18,
+  iconClassName,
   meta,
   rowRef,
   className,
@@ -153,7 +155,7 @@ export const VaultTreeGroupRow: React.FC<VaultTreeGroupRowProps> = ({
           </div>
         )}
       </div>
-      <div className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current transition-colors">
+      <div className={cn("mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current transition-colors", iconClassName)}>
         {icon ?? (expanded ? (
           <FolderOpen size={iconSize} strokeWidth={1.9} />
         ) : (
@@ -190,6 +192,7 @@ type VaultTreeItemRowProps = Omit<React.HTMLAttributes<HTMLDivElement>, "childre
   depth: number;
   selected?: boolean;
   icon?: React.ReactNode;
+  iconClassName?: string;
   leading?: React.ReactNode;
   detail?: React.ReactNode;
   actions?: React.ReactNode;
@@ -205,6 +208,7 @@ export const VaultTreeItemRow: React.FC<VaultTreeItemRowProps> = ({
   depth,
   selected = false,
   icon,
+  iconClassName,
   leading,
   detail,
   actions,
@@ -231,7 +235,11 @@ export const VaultTreeItemRow: React.FC<VaultTreeItemRowProps> = ({
     {...props}
   >
     {leading ?? <div className="mr-1 h-5 w-4 flex-shrink-0" />}
-    {icon ? <div className="mr-2 flex shrink-0 items-center self-center">{icon}</div> : <FileText size={14} className="mr-2 shrink-0 text-muted-foreground" />}
+    {icon ? (
+      <div className={cn("mr-2 flex shrink-0 items-center self-center", iconClassName)}>{icon}</div>
+    ) : (
+      <FileText size={14} className={cn("mr-2 shrink-0 text-muted-foreground", iconClassName)} />
+    )}
     {content ?? (
       <div className="min-w-0 flex-1 overflow-hidden">
         {editing && onRenameCommit && onRenameCancel ? (

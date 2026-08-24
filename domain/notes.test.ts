@@ -301,6 +301,84 @@ Some intro text
   assert.equal(headings[2].level, 3);
 });
 
+test("extractNoteHeadings follows rendered markdown fence and setext rules", () => {
+  const content = `Setext title
+============
+
+~~~md
+# Hidden in tilde fence
+~~~
+
+\`\`\`\`md
+## Hidden in long fence
+\`\`\`
+still hidden
+\`\`\`\`
+
+    # Indented code
+### Visible ###`;
+  const headings = extractNoteHeadings(content);
+
+  assert.deepEqual(
+    headings.map(({ level, text, line }) => ({ level, text, line })),
+    [
+      { level: 1, text: "Setext title", line: 1 },
+      { level: 3, text: "Visible", line: 15 },
+    ],
+  );
+});
+
+test("extractNoteHeadings does not turn thematic breaks after block headings into setext headings", () => {
+  assert.deepEqual(
+    extractNoteHeadings("# First\n---\n## Second").map(({ level, text }) => ({ level, text })),
+    [
+      { level: 1, text: "First" },
+      { level: 2, text: "Second" },
+    ],
+  );
+});
+
+test("extractNoteHeadings excludes reference definitions before thematic breaks", () => {
+  assert.deepEqual(
+    extractNoteHeadings("[docs]: https://example.com\n---\n## Real").map(({ text }) => text),
+    ["Real"],
+  );
+});
+
+test("extractNoteHeadings uses the same visible text as formatted rendered headings", () => {
+  assert.deepEqual(
+    extractNoteHeadings("## **Bold**\n## ~~Removed~~ title\n## [Docs](https://example.com)\n## `code` &copy; more\n## <https://example.com>\n## [Reference][docs]\n\n[docs]: /url")
+      .map(({ text }) => text),
+    ["Bold", "Removed title", "Docs", "code © more", "https://example.com", "Reference"],
+  );
+});
+
+test("extractNoteHeadings includes headings rendered inside markdown containers", () => {
+  assert.deepEqual(
+    extractNoteHeadings("> ## Repeat\n## Repeat\n- ### Listed").map(({ level, text }) => ({ level, text })),
+    [
+      { level: 2, text: "Repeat" },
+      { level: 2, text: "Repeat" },
+      { level: 3, text: "Listed" },
+    ],
+  );
+});
+
+test("extractNoteHeadings keeps complete multi-line setext heading text", () => {
+  const [heading] = extractNoteHeadings("first line\nsecond line\n---");
+  assert.deepEqual(
+    { level: heading.level, text: heading.text, line: heading.line },
+    { level: 2, text: "first line second line", line: 1 },
+  );
+});
+
+test("extractNoteHeadings ignores multi-line definitions and raw HTML blocks", () => {
+  assert.deepEqual(
+    extractNoteHeadings('[foo]: /url\n  "title"\n---\n\n<div>\ntext\n---\n</div>\n\n## Real').map(({ text }) => text),
+    ["Real"],
+  );
+});
+
 test("extractNoteSnippet extracts clean plain text from markdown", () => {
   const content = `# Title
 Here is **bold** text and [a link](https://example.com) and \`code\`.
@@ -365,19 +443,29 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
 
   // insert table when no selection (start 0, end 0)
   const tableRes = wrapMarkdownSyntax("", 0, 0, "table");
-  assert.ok(tableRes.text.includes("| 列 1 | 列 2 | 列 3 |"));
+  assert.ok(tableRes.text.includes("| Column 1 | Column 2 | Column 3 |"));
 
   // insert code block
   const codeRes = wrapMarkdownSyntax("", 0, 0, "codeblock");
   assert.ok(codeRes.text.includes("```bash"));
-  assert.equal(codeRes.selectionStart, 15);
-  assert.equal(codeRes.selectionEnd, 15);
+  assert.equal(codeRes.selectionStart, "\n```bash\n".length);
+  assert.equal(codeRes.selectionEnd, "\n```bash\n".length);
 
   // insert math block
   const mathRes = wrapMarkdownSyntax("", 0, 0, "math");
   assert.ok(mathRes.text.includes("```math"));
-  assert.equal(mathRes.selectionStart, 8);
-  assert.equal(mathRes.selectionEnd, 8);
+  assert.equal(mathRes.selectionStart, "\n```math\n".length);
+  assert.equal(mathRes.selectionEnd, "\n```math\n".length);
+
+  const selectedCodeRes = wrapMarkdownSyntax("echo ok", 0, 7, "codeblock");
+  assert.equal(
+    selectedCodeRes.text.slice(selectedCodeRes.selectionStart, selectedCodeRes.selectionEnd),
+    "echo ok",
+  );
+
+  const selectedMathRes = wrapMarkdownSyntax("x^2", 0, 3, "math");
+  assert.equal(
+    selectedMathRes.text.slice(selectedMathRes.selectionStart, selectedMathRes.selectionEnd),
+    "x^2",
+  );
 });
-
-

@@ -82,6 +82,9 @@ test("NotesManager balances folder and note tree icon sizes", () => {
 
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-folder/);
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-file-text/);
+  assert.match(markup, /<div class="flex h-5 w-5[^"]*mr-1">/);
+  assert.match(markup, /<div class="flex shrink-0 items-center self-center[^"]*mr-1">/);
+  assert.doesNotMatch(markup, /lucide lucide-file-text[^"]*mr-2/);
 });
 
 test("NotesManager tree scroll area constrains width so titles can truncate", () => {

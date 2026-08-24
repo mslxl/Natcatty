@@ -1,5 +1,9 @@
 import type { Host, VaultNote } from "./models.ts";
 import { getNextVaultOrder, normalizeVaultOrder, sortByVaultOrder } from "./vaultOrder.ts";
+import { fromMarkdown } from "mdast-util-from-markdown";
+import { gfmStrikethroughFromMarkdown } from "mdast-util-gfm-strikethrough";
+import { toString as markdownNodeToString } from "mdast-util-to-string";
+import { gfmStrikethrough } from "micromark-extension-gfm-strikethrough";
 
 export type { Host, VaultNote };
 
@@ -473,32 +477,40 @@ export interface NoteHeadingItem {
   line: number;
 }
 
+export const normalizeNoteHeadingText = (value: string): string => value.replace(/\s+/g, " ").trim();
+
 export const extractNoteHeadings = (content: string): NoteHeadingItem[] => {
   if (!content) return [];
-  const lines = content.split("\n");
   const headings: NoteHeadingItem[] = [];
-  let inCodeBlock = false;
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (line.trim().startsWith("```")) {
-      inCodeBlock = !inCodeBlock;
-      continue;
+  type AstNode = {
+    type: string;
+    depth?: number;
+    children?: AstNode[];
+    position?: { start?: { line?: number } };
+  };
+  const visit = (node: AstNode) => {
+    if (node.type === "heading" && node.depth) {
+      const text = normalizeNoteHeadingText(
+        markdownNodeToString(node as Parameters<typeof markdownNodeToString>[0]),
+      );
+      const line = node.position?.start?.line ?? 1;
+      if (text) {
+        headings.push({
+          id: `heading-${line - 1}-${text.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, "-")}`,
+          level: node.depth,
+          text,
+          line,
+        });
+      }
     }
-    if (inCodeBlock) continue;
-
-    const match = /^(#{1,6})\s+(.+)$/.exec(line.trim());
-    if (match) {
-      const level = match[1].length;
-      const text = match[2].trim();
-      headings.push({
-        id: `heading-${i}-${text.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/gi, "-")}`,
-        level,
-        text,
-        line: i + 1,
-      });
-    }
-  }
+    node.children?.forEach(visit);
+  };
+  visit(
+    fromMarkdown(content, {
+      extensions: [gfmStrikethrough()],
+      mdastExtensions: [gfmStrikethroughFromMarkdown()],
+    }) as AstNode,
+  );
   return headings;
 };
 
@@ -677,7 +689,7 @@ export const wrapMarkdownSyntax = (
 
   switch (action) {
     case "bold": {
-      const content = selected || "粗体文字";
+      const content = selected || "bold text";
       return {
         text: `${before}**${content}**${after}`,
         selectionStart: start + 2,
@@ -685,7 +697,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "italic": {
-      const content = selected || "斜体文字";
+      const content = selected || "italic text";
       return {
         text: `${before}*${content}*${after}`,
         selectionStart: start + 1,
@@ -693,7 +705,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "strikethrough": {
-      const content = selected || "删除线文字";
+      const content = selected || "strikethrough text";
       return {
         text: `${before}~~${content}~~${after}`,
         selectionStart: start + 2,
@@ -701,7 +713,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "underline": {
-      const content = selected || "下划线文字";
+      const content = selected || "underlined text";
       return {
         text: `${before}<u>${content}</u>${after}`,
         selectionStart: start + 3,
@@ -709,7 +721,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "code": {
-      const content = selected || "代码";
+      const content = selected || "code";
       return {
         text: `${before}\`${content}\`${after}`,
         selectionStart: start + 1,
@@ -718,15 +730,16 @@ export const wrapMarkdownSyntax = (
     }
     case "codeblock": {
       const content = selected || "";
-      const insert = `\n\`\`\`bash\n${content}\n\`\`\`\n`;
+      const opening = "\n```bash\n";
+      const insert = `${opening}${content}\n\`\`\`\n`;
       return {
         text: `${before}${insert}${after}`,
-        selectionStart: start + 15,
-        selectionEnd: start + 15 + content.length,
+        selectionStart: start + opening.length,
+        selectionEnd: start + opening.length + content.length,
       };
     }
     case "h1": {
-      const content = selected || "一级标题";
+      const content = selected || "Heading 1";
       return {
         text: `${before}\n# ${content}\n${after}`,
         selectionStart: start + 3,
@@ -734,7 +747,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "h2": {
-      const content = selected || "二级标题";
+      const content = selected || "Heading 2";
       return {
         text: `${before}\n## ${content}\n${after}`,
         selectionStart: start + 4,
@@ -742,7 +755,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "h3": {
-      const content = selected || "三级标题";
+      const content = selected || "Heading 3";
       return {
         text: `${before}\n### ${content}\n${after}`,
         selectionStart: start + 5,
@@ -750,7 +763,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "h4": {
-      const content = selected || "四级标题";
+      const content = selected || "Heading 4";
       return {
         text: `${before}\n#### ${content}\n${after}`,
         selectionStart: start + 6,
@@ -758,7 +771,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "quote": {
-      const content = selected || "引用文本";
+      const content = selected || "Quote";
       return {
         text: `${before}\n> ${content}\n${after}`,
         selectionStart: start + 3,
@@ -766,7 +779,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "bullet": {
-      const content = selected || "列表项";
+      const content = selected || "List item";
       return {
         text: `${before}\n- ${content}\n${after}`,
         selectionStart: start + 3,
@@ -774,7 +787,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "number": {
-      const content = selected || "列表项";
+      const content = selected || "List item";
       return {
         text: `${before}\n1. ${content}\n${after}`,
         selectionStart: start + 4,
@@ -782,7 +795,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "task": {
-      const content = selected || "待办任务";
+      const content = selected || "Task";
       return {
         text: `${before}\n- [ ] ${content}\n${after}`,
         selectionStart: start + 7,
@@ -798,7 +811,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "table": {
-      const tableMarkdown = `\n| 列 1 | 列 2 | 列 3 |\n| :--- | :--- | :--- |\n| 单元格 1 | 单元格 2 | 单元格 3 |\n`;
+      const tableMarkdown = `\n| Column 1 | Column 2 | Column 3 |\n| :--- | :--- | :--- |\n| Cell 1 | Cell 2 | Cell 3 |\n`;
       return {
         text: `${before}${tableMarkdown}${after}`,
         selectionStart: start + tableMarkdown.length,
@@ -806,7 +819,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "link": {
-      const title = selected || "链接文本";
+      const title = selected || "Link text";
       const insert = `[${title}](https://)`;
       return {
         text: `${before}${insert}${after}`,
@@ -815,7 +828,7 @@ export const wrapMarkdownSyntax = (
       };
     }
     case "image": {
-      const alt = selected || "图片描述";
+      const alt = selected || "Image description";
       const insert = `![${alt}](https://)`;
       return {
         text: `${before}${insert}${after}`,
@@ -825,11 +838,12 @@ export const wrapMarkdownSyntax = (
     }
     case "math": {
       const content = selected || "";
-      const insert = `\n\`\`\`math\n${content}\n\`\`\`\n`;
+      const opening = "\n```math\n";
+      const insert = `${opening}${content}\n\`\`\`\n`;
       return {
         text: `${before}${insert}${after}`,
-        selectionStart: start + 8,
-        selectionEnd: start + 8 + content.length,
+        selectionStart: start + opening.length,
+        selectionEnd: start + opening.length + content.length,
       };
     }
     default:

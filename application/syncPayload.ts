@@ -107,6 +107,9 @@ import {
   STORAGE_KEY_AI_QUICK_MESSAGES,
   STORAGE_KEY_AI_SHOW_TERMINAL_SELECTION_ACTION,
   STORAGE_KEY_PORT_FORWARDING,
+  STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+  STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+  STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
 } from '../infrastructure/config/storageKeys';
 import { isTerminalSidePanelAutoOpenTab } from '../domain/terminalSidePanelAutoOpen';
 import { prepareRestoredPayloadConvergentWrites } from './convergentSyncReplica';
@@ -274,6 +277,9 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_UI_FONT_FAMILY,
   STORAGE_KEY_UI_LANGUAGE,
   STORAGE_KEY_CUSTOM_CSS,
+  STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
+  STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
+  STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
   STORAGE_KEY_TERM_THEME,
   STORAGE_KEY_TERM_FOLLOW_APP_THEME,
   STORAGE_KEY_TERM_THEME_DARK,
@@ -430,6 +436,12 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   if (lang) settings.uiLanguage = lang;
   const css = localStorageAdapter.readString(STORAGE_KEY_CUSTOM_CSS);
   if (css != null) settings.customCSS = css;
+  const noteFontFamily = localStorageAdapter.readString(STORAGE_KEY_VAULT_NOTES_FONT_FAMILY);
+  if (noteFontFamily != null) settings.noteFontFamily = noteFontFamily;
+  const noteFontSize = localStorageAdapter.readNumber(STORAGE_KEY_VAULT_NOTES_FONT_SIZE);
+  if (noteFontSize != null && noteFontSize >= 10 && noteFontSize <= 32) settings.noteFontSize = noteFontSize;
+  const noteCodeFontSize = localStorageAdapter.readNumber(STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE);
+  if (noteCodeFontSize != null && noteCodeFontSize >= 10 && noteCodeFontSize <= 32) settings.noteCodeFontSize = noteCodeFontSize;
 
   // Terminal
   const termTheme = localStorageAdapter.readString(STORAGE_KEY_TERM_THEME);
@@ -649,6 +661,13 @@ async function applySyncableSettings(settings: NonNullable<SyncPayload['settings
   if (settings.uiFontFamilyId != null) localStorageAdapter.writeString(STORAGE_KEY_UI_FONT_FAMILY, settings.uiFontFamilyId);
   if (settings.uiLanguage != null) localStorageAdapter.writeString(STORAGE_KEY_UI_LANGUAGE, settings.uiLanguage);
   if (settings.customCSS != null) localStorageAdapter.writeString(STORAGE_KEY_CUSTOM_CSS, settings.customCSS);
+  if (settings.noteFontFamily != null) localStorageAdapter.writeString(STORAGE_KEY_VAULT_NOTES_FONT_FAMILY, settings.noteFontFamily);
+  if (settings.noteFontSize != null && settings.noteFontSize >= 10 && settings.noteFontSize <= 32) {
+    localStorageAdapter.writeNumber(STORAGE_KEY_VAULT_NOTES_FONT_SIZE, settings.noteFontSize);
+  }
+  if (settings.noteCodeFontSize != null && settings.noteCodeFontSize >= 10 && settings.noteCodeFontSize <= 32) {
+    localStorageAdapter.writeNumber(STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE, settings.noteCodeFontSize);
+  }
 
   // Terminal
   if (settings.terminalTheme != null) localStorageAdapter.writeString(STORAGE_KEY_TERM_THEME, settings.terminalTheme);

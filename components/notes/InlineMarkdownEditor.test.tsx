@@ -4,15 +4,137 @@ import { readFileSync } from "node:fs";
 
 import {
   getHostPickerTriggerRange,
+  getRenderedNoteHeadingText,
   isNoteSmallImageWidth,
+  isNoteMathLanguageLabel,
   isSupportedNoteExternalHref,
   isPointerInsideLinkActionHoverZone,
+  invokeNoteEditorDialogAction,
   linkActionStatesEqual,
   NOTE_SMALL_IMAGE_MAX_WIDTH,
   resolveHostPickerPopupPosition,
+  scrollNoteHeadingIntoView,
   shouldInsertClipboardTextAsMarkdown,
   shouldHandleHostPickerNavigationKey,
 } from "./InlineMarkdownEditor.tsx";
+import { getSourceEditDelta, shouldCoalesceSourceUndoStep } from "./NoteSourceEditor.tsx";
+
+test("source undo history coalesces only adjacent edits of the same typing kind", () => {
+  const previous = { inputType: "insertText", at: 1_000, caret: 2 };
+  const adjacentInsert = getSourceEditDelta("ab", "abc");
+  const movedCaretInsert = getSourceEditDelta("ab", "axb");
+  assert.equal(shouldCoalesceSourceUndoStep(previous, "insertText", 1_500, adjacentInsert), true);
+  assert.equal(shouldCoalesceSourceUndoStep(previous, "insertText", 1_500, movedCaretInsert), false);
+  assert.equal(shouldCoalesceSourceUndoStep(previous, "insertText", 1_751, adjacentInsert), false);
+  assert.equal(shouldCoalesceSourceUndoStep(previous, "deleteContentBackward", 1_100, adjacentInsert), false);
+  assert.equal(shouldCoalesceSourceUndoStep(previous, "insertFromPaste", 1_100, adjacentInsert), false);
+  assert.equal(shouldCoalesceSourceUndoStep(null, "insertText", 1_100, adjacentInsert), false);
+});
+
+test("math language detection does not mistake plain text blocks for TeX", () => {
+  assert.equal(isNoteMathLanguageLabel("math"), true);
+  assert.equal(isNoteMathLanguageLabel("Math (LaTeX)"), true);
+  assert.equal(isNoteMathLanguageLabel("language-latex"), true);
+  assert.equal(isNoteMathLanguageLabel("language-tex highlighted"), true);
+  assert.equal(isNoteMathLanguageLabel("公式"), true);
+  assert.equal(isNoteMathLanguageLabel("text"), false);
+  assert.equal(isNoteMathLanguageLabel("plaintext"), false);
+  assert.equal(isNoteMathLanguageLabel("typescript"), false);
+});
+
+test("note link and image actions open the editor dialogs", () => {
+  const opened: string[] = [];
+  const dialogs = {
+    openImageDialog: () => opened.push("image"),
+    openLinkDialog: () => opened.push("link"),
+  };
+
+  assert.equal(invokeNoteEditorDialogAction("link", dialogs), true);
+  assert.equal(invokeNoteEditorDialogAction("image", dialogs), true);
+  assert.equal(invokeNoteEditorDialogAction("bold", dialogs), false);
+  assert.equal(invokeNoteEditorDialogAction("link", null), false);
+  assert.deepEqual(opened, ["link", "image"]);
+});
+
+test("note outline jumps to the matching rendered heading", () => {
+  let scrollOptions: ScrollIntoViewOptions | undefined;
+  const first = {
+    tagName: "H1",
+    textContent: "Quoted",
+    scrollIntoView: () => undefined,
+  } as unknown as HTMLElement;
+  const second = {
+    tagName: "H2",
+    textContent: "Real",
+    scrollIntoView: (options?: ScrollIntoViewOptions) => {
+      scrollOptions = options;
+    },
+  } as unknown as HTMLElement;
+  const root = {
+    querySelectorAll: (selector: string) => {
+      assert.match(selector, /\.netcatty-mdx-content h1/);
+      assert.match(selector, /\.netcatty-mdx-content h6/);
+      return [first, second];
+    },
+  };
+
+  assert.equal(scrollNoteHeadingIntoView(root, { level: 2, text: "Real" }), true);
+  assert.deepEqual(scrollOptions, {
+    behavior: "smooth",
+    block: "start",
+    inline: "nearest",
+  });
+  assert.equal(scrollNoteHeadingIntoView(root, { level: 3, text: "Missing" }), false);
+  assert.equal(scrollNoteHeadingIntoView(null, { level: 1, text: "None" }), false);
+});
+
+test("note outline matches rendered whitespace and strikethrough heading text", () => {
+  let scrolled = false;
+  const renderedHeading = {
+    tagName: "H2",
+    textContent: "Removed\n title",
+    scrollIntoView: () => {
+      scrolled = true;
+    },
+  } as unknown as HTMLElement;
+  const root = {
+    querySelectorAll: () => [renderedHeading],
+  };
+
+  assert.equal(scrollNoteHeadingIntoView(root, { level: 2, text: "Removed title" }), true);
+  assert.equal(scrolled, true);
+});
+
+test("note outline matches image alt text inside rendered headings", () => {
+  const textNode = (textContent: string) => ({ nodeType: 3, textContent, childNodes: [] });
+  const imageNode = (alt: string) => ({
+    nodeType: 1,
+    tagName: "IMG",
+    textContent: "",
+    childNodes: [],
+    getAttribute: (name: string) => name === "alt" ? alt : null,
+  });
+  let scrolled = 0;
+  const imageHeading = {
+    tagName: "H2",
+    textContent: "",
+    childNodes: [imageNode("Logo")],
+    scrollIntoView: () => { scrolled += 1; },
+  } as unknown as HTMLElement;
+  const mixedHeading = {
+    tagName: "H2",
+    textContent: "Release  notes",
+    childNodes: [textNode("Release "), imageNode("Logo"), textNode(" notes")],
+    scrollIntoView: () => { scrolled += 1; },
+  } as unknown as HTMLElement;
+  const root = { querySelectorAll: () => [imageHeading, mixedHeading] };
+
+  assert.equal(getRenderedNoteHeadingText(imageHeading), "Logo");
+  assert.equal(getRenderedNoteHeadingText(mixedHeading), "Release Logo notes");
+  assert.equal(scrollNoteHeadingIntoView(root, { level: 2, text: "Logo" }), true);
+  assert.equal(scrollNoteHeadingIntoView(root, { level: 2, text: "Release Logo notes" }), true);
+  assert.equal(scrolled, 2);
+});
 
 test("host picker navigation keys are handled even before a query is typed", () => {
   assert.equal(shouldHandleHostPickerNavigationKey(true, "ArrowDown", 3), true);
@@ -72,6 +194,35 @@ test("small note image width threshold matches README badge sizes", () => {
   assert.equal(isNoteSmallImageWidth(2000), false);
   assert.equal(isNoteSmallImageWidth(""), false);
   assert.equal(isNoteSmallImageWidth(null), false);
+});
+
+test("note image actions use a bordered toolbar shown only on hover or focus", () => {
+  const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+
+  assert.match(
+    styles,
+    /\[data-editor-block-type="image"\] \[class\*="_editImageToolbar_"\][\s\S]*?gap:\s*0\.0625rem;[\s\S]*?padding:\s*0\.125rem;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;[\s\S]*?border:\s*1px solid/s,
+  );
+  assert.match(
+    styles,
+    /\[data-editor-block-type="image"\] \[class\*="_editImageToolbar_"\] button,[\s\S]*?width:\s*1\.375rem;[\s\S]*?height:\s*1\.375rem;/s,
+  );
+  assert.match(
+    styles,
+    /\[data-editor-block-type="image"\] \[class\*="_editImageToolbar_"\] button svg,[\s\S]*?width:\s*0\.875rem;[\s\S]*?height:\s*0\.875rem;/s,
+  );
+  assert.match(
+    styles,
+    /\[data-editor-block-type="image"\]:hover \[class\*="_editImageToolbar_"\][\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/s,
+  );
+  assert.match(
+    styles,
+    /\[data-editor-block-type="image"\]:focus-within \[class\*="_editImageToolbar_"\]/,
+  );
+  assert.doesNotMatch(
+    styles,
+    /\[data-editor-block-type="image"\]\[data-note-img-size="sm"\] \[class\*="_editImageToolbar_"\]/,
+  );
 });
 
 test("host picker trigger range only covers the typed trigger and query", () => {
@@ -146,7 +297,7 @@ test("note editor enables image plugin for remote markdown images", () => {
   assert.match(source, /imagePlugin\(\{\s*allowSetImageDimensions:\s*true/);
 });
 
-test("note editor exposes preview and edit modes with a markdown toolbar in edit mode", () => {
+test("note editor exposes its modes from a borderless title-row dropdown", () => {
   const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
   const managerSource = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
   const toolbarSource = readFileSync(new URL("./NoteToolbar.tsx", import.meta.url), "utf8");
@@ -168,9 +319,13 @@ test("note editor exposes preview and edit modes with a markdown toolbar in edit
   assert.doesNotMatch(source, /data-note-mode-switch/);
   assert.doesNotMatch(source, /absolute -top-9/);
   assert.match(managerSource, /data-note-title-row/);
-  assert.match(toolbarSource, /data-note-mode-switch="live"/);
-  assert.match(toolbarSource, /data-note-mode-switch="source"/);
-  assert.match(toolbarSource, /data-note-mode-switch="preview"/);
+  assert.match(toolbarSource, /data-note-mode-dropdown-trigger/);
+  assert.match(toolbarSource, /data-note-mode-option=\{option\.mode\}/);
+  assert.match(toolbarSource, /gap-1\.5 border-0 bg-transparent px-2/);
+  assert.match(toolbarSource, /<Select value=\{normalizedMode\}/);
+  assert.doesNotMatch(toolbarSource, /data-note-mode-switch=/);
+  assert.match(managerSource, /data-note-title-row[\s\S]*?<NoteModeDropdown[\s\S]*?<NoteToolbar/);
+  assert.match(managerSource, /<NoteModeDropdown[\s\S]*?editorMode=\{noteEditorMode\}/);
   assert.match(managerSource, /editorMode=\{noteEditorMode\}/);
   assert.doesNotMatch(`${source}\n${managerSource}`, /role="tablist"|role="tab"|renderModeButton/);
   assert.doesNotMatch(`${source}\n${managerSource}`, /className="mb-2 flex shrink-0 items-center justify-end"/);
@@ -283,11 +438,19 @@ test("note code block frame is borderless and language picker is compact", () =>
 
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*border:\s*0\s*!important;[^}]*padding:\s*0\.2rem\s+0\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*border:\s*0\s*!important;[^}]*background:\s*transparent\s*!important;[^}]*padding:\s*0\s*!important;/s,
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\.cm-editor\s*\{[^}]*border:\s*0\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\.cm-editor\s*\{[^}]*border:\s*0\s*!important;[^}]*background:\s*transparent\s*!important;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-mdx-content\s+pre\s*\{[^}]*border:\s*0;[^}]*background:\s*transparent;[^}]*padding:\s*0;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-note-code-copy\s*\{[^}]*border:\s*0\s*!important;[^}]*background:\s*transparent\s*!important;[^}]*box-shadow:\s*none\s*!important;/s,
   );
   assert.match(
     styles,
@@ -327,7 +490,7 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*gap:\s*0;[^}]*margin:\s*0\.3rem\s+0\s+0\.65rem;/s,
+    /\.netcatty-mdx-editor:not\(\.netcatty-mdx-editor--preview\)\s+\[class\*="_codeMirrorWrapper_"\]\s*\{[^}]*gap:\s*0;[^}]*margin:\s*0\.25rem\s+0\s+0\.55rem;/s,
   );
   assert.match(
     styles,
@@ -335,11 +498,38 @@ test("note code block frame is borderless and language picker is compact", () =>
   );
   assert.match(
     styles,
-    /\.netcatty-mdx-editor\s+\.cm-gutters\s*\{[^}]*padding:\s*0\s*!important;/s,
+    /\.netcatty-mdx-editor\s+\.cm-gutters\s*\{[^}]*background:\s*transparent\s*!important;[^}]*padding:\s*0\s*!important;/s,
   );
   assert.match(
     styles,
     /\.netcatty-mdx-editor--preview\s+\[class\*="_codeMirrorToolbar_"\]\s*\{[^}]*display:\s*none\s*!important;/s,
+  );
+});
+
+test("note formulas render without framed surfaces", () => {
+  const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
+
+  assert.match(
+    styles,
+    /\.netcatty-math-formula-preview\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-math-reading-mode\s*\{[^}]*background:\s*transparent\s*!important;[^}]*border:\s*none\s*!important;[^}]*padding:\s*0\s*!important;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-math-reading-mode\s+\.netcatty-math-formula-preview\s*\{[^}]*background:\s*transparent;/s,
+  );
+  assert.match(
+    styles,
+    /\.netcatty-math-block-p\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;[^}]*border-radius:\s*0;/s,
+  );
+  assert.match(styles, /\.netcatty-math-formula-preview\s*\{[^}]*justify-content:\s*safe center;[^}]*overflow-x:\s*auto;/s);
+  assert.match(styles, /\.netcatty-math-block-p\s*\{[^}]*justify-content:\s*safe center;[^}]*overflow-x:\s*auto;/s);
+  assert.match(
+    styles,
+    /\.netcatty-math-reading-mode\s*>\s*\.netcatty-note-code-copy\s*\{[^}]*display:\s*none\s*!important;/s,
   );
 });
 

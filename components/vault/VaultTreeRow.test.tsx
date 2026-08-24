@@ -68,6 +68,20 @@ test("VaultTreeItemRow exposes shared selected item state", () => {
   assert.match(markup, /Failover checklist/);
 });
 
+test("VaultTree rows can tighten the icon-to-label gap per surface", () => {
+  const groupMarkup = renderToStaticMarkup(
+    <VaultTreeGroupRow name="Production" depth={0} iconClassName="mr-1" />,
+  );
+  const itemMarkup = renderToStaticMarkup(
+    <VaultTreeItemRow label="Failover checklist" depth={0} iconClassName="mr-1" />,
+  );
+
+  assert.match(groupMarkup, /<div class="flex h-5 w-5[^"]*mr-1">/);
+  assert.match(itemMarkup, /lucide lucide-file-text[^"]*mr-1/);
+  assert.doesNotMatch(groupMarkup, /<div class="[^"]*mr-2[^"]*h-5 w-5/);
+  assert.doesNotMatch(itemMarkup, /lucide lucide-file-text[^"]*mr-2/);
+});
+
 test("VaultTree labels use CJK-safe line-height under truncate", () => {
   const groupMarkup = renderToStaticMarkup(
     <VaultTreeGroupRow name="服务器配置" depth={0} count={1} />,

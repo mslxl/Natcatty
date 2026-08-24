@@ -1,35 +1,40 @@
 import {
   Copy,
-  Download,
-  FileCode,
   FileText,
   Share2,
 } from "lucide-react";
-import React, { useState, useRef, useEffect } from "react";
+import React, { useCallback, useState, useRef, useEffect } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import {
-  buildVaultNoteMarkdownExportFiles,
-  sanitizeNoteExportFileNamePart,
   type VaultNote,
 } from "../../domain/notes";
 import { copyToClipboard } from "../keychain/utils";
 import { toast } from "../ui/toast";
-import { buildTextFilesZipBlob } from "../../lib/textZip";
 
 export interface NoteExportMenuProps {
   note: VaultNote | null;
   allNotes: VaultNote[];
+  onExportNote: (note: VaultNote) => void;
+  onExportAll: () => void;
   className?: string;
 }
 
 export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
   note,
   allNotes,
+  onExportNote,
+  onExportAll,
   className = "",
 }) => {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const closeAndRestoreFocus = useCallback(() => {
+    setOpen(false);
+    requestAnimationFrame(() => triggerRef.current?.focus());
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -38,57 +43,45 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
         setOpen(false);
       }
     };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeAndRestoreFocus();
+        return;
+      }
+      if (e.key === "Tab") {
+        setOpen(false);
+        return;
+      }
+      const items = Array.from(
+        menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [],
+      );
+      if (!items.length) return;
+      const current = items.indexOf(document.activeElement as HTMLButtonElement);
+      let next = current;
+      if (e.key === "ArrowDown") next = (current + 1 + items.length) % items.length;
+      else if (e.key === "ArrowUp") next = (current - 1 + items.length) % items.length;
+      else if (e.key === "Home") next = 0;
+      else if (e.key === "End") next = items.length - 1;
+      else return;
+      e.preventDefault();
+      items[next]?.focus();
+    };
     window.addEventListener("mousedown", handleClickOutside);
-    return () => window.removeEventListener("mousedown", handleClickOutside);
-  }, [open]);
+    window.addEventListener("keydown", handleKeyDown);
+    requestAnimationFrame(() => {
+      menuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
+    });
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeAndRestoreFocus, open]);
 
   const handleExportSingleMarkdown = () => {
     if (!note) return;
-    const fileName = `${sanitizeNoteExportFileNamePart(note.title, "note")}.md`;
-    const blob = new Blob([note.content], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(t("notes.export.toast.markdownSuccess"));
-    setOpen(false);
-  };
-
-  const handleExportSingleHtml = () => {
-    if (!note) return;
-    const title = note.title || "Untitled Note";
-    const escapedTitle = title.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const htmlContent = `<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-  <meta charset="UTF-8">
-  <title>${escapedTitle}</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #333; }
-    h1, h2, h3 { color: #111; }
-    pre { background: #f4f4f5; padding: 16px; border-radius: 8px; overflow-x: auto; }
-    code { font-family: monospace; background: #f4f4f5; padding: 2px 6px; border-radius: 4px; }
-    pre code { background: none; padding: 0; }
-    blockquote { border-left: 4px solid #e4e4e7; margin: 0; padding-left: 16px; color: #71717a; }
-  </style>
-</head>
-<body>
-  <h1>${escapedTitle}</h1>
-  <pre style="white-space: pre-wrap;">${note.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
-</body>
-</html>`;
-    const fileName = `${sanitizeNoteExportFileNamePart(note.title, "note")}.html`;
-    const blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = fileName;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(t("notes.export.toast.htmlSuccess"));
-    setOpen(false);
+    onExportNote(note);
+    closeAndRestoreFocus();
   };
 
   const handleCopyMarkdown = async () => {
@@ -97,36 +90,31 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
     if (ok) {
       toast.success(t("common.copied") || "已复制到剪贴板");
     }
-    setOpen(false);
+    closeAndRestoreFocus();
   };
 
   const handleExportAllZip = () => {
     if (!allNotes.length) return;
-    const files = buildVaultNoteMarkdownExportFiles(allNotes, { type: "all" });
-    const zipBlob = buildTextFilesZipBlob(files);
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `netcatty-notes-backup-${new Date().toISOString().slice(0, 10)}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success(t("notes.export.toast.zipSuccess"));
-    setOpen(false);
+    onExportAll();
+    closeAndRestoreFocus();
   };
 
   return (
     <div className={`relative inline-block ${className}`} ref={menuRef}>
       <button
+        ref={triggerRef}
         type="button"
         className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
         title={t("notes.export.share")}
         onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="menu"
+        aria-expanded={open}
       >
         <Share2 size={16} />
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-1.5 w-56 bg-popover border border-border rounded-lg shadow-lg py-1.5 z-50 text-sm animate-in fade-in-50 zoom-in-95">
+        <div role="menu" className="absolute right-0 top-full mt-1.5 w-56 bg-popover border border-border rounded-lg shadow-lg py-1.5 z-50 text-sm animate-in fade-in-50 zoom-in-95">
           {note && (
             <>
               <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -134,6 +122,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
               </div>
               <button
                 type="button"
+                role="menuitem"
                 className="w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-muted text-foreground transition-colors text-left"
                 onClick={handleExportSingleMarkdown}
               >
@@ -142,14 +131,7 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
               </button>
               <button
                 type="button"
-                className="w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-muted text-foreground transition-colors text-left"
-                onClick={handleExportSingleHtml}
-              >
-                <FileCode size={14} className="text-primary" />
-                <span>{t("notes.export.exportHtml")}</span>
-              </button>
-              <button
-                type="button"
+                role="menuitem"
                 className="w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-muted text-foreground transition-colors text-left"
                 onClick={handleCopyMarkdown}
               >
@@ -165,11 +147,12 @@ export const NoteExportMenu: React.FC<NoteExportMenuProps> = ({
           </div>
           <button
             type="button"
+            role="menuitem"
             className="w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-muted text-foreground transition-colors text-left"
             onClick={handleExportAllZip}
             disabled={!allNotes.length}
           >
-            <Download size={14} className="text-emerald-500" />
+            <FileText size={14} className="text-emerald-500" />
             <span>{t("notes.export.exportAllZip")}</span>
           </button>
         </div>

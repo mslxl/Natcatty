@@ -35,11 +35,11 @@ import { useI18n } from "../../application/i18n/I18nProvider";
 import type { ActiveTextFormats, NoteEditorMode } from "./InlineMarkdownEditor";
 import { EMPTY_ACTIVE_FORMATS } from "./InlineMarkdownEditor";
 import { Dropdown, DropdownContent, DropdownTrigger } from "../ui/dropdown";
+import { Select, SelectContent, SelectItem, SelectTrigger } from "../ui/select";
 import { cn } from "../../lib/utils";
 
 export interface NoteToolbarProps {
   editorMode: NoteEditorMode;
-  onChangeMode: (mode: NoteEditorMode) => void;
   onAction?: (action: MarkdownActionType) => void;
   onOpenHostPicker?: () => void;
   className?: string;
@@ -53,12 +53,80 @@ export interface NoteToolbarProps {
   activeFormats?: ActiveTextFormats;
 }
 
+export interface NoteModeDropdownProps {
+  editorMode: NoteEditorMode;
+  onChangeMode: (mode: NoteEditorMode) => void;
+  className?: string;
+}
+
 const FONT_SIZES = [12, 13, 14, 15, 16, 18, 20];
 const CODE_FONT_SIZES = [11, 12, 13, 14, 15, 16, 18];
 
-export const NoteToolbar: React.FC<NoteToolbarProps> = ({
+export const NoteModeDropdown: React.FC<NoteModeDropdownProps> = ({
   editorMode,
   onChangeMode,
+  className = "",
+}) => {
+  const { t } = useI18n();
+  const normalizedMode: "edit" | "source" | "preview" =
+    editorMode === "live" ? "edit" : editorMode;
+  const options = [
+    {
+      mode: "edit" as const,
+      label: t("notes.toolbar.modeLive"),
+      title: t("notes.toolbar.modeLiveTitle"),
+      icon: PencilLine,
+    },
+    {
+      mode: "source" as const,
+      label: t("notes.toolbar.modeSource"),
+      title: t("notes.toolbar.modeSourceTitle"),
+      icon: SquareCode,
+    },
+    {
+      mode: "preview" as const,
+      label: t("notes.toolbar.modePreview"),
+      title: t("notes.toolbar.modePreviewTitle"),
+      icon: Eye,
+    },
+  ];
+  const activeOption = options.find((option) => option.mode === normalizedMode) ?? options[0];
+  const ActiveIcon = activeOption.icon;
+
+  return (
+    <Select value={normalizedMode} onValueChange={(mode) => onChangeMode(mode as NoteEditorMode)}>
+        <SelectTrigger
+          data-note-mode-dropdown-trigger
+          aria-label={activeOption.title}
+          className={cn(
+            "app-no-drag h-8 w-auto shrink-0 gap-1.5 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-secondary/70 hover:text-foreground focus:ring-0",
+            className,
+          )}
+        >
+          <ActiveIcon size={15} />
+          <span>{activeOption.label}</span>
+        </SelectTrigger>
+      <SelectContent align="end" className="w-40">
+        {options.map((option) => {
+          const Icon = option.icon;
+          return (
+            <SelectItem
+              key={option.mode}
+              value={option.mode}
+              data-note-mode-option={option.mode}
+              className="h-9"
+            >
+              <span className="flex items-center gap-2"><Icon size={14} />{option.label}</span>
+            </SelectItem>
+          );
+        })}
+      </SelectContent>
+    </Select>
+  );
+};
+
+export const NoteToolbar: React.FC<NoteToolbarProps> = ({
+  editorMode,
   onAction,
   className = "",
   noteFontFamily = "",
@@ -95,6 +163,8 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
   const isEditing = editorMode === "edit" || editorMode === "live" || editorMode === "source";
 
+  if (!isEditing) return null;
+
   // Highlight style for toggles that are active at the current selection.
   const formatButtonClass = (active: boolean) =>
     cn(
@@ -106,60 +176,10 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
 
   return (
     <div
-      className={`flex items-center justify-between gap-1.5 px-3 py-1.5 border-b border-border/70 bg-card/40 text-xs select-none min-w-0 ${className}`}
+      className={`flex items-center gap-1.5 px-3 py-1.5 border-b border-border/70 bg-card/40 text-xs select-none min-w-0 ${className}`}
     >
-      {/* Left Area: View Mode Segmented Control */}
-      <div className="flex items-center gap-0.5 bg-muted/60 p-0.5 rounded-lg border border-border/50 shrink-0">
-        <button
-          type="button"
-          data-note-mode-switch="live"
-          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
-            editorMode === "edit" || editorMode === "live"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-          onClick={() => onChangeMode("edit")}
-          title={t("notes.toolbar.modeLiveTitle")}
-        >
-          <PencilLine size={13} />
-          <span className="hidden sm:inline">{t("notes.toolbar.modeLive")}</span>
-        </button>
-
-        <button
-          type="button"
-          data-note-mode-switch="source"
-          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
-            editorMode === "source"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-          onClick={() => onChangeMode("source")}
-          title={t("notes.toolbar.modeSourceTitle")}
-        >
-          <SquareCode size={13} />
-          <span className="hidden sm:inline">{t("notes.toolbar.modeSource")}</span>
-        </button>
-
-        <button
-          type="button"
-          data-note-mode-switch="preview"
-          className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium transition-all ${
-            editorMode === "preview"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-          onClick={() => onChangeMode("preview")}
-          title={t("notes.toolbar.modePreviewTitle")}
-        >
-          <Eye size={13} />
-          <span className="hidden sm:inline">{t("notes.toolbar.modePreview")}</span>
-        </button>
-      </div>
-
-      {/* Middle Area: Formatting Tools (Available in Live Preview & Source Mode) */}
-      {isEditing && (
-        <div className="flex flex-1 items-center gap-0.5 min-w-0 overflow-x-auto [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 [&::-webkit-scrollbar-track]:bg-transparent">
-          <div className="h-4 w-px bg-border mx-1 shrink-0" />
+      {/* Formatting Tools (Available in Live Preview & Source Mode) */}
+      <div className="flex flex-1 items-center gap-0.5 min-w-0 overflow-x-auto [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border/70 [&::-webkit-scrollbar-track]:bg-transparent">
 
           {/* Undo / Redo */}
           <button
@@ -497,8 +517,7 @@ export const NoteToolbar: React.FC<NoteToolbarProps> = ({
           >
             <ImageIcon size={14} />
           </button>
-        </div>
-      )}
+      </div>
     </div>
   );
 };

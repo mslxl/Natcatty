@@ -1,11 +1,11 @@
-import { Hash, ListTree, X } from "lucide-react";
-import React, { useMemo } from "react";
+import { ListTree, X } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
 import { extractNoteHeadings, type NoteHeadingItem } from "../../domain/notes";
 import { useI18n } from "../../application/i18n/I18nProvider";
 
 export interface NoteOutlineProps {
   content: string;
-  onSelectHeading?: (heading: NoteHeadingItem) => void;
+  onSelectHeading?: (heading: NoteHeadingItem, index: number) => void;
   onClose?: () => void;
   className?: string;
 }
@@ -18,68 +18,77 @@ export const NoteOutline: React.FC<NoteOutlineProps> = ({
 }) => {
   const { t } = useI18n();
   const headings = useMemo(() => extractNoteHeadings(content), [content]);
+  const [activeHeadingId, setActiveHeadingId] = useState<string | null>(null);
+  const minimumHeadingLevel = useMemo(
+    () => headings.length > 0
+      ? Math.min(...headings.map((heading) => heading.level))
+      : 1,
+    [headings],
+  );
 
-  const getIndentClass = (level: number) => {
-    switch (level) {
-      case 1:
-        return "pl-2 font-semibold text-foreground";
-      case 2:
-        return "pl-5 text-foreground/90";
-      case 3:
-        return "pl-8 text-muted-foreground";
-      case 4:
-      default:
-        return "pl-11 text-muted-foreground/80 text-xs";
-    }
-  };
+  useEffect(() => {
+    setActiveHeadingId(null);
+  }, [content]);
 
   return (
-    <div
-      className={`flex flex-col h-full bg-background/95 border-l border-border select-none ${className}`}
+    <nav
+      aria-label={t("notes.outline.title")}
+      data-note-outline="true"
+      className={`flex h-full flex-col bg-background select-none ${className}`}
     >
-      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-border/80 shrink-0">
-        <div className="flex items-center gap-2 text-xs font-semibold text-foreground uppercase tracking-wider">
-          <ListTree size={14} className="text-primary" />
-          <span>{t("notes.outline.titleWithCount", { count: headings.length })}</span>
+      <div className="flex shrink-0 items-center justify-between px-3.5 pb-2 pt-3">
+        <div className="flex min-w-0 items-center gap-2 text-xs font-medium text-foreground/90">
+          <ListTree size={14} className="shrink-0 text-muted-foreground" />
+          <span className="truncate">{t("notes.outline.title")}</span>
+          <span className="shrink-0 text-[11px] font-normal tabular-nums text-muted-foreground/60">
+            {headings.length}
+          </span>
         </div>
         {onClose && (
           <button
             type="button"
-            className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60"
             onClick={onClose}
             title={t("common.close")}
+            aria-label={t("common.close")}
           >
             <X size={14} />
           </button>
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+      <div className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
         {headings.length === 0 ? (
-          <div className="py-8 text-center text-xs text-muted-foreground px-4">
-            <Hash size={24} className="mx-auto mb-2 opacity-30" />
+          <div className="px-3 py-8 text-center text-xs text-muted-foreground">
             <p>{t("notes.outline.empty")}</p>
             <p className="mt-1 text-[11px] opacity-70">
               {t("notes.outline.emptyHint")}
             </p>
           </div>
         ) : (
-          headings.map((item) => (
+          headings.map((item, index) => (
             <button
               key={item.id}
               type="button"
-              className={`w-full text-left py-1.5 pr-2 rounded-md hover:bg-muted/70 text-xs truncate transition-colors flex items-center gap-1.5 ${getIndentClass(
-                item.level,
-              )}`}
-              onClick={() => onSelectHeading?.(item)}
+              data-note-outline-item={item.id}
+              data-heading-level={item.level}
+              className={`flex w-full items-center rounded-md py-1.5 pr-2 text-left text-xs leading-5 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary/60 ${
+                activeHeadingId === item.id
+                  ? "bg-secondary/60 font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-secondary/40 hover:text-foreground"
+              }`}
+              style={{ paddingLeft: `${10 + Math.min(item.level - minimumHeadingLevel, 4) * 12}px` }}
+              onClick={() => {
+                setActiveHeadingId(item.id);
+                onSelectHeading?.(item, index);
+              }}
               title={item.text}
             >
-              <span className="opacity-40 text-[10px] shrink-0">H{item.level}</span>
               <span className="truncate">{item.text}</span>
             </button>
           ))
         )}
       </div>
-    </div>
+    </nav>
   );
 };

@@ -21,9 +21,11 @@ import { useI18n } from "../../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../../application/state/useApplicationBackend";
 import { useStoredNumber } from "../../application/state/useStoredNumber";
 import { useStoredString } from "../../application/state/useStoredString";
+import { useAvailableFonts } from "../../application/state/fontStore";
+import { resolveNoteFontFamily } from "../../domain/noteFonts";
 import { NoteOutline } from "./NoteOutline";
 import { NoteExportMenu } from "./NoteExportMenu";
-import { NoteToolbar } from "./NoteToolbar";
+import { NoteModeDropdown, NoteToolbar } from "./NoteToolbar";
 import type { NoteSourceEditorHandle } from "./NoteSourceEditor";
 import {
   ancestorNoteGroupPaths,
@@ -41,6 +43,7 @@ import {
   resolveMovedNoteGroupPath,
   sanitizeNoteExportFileNamePart,
   type MarkdownActionType,
+  type NoteHeadingItem,
   type VaultNotesExportScope,
 } from "../../domain/notes";
 import { getNextVaultOrder, reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from "../../domain/vaultOrder";
@@ -415,6 +418,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
     "",
   );
+  const availableNoteFonts = useAvailableFonts();
+  const resolvedNoteFontFamily = useMemo(
+    () => resolveNoteFontFamily(availableNoteFonts, noteFontFamily),
+    [availableNoteFonts, noteFontFamily],
+  );
   const [noteFontSize, setNoteFontSize, persistNoteFontSize] = useStoredNumber(
     STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
     14,
@@ -741,6 +749,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
       inlineEditorRef.current?.executeAction(action);
     }
   }, [overlayNoteView]);
+
+  const handleOutlineHeadingSelect = useCallback((heading: NoteHeadingItem, index: number) => {
+    inlineEditorRef.current?.scrollToHeading(heading, index);
+  }, []);
 
   const addNoteToGroup = (group: string | null) => {
     let created: VaultNote | null = null;
@@ -1272,7 +1284,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         style={{ paddingLeft: depth * 16 + 4 }}
       >
         <div className="mr-1 h-5 w-4 shrink-0" />
-        <div className="mr-2 flex h-5 w-5 shrink-0 items-center justify-center text-current">
+        <div className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center text-current">
           <Folder size={16} strokeWidth={1.9} />
         </div>
         <VaultTreeInlineRenameInput
@@ -1302,7 +1314,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               renameNoteFromTree(note.id, name);
             }}
             onRenameCancel={() => setEditingNoteId(null)}
-            icon={<FileText size={16} className="mr-2 shrink-0 text-muted-foreground" />}
+            icon={<FileText size={16} className="shrink-0 text-muted-foreground" />}
+            iconClassName="mr-1"
             data-note-id={note.id}
             data-notes-drag-kind="note"
             data-notes-context-menu="note"
@@ -1379,6 +1392,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               selected={isNoteFolderTreeSelected(selectedGroup, selectedNoteId, node.path)}
               hasChildren={hasChildren}
               iconSize={16}
+              iconClassName="mr-1"
               editing={editingGroupPath === node.path}
               editingInitialName={node.name}
               onRenameCommit={(name) => renameGroup(node.path, name)}
@@ -1783,6 +1797,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                   />
                 </div>
 
+                <NoteModeDropdown
+                  editorMode={noteEditorMode}
+                  onChangeMode={(mode) => {
+                    flushNoteDraft();
+                    setNoteEditorMode(mode);
+                  }}
+                />
+
                 {/* Outline Toggle */}
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1804,7 +1826,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 </Tooltip>
 
                 {/* Export Menu */}
-                <NoteExportMenu note={selectedNoteView} allNotes={sortedNotes} />
+                <NoteExportMenu
+                  note={selectedNoteView}
+                  allNotes={sortedNotes}
+                  onExportNote={exportNoteToMarkdown}
+                  onExportAll={exportAllNotes}
+                />
 
                 {/* Delete Note */}
                 <Tooltip>
@@ -1897,13 +1924,9 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               {/* Cherry Studio Style Note Toolbar */}
               <NoteToolbar
                 editorMode={noteEditorMode}
-                onChangeMode={(mode) => {
-                  flushNoteDraft();
-                  setNoteEditorMode(mode);
-                }}
                 onAction={handleToolbarAction}
                 activeFormats={activeFormats}
-                noteFontFamily={noteFontFamily}
+                noteFontFamily={resolvedNoteFontFamily}
                 onChangeNoteFontFamily={(font) => setNoteFontFamily(font)}
                 noteFontSize={noteFontSize}
                 onChangeNoteFontSize={handleSetNoteFontSize}
@@ -1935,7 +1958,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                           onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                           onOpenExternalLink={openExternal}
                           sourceEditorRef={sourceEditorRef}
-                          noteFontFamily={noteFontFamily}
+                          noteFontFamily={resolvedNoteFontFamily}
                           noteFontSize={noteFontSize}
                           noteCodeFontSize={noteCodeFontSize}
                           onActiveFormatsChange={setActiveFormats}
@@ -1967,7 +1990,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                             onOpenHost={(host) => handleOpenHostFromNote(host, selectedNoteView.id)}
                             onOpenExternalLink={openExternal}
                             sourceEditorRef={sourceEditorRef}
-                            noteFontFamily={noteFontFamily}
+                            noteFontFamily={resolvedNoteFontFamily}
                             noteFontSize={noteFontSize}
                             noteCodeFontSize={noteCodeFontSize}
                             onActiveFormatsChange={setActiveFormats}
@@ -1979,9 +2002,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 )}
 
                 {showOutline && (
-                  <div className="w-60 shrink-0 h-full">
+                  <div className="h-full w-64 shrink-0">
                     <NoteOutline
                       content={selectedNoteView.content}
+                      onSelectHeading={handleOutlineHeadingSelect}
                       onClose={() => setShowOutline(false)}
                     />
                   </div>
@@ -2050,19 +2074,28 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 />
               </div>
 
-              <NoteExportMenu note={overlayNoteView} allNotes={sortedNotes} />
+              <NoteModeDropdown
+                editorMode={noteEditorMode}
+                onChangeMode={(mode) => {
+                  flushNoteDraft();
+                  setNoteEditorMode(mode);
+                }}
+              />
+
+              <NoteExportMenu
+                note={overlayNoteView}
+                allNotes={sortedNotes}
+                onExportNote={exportNoteToMarkdown}
+                onExportAll={exportAllNotes}
+              />
             </div>
 
             {/* Note Toolbar in Overlay */}
             <NoteToolbar
               editorMode={noteEditorMode}
-              onChangeMode={(mode) => {
-                flushNoteDraft();
-                setNoteEditorMode(mode);
-              }}
               onAction={handleToolbarAction}
               activeFormats={activeFormats}
-              noteFontFamily={noteFontFamily}
+              noteFontFamily={resolvedNoteFontFamily}
               onChangeNoteFontFamily={(font) => setNoteFontFamily(font)}
               noteFontSize={noteFontSize}
               onChangeNoteFontSize={handleSetNoteFontSize}
@@ -2093,7 +2126,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                       onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
                       onOpenExternalLink={openExternal}
                       sourceEditorRef={sourceEditorRef}
-                      noteFontFamily={noteFontFamily}
+                      noteFontFamily={resolvedNoteFontFamily}
                       noteFontSize={noteFontSize}
                       noteCodeFontSize={noteCodeFontSize}
                       onActiveFormatsChange={setActiveFormats}
@@ -2125,7 +2158,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                         onOpenHost={(host) => handleOpenHostFromNote(host, overlayNoteView.id)}
                         onOpenExternalLink={openExternal}
                         sourceEditorRef={sourceEditorRef}
-                        noteFontFamily={noteFontFamily}
+                        noteFontFamily={resolvedNoteFontFamily}
                         noteFontSize={noteFontSize}
                         noteCodeFontSize={noteCodeFontSize}
                         onActiveFormatsChange={setActiveFormats}
