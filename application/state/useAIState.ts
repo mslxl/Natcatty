@@ -951,34 +951,25 @@ export function useAIState() {
   }, []);
 
   const showDraftView = useCallback((scopeKey: string) => {
-    const currentPanelViewByScope = panelViewByScope;
-    let nextActiveSessionIdMap: Record<string, string | null> | null = null;
-    let nextPanelViewByScope: PanelViewByScope | null = null;
-    let activeSessionMapChanged = false;
-    let panelViewChanged = false;
+    const currentActiveSessionIdMap = latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {};
+    const next = activateDraftView(
+      currentActiveSessionIdMap,
+      panelViewByScope,
+      scopeKey,
+    );
 
-    setActiveSessionIdMapRaw((prevActiveSessionIdMap) => {
-      const next = activateDraftView(
-        prevActiveSessionIdMap,
-        currentPanelViewByScope,
-        scopeKey,
-      );
-      activeSessionMapChanged = next.activeSessionIdMap !== prevActiveSessionIdMap;
-      panelViewChanged = next.panelViewByScope !== currentPanelViewByScope;
-      nextActiveSessionIdMap = next.activeSessionIdMap;
-      nextPanelViewByScope = next.panelViewByScope;
-      return activeSessionMapChanged ? next.activeSessionIdMap : prevActiveSessionIdMap;
-    });
-
-    if (activeSessionMapChanged && nextActiveSessionIdMap) {
-      setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
-      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
+    if (next.activeSessionIdMap !== currentActiveSessionIdMap) {
+      setLatestAIActiveSessionMapSnapshot(next.activeSessionIdMap);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next.activeSessionIdMap);
+      setActiveSessionIdMapRaw(next.activeSessionIdMap);
       emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
     }
 
-    if (panelViewChanged && nextPanelViewByScope) {
-      setLatestAIPanelViewByScopeSnapshot(nextPanelViewByScope);
-      setPanelViewByScopeRaw(nextPanelViewByScope);
+    if (next.panelViewByScope !== panelViewByScope) {
+      setLatestAIPanelViewByScopeSnapshot(next.panelViewByScope);
+      setPanelViewByScopeRaw(next.panelViewByScope);
       emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
     }
   }, [panelViewByScope]);
