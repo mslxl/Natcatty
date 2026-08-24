@@ -88,20 +88,30 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let invoked = false;
+    let abandoned = false;
     let timer = null;
     const cleanup = () => {
       if (timer) clearTimeoutFn(timer);
       timer = null;
       signal?.removeEventListener?.("abort", onAbort);
     };
-    const finish = (error, result, { invalidate = false } = {}) => {
+    const finish = (error, result, { invalidate = false, abandon = false } = {}) => {
       if (settled) {
         if (result) closeLateResult(result);
+        if (abandoned) {
+          abandoned = false;
+          try { options.onAbandonedOpenSettled?.(); } catch { /* ignore */ }
+        }
         return false;
       }
       settled = true;
       cleanup();
       if (error && result) closeLateResult(result);
+      if (abandon && invoked) {
+        abandoned = true;
+        try { options.onAbandonedOpen?.(); } catch { /* ignore */ }
+      }
       if (invalidate) invalidateSshTransport(sshClient);
       if (error) reject(error);
       else resolve(result);
@@ -110,7 +120,7 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
     const onAbort = () => finish(
       channelAbortError(signal, label),
       null,
-      { invalidate: invalidateOnAbort },
+      { invalidate: invalidateOnAbort, abandon: !invalidateOnAbort },
     );
 
     if (signal?.aborted) {
@@ -124,10 +134,14 @@ function openBoundedSshChannel(sshClient, invoke, options = {}) {
     timer = setTimeoutFn(() => {
       const error = new Error(`${label} timed out after ${timeoutMs} ms`);
       error.code = timeoutCode;
-      finish(error, null, { invalidate: invalidateOnTimeout });
+      finish(error, null, {
+        invalidate: invalidateOnTimeout,
+        abandon: !invalidateOnTimeout,
+      });
     }, timeoutMs);
 
     try {
+      invoked = true;
       invoke((error, result) => finish(error, result));
     } catch (error) {
       finish(error);

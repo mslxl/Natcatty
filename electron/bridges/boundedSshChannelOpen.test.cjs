@@ -88,6 +88,34 @@ test("cancelled channel open invalidates transport and a late stream is closed",
   assert.equal(timers.active.size, 0);
 });
 
+test("non-invalidating cancellation reports an abandoned open until its callback settles", async () => {
+  let callback;
+  let abandoned = 0;
+  let abandonedSettled = 0;
+  const controller = new AbortController();
+  const client = {
+    shell(_window, _options, next) { callback = next; },
+  };
+  const pending = openBoundedSshShell(client, {}, {}, {
+    signal: controller.signal,
+    invalidateOnAbort: false,
+    onAbandonedOpen: () => { abandoned += 1; },
+    onAbandonedOpenSettled: () => { abandonedSettled += 1; },
+  });
+
+  controller.abort(new Error("cancelled"));
+  await assert.rejects(pending, /cancelled/);
+  assert.equal(abandoned, 1);
+  assert.equal(abandonedSettled, 0);
+
+  const lateStream = new EventEmitter();
+  lateStream.closed = 0;
+  lateStream.close = () => { lateStream.closed += 1; };
+  callback(null, lateStream);
+  assert.equal(lateStream.closed, 1);
+  assert.equal(abandonedSettled, 1);
+});
+
 test("channel open keeps its deadline referenced and clears it after success", async () => {
   let callback;
   const timers = trackedTimerApi();

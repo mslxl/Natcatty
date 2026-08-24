@@ -764,7 +764,10 @@ function createStartSessionApi(ctx) {
         };
         conn.once("error", onConnError);
 
-        if (connRef.allowShellReuse === false) {
+        if (
+          connRef.allowShellReuse === false
+          || Number(connRef.pendingAbandonedShellOpens) > 0
+        ) {
           conn.removeListener("error", onConnError);
           failReuse(new Error("Transport is no longer reusable for shells"));
           return;
@@ -1077,6 +1080,18 @@ function createStartSessionApi(ctx) {
               // Cancelling one pending Copy Tab must not destroy the source
               // tab's shared authenticated transport.
               invalidateOnAbort: false,
+              onAbandonedOpen: () => {
+                connRef.pendingAbandonedShellOpens =
+                  (Number(connRef.pendingAbandonedShellOpens) || 0) + 1;
+              },
+              onAbandonedOpenSettled: () => {
+                const pending = Math.max(
+                  0,
+                  (Number(connRef.pendingAbandonedShellOpens) || 0) - 1,
+                );
+                if (pending === 0) delete connRef.pendingAbandonedShellOpens;
+                else connRef.pendingAbandonedShellOpens = pending;
+              },
             },
           );
         } catch (syncErr) {

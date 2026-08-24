@@ -1504,6 +1504,78 @@ test("cancelling ordinary parked reuse does not start a fresh login", async (t) 
   assert.equal(source.connRef.count, 1);
 });
 
+test("an abandoned Copy Tab open blocks overlapping reuse until the raw callback settles", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeDeferredShellConn();
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  sessions.set("source", source);
+  const start = registerStartHandler(bridge, sessions);
+
+  const firstStart = start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy-1",
+      hostname: "bastion.example",
+      username: "alice",
+      sourceSessionId: "source",
+      bootEpoch: 1,
+    },
+  );
+  for (let attempt = 0; attempt < 20 && sourceConn._pending.length === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(sourceConn._pending.length, 1);
+  abortPendingBoot("copy-1", 1);
+  await assert.rejects(firstStart, /aborted/);
+  assert.equal(source.connRef.pendingAbandonedShellOpens, 1);
+  assert.equal(sourceConn._pending.length, 1);
+
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy-2",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        bootEpoch: 1,
+      },
+    ),
+    /unexpected fresh connect/,
+  );
+  assert.equal(sourceConn._pending.length, 1, "second copy must not overlap the abandoned open");
+
+  sourceConn.flushShell();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(source.connRef.pendingAbandonedShellOpens, undefined);
+
+  const thirdStart = start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy-3",
+      hostname: "bastion.example",
+      username: "alice",
+      sourceSessionId: "source",
+      bootEpoch: 1,
+      skipShellPidDiscovery: true,
+    },
+  );
+  for (let attempt = 0; attempt < 20 && sourceConn._pending.length === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(sourceConn._pending.length, 1);
+  sourceConn.flushShell();
+  const result = await thirdStart;
+
+  assert.equal(result.sessionId, "copy-3");
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sourceConn.ended, 0);
+});
+
 test("a shared connection error during Copy Tab backoff stops queued retries", async (t) => {
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
