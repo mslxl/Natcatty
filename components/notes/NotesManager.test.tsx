@@ -354,4 +354,6 @@ test("NotesManager can re-open the same sidebar note when the request id changes
 
   assert.match(source, /openNoteRequestId\?: number \| null/);
   assert.match(source, /\[isSidebarMode, onOpenNoteIdHandled, openNoteId, openNoteRequestId, sortedNotes\]/);
+  assert.match(source, /if \(isSidebarMode && overlayNoteView\)/);
+  assert.match(source, /\[isSidebarMode, overlayNoteView\]/);
 });

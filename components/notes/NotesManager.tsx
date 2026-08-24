@@ -743,12 +743,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   const overlayEditorRef = useRef<InlineMarkdownEditorHandle>(null);
 
   const handleToolbarAction = useCallback((action: MarkdownActionType) => {
-    if (overlayNoteView) {
+    if (isSidebarMode && overlayNoteView) {
       overlayEditorRef.current?.executeAction(action);
     } else {
       inlineEditorRef.current?.executeAction(action);
     }
-  }, [overlayNoteView]);
+  }, [isSidebarMode, overlayNoteView]);
 
   const handleOutlineHeadingSelect = useCallback((heading: NoteHeadingItem, index: number) => {
     inlineEditorRef.current?.scrollToHeading(heading, index);

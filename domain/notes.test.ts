@@ -209,8 +209,20 @@ test("deriveNoteImportTitle prefers the first markdown heading", () => {
     "Real Title",
   );
   assert.equal(
+    deriveNoteImportTitle("tilde.md", "~~~md\n# not a title\n~~~\n\n# Tilde Fence Title"),
+    "Tilde Fence Title",
+  );
+  assert.equal(
+    deriveNoteImportTitle("long-fence.md", "````md\n# not a title\n```\nstill fenced\n````\n\n# Long Fence Title"),
+    "Long Fence Title",
+  );
+  assert.equal(
     deriveNoteImportTitle("unclosed.md", "```sh\n# not a title\n\n# Also inside fence"),
     "unclosed",
+  );
+  assert.equal(
+    deriveNoteImportTitle("unclosed-tilde.md", "~~~sh\n# not a title\n\n# Also inside fence"),
+    "unclosed-tilde",
   );
   assert.equal(
     deriveNoteImportTitle("preface.md", "# Real Title\n\n```sh\n# not a title"),
