@@ -30,6 +30,7 @@ const {
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
 const MAX_SSH_CONNECTION_TIMEOUT_MS = 3600000;
+const COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS = 30000;
 
 /**
  * Fan out netcatty:exit to the primary contents plus any attach-home owner
@@ -712,10 +713,41 @@ function createStartSessionApi(ctx) {
       // is restored.
       return new Promise((resolve, reject) => {
         let settled = false;
+        let onConnError = null;
+        let abortOpenedStream = null;
+        const retryAbortController = new AbortController();
+        const pendingBootSignal = options._passphraseSignal || null;
+        const abortRetryFromPendingBoot = () => {
+          retryAbortController.abort(
+            pendingBootSignal?.reason || new Error("SSH session start was cancelled"),
+          );
+          abortOpenedStream?.(
+            pendingBootSignal?.reason || new Error("SSH session start was cancelled"),
+          );
+        };
+        const cleanupConnectionGuard = () => {
+          if (onConnError) conn.removeListener("error", onConnError);
+        };
+        const cleanupPendingBootGuard = () => {
+          abortOpenedStream = null;
+          pendingBootSignal?.removeEventListener?.("abort", abortRetryFromPendingBoot);
+        };
+        const cleanupReuseGuards = () => {
+          cleanupConnectionGuard();
+          cleanupPendingBootGuard();
+        };
+
+        if (pendingBootSignal?.aborted) {
+          abortRetryFromPendingBoot();
+        } else {
+          pendingBootSignal?.addEventListener?.("abort", abortRetryFromPendingBoot, { once: true });
+        }
 
         const failReuse = (err) => {
           if (settled) return;
           settled = true;
+          cleanupReuseGuards();
+          retryAbortController.abort(err);
           // Release the hold we took up-front so the source's reference count is
           // not leaked when we fall back to a fresh connection.
           releaseConnectionRef(refHolder);
@@ -727,12 +759,15 @@ function createStartSessionApi(ctx) {
         // connection. Removed once the channel opens so we don't leave a stray
         // listener on the shared connection (the owner's own error handler stays
         // responsible thereafter).
-        const onConnError = (connErr) => {
+        onConnError = (connErr) => {
           failReuse(connErr);
         };
         conn.once("error", onConnError);
 
-        if (connRef.allowShellReuse === false) {
+        if (
+          connRef.allowShellReuse === false
+          || Number(connRef.pendingAbandonedShellOpens) > 0
+        ) {
           conn.removeListener("error", onConnError);
           failReuse(new Error("Transport is no longer reusable for shells"));
           return;
@@ -749,7 +784,7 @@ function createStartSessionApi(ctx) {
             },
             shellOptions,
             (err, stream) => {
-              conn.removeListener("error", onConnError);
+              cleanupConnectionGuard();
               if (settled) {
                 // Connection already failed; close any channel that still opened
                 // and drop the hold (failReuse already released, so guard with the
@@ -771,7 +806,19 @@ function createStartSessionApi(ctx) {
 
               sendProgress('connected');
 
+              abortOpenedStream = (abortError) => {
+                try { stream.close(); } catch { /* ignore */ }
+                failReuse(abortError);
+              };
+              if (pendingBootSignal?.aborted) {
+                abortOpenedStream(
+                  pendingBootSignal.reason || new Error("SSH session start was cancelled"),
+                );
+                return;
+              }
+
               const finishReusedShellOpen = (prefetchedChunks = []) => {
+                cleanupPendingBootGuard();
                 if (settled) {
                   if (stream) { try { stream.close(); } catch { /* ignore */ } }
                   return;
@@ -1022,16 +1069,36 @@ function createStartSessionApi(ctx) {
                 failReuse(livenessErr);
               });
             },
-            Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
-              ? { rateLimitBackoffMs }
-              : {},
+            {
+              ...(Number.isFinite(rateLimitBackoffMs) && rateLimitBackoffMs > 0
+                ? { rateLimitBackoffMs }
+                : {}),
+              ...(options.sourceSessionId
+                ? { rateLimitRetryTimeoutMs: COPY_TAB_RATE_LIMIT_RETRY_TIMEOUT_MS }
+                : {}),
+              signal: retryAbortController.signal,
+              // Cancelling one pending Copy Tab must not destroy the source
+              // tab's shared authenticated transport.
+              invalidateOnAbort: false,
+              onAbandonedOpen: () => {
+                connRef.pendingAbandonedShellOpens =
+                  (Number(connRef.pendingAbandonedShellOpens) || 0) + 1;
+              },
+              onAbandonedOpenSettled: () => {
+                const pending = Math.max(
+                  0,
+                  (Number(connRef.pendingAbandonedShellOpens) || 0) - 1,
+                );
+                if (pending === 0) delete connRef.pendingAbandonedShellOpens;
+                else connRef.pendingAbandonedShellOpens = pending;
+              },
+            },
           );
         } catch (syncErr) {
           // ssh2 can throw synchronously (e.g. "Not connected") if the borrowed
           // transport dropped between findReusableSession and conn.shell(). Make
           // sure we drop the listener and release the up-front ref so the count
           // isn't leaked, then fall back to a fresh connection.
-          conn.removeListener("error", onConnError);
           log("reused shell threw synchronously", { sessionId, hostname: options.hostname, error: syncErr?.message });
           failReuse(syncErr);
         }
@@ -1127,6 +1194,7 @@ function createStartSessionApi(ctx) {
           try {
             return await reuseShellSession(event, options, sourceSession, sessionId, log);
           } catch (reuseErr) {
+            if (options._passphraseSignal?.aborted) throw reuseErr;
             log("connection reuse failed, falling back to fresh connection", {
               sessionId,
               sourceSessionId: options.sourceSessionId,
@@ -1178,6 +1246,11 @@ function createStartSessionApi(ctx) {
               { confirmReusedShellLiveness },
             );
           } catch (parkErr) {
+            if (options._passphraseSignal?.aborted) {
+              throw options._passphraseSignal.reason instanceof Error
+                ? options._passphraseSignal.reason
+                : parkErr;
+            }
             log("parked transport reuse failed, falling back to fresh connection", {
               sessionId,
               hostname: options.hostname,
@@ -1213,6 +1286,11 @@ function createStartSessionApi(ctx) {
               log,
             );
           } catch (coordinationErr) {
+            if (options._passphraseSignal?.aborted) {
+              throw options._passphraseSignal.reason instanceof Error
+                ? options._passphraseSignal.reason
+                : coordinationErr;
+            }
             // A waiter must observe the leader's real failure instead of
             // immediately starting a second authentication prompt. Existing
             // transport reuse keeps its historical fresh-dial fallback.
@@ -1229,6 +1307,12 @@ function createStartSessionApi(ctx) {
             options._pendingDialState.coordination = coordination;
           }
         }
+      }
+
+      if (options._passphraseSignal?.aborted) {
+        throw options._passphraseSignal.reason instanceof Error
+          ? options._passphraseSignal.reason
+          : new Error("SSH session start was cancelled");
       }
 
       const cols = options.cols || 80;
