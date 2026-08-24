@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { JSDOM } from "jsdom";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -87,8 +88,40 @@ test("NotesManager balances folder and note tree icon sizes", () => {
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-folder/);
   assert.match(markup, /width="16" height="16"[^>]*class="lucide lucide-file-text/);
   assert.match(markup, /<div class="flex h-5 w-5[^"]*mr-1">/);
-  assert.match(markup, /<div class="flex shrink-0 items-center self-center[^"]*mr-1">/);
+  assert.match(markup, /<div class="flex h-5 w-5 shrink-0 items-center justify-center[^"]*mr-1">/);
   assert.doesNotMatch(markup, /lucide lucide-file-text[^"]*mr-2/);
+});
+
+test("NotesManager gives folder and tag metadata pills the same compact style", () => {
+  const markup = renderNotes([note({ tags: ["inspection"] })]);
+  const document = new JSDOM(markup).window.document;
+  const folderPill = document.querySelector<HTMLElement>('[data-note-metadata-pill="folder"]');
+  const tagPill = document.querySelector<HTMLElement>('[data-note-metadata-pill="tag"]');
+  const addTagPill = document.querySelector<HTMLElement>('[data-note-metadata-pill="add-tag"]');
+
+  assert.ok(folderPill);
+  assert.ok(tagPill);
+  assert.ok(addTagPill);
+  for (const className of [
+    "inline-flex",
+    "h-5",
+    "items-center",
+    "gap-1",
+    "rounded-md",
+    "bg-muted/70",
+    "px-2",
+    "text-[11px]",
+    "font-medium",
+    "leading-5",
+  ]) {
+    assert.ok(folderPill.classList.contains(className), `folder pill should include ${className}`);
+    assert.ok(tagPill.classList.contains(className), `tag pill should include ${className}`);
+    assert.ok(addTagPill.classList.contains(className), `add-tag pill should include ${className}`);
+  }
+  assert.ok(tagPill.classList.contains("text-foreground"));
+  assert.ok(addTagPill.classList.contains("text-foreground"));
+  assert.equal(tagPill.classList.contains("border"), false);
+  assert.equal(tagPill.classList.contains("bg-primary/10"), false);
 });
 
 test("NotesManager tree scroll area constrains width so titles can truncate", () => {

@@ -116,6 +116,7 @@ type NotesToolbarPanel = "search" | null;
 
 const toolbarIconButtonClass = "netcatty-tab h-6 w-6 shrink-0 rounded-md p-0 hover:bg-transparent";
 const menuItemClass = "flex h-8 w-full items-center rounded-md px-3 text-left text-sm hover:bg-secondary";
+const noteMetadataPillClass = "inline-flex h-5 items-center gap-1 rounded-md bg-muted/70 px-2 text-[11px] font-medium leading-5";
 const NOTES_TREE_DEFAULT_WIDTH = 300;
 /** Narrow enough for nested folders + ellipsis; toolbar scrolls if needed. */
 const NOTES_TREE_MIN_WIDTH = 160;
@@ -1858,7 +1859,10 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               {/* Tags & Folder Breadcrumb Header */}
               <div className="flex flex-wrap items-center gap-1.5 px-8 pb-2 text-xs text-muted-foreground">
                 {selectedNoteView.group && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-muted/70 rounded-md text-[11px] text-foreground font-medium">
+                  <span
+                    data-note-metadata-pill="folder"
+                    className={cn(noteMetadataPillClass, "text-foreground")}
+                  >
                     <Folder size={12} className="text-amber-500" />
                     <span>{selectedNoteView.group}</span>
                   </span>
@@ -1867,13 +1871,14 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 {selectedNoteView.tags?.map((tag) => (
                   <span
                     key={tag}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded-md text-[11px] font-medium"
+                    data-note-metadata-pill="tag"
+                    className={cn(noteMetadataPillClass, "text-foreground")}
                   >
-                    <Hash size={11} className="opacity-70" />
+                    <Hash size={12} className="opacity-70" />
                     <span>{tag}</span>
                     <button
                       type="button"
-                      className="p-0.5 rounded-full hover:bg-primary/20 text-primary/70 hover:text-primary transition-colors"
+                      className="-mr-0.5 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-foreground/10 hover:text-foreground"
                       onClick={() => removeTagFromNote(selectedNoteView.id, tag)}
                       title={t("notes.tag.remove")}
                     >
@@ -1883,8 +1888,8 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 ))}
 
                 {tagInputOpen ? (
-                  <div className="inline-flex items-center gap-1 bg-background border border-primary/60 rounded-md px-1.5 py-0.5">
-                    <Hash size={11} className="text-muted-foreground" />
+                  <div className="inline-flex h-5 items-center gap-1 rounded-md border border-primary/60 bg-background px-1.5">
+                    <Hash size={12} className="text-muted-foreground" />
                     <input
                       type="text"
                       autoFocus
@@ -1916,10 +1921,11 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
                 ) : (
                   <button
                     type="button"
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-muted text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+                    data-note-metadata-pill="add-tag"
+                    className={cn(noteMetadataPillClass, "text-foreground transition-colors hover:bg-muted")}
                     onClick={() => setTagInputOpen(true)}
                   >
-                    <Plus size={11} />
+                    <Plus size={12} />
                     <span>{t("notes.tag.add")}</span>
                   </button>
                 )}
