@@ -226,6 +226,9 @@ export class KeywordHighlighter implements IDisposable {
   private absoluteControlTail = "";
   private absoluteOriginControlTail = "";
   private absoluteOriginMode: boolean | null = false;
+  private absoluteActiveBuffer: "normal" | "alternate" | null = "normal";
+  private absoluteNormalSavedOriginMode: boolean | null = false;
+  private absoluteAlternateSavedOriginMode: boolean | null = false;
 
   get pendingPristineBytes(): number {
     return 0;
@@ -524,6 +527,9 @@ export class KeywordHighlighter implements IDisposable {
     if (typeof data !== "string") {
       this.absoluteOriginControlTail = "";
       this.absoluteOriginMode = null;
+      this.absoluteActiveBuffer = null;
+      this.absoluteNormalSavedOriginMode = null;
+      this.absoluteAlternateSavedOriginMode = null;
       return true;
     }
     const controls = this.absoluteOriginControlTail + data;
@@ -536,24 +542,68 @@ export class KeywordHighlighter implements IDisposable {
         this.absoluteOriginControlTail = suffix.slice(-32);
       }
     }
-    const originModeControls = [
-      ...controls.matchAll(/\x1bc|\x1b\[!p|\x1b\[\?[\d;]*[hl]/g), // eslint-disable-line no-control-regex
-    ];
-    const privateModeIncludesOrigin = (control: string): boolean => {
-      const parameters = /^\x1b\[\?([\d;]*)[hl]$/.exec(control)?.[1]; // eslint-disable-line no-control-regex
-      return parameters?.split(";").some((parameter) => Number.parseInt(parameter, 10) === 6)
-        ?? false;
-    };
-    const originModeNeedsSafety = this.absoluteOriginMode !== false
-      || originModeControls.some((match) => (
-        match[0].endsWith("h") && privateModeIncludesOrigin(match[0])
-      ));
-    for (const match of originModeControls) {
-      if (match[0] === "\x1bc" || match[0] === "\x1b[!p") {
-        this.absoluteOriginMode = false;
-      } else if (privateModeIncludesOrigin(match[0])) {
-        this.absoluteOriginMode = match[0].endsWith("h");
+    const saveOriginMode = () => {
+      if (this.absoluteActiveBuffer === "normal") {
+        this.absoluteNormalSavedOriginMode = this.absoluteOriginMode;
+      } else if (this.absoluteActiveBuffer === "alternate") {
+        this.absoluteAlternateSavedOriginMode = this.absoluteOriginMode;
+      } else {
+        this.absoluteNormalSavedOriginMode = null;
+        this.absoluteAlternateSavedOriginMode = null;
       }
+    };
+    const restoreOriginMode = () => {
+      this.absoluteOriginMode = this.absoluteActiveBuffer === "normal"
+        ? this.absoluteNormalSavedOriginMode
+        : this.absoluteActiveBuffer === "alternate"
+          ? this.absoluteAlternateSavedOriginMode
+          : null;
+    };
+    const originModeControls = [
+      ...controls.matchAll(
+        /\x1bc|\x1b[78]|\x1b\[!p|\x1b\[[\d;]*[su]|\x1b\[\?[\d;]*[hl]/g, // eslint-disable-line no-control-regex
+      ),
+    ];
+    let originModeNeedsSafety = this.absoluteOriginMode !== false;
+    for (const match of originModeControls) {
+      const control = match[0];
+      if (control === "\x1bc") {
+        this.absoluteOriginMode = false;
+        this.absoluteActiveBuffer = "normal";
+        this.absoluteNormalSavedOriginMode = false;
+        this.absoluteAlternateSavedOriginMode = false;
+      } else if (control === "\x1b[!p") {
+        this.absoluteOriginMode = false;
+      } else if (control === "\x1b7" || control.endsWith("s")) {
+        saveOriginMode();
+      } else if (control === "\x1b8" || control.endsWith("u")) {
+        restoreOriginMode();
+      } else {
+        const parameters = /^\x1b\[\?([\d;]*)[hl]$/.exec(control)?.[1] // eslint-disable-line no-control-regex
+          ?.split(";")
+          .map((parameter) => Number.parseInt(parameter, 10))
+          ?? [];
+        const enabled = control.endsWith("h");
+        for (const parameter of parameters) {
+          if (parameter === 6) {
+            this.absoluteOriginMode = enabled;
+          } else if (parameter === 1048) {
+            if (enabled) saveOriginMode();
+            else restoreOriginMode();
+          } else if (parameter === 1049) {
+            if (enabled) {
+              saveOriginMode();
+              this.absoluteActiveBuffer = "alternate";
+            } else {
+              this.absoluteActiveBuffer = "normal";
+              restoreOriginMode();
+            }
+          } else if (parameter === 47 || parameter === 1047) {
+            this.absoluteActiveBuffer = enabled ? "alternate" : "normal";
+          }
+        }
+      }
+      originModeNeedsSafety ||= this.absoluteOriginMode !== false;
     }
     return originModeNeedsSafety;
   }
@@ -602,6 +652,9 @@ export class KeywordHighlighter implements IDisposable {
     this.absoluteControlTail = "";
     this.absoluteOriginControlTail = "";
     this.absoluteOriginMode = false;
+    this.absoluteActiveBuffer = "normal";
+    this.absoluteNormalSavedOriginMode = false;
+    this.absoluteAlternateSavedOriginMode = false;
     return this.originalReset();
   };
 

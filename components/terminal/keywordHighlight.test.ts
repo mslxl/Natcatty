@@ -784,6 +784,67 @@ test("multi-parameter origin mode is recognized at every transport split", async
   }
 });
 
+test("saved origin mode is restored across every cursor-control split", async () => {
+  const controls = [
+    { save: "\x1b7", restore: "\x1b8", disableHighlightDuringRestore: false },
+    { save: "\x1b[s", restore: "\x1b[u", disableHighlightDuringRestore: true },
+  ];
+  for (const entry of controls) {
+    for (let saveSplit = 1; saveSplit < entry.save.length; saveSplit += 1) {
+      for (let restoreSplit = 1; restoreSplit < entry.restore.length; restoreSplit += 1) {
+        const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+        const highlighter = new KeywordHighlighter(term);
+        highlighter.setRules(rule(), true);
+        await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+        await write(term, "\x1b[2;4r\x1b[?6h");
+        await write(term, entry.save.slice(0, saveSplit));
+        await write(term, entry.save.slice(saveSplit));
+        await write(term, "\x1b[?6l");
+        if (entry.disableHighlightDuringRestore) highlighter.setRules(rule(), false);
+        await write(term, entry.restore.slice(0, restoreSplit));
+        await write(term, entry.restore.slice(restoreSplit));
+        if (entry.disableHighlightDuringRestore) {
+          highlighter.setRules(rule(), true);
+          await highlighter.whenSettled();
+        }
+        await write(term, "\x1b[2;1Htarget ERROR\x1b[1;1H");
+
+        const fixture = `${JSON.stringify(entry)} save ${saveSplit} restore ${restoreSplit}`;
+        assert.equal(cellRgb(term, 2, "ERROR"), RED, fixture);
+        await write(term, "\x1b[?6l");
+        const internal = highlighter as unknown as {
+          recolorRange(startY: number, endY: number, refresh: boolean, force: boolean): void;
+        };
+        const originalRecolorRange = internal.recolorRange.bind(highlighter);
+        let scannedRows = 0;
+        internal.recolorRange = (startY, endY, refresh, force) => {
+          scannedRows += Math.abs(endY - startY) + 1;
+          originalRecolorRange(startY, endY, refresh, force);
+        };
+        await write(term, "\x1b[5;1Hnormal ERROR");
+        assert.ok(scannedRows <= 2, `${fixture}: ${scannedRows}`);
+        highlighter.dispose();
+        term.dispose();
+      }
+    }
+  }
+});
+
+test("normal-buffer origin mode survives an alternate-screen round trip", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+  await write(term, "\x1b[2;4r\x1b[?6h\x1b[?1049h");
+  await write(term, "\x1b[?6l");
+  await write(term, "\x1b[?1049l");
+  await write(term, "\x1b[2;1Htarget ERROR\x1b[1;1H");
+
+  assert.equal(cellRgb(term, 2, "ERROR"), RED);
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;
