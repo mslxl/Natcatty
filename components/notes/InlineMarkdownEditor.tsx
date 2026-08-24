@@ -78,7 +78,13 @@ export {
 } from "./noteClipboardPaste";
 
 import { NoteSourceEditor, type NoteSourceEditorHandle } from "./NoteSourceEditor";
-import { extractNoteHeadings, normalizeNoteHeadingText, type MarkdownActionType, type NoteHeadingItem } from "../../domain/notes";
+import {
+  extractNoteHeadings,
+  formatMarkdownListSelection,
+  normalizeNoteHeadingText,
+  type MarkdownActionType,
+  type NoteHeadingItem,
+} from "../../domain/notes";
 
 export { NoteSourceEditor, type NoteSourceEditorHandle };
 
@@ -141,6 +147,55 @@ export interface InlineMarkdownEditorProps {
 }
 
 export type NoteEditorMode = "edit" | "preview" | "source" | "live";
+
+export const NOTE_EDIT_DECORATION_DEBOUNCE_MS = 160;
+
+export const getNoteDecorationMutationDelay = (editorMode: NoteEditorMode): number =>
+  editorMode === "edit" || editorMode === "live" ? NOTE_EDIT_DECORATION_DEBOUNCE_MS : 0;
+
+export interface NoteDecorationSchedulerRuntime {
+  requestFrame: (callback: () => void) => number;
+  cancelFrame: (id: number) => void;
+  setTimer: (callback: () => void, delay: number) => number;
+  clearTimer: (id: number) => void;
+}
+
+export const createNoteDecorationMutationScheduler = (
+  editorMode: NoteEditorMode,
+  runDecorations: () => void,
+  runtime: NoteDecorationSchedulerRuntime,
+): { schedule: () => void; cancel: () => void } => {
+  let frame = 0;
+  let timer = 0;
+  let cancelled = false;
+
+  return {
+    schedule: () => {
+      if (cancelled) return;
+      const delay = getNoteDecorationMutationDelay(editorMode);
+      if (delay > 0) {
+        if (timer) runtime.clearTimer(timer);
+        timer = runtime.setTimer(() => {
+          timer = 0;
+          if (!cancelled) runDecorations();
+        }, delay);
+        return;
+      }
+      if (frame) return;
+      frame = runtime.requestFrame(() => {
+        frame = 0;
+        if (!cancelled) runDecorations();
+      });
+    },
+    cancel: () => {
+      cancelled = true;
+      if (timer) runtime.clearTimer(timer);
+      if (frame) runtime.cancelFrame(frame);
+      timer = 0;
+      frame = 0;
+    },
+  };
+};
 
 /** Active text-format toggles at the current selection (toolbar highlight). */
 export type ActiveTextFormats = {
@@ -237,7 +292,6 @@ const NOTE_CODE_BLOCK_LANGUAGES = {
   jsx: "JavaScript (React)",
   latex: "LaTeX",
   markdown: "Markdown",
-  math: "Math (LaTeX)",
   md: "Markdown",
   nginx: "Nginx",
   plaintext: "Plain text",
@@ -750,19 +804,14 @@ export const annotateNoteCodeBlockDeleteButtons = (container: HTMLElement): void
 export const isNoteMathLanguageLabel = (value: string): boolean => {
   const normalized = value.toLowerCase().trim();
   if (!normalized) return false;
-  return /(?:^|\s)language-(?:math|latex|tex)(?:\s|$)/.test(normalized)
-    || /^(?:math|latex|tex|公式)(?:\s|\(|$)/.test(normalized);
+  return normalized === "latex"
+    || normalized === "tex"
+    || /(?:^|\s)language-(?:latex|tex)(?:\s|$)/.test(normalized);
 };
 
 export const shouldRenderNoteMathFormula = (
   languageLabel: string,
-  hasExplicitLanguage: boolean,
-  content: string,
-): boolean => isNoteMathLanguageLabel(languageLabel)
-  || (!hasExplicitLanguage
-    && content.startsWith("$$")
-    && content.endsWith("$$")
-    && content.length > 4);
+): boolean => isNoteMathLanguageLabel(languageLabel);
 
 export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: string): void => {
   container.querySelectorAll('[class*="_codeMirrorWrapper_"], pre').forEach((wrapper) => {
@@ -770,7 +819,6 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
 
     const langTrigger = wrapper.querySelector('[class*="_toolbarCodeBlockLanguageSelectTrigger_"], [class*="_selectTrigger_"], select');
     const triggerText = langTrigger?.textContent?.trim() ?? "";
-    const triggerPlaceholder = langTrigger?.getAttribute("aria-label")?.trim() ?? "";
     const dataLanguage = wrapper.getAttribute("data-language")?.trim() ?? "";
     const codeLanguage = /(?:^|\s)language-([^\s]+)/i.exec(
       wrapper.querySelector("code")?.className ?? "",
@@ -778,17 +826,11 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
     const selectLanguage = langTrigger instanceof HTMLSelectElement
       ? langTrigger.value.trim()
       : "";
-    const hasExplicitLanguage = Boolean(
-      dataLanguage
-      || codeLanguage
-      || selectLanguage
-      || (triggerText && triggerText !== triggerPlaceholder),
-    );
     const lang = (dataLanguage || codeLanguage || selectLanguage || triggerText).toLowerCase();
 
     const text = getCodeMirrorBlockText(wrapper).trim();
 
-    const isMathBlock = shouldRenderNoteMathFormula(lang, hasExplicitLanguage, text);
+    const isMathBlock = shouldRenderNoteMathFormula(lang);
     if (!isMathBlock) {
       const existingPreview = wrapper.querySelector(".netcatty-math-formula-preview");
       if (existingPreview) existingPreview.remove();
@@ -796,8 +838,7 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
       return;
     }
 
-    const isDollarMath = !isNoteMathLanguageLabel(lang);
-    const formulaSource = isDollarMath ? text.slice(2, -2).trim() : text;
+    const formulaSource = text;
     if (!formulaSource) {
       const existingPreview = wrapper.querySelector(".netcatty-math-formula-preview");
       if (existingPreview) existingPreview.remove();
@@ -824,17 +865,6 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
     }
   });
 
-  if (editorMode === "preview") {
-    container.querySelectorAll("p").forEach((p) => {
-      const pText = p.textContent?.trim() || "";
-      if (pText.startsWith("$$") && pText.endsWith("$$") && pText.length > 4) {
-        if (p.querySelector("math")) return;
-        const formula = pText.slice(2, -2).trim();
-        p.innerHTML = latexToMathML(formula, true);
-        p.classList.add("netcatty-math-block-p");
-      }
-    });
-  }
 };
 
 const deleteLexicalTextRange = (range: Range, onUpdate: () => void): boolean => {
@@ -985,13 +1015,13 @@ export const InlineMarkdownEditor = React.memo(
                 editor.insertMarkdown(`\n> ${sel || "Quote"}\n`);
                 break;
               case "bullet":
-                editor.insertMarkdown(`\n- ${sel || "List item"}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownListSelection(sel || "List item", "bullet")}\n`);
                 break;
               case "number":
-                editor.insertMarkdown(`\n1. ${sel || "List item"}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownListSelection(sel || "List item", "number")}\n`);
                 break;
               case "task":
-                editor.insertMarkdown(`\n- [ ] ${sel || "Task"}\n`);
+                editor.insertMarkdown(`\n${formatMarkdownListSelection(sel || "Task", "task")}\n`);
                 break;
               case "codeblock":
                 editor.insertMarkdown(`\n\`\`\`bash\n${sel}\n\`\`\`\n`);
@@ -1009,7 +1039,7 @@ export const InlineMarkdownEditor = React.memo(
                 invokeNoteEditorDialogAction(action, dialogActionsRef.current);
                 break;
               case "math":
-                editor.insertMarkdown(`\n\`\`\`math\n${sel}\n\`\`\`\n`);
+                editor.insertMarkdown(`\n\`\`\`latex\n${sel}\n\`\`\`\n`);
                 break;
               default:
                 break;
@@ -1428,8 +1458,6 @@ export const InlineMarkdownEditor = React.memo(
     const container = containerRef.current;
     if (!container) return;
 
-    let frame = 0;
-
     const runDecorations = (includeHostLinks: boolean) => {
       annotateNoteImageSizes(container);
       if (includeHostLinks) annotateHostLinks();
@@ -1438,20 +1466,23 @@ export const InlineMarkdownEditor = React.memo(
       annotateMathFormulaBlocks(container, editorMode);
     };
 
-    const scheduleFromMutation = () => {
-      if (frame) return;
-      frame = window.requestAnimationFrame(() => {
-        frame = 0;
-        runDecorations(true);
-      });
-    };
+    const mutationScheduler = createNoteDecorationMutationScheduler(
+      editorMode,
+      () => runDecorations(true),
+      {
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (id) => window.cancelAnimationFrame(id),
+        setTimer: (callback, delay) => window.setTimeout(callback, delay),
+        clearTimer: (id) => window.clearTimeout(id),
+      },
+    );
 
     runDecorations(true);
 
     const timer1 = window.setTimeout(() => runDecorations(true), 80);
     const timer2 = window.setTimeout(() => runDecorations(true), 300);
 
-    const observer = new MutationObserver(scheduleFromMutation);
+    const observer = new MutationObserver(mutationScheduler.schedule);
     observer.observe(container, {
       childList: true,
       subtree: true,
@@ -1463,7 +1494,7 @@ export const InlineMarkdownEditor = React.memo(
       observer.disconnect();
       window.clearTimeout(timer1);
       window.clearTimeout(timer2);
-      if (frame) window.cancelAnimationFrame(frame);
+      mutationScheduler.cancel();
     };
   }, [annotateCodeBlockCopyButtons, annotateHostLinks, editorMode]);
 

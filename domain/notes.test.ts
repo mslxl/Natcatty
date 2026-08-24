@@ -9,6 +9,7 @@ import {
   extractNoteHeadings,
   extractNoteSnippet,
   filterAndSortVaultNotes,
+  formatMarkdownListSelection,
   getVaultNotesForExportScope,
   importMarkdownFilesToVaultNotes,
   importMarkdownPayloadsToVaultNotes,
@@ -480,9 +481,9 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
 
   // insert math block
   const mathRes = wrapMarkdownSyntax("", 0, 0, "math");
-  assert.ok(mathRes.text.includes("```math"));
-  assert.equal(mathRes.selectionStart, "\n```math\n".length);
-  assert.equal(mathRes.selectionEnd, "\n```math\n".length);
+  assert.ok(mathRes.text.includes("```latex"));
+  assert.equal(mathRes.selectionStart, "\n```latex\n".length);
+  assert.equal(mathRes.selectionEnd, "\n```latex\n".length);
 
   const selectedCodeRes = wrapMarkdownSyntax("echo ok", 0, 7, "codeblock");
   assert.equal(
@@ -551,4 +552,10 @@ test("wrapMarkdownSyntax wraps or inserts markdown syntax correctly", () => {
     assert.equal(newlineOnlyRes.selectionStart, 1);
     assert.equal(newlineOnlyRes.selectionEnd, 1);
   }
+});
+
+test("formatMarkdownListSelection prefixes every non-empty selected line", () => {
+  assert.equal(formatMarkdownListSelection("one\ntwo", "bullet"), "- one\n- two");
+  assert.equal(formatMarkdownListSelection("one\n\ntwo", "number"), "1. one\n\n2. two");
+  assert.equal(formatMarkdownListSelection("one\ntwo", "task"), "- [ ] one\n- [ ] two");
 });

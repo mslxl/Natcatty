@@ -699,6 +699,18 @@ const formatSelectedMarkdownListLines = (
   };
 };
 
+export const formatMarkdownListSelection = (
+  content: string,
+  action: "bullet" | "number" | "task",
+): string => formatSelectedMarkdownListLines(
+  content,
+  action === "number"
+    ? (index) => `${index + 1}. `
+    : action === "task"
+      ? () => "- [ ] "
+      : () => "- ",
+).formatted;
+
 export const wrapMarkdownSyntax = (
   text: string,
   start: number,
@@ -872,7 +884,7 @@ export const wrapMarkdownSyntax = (
     }
     case "math": {
       const content = selected || "";
-      const opening = "\n```math\n";
+      const opening = "\n```latex\n";
       const insert = `${opening}${content}\n\`\`\`\n`;
       return {
         text: `${before}${insert}${after}`,

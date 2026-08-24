@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import {
+  createNoteDecorationMutationScheduler,
   getHostPickerTriggerRange,
+  getNoteDecorationMutationDelay,
   getRenderedNoteHeadingText,
   isNoteSmallImageWidth,
   isNoteMathLanguageLabel,
@@ -12,6 +14,7 @@ import {
   invokeNoteEditorDialogAction,
   linkActionStatesEqual,
   NOTE_SMALL_IMAGE_MAX_WIDTH,
+  NOTE_EDIT_DECORATION_DEBOUNCE_MS,
   resolveHostPickerPopupPosition,
   scrollNoteHeadingIntoView,
   shouldRenderNoteMathFormula,
@@ -33,18 +36,76 @@ test("source undo history coalesces only adjacent edits of the same typing kind"
 });
 
 test("math language detection does not mistake plain text blocks for TeX", () => {
-  assert.equal(isNoteMathLanguageLabel("math"), true);
-  assert.equal(isNoteMathLanguageLabel("Math (LaTeX)"), true);
+  assert.equal(isNoteMathLanguageLabel("math"), false);
+  assert.equal(isNoteMathLanguageLabel("Math (LaTeX)"), false);
   assert.equal(isNoteMathLanguageLabel("language-latex"), true);
   assert.equal(isNoteMathLanguageLabel("language-tex highlighted"), true);
-  assert.equal(isNoteMathLanguageLabel("公式"), true);
+  assert.equal(isNoteMathLanguageLabel("latex"), true);
+  assert.equal(isNoteMathLanguageLabel("tex"), true);
+  assert.equal(isNoteMathLanguageLabel("公式"), false);
   assert.equal(isNoteMathLanguageLabel("text"), false);
   assert.equal(isNoteMathLanguageLabel("plaintext"), false);
   assert.equal(isNoteMathLanguageLabel("typescript"), false);
-  assert.equal(shouldRenderNoteMathFormula("Plain text", true, "$$E=mc^2$$"), false);
-  assert.equal(shouldRenderNoteMathFormula("plaintext", true, "$$E=mc^2$$"), false);
-  assert.equal(shouldRenderNoteMathFormula("", false, "$$E=mc^2$$"), true);
-  assert.equal(shouldRenderNoteMathFormula("Math (LaTeX)", true, "E=mc^2"), true);
+  assert.equal(shouldRenderNoteMathFormula("Plain text"), false);
+  assert.equal(shouldRenderNoteMathFormula("plaintext"), false);
+  assert.equal(shouldRenderNoteMathFormula(""), false);
+  assert.equal(shouldRenderNoteMathFormula("math"), false);
+  assert.equal(shouldRenderNoteMathFormula("latex"), true);
+  assert.equal(shouldRenderNoteMathFormula("tex"), true);
+});
+
+test("live note decoration scans are debounced while preview mounts stay immediate", () => {
+  assert.equal(getNoteDecorationMutationDelay("edit"), NOTE_EDIT_DECORATION_DEBOUNCE_MS);
+  assert.equal(getNoteDecorationMutationDelay("live"), NOTE_EDIT_DECORATION_DEBOUNCE_MS);
+  assert.equal(getNoteDecorationMutationDelay("preview"), 0);
+
+  let nextId = 1;
+  let runCount = 0;
+  const timers = new Map<number, () => void>();
+  const frames = new Map<number, () => void>();
+  const runtime = {
+    requestFrame: (callback: () => void) => {
+      const id = nextId++;
+      frames.set(id, callback);
+      return id;
+    },
+    cancelFrame: (id: number) => { frames.delete(id); },
+    setTimer: (callback: () => void, delay: number) => {
+      assert.equal(delay, NOTE_EDIT_DECORATION_DEBOUNCE_MS);
+      const id = nextId++;
+      timers.set(id, callback);
+      return id;
+    },
+    clearTimer: (id: number) => { timers.delete(id); },
+  };
+
+  const editScheduler = createNoteDecorationMutationScheduler("edit", () => { runCount += 1; }, runtime);
+  editScheduler.schedule();
+  editScheduler.schedule();
+  editScheduler.schedule();
+  assert.equal(runCount, 0);
+  assert.equal(timers.size, 1);
+  const pendingEdit = [...timers.values()][0];
+  timers.clear();
+  pendingEdit();
+  assert.equal(runCount, 1);
+
+  editScheduler.schedule();
+  assert.equal(timers.size, 1);
+  const cancelledEdit = [...timers.values()][0];
+  editScheduler.cancel();
+  assert.equal(timers.size, 0);
+  cancelledEdit();
+  assert.equal(runCount, 1);
+
+  const previewScheduler = createNoteDecorationMutationScheduler("preview", () => { runCount += 1; }, runtime);
+  previewScheduler.schedule();
+  previewScheduler.schedule();
+  assert.equal(frames.size, 1);
+  const pendingPreview = [...frames.values()][0];
+  frames.clear();
+  pendingPreview();
+  assert.equal(runCount, 2);
 });
 
 test("note link and image actions open the editor dialogs", () => {
@@ -526,12 +587,7 @@ test("note formulas render without framed surfaces", () => {
     styles,
     /\.netcatty-math-reading-mode\s+\.netcatty-math-formula-preview\s*\{[^}]*background:\s*transparent;/s,
   );
-  assert.match(
-    styles,
-    /\.netcatty-math-block-p\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;[^}]*border-radius:\s*0;/s,
-  );
   assert.match(styles, /\.netcatty-math-formula-preview\s*\{[^}]*justify-content:\s*safe center;[^}]*overflow-x:\s*auto;/s);
-  assert.match(styles, /\.netcatty-math-block-p\s*\{[^}]*justify-content:\s*safe center;[^}]*overflow-x:\s*auto;/s);
   assert.match(
     styles,
     /\.netcatty-math-reading-mode\s*>\s*\.netcatty-note-code-copy\s*\{[^}]*display:\s*none\s*!important;/s,

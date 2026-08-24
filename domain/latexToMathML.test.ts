@@ -87,3 +87,23 @@ test("latexToMathML preserves math font arguments without escaping rendered toke
   assert.ok(mathml.includes('<mstyle mathvariant="script"><mrow><mi>F</mi></mrow></mstyle>'));
   assert.ok(!mathml.includes("&lt;mi&gt;"));
 });
+
+test("latexToMathML resolves command delimiters after left and right", () => {
+  const mathml = latexToMathML("\\left\\langle x \\right\\rangle");
+  assert.ok(mathml.includes('<mo fence="true" stretchy="true">⟨</mo>'));
+  assert.ok(mathml.includes('<mo fence="true" stretchy="true">⟩</mo>'));
+  assert.ok(!mathml.includes(">langle<"));
+  assert.ok(!mathml.includes(">rangle<"));
+
+  const doubleBar = latexToMathML("\\left\\lVert x \\right\\rVert");
+  assert.equal(doubleBar.match(/>∥<\/mo>/g)?.length, 2);
+
+  const escapedBar = latexToMathML("\\left\\| x \\right\\|");
+  assert.equal(escapedBar.match(/>∥<\/mo>/g)?.length, 2);
+
+  const inlineEscapedBar = latexToMathML("\\|x\\|");
+  assert.equal(inlineEscapedBar.match(/<mo>∥<\/mo>/g)?.length, 2);
+
+  const backslash = latexToMathML("\\left\\backslash x \\right\\backslash");
+  assert.equal(backslash.match(/>\\<\/mo>/g)?.length, 2);
+});

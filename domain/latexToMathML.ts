@@ -56,6 +56,7 @@ const SYMBOL_MAP: Record<string, string> = {
   star: "⋆",
   circ: "∘",
   bullet: "•",
+  "|": "∥",
   cap: "∩",
   cup: "∪",
   uplus: "⊎",
@@ -131,6 +132,25 @@ const SYMBOL_MAP: Record<string, string> = {
   dots: "…",
 };
 
+const DELIMITER_COMMAND_MAP: Record<string, string> = {
+  langle: "⟨",
+  rangle: "⟩",
+  lbrace: "{",
+  rbrace: "}",
+  lceil: "⌈",
+  rceil: "⌉",
+  lfloor: "⌊",
+  rfloor: "⌋",
+  vert: "|",
+  lvert: "|",
+  rvert: "|",
+  "|": "∥",
+  Vert: "∥",
+  lVert: "∥",
+  rVert: "∥",
+  backslash: "\\",
+};
+
 const OPERATOR_MAP: Record<string, string> = {
   sum: "∑",
   prod: "∏",
@@ -191,6 +211,11 @@ export function tokenizeLatex(input: string): LatexToken[] {
       }
       if (nextChar === "," || nextChar === ";" || nextChar === " ") {
         tokens.push({ type: "space", value: " " });
+        i++;
+        continue;
+      }
+      if (nextChar === "|") {
+        tokens.push({ type: "command", value: "|" });
         i++;
         continue;
       }
@@ -453,13 +478,19 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
       } else if (cmd === "left") {
         const delimRes = getNextArg(tokens, i + 1);
         i = delimRes.nextIndex;
-        const delim = delimRes.arg ? delimRes.arg.value : "(";
+        const rawDelim = delimRes.arg ? delimRes.arg.value : "(";
+        const delim = delimRes.arg?.type === "command"
+          ? DELIMITER_COMMAND_MAP[rawDelim] ?? SYMBOL_MAP[rawDelim] ?? rawDelim
+          : rawDelim;
         baseXml = `<mo fence="true" stretchy="true">${escapeXml(delim === "." ? "" : delim)}</mo>`;
         consumed = true;
       } else if (cmd === "right") {
         const delimRes = getNextArg(tokens, i + 1);
         i = delimRes.nextIndex;
-        const delim = delimRes.arg ? delimRes.arg.value : ")";
+        const rawDelim = delimRes.arg ? delimRes.arg.value : ")";
+        const delim = delimRes.arg?.type === "command"
+          ? DELIMITER_COMMAND_MAP[rawDelim] ?? SYMBOL_MAP[rawDelim] ?? rawDelim
+          : rawDelim;
         baseXml = `<mo fence="true" stretchy="true">${escapeXml(delim === "." ? "" : delim)}</mo>`;
         consumed = true;
       } else if (cmd === "begin") {
