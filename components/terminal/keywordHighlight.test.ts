@@ -708,6 +708,51 @@ test("cursor-addressed auto-wrap scrolling keeps the pre-scroll row highlighted"
   term.dispose();
 });
 
+test("origin-mode cursor addresses stay safe across writes and recover after disable", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+
+  await write(term, "\x1b[2;4r\x1b[?");
+  await write(term, "6h");
+  await write(term, "\x1b[2;1Htarget ERROR\x1b[1;1H");
+  assert.equal(cellRgb(term, 2, "ERROR"), RED);
+
+  await write(term, "\x1b[?6l");
+  const internal = highlighter as unknown as {
+    recolorRange(startY: number, endY: number, refresh: boolean, force: boolean): void;
+  };
+  const originalRecolorRange = internal.recolorRange.bind(highlighter);
+  let scannedRows = 0;
+  internal.recolorRange = (startY, endY, refresh, force) => {
+    scannedRows += Math.abs(endY - startY) + 1;
+    originalRecolorRange(startY, endY, refresh, force);
+  };
+  await write(term, "\x1b[5;1Hnormal ERROR");
+  assert.equal(cellRgb(term, 4, "ERROR"), RED);
+  assert.ok(scannedRows <= 2, `origin-mode disable should restore the narrow path: ${scannedRows}`);
+
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("origin mode is remembered while keyword highlighting is disabled", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), false);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+  await write(term, "\x1b[2;4r\x1b[?6h");
+
+  highlighter.setRules(rule(), true);
+  await highlighter.whenSettled();
+  await write(term, "\x1b[2;1Htarget ERROR\x1b[1;1H");
+
+  assert.equal(cellRgb(term, 2, "ERROR"), RED);
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;

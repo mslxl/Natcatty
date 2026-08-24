@@ -224,6 +224,8 @@ export class KeywordHighlighter implements IDisposable {
   private lastBaseY = 0;
   private hasOutput = false;
   private absoluteControlTail = "";
+  private absoluteOriginControlTail = "";
+  private absoluteOriginMode: boolean | null = false;
 
   get pendingPristineBytes(): number {
     return 0;
@@ -364,6 +366,7 @@ export class KeywordHighlighter implements IDisposable {
 
   private readonly write: XTerm["write"] = (data, callback) => {
     if (this.disposed) return this.originalWrite(data, callback);
+    const originModeNeedsSafety = this.trackAbsoluteOriginMode(data);
     const startedOnNormal = this.term.buffer.active.type === "normal";
     if (!startedOnNormal && this.compiledPatterns.length === 0 && !this.hasPendingCatchUp()) {
       return this.originalWrite(data, callback);
@@ -375,7 +378,7 @@ export class KeywordHighlighter implements IDisposable {
     const startBaseY = this.term.buffer.active.baseY;
     const startY = startBaseY + this.term.buffer.active.cursorY;
     const absoluteRepaintRange = typeof data === "string"
-      ? this.resolveAbsoluteRepaintRange(data)
+      ? this.resolveAbsoluteRepaintRange(data, originModeNeedsSafety)
       : null;
     const bypass = !startedOnNormal || this.shouldBypassWrite(data);
     if (bypass) {
@@ -517,7 +520,35 @@ export class KeywordHighlighter implements IDisposable {
     });
   };
 
-  private resolveAbsoluteRepaintRange(data: string): AbsoluteRepaintRange | null {
+  private trackAbsoluteOriginMode(data: string | Uint8Array): boolean {
+    if (typeof data !== "string") {
+      this.absoluteOriginControlTail = "";
+      this.absoluteOriginMode = null;
+      return true;
+    }
+    const controls = this.absoluteOriginControlTail + data;
+    this.absoluteOriginControlTail = "";
+    const lastEscape = controls.lastIndexOf("\x1b");
+    if (lastEscape >= 0) {
+      const suffix = controls.slice(lastEscape);
+      const csiBody = suffix.startsWith("\x1b[") ? suffix.slice(2) : null;
+      if (suffix === "\x1b" || (csiBody !== null && !/[\x40-\x7e]/.test(csiBody))) {
+        this.absoluteOriginControlTail = suffix.slice(-32);
+      }
+    }
+    const originModeNeedsSafety = this.absoluteOriginMode !== false
+      || controls.includes("\x1b[?6h");
+    const originModeControls = /\x1bc|\x1b\[!p|\x1b\[\?6[hl]/g; // eslint-disable-line no-control-regex
+    for (const match of controls.matchAll(originModeControls)) {
+      this.absoluteOriginMode = match[0] === "\x1b[?6h";
+    }
+    return originModeNeedsSafety;
+  }
+
+  private resolveAbsoluteRepaintRange(
+    data: string,
+    originModeNeedsSafety: boolean,
+  ): AbsoluteRepaintRange | null {
     const controls = this.absoluteControlTail + data;
     this.absoluteControlTail = "";
     const lastEscape = controls.lastIndexOf("\x1b");
@@ -544,7 +575,8 @@ export class KeywordHighlighter implements IDisposable {
     for (const match of controls.matchAll(vpa)) noteRow(match[1]);
     // These controls can visit rows that are not named by CUP/VPA. Keep the
     // wider safety range only for writes that actually contain such movement.
-    const mayTraverseRows = /[\n\v\f]|\x1b(?:[DEM8]|\[[\d;?]*[ABEFIJLMSTehlru])/.test(controls); // eslint-disable-line no-control-regex
+    const mayTraverseRows = originModeNeedsSafety
+      || /[\n\v\f]|\x1b(?:[DEM8]|\[[\d;?]*[ABEFIJLMSTehlru])/.test(controls); // eslint-disable-line no-control-regex
     return earliest === null || latest === null
       ? null
       : { startRow: earliest, endRow: latest, mayTraverseRows };
@@ -555,6 +587,8 @@ export class KeywordHighlighter implements IDisposable {
     this.cancelCatchUp();
     this.hasOutput = false;
     this.absoluteControlTail = "";
+    this.absoluteOriginControlTail = "";
+    this.absoluteOriginMode = false;
     return this.originalReset();
   };
 
