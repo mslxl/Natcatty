@@ -5,6 +5,8 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { I18nProvider } from "../../application/i18n/I18nProvider.tsx";
+import { readStoredStringValue } from "../../application/state/useStoredString.ts";
+import { STORAGE_KEY_VAULT_NOTES_EDITOR_MODE } from "../../infrastructure/config/storageKeys.ts";
 import type { VaultNote } from "../../types.ts";
 import { TooltipProvider } from "../ui/tooltip.tsx";
 import {
@@ -17,6 +19,8 @@ import {
   getValidatedNoteSelectionState,
   getSelectedVaultNote,
   isNoteFolderTreeSelected,
+  isNoteEditorMode,
+  normalizeNoteEditorMode,
   NotesManager,
 } from "./NotesManager.tsx";
 
@@ -115,6 +119,36 @@ test("clampNotesTreeWidth keeps the sidebar within the design range", () => {
   assert.equal(clampNotesTreeWidth(100), 160);
   assert.equal(clampNotesTreeWidth(300), 300);
   assert.equal(clampNotesTreeWidth(900), 520);
+});
+
+test("normalizeNoteEditorMode migrates the legacy live mode to edit", () => {
+  assert.equal(normalizeNoteEditorMode("live"), "edit");
+  assert.equal(isNoteEditorMode("live"), false);
+  assert.equal(isNoteEditorMode("edit"), true);
+  assert.equal(normalizeNoteEditorMode("preview"), "preview");
+  assert.equal(normalizeNoteEditorMode("invalid"), null);
+});
+
+test("stored legacy live mode falls back to edit on the real read path", (t) => {
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => key === STORAGE_KEY_VAULT_NOTES_EDITOR_MODE ? "live" : null,
+    } as Storage,
+  });
+  t.after(() => {
+    if (previousLocalStorage) {
+      Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    } else {
+      Reflect.deleteProperty(globalThis, "localStorage");
+    }
+  });
+
+  assert.equal(
+    readStoredStringValue(STORAGE_KEY_VAULT_NOTES_EDITOR_MODE, "edit", isNoteEditorMode),
+    "edit",
+  );
 });
 
 test("NotesManager selection helpers keep note and folder selection exclusive", () => {

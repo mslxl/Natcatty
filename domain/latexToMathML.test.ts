@@ -17,6 +17,14 @@ test("tokenizeLatex tokenizes basic commands and superscripts", () => {
   assert.equal(tokens[5].value, "2");
 });
 
+test("tokenizeLatex keeps ordinary integers and decimals together", () => {
+  const tokens = tokenizeLatex("12 3.14");
+  assert.deepEqual(tokens.map(({ type, value }) => ({ type, value })), [
+    { type: "number", value: "12" },
+    { type: "number", value: "3.14" },
+  ]);
+});
+
 test("latexToMathML converts E = mc^2 correctly", () => {
   const mathml = latexToMathML("E = mc^2");
   assert.ok(mathml.includes("<math"));
@@ -28,6 +36,21 @@ test("latexToMathML converts fractions and square roots", () => {
   const mathml = latexToMathML("\\frac{a}{b} + \\sqrt{x}");
   assert.ok(mathml.includes("<mfrac>"));
   assert.ok(mathml.includes("<msqrt>"));
+});
+
+test("latexToMathML consumes one token per unbraced numeric argument", () => {
+  const fraction = latexToMathML("\\frac12");
+  assert.match(fraction, /<mfrac><mrow><mn>1<\/mn><\/mrow><mrow><mn>2<\/mn><\/mrow><\/mfrac>/);
+
+  const squareRoot = latexToMathML("\\sqrt12");
+  assert.match(squareRoot, /<msqrt><mrow><mn>1<\/mn><\/mrow><\/msqrt><mn>2<\/mn>/);
+});
+
+test("latexToMathML keeps ordinary and grouped numeric runs intact", () => {
+  const mathml = latexToMathML("12 + 3.14 + x_{12}");
+  assert.match(mathml, /<mn>12<\/mn>/);
+  assert.match(mathml, /<mn>3\.14<\/mn>/);
+  assert.match(mathml, /<msub><mi>x<\/mi><mrow><mn>12<\/mn><\/mrow><\/msub>/);
 });
 
 test("latexToMathML converts Greek letters and operators", () => {

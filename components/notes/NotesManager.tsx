@@ -128,10 +128,14 @@ export function clampNotesTreeWidth(value: number): number {
 }
 
 export const normalizeNoteEditorMode = (value: string | null): NoteEditorMode | null =>
-  value === "edit" || value === "preview" || value === "source" || value === "live" ? value : null;
+  value === "live"
+    ? "edit"
+    : value === "edit" || value === "preview" || value === "source"
+      ? value
+      : null;
 
-const isNoteEditorMode = (value: string | null): value is NoteEditorMode =>
-  normalizeNoteEditorMode(value) !== null;
+export const isNoteEditorMode = (value: string | null): value is NoteEditorMode =>
+  value === "edit" || value === "preview" || value === "source";
 
 const InlineMarkdownEditorFallback = () => (
   <div

@@ -313,6 +313,11 @@ function escapeXml(unsafe: string): string {
 function getNextArg(tokens: LatexToken[], index: number): { arg: LatexToken | null; nextIndex: number } {
   if (index >= tokens.length) return { arg: null, nextIndex: index };
   const tok = tokens[index];
+  if (tok.type === "number" && tok.value.length > 1) {
+    const [value, ...remainder] = tok.value;
+    tokens[index] = { ...tok, value: remainder.join("") };
+    return { arg: { ...tok, value }, nextIndex: index };
+  }
   return { arg: tok, nextIndex: index + 1 };
 }
 
