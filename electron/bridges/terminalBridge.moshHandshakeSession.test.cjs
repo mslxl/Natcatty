@@ -368,6 +368,26 @@ test("startMoshSession marks the OpenSSH first-host confirmation as interactive"
   assert.equal(prompt.payload.meta?.moshHandshakeRequiresUserInput, true);
 });
 
+test("startMoshSession exposes shared fail-closed keyboard-interactive prompts", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });
+  const prompts = [
+    "Duo two-factor login\r\nPasscode or option (1-1):",
+    "\r\nCustom authentication>",
+    "\r\n验证码：",
+  ];
+
+  for (const text of prompts) {
+    h.spawns[0].emitData(text);
+    await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
+    const prompt = h.sent.find((evt) =>
+      evt.channel === "netcatty:data" && evt.payload?.data?.includes(text.trim()),
+    );
+    assert.ok(prompt, `expected prompt to reach the renderer: ${text}`);
+    assert.equal(prompt.payload.meta?.moshHandshakeRequiresUserInput, true, text);
+  }
+});
+
 test("startMoshSession password-only mode disables public-key authentication", async (t) => {
   const h = makeHarness(t);
   await h.bridge.startMoshSession(
@@ -676,6 +696,7 @@ test("startMoshSession tags handshake output and emits ready after mosh-client s
   );
   assert.ok(handshakeData, "expected handshake data on netcatty:data");
   assert.equal(handshakeData.payload.meta?.moshHandshake, true);
+  assert.notEqual(handshakeData.payload.meta?.moshHandshakeRequiresUserInput, true);
 
   assert.equal(
     h.sent.some((evt) => evt.channel === "netcatty:mosh:ready"),

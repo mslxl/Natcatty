@@ -11,6 +11,9 @@ const { createSshConnExecProbe } = require("../ai/sessionShellKind.cjs");
 const { orderSshIdentityNames, SSH_KEY_PATTERN } = require("../sshAuthHelper.cjs");
 const { fanoutSessionExit } = require("../terminalAttachRestore.cjs");
 const {
+  isUntrustedTerminalInputPrompt,
+} = require("../../../domain/terminalPromptSecurity.shared.cjs");
+const {
   buildAuthoritativeKnownHostsContent,
   buildExternalHostKeySshOptions,
   vaultPinsConnectionHosts,
@@ -117,7 +120,7 @@ function createMoshSessionApi(ctx) {
         return passphrasePrompt
           || passwordPrompt
           || isMoshHostKeyConfirmationPrompt(tail)
-          || mfaPrompt;
+          || isUntrustedTerminalInputPrompt(tail);
       };
     }
     
