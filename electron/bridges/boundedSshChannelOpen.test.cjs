@@ -172,11 +172,16 @@ test("a retry-budget timeout preserves the transport and returns the rate-limit 
   let attempts = 0;
   let invalidations = 0;
   let elapsedMs = 0;
+  let lateCallback = null;
+  let abandoned = 0;
+  let abandonedSettled = 0;
   const client = {
     shell(_window, _options, next) {
       attempts += 1;
       if (attempts === 1) {
         next(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      } else {
+        lateCallback = next;
       }
     },
     destroy() { invalidations += 1; },
@@ -197,12 +202,23 @@ test("a retry-budget timeout preserves the transport and returns the rate-limit 
         return { unref() {} };
       },
       clearTimeoutFn() {},
+      onAbandonedOpen: () => { abandoned += 1; },
+      onAbandonedOpenSettled: () => { abandonedSettled += 1; },
     }),
     /channelOpen too offen/,
   );
 
   assert.equal(attempts, 2);
   assert.equal(invalidations, 0);
+  assert.equal(abandoned, 1);
+  assert.equal(abandonedSettled, 0);
+
+  const lateStream = new EventEmitter();
+  lateStream.closed = 0;
+  lateStream.close = () => { lateStream.closed += 1; };
+  lateCallback(null, lateStream);
+  assert.equal(lateStream.closed, 1);
+  assert.equal(abandonedSettled, 1);
 });
 
 test("detects bastion channelOpen rate-limit errors including the offen typo", () => {
