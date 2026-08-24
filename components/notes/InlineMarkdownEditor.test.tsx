@@ -17,6 +17,7 @@ import {
   NOTE_EDIT_DECORATION_DEBOUNCE_MS,
   resolveHostPickerPopupPosition,
   scrollNoteHeadingIntoView,
+  shouldApplyExternalNoteMarkdown,
   shouldRenderNoteMathFormula,
   shouldInsertClipboardTextAsMarkdown,
   shouldHandleHostPickerNavigationKey,
@@ -695,4 +696,40 @@ test("NoteSourceEditor manages local draft state to prevent cursor jumping on de
   assert.match(source, /onChange=\{handleChange\}/);
   assert.match(source, /prevNoteIdRef\.current/);
   assert.match(source, /prevValueRef\.current/);
+});
+
+test("source mode compares raw markdown separately from display-normalized markdown", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /const latestSourceMarkdownRef = useRef\(value\)/);
+  assert.match(source, /markdown === latestSourceMarkdownRef\.current/);
+  assert.match(source, /latestMarkdownRef\.current = normalizeNotePublicAssetPaths\(markdown\)/);
+  assert.match(source, /setAcceptedSourceMarkdown\(markdown\)/);
+  assert.match(
+    source,
+    /<NoteSourceEditor[\s\S]*?value=\{noteId !== undefined && noteId !== noteIdRef\.current \? value : acceptedSourceMarkdown\}[\s\S]*?onChange=\{commitSourceMarkdown\}/,
+  );
+});
+
+test("raw source drafts are not overwritten by external values with equivalent display markdown", () => {
+  const base = {
+    latestMarkdown: "![x](/x.png)",
+    syncedMarkdown: "![x](/x.png)",
+    latestSourceMarkdown: "![x](/x.png)",
+    syncedSourceMarkdown: "![x](/public/x.png)",
+  };
+
+  assert.equal(shouldApplyExternalNoteMarkdown({
+    ...base,
+    nextSourceMarkdown: "# Remote",
+  }), false);
+  assert.equal(shouldApplyExternalNoteMarkdown({
+    ...base,
+    nextSourceMarkdown: "![x](/x.png)",
+  }), true);
+  assert.equal(shouldApplyExternalNoteMarkdown({
+    ...base,
+    latestSourceMarkdown: "![x](/public/x.png)",
+    nextSourceMarkdown: "![x](/x.png)",
+  }), true);
 });

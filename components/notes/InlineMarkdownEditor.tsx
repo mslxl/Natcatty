@@ -154,6 +154,18 @@ export const NOTE_EDIT_DECORATION_DEBOUNCE_MS = 160;
 export const getNoteDecorationMutationDelay = (editorMode: NoteEditorMode): number =>
   editorMode === "edit" || editorMode === "live" ? NOTE_EDIT_DECORATION_DEBOUNCE_MS : 0;
 
+export const shouldApplyExternalNoteMarkdown = (input: {
+  latestMarkdown: string;
+  syncedMarkdown: string;
+  latestSourceMarkdown: string;
+  syncedSourceMarkdown: string;
+  nextSourceMarkdown: string;
+}): boolean => input.latestSourceMarkdown === input.nextSourceMarkdown
+  || (
+    input.latestMarkdown === input.syncedMarkdown
+    && input.latestSourceMarkdown === input.syncedSourceMarkdown
+  );
+
 export interface NoteDecorationSchedulerRuntime {
   requestFrame: (callback: () => void) => number;
   cancelFrame: (id: number) => void;
@@ -920,6 +932,10 @@ export const InlineMarkdownEditor = React.memo(
     // Display-normalized space (same as setMarkdown / public-asset rewrite).
     const latestMarkdownRef = useRef(normalizeNotePublicAssetPaths(value));
     const syncedPropValueRef = useRef(normalizeNotePublicAssetPaths(value));
+    // Raw persisted space used by source mode so display-only path rewrites
+    // never suppress an intentional source edit.
+    const latestSourceMarkdownRef = useRef(value);
+    const syncedSourceMarkdownRef = useRef(value);
     const noteIdRef = useRef(noteId);
     // Bumped on unmount / external value sync so deferred paste recovery cannot
     // commit into a switched or unmounted note.
@@ -1083,6 +1099,7 @@ export const InlineMarkdownEditor = React.memo(
     top: 32,
   });
   const [linkAction, setLinkAction] = useState<LinkActionState | null>(null);
+  const [acceptedSourceMarkdown, setAcceptedSourceMarkdown] = useState(value);
   const [isContentSwapping, setIsContentSwapping] = useState(false);
   const linkActionRef = useRef<LinkActionState | null>(null);
   linkActionRef.current = linkAction;
@@ -1231,6 +1248,9 @@ export const InlineMarkdownEditor = React.memo(
       // does not look like a divergent local draft.
       latestMarkdownRef.current = markdown;
       syncedPropValueRef.current = markdown;
+      latestSourceMarkdownRef.current = value;
+      syncedSourceMarkdownRef.current = value;
+      setAcceptedSourceMarkdown(value);
       setHostPicker((current) => (
         current.open
           ? { ...current, open: false, query: "", selectedIndex: 0 }
@@ -1295,22 +1315,32 @@ export const InlineMarkdownEditor = React.memo(
         };
         latestMarkdownRef.current = markdown;
         syncedPropValueRef.current = markdown;
+        latestSourceMarkdownRef.current = value;
+        syncedSourceMarkdownRef.current = value;
+        setAcceptedSourceMarkdown(value);
       }
       return;
     }
 
-    if (latestMarkdownRef.current === value || latestMarkdownRef.current === markdown) {
-      latestMarkdownRef.current = markdown;
-      syncedPropValueRef.current = markdown;
+    // Local display or source draft diverged from the last external value —
+    // do not clobber it unless this value is the parent's echo of that draft.
+    if (!shouldApplyExternalNoteMarkdown({
+      latestMarkdown: latestMarkdownRef.current,
+      syncedMarkdown: syncedPropValueRef.current,
+      latestSourceMarkdown: latestSourceMarkdownRef.current,
+      syncedSourceMarkdown: syncedSourceMarkdownRef.current,
+      nextSourceMarkdown: value,
+    })) {
       return;
     }
-    // Local draft diverged from last external value — do not clobber.
-    if (latestMarkdownRef.current !== syncedPropValueRef.current) {
-      return;
-    }
+    const displayChanged = latestMarkdownRef.current !== markdown;
     pasteRecoveryGenerationRef.current += 1;
     syncedPropValueRef.current = markdown;
     latestMarkdownRef.current = markdown;
+    latestSourceMarkdownRef.current = value;
+    syncedSourceMarkdownRef.current = value;
+    setAcceptedSourceMarkdown(value);
+    if (!displayChanged) return;
     try {
       editorRef.current?.setMarkdown(markdown);
       clearLexicalHistory();
@@ -1520,6 +1550,17 @@ export const InlineMarkdownEditor = React.memo(
     if (contentSwapPendingRef.current) return;
     if (markdown === latestMarkdownRef.current) return;
     latestMarkdownRef.current = markdown;
+    latestSourceMarkdownRef.current = markdown;
+    setAcceptedSourceMarkdown(markdown);
+    onChange(markdown);
+  }, [onChange]);
+
+  const commitSourceMarkdown = useCallback((markdown: string) => {
+    if (contentSwapPendingRef.current) return;
+    if (markdown === latestSourceMarkdownRef.current) return;
+    latestSourceMarkdownRef.current = markdown;
+    latestMarkdownRef.current = normalizeNotePublicAssetPaths(markdown);
+    setAcceptedSourceMarkdown(markdown);
     onChange(markdown);
   }, [onChange]);
 
@@ -2064,9 +2105,9 @@ export const InlineMarkdownEditor = React.memo(
         <NoteSourceEditor
           ref={sourceEditorRef}
           noteId={noteId}
-          value={value}
+          value={noteId !== undefined && noteId !== noteIdRef.current ? value : acceptedSourceMarkdown}
           placeholder={placeholder}
-          onChange={commitMarkdown}
+          onChange={commitSourceMarkdown}
           noteFontFamily={noteFontFamily}
           noteFontSize={noteCodeFontSize || noteFontSize}
         />
