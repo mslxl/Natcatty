@@ -122,6 +122,16 @@ test("note link and image actions open the editor dialogs", () => {
   assert.deepEqual(opened, ["link", "image"]);
 });
 
+test("toolbar text selection is restricted to the note editor", () => {
+  const source = readFileSync(new URL("./InlineMarkdownEditor.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /if \(domText\) \{/);
+  assert.match(source, /domSelection && domSelection\.rangeCount > 0 && container/);
+  assert.match(source, /container\.contains\(range\.startContainer\)/);
+  assert.match(source, /container\.contains\(range\.endContainer\)/);
+  assert.match(source, /return domText;[\s\S]*return "";[\s\S]*querySelector\("\[contenteditable\]"\)/);
+});
+
 test("note outline jumps to the matching rendered heading", () => {
   let scrollOptions: ScrollIntoViewOptions | undefined;
   const first = {

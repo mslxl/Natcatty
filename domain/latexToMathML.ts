@@ -354,6 +354,7 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
 
     // Check for base with attached sub/sup
     let baseXml = "";
+    let baseIsLargeOperator = false;
     let consumed = false;
 
     if (tok.type === "command") {
@@ -557,6 +558,7 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
         } else {
           baseXml = matrixXml;
         }
+        baseXml = `<mrow>${baseXml}</mrow>`;
         consumed = true;
       } else if (GREEK_MAP[cmd]) {
         baseXml = `<mi>${GREEK_MAP[cmd]}</mi>`;
@@ -568,6 +570,7 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
         consumed = true;
       } else if (OPERATOR_MAP[cmd]) {
         baseXml = `<mo class="math-operator">${OPERATOR_MAP[cmd]}</mo>`;
+        baseIsLargeOperator = true;
         i++;
         consumed = true;
       } else if (FUNCTION_NAMES.has(cmd)) {
@@ -638,19 +641,19 @@ function renderTokensToMathML(tokens: LatexToken[]): string {
 
     if (subXml && supXml) {
       // If base is a large operator like \sum or \int, use munderover
-      if (baseXml.includes("math-operator")) {
+      if (baseIsLargeOperator) {
         result += `<munderover>${baseXml}<mrow>${subXml}</mrow><mrow>${supXml}</mrow></munderover>`;
       } else {
         result += `<msubsup>${baseXml}<mrow>${subXml}</mrow><mrow>${supXml}</mrow></msubsup>`;
       }
     } else if (subXml) {
-      if (baseXml.includes("math-operator")) {
+      if (baseIsLargeOperator) {
         result += `<munder>${baseXml}<mrow>${subXml}</mrow></munder>`;
       } else {
         result += `<msub>${baseXml}<mrow>${subXml}</mrow></msub>`;
       }
     } else if (supXml) {
-      if (baseXml.includes("math-operator")) {
+      if (baseIsLargeOperator) {
         result += `<mover>${baseXml}<mrow>${supXml}</mrow></mover>`;
       } else {
         result += `<msup>${baseXml}<mrow>${supXml}</mrow></msup>`;

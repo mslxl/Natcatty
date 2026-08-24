@@ -941,11 +941,19 @@ export const InlineMarkdownEditor = React.memo(
     const containerRef = useRef<HTMLDivElement>(null);
 
     const getSelectedText = useCallback((): string => {
+      const container = containerRef.current;
       const domSelection = window.getSelection();
       const domText = domSelection?.toString() || "";
-      if (domText) return domText;
+      if (domText) {
+        if (domSelection && domSelection.rangeCount > 0 && container) {
+          const range = domSelection.getRangeAt(0);
+          if (container.contains(range.startContainer) && container.contains(range.endContainer)) {
+            return domText;
+          }
+        }
+        return "";
+      }
 
-      const container = containerRef.current;
       const editable = container?.querySelector("[contenteditable]");
       const lexicalEditor = editable ? getNearestEditorFromDOMNode(editable) : null;
       if (lexicalEditor) {

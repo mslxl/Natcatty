@@ -45,6 +45,19 @@ test("latexToMathML converts matrices", () => {
   assert.ok(mathml.includes("<mtd>"));
 });
 
+test("latexToMathML groups matrix environments before attaching scripts", () => {
+  for (const environment of ["matrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix", "cases"]) {
+    const mathml = latexToMathML(`\\begin{${environment}} a & b \\\\ c & d \\end{${environment}}^{-1}`);
+    assert.match(mathml, /<msup><mrow>.*<mtable>.*<\/mtable>.*<\/mrow><mrow>/);
+  }
+});
+
+test("latexToMathML does not treat a matrix containing a large operator as the operator", () => {
+  const mathml = latexToMathML("\\begin{pmatrix} \\sum & b \\\\ c & d \\end{pmatrix}^{-1}");
+  assert.match(mathml, /<msup><mrow>.*math-operator.*<\/mrow><mrow>/);
+  assert.doesNotMatch(mathml, /<mover><mrow>.*<mtable>/);
+});
+
 test("latexToMathML converts n-th root \\sqrt[3]{3} correctly using mroot", () => {
   const mathml = latexToMathML("\\sqrt[3]{3}");
   assert.ok(mathml.includes("<mroot>"));
