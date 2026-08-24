@@ -643,6 +643,71 @@ test("pressured cursor-addressed repaint catches up from the pre-scroll viewport
   term.dispose();
 });
 
+test("row-sized Mosh repaint writes do not rescan the viewport for every row", async () => {
+  for (const rows of [40, 80]) {
+    const term = new XTerm({ allowProposedApi: true, cols: 80, rows, scrollback: 20 });
+    const highlighter = new KeywordHighlighter(term);
+    highlighter.setRules(rule(), true);
+    await write(term, Array.from({ length: rows }, (_, index) => `old-${index} ERROR`).join("\r\n"));
+
+    const internal = highlighter as unknown as {
+      recolorRange(startY: number, endY: number, refresh: boolean, force: boolean): void;
+    };
+    const originalRecolorRange = internal.recolorRange.bind(highlighter);
+    let scannedRows = 0;
+    let refreshes = 0;
+    internal.recolorRange = (startY, endY, refresh, force) => {
+      scannedRows += Math.abs(endY - startY) + 1;
+      if (refresh) refreshes += 1;
+      originalRecolorRange(startY, endY, refresh, force);
+    };
+
+    for (let row = 1; row <= rows; row += 1) {
+      await write(term, `\x1b[${row};1Hnew-${row} ERROR`);
+    }
+
+    assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), [], `${rows} rows`);
+    assert.ok(
+      scannedRows <= rows * 2,
+      `${rows} rows should stay linear, scanned ${scannedRows} rows`,
+    );
+    assert.ok(
+      refreshes <= rows + 1,
+      `${rows} rows should refresh at most once per typical write, got ${refreshes}`,
+    );
+    highlighter.dispose();
+    term.dispose();
+  }
+});
+
+test("cursor-addressed repaint follows VPR and inserted-line row changes", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1 ERROR\r\nold-2 ERROR\r\nold-3 ERROR\r\nold-4 ERROR");
+
+  await write(term, "\x1b[1;1Hfirst ERROR\x1b[2ethird ERROR\x1b[1;1H");
+  await write(term, "\x1b[2;1H\x1b[1Linserted ERROR\x1b[1;1H");
+
+  assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), []);
+  highlighter.dispose();
+  term.dispose();
+});
+
+test("cursor-addressed auto-wrap scrolling keeps the pre-scroll row highlighted", async () => {
+  const term = new XTerm({ allowProposedApi: true, cols: 12, rows: 4, scrollback: 20 });
+  const highlighter = new KeywordHighlighter(term);
+  highlighter.setRules(rule(), true);
+  await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4");
+
+  await write(term, `\x1b[4;1HERROR ${"x".repeat(24)}\x1b[1;1H`);
+
+  assert.ok(term.buffer.active.baseY > 0, "fixture must scroll through auto-wrap");
+  assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), []);
+  highlighter.dispose();
+  term.dispose();
+});
+
 test("scrolling during a rule change catch-up recolors newly visible rows", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 40, rows: 4, scrollback: 80 });
   let bypass = true;

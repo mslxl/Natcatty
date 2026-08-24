@@ -45,6 +45,12 @@ type LogicalLine = {
   cellAtStringOffset: Array<{ y: number; x: number }>;
 };
 
+type AbsoluteRepaintRange = {
+  startRow: number;
+  endRow: number;
+  mayTraverseRows: boolean;
+};
+
 export type KeywordHighlighterOptions = {
   shouldBypassHighlight?: () => boolean;
   serializeAddon?: SerializeAddon;
@@ -431,28 +437,75 @@ export class KeywordHighlighter implements IDisposable {
           const ordinaryFromY = skipStartRow && !startRowMutated
             ? Math.min(endY, writeMarker.line + 1)
             : writeMarker.line;
-          // An absolute-positioned update can traverse rows via CRLF/IND and
-          // can scroll before restoring its final cursor. Cover both the
-          // pre-write and post-write viewports instead of inferring every
-          // intermediate cursor position from a potentially split stream.
-          const fromY = absoluteRepaintRange === null
-            ? ordinaryFromY
-            : Math.min(ordinaryFromY, startBaseY, active.baseY);
-          const toY = absoluteRepaintRange === null
-            ? endY
-            : Math.max(
-              ordinaryFromY,
-              endY,
-              startBaseY + this.term.rows - 1,
-              active.baseY + this.term.rows - 1,
-            );
-          if (this.compiledPatterns.length === 0) {
-            if (this.hasStoredOriginalsInRange(fromY, toY)) {
-              this.markCatchUp(fromY);
-              this.scheduleCatchUp();
+          if (
+            absoluteRepaintRange !== null
+            && !absoluteRepaintRange.mayTraverseRows
+            && active.baseY === startBaseY
+          ) {
+            // A normal Mosh framebuffer diff sends one absolute row update per
+            // write. Recolor the old cursor row and the addressed rows as
+            // separate ranges so N row-sized writes stay O(N), rather than
+            // rescanning the gaps between them for every write.
+            const addressed = {
+              start: startBaseY + absoluteRepaintRange.startRow,
+              end: startBaseY + absoluteRepaintRange.endRow,
+            };
+            const repaintRanges = [addressed];
+            if (ordinaryFromY < addressed.start || ordinaryFromY > addressed.end) {
+              repaintRanges.push({ start: ordinaryFromY, end: ordinaryFromY });
+            }
+            if (
+              (endY < addressed.start || endY > addressed.end)
+              && endY !== ordinaryFromY
+            ) {
+              repaintRanges.push({ start: endY, end: endY });
+            }
+            repaintRanges.sort((left, right) => left.start - right.start);
+            for (let index = repaintRanges.length - 1; index > 0; index -= 1) {
+              const previous = repaintRanges[index - 1];
+              const current = repaintRanges[index];
+              if (current.start > previous.end + 1) continue;
+              previous.end = Math.max(previous.end, current.end);
+              repaintRanges.splice(index, 1);
+            }
+            if (this.compiledPatterns.length === 0) {
+              const catchUpFrom = repaintRanges.reduce<number | null>((earliest, range) => (
+                this.hasStoredOriginalsInRange(range.start, range.end)
+                  ? Math.min(earliest ?? range.start, range.start)
+                  : earliest
+              ), null);
+              if (catchUpFrom !== null) {
+                this.markCatchUp(catchUpFrom);
+                this.scheduleCatchUp();
+              }
+            } else {
+              for (const range of repaintRanges) {
+                this.recolorRange(range.start, range.end, true, true);
+              }
             }
           } else {
-            this.recolorRange(fromY, toY, true, true);
+            // An absolute-positioned update that also traverses rows via
+            // CRLF/IND can scroll before restoring its final cursor. Cover the
+            // pre-write and post-write viewports for that uncommon case.
+            const fromY = absoluteRepaintRange === null
+              ? ordinaryFromY
+              : Math.min(ordinaryFromY, startBaseY, active.baseY);
+            const toY = absoluteRepaintRange === null
+              ? endY
+              : Math.max(
+                ordinaryFromY,
+                endY,
+                startBaseY + this.term.rows - 1,
+                active.baseY + this.term.rows - 1,
+              );
+            if (this.compiledPatterns.length === 0) {
+              if (this.hasStoredOriginalsInRange(fromY, toY)) {
+                this.markCatchUp(fromY);
+                this.scheduleCatchUp();
+              }
+            } else {
+              this.recolorRange(fromY, toY, true, true);
+            }
           }
         }
       } else if (startedOnNormal && (this.enabled || this.compiledPatterns.length > 0)) {
@@ -464,7 +517,7 @@ export class KeywordHighlighter implements IDisposable {
     });
   };
 
-  private resolveAbsoluteRepaintRange(data: string): { startRow: number; endRow: number } | null {
+  private resolveAbsoluteRepaintRange(data: string): AbsoluteRepaintRange | null {
     const controls = this.absoluteControlTail + data;
     this.absoluteControlTail = "";
     const lastEscape = controls.lastIndexOf("\x1b");
@@ -489,9 +542,12 @@ export class KeywordHighlighter implements IDisposable {
     const vpa = /\x1b\[(\d*)d/g; // eslint-disable-line no-control-regex
     for (const match of controls.matchAll(cup)) noteRow(match[1]);
     for (const match of controls.matchAll(vpa)) noteRow(match[1]);
+    // These controls can visit rows that are not named by CUP/VPA. Keep the
+    // wider safety range only for writes that actually contain such movement.
+    const mayTraverseRows = /[\n\v\f]|\x1b(?:[DEM8]|\[[\d;?]*[ABEFIJLMSTehlru])/.test(controls); // eslint-disable-line no-control-regex
     return earliest === null || latest === null
       ? null
-      : { startRow: earliest, endRow: latest };
+      : { startRow: earliest, endRow: latest, mayTraverseRows };
   }
 
   private readonly reset: XTerm["reset"] = () => {
