@@ -585,6 +585,7 @@ test("note code block frame is borderless and language picker is compact", () =>
 test("note formulas render without framed surfaces", () => {
   const styles = readFileSync(new URL("../../index.css", import.meta.url), "utf8");
 
+  assert.doesNotMatch(styles, /data-language="math"/);
   assert.match(
     styles,
     /\.netcatty-math-formula-preview\s*\{[^}]*background:\s*transparent;[^}]*border:\s*0;/s,

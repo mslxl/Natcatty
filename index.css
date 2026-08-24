@@ -1443,7 +1443,6 @@ html[data-theme-transition] *::after {
   font-size: var(--note-code-font-size, 13px) !important;
 }
 
-.netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="math"]),
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="latex"]),
 .netcatty-mdx-editor [class*="_codeMirrorWrapper_"]:has([data-language="tex"]) {
   border: 0 !important;
