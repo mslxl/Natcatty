@@ -308,8 +308,64 @@ test("startMoshSession writes the saved password when ssh prompts for one", asyn
   );
 
   h.spawns[0].emitData("(alice@example.com) Password:");
+  await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
 
   assert.deepEqual(h.spawns[0].writes, ["saved-secret\r"]);
+  const prompt = h.sent.find((evt) =>
+    evt.channel === "netcatty:data" && evt.payload?.data?.includes("Password:"),
+  );
+  assert.ok(prompt, "expected the saved-password prompt to reach the renderer");
+  assert.notEqual(prompt.payload.meta?.moshHandshakeRequiresUserInput, true);
+});
+
+test("startMoshSession marks a password prompt that has no saved answer as interactive", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });
+
+  h.spawns[0].emitData("(alice@example.com) Password:");
+  await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
+
+  assert.deepEqual(h.spawns[0].writes, []);
+  const prompt = h.sent.find((evt) =>
+    evt.channel === "netcatty:data" && evt.payload?.data?.includes("Password:"),
+  );
+  assert.ok(prompt, "expected the manual password prompt to reach the renderer");
+  assert.equal(prompt.payload.meta?.moshHandshakeRequiresUserInput, true);
+});
+
+test("startMoshSession keeps a saved primary password out of an MFA prompt", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(
+    h.event,
+    { ...h.options, password: "saved-secret", requiresMfa: true },
+    { moshClientLookup: h.lookupOpts },
+  );
+
+  h.spawns[0].emitData("Verification code:");
+  await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
+
+  assert.deepEqual(h.spawns[0].writes, []);
+  const prompt = h.sent.find((evt) =>
+    evt.channel === "netcatty:data" && evt.payload?.data?.includes("Verification code:"),
+  );
+  assert.ok(prompt, "expected the MFA prompt to reach the renderer");
+  assert.equal(prompt.payload.meta?.moshHandshakeRequiresUserInput, true);
+});
+
+test("startMoshSession marks the OpenSSH first-host confirmation as interactive", async (t) => {
+  const h = makeHarness(t);
+  await h.bridge.startMoshSession(h.event, h.options, { moshClientLookup: h.lookupOpts });
+
+  h.spawns[0].emitData(
+    "Are you sure you want to continue connecting (yes/no/[fingerprint])?",
+  );
+  await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
+
+  const prompt = h.sent.find((evt) =>
+    evt.channel === "netcatty:data" && evt.payload?.data?.includes("continue connecting"),
+  );
+  assert.ok(prompt, "expected the host confirmation prompt to reach the renderer");
+  assert.equal(prompt.payload.meta?.moshHandshakeRequiresUserInput, true);
 });
 
 test("startMoshSession password-only mode disables public-key authentication", async (t) => {
@@ -510,8 +566,14 @@ test("startMoshSession writes the saved passphrase when ssh prompts for the temp
   );
 
   h.spawns[0].emitData("Enter passphrase for key 'mosh-auth-key-1.pem':");
+  await new Promise((resolve) => h.sessions.get("mosh-test-session").flushPendingData(resolve));
 
   assert.deepEqual(h.spawns[0].writes, ["key-passphrase\r"]);
+  const prompt = h.sent.find((evt) =>
+    evt.channel === "netcatty:data" && evt.payload?.data?.includes("passphrase"),
+  );
+  assert.ok(prompt, "expected the saved-passphrase prompt to reach the renderer");
+  assert.notEqual(prompt.payload.meta?.moshHandshakeRequiresUserInput, true);
 });
 
 test("startMoshSession swaps to mosh-client when MOSH CONNECT has no trailing newline", async (t) => {

@@ -2450,11 +2450,13 @@ test("attachSessionToTerminal marks connected on metadata-only or visible first 
   assert.equal(ctx.hasConnectedRef.current, true);
 });
 
-test("Mosh handshake stays connecting until ready unless it needs terminal input", () => {
+test("Mosh handshake stays connecting until ready unless the backend needs terminal input", () => {
   const { term } = createFakeTerm();
   const statuses: string[] = [];
-  let onData: ((data: string, meta?: { moshHandshake?: boolean }) => void) | null = null;
-  const passwordPromptActiveRef = { current: false };
+  let onData: ((data: string, meta?: {
+    moshHandshake?: boolean;
+    moshHandshakeRequiresUserInput?: boolean;
+  }) => void) | null = null;
   const ctx = {
     ...createContext(false),
     sessionId: "mosh-session",
@@ -2466,10 +2468,6 @@ test("Mosh handshake stays connecting until ready unless it needs terminal input
     fitAddonRef: { current: null },
     serializeAddonRef: { current: null },
     pendingAuthRef: { current: null },
-    passwordPromptActiveRef,
-    onTerminalOutput: (data: string) => {
-      if (data.includes("Password:")) passwordPromptActiveRef.current = true;
-    },
     terminalBackend: {
       onSessionData: (_id: string, cb: typeof onData) => {
         onData = cb;
@@ -2495,5 +2493,10 @@ test("Mosh handshake stays connecting until ready unless it needs terminal input
   onData?.("login banner\r\n", { moshHandshake: true });
   assert.deepEqual(statuses, []);
   onData?.("Password:", { moshHandshake: true });
+  assert.deepEqual(statuses, []);
+  onData?.("Verification code:", {
+    moshHandshake: true,
+    moshHandshakeRequiresUserInput: true,
+  });
   assert.deepEqual(statuses, ["connected"]);
 });

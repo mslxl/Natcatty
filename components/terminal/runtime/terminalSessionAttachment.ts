@@ -838,6 +838,7 @@ export const attachSessionToTerminal = (
     onConnected?: (meta?: TerminalSessionDataMeta) => void;
     onExit?: (evt: TerminalSessionExitEvent) => void;
     requireExplicitConnectionReady?: boolean;
+    deferConnectionDuringMoshHandshake?: boolean;
     convertLfToCrlf?: boolean;
     sudoAutofillPassword?: string;
     sudoAutofillCandidates?: SudoPasswordAutofillCandidate[];
@@ -889,7 +890,7 @@ export const attachSessionToTerminal = (
     if (
       opts?.deferConnectionDuringMoshHandshake === true
       && meta?.moshHandshake === true
-      && ctx.passwordPromptActiveRef?.current !== true
+      && meta?.moshHandshakeRequiresUserInput !== true
     ) {
       return;
     }
@@ -953,9 +954,9 @@ export const attachSessionToTerminal = (
       data = sudoAutofill?.handleOutput(data) ?? data;
       writeSessionData(ctx, term, data, ingressBytes, meta);
       ctx.onTerminalOutput?.(data, meta);
-      // Ordinary transports connect on first visible output. Mosh can defer
-      // that transition until its explicit ready event; an interactive
-      // password/OTP prompt still dismisses the overlay so input is reachable.
+      // Ordinary transports connect on first visible output. Mosh defers that
+      // transition until ready unless its SSH bootstrap explicitly reports
+      // that it is blocked on input Netcatty could not answer automatically.
       markConnectedOnFirstOutput(meta);
     },
     { replayBacklog: true },
