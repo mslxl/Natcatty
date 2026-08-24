@@ -680,6 +680,54 @@ test("row-sized Mosh repaint writes do not rescan the viewport for every row", a
   }
 });
 
+test("cursor-restoring Mosh row writes keep repaint work linear", async () => {
+  for (const rows of [40, 80]) {
+    const term = new XTerm({ allowProposedApi: true, cols: 80, rows, scrollback: 20 });
+    const highlighter = new KeywordHighlighter(term);
+    highlighter.setRules(rule(), true);
+    await write(term, Array.from({ length: rows }, (_, index) => `old-${index} ERROR`).join("\r\n"));
+    const internal = highlighter as unknown as {
+      recolorRange(startY: number, endY: number, refresh: boolean, force: boolean): void;
+    };
+    const originalRecolorRange = internal.recolorRange.bind(highlighter);
+    let scannedRows = 0;
+    let refreshes = 0;
+    internal.recolorRange = (startY, endY, refresh, force) => {
+      scannedRows += Math.abs(endY - startY) + 1;
+      if (refresh) refreshes += 1;
+      originalRecolorRange(startY, endY, refresh, force);
+    };
+
+    for (let row = 1; row <= rows; row += 1) {
+      await write(term, `\x1b[${row};1Hnew-${row} ERROR\x1b[1;1H`);
+    }
+
+    assert.deepEqual(uncoloredKeywordLines(term, "ERROR", RED), [], `${rows} rows`);
+    assert.ok(scannedRows <= rows * 2, `${rows} rows scanned ${scannedRows}`);
+    assert.ok(refreshes <= rows * 2, `${rows} rows refreshed ${refreshes} times`);
+    highlighter.dispose();
+    term.dispose();
+  }
+});
+
+test("CUP fragments survive enabling highlighting between writes", async () => {
+  const control = "\x1b[2;1H";
+  for (let split = 1; split < control.length; split += 1) {
+    const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
+    const highlighter = new KeywordHighlighter(term);
+    highlighter.setRules(rule(), false);
+    await write(term, "old-1\r\nold-2\r\nold-3\r\nold-4\r\nold-5");
+    await write(term, control.slice(0, split));
+    highlighter.setRules(rule(), true);
+    await highlighter.whenSettled();
+    await write(term, `${control.slice(split)}target ERROR\x1b[1;1H`);
+
+    assert.equal(cellRgb(term, 1, "ERROR"), RED, `split ${split}`);
+    highlighter.dispose();
+    term.dispose();
+  }
+});
+
 test("cursor-addressed repaint follows VPR and inserted-line row changes", async () => {
   const term = new XTerm({ allowProposedApi: true, cols: 24, rows: 5, scrollback: 20 });
   const highlighter = new KeywordHighlighter(term);

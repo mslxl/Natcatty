@@ -46,8 +46,7 @@ type LogicalLine = {
 };
 
 type AbsoluteRepaintRange = {
-  startRow: number;
-  endRow: number;
+  rows: number[];
   mayTraverseRows: boolean;
 };
 
@@ -370,6 +369,7 @@ export class KeywordHighlighter implements IDisposable {
   private readonly write: XTerm["write"] = (data, callback) => {
     if (this.disposed) return this.originalWrite(data, callback);
     const originModeNeedsSafety = this.trackAbsoluteOriginMode(data);
+    const absoluteControls = this.collectAbsoluteControls(data);
     const startedOnNormal = this.term.buffer.active.type === "normal";
     if (!startedOnNormal && this.compiledPatterns.length === 0 && !this.hasPendingCatchUp()) {
       return this.originalWrite(data, callback);
@@ -380,8 +380,8 @@ export class KeywordHighlighter implements IDisposable {
     }
     const startBaseY = this.term.buffer.active.baseY;
     const startY = startBaseY + this.term.buffer.active.cursorY;
-    const absoluteRepaintRange = typeof data === "string"
-      ? this.resolveAbsoluteRepaintRange(data, originModeNeedsSafety)
+    const absoluteRepaintRange = absoluteControls !== null
+      ? this.resolveAbsoluteRepaintRange(absoluteControls, originModeNeedsSafety)
       : null;
     const bypass = !startedOnNormal || this.shouldBypassWrite(data);
     if (bypass) {
@@ -452,18 +452,17 @@ export class KeywordHighlighter implements IDisposable {
             // write. Recolor the old cursor row and the addressed rows as
             // separate ranges so N row-sized writes stay O(N), rather than
             // rescanning the gaps between them for every write.
-            const addressed = {
-              start: startBaseY + absoluteRepaintRange.startRow,
-              end: startBaseY + absoluteRepaintRange.endRow,
-            };
-            const repaintRanges = [addressed];
-            if (ordinaryFromY < addressed.start || ordinaryFromY > addressed.end) {
+            const repaintRanges = absoluteRepaintRange.rows.map((row) => ({
+              start: startBaseY + row,
+              end: startBaseY + row,
+            }));
+            const includesLine = (line: number) => repaintRanges.some((range) => (
+              line >= range.start && line <= range.end
+            ));
+            if (!includesLine(ordinaryFromY)) {
               repaintRanges.push({ start: ordinaryFromY, end: ordinaryFromY });
             }
-            if (
-              (endY < addressed.start || endY > addressed.end)
-              && endY !== ordinaryFromY
-            ) {
+            if (!includesLine(endY) && endY !== ordinaryFromY) {
               repaintRanges.push({ start: endY, end: endY });
             }
             repaintRanges.sort((left, right) => left.start - right.start);
@@ -608,10 +607,11 @@ export class KeywordHighlighter implements IDisposable {
     return originModeNeedsSafety;
   }
 
-  private resolveAbsoluteRepaintRange(
-    data: string,
-    originModeNeedsSafety: boolean,
-  ): AbsoluteRepaintRange | null {
+  private collectAbsoluteControls(data: string | Uint8Array): string | null {
+    if (typeof data !== "string") {
+      this.absoluteControlTail = "";
+      return null;
+    }
     const controls = this.absoluteControlTail + data;
     this.absoluteControlTail = "";
     const lastEscape = controls.lastIndexOf("\x1b");
@@ -622,12 +622,17 @@ export class KeywordHighlighter implements IDisposable {
         this.absoluteControlTail = suffix.slice(-32);
       }
     }
-    let earliest: number | null = null;
-    let latest: number | null = null;
+    return controls;
+  }
+
+  private resolveAbsoluteRepaintRange(
+    controls: string,
+    originModeNeedsSafety: boolean,
+  ): AbsoluteRepaintRange | null {
+    const rows = new Set<number>();
     const noteRow = (raw: string | undefined) => {
       const row = Math.max(0, (Number.parseInt(raw || "1", 10) || 1) - 1);
-      earliest = earliest === null ? row : Math.min(earliest, row);
-      latest = latest === null ? row : Math.max(latest, row);
+      rows.add(row);
     };
     // CUP/HVP and VPA address a viewport row directly. Mosh's framebuffer
     // diff uses these controls to repaint rows above the current cursor once
@@ -640,9 +645,9 @@ export class KeywordHighlighter implements IDisposable {
     // wider safety range only for writes that actually contain such movement.
     const mayTraverseRows = originModeNeedsSafety
       || /[\n\v\f]|\x1b(?:[DEM8]|\[[\d;?]*[ABEFIJLMSTehlru])/.test(controls); // eslint-disable-line no-control-regex
-    return earliest === null || latest === null
+    return rows.size === 0
       ? null
-      : { startRow: earliest, endRow: latest, mayTraverseRows };
+      : { rows: [...rows].sort((left, right) => left - right), mayTraverseRows };
   }
 
   private readonly reset: XTerm["reset"] = () => {

@@ -138,7 +138,8 @@ if (!process.versions.electron) {
       };
       const rowFrames = Array.from(
         { length: moshRows },
-        (_, index) => "\\x1b[" + (index + 1) + ";1Hnew-" + (index + 1) + " ERROR",
+        (_, index) => "\\x1b[" + (index + 1) + ";1Hnew-" + (index + 1)
+          + " ERROR\\x1b[1;1H",
       );
       await seedMoshRows();
       measuredRecolorRows = 0;
@@ -230,7 +231,7 @@ if (!process.versions.electron) {
     assert.ok(result.moshHighlightCount >= 4, JSON.stringify(result));
     assert.ok(result.splitMoshHighlightCount >= 40, JSON.stringify(result));
     assert.ok(result.splitMoshRecolorRows <= 80, JSON.stringify(result));
-    assert.ok(result.splitMoshRefreshes <= 41, JSON.stringify(result));
+    assert.ok(result.splitMoshRefreshes <= 80, JSON.stringify(result));
     assert.ok(result.splitMoshMs < 500, `split Mosh repaint regressed: ${JSON.stringify(result)}`);
     assert.equal(result.enterRebuildCount, result.rebuildsBeforeEnter, JSON.stringify(result));
     assert.equal(result.rebuildCount, result.rebuildsBeforeEnter + 1, JSON.stringify(result));
