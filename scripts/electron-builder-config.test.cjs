@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
 const config = require("../electron-builder.config.cjs");
 
@@ -176,6 +178,7 @@ test("build.files excludes Vite-bundled renderer-only packages", () => {
     "!node_modules/lexical/**/*",
     "!node_modules/@lexical/**/*",
     "!node_modules/@codemirror/**/*",
+    "!node_modules/katex/**/*",
     "!node_modules/shiki/**/*",
     "!node_modules/@shiki/**/*",
   ]) {
@@ -184,6 +187,14 @@ test("build.files excludes Vite-bundled renderer-only packages", () => {
       `build.files must exclude Vite-bundled renderer package: ${glob}`,
     );
   }
+});
+
+test("KaTeX distribution keeps its license notice", () => {
+  const notice = readFileSync(
+    path.join(__dirname, "..", "public", "licenses", "KaTeX-LICENSE.txt"),
+    "utf8",
+  );
+  assert.match(notice, /Copyright \(c\) 2013-2020 Khan Academy and other contributors/);
 });
 
 test("linux packaging uses multi-size build/icons instead of a single 1024px override", async () => {

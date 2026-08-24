@@ -1467,11 +1467,18 @@ html[data-theme-transition] *::after {
   min-height: 2.25rem;
 }
 
-.netcatty-math-formula-preview math {
+.netcatty-math-formula-preview .katex-display {
   flex: 0 0 auto;
-  font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "KaTeX_Main", serif;
-  letter-spacing: 0.02em;
-  line-height: normal;
+  margin: 0;
+}
+
+.netcatty-math-formula-preview .katex {
+  font-size: 1em;
+  color: inherit;
+}
+
+.netcatty-math-formula-preview .katex-mathml math {
+  flex: 0 0 auto;
 }
 
 .netcatty-math-reading-mode .cm-editor {

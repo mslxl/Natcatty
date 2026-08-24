@@ -92,17 +92,17 @@ import type {
   ActiveTextFormats,
   InlineMarkdownEditorHandle,
   NoteEditorMode,
-} from "./InlineMarkdownEditor";
-import { EMPTY_ACTIVE_FORMATS } from "./InlineMarkdownEditor";
+} from "./noteEditorTypes";
+import { EMPTY_ACTIVE_FORMATS } from "./noteEditorTypes";
 import { NoteTitleInput } from "./NoteTitleInput";
 
 const InlineMarkdownEditor = lazy(() =>
-  import("./InlineMarkdownEditor").then((module) => ({ default: module.InlineMarkdownEditor })),
+  import("./InlineMarkdownEditor.lazy").then((module) => ({ default: module.InlineMarkdownEditor })),
 );
 
 /** Warm the MDXEditor chunk before Suspense. */
 export function prefetchInlineMarkdownEditor(): void {
-  void import("./InlineMarkdownEditor");
+  void import("./InlineMarkdownEditor.lazy");
 }
 
 interface NoteFolderNode {

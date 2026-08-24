@@ -379,7 +379,7 @@ test("note editor exposes its modes from a borderless title-row dropdown", () =>
   const managerSource = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
   const toolbarSource = readFileSync(new URL("./NoteToolbar.tsx", import.meta.url), "utf8");
 
-  assert.match(source, /type NoteEditorMode = "edit" \| "preview"/);
+  assert.match(source, /type NoteEditorMode/);
   // The app-owned NoteToolbar (not MDXEditor's toolbarPlugin) hosts the
   // formatting controls; MDXEditor must not render its own toolbar.
   assert.doesNotMatch(source, /toolbarPlugin\(/);

@@ -44,7 +44,6 @@ import React, {
   useState,
 } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
-import { latexToMathML } from "../../domain/latexToMathML";
 import { resolveRenderedMarkdownLinkHref } from "../../domain/notes";
 import {
   isPointerOnTaskCheckbox,
@@ -63,6 +62,13 @@ import {
   shouldInterceptResolvedNotePaste,
 } from "./noteClipboardPaste";
 import { annotateNoteImageSizes } from "./noteImageLayout";
+import { renderNoteMathFormula } from "./noteMathRenderer";
+import {
+  EMPTY_ACTIVE_FORMATS,
+  type ActiveTextFormats,
+  type InlineMarkdownEditorHandle,
+  type NoteEditorMode,
+} from "./noteEditorTypes";
 
 export {
   annotateNoteImageSizes,
@@ -88,12 +94,6 @@ import {
 } from "../../domain/notes";
 
 export { NoteSourceEditor, type NoteSourceEditorHandle };
-
-export interface InlineMarkdownEditorHandle {
-  executeAction: (action: MarkdownActionType) => void;
-  focus: () => void;
-  scrollToHeading: (heading: NoteHeadingItem, headingIndex: number) => boolean;
-}
 
 const NOTE_HEADING_SELECTOR = [1, 2, 3, 4, 5, 6]
   .map((level) => `.netcatty-mdx-content h${level}`)
@@ -146,8 +146,6 @@ export interface InlineMarkdownEditorProps {
   /** Reports the active text-format toggles at the current selection (toolbar highlight). */
   onActiveFormatsChange?: (formats: ActiveTextFormats) => void;
 }
-
-export type NoteEditorMode = "edit" | "preview" | "source" | "live";
 
 export const NOTE_EDIT_DECORATION_DEBOUNCE_MS = 160;
 
@@ -208,23 +206,6 @@ export const createNoteDecorationMutationScheduler = (
       frame = 0;
     },
   };
-};
-
-/** Active text-format toggles at the current selection (toolbar highlight). */
-export type ActiveTextFormats = {
-  bold: boolean;
-  italic: boolean;
-  underline: boolean;
-  strikethrough: boolean;
-  code: boolean;
-};
-
-export const EMPTY_ACTIVE_FORMATS: ActiveTextFormats = {
-  bold: false,
-  italic: false,
-  underline: false,
-  strikethrough: false,
-  code: false,
 };
 
 export interface NoteEditorDialogActions {
@@ -868,7 +849,7 @@ export const annotateMathFormulaBlocks = (container: HTMLElement, editorMode: st
 
     if (preview.dataset.formulaSource !== formulaSource) {
       preview.dataset.formulaSource = formulaSource;
-      preview.innerHTML = latexToMathML(formulaSource, true);
+      preview.innerHTML = renderNoteMathFormula(formulaSource);
     }
 
     if (editorMode === "preview") {
