@@ -106,7 +106,7 @@ export const NoteModeDropdown: React.FC<NoteModeDropdownProps> = ({
           <ActiveIcon size={15} />
           <span>{activeOption.label}</span>
         </SelectTrigger>
-      <SelectContent align="end" className="w-40">
+      <SelectContent align="end" className="w-max min-w-[10rem]">
         {options.map((option) => {
           const Icon = option.icon;
           return (
@@ -114,9 +114,9 @@ export const NoteModeDropdown: React.FC<NoteModeDropdownProps> = ({
               key={option.mode}
               value={option.mode}
               data-note-mode-option={option.mode}
-              className="h-9"
+              className="h-9 whitespace-nowrap"
             >
-              <span className="flex items-center gap-2"><Icon size={14} />{option.label}</span>
+              <span className="flex items-center gap-2 whitespace-nowrap"><Icon size={14} />{option.label}</span>
             </SelectItem>
           );
         })}
