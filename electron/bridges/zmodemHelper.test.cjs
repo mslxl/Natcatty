@@ -334,6 +334,50 @@ test("handleUpload does not read the next chunk until transport backpressure cle
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test("handleUpload throttles progress IPC by default for every transport", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-progress-"));
+  const filePath = path.join(tempDir, "large-upload.bin");
+  const size = UPLOAD_CHUNK_SIZE + 1;
+  fs.writeFileSync(filePath, Buffer.alloc(size, 0x5a));
+  const progress = [];
+  const originalNow = Date.now;
+  Date.now = () => 1000;
+
+  try {
+    const zsession = {
+      async send_offer() {
+        return {
+          send() {},
+          async end() {},
+        };
+      },
+      async close() {},
+    };
+
+    await handleUpload(zsession, {
+      sessionId: "session-1",
+      getWebContents: () => ({
+        isDestroyed: () => false,
+        send(channel, data) {
+          if (channel === "netcatty:zmodem:progress") progress.push(data);
+        },
+      }),
+      takeDragDropUpload: () => ({
+        filePaths: [filePath],
+        remoteNames: ["large-upload.bin"],
+      }),
+    });
+
+    assert.deepEqual(
+      progress.map((event) => [event.transferred, Boolean(event.finalizing)]),
+      [[0, false], [UPLOAD_CHUNK_SIZE, false], [size, true]],
+    );
+  } finally {
+    Date.now = originalNow;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test("handleUpload progress follows a display rebind during transfer", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-rebind-"));
   const filePath = path.join(tempDir, "upload.txt");
@@ -544,6 +588,46 @@ test("handleUpload does not run timeout recovery when the remote rejects the fin
 
   assert.equal(timeoutNotified, false);
   assert.equal(writes.length, 0);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("handleUpload times out when the remote never answers the offer", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const filePath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  const writes = [];
+  let timeoutNotified = false;
+
+  // rz died before answering ZFILE: send_offer never resolves. The upload
+  // loop must not park here forever — bound it like xfer.end()/close().
+  const zsession = {
+    send_offer: () => new Promise(() => {}),
+    async abort() {},
+    async close() {},
+  };
+
+  await assert.rejects(
+    handleUpload(zsession, {
+      sessionId: "session-1",
+      getWebContents: () => null,
+      writeToRemote: (buf) => {
+        writes.push(Buffer.from(buf));
+        return true;
+      },
+      takeDragDropUpload: () => ({
+        filePaths: [filePath],
+        remoteNames: ["upload.txt"],
+      }),
+      uploadFileEndTimeoutMs: 50,
+      onUploadTimeout: () => {
+        timeoutNotified = true;
+      },
+    }),
+    /Remote did not respond to the offer for upload\.txt/,
+  );
+
+  assert.equal(timeoutNotified, true);
+  assert.ok(writes.length > 0, "CAN abort bytes were sent to the remote");
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
