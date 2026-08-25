@@ -401,6 +401,11 @@ test("note editor exposes its modes from a borderless title-row dropdown", () =>
   assert.match(toolbarSource, /data-note-mode-dropdown-trigger/);
   assert.match(toolbarSource, /data-note-mode-option=\{option\.mode\}/);
   assert.match(toolbarSource, /gap-1\.5 border-0 bg-transparent px-2/);
+  assert.match(toolbarSource, /<SelectContent align="end" className="w-max min-w-\[10rem\]">/);
+  assert.match(
+    toolbarSource,
+    /data-note-mode-option=\{option\.mode\}[\s\S]*?className="h-9 whitespace-nowrap"/,
+  );
   assert.match(toolbarSource, /<Select value=\{normalizedMode\}/);
   assert.doesNotMatch(toolbarSource, /data-note-mode-switch=/);
   assert.match(managerSource, /data-note-title-row[\s\S]*?<NoteModeDropdown[\s\S]*?<NoteToolbar/);
