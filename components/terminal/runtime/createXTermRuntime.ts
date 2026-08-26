@@ -113,6 +113,7 @@ import {
 } from "./terminalImeTextInput";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
+import { sanitizeTerminalInput } from "./terminalInputSanitize";
 import { formatTelnetLocalEcho } from "./telnetLocalEcho";
 import {
   isTerminalFontSizeAction,
@@ -1057,6 +1058,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       skipBroadcast?: boolean;
     },
   ) => {
+    // Strip zero-width / invisible formatting characters that CJK IMEs
+    // (notably Microsoft Pinyin / Sogou on Windows) emit when switching
+    // composition modes. With the 15-graphemes Unicode version these render
+    // at width 0, so they become hidden characters in the command line and
+    // cause the executed command to fail (#3138).
+    data = sanitizeTerminalInput(data);
+    if (!data) return;
+
     // Clipboard paste / typed password while assist is open must dismiss the
     // hint first. Otherwise Enter is still hijacked for confirmFill and can
     // append the host session password after the user's pasted secret (#2198).
