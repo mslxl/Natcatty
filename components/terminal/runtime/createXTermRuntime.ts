@@ -1385,16 +1385,20 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
     // Actual IME remap — Kitty associated-text composition when negotiated;
     // otherwise send the committed glyph (report-all alone cannot carry it).
-    const encoded = encodeKittyCompositionText(kittyKeyboardMode, text);
+    // Sanitize before encoding so zero-width IME artifacts do not become
+    // Kitty escape sequences that bypass the handleTerminalInputData guard (#3138).
+    const sanitizedText = sanitizeTerminalInput(text);
+    if (!sanitizedText) return;
+    const encoded = encodeKittyCompositionText(kittyKeyboardMode, sanitizedText);
     if (encoded) {
       handleTerminalInputData(encoded, { source: "kitty" });
     } else {
       if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
         suppressNextTerminalDataBroadcast = true;
       }
-      handleTerminalInputData(text);
+      handleTerminalInputData(sanitizedText);
     }
-    broadcastKittyInput({ kind: "text", text });
+    broadcastKittyInput({ kind: "text", text: sanitizedText });
   };
   const flushImeTextInputDeferral = () => {
     const fallback = imeTextInputDeferredKey;
@@ -2138,16 +2142,20 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         window.clearTimeout(kittyCompositionClearTimer);
         kittyCompositionClearTimer = undefined;
       }
-      const encoded = encodeKittyCompositionText(kittyKeyboardMode, data);
+      // Sanitize before encoding so zero-width IME artifacts do not become
+      // Kitty escape sequences that bypass the handleTerminalInputData guard (#3138).
+      const sanitizedData = sanitizeTerminalInput(data);
+      if (!sanitizedData) return;
+      const encoded = encodeKittyCompositionText(kittyKeyboardMode, sanitizedData);
       if (encoded) {
         handleTerminalInputData(encoded, { source: "kitty" });
       } else {
         if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
           suppressNextTerminalDataBroadcast = true;
         }
-        handleTerminalInputData(data);
+        handleTerminalInputData(sanitizedData);
       }
-      broadcastKittyInput({ kind: "text", text: data });
+      broadcastKittyInput({ kind: "text", text: sanitizedData });
       return;
     }
     if (broadcastLegacyDataPending) {

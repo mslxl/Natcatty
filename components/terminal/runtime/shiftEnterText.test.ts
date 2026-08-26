@@ -177,7 +177,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /const encoded = encodeKittyCompositionText\(kittyKeyboardMode, data\);[\s\S]*if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(data\);[\s\S]*broadcastKittyInput\(\{ kind: "text", text: data \}\);/,
+    /const sanitizedData = sanitizeTerminalInput\(data\);[\s\S]*const encoded = encodeKittyCompositionText\(kittyKeyboardMode, sanitizedData\);[\s\S]*if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(sanitizedData\);[\s\S]*broadcastKittyInput\(\{ kind: "text", text: sanitizedData \}\);/,
   );
   assert.match(source, /ctx\.container\.addEventListener\("input", markKittyTextInput, true\);/);
   assert.match(

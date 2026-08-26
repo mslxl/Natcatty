@@ -18,9 +18,14 @@ test("sanitizeTerminalInput strips soft hyphen (U+00AD)", () => {
   assert.equal(sanitizeTerminalInput("ls\u00ad"), "ls");
 });
 
-test("sanitizeTerminalInput strips ZWNJ (U+200C) and ZWJ (U+200D)", () => {
-  assert.equal(sanitizeTerminalInput("a\u200cb"), "ab");
-  assert.equal(sanitizeTerminalInput("a\u200db"), "ab");
+test("sanitizeTerminalInput preserves ZWNJ (U+200C) and ZWJ (U+200D)", () => {
+  // ZWNJ is meaningful in Persian orthography; ZWJ joins emoji sequences.
+  // PTYs / remote programs can process these raw bytes, so they must not be
+  // stripped — otherwise filenames, args, or passwords containing them break.
+  assert.equal(sanitizeTerminalInput("a\u200cb"), "a\u200cb");
+  assert.equal(sanitizeTerminalInput("a\u200db"), "a\u200db");
+  // Emoji with ZWJ (👨‍💻 = man + ZWJ + laptop) is preserved
+  assert.equal(sanitizeTerminalInput("👨\u200d💻"), "👨\u200d💻");
 });
 
 test("sanitizeTerminalInput strips directional marks (U+200E, U+200F)", () => {
@@ -37,7 +42,13 @@ test("sanitizeTerminalInput strips word joiner and invisible operators (U+2060-2
 
 test("sanitizeTerminalInput returns empty string for zero-width-only input", () => {
   assert.equal(sanitizeTerminalInput("\u200b"), "");
-  assert.equal(sanitizeTerminalInput("\u200b\ufeff\u200c\u200d"), "");
+  assert.equal(sanitizeTerminalInput("\u200b\ufeff\u2060"), "");
+});
+
+test("sanitizeTerminalInput does not strip ZWNJ/ZWJ-only input", () => {
+  assert.equal(sanitizeTerminalInput("\u200c"), "\u200c");
+  assert.equal(sanitizeTerminalInput("\u200d"), "\u200d");
+  assert.equal(sanitizeTerminalInput("\u200c\u200d"), "\u200c\u200d");
 });
 
 test("sanitizeTerminalInput preserves regular ASCII and control characters", () => {

@@ -8,18 +8,15 @@
  * version they render at width 0 — so the command line looks normal but
  * contains hidden characters that cause the executed command to fail (#3138).
  *
- * These characters are never legitimate in terminal input: the shell cannot
- * display or process them, and a remote PTY has no grapheme renderer.
- * Stripping them from the input path does not affect output rendering,
- * which goes through a separate write pipeline.
+ * ZWNJ (U+200C) and ZWJ (U+200D) are intentionally preserved: they carry
+ * meaning in Persian orthography and emoji sequences, and PTYs / remote
+ * programs can process those raw bytes even though they occupy no display
+ * width. Stripping them would corrupt command arguments, filenames, and
+ * passwords that legitimately contain them.
  */
 
 // U+00AD  SOFT HYPHEN
 // U+200B  ZERO WIDTH SPACE
-// U+200C  ZERO WIDTH NON-JOINER
-// U+200D  ZERO WIDTH JOINER  (also used inside emoji sequences; in terminal
-//                           input the shell receives raw bytes and cannot
-//                           benefit from a joiner, so stripping is safe)
 // U+200E  LEFT-TO-RIGHT MARK
 // U+200F  RIGHT-TO-LEFT MARK
 // U+2060  WORD JOINER
@@ -28,7 +25,9 @@
 // U+2063  INVISIBLE SEPARATOR
 // U+2064  INVISIBLE PLUS
 // U+FEFF  ZERO WIDTH NO-BREAK SPACE / BOM
-const ZERO_WIDTH_INPUT_RE = /[\u00ad\u200b-\u200f\u2060-\u2064\ufeff]/g;
+//
+// U+200C (ZWNJ) and U+200D (ZWJ) are intentionally excluded.
+const ZERO_WIDTH_INPUT_RE = /[\u00ad\u200b\u200e-\u200f\u2060-\u2064\ufeff]/g;
 
 /**
  * Remove zero-width / invisible formatting characters from terminal input.

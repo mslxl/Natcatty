@@ -132,7 +132,7 @@ test("createXTermRuntime defers ASCII punctuation keydowns to insertText", () =>
   // Unchanged ASCII must encode via Kitty key events, not composition text.
   const unchangedIdx = runtimeSource.indexOf("isUnchangedDeferredImeTextInput(deferredKey, text)");
   const compositionIdx = runtimeSource.indexOf(
-    "encodeKittyCompositionText(kittyKeyboardMode, text)",
+    "encodeKittyCompositionText(kittyKeyboardMode, sanitizedText)",
   );
   assert.ok(unchangedIdx >= 0 && compositionIdx > unchangedIdx);
   // Even when the source writes the literal glyph, broadcast peers still get
@@ -161,6 +161,6 @@ test("createXTermRuntime defers ASCII punctuation keydowns to insertText", () =>
   // (report-all without associated text).
   assert.match(
     runtimeSource.slice(compositionIdx, compositionIdx + 420),
-    /if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(text\);/,
+    /if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(sanitizedText\);/,
   );
 });
