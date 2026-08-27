@@ -37,6 +37,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Dropdown, DropdownContent, DropdownTrigger } from './ui/dropdown';
 import { SortDropdown, SortMode } from './ui/sort-dropdown';
 import { toast } from './ui/toast';
+import { isNonPrimaryPointer, primaryOnlyDragHandlers } from './ui/primaryOnlyDrag';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
 import { SnippetsRightPanel } from './SnippetsRightPanel';
@@ -65,23 +66,6 @@ import {
   markVaultInsideDropIndicator as markSnippetInsideIndicator,
   useVaultGridLayoutAnimation,
 } from './vault/vaultReorderDrag';
-
-const isNonPrimaryPointer = (event: { button?: number; buttons?: number }): boolean =>
-  event.button === 2
-  || event.buttons === 2
-  || (typeof event.button === 'number' && event.button !== 0);
-
-const primaryOnlyDragHandlers = (enabled: boolean) => ({
-  onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) event.currentTarget.draggable = false;
-  },
-  onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
-    event.currentTarget.draggable = enabled;
-  },
-  onPointerCancel: (event: React.PointerEvent<HTMLElement>) => {
-    event.currentTarget.draggable = enabled;
-  },
-});
 
 interface SnippetsManagerProps {
   snippets: Snippet[];

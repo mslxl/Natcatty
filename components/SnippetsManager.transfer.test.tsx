@@ -124,8 +124,8 @@ const snippetsManagerSource = readFileSync(new URL("./SnippetsManager.tsx", impo
 test("vault snippet package and snippet cards use asChild context-menu triggers", () => {
   assert.equal(snippetsManagerSource.match(/<ContextMenuTrigger asChild>/g)?.length, 2);
   assert.doesNotMatch(snippetsManagerSource, /<ContextMenuTrigger>(?! asChild)/);
+  assert.match(snippetsManagerSource, /from '\.\/ui\/primaryOnlyDrag'/);
   assert.match(snippetsManagerSource, /primaryOnlyDragHandlers/);
-  assert.match(snippetsManagerSource, /event\.button !== 0/);
   assert.match(snippetsManagerSource, /deleteSnippetPackage/);
   assert.match(snippetsManagerSource, /renameSnippetPackage/);
 });

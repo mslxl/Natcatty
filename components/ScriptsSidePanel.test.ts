@@ -151,7 +151,7 @@ test("scripts side panel package rows wrap in a rename and delete context menu",
 });
 
 test("scripts side panel does not start a drag from a non-primary pointer", () => {
+  assert.match(source, /from '\.\/ui\/primaryOnlyDrag'/);
   assert.match(source, /isNonPrimaryPointer/);
   assert.match(source, /primaryOnlyDragHandlers/);
-  assert.match(source, /event\.button !== 0/);
 });

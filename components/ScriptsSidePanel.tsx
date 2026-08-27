@@ -51,29 +51,13 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { SnippetCommandTooltipContent } from './snippets/SnippetCommandTooltipContent';
 import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
+import { isNonPrimaryPointer, primaryOnlyDragHandlers } from './ui/primaryOnlyDrag';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 const toolbarIconButtonClass =
   'h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:pointer-events-none';
 
 const SCRIPT_ROW_HEIGHT = 34;
-
-const isNonPrimaryPointer = (event: { button?: number; buttons?: number }): boolean =>
-  event.button === 2
-  || event.buttons === 2
-  || (typeof event.button === 'number' && event.button !== 0);
-
-const primaryOnlyDragHandlers = (enabled: boolean) => ({
-  onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0) event.currentTarget.draggable = false;
-  },
-  onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
-    event.currentTarget.draggable = enabled;
-  },
-  onPointerCancel: (event: React.PointerEvent<HTMLElement>) => {
-    event.currentTarget.draggable = enabled;
-  },
-});
 
 const isRootPackagePath = (path: string): boolean => {
   const body = path.startsWith('/') ? path.slice(1) : path;
