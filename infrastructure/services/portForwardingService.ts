@@ -6,6 +6,7 @@
 
 import { Host, Identity, KnownHost, PortForwardingRule, SSHKey, TerminalSettings } from '../../domain/models';
 import {
+  isPortForwardingRuleStartable,
   isPortForwardingRuntimeBusy,
   selectStartablePortForwardingRules,
   selectStoppablePortForwardingRules,
@@ -1275,10 +1276,15 @@ export type StopAllActivePortForwardsResult = {
 };
 
 type StartAllPortForwardHostResolver = (rule: PortForwardingRule) => Host | undefined;
+type StartAllPortForwardRuleLookup = (ruleId: string) => PortForwardingRule | undefined;
+
+const isTrackedRuntimeBusy = (ruleId: string): boolean =>
+  isPortForwardingRuntimeBusy(getActiveConnection(ruleId));
 
 /**
  * Start each inactive/error rule sequentially via startPortForward.
- * Skips rules that already have an active or connecting runtime tunnel.
+ * Re-reads the live rule before each start so deletes/edits during the
+ * queue are honored. Skips tracked active, connecting, or error runtimes.
  */
 export const startAllPortForwards = async (
   rules: PortForwardingRule[],
@@ -1289,6 +1295,7 @@ export const startAllPortForwards = async (
   onStatusChange: (ruleId: string, status: PortForwardingRule['status'], error?: string) => void,
   terminalSettings?: Pick<TerminalSettings, 'verifyHostKeys' | 'keepaliveInterval' | 'keepaliveCountMax'>,
   knownHosts?: KnownHost[],
+  getRule?: StartAllPortForwardRuleLookup,
 ): Promise<StartAllPortForwardsResult> => {
   const result: StartAllPortForwardsResult = {
     started: 0,
@@ -1296,17 +1303,15 @@ export const startAllPortForwards = async (
     failed: 0,
     errors: [],
   };
-  const startableIds = new Set(
-    selectStartablePortForwardingRules(
-      rules,
-      (ruleId) => isPortForwardingRuntimeBusy(getActiveConnection(ruleId)),
-    ).map((rule) => rule.id),
-  );
-  result.skipped = rules.length - startableIds.size;
+  const queuedIds = selectStartablePortForwardingRules(rules, isTrackedRuntimeBusy)
+    .map((rule) => rule.id);
+  result.skipped = rules.length - queuedIds.length;
+  const resolveLiveRule = (ruleId: string): PortForwardingRule | undefined =>
+    getRule ? getRule(ruleId) : rules.find((rule) => rule.id === ruleId);
 
-  for (const rule of rules) {
-    if (!startableIds.has(rule.id)) continue;
-    if (isPortForwardingRuntimeBusy(getActiveConnection(rule.id))) {
+  for (const ruleId of queuedIds) {
+    const rule = resolveLiveRule(ruleId);
+    if (!rule || !isPortForwardingRuleStartable(rule, isTrackedRuntimeBusy(rule.id))) {
       result.skipped += 1;
       continue;
     }
@@ -1353,10 +1358,7 @@ export const stopAllActivePortForwards = async (
   rules: PortForwardingRule[],
   onStatusChange: (ruleId: string, status: PortForwardingRule['status'], error?: string) => void,
 ): Promise<StopAllActivePortForwardsResult> => {
-  const targets = selectStoppablePortForwardingRules(
-    rules,
-    (ruleId) => isPortForwardingRuntimeBusy(getActiveConnection(ruleId)),
-  );
+  const targets = selectStoppablePortForwardingRules(rules, isTrackedRuntimeBusy);
   const result: StopAllActivePortForwardsResult = {
     stopped: 0,
     failed: 0,

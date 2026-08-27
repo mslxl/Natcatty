@@ -1813,3 +1813,123 @@ test("stopAllActivePortForwards stops running rules then calls backend stopAll",
   assert.equal(getActiveConnection("bulk-stop-2"), undefined);
 });
 
+test("startAllPortForwards re-reads live rules before each queued start", async () => {
+  const started: Array<{ ruleId: string; localPort: number }> = [];
+  const liveRules = [
+    rule({ id: "bulk-live-1", label: "One", status: "inactive", localPort: 18081 }),
+    rule({ id: "bulk-live-2", label: "Two", status: "inactive", localPort: 18082 }),
+    rule({ id: "bulk-live-3", label: "Three", status: "inactive", localPort: 18083 }),
+  ];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async (options: { ruleId: string; localPort: number }) => {
+          started.push({ ruleId: options.ruleId, localPort: options.localPort });
+          if (options.ruleId === "bulk-live-1") {
+            const removed = liveRules.findIndex((item) => item.id === "bulk-live-2");
+            if (removed >= 0) liveRules.splice(removed, 1);
+            const edited = liveRules.findIndex((item) => item.id === "bulk-live-3");
+            if (edited >= 0) {
+              liveRules[edited] = { ...liveRules[edited], localPort: 19083 };
+            }
+          }
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          return { success: true };
+        },
+        onPortForwardStatus: () => () => undefined,
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+      },
+    },
+  });
+
+  const snapshot = [...liveRules];
+  const result = await startAllPortForwards(
+    snapshot,
+    () => host(),
+    [host()],
+    [],
+    [],
+    () => undefined,
+    undefined,
+    undefined,
+    (ruleId) => liveRules.find((item) => item.id === ruleId),
+  );
+
+  assert.deepEqual(started, [
+    { ruleId: "bulk-live-1", localPort: 18081 },
+    { ruleId: "bulk-live-3", localPort: 19083 },
+  ]);
+  assert.equal(result.started, 2);
+  assert.equal(result.failed, 0);
+  assert.equal(result.skipped, 1);
+
+  stopAndCleanupRule("bulk-live-1");
+  stopAndCleanupRule("bulk-live-3");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+test("startAllPortForwards skips tracked error runtimes and stopAll stops them", async () => {
+  const startedRuleIds: string[] = [];
+  const stoppedRuleIds: string[] = [];
+  let failNextStop = true;
+  let stopAllCalls = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async (options: { ruleId: string }) => {
+          startedRuleIds.push(options.ruleId);
+          return { success: true };
+        },
+        onPortForwardStatus: () => () => undefined,
+        stopPortForwardByRuleId: async (ruleId: string) => {
+          if (failNextStop) {
+            failNextStop = false;
+            return { stopped: 0, failed: 1, errors: ["stop failed"] };
+          }
+          stoppedRuleIds.push(ruleId);
+          return { stopped: 1, failed: 0, errors: [] };
+        },
+        stopAllPortForwards: async () => {
+          stopAllCalls += 1;
+        },
+      },
+    },
+  });
+
+  const trackedError = rule({ id: "bulk-tracked-error", label: "Tracked", status: "inactive" });
+  const idle = rule({ id: "bulk-idle-after-error", label: "Idle", status: "inactive" });
+  await startPortForward(trackedError, host(), [], [], [], () => undefined);
+  const failedStop = await stopPortForward(trackedError.id, () => undefined);
+  assert.equal(failedStop.success, false);
+  assert.equal(getActiveConnection("bulk-tracked-error")?.status, "error");
+
+  startedRuleIds.length = 0;
+  const startResult = await startAllPortForwards(
+    [trackedError, idle],
+    () => host(),
+    [host()],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.deepEqual(startedRuleIds, ["bulk-idle-after-error"]);
+  assert.equal(startResult.started, 1);
+  assert.equal(startResult.skipped, 1);
+
+  const stopResult = await stopAllActivePortForwards(
+    [trackedError, idle],
+    () => undefined,
+  );
+  assert.ok(stoppedRuleIds.includes("bulk-tracked-error"));
+  assert.ok(stoppedRuleIds.includes("bulk-idle-after-error"));
+  assert.equal(stopResult.stopped, 2);
+  assert.equal(stopAllCalls, 1);
+
+  stopAndCleanupRule("bulk-tracked-error");
+  stopAndCleanupRule("bulk-idle-after-error");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+

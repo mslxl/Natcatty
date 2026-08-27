@@ -6,7 +6,10 @@ export type PortForwardingRuntimeLike = {
 
 export const isPortForwardingRuntimeBusy = (
   connection?: PortForwardingRuntimeLike | null,
-): boolean => connection?.status === "active" || connection?.status === "connecting";
+): boolean =>
+  connection?.status === "active"
+  || connection?.status === "connecting"
+  || connection?.status === "error";
 
 export const isPortForwardingRuleStartable = (
   rule: Pick<PortForwardingRule, "status">,

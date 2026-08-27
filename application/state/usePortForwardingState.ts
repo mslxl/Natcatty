@@ -759,6 +759,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
         },
         terminalSettings,
         knownHosts,
+        (ruleId) => globalRules.find((rule) => rule.id === ruleId),
       );
     },
     [setRuleStatus],

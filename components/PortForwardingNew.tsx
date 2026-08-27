@@ -29,7 +29,6 @@ import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig"
 import {
   isPortForwardingRuleStartable,
   isPortForwardingRuleStoppable,
-  isPortForwardingRuntimeBusy,
 } from "../domain/portForwardingBulkActions";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import { cn } from "../lib/utils";
@@ -253,20 +252,13 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     [stopTunnel, t],
   );
 
-  const isRuleRuntimeBusy = useCallback(
-    (rule: PortForwardingRule) =>
-      isPortForwardingRuntimeBusy({ status: rule.status }) ||
-      (hasRuntimeTunnel(rule.id) && rule.status !== "error"),
-    [hasRuntimeTunnel],
-  );
-
   const startableRules = useMemo(
-    () => rules.filter((rule) => isPortForwardingRuleStartable(rule, isRuleRuntimeBusy(rule))),
-    [isRuleRuntimeBusy, rules],
+    () => rules.filter((rule) => isPortForwardingRuleStartable(rule, hasRuntimeTunnel(rule.id))),
+    [hasRuntimeTunnel, rules],
   );
   const stoppableRules = useMemo(
-    () => rules.filter((rule) => isPortForwardingRuleStoppable(rule, isRuleRuntimeBusy(rule))),
-    [isRuleRuntimeBusy, rules],
+    () => rules.filter((rule) => isPortForwardingRuleStoppable(rule, hasRuntimeTunnel(rule.id))),
+    [hasRuntimeTunnel, rules],
   );
 
   const handleStartAll = useCallback(async () => {

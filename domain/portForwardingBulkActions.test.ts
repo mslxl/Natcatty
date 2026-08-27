@@ -24,10 +24,10 @@ const rule = (overrides: Partial<PortForwardingRule>): PortForwardingRule => ({
 });
 
 describe("portForwardingBulkActions", () => {
-  it("treats active and connecting runtimes as busy", () => {
+  it("treats tracked active, connecting, and error runtimes as busy", () => {
     assert.equal(isPortForwardingRuntimeBusy({ status: "active" }), true);
     assert.equal(isPortForwardingRuntimeBusy({ status: "connecting" }), true);
-    assert.equal(isPortForwardingRuntimeBusy({ status: "error" }), false);
+    assert.equal(isPortForwardingRuntimeBusy({ status: "error" }), true);
     assert.equal(isPortForwardingRuntimeBusy({ status: "inactive" }), false);
     assert.equal(isPortForwardingRuntimeBusy(undefined), false);
   });
@@ -38,6 +38,7 @@ describe("portForwardingBulkActions", () => {
     assert.equal(isPortForwardingRuleStartable(rule({ status: "unknown" }), false), false);
     assert.equal(isPortForwardingRuleStartable(rule({ status: "inactive" }), true), false);
     assert.equal(isPortForwardingRuleStartable(rule({ status: "error" }), true), false);
+    assert.equal(isPortForwardingRuleStartable(rule({ status: "inactive" }), true), false);
     assert.equal(isPortForwardingRuleStartable(rule({ status: "active" }), false), false);
     assert.equal(isPortForwardingRuleStartable(rule({ status: "connecting" }), false), false);
   });
@@ -46,6 +47,7 @@ describe("portForwardingBulkActions", () => {
     assert.equal(isPortForwardingRuleStoppable(rule({ status: "active" }), false), true);
     assert.equal(isPortForwardingRuleStoppable(rule({ status: "connecting" }), false), true);
     assert.equal(isPortForwardingRuleStoppable(rule({ status: "inactive" }), true), true);
+    assert.equal(isPortForwardingRuleStoppable(rule({ status: "error" }), true), true);
     assert.equal(isPortForwardingRuleStoppable(rule({ status: "error" }), false), false);
     assert.equal(isPortForwardingRuleStoppable(rule({ status: "inactive" }), false), false);
     assert.equal(isPortForwardingRuleStoppable(rule({ status: "unknown" }), false), false);
@@ -58,9 +60,10 @@ describe("portForwardingBulkActions", () => {
       rule({ id: "active", status: "active" }),
       rule({ id: "connecting", status: "connecting" }),
       rule({ id: "busy-inactive", status: "inactive" }),
+      rule({ id: "error-runtime", status: "error" }),
       rule({ id: "unknown", status: "unknown" }),
     ];
-    const busy = new Set(["busy-inactive", "active", "connecting"]);
+    const busy = new Set(["busy-inactive", "active", "connecting", "error-runtime"]);
 
     assert.deepEqual(
       selectStartablePortForwardingRules(rules, (id) => busy.has(id)).map((item) => item.id),
@@ -68,7 +71,7 @@ describe("portForwardingBulkActions", () => {
     );
     assert.deepEqual(
       selectStoppablePortForwardingRules(rules, (id) => busy.has(id)).map((item) => item.id),
-      ["active", "connecting", "busy-inactive"],
+      ["active", "connecting", "busy-inactive", "error-runtime"],
     );
   });
 });
