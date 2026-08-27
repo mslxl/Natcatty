@@ -1252,7 +1252,7 @@ export const InlineMarkdownEditor = React.memo(
       // The new note's markdown gets a fresh MDX import; clear a previous
       // note's unrenderable-markdown fallback.
       setMdxParseFailure(null);
-      setMdxRetryMarkdown(null);
+      setMdxRetry(null);
       // Keep both refs in displayMarkdown space so public-path normalization
       // does not look like a divergent local draft.
       latestMarkdownRef.current = markdown;
@@ -1401,7 +1401,7 @@ export const InlineMarkdownEditor = React.memo(
     // Mode changes remount the rich editor (key={editorMode}); give its MDX
     // import a fresh chance after an unrenderable-markdown fallback.
     setMdxParseFailure(null);
-    setMdxRetryMarkdown(null);
+    setMdxRetry(null);
   }, [editorMode]);
 
   const getHostPickerContext = useCallback(() => {
@@ -1593,13 +1593,14 @@ export const InlineMarkdownEditor = React.memo(
   // One-shot markdown for the retry after a fallback: NotesManager debounces
   // source drafts, so the `value` prop can still hold the pre-fix body when
   // the user retries right after editing in the fallback. Seed that retry
-  // import from the editor's own latest accepted source instead.
-  const [mdxRetryMarkdown, setMdxRetryMarkdown] = useState<string | null>(null);
+  // import from the editor's own latest accepted source instead, but only while
+  // the parent prop is still the stale body that originally failed.
+  const [mdxRetry, setMdxRetry] = useState<{ markdown: string; staleValue: string } | null>(null);
 
   const retryRichNoteEditor = useCallback(() => {
-    setMdxRetryMarkdown(latestSourceMarkdownRef.current);
+    setMdxRetry({ markdown: latestSourceMarkdownRef.current, staleValue: value });
     setMdxParseFailure(null);
-  }, []);
+  }, [value]);
 
   const insertHostLink = useCallback((host: Host) => {
     const link = `[${getHostLinkLabel(host)}](${formatSshDeepLinkForHost(host)})`;
@@ -2185,8 +2186,8 @@ export const InlineMarkdownEditor = React.memo(
           key={editorMode}
           ref={editorRef}
           markdown={
-            mdxRetryMarkdown !== null && mdxRetryMarkdown !== value
-              ? normalizeNotePublicAssetPaths(mdxRetryMarkdown)
+            mdxRetry !== null && value === mdxRetry.staleValue
+              ? normalizeNotePublicAssetPaths(mdxRetry.markdown)
               : displayMarkdown
           }
           placeholder={placeholder}
