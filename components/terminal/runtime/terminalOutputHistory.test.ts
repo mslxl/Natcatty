@@ -61,6 +61,28 @@ test("a cursor-addressed frame without newlines stays inside the character budge
   assert.ok(transcript.includes("frame 199"), transcript.slice(-200));
 });
 
+test("8-bit control strings are consumed through their terminator", () => {
+  // C1 OSC (0x9d) with C1 ST (0x9c) must not leak its payload.
+  assert.equal(stripTerminalDisplayToPlainText("\x9d0;SECRET\x9ctail").text, "tail");
+  // DCS (0x90), SOS (0x98), PM (0x9e) and APC (0x9f) use the same terminator.
+  assert.equal(stripTerminalDisplayToPlainText("\x90payload\x9ctail").text, "tail");
+  assert.equal(stripTerminalDisplayToPlainText("\x98payload\x9ctail").text, "tail");
+  assert.equal(stripTerminalDisplayToPlainText("\x9epayload\x9ctail").text, "tail");
+  assert.equal(stripTerminalDisplayToPlainText("\x9fpayload\x9ctail").text, "tail");
+
+  const first = stripTerminalDisplayToPlainText("ok\x9d0;title");
+  assert.equal(first.text, "ok");
+  assert.equal(first.pending, "\x9d0;title");
+  assert.equal(stripTerminalDisplayToPlainText("\x9ctail", first.pending).text, "tail");
+});
+
+test("tabs expand to terminal tab stops so preview rows wrap as they render", () => {
+  const history = createTerminalOutputHistoryPreview();
+  history.append("a\tb\n");
+  history.append("abc\td\n");
+  assert.deepEqual([...history.getLines()], ["a       b", "abc     d"]);
+});
+
 test("bare carriage returns overwrite the line they restart", () => {
   const history = createTerminalOutputHistoryPreview();
   history.append("downloading 10%\r");

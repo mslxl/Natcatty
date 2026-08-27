@@ -30,8 +30,16 @@ const MAX_PENDING_ESCAPE_CHARS = 4096;
 
 export const DEFAULT_OUTPUT_HISTORY_MAX_LINES = 2000;
 export const DEFAULT_OUTPUT_HISTORY_MAX_CHARS = 200_000;
+/** xterm's default tab stop interval, used when expanding tabs for the preview. */
+const TERMINAL_TAB_STOP_COLUMNS = 8;
 
-const isEscapeIntroducer = (ch: string): boolean => ch === ESC || ch === C1_CSI;
+// 8-bit (C1) control string introducers: DCS, SOS, OSC, PM, APC. Their
+// payloads must be consumed with them, not left as transcript text.
+const isC1ControlStringIntroducer = (ch: string): boolean =>
+  ch === "\x90" || ch === "\x98" || ch === "\x9d" || ch === "\x9e" || ch === "\x9f";
+
+const isEscapeIntroducer = (ch: string): boolean =>
+  ch === ESC || ch === C1_CSI || isC1ControlStringIntroducer(ch);
 
 const findEscapeIntroducer = (input: string, from: number): number => {
   for (let i = from; i < input.length; i += 1) {
@@ -68,7 +76,9 @@ const isEscapeFinalByte = (ch: string): boolean => ch >= "0" && ch <= "~";
 
 /** Index past the escape sequence at `start`, or null while it is incomplete. */
 const consumeEscapeSequence = (input: string, start: number): number | null => {
-  if (input[start] === C1_CSI) return consumeCsiBody(input, start + 1);
+  const introducer = input[start];
+  if (introducer === C1_CSI) return consumeCsiBody(input, start + 1);
+  if (isC1ControlStringIntroducer(introducer)) return consumeControlString(input, start + 1);
   const second = input[start + 1];
   if (second === undefined) return null;
   if (second === "[") return consumeCsiBody(input, start + 2);
@@ -260,6 +270,23 @@ export const createTerminalOutputHistoryPreview = (options?: {
     }
   };
 
+  /**
+   * Write one span at the open line's cursor. A cursor-addressed redraw
+   * (cursor-home CSI stripped, no LF) would keep appending frames to the open
+   * line forever, so the budget is enforced here: the line is committed once it
+   * reaches the cap and each span is clipped to the remaining room, keeping the
+   * copy every write makes bounded.
+   */
+  const writeSpan = (span: string) => {
+    if (!span) return;
+    if (current.length >= maxChars) commitCurrentLine();
+    const clipped = span.slice(0, maxChars - current.length);
+    current = cursor >= current.length
+      ? current + clipped
+      : current.slice(0, cursor) + clipped + current.slice(cursor + clipped.length);
+    cursor = cursor >= current.length ? current.length : cursor + clipped.length;
+  };
+
   const writeText = (text: string) => {
     let i = 0;
     while (i < text.length) {
@@ -279,19 +306,26 @@ export const createTerminalOutputHistoryPreview = (options?: {
         i += 1;
         continue;
       }
+      if (ch === "\t") {
+        // Expand to the next 8-column tab stop so row widths match how the
+        // preview overlay renders the text; a literal tab renders at the tab
+        // stop and would be clipped instead of wrapped onto a continuation row.
+        const padding = TERMINAL_TAB_STOP_COLUMNS - (cursor % TERMINAL_TAB_STOP_COLUMNS);
+        writeSpan(" ".repeat(padding));
+        i += 1;
+        continue;
+      }
       let end = i;
-      while (end < text.length && text[end] !== "\n" && text[end] !== "\r" && text[end] !== "\b") {
+      while (
+        end < text.length
+        && text[end] !== "\n"
+        && text[end] !== "\r"
+        && text[end] !== "\b"
+        && text[end] !== "\t"
+      ) {
         end += 1;
       }
-      // A cursor-addressed redraw (cursor-home CSI stripped, no LF) would keep
-      // appending to `current` forever; commit it at the budget so neither the
-      // open line nor the copy each append makes can grow without bound.
-      if (current.length >= maxChars) commitCurrentLine();
-      const span = text.slice(i, end).slice(0, maxChars - current.length);
-      current = cursor >= current.length
-        ? current + span
-        : current.slice(0, cursor) + span + current.slice(cursor + span.length);
-      cursor = cursor >= current.length ? current.length : cursor + span.length;
+      writeSpan(text.slice(i, end));
       i = end;
     }
   };
