@@ -200,6 +200,10 @@ function getTempDir() {
       if (error?.code !== "ENOENT" && !identityChanged) throw error;
       cachedTempDir = null;
       cachedTempDirIdentity = null;
+      // The previous key file lived on the old inode (or vanished with ENOENT).
+      // Drop it so the next getToolOutputSigningKey() reloads from the rebound root.
+      toolOutputSigningKeyPromise = Promise.resolve(null);
+      toolOutputSigningKeyRecoveryPromise = null;
     }
   }
   
