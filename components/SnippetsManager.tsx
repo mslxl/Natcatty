@@ -26,6 +26,7 @@ import {
 } from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
+import { deleteSnippetPackage, renameSnippetPackage } from '../domain/snippetPackage.ts';
 import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
 import { DEFAULT_SCRIPT_TEMPLATE, isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
@@ -64,6 +65,23 @@ import {
   markVaultInsideDropIndicator as markSnippetInsideIndicator,
   useVaultGridLayoutAnimation,
 } from './vault/vaultReorderDrag';
+
+const isNonPrimaryPointer = (event: { button?: number; buttons?: number }): boolean =>
+  event.button === 2
+  || event.buttons === 2
+  || (typeof event.button === 'number' && event.button !== 0);
+
+const primaryOnlyDragHandlers = (enabled: boolean) => ({
+  onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) event.currentTarget.draggable = false;
+  },
+  onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
+    event.currentTarget.draggable = enabled;
+  },
+  onPointerCancel: (event: React.PointerEvent<HTMLElement>) => {
+    event.currentTarget.draggable = enabled;
+  },
+});
 
 interface SnippetsManagerProps {
   snippets: Snippet[];
@@ -1161,19 +1179,9 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   };
 
   const performDeletePackage = (path: string) => {
-    const keep = packages.filter((p) => !(p === path || p.startsWith(path + '/')));
-    
-    const updatedSnippets = snippets.map((s) => {
-      if (!s.package) return s;
-      if (s.package === path || s.package.startsWith(path + '/')) {
-        return { ...s, package: '' };
-      }
-      return s;
-    });
-    
-    onPackagesChange(keep);
-    
-    onBulkSave(updatedSnippets);
+    const result = deleteSnippetPackage(packages, snippets, path);
+    onPackagesChange(result.packages);
+    onBulkSave(result.snippets);
     
     if (selectedPackage && (selectedPackage === path || selectedPackage.startsWith(path + '/'))) {
       setSelectedPackage(null);
@@ -1286,66 +1294,33 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   const renamePackage = () => {
     if (!renamingPackagePath) return;
 
-    const newName = renamePackageName.trim();
-
-    if (!newName) {
-      setRenameError(t('snippets.renameDialog.error.empty'));
+    const result = renameSnippetPackage(packages, snippets, renamingPackagePath, renamePackageName);
+    if (!result.ok) {
+      setRenameError(t(`snippets.renameDialog.error.${result.error}`));
       return;
     }
 
-    if (!/^[\w\p{L}\p{N}-]+$/u.test(newName)) {
-      setRenameError(t('snippets.renameDialog.error.invalidChars'));
-      return;
-    }
-
-    const parts = renamingPackagePath.split('/');
-    parts[parts.length - 1] = newName;
-    const newPath = parts.join('/');
-
-    if (newPath === renamingPackagePath) {
+    if (result.newPath === renamingPackagePath) {
       setIsRenameDialogOpen(false);
       return;
     }
 
-    const existingPackage = packages.find(p => p !== renamingPackagePath && p.toLowerCase() === newPath.toLowerCase());
-    if (existingPackage) {
-      setRenameError(t('snippets.renameDialog.error.duplicate'));
-      return;
-    }
-
-    const updatedPackages = packages.map((p) => {
-      if (p === renamingPackagePath) return newPath;
-      if (p.startsWith(renamingPackagePath + '/')) {
-        return newPath + p.substring(renamingPackagePath.length);
-      }
-      return p;
-    });
-
-    const updatedSnippets = snippets.map((s) => {
-      if (!s.package) return s;
-      if (s.package === renamingPackagePath) return { ...s, package: newPath };
-      if (s.package.startsWith(renamingPackagePath + '/')) {
-        return { ...s, package: newPath + s.package.substring(renamingPackagePath.length) };
-      }
-      return s;
-    });
-
-    onPackagesChange(Array.from(new Set(updatedPackages)));
-    onBulkSave(updatedSnippets);
+    onPackagesChange(result.packages);
+    onBulkSave(result.snippets);
 
     if (selectedPackage === renamingPackagePath) {
-      setSelectedPackage(newPath);
+      setSelectedPackage(result.newPath);
     } else if (selectedPackage?.startsWith(renamingPackagePath + '/')) {
-      setSelectedPackage(newPath + selectedPackage.substring(renamingPackagePath.length));
+      setSelectedPackage(result.newPath + selectedPackage.substring(renamingPackagePath.length));
     }
 
     if (editingSnippet.package) {
       if (editingSnippet.package === renamingPackagePath) {
-        setEditingSnippet(prev => ({ ...prev, package: newPath }));
+        setEditingSnippet(prev => ({ ...prev, package: result.newPath }));
       } else if (editingSnippet.package.startsWith(renamingPackagePath + '/')) {
         setEditingSnippet(prev => ({
           ...prev,
-          package: newPath + prev.package!.substring(renamingPackagePath.length)
+          package: result.newPath + prev.package!.substring(renamingPackagePath.length)
         }));
       }
     }
@@ -1862,7 +1837,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
               >
                 {displayedPackages.map((pkg) => (
                   <ContextMenu key={pkg.path}>
-                    <ContextMenuTrigger>
+                    <ContextMenuTrigger asChild>
                       <div
                         className={cn(
                           "vault-drop-indicator-row group cursor-pointer overflow-hidden",
@@ -1875,7 +1850,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                         data-vault-reorder-grid={viewMode === 'grid' ? 'true' : undefined}
                         data-vault-reorder-dragging={draggingPackagePath === pkg.path ? 'true' : undefined}
                         draggable
+                        {...primaryOnlyDragHandlers(true)}
                         onDragStart={(e) => {
+                          if (isNonPrimaryPointer(e) || isNonPrimaryPointer(e.nativeEvent)) {
+                            e.preventDefault();
+                            return;
+                          }
                           e.dataTransfer.effectAllowed = 'move';
                           e.dataTransfer.setData('pkg-path', pkg.path);
                           draggingPackagePathRef.current = pkg.path;
@@ -1951,7 +1931,7 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                   const isSelected = selectedSnippetIds.has(snippet.id);
                   return (
                   <ContextMenu key={snippet.id}>
-                    <ContextMenuTrigger>
+                    <ContextMenuTrigger asChild>
                       <div
                         className={cn(
                           "vault-drop-indicator-row group cursor-pointer overflow-hidden",
@@ -1965,7 +1945,12 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
                         data-vault-reorder-grid={viewMode === 'grid' ? 'true' : undefined}
                         data-vault-reorder-dragging={draggingSnippetId === snippet.id ? 'true' : undefined}
                         draggable={!isSearchActive && !isMultiSelectMode}
+                        {...primaryOnlyDragHandlers(!isSearchActive && !isMultiSelectMode)}
                         onDragStart={(e) => {
+                          if (isNonPrimaryPointer(e) || isNonPrimaryPointer(e.nativeEvent)) {
+                            e.preventDefault();
+                            return;
+                          }
                           e.dataTransfer.effectAllowed = 'move';
                           e.dataTransfer.setData('snippet-id', snippet.id);
                           draggingSnippetIdRef.current = snippet.id;

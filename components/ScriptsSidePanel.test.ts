@@ -135,3 +135,23 @@ test("scripts side panel package dialog traps focus and exposes dialog close con
   assert.match(source, /data-dialog-close="true"/);
   assert.match(source, /isPackageDialogOpen/);
 });
+
+test("scripts side panel package rows wrap in a rename and delete context menu", () => {
+  assert.match(source, /const PackageRow = memo/);
+  assert.match(
+    source,
+    /data-pkg-path=\{row\.path\}[\s\S]*?<ContextMenu>[\s\S]*?<ContextMenuTrigger asChild>[\s\S]*?\{rowButton\}/,
+  );
+  assert.match(source, /common\.rename/);
+  assert.match(source, /vault\.deleteConfirm\.packageDesc/);
+  assert.match(source, /deleteSnippetPackage/);
+  assert.match(source, /renameSnippetPackage/);
+  assert.match(source, /openRenamePackageDialog/);
+  assert.match(source, /requestDeletePackage/);
+});
+
+test("scripts side panel does not start a drag from a non-primary pointer", () => {
+  assert.match(source, /isNonPrimaryPointer/);
+  assert.match(source, /primaryOnlyDragHandlers/);
+  assert.match(source, /event\.button !== 0/);
+});

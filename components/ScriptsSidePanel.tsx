@@ -27,8 +27,9 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSync
 import { useI18n } from '../application/i18n/I18nProvider';
 import { getScriptRecordingSnapshot, subscribeScriptRecording } from '../application/state/scriptRecordingStore.ts';
 import { VaultDeleteConfirmDialog } from './vault/VaultDeleteConfirmDialog';
-import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
+import { deleteSnippetPackage, renameSnippetPackage } from '../domain/snippetPackage.ts';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
+import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
 import { cn } from '../lib/utils';
 import { Snippet } from '../types';
 import type { ScriptRun } from '../types/global/netcatty-bridge-script.d.ts';
@@ -52,6 +53,23 @@ const toolbarIconButtonClass =
   'h-7 w-7 shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-40 disabled:pointer-events-none';
 
 const SCRIPT_ROW_HEIGHT = 34;
+
+const isNonPrimaryPointer = (event: { button?: number; buttons?: number }): boolean =>
+  event.button === 2
+  || event.buttons === 2
+  || (typeof event.button === 'number' && event.button !== 0);
+
+const primaryOnlyDragHandlers = (enabled: boolean) => ({
+  onPointerDown: (event: React.PointerEvent<HTMLElement>) => {
+    if (event.button !== 0) event.currentTarget.draggable = false;
+  },
+  onPointerUp: (event: React.PointerEvent<HTMLElement>) => {
+    event.currentTarget.draggable = enabled;
+  },
+  onPointerCancel: (event: React.PointerEvent<HTMLElement>) => {
+    event.currentTarget.draggable = enabled;
+  },
+});
 
 const isRootPackagePath = (path: string): boolean => {
   const body = path.startsWith('/') ? path.slice(1) : path;
@@ -293,7 +311,10 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   const [isMultiSelectMode, setIsMultiSelectMode] = useState(false);
   const [selectedSnippetIds, setSelectedSnippetIds] = useState<Set<string>>(new Set());
   const [pendingDeleteIds, setPendingDeleteIds] = useState<string[] | null>(null);
+  const [pendingDeletePackagePath, setPendingDeletePackagePath] = useState<string | null>(null);
   const [isPackageDialogOpen, setIsPackageDialogOpen] = useState(false);
+  const [packageDialogMode, setPackageDialogMode] = useState<'create' | 'rename'>('create');
+  const [renamingPackagePath, setRenamingPackagePath] = useState('');
   const [newPackageName, setNewPackageName] = useState('');
   const [packageError, setPackageError] = useState('');
   const packageDialogRef = useRef<HTMLDivElement>(null);
@@ -406,6 +427,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
 
   useEffect(() => {
     if (!isVisible) setPendingDeleteIds(null);
+    if (!isVisible) setPendingDeletePackagePath(null);
   }, [isVisible]);
 
   // Parent-owned confirm (compact toolbar popover) dispatches the shared delete
@@ -721,7 +743,17 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   }, []);
 
   const openPackageDialog = useCallback(() => {
+    setPackageDialogMode('create');
+    setRenamingPackagePath('');
     setNewPackageName('');
+    setPackageError('');
+    setIsPackageDialogOpen(true);
+  }, []);
+
+  const openRenamePackageDialog = useCallback((path: string) => {
+    setPackageDialogMode('rename');
+    setRenamingPackagePath(path);
+    setNewPackageName(path.split('/').pop() || '');
     setPackageError('');
     setIsPackageDialogOpen(true);
   }, []);
@@ -818,6 +850,48 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     setNewPackageName('');
     setPackageError('');
   }, [newPackageName, onPackagesChange, packages, t]);
+
+  const handleRenamePackage = useCallback(() => {
+    if (!onPackagesChange || !onSnippetsChange || !renamingPackagePath) {
+      setPackageError(t('snippets.renameDialog.error.empty'));
+      return;
+    }
+    const result = renameSnippetPackage(packages, snippets, renamingPackagePath, newPackageName);
+    if (!result.ok) {
+      setPackageError(t(`snippets.renameDialog.error.${result.error}`));
+      return;
+    }
+    if (result.newPath !== renamingPackagePath) {
+      onPackagesChange(result.packages);
+      onSnippetsChange(result.snippets);
+    }
+    setIsPackageDialogOpen(false);
+    setNewPackageName('');
+    setPackageError('');
+    setRenamingPackagePath('');
+  }, [
+    newPackageName,
+    onPackagesChange,
+    onSnippetsChange,
+    packages,
+    renamingPackagePath,
+    snippets,
+    t,
+  ]);
+
+  const requestDeletePackage = useCallback((path: string) => {
+    setPendingDeleteIds(null);
+    setPendingDeletePackagePath(path);
+  }, []);
+
+  const confirmDeletePackage = useCallback(() => {
+    const path = pendingDeletePackagePath;
+    setPendingDeletePackagePath(null);
+    if (!path || !onPackagesChange || !onSnippetsChange) return;
+    const result = deleteSnippetPackage(packages, snippets, path);
+    onPackagesChange(result.packages);
+    onSnippetsChange(result.snippets);
+  }, [onPackagesChange, onSnippetsChange, packages, pendingDeletePackagePath, snippets]);
 
   const handleEditSnippet = useCallback((snippet: Snippet) => {
     window.dispatchEvent(
@@ -1087,6 +1161,7 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                 );
               }
               if (item.kind === 'package') {
+                const canMutatePackages = Boolean(onPackagesChange && onSnippetsChange);
                 return (
                   <PackageRow
                     row={item.row}
@@ -1096,6 +1171,14 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                     onDrop={handleRowDrop}
                     onDragEnd={clearScriptsDropIndicator}
                     onToggle={() => togglePackage(item.row.path)}
+                    onRename={canMutatePackages
+                      ? () => openRenamePackageDialog(item.row.path)
+                      : undefined}
+                    onDelete={canMutatePackages
+                      ? () => requestDeletePackage(item.row.path)
+                      : undefined}
+                    renameLabel={t('common.rename')}
+                    deleteLabel={t('action.delete')}
                   />
                 );
               }
@@ -1222,7 +1305,9 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
           role="dialog"
           aria-modal="true"
           data-state="open"
-          aria-label={t('snippets.packageDialog.title')}
+          aria-label={packageDialogMode === 'rename'
+            ? t('snippets.renameDialog.title')
+            : t('snippets.packageDialog.title')}
           onKeyDown={(e) => {
             if (e.key === 'Escape') {
               e.preventDefault();
@@ -1247,9 +1332,15 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <div>
-              <p className="text-sm font-semibold">{t('snippets.packageDialog.title')}</p>
+              <p className="text-sm font-semibold">
+                {packageDialogMode === 'rename'
+                  ? t('snippets.renameDialog.title')
+                  : t('snippets.packageDialog.title')}
+              </p>
               <p className="text-[11px] text-muted-foreground mt-0.5">
-                {t('snippets.packageDialog.parent', { parent: t('snippets.packageDialog.root') })}
+                {packageDialogMode === 'rename'
+                  ? t('snippets.renameDialog.currentPath', { path: renamingPackagePath })
+                  : t('snippets.packageDialog.parent', { parent: t('snippets.packageDialog.root') })}
               </p>
             </div>
             <div className="space-y-1.5">
@@ -1264,13 +1355,18 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
-                    handleCreatePackage();
+                    if (packageDialogMode === 'rename') handleRenamePackage();
+                    else handleCreatePackage();
                   }
                 }}
-                placeholder={t('snippets.packageDialog.placeholder')}
+                placeholder={packageDialogMode === 'rename'
+                  ? t('snippets.renameDialog.placeholder')
+                  : t('snippets.packageDialog.placeholder')}
                 className="h-8 text-xs"
               />
-              <p className="text-[10px] text-muted-foreground">{t('snippets.packageDialog.hint')}</p>
+              {packageDialogMode === 'create' ? (
+                <p className="text-[10px] text-muted-foreground">{t('snippets.packageDialog.hint')}</p>
+              ) : null}
               {packageError ? (
                 <p className="text-[10px] text-destructive">{packageError}</p>
               ) : null}
@@ -1284,8 +1380,12 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
               >
                 {t('common.cancel')}
               </Button>
-              <Button type="button" size="sm" onClick={handleCreatePackage}>
-                {t('common.create')}
+              <Button
+                type="button"
+                size="sm"
+                onClick={packageDialogMode === 'rename' ? handleRenamePackage : handleCreatePackage}
+              >
+                {packageDialogMode === 'rename' ? t('common.rename') : t('common.create')}
               </Button>
             </div>
           </div>
@@ -1305,6 +1405,15 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
           onConfirm={confirmDeleteSelectedSnippets}
         />
       ) : null}
+      <VaultDeleteConfirmDialog
+        open={Boolean(pendingDeletePackagePath)}
+        title={t('vault.deleteConfirm.title', { name: pendingDeletePackagePath ?? '' })}
+        description={t('vault.deleteConfirm.packageDesc')}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeletePackagePath(null);
+        }}
+        onConfirm={confirmDeletePackage}
+      />
     </div>
     </TooltipProvider>
   );
@@ -1318,38 +1427,82 @@ interface PackageRowProps {
   onDrop: (event: React.DragEvent<HTMLElement>) => void;
   onDragEnd: () => void;
   onToggle: () => void;
+  onRename?: () => void;
+  onDelete?: () => void;
+  renameLabel: string;
+  deleteLabel: string;
 }
 
-const PackageRow = memo<PackageRowProps>(({ row, countLabel, draggable, onDragOver, onDrop, onDragEnd, onToggle }) => (
-  <button
-    type="button"
-    onClick={onToggle}
-    className="vault-drop-indicator-row w-full flex items-center gap-1.5 pr-3 py-1.5 text-left hover:bg-accent/50 transition-colors"
-    style={{ paddingLeft: 8 + row.depth * 14 }}
-    data-pkg-path={row.path}
-    draggable={draggable}
-    onDragStart={(event) => {
-      if (!draggable) return;
-      event.dataTransfer.effectAllowed = 'move';
-      event.dataTransfer.setData('pkg-path', row.path);
-    }}
-    onDragOver={onDragOver}
-    onDrop={onDrop}
-    onDragEnd={onDragEnd}
-  >
-    <ChevronRight
-      size={12}
-      className={cn(
-        'shrink-0 text-muted-foreground transition-transform',
-        row.isExpanded && 'rotate-90',
-        !row.hasChildren && 'opacity-0',
-      )}
-    />
-    <Package size={12} className="shrink-0 text-primary/80" />
-    <span className="flex-1 min-w-0 truncate text-xs font-medium">{row.name}</span>
-    <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{countLabel}</span>
-  </button>
-));
+const PackageRow = memo<PackageRowProps>(({
+  row,
+  countLabel,
+  draggable,
+  onDragOver,
+  onDrop,
+  onDragEnd,
+  onToggle,
+  onRename,
+  onDelete,
+  renameLabel,
+  deleteLabel,
+}) => {
+  const rowButton = (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="vault-drop-indicator-row w-full flex items-center gap-1.5 pr-3 py-1.5 text-left hover:bg-accent/50 transition-colors"
+      style={{ paddingLeft: 8 + row.depth * 14 }}
+      data-pkg-path={row.path}
+      draggable={draggable}
+      {...primaryOnlyDragHandlers(draggable)}
+      onDragStart={(event) => {
+        if (!draggable || isNonPrimaryPointer(event) || isNonPrimaryPointer(event.nativeEvent)) {
+          event.preventDefault();
+          return;
+        }
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('pkg-path', row.path);
+      }}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
+    >
+      <ChevronRight
+        size={12}
+        className={cn(
+          'shrink-0 text-muted-foreground transition-transform',
+          row.isExpanded && 'rotate-90',
+          !row.hasChildren && 'opacity-0',
+        )}
+      />
+      <Package size={12} className="shrink-0 text-primary/80" />
+      <span className="flex-1 min-w-0 truncate text-xs font-medium">{row.name}</span>
+      <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{countLabel}</span>
+    </button>
+  );
+
+  if (!onRename && !onDelete) return rowButton;
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {rowButton}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {onRename ? (
+          <ContextMenuItem onClick={onRename}>
+            <Edit2 className="mr-2 h-4 w-4" /> {renameLabel}
+          </ContextMenuItem>
+        ) : null}
+        {onDelete ? (
+          <ContextMenuItem className="text-destructive" onClick={onDelete}>
+            <Trash2 className="mr-2 h-4 w-4" /> {deleteLabel}
+          </ContextMenuItem>
+        ) : null}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+});
 PackageRow.displayName = 'PackageRow';
 
 interface SnippetRowProps {
@@ -1401,8 +1554,12 @@ const SnippetRow = memo<SnippetRowProps>(({
         className="vault-drop-indicator-row"
         data-snippet-id={sortableTarget ? snippet.id : undefined}
         draggable={draggable}
+        {...primaryOnlyDragHandlers(draggable)}
         onDragStart={(event) => {
-          if (!draggable) return;
+          if (!draggable || isNonPrimaryPointer(event) || isNonPrimaryPointer(event.nativeEvent)) {
+            event.preventDefault();
+            return;
+          }
           event.dataTransfer.effectAllowed = 'move';
           event.dataTransfer.setData('snippet-id', snippet.id);
         }}
