@@ -5,6 +5,17 @@ const fs = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const tempDirBridge = require("./tempDirBridge.cjs");
 
+function isolatedTempChildEnv(root, home, extra = {}) {
+  return {
+    ...process.env,
+    TMPDIR: root,
+    TEMP: root,
+    TMP: root,
+    HOME: home,
+    ...extra,
+  };
+}
+
 test("getTempFilePath is unique for duplicate names in the same millisecond", () => {
   const originalNow = Date.now;
   Date.now = () => 1234567890;
@@ -60,7 +71,7 @@ test("cached temp root is recreated after OS cleanup", async () => {
     ].join("\n");
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: path.resolve(__dirname, "../.."),
-      env: { ...process.env, TMPDIR: root, HOME: fakeHome },
+      env: isolatedTempChildEnv(root, fakeHome),
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -80,17 +91,21 @@ test("cached temp root is rebound after inode replacement", async () => {
       'const path = require("node:path");',
       'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
       'const first = bridge.getTempDir();',
-      'fs.rmSync(first, { recursive: true, force: true });',
+      'const oldPath = `${first}.old`;',
+      'fs.renameSync(first, oldPath);',
       'fs.mkdirSync(first, { recursive: true, mode: 0o700 });',
+      'const oldStat = fs.lstatSync(oldPath);',
       'const second = bridge.getTempDir();',
-      'if (!fs.statSync(second).isDirectory()) process.exit(2);',
+      'const newStat = fs.lstatSync(second);',
+      'if (!newStat.isDirectory()) process.exit(2);',
+      'if (oldStat.dev === newStat.dev && oldStat.ino === newStat.ino) process.exit(4);',
       'const downloadPath = bridge.getTempFilePath("download.bin");',
       'const relative = path.relative(second, downloadPath);',
       'if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) process.exit(3);',
     ].join("\n");
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: path.resolve(__dirname, "../.."),
-      env: { ...process.env, TMPDIR: root, HOME: fakeHome },
+      env: isolatedTempChildEnv(root, fakeHome),
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -365,7 +380,7 @@ test("startup cleanup still expires tool outputs when secure storage is unavaila
     ].join("\n");
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: path.resolve(__dirname, "../.."),
-      env: { ...process.env, TMPDIR: root, HOME: fakeHome },
+      env: isolatedTempChildEnv(root, fakeHome),
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -674,13 +689,10 @@ test("tool output signing key survives a real process restart", async () => {
   ].join("\n");
   const run = (phase, secret) => spawnSync(process.execPath, ["-e", script], {
     cwd: path.resolve(__dirname, "../.."),
-    env: {
-      ...process.env,
-      TMPDIR: root,
-      HOME: fakeHome,
+    env: isolatedTempChildEnv(root, fakeHome, {
       PHASE: phase,
       FAKE_SAFE_STORAGE_SECRET: secret,
-    },
+    }),
     encoding: "utf8",
   });
   try {
