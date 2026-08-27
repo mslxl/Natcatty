@@ -27,7 +27,11 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState, useSync
 import { useI18n } from '../application/i18n/I18nProvider';
 import { getScriptRecordingSnapshot, subscribeScriptRecording } from '../application/state/scriptRecordingStore.ts';
 import { VaultDeleteConfirmDialog } from './vault/VaultDeleteConfirmDialog';
-import { deleteSnippetPackage, renameSnippetPackage } from '../domain/snippetPackage.ts';
+import {
+  collectSnippetPackageTreePaths,
+  deleteSnippetPackage,
+  renameSnippetPackage,
+} from '../domain/snippetPackage.ts';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
 import { cn } from '../lib/utils';
@@ -173,24 +177,7 @@ export function collectScriptsSidePanelPackagePaths(
   packages: string[],
   snippets: Snippet[],
 ): string[] {
-  const normalizedPackages = new Set<string>();
-  const addWithAncestors = (raw: string) => {
-    const path = raw.trim();
-    if (!path) return;
-    const isAbs = path.startsWith('/');
-    const body = isAbs ? path.slice(1) : path;
-    const parts = body.split('/').filter(Boolean);
-    for (let i = 1; i <= parts.length; i += 1) {
-      const sub = parts.slice(0, i).join('/');
-      normalizedPackages.add(isAbs ? `/${sub}` : sub);
-    }
-  };
-
-  packages.forEach(addWithAncestors);
-  snippets.forEach((snippet) => {
-    if (snippet.package) addWithAncestors(snippet.package);
-  });
-  return Array.from(normalizedPackages);
+  return collectSnippetPackageTreePaths(packages, snippets);
 }
 
 export function buildScriptsSidePanelRows({

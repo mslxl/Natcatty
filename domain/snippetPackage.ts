@@ -8,6 +8,32 @@ export function isSnippetPackagePathAtOrBelow(path: string, root: string): boole
   return path === root || path.startsWith(`${root}/`);
 }
 
+export function getSnippetPackageAncestors(path: string): string[] {
+  const normalized = path.trim().replace(/\/+$/g, "");
+  if (!normalized) return [];
+  const isAbsolute = normalized.startsWith("/");
+  const parts = normalized.split("/").filter(Boolean);
+  return parts.map((_, index) => {
+    const joined = parts.slice(0, index + 1).join("/");
+    return isAbsolute ? `/${joined}` : joined;
+  });
+}
+
+/** Persisted packages plus inferred ancestors from packages and snippet.package. */
+export function collectSnippetPackageTreePaths(
+  packages: string[],
+  snippets: PackagedSnippet[] = [],
+): string[] {
+  const paths = new Set<string>();
+  const add = (raw: string | undefined) => {
+    if (!raw) return;
+    getSnippetPackageAncestors(raw).forEach((ancestor) => paths.add(ancestor));
+  };
+  packages.forEach(add);
+  snippets.forEach((snippet) => add(snippet.package));
+  return Array.from(paths);
+}
+
 const rewritePackagePath = (value: string, from: string, to: string): string => {
   if (value === from) return to;
   if (value.startsWith(`${from}/`)) return to + value.slice(from.length);
@@ -50,7 +76,8 @@ export function renameSnippetPackage<T extends PackagedSnippet>(
     return { ok: true, packages, snippets, newPath };
   }
 
-  const duplicate = packages.some(
+  const occupied = collectSnippetPackageTreePaths(packages, snippets);
+  const duplicate = occupied.some(
     (item) => item !== path && item.toLowerCase() === newPath.toLowerCase(),
   );
   if (duplicate) return { ok: false, error: "duplicate" };

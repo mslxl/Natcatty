@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { Snippet } from "./models.ts";
 import {
+  collectSnippetPackageTreePaths,
   deleteSnippetPackage,
   renameSnippetPackage,
 } from "./snippetPackage.ts";
@@ -86,6 +87,36 @@ test("renameSnippetPackage rejects empty, invalid, and duplicate names", () => {
   assert.deepEqual(
     renameSnippetPackage(["ops", "db"], [], "ops", "DB"),
     { ok: false, error: "duplicate" },
+  );
+});
+
+test("renameSnippetPackage rejects collisions with inferred ancestor packages", () => {
+  assert.deepEqual(
+    renameSnippetPackage(["a", "b/x"], [], "a", "b"),
+    { ok: false, error: "duplicate" },
+  );
+  assert.deepEqual(
+    renameSnippetPackage(["a", "B/x"], [], "a", "b"),
+    { ok: false, error: "duplicate" },
+  );
+});
+
+test("renameSnippetPackage rejects collisions with snippet-implied packages", () => {
+  assert.deepEqual(
+    renameSnippetPackage(
+      ["a"],
+      [snippet({ id: "s", package: "b/x" })],
+      "a",
+      "b",
+    ),
+    { ok: false, error: "duplicate" },
+  );
+});
+
+test("collectSnippetPackageTreePaths includes persisted and inferred ancestors", () => {
+  assert.deepEqual(
+    collectSnippetPackageTreePaths(["a", "b/x"], [snippet({ id: "s", package: "c/y" })]).sort(),
+    ["a", "b", "b/x", "c", "c/y"],
   );
 });
 
