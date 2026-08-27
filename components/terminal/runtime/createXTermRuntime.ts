@@ -110,6 +110,10 @@ import {
   shouldBlockKeyPressForImeTextInput,
   shouldCommitDeferredImeTextInput,
   shouldDeferKeyDownForImeTextInput,
+  resolveDeferredKeyupRelease,
+  shouldDiscardStaleDeferredImeTextInput,
+  shouldFlushDeferredImeTextInputOnKeyUp,
+  shouldFlushStaleDeferredImeTextInput,
 } from "./terminalImeTextInput";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
@@ -1402,6 +1406,35 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // broadcast targets can still receive paired key events.
     imeTextInputDeferredKittyEvent = toKittyKeyboardEvent(event);
   };
+  /**
+   * Emit the paired release for a forwarded press, locally and to broadcast
+   * peers. Used by the keyup handler and by the stale-deferral recovery, where
+   * the IME dropped the release and one must be synthesized from the deferred
+   * physical key so the TUI does not see the key held until focus loss.
+   */
+  const releaseForwardedKittyPress = (
+    event: Pick<KittyKeyboardEvent, "code" | "key"> & KittyKeyboardEvent,
+  ): boolean => {
+    const identity = event.code || event.key;
+    const forwardedPress = broadcastForwardedKeys.get(identity);
+    if (forwardedPress) {
+      broadcastForwardedKeys.delete(identity);
+      broadcastKittyInput(
+        { kind: "key", event },
+        true,
+        forwardedPress.targetSessionIds,
+      );
+    }
+    if (!kittyForwardedKeys.delete(identity)) return false;
+    const sequence = kittyKeyboardProtocolEnabled
+      ? encodeKittyKeyEvent(kittyKeyboardMode, event)
+      : null;
+    if (sequence) {
+      handleTerminalInputData(sequence, { source: "kitty" });
+      return true;
+    }
+    return false;
+  };
 
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     // Preserve mouse selection across keystrokes when enabled. xterm.js
@@ -1448,38 +1481,57 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
     if (e.type === "keyup") {
       // insertText for this keystroke has already run when present; flush the
-      // deferred ASCII key only when the IME did not remap it.
-      if (imeTextInputDeferredKey !== null && e.key === imeTextInputDeferredKey) {
-        flushImeTextInputDeferral();
-      }
-      const identity = kittyKeyIdentity(e);
-      if (broadcastLegacyDataPending === identity) clearBroadcastLegacyDataPending();
-      const forwardedPress = broadcastForwardedKeys.get(identity);
-      if (forwardedPress) {
-        broadcastForwardedKeys.delete(identity);
-        broadcastKittyInput(
-          { kind: "key", event: toKittyKeyboardEvent(e) },
-          true,
-          forwardedPress.targetSessionIds,
+      // deferred ASCII key when the IME did not remap it. Any real key release
+      // ends the deferral: Windows IMEs report Process/229 as the release of a
+      // key they consumed (or drop the keyup), and an exact key match left the
+      // deferral armed so every later keypress was swallowed (#3103).
+      let releaseEvent: KeyboardEvent = e;
+      if (
+        imeTextInputDeferredKey !== null &&
+        shouldFlushDeferredImeTextInputOnKeyUp(imeTextInputDeferredKey, e)
+      ) {
+        const deferredKittyEvent = imeTextInputDeferredKittyEvent;
+        const releaseMode = resolveDeferredKeyupRelease(
+          imeTextInputDeferredKey,
+          deferredKittyEvent?.code ?? null,
+          e,
         );
+        flushImeTextInputDeferral();
+        if (deferredKittyEvent && releaseMode === "deferred") {
+          // The release reported an IME sentinel (Process/229); pair the
+          // flushed press from the deferred physical key so the kitty
+          // sequence keeps its key identity.
+          releaseEvent = {
+            ...deferredKittyEvent,
+            type: "keyup",
+          } as unknown as KeyboardEvent;
+        } else if (deferredKittyEvent && releaseMode === "unrelated") {
+          // Another held key was released first: this keyup only ends the
+          // stale deferral, so the flushed press needs its own synthesized
+          // release while the real keyup keeps its identity.
+          releaseForwardedKittyPress({ ...deferredKittyEvent, type: "keyup" });
+        }
       }
-      if (!kittyForwardedKeys.delete(identity)) return true;
-      const kittyEvent = toKittyKeyboardEvent(e);
-      const sequence = kittyKeyboardProtocolEnabled
-        ? encodeKittyKeyEvent(kittyKeyboardMode, kittyEvent)
-        : null;
-      if (sequence) {
+      const identity = kittyKeyIdentity(releaseEvent);
+      if (broadcastLegacyDataPending === identity) clearBroadcastLegacyDataPending();
+      if (releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent))) {
         e.preventDefault();
         e.stopPropagation();
-        handleTerminalInputData(sequence, { source: "kitty" });
         return false;
       }
       return true;
     }
 
     // Block keypress so xterm cannot re-emit the half-width ASCII char after we
-    // deferred the matching keydown for IME insertText (#2833).
-    if (shouldBlockKeyPressForImeTextInput(imeTextInputDeferredKey, e)) {
+    // deferred the matching keydown for IME insertText (#2833). Scoped to the
+    // deferred key so a stale deferral cannot swallow unrelated keystrokes.
+    if (
+      shouldBlockKeyPressForImeTextInput(
+        imeTextInputDeferredKey,
+        e,
+        imeTextInputDeferredKittyEvent?.keyCode ?? null,
+      )
+    ) {
       return false;
     }
 
@@ -1488,6 +1540,29 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
 
     if (handlingKittyBroadcast) return true;
+
+    // A deferred punctuation keystroke that outlived its own release means the
+    // IME swallowed the keyup (Windows reports Process/229). Flush it before
+    // the next keystroke so the pending ASCII key still reaches the PTY
+    // instead of wedging the deferral (#3103). A modified keydown is a command
+    // rather than a continuation, so the lost keystroke is dropped there
+    // instead of being injected in front of the interrupt or shortcut.
+    if (imeTextInputDeferredKey !== null) {
+      if (shouldFlushStaleDeferredImeTextInput(imeTextInputDeferredKey, e)) {
+        const deferredKittyEvent = imeTextInputDeferredKittyEvent;
+        flushImeTextInputDeferral();
+        if (deferredKittyEvent) {
+          // The flush emitted the deferred press, but the release it waits for
+          // is the one the IME dropped — synthesize it so the TUI does not see
+          // the key held until focus loss.
+          releaseForwardedKittyPress({ ...deferredKittyEvent, type: "keyup" });
+        }
+      } else if (
+        shouldDiscardStaleDeferredImeTextInput(imeTextInputDeferredKey, e)
+      ) {
+        clearImeTextInputDeferral();
+      }
+    }
 
     if (e.keyCode === 229) {
       markKittyCompositionPending(true);
