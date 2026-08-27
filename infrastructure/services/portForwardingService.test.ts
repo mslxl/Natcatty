@@ -7,7 +7,9 @@ import {
   getActiveConnection,
   reconcileWithBackend,
   setReconnectCallback,
+  startAllPortForwards,
   startPortForward,
+  stopAllActivePortForwards,
   stopAndCleanupRule,
   stopAndCleanupRuleAndWait,
   stopPortForward,
@@ -1668,3 +1670,146 @@ test("startPortForward rejects jump host proxy identity passwords that cannot be
   assert.equal(bridge.wasStarted(), false);
   assert.match(statuses.at(-1) || "", /error:Proxy credentials/);
 });
+
+test("startAllPortForwards starts inactive and error rules sequentially and skips busy tunnels", async () => {
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const startedRuleIds: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async (options: { ruleId: string }) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          startedRuleIds.push(options.ruleId);
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          inFlight -= 1;
+          return { success: true };
+        },
+        onPortForwardStatus: () => () => undefined,
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+        stopAllPortForwards: async () => undefined,
+      },
+    },
+  });
+
+  const busyRule = rule({ id: "bulk-busy", label: "Busy", status: "inactive" });
+  await startPortForward(busyRule, host(), [], [], [], () => undefined);
+  startedRuleIds.length = 0;
+  maxInFlight = 0;
+
+  const inactiveRule = rule({
+    id: "bulk-inactive",
+    label: "Inactive",
+    status: "inactive",
+    autoStart: true,
+  });
+  const errorRule = rule({
+    id: "bulk-error",
+    label: "Error",
+    status: "error",
+    autoStart: false,
+  });
+  const connectingRule = rule({
+    id: "bulk-connecting",
+    label: "Connecting",
+    status: "connecting",
+  });
+
+  const result = await startAllPortForwards(
+    [busyRule, inactiveRule, errorRule, connectingRule],
+    () => host(),
+    [host()],
+    [],
+    [],
+    () => undefined,
+  );
+
+  assert.equal(maxInFlight, 1);
+  assert.deepEqual(startedRuleIds, ["bulk-inactive", "bulk-error"]);
+  assert.equal(result.started, 2);
+  assert.equal(result.failed, 0);
+  assert.equal(result.skipped, 2);
+
+  stopAndCleanupRule("bulk-busy");
+  stopAndCleanupRule("bulk-inactive");
+  stopAndCleanupRule("bulk-error");
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+test("startAllPortForwards records a missing host as a failed start", async () => {
+  const startedRuleIds: string[] = [];
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async (options: { ruleId: string }) => {
+          startedRuleIds.push(options.ruleId);
+          return { success: true };
+        },
+        onPortForwardStatus: () => () => undefined,
+      },
+    },
+  });
+
+  const missingHostRule = rule({ id: "bulk-missing-host", label: "Missing", status: "inactive" });
+  const statuses: Array<{ ruleId: string; status: string; error?: string }> = [];
+  const result = await startAllPortForwards(
+    [missingHostRule],
+    () => undefined,
+    [],
+    [],
+    [],
+    (ruleId, status, error) => statuses.push({ ruleId, status, error }),
+  );
+
+  assert.deepEqual(startedRuleIds, []);
+  assert.equal(result.started, 0);
+  assert.equal(result.failed, 1);
+  assert.equal(result.errors[0]?.error, "Host not found");
+  assert.equal(statuses.at(-1)?.status, "error");
+});
+
+test("stopAllActivePortForwards stops running rules then calls backend stopAll", async () => {
+  const stoppedRuleIds: string[] = [];
+  let stopAllCalls = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: () => () => undefined,
+        stopPortForwardByRuleId: async (ruleId: string) => {
+          stoppedRuleIds.push(ruleId);
+          return { stopped: 1, failed: 0, errors: [] };
+        },
+        stopAllPortForwards: async () => {
+          stopAllCalls += 1;
+        },
+      },
+    },
+  });
+
+  const first = rule({ id: "bulk-stop-1", label: "One", status: "inactive" });
+  const second = rule({ id: "bulk-stop-2", label: "Two", status: "inactive" });
+  const idle = rule({ id: "bulk-stop-idle", label: "Idle", status: "inactive" });
+  await startPortForward(first, host(), [], [], [], () => undefined);
+  await startPortForward(second, host(), [], [], [], () => undefined);
+
+  const statuses: string[] = [];
+  const result = await stopAllActivePortForwards(
+    [first, second, idle],
+    (ruleId, status) => statuses.push(`${ruleId}:${status}`),
+  );
+
+  assert.deepEqual(stoppedRuleIds, ["bulk-stop-1", "bulk-stop-2"]);
+  assert.equal(stopAllCalls, 1);
+  assert.equal(result.stopped, 2);
+  assert.equal(result.failed, 0);
+  assert.ok(statuses.includes("bulk-stop-1:inactive"));
+  assert.ok(statuses.includes("bulk-stop-2:inactive"));
+  assert.equal(getActiveConnection("bulk-stop-1"), undefined);
+  assert.equal(getActiveConnection("bulk-stop-2"), undefined);
+});
+

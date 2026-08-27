@@ -21,12 +21,16 @@ import {
   getPortForwardRuntimeAuthority,
   initReconnectCancelListener,
   reconcileWithBackend,
+  startAllPortForwards,
   startPortForward,
+  stopAllActivePortForwards,
   stopAllPortForwards,
   stopAndCleanupRule,
   stopAndCleanupRuleAndWait,
   stopPortForward,
   syncWithBackend,
+  type StartAllPortForwardsResult,
+  type StopAllActivePortForwardsResult,
 } from "../../infrastructure/services/portForwardingService";
 import { useStoredViewMode, ViewMode } from "./useStoredViewMode";
 
@@ -89,6 +93,16 @@ export interface UsePortForwardingStateResult {
     ruleId: string,
     onStatusChange?: (status: PortForwardingRule["status"], error?: string) => void,
   ) => Promise<{ success: boolean; error?: string }>;
+  startAllTunnels: (
+    rules: PortForwardingRule[],
+    resolveHost: (rule: PortForwardingRule) => Host | undefined,
+    hosts: Host[],
+    keys: SSHKey[],
+    identities: Identity[],
+    terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number },
+    knownHosts?: KnownHost[],
+  ) => Promise<StartAllPortForwardsResult>;
+  stopAllTunnels: (rules: PortForwardingRule[]) => Promise<StopAllActivePortForwardsResult>;
   stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
   hasRuntimeTunnel: (ruleId: string) => boolean;
 
@@ -724,6 +738,41 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     return connection !== undefined && connection.status !== "inactive";
   }, []);
 
+  const startAllTunnels = useCallback(
+    async (
+      targetRules: PortForwardingRule[],
+      resolveHost: (rule: PortForwardingRule) => Host | undefined,
+      hosts: Host[],
+      keys: SSHKey[],
+      identities: Identity[],
+      terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number },
+      knownHosts?: KnownHost[],
+    ) => {
+      return startAllPortForwards(
+        targetRules,
+        resolveHost,
+        hosts,
+        keys,
+        identities,
+        (ruleId, status, error) => {
+          setRuleStatus(ruleId, status, error);
+        },
+        terminalSettings,
+        knownHosts,
+      );
+    },
+    [setRuleStatus],
+  );
+
+  const stopAllTunnels = useCallback(
+    async (targetRules: PortForwardingRule[]) => {
+      return stopAllActivePortForwards(targetRules, (ruleId, status, error) => {
+        setRuleStatus(ruleId, status, error);
+      });
+    },
+    [setRuleStatus],
+  );
+
   // Filter and sort rules
   const filteredRules = useMemo(() => {
     let result = [...rules];
@@ -789,6 +838,8 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     setRuleStatus,
     startTunnel,
     stopTunnel,
+    startAllTunnels,
+    stopAllTunnels,
     stopRuleTunnels: stopAndCleanupRuleAndWait,
     hasRuntimeTunnel,
 

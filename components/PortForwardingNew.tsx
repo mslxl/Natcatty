@@ -4,8 +4,11 @@ import {
   Globe,
   LayoutGrid,
   List as ListIcon,
+  Loader2,
+  Play,
   Server,
   Shuffle,
+  Square,
   Zap,
 } from "lucide-react";
 import React, { useCallback, useMemo, useRef, useState } from "react";
@@ -23,6 +26,11 @@ import {
   SSHKey,
 } from "../domain/models";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
+import {
+  isPortForwardingRuleStartable,
+  isPortForwardingRuleStoppable,
+  isPortForwardingRuntimeBusy,
+} from "../domain/portForwardingBulkActions";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import { cn } from "../lib/utils";
 import SelectHostPanel from "./SelectHostPanel";
@@ -33,6 +41,7 @@ import {
 } from "./ui/aside-panel";
 import { Button } from "./ui/button";
 import { Dropdown, DropdownContent, DropdownTrigger } from "./ui/dropdown";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 import { SortDropdown } from "./ui/sort-dropdown";
 import { toast } from "./ui/toast";
 import {
@@ -101,7 +110,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     resizeAriaLabel: t("vault.panel.resizeWidth"),
   };
   const {
-    rules: _rules,
+    rules,
     selectedRuleId,
     viewMode,
     sortMode,
@@ -118,6 +127,8 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     setRuleStatus,
     startTunnel,
     stopTunnel,
+    startAllTunnels,
+    stopAllTunnels,
     hasRuntimeTunnel,
     filteredRules,
     selectedRule: _selectedRule,
@@ -129,6 +140,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   const [pendingOperations, setPendingOperations] = useState<Set<string>>(
     new Set(),
   );
+  const [bulkAction, setBulkAction] = useState<"start" | "stop" | null>(null);
   const proxyProfileIdSet = useMemo(
     () => new Set(proxyProfiles.map((profile) => profile.id)),
     [proxyProfiles],
@@ -240,6 +252,119 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     },
     [stopTunnel, t],
   );
+
+  const isRuleRuntimeBusy = useCallback(
+    (rule: PortForwardingRule) =>
+      isPortForwardingRuntimeBusy({ status: rule.status }) ||
+      (hasRuntimeTunnel(rule.id) && rule.status !== "error"),
+    [hasRuntimeTunnel],
+  );
+
+  const startableRules = useMemo(
+    () => rules.filter((rule) => isPortForwardingRuleStartable(rule, isRuleRuntimeBusy(rule))),
+    [isRuleRuntimeBusy, rules],
+  );
+  const stoppableRules = useMemo(
+    () => rules.filter((rule) => isPortForwardingRuleStoppable(rule, isRuleRuntimeBusy(rule))),
+    [isRuleRuntimeBusy, rules],
+  );
+
+  const handleStartAll = useCallback(async () => {
+    if (bulkAction || startableRules.length === 0) return;
+    setBulkAction("start");
+    setPendingOperations((prev) => {
+      const next = new Set(prev);
+      for (const rule of startableRules) next.add(rule.id);
+      return next;
+    });
+    try {
+      const effectiveHosts = hosts.map((host) => resolveEffectiveHost(host));
+      const result = await startAllTunnels(
+        rules,
+        (rule) => {
+          const rawHost = rule.hostId ? hostById.get(rule.hostId) : undefined;
+          return rawHost ? resolveEffectiveHost(rawHost) : undefined;
+        },
+        effectiveHosts,
+        keys,
+        identities,
+        terminalSettings,
+        knownHosts,
+      );
+      if (result.failed > 0 && result.started > 0) {
+        toast.warning(
+          t("pf.toast.startAll.partial", { started: result.started, failed: result.failed }),
+          t("pf.action.startAll"),
+        );
+      } else if (result.failed > 0) {
+        toast.error(
+          t("pf.toast.startAll.failed", { count: result.failed }),
+          t("pf.action.startAll"),
+        );
+      } else if (result.started > 0) {
+        toast.success(
+          t("pf.toast.startAll.success", { count: result.started }),
+          t("pf.action.startAll"),
+        );
+      }
+    } finally {
+      setPendingOperations((prev) => {
+        const next = new Set(prev);
+        for (const rule of startableRules) next.delete(rule.id);
+        return next;
+      });
+      setBulkAction(null);
+    }
+  }, [
+    bulkAction,
+    hostById,
+    hosts,
+    identities,
+    keys,
+    knownHosts,
+    resolveEffectiveHost,
+    rules,
+    startAllTunnels,
+    startableRules,
+    t,
+    terminalSettings,
+  ]);
+
+  const handleStopAll = useCallback(async () => {
+    if (bulkAction || stoppableRules.length === 0) return;
+    setBulkAction("stop");
+    setPendingOperations((prev) => {
+      const next = new Set(prev);
+      for (const rule of stoppableRules) next.add(rule.id);
+      return next;
+    });
+    try {
+      const result = await stopAllTunnels(rules);
+      if (result.failed > 0 && result.stopped > 0) {
+        toast.warning(
+          t("pf.toast.stopAll.partial", { stopped: result.stopped, failed: result.failed }),
+          t("pf.action.stopAll"),
+        );
+      } else if (result.failed > 0) {
+        toast.error(
+          t("pf.toast.stopAll.failed", { count: result.failed }),
+          t("pf.action.stopAll"),
+        );
+      } else if (result.stopped > 0) {
+        toast.success(
+          t("pf.toast.stopAll.success", { count: result.stopped }),
+          t("pf.action.stopAll"),
+        );
+      }
+    } finally {
+      setPendingOperations((prev) => {
+        const next = new Set(prev);
+        for (const rule of stoppableRules) next.delete(rule.id);
+        return next;
+      });
+      setBulkAction(null);
+    }
+  }, [bulkAction, rules, stopAllTunnels, stoppableRules, t]);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -664,6 +789,46 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
               </Button>
             </DropdownContent>
           </Dropdown>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="secondary"
+                className={vaultHeaderSecondaryButtonClass}
+                onClick={() => { void handleStartAll(); }}
+                disabled={bulkAction !== null || startableRules.length === 0}
+                aria-label={t("pf.action.startAll")}
+              >
+                {bulkAction === "start" ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Play size={14} />
+                )}
+                {t("pf.action.startAll")}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("pf.action.startAll")}</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="secondary"
+                className={vaultHeaderSecondaryButtonClass}
+                onClick={() => { void handleStopAll(); }}
+                disabled={bulkAction !== null || stoppableRules.length === 0}
+                aria-label={t("pf.action.stopAll")}
+              >
+                {bulkAction === "stop" ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : (
+                  <Square size={14} />
+                )}
+                {t("pf.action.stopAll")}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t("pf.action.stopAll")}</TooltipContent>
+          </Tooltip>
 
           <div className="ml-auto flex items-center gap-2">
             <VaultHeaderSearch

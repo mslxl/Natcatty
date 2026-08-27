@@ -5,6 +5,11 @@
  */
 
 import { Host, Identity, KnownHost, PortForwardingRule, SSHKey, TerminalSettings } from '../../domain/models';
+import {
+  isPortForwardingRuntimeBusy,
+  selectStartablePortForwardingRules,
+  selectStoppablePortForwardingRules,
+} from '../../domain/portForwardingBulkActions';
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
 import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
@@ -1250,6 +1255,134 @@ export const isBackendAvailable = (): boolean => {
   return !!(netcattyBridge.get()?.startPortForward);
 };
 
+export type BulkPortForwardRuleError = {
+  ruleId: string;
+  label: string;
+  error: string;
+};
+
+export type StartAllPortForwardsResult = {
+  started: number;
+  skipped: number;
+  failed: number;
+  errors: BulkPortForwardRuleError[];
+};
+
+export type StopAllActivePortForwardsResult = {
+  stopped: number;
+  failed: number;
+  errors: BulkPortForwardRuleError[];
+};
+
+type StartAllPortForwardHostResolver = (rule: PortForwardingRule) => Host | undefined;
+
+/**
+ * Start each inactive/error rule sequentially via startPortForward.
+ * Skips rules that already have an active or connecting runtime tunnel.
+ */
+export const startAllPortForwards = async (
+  rules: PortForwardingRule[],
+  resolveHost: StartAllPortForwardHostResolver,
+  hosts: Host[],
+  keys: SSHKey[],
+  identities: Identity[],
+  onStatusChange: (ruleId: string, status: PortForwardingRule['status'], error?: string) => void,
+  terminalSettings?: Pick<TerminalSettings, 'verifyHostKeys' | 'keepaliveInterval' | 'keepaliveCountMax'>,
+  knownHosts?: KnownHost[],
+): Promise<StartAllPortForwardsResult> => {
+  const result: StartAllPortForwardsResult = {
+    started: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [],
+  };
+  const startableIds = new Set(
+    selectStartablePortForwardingRules(
+      rules,
+      (ruleId) => isPortForwardingRuntimeBusy(getActiveConnection(ruleId)),
+    ).map((rule) => rule.id),
+  );
+  result.skipped = rules.length - startableIds.size;
+
+  for (const rule of rules) {
+    if (!startableIds.has(rule.id)) continue;
+    if (isPortForwardingRuntimeBusy(getActiveConnection(rule.id))) {
+      result.skipped += 1;
+      continue;
+    }
+
+    const host = resolveHost(rule);
+    if (!host) {
+      const error = 'Host not found';
+      onStatusChange(rule.id, 'error', error);
+      result.failed += 1;
+      result.errors.push({ ruleId: rule.id, label: rule.label, error });
+      continue;
+    }
+
+    const startResult = await startPortForward(
+      rule,
+      host,
+      hosts,
+      keys,
+      identities,
+      (status, error) => onStatusChange(rule.id, status, error),
+      Boolean(rule.autoStart),
+      terminalSettings,
+      knownHosts,
+    );
+    if (startResult.success) {
+      result.started += 1;
+    } else {
+      result.failed += 1;
+      result.errors.push({
+        ruleId: rule.id,
+        label: rule.label,
+        error: startResult.error || 'Failed to start',
+      });
+    }
+  }
+
+  return result;
+};
+
+/**
+ * Stop running tunnels one-by-one, then call stopAllPortForwards as a safety net.
+ */
+export const stopAllActivePortForwards = async (
+  rules: PortForwardingRule[],
+  onStatusChange: (ruleId: string, status: PortForwardingRule['status'], error?: string) => void,
+): Promise<StopAllActivePortForwardsResult> => {
+  const targets = selectStoppablePortForwardingRules(
+    rules,
+    (ruleId) => isPortForwardingRuntimeBusy(getActiveConnection(ruleId)),
+  );
+  const result: StopAllActivePortForwardsResult = {
+    stopped: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  for (const rule of targets) {
+    const stopResult = await stopPortForward(rule.id, (status, error) => {
+      onStatusChange(rule.id, status, error);
+    });
+    if (stopResult.success) {
+      result.stopped += 1;
+    } else {
+      result.failed += 1;
+      result.errors.push({
+        ruleId: rule.id,
+        label: rule.label,
+        error: stopResult.error || 'Failed to stop',
+      });
+    }
+  }
+
+  await stopAllPortForwards();
+  return result;
+};
+
 /**
  * Stop all active tunnels (cleanup on unmount)
  */
@@ -1318,10 +1451,12 @@ const simulateConnection = async (
 
 export default {
   startPortForward,
+  startAllPortForwards,
   stopPortForward,
   getPortForwardStatus,
   isBackendAvailable,
   stopAllPortForwards,
+  stopAllActivePortForwards,
   setReconnectCallback,
   clearReconnectTimer,
 };
