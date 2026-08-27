@@ -19,6 +19,7 @@
 export type ImeTextInputKeyEvent = {
   type?: string;
   key: string;
+  code?: string;
   keyCode?: number;
   altKey?: boolean;
   ctrlKey?: boolean;
@@ -122,22 +123,29 @@ export function shouldDiscardStaleDeferredImeTextInput(
 }
 
 /**
- * True when the release that ends a deferral is an IME sentinel standing in
- * for the deferred key, so the paired Kitty release must be encoded from the
- * deferred physical key instead. A real keyup for another held key keeps its
- * own identity — rewriting it would strand that key's forwarded press and the
- * TUI would see it stuck down until focus loss.
+ * How the keyup that ends a deferral relates to the deferred key.
+ * - `deferred`: an IME sentinel stood in for the deferred key, so the paired
+ *   release must be encoded from the deferred physical key.
+ * - `own`: the release belongs to the deferred key itself (matched key or
+ *   physical code), so it already pairs the press the flush emitted.
+ * - `unrelated`: another held key was released; it keeps its own identity and
+ *   the deferred press needs a separate synthesized release.
  */
-export function shouldRewriteKeyUpToDeferredImeKey(
+export type DeferredKeyupReleaseMode = "deferred" | "own" | "unrelated";
+
+export function resolveDeferredKeyupRelease(
   deferredKey: string | null | undefined,
+  deferredCode: string | null | undefined,
   event: ImeTextInputKeyEvent,
-): boolean {
-  if (!deferredKey) return false;
-  if (event.type !== undefined && event.type !== "keyup") return false;
-  if (event.altKey || event.ctrlKey || event.metaKey) return false;
-  if (isModifierOnlyKey(event.key)) return false;
-  if (event.key === deferredKey) return false;
-  return isImeSentinelKeyUp(event);
+): DeferredKeyupReleaseMode {
+  if (!deferredKey) return "own";
+  if (event.type !== undefined && event.type !== "keyup") return "own";
+  if (event.altKey || event.ctrlKey || event.metaKey) return "own";
+  if (isModifierOnlyKey(event.key)) return "own";
+  if (event.key === deferredKey) return "own";
+  if (event.code && deferredCode && event.code === deferredCode) return "own";
+  if (isImeSentinelKeyUp(event)) return "deferred";
+  return "unrelated";
 }
 
 export function shouldBlockKeyPressForImeTextInput(

@@ -110,10 +110,10 @@ import {
   shouldBlockKeyPressForImeTextInput,
   shouldCommitDeferredImeTextInput,
   shouldDeferKeyDownForImeTextInput,
+  resolveDeferredKeyupRelease,
   shouldDiscardStaleDeferredImeTextInput,
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
-  shouldRewriteKeyUpToDeferredImeKey,
 } from "./terminalImeTextInput";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
@@ -1491,11 +1491,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         shouldFlushDeferredImeTextInputOnKeyUp(imeTextInputDeferredKey, e)
       ) {
         const deferredKittyEvent = imeTextInputDeferredKittyEvent;
-        const sentinelRelease =
-          deferredKittyEvent !== null &&
-          shouldRewriteKeyUpToDeferredImeKey(imeTextInputDeferredKey, e);
+        const releaseMode = resolveDeferredKeyupRelease(
+          imeTextInputDeferredKey,
+          deferredKittyEvent?.code ?? null,
+          e,
+        );
         flushImeTextInputDeferral();
-        if (sentinelRelease && deferredKittyEvent) {
+        if (deferredKittyEvent && releaseMode === "deferred") {
           // The release reported an IME sentinel (Process/229); pair the
           // flushed press from the deferred physical key so the kitty
           // sequence keeps its key identity.
@@ -1503,6 +1505,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
             ...deferredKittyEvent,
             type: "keyup",
           } as unknown as KeyboardEvent;
+        } else if (deferredKittyEvent && releaseMode === "unrelated") {
+          // Another held key was released first: this keyup only ends the
+          // stale deferral, so the flushed press needs its own synthesized
+          // release while the real keyup keeps its identity.
+          releaseForwardedKittyPress({ ...deferredKittyEvent, type: "keyup" });
         }
       }
       const identity = kittyKeyIdentity(releaseEvent);

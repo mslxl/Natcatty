@@ -9,10 +9,10 @@ import {
   shouldBlockKeyPressForImeTextInput,
   shouldCommitDeferredImeTextInput,
   shouldDeferKeyDownForImeTextInput,
+  resolveDeferredKeyupRelease,
   shouldDiscardStaleDeferredImeTextInput,
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
-  shouldRewriteKeyUpToDeferredImeKey,
 } from "./terminalImeTextInput";
 
 const runtimeSource = readFileSync(
@@ -163,51 +163,66 @@ test("a Windows IME release reporting Process must flush the deferred slash (#31
 test("a held key released while the deferral is armed keeps its own keyup identity", () => {
   // "/" is deferred (its own release was swallowed) and the user still holds
   // "a" with the other hand, so the "a" keyup lands first. The stale deferral
-  // still ends, but that release is a real keyup, not an IME sentinel: only
-  // the deferred punctuation key may be rewritten, otherwise the held key's
-  // press entry is never paired and the TUI sees it stuck down.
+  // still ends, but that release is a real keyup, not an IME sentinel: it
+  // keeps its own identity, and the deferred press is released separately.
   const deferredKey = "/";
-  const heldKeyUp = { type: "keyup", key: "a", keyCode: 65 };
+  const heldKeyUp = { type: "keyup", key: "a", keyCode: 65, code: "KeyA" };
   assert.equal(
     shouldFlushDeferredImeTextInputOnKeyUp(deferredKey, heldKeyUp),
     true,
     "the stale deferral still ends on a real release",
   );
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey(deferredKey, heldKeyUp),
-    false,
+    resolveDeferredKeyupRelease(deferredKey, "Slash", heldKeyUp),
+    "unrelated",
     "an unrelated release must not be rewritten to the deferred key",
   );
 });
 
-test("only IME sentinel releases are rewritten to the deferred key", () => {
+test("only IME sentinel releases take over the deferred key's release identity", () => {
   // Windows IMEs report Process/229 (occasionally Unidentified) as the release
   // of a key they consumed — those are the only releases that stand in for the
   // deferred punctuation key.
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey("/", { type: "keyup", key: "Process", keyCode: 229 }),
-    true,
+    resolveDeferredKeyupRelease("/", "Slash", { type: "keyup", key: "Process", keyCode: 229 }),
+    "deferred",
   );
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey("/", { type: "keyup", key: "Unidentified" }),
-    true,
+    resolveDeferredKeyupRelease("/", "Slash", { type: "keyup", key: "Unidentified" }),
+    "deferred",
   );
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey("/", { type: "keyup", key: "/", keyCode: 191 }),
-    false,
+    resolveDeferredKeyupRelease("/", "Slash", { type: "keyup", key: "/", keyCode: 191 }),
+    "own",
     "a matched release already encodes from the real event",
   );
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey("/", { type: "keyup", key: "Shift", keyCode: 16 }),
-    false,
+    resolveDeferredKeyupRelease("/", "Slash", {
+      type: "keyup",
+      key: "1",
+      keyCode: 191,
+      code: "Slash",
+    }),
+    "own",
+    "a release of the same physical key already pairs the flushed press",
   );
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey("/", { type: "keyup", key: "a", keyCode: 65, ctrlKey: true }),
-    false,
+    resolveDeferredKeyupRelease("/", "Slash", { type: "keyup", key: "Shift", keyCode: 16 }),
+    "own",
   );
   assert.equal(
-    shouldRewriteKeyUpToDeferredImeKey(null, { type: "keyup", key: "Process", keyCode: 229 }),
-    false,
+    resolveDeferredKeyupRelease("/", "Slash", {
+      type: "keyup",
+      key: "a",
+      keyCode: 65,
+      code: "KeyA",
+      ctrlKey: true,
+    }),
+    "own",
+  );
+  assert.equal(
+    resolveDeferredKeyupRelease(null, null, { type: "keyup", key: "Process", keyCode: 229 }),
+    "own",
   );
 });
 
@@ -463,13 +478,15 @@ test("createXTermRuntime recovers a stuck IME punctuation deferral (#3103)", () 
     /shouldFlushDeferredImeTextInputOnKeyUp\(imeTextInputDeferredKey, e\)/,
   );
   assert.match(keyupSlice, /flushImeTextInputDeferral\(\);/);
-  // Only an IME sentinel release (Process/229/Unidentified) may be rewritten
-  // to the deferred physical key; an unrelated keyup keeps its own identity so
-  // the held key's forwarded press still gets its release.
+  // Only an IME sentinel release (Process/229/Unidentified) takes over the
+  // deferred key's release identity; an unrelated keyup keeps its own identity
+  // and the flushed press is released separately.
   assert.match(
     keyupSlice,
-    /shouldRewriteKeyUpToDeferredImeKey\(imeTextInputDeferredKey, e\)/,
+    /resolveDeferredKeyupRelease\(\s*imeTextInputDeferredKey,\s*deferredKittyEvent\?\.code \?\? null,\s*e,?\s*\)/,
   );
+  assert.match(keyupSlice, /releaseMode === "deferred"/);
+  assert.match(keyupSlice, /releaseMode === "unrelated"/);
   assert.match(
     keyupSlice,
     /\.\.\.deferredKittyEvent,\s*type: "keyup",/,
