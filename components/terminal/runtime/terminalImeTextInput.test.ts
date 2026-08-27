@@ -9,6 +9,8 @@ import {
   shouldBlockKeyPressForImeTextInput,
   shouldCommitDeferredImeTextInput,
   shouldDeferKeyDownForImeTextInput,
+  shouldFlushDeferredImeTextInputOnKeyUp,
+  shouldFlushStaleDeferredImeTextInput,
 } from "./terminalImeTextInput";
 
 const runtimeSource = readFileSync(
@@ -63,9 +65,190 @@ test("shouldDeferKeyDownForImeTextInput leaves composition and modified keys alo
 });
 
 test("shouldBlockKeyPressForImeTextInput only while a deferral is armed", () => {
-  assert.equal(shouldBlockKeyPressForImeTextInput(",", { type: "keypress" }), true);
-  assert.equal(shouldBlockKeyPressForImeTextInput(null, { type: "keypress" }), false);
-  assert.equal(shouldBlockKeyPressForImeTextInput(",", { type: "keydown" }), false);
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(",", { type: "keypress", key: "," }),
+    true,
+  );
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(null, { type: "keypress", key: "," }),
+    false,
+  );
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(",", { type: "keydown", key: "," }),
+    false,
+  );
+});
+
+test("shouldBlockKeyPressForImeTextInput still blocks the deferred keystroke itself", () => {
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(
+      "/",
+      { type: "keypress", key: "/", keyCode: 191 },
+      191,
+    ),
+    true,
+  );
+  // Shift+/ reports "?" on keydown, so the deferral arms with "?".
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(
+      "?",
+      { type: "keypress", key: "?", keyCode: 191 },
+      191,
+    ),
+    true,
+  );
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(
+      "/",
+      { type: "keypress", key: "/", isComposing: true },
+      191,
+    ),
+    true,
+  );
+});
+
+test("a stale deferral must not swallow unrelated keypresses (#3103)", () => {
+  // Uppercase letters are routed through keypress by xterm, so a blanket
+  // keypress block turned one stale deferral into a terminal that ignored
+  // everything typed afterwards.
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(
+      "/",
+      { type: "keypress", key: "X", keyCode: 88 },
+      191,
+    ),
+    false,
+  );
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(
+      "/",
+      { type: "keypress", key: "a", keyCode: 65 },
+      191,
+    ),
+    false,
+  );
+  // A matching keyCode keeps the block when an IME rewrites the key label.
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(
+      "/",
+      { type: "keypress", key: "1", keyCode: 191 },
+      191,
+    ),
+    true,
+  );
+});
+
+test("a Windows IME release reporting Process must flush the deferred slash (#3103)", () => {
+  // Windows + CJK IME in vi: keydown still reports the physical key while the
+  // IME consumes it, then reports Process/229 on the release and never sends
+  // an insertText the runtime would treat as a remap.
+  let deferredKey: string | null = null;
+  const keydown = { type: "keydown", key: "/", keyCode: 191 };
+  if (shouldDeferKeyDownForImeTextInput(keydown)) deferredKey = keydown.key;
+  assert.equal(deferredKey, "/");
+
+  const release = { type: "keyup", key: "Process", keyCode: 229 };
+  if (shouldFlushDeferredImeTextInputOnKeyUp(deferredKey, release)) deferredKey = null;
+  assert.equal(deferredKey, null, "the deferral must not outlive its keystroke");
+
+  // Input keeps flowing afterwards.
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(deferredKey, { type: "keypress", key: "x", keyCode: 88 }),
+    false,
+  );
+});
+
+test("a deferral left without release or insertText recovers on the next keystroke (#3103)", () => {
+  let deferredKey: string | null = null;
+  const keydown = { type: "keydown", key: "/", keyCode: 191 };
+  if (shouldDeferKeyDownForImeTextInput(keydown)) deferredKey = keydown.key;
+  assert.equal(deferredKey, "/");
+
+  // No insertText and no keyup at all; the user then types a plain letter.
+  const nextKeyDown = { type: "keydown", key: "a", keyCode: 65 };
+  if (shouldFlushStaleDeferredImeTextInput(deferredKey, nextKeyDown)) deferredKey = null;
+  assert.equal(deferredKey, null, "the stale deferral must flush before the new keystroke");
+  assert.equal(
+    shouldBlockKeyPressForImeTextInput(deferredKey, { type: "keypress", key: "a", keyCode: 65 }),
+    false,
+  );
+});
+
+test("auto-repeat and modifier keystrokes keep the deferral armed", () => {
+  // Same-key keydown is auto-repeat: re-arm instead of flushing, so a held key
+  // does not emit an extra character per repeat.
+  assert.equal(
+    shouldFlushStaleDeferredImeTextInput("/", { type: "keydown", key: "/", keyCode: 191 }),
+    false,
+  );
+  assert.equal(
+    shouldFlushStaleDeferredImeTextInput("/", { type: "keydown", key: "Shift", keyCode: 16 }),
+    false,
+  );
+  assert.equal(
+    shouldFlushStaleDeferredImeTextInput("/", {
+      type: "keydown",
+      key: "c",
+      keyCode: 67,
+      ctrlKey: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFlushStaleDeferredImeTextInput("/", {
+      type: "keydown",
+      key: "d",
+      keyCode: 229,
+      isComposing: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldFlushDeferredImeTextInputOnKeyUp("/", { type: "keyup", key: "Shift", keyCode: 16 }),
+    false,
+  );
+  assert.equal(
+    shouldFlushDeferredImeTextInputOnKeyUp("/", {
+      type: "keyup",
+      key: "c",
+      keyCode: 67,
+      ctrlKey: true,
+    }),
+    false,
+  );
+});
+
+test("an active composition still resolves the deferred keystroke via insertText", () => {
+  // The IME absorbed the punctuation into a composition: the composing release
+  // must not flush the ASCII key ahead of the committed glyph.
+  assert.equal(
+    shouldFlushDeferredImeTextInputOnKeyUp("/", {
+      type: "keyup",
+      key: "/",
+      keyCode: 191,
+      isComposing: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldCommitDeferredImeTextInput("/", { inputType: "insertText", data: "、" }),
+    true,
+  );
+});
+
+test("a matched keyup still flushes the English punctuation fallback (#2833)", () => {
+  assert.equal(
+    shouldFlushDeferredImeTextInputOnKeyUp("/", { type: "keyup", key: "/", keyCode: 191 }),
+    true,
+  );
+  assert.equal(
+    shouldFlushDeferredImeTextInputOnKeyUp(null, { type: "keyup", key: "/", keyCode: 191 }),
+    false,
+  );
+  assert.equal(
+    shouldFlushDeferredImeTextInputOnKeyUp("/", { type: "keydown", key: "/", keyCode: 191 }),
+    false,
+  );
 });
 
 test("shouldCommitDeferredImeTextInput accepts insertText payloads while deferred", () => {
@@ -100,7 +283,10 @@ test("isUnchangedDeferredImeTextInput detects English punctuation flush", () => 
 test("createXTermRuntime defers ASCII punctuation keydowns to insertText", () => {
   assert.match(runtimeSource, /shouldDeferKeyDownForImeTextInput\(e\)/);
   assert.match(runtimeSource, /armImeTextInputDeferral\(e\)/);
-  assert.match(runtimeSource, /shouldBlockKeyPressForImeTextInput\(imeTextInputDeferredKey, e\)/);
+  assert.match(
+    runtimeSource,
+    /shouldBlockKeyPressForImeTextInput\(\s*imeTextInputDeferredKey,\s*e,\s*imeTextInputDeferredKittyEvent\?\.keyCode \?\? null,\s*\)/,
+  );
   assert.match(
     runtimeSource,
     /shouldCommitDeferredImeTextInput\(imeTextInputDeferredKey, event\)/,
@@ -162,5 +348,47 @@ test("createXTermRuntime defers ASCII punctuation keydowns to insertText", () =>
   assert.match(
     runtimeSource.slice(compositionIdx, compositionIdx + 420),
     /if \(encoded\) \{[\s\S]*handleTerminalInputData\(encoded, \{ source: "kitty" \}\);[\s\S]*\} else \{[\s\S]*handleTerminalInputData\(text\);/,
+  );
+});
+
+test("createXTermRuntime recovers a stuck IME punctuation deferral (#3103)", () => {
+  // Any real key release ends the deferral, not just an exact key match.
+  const keyupIdx = runtimeSource.indexOf('if (e.type === "keyup")');
+  assert.ok(keyupIdx >= 0);
+  const keyupSlice = runtimeSource.slice(keyupIdx, keyupIdx + 1600);
+  assert.match(
+    keyupSlice,
+    /shouldFlushDeferredImeTextInputOnKeyUp\(imeTextInputDeferredKey, e\)/,
+  );
+  assert.match(keyupSlice, /flushImeTextInputDeferral\(\);/);
+  // A mangled release must not be encoded as a kitty key event; pair the
+  // release from the deferred physical key instead.
+  assert.match(
+    keyupSlice,
+    /e\.key !== imeTextInputDeferredKey && deferredKittyEvent !== null/,
+  );
+  assert.match(
+    keyupSlice,
+    /\.\.\.deferredKittyEvent,\s*type: "keyup",/,
+  );
+  const kittyReleaseIdx = keyupSlice.indexOf("toKittyKeyboardEvent(releaseEvent)");
+  assert.ok(kittyReleaseIdx > keyupSlice.indexOf("flushImeTextInputDeferral();"));
+
+  // The stale flush runs on keydown, after the broadcast guard and before the
+  // composition handling, so a wedged deferral cannot survive a new keystroke.
+  const staleIdx = runtimeSource.indexOf(
+    "shouldFlushStaleDeferredImeTextInput(imeTextInputDeferredKey, e)",
+  );
+  assert.ok(staleIdx > keyupIdx);
+  const keydownGuardIdx = runtimeSource.indexOf("if (handlingKittyBroadcast) return true;", keyupIdx);
+  const keyCode229Idx = runtimeSource.indexOf("if (e.keyCode === 229) {", keyupIdx);
+  assert.ok(
+    keydownGuardIdx > keyupIdx &&
+      staleIdx > keydownGuardIdx &&
+      keyCode229Idx > staleIdx,
+  );
+  assert.match(
+    runtimeSource.slice(staleIdx - 400, staleIdx + 200),
+    /flushImeTextInputDeferral\(\);/,
   );
 });
