@@ -117,6 +117,11 @@ import {
 } from "./terminalImeTextInput";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
+import {
+  getTextInputWireChunks,
+  shouldSplitImeTextInputForWire,
+  shouldSplitRawPasteInputForWire,
+} from "./terminalPerCharacterInput";
 import { formatTelnetLocalEcho } from "./telnetLocalEcho";
 import {
   isTerminalFontSizeAction,
@@ -1093,6 +1098,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       source?: "terminal" | "shift-enter" | "kitty";
       /** Skip string broadcast when peers will re-resolve from a key chord. */
       skipBroadcast?: boolean;
+      /**
+       * Send plain text as one write per character. Strict bastion prompts
+       * (QAX) treat one channel write as a keystroke and drop multi-character
+       * chunks, so IME commits and short raw pastes must go out per
+       * character (#3077). Bookkeeping still sees the whole payload once.
+       */
+      perCharacterWrites?: boolean;
     },
   ) => {
     // Clipboard paste / typed password while assist is open must dismiss the
@@ -1208,7 +1220,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         // When backspaceBehavior is configured, remap the Backspace key output
         const outData = mapTerminalBackspaceInput(dataToWrite, ctx.host.backspaceBehavior);
         ctx.onOutputTriggerUserInputRef?.current?.(outData);
-        ctx.terminalBackend.writeToSession(id, outData, { sensitive });
+        for (const chunk of getTextInputWireChunks(outData, options?.perCharacterWrites === true)) {
+          ctx.terminalBackend.writeToSession(id, chunk, { sensitive });
+        }
 
         // Local echo for serial connections only when explicitly enabled
         if (inputSource !== "kitty" && ctx.host.protocol === "serial" && ctx.serialLocalEcho) {
@@ -1372,7 +1386,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
         suppressNextTerminalDataBroadcast = true;
       }
-      handleTerminalInputData(text);
+      handleTerminalInputData(text, { perCharacterWrites: shouldSplitImeTextInputForWire(text) });
       if (deferredKittyEvent) {
         const pressEvent: KittyKeyboardEvent = {
           ...deferredKittyEvent,
@@ -1421,7 +1435,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
         suppressNextTerminalDataBroadcast = true;
       }
-      handleTerminalInputData(text);
+      handleTerminalInputData(text, { perCharacterWrites: shouldSplitImeTextInputForWire(text) });
     }
     broadcastKittyInput({ kind: "text", text });
   };
@@ -2245,7 +2259,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
           suppressNextTerminalDataBroadcast = true;
         }
-        handleTerminalInputData(data);
+        // Committed composition text, not a negotiated Kitty sequence.
+        handleTerminalInputData(data, { perCharacterWrites: shouldSplitImeTextInputForWire(data) });
       }
       broadcastKittyInput({ kind: "text", text: data });
       return;
@@ -2263,7 +2278,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       });
       broadcastLegacyDataPending = null;
     }
-    handleTerminalInputData(data);
+    // Raw multi-character onData is an unbracketed paste (or a committed
+    // composition): short plain text must reach strict bastions per character.
+    handleTerminalInputData(data, { perCharacterWrites: shouldSplitRawPasteInputForWire(data) });
   });
 
   const handleKittyKeyboardBroadcast = createKittyKeyboardBroadcastHandler({
