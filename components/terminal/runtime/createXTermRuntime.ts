@@ -122,6 +122,7 @@ import {
   shouldSplitImeTextInputForWire,
   shouldSplitRawPasteInputForWire,
 } from "./terminalPerCharacterInput";
+import { sanitizeTerminalInput } from "./terminalInputSanitize";
 import { formatTelnetLocalEcho } from "./telnetLocalEcho";
 import {
   isTerminalFontSizeAction,
@@ -1107,6 +1108,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       perCharacterWrites?: boolean;
     },
   ) => {
+    // Strip zero-width / invisible formatting characters that CJK IMEs
+    // (notably Microsoft Pinyin / Sogou on Windows) emit when switching
+    // composition modes. With the 15-graphemes Unicode version these render
+    // at width 0, so they become hidden characters in the command line and
+    // cause the executed command to fail (#3138).
+    data = sanitizeTerminalInput(data);
+    if (!data) return;
+
     // Clipboard paste / typed password while assist is open must dismiss the
     // hint first. Otherwise Enter is still hijacked for confirmFill and can
     // append the host session password after the user's pasted secret (#2198).
@@ -1428,16 +1437,22 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
     // Actual IME remap — Kitty associated-text composition when negotiated;
     // otherwise send the committed glyph (report-all alone cannot carry it).
-    const encoded = encodeKittyCompositionText(kittyKeyboardMode, text);
+    // Sanitize before encoding so zero-width IME artifacts do not become
+    // Kitty escape sequences that bypass the handleTerminalInputData guard (#3138).
+    const sanitizedText = sanitizeTerminalInput(text);
+    if (!sanitizedText) return;
+    const encoded = encodeKittyCompositionText(kittyKeyboardMode, sanitizedText);
     if (encoded) {
       handleTerminalInputData(encoded, { source: "kitty" });
     } else {
       if (ctx.isBroadcastEnabledRef.current && ctx.onBroadcastInputRef.current) {
         suppressNextTerminalDataBroadcast = true;
       }
-      handleTerminalInputData(text, { perCharacterWrites: shouldSplitImeTextInputForWire(text) });
+      handleTerminalInputData(sanitizedText, {
+        perCharacterWrites: shouldSplitImeTextInputForWire(sanitizedText),
+      });
     }
-    broadcastKittyInput({ kind: "text", text });
+    broadcastKittyInput({ kind: "text", text: sanitizedText });
   };
   const flushImeTextInputDeferral = () => {
     const fallback = imeTextInputDeferredKey;
@@ -2252,7 +2267,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         window.clearTimeout(kittyCompositionClearTimer);
         kittyCompositionClearTimer = undefined;
       }
-      const encoded = encodeKittyCompositionText(kittyKeyboardMode, data);
+      // Sanitize before encoding so zero-width IME artifacts do not become
+      // Kitty escape sequences that bypass the handleTerminalInputData guard (#3138).
+      const sanitizedData = sanitizeTerminalInput(data);
+      if (!sanitizedData) return;
+      const encoded = encodeKittyCompositionText(kittyKeyboardMode, sanitizedData);
       if (encoded) {
         handleTerminalInputData(encoded, { source: "kitty" });
       } else {
@@ -2260,9 +2279,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           suppressNextTerminalDataBroadcast = true;
         }
         // Committed composition text, not a negotiated Kitty sequence.
-        handleTerminalInputData(data, { perCharacterWrites: shouldSplitImeTextInputForWire(data) });
+        handleTerminalInputData(sanitizedData, {
+          perCharacterWrites: shouldSplitImeTextInputForWire(sanitizedData),
+        });
       }
-      broadcastKittyInput({ kind: "text", text: data });
+      broadcastKittyInput({ kind: "text", text: sanitizedData });
       return;
     }
     if (broadcastLegacyDataPending) {

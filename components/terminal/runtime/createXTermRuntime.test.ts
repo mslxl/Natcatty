@@ -999,7 +999,7 @@ test("multi-character plain text goes out as per-character writes (#3077)", asyn
   );
   assert.match(
     source,
-    /handleTerminalInputData\(data, \{ perCharacterWrites: shouldSplitImeTextInputForWire\(data\) \}\)/,
+    /handleTerminalInputData\(sanitizedData, \{\s*perCharacterWrites: shouldSplitImeTextInputForWire\(sanitizedData\),?\s*\}\)/,
   );
   // Negotiated Kitty paths keep their single write: CSI-u associated text and
   // forwarded key sequences must never be split across writes.
