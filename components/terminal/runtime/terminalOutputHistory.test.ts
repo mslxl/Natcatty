@@ -116,6 +116,14 @@ test("erase-in-line after a carriage return drops the stale suffix", () => {
   assert.deepEqual([...history.getLines()], ["new"]);
 });
 
+test("clear resets the tab stop column with the rest of the line state", () => {
+  const history = createTerminalOutputHistoryPreview();
+  history.append("abc");
+  history.clear();
+  history.append("\tb\n");
+  assert.deepEqual([...history.getLines()], ["        b"]);
+});
+
 test("bare carriage returns overwrite the line they restart", () => {
   const history = createTerminalOutputHistoryPreview();
   history.append("downloading 10%\r");

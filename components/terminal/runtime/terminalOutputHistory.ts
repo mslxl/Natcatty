@@ -404,6 +404,7 @@ export const createTerminalOutputHistoryPreview = (options?: {
       lines = [];
       current = "";
       cursor = 0;
+      cursorCell = 0;
       totalChars = 0;
       pendingEscape = "";
       cacheDirty = true;
