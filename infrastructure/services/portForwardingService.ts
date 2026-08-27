@@ -1296,6 +1296,7 @@ export const startAllPortForwards = async (
   terminalSettings?: Pick<TerminalSettings, 'verifyHostKeys' | 'keepaliveInterval' | 'keepaliveCountMax'>,
   knownHosts?: KnownHost[],
   getRule?: StartAllPortForwardRuleLookup,
+  hostNotFoundMessage?: string,
 ): Promise<StartAllPortForwardsResult> => {
   const result: StartAllPortForwardsResult = {
     started: 0,
@@ -1318,7 +1319,7 @@ export const startAllPortForwards = async (
 
     const host = resolveHost(rule);
     if (!host) {
-      const error = 'Host not found';
+      const error = hostNotFoundMessage ?? 'Host not found';
       onStatusChange(rule.id, 'error', error);
       result.failed += 1;
       result.errors.push({ ruleId: rule.id, label: rule.label, error });

@@ -1755,6 +1755,7 @@ test("startAllPortForwards records a missing host as a failed start", async () =
 
   const missingHostRule = rule({ id: "bulk-missing-host", label: "Missing", status: "inactive" });
   const statuses: Array<{ ruleId: string; status: string; error?: string }> = [];
+  const hostNotFoundMessage = "pf.error.hostNotFound";
   const result = await startAllPortForwards(
     [missingHostRule],
     () => undefined,
@@ -1762,13 +1763,19 @@ test("startAllPortForwards records a missing host as a failed start", async () =
     [],
     [],
     (ruleId, status, error) => statuses.push({ ruleId, status, error }),
+    undefined,
+    undefined,
+    undefined,
+    hostNotFoundMessage,
   );
 
   assert.deepEqual(startedRuleIds, []);
   assert.equal(result.started, 0);
   assert.equal(result.failed, 1);
-  assert.equal(result.errors[0]?.error, "Host not found");
+  assert.equal(result.errors[0]?.error, hostNotFoundMessage);
+  assert.notEqual(result.errors[0]?.error, "Host not found");
   assert.equal(statuses.at(-1)?.status, "error");
+  assert.equal(statuses.at(-1)?.error, hostNotFoundMessage);
 });
 
 test("stopAllActivePortForwards stops running rules then calls backend stopAll", async () => {

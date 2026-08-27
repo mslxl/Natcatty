@@ -282,6 +282,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         identities,
         terminalSettings,
         knownHosts,
+        t("pf.error.hostNotFound"),
       );
       if (result.failed > 0 && result.started > 0) {
         toast.warning(

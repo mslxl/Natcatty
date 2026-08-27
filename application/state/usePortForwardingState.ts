@@ -101,6 +101,7 @@ export interface UsePortForwardingStateResult {
     identities: Identity[],
     terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number },
     knownHosts?: KnownHost[],
+    hostNotFoundMessage?: string,
   ) => Promise<StartAllPortForwardsResult>;
   stopAllTunnels: (rules: PortForwardingRule[]) => Promise<StopAllActivePortForwardsResult>;
   stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
@@ -747,6 +748,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
       identities: Identity[],
       terminalSettings?: { keepaliveInterval: number; keepaliveCountMax: number },
       knownHosts?: KnownHost[],
+      hostNotFoundMessage?: string,
     ) => {
       return startAllPortForwards(
         targetRules,
@@ -760,6 +762,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
         terminalSettings,
         knownHosts,
         (ruleId) => globalRules.find((rule) => rule.id === ruleId),
+        hostNotFoundMessage,
       );
     },
     [setRuleStatus],
