@@ -1405,6 +1405,35 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // broadcast targets can still receive paired key events.
     imeTextInputDeferredKittyEvent = toKittyKeyboardEvent(event);
   };
+  /**
+   * Emit the paired release for a forwarded press, locally and to broadcast
+   * peers. Used by the keyup handler and by the stale-deferral recovery, where
+   * the IME dropped the release and one must be synthesized from the deferred
+   * physical key so the TUI does not see the key held until focus loss.
+   */
+  const releaseForwardedKittyPress = (
+    event: Pick<KittyKeyboardEvent, "code" | "key"> & KittyKeyboardEvent,
+  ): boolean => {
+    const identity = event.code || event.key;
+    const forwardedPress = broadcastForwardedKeys.get(identity);
+    if (forwardedPress) {
+      broadcastForwardedKeys.delete(identity);
+      broadcastKittyInput(
+        { kind: "key", event },
+        true,
+        forwardedPress.targetSessionIds,
+      );
+    }
+    if (!kittyForwardedKeys.delete(identity)) return false;
+    const sequence = kittyKeyboardProtocolEnabled
+      ? encodeKittyKeyEvent(kittyKeyboardMode, event)
+      : null;
+    if (sequence) {
+      handleTerminalInputData(sequence, { source: "kitty" });
+      return true;
+    }
+    return false;
+  };
 
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     // Preserve mouse selection across keystrokes when enabled. xterm.js
@@ -1477,24 +1506,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       }
       const identity = kittyKeyIdentity(releaseEvent);
       if (broadcastLegacyDataPending === identity) clearBroadcastLegacyDataPending();
-      const forwardedPress = broadcastForwardedKeys.get(identity);
-      if (forwardedPress) {
-        broadcastForwardedKeys.delete(identity);
-        broadcastKittyInput(
-          { kind: "key", event: toKittyKeyboardEvent(releaseEvent) },
-          true,
-          forwardedPress.targetSessionIds,
-        );
-      }
-      if (!kittyForwardedKeys.delete(identity)) return true;
-      const kittyEvent = toKittyKeyboardEvent(releaseEvent);
-      const sequence = kittyKeyboardProtocolEnabled
-        ? encodeKittyKeyEvent(kittyKeyboardMode, kittyEvent)
-        : null;
-      if (sequence) {
+      if (releaseForwardedKittyPress(toKittyKeyboardEvent(releaseEvent))) {
         e.preventDefault();
         e.stopPropagation();
-        handleTerminalInputData(sequence, { source: "kitty" });
         return false;
       }
       return true;
@@ -1527,7 +1541,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       imeTextInputDeferredKey !== null &&
       shouldFlushStaleDeferredImeTextInput(imeTextInputDeferredKey, e)
     ) {
+      const deferredKittyEvent = imeTextInputDeferredKittyEvent;
       flushImeTextInputDeferral();
+      if (deferredKittyEvent) {
+        // The flush emitted the deferred press, but the release it waits for
+        // is the one the IME dropped — synthesize it so the TUI does not see
+        // the key held until focus loss.
+        releaseForwardedKittyPress({ ...deferredKittyEvent, type: "keyup" });
+      }
     }
 
     if (e.keyCode === 229) {

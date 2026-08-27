@@ -444,4 +444,10 @@ test("createXTermRuntime recovers a stuck IME punctuation deferral (#3103)", () 
     runtimeSource.slice(staleIdx - 400, staleIdx + 200),
     /flushImeTextInputDeferral\(\);/,
   );
+  // The recovery runs because the deferred key's release will never arrive, so
+  // the press emitted by the flush must be paired with a synthesized release
+  // instead of staying forwarded until focus loss.
+  const recoverySlice = runtimeSource.slice(staleIdx, staleIdx + 500);
+  assert.match(recoverySlice, /deferredKittyEvent = imeTextInputDeferredKittyEvent/);
+  assert.match(recoverySlice, /releaseForwardedKittyPress\(\s*\{\s*\.\.\.deferredKittyEvent,\s*type: "keyup",?\s*\}\s*\)/);
 });
