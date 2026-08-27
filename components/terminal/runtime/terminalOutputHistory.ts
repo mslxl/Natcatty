@@ -61,6 +61,11 @@ const consumeControlString = (input: string, from: number): number | null => {
 const isControlStringIntroducer = (ch: string): boolean =>
   ch === "]" || ch === "P" || ch === "^" || ch === "_" || ch === "X";
 
+// ECMA-48 nF sequences: zero or more intermediates (0x20-0x2f) then one final
+// byte (0x30-0x7e), e.g. `ESC ( B` (charset) or `ESC # 8` (DECALN).
+const isEscapeIntermediateByte = (ch: string): boolean => ch >= " " && ch <= "/";
+const isEscapeFinalByte = (ch: string): boolean => ch >= "0" && ch <= "~";
+
 /** Index past the escape sequence at `start`, or null while it is incomplete. */
 const consumeEscapeSequence = (input: string, start: number): number | null => {
   if (input[start] === C1_CSI) return consumeCsiBody(input, start + 1);
@@ -68,7 +73,13 @@ const consumeEscapeSequence = (input: string, start: number): number | null => {
   if (second === undefined) return null;
   if (second === "[") return consumeCsiBody(input, start + 2);
   if (isControlStringIntroducer(second)) return consumeControlString(input, start + 2);
-  return start + 2;
+  let end = start + 1;
+  while (end < input.length && isEscapeIntermediateByte(input[end])) end += 1;
+  if (end >= input.length) return null;
+  // No final byte: leave the trailing byte to the transcript filters, which
+  // drop control characters, instead of eating a meaningful one.
+  if (!isEscapeFinalByte(input[end])) return end;
+  return end + 1;
 };
 
 /**
@@ -241,7 +252,7 @@ export const createTerminalOutputHistoryPreview = (options?: {
     totalChars += current.length;
     current = "";
     cursor = 0;
-    // Always keep the newest line, even when it alone exceeds the cap.
+    // Never trim away the last retained line.
     while (lines.length > maxLines || (totalChars > maxChars && lines.length > 1)) {
       const dropped = lines.shift();
       if (dropped === undefined) break;
@@ -272,11 +283,15 @@ export const createTerminalOutputHistoryPreview = (options?: {
       while (end < text.length && text[end] !== "\n" && text[end] !== "\r" && text[end] !== "\b") {
         end += 1;
       }
-      const span = text.slice(i, end);
+      // A cursor-addressed redraw (cursor-home CSI stripped, no LF) would keep
+      // appending to `current` forever; commit it at the budget so neither the
+      // open line nor the copy each append makes can grow without bound.
+      if (current.length >= maxChars) commitCurrentLine();
+      const span = text.slice(i, end).slice(0, maxChars - current.length);
       current = cursor >= current.length
         ? current + span
         : current.slice(0, cursor) + span + current.slice(cursor + span.length);
-      cursor += span.length;
+      cursor = cursor >= current.length ? current.length : cursor + span.length;
       i = end;
     }
   };

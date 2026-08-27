@@ -35,6 +35,32 @@ test("escape sequences split across chunks are not leaked into the transcript", 
   assert.equal(second.pending, "");
 });
 
+test("escape sequences with intermediate bytes are consumed through their final byte", () => {
+  // ESC ( B designates G0 (ncurses / terminal reset emit it constantly).
+  assert.equal(stripTerminalDisplayToPlainText("\x1b(Bplain").text, "plain");
+  // ESC # 8 is DECALN.
+  assert.equal(stripTerminalDisplayToPlainText("\x1b#8plain").text, "plain");
+  // Two-byte escapes without intermediates keep working.
+  assert.equal(stripTerminalDisplayToPlainText("\x1bMplain").text, "plain");
+
+  const first = stripTerminalDisplayToPlainText("ok\x1b(");
+  assert.equal(first.text, "ok");
+  assert.equal(first.pending, "\x1b(");
+  assert.equal(stripTerminalDisplayToPlainText("Btail", first.pending).text, "tail");
+});
+
+test("a cursor-addressed frame without newlines stays inside the character budget", () => {
+  const history = createTerminalOutputHistoryPreview({ maxChars: 64 });
+  for (let frame = 0; frame < 200; frame += 1) {
+    history.append(`\x1b[Hframe ${frame} ${"x".repeat(80)}`);
+  }
+
+  const transcript = [...history.getLines()].join("");
+  assert.ok(transcript.length <= 2 * 64, `unbounded open line: ${transcript.length}`);
+  // The newest frame still lands in the retained tail.
+  assert.ok(transcript.includes("frame 199"), transcript.slice(-200));
+});
+
 test("bare carriage returns overwrite the line they restart", () => {
   const history = createTerminalOutputHistoryPreview();
   history.append("downloading 10%\r");
@@ -139,5 +165,6 @@ test("default retention bounds the preview history", () => {
   history.append("aaaaaaaa\n");
   history.append("bbbbbbbb\n");
   history.append("cccccccc\n");
-  assert.deepEqual([...history.getLines()], ["cccccccc"]);
+  // Lines longer than the character budget are clipped to it.
+  assert.deepEqual([...history.getLines()], ["cccccc"]);
 });
