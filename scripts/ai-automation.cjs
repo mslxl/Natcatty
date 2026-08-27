@@ -6,17 +6,32 @@ const crypto = require('node:crypto');
 
 // Kept for backward-compat imports/tests; public issue comments no longer show it.
 const DISCLAIMER = '';
-const TRIAGE_MARKER = '<!-- cursor-automation -->';
-const BOT_PR_MARKER = '<!-- cursor-bot-pr -->';
-const SOURCE_ISSUE_RE = /<!--\s*cursor-source-issue:(\d+)\s*-->/i;
-const TRIAGE_WATERMARK_RE =
-  /<!--\s*cursor-triage-watermark:comment-id=([A-Za-z0-9_-]+)\s*-->/i;
-const TRIAGE_PROCESSED_RE =
-  /<!--\s*cursor-triage-processed:comment-id=([A-Za-z0-9_-]+)\s*-->/gi;
-const ISSUE_WATERMARK_RE =
-  /<!--\s*cursor-issue-watermark:comment-id=([A-Za-z0-9_-]+)\s*-->/i;
-const ISSUE_FOLLOWUP_RE =
-  /<!--\s*cursor-followup:comment-id=([A-Za-z0-9_-]+);result=([a-z_]+)\s*-->/gi;
+const TRIAGE_MARKER = '<!-- ai-automation -->';
+const BOT_PR_MARKER = '<!-- ai-bot-pr -->';
+function isAutomationTriageMarker(body) {
+  return /<!--\s*(?:ai|cursor)-automation\s*-->/i.test(String(body || ''));
+}
+const MARKER_VENDOR = '(?:ai|cursor)';
+const SOURCE_ISSUE_RE = new RegExp(
+  `<!--\\s*${MARKER_VENDOR}-source-issue:(\\d+)\\s*-->`,
+  'i',
+);
+const TRIAGE_WATERMARK_RE = new RegExp(
+  `<!--\\s*${MARKER_VENDOR}-triage-watermark:comment-id=([A-Za-z0-9_-]+)\\s*-->`,
+  'i',
+);
+const TRIAGE_PROCESSED_RE = new RegExp(
+  `<!--\\s*${MARKER_VENDOR}-triage-processed:comment-id=([A-Za-z0-9_-]+)\\s*-->`,
+  'gi',
+);
+const ISSUE_WATERMARK_RE = new RegExp(
+  `<!--\\s*${MARKER_VENDOR}-issue-watermark:comment-id=([A-Za-z0-9_-]+)\\s*-->`,
+  'i',
+);
+const ISSUE_FOLLOWUP_RE = new RegExp(
+  `<!--\\s*${MARKER_VENDOR}-followup:comment-id=([A-Za-z0-9_-]+);result=([a-z_]+)\\s*-->`,
+  'gi',
+);
 const CATEGORIES = Object.freeze([
   'bug_ready',
   'bug_needs_info',
@@ -89,9 +104,13 @@ const CLOSE_REASONS = Object.freeze({
 
 const PROTECTED_PATH_PREFIXES = Object.freeze([
   '.github/',
+  '.ai/',
   '.cursor/',
+  'scripts/ai-automation',
+  'scripts/ai-brave-search',
   'scripts/cursor-automation',
   'scripts/compare-ci-test-baseline',
+  'scripts/prepare-ai-research-input',
   'scripts/prepare-cursor-research-input',
   'scripts/issue-triage',
   'scripts/release',
@@ -122,7 +141,7 @@ const IMPLEMENT_CATEGORIES = new Set(['bug_ready', 'feature_quick_win']);
 const AUTOMATION_MODE_FULL = 'full';
 const AUTOMATION_MODE_TRIAGE_ONLY = 'triage_only';
 
-/** Routes that write code or drive the Cursor ↔ Codex review loop. */
+/** Routes that write code or drive the Codex review loop. */
 const TRIAGE_ONLY_SKIP_KINDS = new Set([
   'codex_loop',
   'own_rerequest_codex',
@@ -132,7 +151,9 @@ const TRIAGE_ONLY_SKIP_KINDS = new Set([
 ]);
 
 function resolveAutomationMode(explicit) {
-  const raw = explicit == null ? process.env.CURSOR_AUTOMATION_MODE : explicit;
+  const raw = explicit == null
+    ? (process.env.AI_AUTOMATION_MODE || process.env.CURSOR_AUTOMATION_MODE)
+    : explicit;
   const mode = String(raw || AUTOMATION_MODE_FULL).trim().toLowerCase();
   return mode === AUTOMATION_MODE_TRIAGE_ONLY
     ? AUTOMATION_MODE_TRIAGE_ONLY
@@ -144,8 +165,8 @@ function isTriageOnlyMode(explicit) {
 }
 
 /**
- * Temporary choke point: Cursor classifies issues, but does not implement
- * or run the Codex loop. Restore by setting CURSOR_AUTOMATION_MODE=full.
+ * Optional choke point: set AI_AUTOMATION_MODE=triage_only to classify
+ * issues without implement or the Codex loop.
  */
 function gateAutomationRoute(kind, { mode, reason } = {}) {
   const resolvedKind = String(kind || 'skip');
@@ -417,15 +438,59 @@ function extractHttpsUrls(value) {
   return urls;
 }
 
-/** Parse Cursor stream-json and prove that completed research used a web tool. */
+function ingestBraveToolLog(toolLogPath, webEvidenceUrls) {
+  const logPath = String(toolLogPath || '').trim();
+  if (!logPath || !fs.existsSync(logPath)) return false;
+  let used = false;
+  for (const rawLine of fs.readFileSync(logPath, 'utf8').split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (event?.ok !== true) continue;
+    used = true;
+    for (const url of event.urls || []) {
+      const normalized = normalizeResearchSourceUrl(url);
+      if (normalized) webEvidenceUrls.add(normalized);
+    }
+    for (const url of extractHttpsUrls(JSON.stringify(event.results || []))) {
+      webEvidenceUrls.add(url);
+    }
+  }
+  return used;
+}
+
+function recordClaudeWebToolEvidence(event, webEvidenceUrls) {
+  let used = false;
+  const contents = [];
+  if (Array.isArray(event?.message?.content)) contents.push(...event.message.content);
+  if (Array.isArray(event?.content)) contents.push(...event.content);
+  for (const block of contents) {
+    if (block?.type !== 'tool_use' && block?.type !== 'tool_result') continue;
+    const name = String(block?.name || '');
+    const blob = JSON.stringify(block || {});
+    const looksLikeWeb = /(?:^|[^A-Za-z])(?:web-search|web-fetch|ai-brave-search)(?:$|[^A-Za-z])/i
+      .test(`${name}\n${blob}`);
+    if (!looksLikeWeb) continue;
+    used = true;
+    for (const url of extractHttpsUrls(blob)) webEvidenceUrls.add(url);
+  }
+  return used;
+}
+
+/** Parse agent stream-json and prove that completed research used a web tool. */
 function parseExternalResearchStream(value, input) {
   let assistantText = '';
   let partialAssistantText = '';
   const assistantMessages = [];
   const partialAssistantMessages = [];
   let terminalResult = '';
-  let webToolUsed = false;
   const webEvidenceUrls = new Set();
+  let webToolUsed = ingestBraveToolLog(input?.toolLogPath, webEvidenceUrls);
 
   for (const rawLine of String(value || '').split('\n')) {
     const line = rawLine.trim();
@@ -435,6 +500,9 @@ function parseExternalResearchStream(value, input) {
       event = JSON.parse(line);
     } catch {
       throw new Error('External research stream contains malformed JSON.');
+    }
+    if (recordClaudeWebToolEvidence(event, webEvidenceUrls)) {
+      webToolUsed = true;
     }
     if (event?.type === 'tool_call' && event.subtype === 'completed') {
       const toolCall = event.tool_call || event.toolCall || {};
@@ -854,7 +922,7 @@ function isCodexBotLogin(login) {
 
 /**
  * Authors allowed to set automation control markers (round / external head).
- * Random issue commenters must not be able to forge `cursor-codex-round`.
+ * Random issue commenters must not be able to forge `ai-codex-round`.
  */
 function isTrustedAutomationControlAuthor(login, { ownActors } = {}) {
   const name = String(login || '').toLowerCase();
@@ -900,21 +968,22 @@ function isAutomationControlComment(comment, options = {}) {
   }
   const body = String(comment?.body || '');
   return (
-    /<!--\s*cursor-codex-round:\d+\s*-->/.test(body) ||
-    /<!--\s*cursor-external-codex:/.test(body)
+    /<!--\s*(?:ai|cursor)-codex-round:\d+\s*-->/.test(body) ||
+    /<!--\s*(?:ai|cursor)-external-codex:/.test(body)
   );
 }
 
 function isBotPrMarker(body) {
-  return String(body || '').includes(BOT_PR_MARKER);
+  const text = String(body || '');
+  return text.includes(BOT_PR_MARKER) || text.includes('<!-- cursor-bot-pr -->');
 }
 
 function isAutomationBranch(ref) {
   const name = String(ref || '');
   return (
-    /^cursor\/issue-\d+/i.test(name) ||
-    /^cursor\/auto-/i.test(name) ||
-    /^cursor\/automation/i.test(name)
+    /^(?:ai|cursor)\/issue-\d+/i.test(name) ||
+    /^(?:ai|cursor)\/auto-/i.test(name) ||
+    /^(?:ai|cursor)\/automation/i.test(name)
   );
 }
 
@@ -1169,11 +1238,11 @@ function buildTriageComment(
   const lines = [TRIAGE_MARKER];
   const watermark = String(issueCommentWatermark || '').trim();
   if (/^[A-Za-z0-9_-]+$/.test(watermark)) {
-    lines.push(`<!-- cursor-triage-watermark:comment-id=${watermark} -->`);
+    lines.push(`<!-- ai-triage-watermark:comment-id=${watermark} -->`);
   }
   for (const commentId of [...new Set(processedCommentIds.map(String))]) {
     if (/^[A-Za-z0-9_-]+$/.test(commentId)) {
-      lines.push(`<!-- cursor-triage-processed:comment-id=${commentId} -->`);
+      lines.push(`<!-- ai-triage-processed:comment-id=${commentId} -->`);
     }
   }
   lines.push('', classification.reply);
@@ -1206,16 +1275,16 @@ function buildPullRequestBody({
   const watermark = String(issueCommentWatermark || '').trim();
   const markers = [BOT_PR_MARKER, TRIAGE_MARKER];
   if (/^\d+$/.test(n) && Number(n) > 0) {
-    markers.push(`<!-- cursor-source-issue:${n} -->`);
+    markers.push(`<!-- ai-source-issue:${n} -->`);
   }
   if (/^[A-Za-z0-9_-]+$/.test(watermark)) {
-    markers.push(`<!-- cursor-issue-watermark:comment-id=${watermark} -->`);
+    markers.push(`<!-- ai-issue-watermark:comment-id=${watermark} -->`);
   }
   markers.push('');
 
   let body = sanitizeUntrustedText(agentBody, 12_000)
-    .replace(/<!--\s*cursor-bot-pr\s*-->/gi, '')
-    .replace(/<!--\s*cursor-automation\s*-->/gi, '')
+    .replace(/<!--\s*(?:ai|cursor)-bot-pr\s*-->/gi, '')
+    .replace(/<!--\s*(?:ai|cursor)-automation\s*-->/gi, '')
     .trim();
 
   const hasStructure =
@@ -1284,7 +1353,7 @@ function extractSourceIssueNumbers(pull) {
   const closing = extractKeywordIssueNumbers(body);
   if (closing.length) return [...new Set(closing)];
   const headRef = String(pull?.head?.ref || pull?.headRefName || '');
-  const branch = headRef.match(/^cursor\/issue-(\d+)-/i);
+  const branch = headRef.match(/^(?:ai|cursor)\/issue-(\d+)-/i);
   return branch ? [Number(branch[1])] : [];
 }
 
@@ -1488,7 +1557,7 @@ function findPendingIssueFollowups({
       const login = String(
         comment?.user?.login || comment?.author?.login || '',
       ).toLowerCase();
-      if (bots.has(login) && String(comment?.body || '').includes(TRIAGE_MARKER)) {
+      if (bots.has(login) && isAutomationTriageMarker(comment?.body)) {
         lastAutomationReplyIndex = index;
       }
     }
@@ -1618,13 +1687,13 @@ function buildImplementationFailureMessage(issue = {}, {
     ? {
         verification_failed: '自动修改已经产出候选补丁，但验证闸门未通过，因此没有创建 PR。',
         protected_path: '自动修改涉及受保护的发布或自动化文件，安全规则已停止发布。',
-        no_changes: 'Cursor 没有产出可安全提交的聚焦修改，已转给维护者继续判断。',
+        no_changes: '自动修改没有产出可安全提交的聚焦改动，已转给维护者继续判断。',
         processing_failed: '自动修改流程自身没有正常完成，已转给维护者继续处理。',
       }
     : {
         verification_failed: 'The automatic change produced a candidate patch, but it did not pass the verification gate, so no PR was created.',
         protected_path: 'The automatic change touched protected release or automation files, so the safety gate stopped publication.',
-        no_changes: 'Cursor did not produce a safe focused change. A maintainer needs to continue the investigation.',
+        no_changes: 'Automation did not produce a safe focused change. A maintainer needs to continue the investigation.',
         processing_failed: 'The automation process itself did not finish normally. A maintainer needs to continue.',
       };
   return [messages[kind] || messages.processing_failed, protectedDetails, artifact, link]
@@ -1706,16 +1775,16 @@ function buildIssueFollowupReply({
   for (const id of [...new Set((commentIds || []).map(String))]) {
     if (/^[A-Za-z0-9_-]+$/.test(id)) {
       lines.push(
-        `<!-- cursor-followup:comment-id=${id};result=${normalizedResult} -->`,
+        `<!-- ai-followup:comment-id=${id};result=${normalizedResult} -->`,
       );
     }
   }
   if (Number.isFinite(Number(pullNumber)) && Number(pullNumber) > 0) {
-    lines.push(`<!-- cursor-followup-pr:${Number(pullNumber)} -->`);
+    lines.push(`<!-- ai-followup-pr:${Number(pullNumber)} -->`);
   }
   const sha = String(headSha || '').trim().toLowerCase();
   if (/^[0-9a-f]{7,40}$/.test(sha)) {
-    lines.push(`<!-- cursor-followup-head:${sha} -->`);
+    lines.push(`<!-- ai-followup-head:${sha} -->`);
   }
   lines.push('', sanitizeUntrustedText(reply, 3_000) || '收到，我们会继续跟进。');
   return lines.join('\n');
@@ -1769,7 +1838,7 @@ function hasAutomationPullRequestBacklink(comments = [], pullRequestUrl = '') {
   const exactUrl = new RegExp(`(?:^|[\\s(<])${escapedUrl}(?=$|[\\s)>.,;!?\"'#?])`);
   return (comments || []).some((comment) => {
     const body = String(comment?.body || '');
-    return body.includes(TRIAGE_MARKER) && exactUrl.test(body);
+    return isAutomationTriageMarker(body) && exactUrl.test(body);
   });
 }
 
@@ -1790,15 +1859,15 @@ function buildCodexReviewRequestComment(round = 1, headSha = '', options = {}) {
     '',
     `@codex review`,
     '',
-    `<!-- cursor-codex-round:${Number(round) || 1} -->`,
+    `<!-- ai-codex-round:${Number(round) || 1} -->`,
   ];
   const sha = String(headSha || '')
     .trim()
     .toLowerCase();
   if (/^[0-9a-f]{7,40}$/.test(sha)) {
-    lines.push(`<!-- cursor-codex-head:${sha} -->`);
+    lines.push(`<!-- ai-codex-head:${sha} -->`);
     if (includeExternalMarker) {
-      lines.push(`<!-- cursor-external-codex:${sha} -->`);
+      lines.push(`<!-- ai-external-codex:${sha} -->`);
     }
   }
   return lines.join('\n');
@@ -1806,7 +1875,7 @@ function buildCodexReviewRequestComment(round = 1, headSha = '', options = {}) {
 
 function extractRequestedHeadSha(body) {
   const match = String(body || '').match(
-    /<!--\s*cursor-codex-head:([0-9a-f]{7,40})\s*-->/i,
+    /<!--\s*(?:ai|cursor)-codex-head:([0-9a-f]{7,40})\s*-->/i,
   );
   return match ? match[1].toLowerCase() : '';
 }
@@ -1883,7 +1952,7 @@ function hasCodexCleanReactionOnRequest({
 function buildExternalCodexRerequestComment(headSha) {
   return [
     TRIAGE_MARKER,
-    `<!-- cursor-external-codex:${sanitizeUntrustedText(headSha, 64)} -->`,
+    `<!-- ai-external-codex:${sanitizeUntrustedText(headSha, 64)} -->`,
     '',
     '@codex review',
   ].join('\n');
@@ -1918,14 +1987,14 @@ function isCodexRequestDedupeAuthor(login, { ownActors } = {}) {
  * Skip posting another @codex review when this head was already requested.
  *
  * Historical bug: only `cursor-external-codex:SHA` counted. Automation
- * comments that pin `cursor-codex-head:SHA` (and maintainer requests built the
+ * comments that pin `ai-codex-head:SHA` (and maintainer requests built the
  * same way) did not, so a second synchronize-path request could fire for the
  * same SHA while an earlier job was still in flight — clean issue comment from
  * one job, findings review from the other.
  *
  * Skip when a trusted/dedupe author already requested this head via:
  * - `cursor-external-codex:SHA`, or
- * - `cursor-codex-head:SHA` pin matching headSha.
+ * - `ai-codex-head:SHA` pin matching headSha.
  *
  * Plain unpinned "@codex review" is intentionally ignored: without a head pin
  * we cannot tell which SHA it targeted, and timestamp heuristics (age, commit
@@ -1946,7 +2015,8 @@ function shouldSkipExternalCodexRerequest({
     .trim()
     .toLowerCase();
   if (!want) return false;
-  const externalMarker = `<!-- cursor-external-codex:${sanitizeUntrustedText(want, 64)} -->`;
+  const externalMarker = `<!-- ai-external-codex:${sanitizeUntrustedText(want, 64)} -->`;
+  const legacyExternalMarker = `<!-- cursor-external-codex:${sanitizeUntrustedText(want, 64)} -->`;
 
   return existingComments.some((c) => {
     const login = c?.user?.login || c?.login;
@@ -1955,7 +2025,7 @@ function shouldSkipExternalCodexRerequest({
     if (!isCodexReviewRequestBody(body)) return false;
 
     // Explicit external marker for this SHA (legacy + current automation).
-    if (body.includes(externalMarker)) return true;
+    if (body.includes(externalMarker) || body.includes(legacyExternalMarker)) return true;
 
     // Automation / human request that pins this head.
     const pinned = extractRequestedHeadSha(body);
@@ -2027,14 +2097,35 @@ function extractJsonObject(text) {
   throw new Error('Could not parse JSON from agent output.');
 }
 
+function unwrapAgentJson(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  if (value.structured_output && typeof value.structured_output === 'object') {
+    return value.structured_output;
+  }
+  if (typeof value.result === 'string' && value.result.trim()) {
+    try {
+      return extractJsonObject(value.result);
+    } catch {
+      return value;
+    }
+  }
+  return value;
+}
+
 function parseClassificationText(text) {
-  return normalizeClassification(extractJsonObject(text));
+  let parsed;
+  try {
+    parsed = unwrapAgentJson(JSON.parse(text));
+  } catch {
+    parsed = extractJsonObject(text);
+  }
+  return normalizeClassification(parsed);
 }
 
 function parseClassificationFile(filePath) {
   const raw = fs.readFileSync(filePath, 'utf8');
   try {
-    return normalizeClassification(JSON.parse(raw));
+    return normalizeClassification(unwrapAgentJson(JSON.parse(raw)));
   } catch {
     return parseClassificationText(raw);
   }
@@ -2271,7 +2362,7 @@ function hasAutomationCodexRequest(comments = [], options = {}) {
         comment?.user?.login || comment?.login,
         options,
       ) &&
-      /<!--\s*cursor-codex-round:\d+\s*-->/.test(String(comment.body || '')),
+      /<!--\s*ai-codex-round:\d+\s*-->/.test(String(comment.body || '')),
   );
 }
 
@@ -2336,7 +2427,7 @@ function decideCodexLoopAction({
       Boolean(headSha) &&
       commitShasMatch(headSha, reviewed);
     // Only mark ready when the clean result is explicitly pinned to this head
-    // (summary Reviewed commit, or reaction on a request with cursor-codex-head).
+    // (summary Reviewed commit, or reaction on a request with ai-codex-head).
     // Unpinned reactions must not approve a later push.
     if (!pinnedToHead) {
       if (forceRetry || requestExpired) {
@@ -2422,7 +2513,7 @@ const ISSUE_AUTO_CLOSE_HANDOFF_LABELS = new Set([
   'unclear',
 ]);
 
-const REOPEN_HANDOFF_MARKER = '<!-- cursor-reopen-handoff -->';
+const REOPEN_HANDOFF_MARKER = '<!-- ai-reopen-handoff -->';
 
 function normalizeIssueLabelNames(labels = []) {
   return (labels || [])
@@ -2830,7 +2921,7 @@ function getCodexRoundFromComments(comments = [], options = {}) {
       continue;
     }
     const body = String(comment.body || '');
-    const match = body.match(/<!--\s*cursor-codex-round:(\d+)\s*-->/);
+    const match = body.match(/<!--\s*(?:ai|cursor)-codex-round:(\d+)\s*-->/);
     if (match) {
       maxRound = Math.max(maxRound, Number(match[1]) || 0);
     }
@@ -2853,13 +2944,16 @@ function writeText(filePath, value) {
 }
 
 /**
- * Cursor may persist authentication without creating its documented CLI config.
- * Prepare the file deterministically so sandbox and permission policy setup does
- * not depend on an earlier Cursor command having written unrelated preferences.
+ * Write Claude Code settings.json for an unattended CI run.
  */
-function prepareCursorCliConfig({ configPath, denyWeb = false }) {
+function prepareAiCliSettings({
+  configPath,
+  denyWeb = false,
+  allowBrave = false,
+  allowWrites = false,
+} = {}) {
   const target = String(configPath || '').trim();
-  if (!target) throw new Error('Cursor CLI config path is required.');
+  if (!target) throw new Error('Claude Code settings path is required.');
 
   let existing = {};
   try {
@@ -2868,28 +2962,39 @@ function prepareCursorCliConfig({ configPath, denyWeb = false }) {
     if (error?.code !== 'ENOENT') throw error;
   }
   if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
-    throw new Error('Cursor CLI config must contain a JSON object.');
+    throw new Error('Claude Code settings must contain a JSON object.');
   }
+
+  const allow = [...new Set([
+    ...(existing.permissions?.allow || []),
+    'Read',
+    'Grep',
+    'Glob',
+    ...(allowWrites
+      ? ['Edit', 'Write', 'Bash']
+      : allowBrave
+        ? ['Bash(web-search *)', 'Bash(web-fetch *)', 'Bash(./web-search *)', 'Bash(./web-fetch *)']
+        : ['Bash(rg *)', 'Bash(grep *)', 'Bash(find *)']),
+  ])];
+  const deny = [...new Set([
+    ...(existing.permissions?.deny || []),
+    ...(denyWeb ? ['WebSearch', 'WebFetch'] : []),
+    ...(!allowWrites ? ['Edit', 'Write', 'NotebookEdit'] : []),
+  ])];
 
   const config = {
     ...existing,
-    version: existing.version ?? 1,
-    sandbox: {
-      ...(existing.sandbox || {}),
-      mode: 'enabled',
-      networkAccess: 'user_config',
+    permissions: {
+      ...(existing.permissions || {}),
+      defaultMode: 'dontAsk',
+      allow,
+      deny,
+    },
+    env: {
+      ...(existing.env || {}),
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     },
   };
-  if (denyWeb) {
-    config.permissions = {
-      ...(existing.permissions || {}),
-      deny: [...new Set([
-        ...(existing.permissions?.deny || []),
-        'WebSearch(*)',
-        'WebFetch(*)',
-      ])],
-    };
-  }
 
   fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
   const temporary = `${target}.${process.pid}.tmp`;
@@ -3402,7 +3507,8 @@ async function applyReadyForHumanHandoff({
 function isBotPrForIssue(pull, issueNumber) {
   if (!pull) return false;
   const n = String(issueNumber);
-  const prefix = `cursor/issue-${n}-`;
+  const prefix = `ai/issue-${n}-`;
+  const legacyPrefix = `cursor/issue-${n}-`;
   const body = String(pull.body || '');
   const headRef = pull.head?.ref || '';
   const headRepo = String(pull.head?.repo?.full_name || '');
@@ -3411,7 +3517,9 @@ function isBotPrForIssue(pull, issueNumber) {
   if (!sameRepo) return false;
   // Boundary after the issue number so Fixes #1 does not match Fixes #10.
   const fixesRe = new RegExp(`(?:^|\\W)(?:Fixes|fixes) #${n}(?!\\d)`);
-  const mentionsIssue = fixesRe.test(body) || headRef.startsWith(prefix);
+  const mentionsIssue = fixesRe.test(body)
+    || headRef.startsWith(prefix)
+    || headRef.startsWith(legacyPrefix);
   if (!mentionsIssue) return false;
   const marker = isBotPrMarker(body);
   const botLabel = (pull.labels || []).some((label) => {
@@ -3425,7 +3533,7 @@ function isBotPrForIssue(pull, issueNumber) {
     'github-actions',
   ]).has(author);
   return (
-    (trustedBotAuthor && (marker || botLabel || headRef.startsWith(prefix))) ||
+    (trustedBotAuthor && (marker || botLabel || headRef.startsWith(prefix) || headRef.startsWith(legacyPrefix))) ||
     (marker && botLabel)
   );
 }
@@ -3468,7 +3576,7 @@ function isTrustedOpenPullForIssue(pull, issueNumber, {
       && (
         isBotPrMarker(body)
         || labels.includes('automation:bot-pr')
-        || /^cursor\/issue-\d+-/.test(headRef)
+        || /^(?:ai|cursor)\/issue-\d+-/.test(headRef)
       )
     );
   const referencesIssue = automationManaged
@@ -3520,7 +3628,7 @@ function shouldRetryIssueHandoff(comments = [], {
   if (
     recoveryVersion
     && trustedComments.some((comment) => (
-      String(comment.body || '').includes(`cursor-handoff-recovery:version=${recoveryVersion}`)
+      String(comment.body || '').includes(`ai-handoff-recovery:version=${recoveryVersion}`)
     ))
   ) return false;
   const boundedComments = trustedComments
@@ -3540,13 +3648,13 @@ function shouldRetryIssueHandoff(comments = [], {
   for (const comment of boundedComments) {
     const body = String(comment.body || '');
     const retryableFailure =
-      /cursor-implement-failure:[^>]*kind=protected_path/i.test(body)
-      || /cursor-classification-failure:kind=research_failed/i.test(body)
+      /(?:ai|cursor)-implement-failure:[^>]*kind=protected_path/i.test(body)
+      || /(?:ai|cursor)-classification-failure:kind=research_failed/i.test(body)
       || body.includes('收到这条补充了，但自动复核没有安全完成')
       || body.includes('The automatic follow-up did not finish safely');
     if (retryableFailure) {
       latestTerminal = 'retryable_failure';
-    } else if (/cursor-followup:comment-id=[^;>]+;result=(?:no_change|updated)/i.test(body)) {
+    } else if (/(?:ai|cursor)-followup:comment-id=[^;>]+;result=(?:no_change|updated)/i.test(body)) {
       latestTerminal = 'success';
     }
   }
@@ -3557,7 +3665,7 @@ async function findOpenBotPrForIssue({ github, context, issueNumber }) {
   const n = String(issueNumber);
   // Only open PRs count — a closed/unmerged automation PR must not block retries.
   try {
-    const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open ("Fixes #${n}" OR "fixes #${n}" OR head:cursor/issue-${n}-)`;
+    const q = `repo:${context.repo.owner}/${context.repo.repo} is:pr is:open ("Fixes #${n}" OR "fixes #${n}" OR head:ai/issue-${n}- OR head:cursor/issue-${n}-)`;
     const items = await github.paginate(
       github.rest.search.issuesAndPullRequests,
       { q, per_page: 20 },
@@ -4091,7 +4199,9 @@ module.exports = {
   ensurePullRequestReady,
   restoreCleanPullRequestAfterNoChange,
   prepareIssueFollowupContext,
-  prepareCursorCliConfig,
+  prepareAiCliSettings,
+  unwrapAgentJson,
+  isAutomationTriageMarker,
   writeJson,
   writeText,
 };
