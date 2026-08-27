@@ -995,7 +995,7 @@ test("multi-character plain text goes out as per-character writes (#3077)", asyn
   // raw-paste rule; the composition fallback uses the uncapped IME rule.
   assert.match(
     source,
-    /handleTerminalInputData\(data, \{ perCharacterWrites: shouldSplitRawPasteInputForWire\(data\) \}\)/,
+    /handleTerminalInputData\(sanitizedRawData, \{\s*perCharacterWrites: shouldSplitRawPasteInputForWire\(sanitizedRawData\),?\s*\}\)/,
   );
   assert.match(
     source,

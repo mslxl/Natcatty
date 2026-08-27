@@ -2301,7 +2301,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     }
     // Raw multi-character onData is an unbracketed paste (or a committed
     // composition): short plain text must reach strict bastions per character.
-    handleTerminalInputData(data, { perCharacterWrites: shouldSplitRawPasteInputForWire(data) });
+    // Decide on the sanitized payload so removed zero-width characters cannot
+    // keep a qualifying paste above the split cap (#3138).
+    const sanitizedRawData = sanitizeTerminalInput(data);
+    handleTerminalInputData(sanitizedRawData, {
+      perCharacterWrites: shouldSplitRawPasteInputForWire(sanitizedRawData),
+    });
   });
 
   const handleKittyKeyboardBroadcast = createKittyKeyboardBroadcastHandler({

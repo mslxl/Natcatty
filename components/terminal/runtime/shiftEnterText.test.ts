@@ -173,7 +173,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /term\.onData\(\(data\) => \{[\s\S]*handleTerminalInputData\(data, \{ perCharacterWrites: shouldSplitRawPasteInputForWire\(data\) \}\);\s+\}\);/,
+    /term\.onData\(\(data\) => \{[\s\S]*const sanitizedRawData = sanitizeTerminalInput\(data\);[\s\S]*handleTerminalInputData\(sanitizedRawData, \{\s*perCharacterWrites: shouldSplitRawPasteInputForWire\(sanitizedRawData\),?\s*\}\);\s+\}\);/,
   );
   assert.match(
     source,
