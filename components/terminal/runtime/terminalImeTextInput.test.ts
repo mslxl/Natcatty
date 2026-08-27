@@ -9,6 +9,7 @@ import {
   shouldBlockKeyPressForImeTextInput,
   shouldCommitDeferredImeTextInput,
   shouldDeferKeyDownForImeTextInput,
+  shouldDiscardStaleDeferredImeTextInput,
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
   shouldRewriteKeyUpToDeferredImeKey,
@@ -226,6 +227,64 @@ test("a deferral left without release or insertText recovers on the next keystro
   );
 });
 
+test("a modified keydown discards the stale deferral instead of flushing it", () => {
+  // The IME swallowed the "/" release and the user then interrupts with
+  // Ctrl+C. Flushing there would inject "/" in front of the interrupt, and
+  // keeping the deferral armed would inject it before the next character, so
+  // the lost keystroke is dropped instead.
+  assert.equal(
+    shouldFlushStaleDeferredImeTextInput("/", {
+      type: "keydown",
+      key: "c",
+      keyCode: 67,
+      ctrlKey: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldDiscardStaleDeferredImeTextInput("/", {
+      type: "keydown",
+      key: "c",
+      keyCode: 67,
+      ctrlKey: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDiscardStaleDeferredImeTextInput("/", {
+      type: "keydown",
+      key: "Tab",
+      keyCode: 9,
+      altKey: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldDiscardStaleDeferredImeTextInput("/", {
+      type: "keydown",
+      key: "d",
+      keyCode: 229,
+      ctrlKey: true,
+      isComposing: true,
+    }),
+    false,
+    "a composition still owns the keystroke and resolves via insertText",
+  );
+  assert.equal(
+    shouldDiscardStaleDeferredImeTextInput("/", { type: "keydown", key: "a", keyCode: 65 }),
+    false,
+  );
+  assert.equal(
+    shouldDiscardStaleDeferredImeTextInput(null, {
+      type: "keydown",
+      key: "c",
+      keyCode: 67,
+      ctrlKey: true,
+    }),
+    false,
+  );
+});
+
 test("auto-repeat and modifier keystrokes keep the deferral armed", () => {
   // Same-key keydown is auto-repeat: re-arm instead of flushing, so a held key
   // does not emit an extra character per repeat.
@@ -235,15 +294,6 @@ test("auto-repeat and modifier keystrokes keep the deferral armed", () => {
   );
   assert.equal(
     shouldFlushStaleDeferredImeTextInput("/", { type: "keydown", key: "Shift", keyCode: 16 }),
-    false,
-  );
-  assert.equal(
-    shouldFlushStaleDeferredImeTextInput("/", {
-      type: "keydown",
-      key: "c",
-      keyCode: 67,
-      ctrlKey: true,
-    }),
     false,
   );
   assert.equal(
@@ -450,4 +500,10 @@ test("createXTermRuntime recovers a stuck IME punctuation deferral (#3103)", () 
   const recoverySlice = runtimeSource.slice(staleIdx, staleIdx + 500);
   assert.match(recoverySlice, /deferredKittyEvent = imeTextInputDeferredKittyEvent/);
   assert.match(recoverySlice, /releaseForwardedKittyPress\(\s*\{\s*\.\.\.deferredKittyEvent,\s*type: "keyup",?\s*\}\s*\)/);
+  // A modified keydown (Ctrl+C, Alt+…) drops the lost keystroke instead of
+  // injecting it in front of the interrupt or shortcut.
+  assert.match(
+    runtimeSource.slice(staleIdx, staleIdx + 700),
+    /shouldDiscardStaleDeferredImeTextInput\(imeTextInputDeferredKey, e\)/,
+  );
 });

@@ -106,6 +106,22 @@ export function shouldFlushStaleDeferredImeTextInput(
 }
 
 /**
+ * A modified keydown is a command (Ctrl+C, Alt+…), not the continuation of the
+ * lost punctuation keystroke: flushing there would inject the ASCII character
+ * in front of the interrupt or shortcut. Drop the stale deferral instead — the
+ * keystroke was already lost to the IME.
+ */
+export function shouldDiscardStaleDeferredImeTextInput(
+  deferredKey: string | null | undefined,
+  event: ImeTextInputKeyEvent,
+): boolean {
+  if (!deferredKey) return false;
+  if (event.type !== undefined && event.type !== "keydown") return false;
+  if (event.isComposing === true || event.keyCode === 229) return false;
+  return Boolean(event.altKey || event.ctrlKey || event.metaKey);
+}
+
+/**
  * True when the release that ends a deferral is an IME sentinel standing in
  * for the deferred key, so the paired Kitty release must be encoded from the
  * deferred physical key instead. A real keyup for another held key keeps its

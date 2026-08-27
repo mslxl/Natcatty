@@ -110,6 +110,7 @@ import {
   shouldBlockKeyPressForImeTextInput,
   shouldCommitDeferredImeTextInput,
   shouldDeferKeyDownForImeTextInput,
+  shouldDiscardStaleDeferredImeTextInput,
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
   shouldRewriteKeyUpToDeferredImeKey,
@@ -1536,18 +1537,23 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // A deferred punctuation keystroke that outlived its own release means the
     // IME swallowed the keyup (Windows reports Process/229). Flush it before
     // the next keystroke so the pending ASCII key still reaches the PTY
-    // instead of wedging the deferral (#3103).
-    if (
-      imeTextInputDeferredKey !== null &&
-      shouldFlushStaleDeferredImeTextInput(imeTextInputDeferredKey, e)
-    ) {
-      const deferredKittyEvent = imeTextInputDeferredKittyEvent;
-      flushImeTextInputDeferral();
-      if (deferredKittyEvent) {
-        // The flush emitted the deferred press, but the release it waits for
-        // is the one the IME dropped — synthesize it so the TUI does not see
-        // the key held until focus loss.
-        releaseForwardedKittyPress({ ...deferredKittyEvent, type: "keyup" });
+    // instead of wedging the deferral (#3103). A modified keydown is a command
+    // rather than a continuation, so the lost keystroke is dropped there
+    // instead of being injected in front of the interrupt or shortcut.
+    if (imeTextInputDeferredKey !== null) {
+      if (shouldFlushStaleDeferredImeTextInput(imeTextInputDeferredKey, e)) {
+        const deferredKittyEvent = imeTextInputDeferredKittyEvent;
+        flushImeTextInputDeferral();
+        if (deferredKittyEvent) {
+          // The flush emitted the deferred press, but the release it waits for
+          // is the one the IME dropped — synthesize it so the TUI does not see
+          // the key held until focus loss.
+          releaseForwardedKittyPress({ ...deferredKittyEvent, type: "keyup" });
+        }
+      } else if (
+        shouldDiscardStaleDeferredImeTextInput(imeTextInputDeferredKey, e)
+      ) {
+        clearImeTextInputDeferral();
       }
     }
 
