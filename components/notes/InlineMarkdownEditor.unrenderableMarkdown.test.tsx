@@ -1,0 +1,181 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { JSDOM } from "jsdom";
+
+/**
+ * Regression tests for the notes rich editor: markdown that MDX cannot parse
+ * (e.g. unbalanced angle tags such as `<host>` in prose) used to render as an
+ * empty editor, so an AI-written or imported note looked like it had lost its
+ * content. The editor must fall back to the raw markdown source view instead.
+ */
+
+const NOTE_MARKDOWN_MDX_CANNOT_PARSE = [
+  "# SlurmDB Agent Skill",
+  "",
+  "## Overview",
+  "",
+  "Run the exporter with mysql -h <host> -u <user> -P 3306.",
+  "",
+  "The content after the angle tags must stay visible.",
+].join("\n");
+
+const PLAIN_NOTE_MARKDOWN = ["# Steps", "", "Promote the replica, then restart the agent."].join("\n");
+
+const setupDom = () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
+    pretendToBeVisual: true,
+    url: "http://localhost",
+  });
+  const window = dom.window;
+  const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
+  const installGlobal = (key: string, value: unknown) => {
+    previousGlobals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  };
+
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+
+  for (const [key, value] of Object.entries({
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    HTMLElement: window.HTMLElement,
+    HTMLInputElement: window.HTMLInputElement,
+    HTMLTextAreaElement: window.HTMLTextAreaElement,
+    HTMLSelectElement: window.HTMLSelectElement,
+    Element: window.Element,
+    SVGElement: window.SVGElement,
+    Node: window.Node,
+    NodeFilter: window.NodeFilter,
+    MutationObserver: window.MutationObserver,
+    CustomEvent: window.CustomEvent,
+    DOMRect: window.DOMRect,
+    Event: window.Event,
+    KeyboardEvent: window.KeyboardEvent,
+    MouseEvent: window.MouseEvent,
+    getComputedStyle: window.getComputedStyle.bind(window),
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+    ResizeObserver: ResizeObserverStub,
+    IS_REACT_ACT_ENVIRONMENT: true,
+  })) {
+    installGlobal(key, value);
+  }
+
+  return {
+    window,
+    cleanup() {
+      for (const [key, descriptor] of previousGlobals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+      dom.window.close();
+    },
+  };
+};
+
+type DomHarness = ReturnType<typeof setupDom>;
+
+type RenderEditorProps = {
+  value: string;
+  editorMode?: "edit" | "preview" | "source";
+};
+
+const renderEditor = async (window: DomHarness["window"], props: RenderEditorProps) => {
+  const { act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { I18nProvider } = await import("../../application/i18n/I18nProvider.tsx");
+  const { InlineMarkdownEditor } = await import("./InlineMarkdownEditor.tsx");
+
+  const rootNode = window.document.getElementById("root");
+  assert.ok(rootNode);
+  const root = createRoot(rootNode);
+  const changes: string[] = [];
+  await act(async () => {
+    root.render(
+      <I18nProvider locale="en">
+        <InlineMarkdownEditor
+          noteId="note-1"
+          value={props.value}
+          placeholder="Write Markdown notes here..."
+          editorMode={props.editorMode ?? "edit"}
+          onChange={(next) => changes.push(next)}
+          hosts={[]}
+        />
+      </I18nProvider>,
+    );
+  });
+  // Let the deferred MDX import (and its parse-error reporting) settle.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+  return {
+    rootNode,
+    changes,
+    async unmount() {
+      await act(async () => {
+        root.unmount();
+      });
+    },
+  };
+};
+
+const querySourceFallback = (rootNode: HTMLElement) =>
+  rootNode.querySelector<HTMLTextAreaElement>("[data-note-markdown-source-fallback] textarea");
+
+test("unrenderable markdown stays visible via the raw source fallback", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const { rootNode, unmount } = await renderEditor(window, { value: NOTE_MARKDOWN_MDX_CANNOT_PARSE });
+
+    const fallback = querySourceFallback(rootNode);
+    assert.ok(fallback, "expected the raw markdown fallback to be rendered");
+    assert.equal(fallback.value, NOTE_MARKDOWN_MDX_CANNOT_PARSE);
+
+    const notice = rootNode.querySelector("[data-note-markdown-source-notice]");
+    assert.ok(notice, "expected an explanatory notice next to the fallback");
+
+    // The rich editor must not sit next to the fallback showing a blank page.
+    assert.equal(rootNode.querySelectorAll("[contenteditable]").length, 0);
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("plain markdown still renders in the rich editor", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const { rootNode, unmount } = await renderEditor(window, { value: PLAIN_NOTE_MARKDOWN });
+
+    assert.equal(querySourceFallback(rootNode), null);
+    const editable = rootNode.querySelector<HTMLElement>("[contenteditable]");
+    assert.ok(editable, "expected the rich editor to stay mounted");
+    assert.match(editable.textContent || "", /Promote the replica/);
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("unrenderable markdown in preview mode falls back to a read-only source view", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    const { rootNode, unmount } = await renderEditor(window, {
+      value: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+      editorMode: "preview",
+    });
+
+    const fallback = querySourceFallback(rootNode);
+    assert.ok(fallback, "expected the raw markdown fallback in preview mode");
+    assert.equal(fallback.value, NOTE_MARKDOWN_MDX_CANNOT_PARSE);
+    assert.equal(fallback.readOnly, true);
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});

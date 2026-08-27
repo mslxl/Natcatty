@@ -29,6 +29,8 @@ export const enVaultMessages: Messages = {
   'notes.mode.preview': 'Preview',
   'notes.title.placeholder': 'Note title',
   'notes.editor.placeholder': 'Write Markdown notes here...',
+  'notes.editor.unrenderableMarkdown': 'This note contains Markdown the rich editor cannot display (for example unbalanced <tag> text). Showing the raw Markdown source instead — the content is intact.',
+  'notes.editor.retryRichView': 'Retry rich view',
   'notes.preview.empty': 'Nothing to preview yet.',
   'notes.empty.title': 'No notes yet',
   'notes.empty.desc': 'Create Markdown notes for runbooks, reminders, and server handoff details.',
