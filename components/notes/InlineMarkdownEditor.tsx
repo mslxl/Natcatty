@@ -1252,6 +1252,7 @@ export const InlineMarkdownEditor = React.memo(
       // The new note's markdown gets a fresh MDX import; clear a previous
       // note's unrenderable-markdown fallback.
       setMdxParseFailure(null);
+      setMdxRetryMarkdown(null);
       // Keep both refs in displayMarkdown space so public-path normalization
       // does not look like a divergent local draft.
       latestMarkdownRef.current = markdown;
@@ -1400,6 +1401,7 @@ export const InlineMarkdownEditor = React.memo(
     // Mode changes remount the rich editor (key={editorMode}); give its MDX
     // import a fresh chance after an unrenderable-markdown fallback.
     setMdxParseFailure(null);
+    setMdxRetryMarkdown(null);
   }, [editorMode]);
 
   const getHostPickerContext = useCallback(() => {
@@ -1588,7 +1590,14 @@ export const InlineMarkdownEditor = React.memo(
     }, 0);
   }, []);
 
+  // One-shot markdown for the retry after a fallback: NotesManager debounces
+  // source drafts, so the `value` prop can still hold the pre-fix body when
+  // the user retries right after editing in the fallback. Seed that retry
+  // import from the editor's own latest accepted source instead.
+  const [mdxRetryMarkdown, setMdxRetryMarkdown] = useState<string | null>(null);
+
   const retryRichNoteEditor = useCallback(() => {
+    setMdxRetryMarkdown(latestSourceMarkdownRef.current);
     setMdxParseFailure(null);
   }, []);
 
@@ -2149,6 +2158,7 @@ export const InlineMarkdownEditor = React.memo(
             <span className="min-w-0 flex-1">{t("notes.editor.unrenderableMarkdown")}</span>
             <button
               type="button"
+              data-note-markdown-source-retry="true"
               className="shrink-0 rounded px-1.5 py-0.5 text-xs text-foreground underline decoration-dotted hover:bg-secondary"
               onClick={retryRichNoteEditor}
             >
@@ -2174,7 +2184,11 @@ export const InlineMarkdownEditor = React.memo(
         <MDXEditor
           key={editorMode}
           ref={editorRef}
-          markdown={displayMarkdown}
+          markdown={
+            mdxRetryMarkdown !== null && mdxRetryMarkdown !== value
+              ? normalizeNotePublicAssetPaths(mdxRetryMarkdown)
+              : displayMarkdown
+          }
           placeholder={placeholder}
           plugins={plugins}
           readOnly={editorMode === "preview"}

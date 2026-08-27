@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 
+import { runWithAct } from "../test-support/renderReactDom.tsx";
+
 /**
  * Regression tests for the notes rich editor: markdown that MDX cannot parse
  * (e.g. unbalanced angle tags such as `<host>` in prose) used to render as an
@@ -127,6 +129,13 @@ const renderEditor = async (window: DomHarness["window"], props: RenderEditorPro
 const querySourceFallback = (rootNode: HTMLElement) =>
   rootNode.querySelector<HTMLTextAreaElement>("[data-note-markdown-source-fallback] textarea");
 
+const setTextareaValue = (window: DomHarness["window"], textarea: HTMLTextAreaElement, nextValue: string) => {
+  const setValue = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+  assert.ok(setValue);
+  setValue.call(textarea, nextValue);
+  textarea.dispatchEvent(new window.Event("input", { bubbles: true }));
+};
+
 test("unrenderable markdown stays visible via the raw source fallback", async () => {
   const { window, cleanup } = setupDom();
   try {
@@ -165,7 +174,7 @@ test("plain markdown still renders in the rich editor", async () => {
 test("unrenderable markdown in preview mode falls back to a read-only source view", async () => {
   const { window, cleanup } = setupDom();
   try {
-    const { rootNode, unmount } = await renderEditor(window, {
+    const { rootNode, changes, unmount } = await renderEditor(window, {
       value: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
       editorMode: "preview",
     });
@@ -174,6 +183,51 @@ test("unrenderable markdown in preview mode falls back to a read-only source vie
     assert.ok(fallback, "expected the raw markdown fallback in preview mode");
     assert.equal(fallback.value, NOTE_MARKDOWN_MDX_CANNOT_PARSE);
     assert.equal(fallback.readOnly, true);
+
+    // Read-only must also block the custom Tab insertion and history handling.
+    await runWithAct(async () => {
+      fallback.dispatchEvent(new window.KeyboardEvent("keydown", {
+        key: "Tab",
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    assert.deepEqual(changes, [], "read-only fallback must not mutate the note");
+    await unmount();
+  } finally {
+    cleanup();
+  }
+});
+
+test("retry imports the latest fallback draft, not the stale prop value", async () => {
+  const { window, cleanup } = setupDom();
+  try {
+    // The host keeps the original (invalid) `value` prop, like the 300 ms
+    // draft debounce in NotesManager does while the user edits the fallback.
+    const { rootNode, changes, unmount } = await renderEditor(window, { value: NOTE_MARKDOWN_MDX_CANNOT_PARSE });
+
+    const fallback = querySourceFallback(rootNode);
+    assert.ok(fallback);
+
+    const fixedMarkdown = NOTE_MARKDOWN_MDX_CANNOT_PARSE.replace("mysql -h <host> -u <user>", "mysql with host and user");
+    await runWithAct(async () => {
+      setTextareaValue(window, fallback, fixedMarkdown);
+    });
+    assert.deepEqual(changes, [fixedMarkdown]);
+
+    const retry = rootNode.querySelector<HTMLButtonElement>("[data-note-markdown-source-retry]");
+    assert.ok(retry, "expected a retry action on the fallback notice");
+    await runWithAct(async () => {
+      retry.click();
+    });
+    await runWithAct(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    const editable = rootNode.querySelector<HTMLElement>("[contenteditable]");
+    assert.ok(editable, "expected the rich editor back after the retry");
+    assert.match(editable.textContent || "", /The content after the angle tags/);
+    assert.equal(querySourceFallback(rootNode), null, "the fallback must be gone after a successful retry");
     await unmount();
   } finally {
     cleanup();
