@@ -53,6 +53,17 @@ export function isModifierOnlyKey(key: string): boolean {
 }
 
 /**
+ * DOM keys that stand in for a key the IME consumed, mirroring the non-text
+ * DOM keys the Kitty encoder already refuses to send as text.
+ */
+const IME_SENTINEL_KEYS = new Set(["Dead", "Process", "Unidentified", "Compose"]);
+
+export function isImeSentinelKeyUp(event: ImeTextInputKeyEvent): boolean {
+  if (event.type !== undefined && event.type !== "keyup") return false;
+  return event.keyCode === 229 || IME_SENTINEL_KEYS.has(event.key);
+}
+
+/**
  * A deferred punctuation keystroke is over once any real key release arrives.
  * The IME remap (insertText) is dispatched before keyup, so a release means the
  * IME did not remap the key and the ASCII character must be flushed.
@@ -92,6 +103,25 @@ export function shouldFlushStaleDeferredImeTextInput(
   if (event.altKey || event.ctrlKey || event.metaKey) return false;
   if (isModifierOnlyKey(event.key)) return false;
   return event.key !== deferredKey;
+}
+
+/**
+ * True when the release that ends a deferral is an IME sentinel standing in
+ * for the deferred key, so the paired Kitty release must be encoded from the
+ * deferred physical key instead. A real keyup for another held key keeps its
+ * own identity — rewriting it would strand that key's forwarded press and the
+ * TUI would see it stuck down until focus loss.
+ */
+export function shouldRewriteKeyUpToDeferredImeKey(
+  deferredKey: string | null | undefined,
+  event: ImeTextInputKeyEvent,
+): boolean {
+  if (!deferredKey) return false;
+  if (event.type !== undefined && event.type !== "keyup") return false;
+  if (event.altKey || event.ctrlKey || event.metaKey) return false;
+  if (isModifierOnlyKey(event.key)) return false;
+  if (event.key === deferredKey) return false;
+  return isImeSentinelKeyUp(event);
 }
 
 export function shouldBlockKeyPressForImeTextInput(

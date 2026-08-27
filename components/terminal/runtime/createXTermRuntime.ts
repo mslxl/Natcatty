@@ -112,6 +112,7 @@ import {
   shouldDeferKeyDownForImeTextInput,
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
+  shouldRewriteKeyUpToDeferredImeKey,
 } from "./terminalImeTextInput";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { mapTerminalBackspaceInput } from "./terminalBackspaceInput";
@@ -1460,12 +1461,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         shouldFlushDeferredImeTextInputOnKeyUp(imeTextInputDeferredKey, e)
       ) {
         const deferredKittyEvent = imeTextInputDeferredKittyEvent;
-        const mangledRelease =
-          e.key !== imeTextInputDeferredKey && deferredKittyEvent !== null;
+        const sentinelRelease =
+          deferredKittyEvent !== null &&
+          shouldRewriteKeyUpToDeferredImeKey(imeTextInputDeferredKey, e);
         flushImeTextInputDeferral();
-        if (mangledRelease && deferredKittyEvent) {
-          // Pair the release from the deferred physical key; the mangled
-          // release event must not be encoded as a kitty key event.
+        if (sentinelRelease && deferredKittyEvent) {
+          // The release reported an IME sentinel (Process/229); pair the
+          // flushed press from the deferred physical key so the kitty
+          // sequence keeps its key identity.
           releaseEvent = {
             ...deferredKittyEvent,
             type: "keyup",
