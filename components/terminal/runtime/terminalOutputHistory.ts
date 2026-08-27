@@ -69,6 +69,30 @@ const consumeControlString = (input: string, from: number): number | null => {
 const isControlStringIntroducer = (ch: string): boolean =>
   ch === "]" || ch === "P" || ch === "^" || ch === "_" || ch === "X";
 
+/** Length of the introducer bytes of the escape sequence starting at `start`. */
+const escapeIntroducerLength = (input: string, start: number): number => {
+  if (input[start] !== ESC) return 1;
+  const second = input[start + 1];
+  return second === "[" || isControlStringIntroducer(second) ? 2 : 1;
+};
+
+/** Marks an erase-in-line the transcript must apply (kept in stripper output). */
+const ERASE_TO_END_OF_LINE = "\x1f";
+
+/**
+ * The erase-in-line sequences progress lines use (`\r` + text + `\x1b[K`) must
+ * be applied to the transcript, or the stale suffix of a shorter redraw shows
+ * up as text. Returns the marker for the variants the transcript can apply.
+ */
+const eraseInLineMarkerFor = (input: string, start: number, end: number): string | null => {
+  if (input[end - 1] !== "K") return null;
+  const introducerLength = escapeIntroducerLength(input, start);
+  const mode = input.slice(start + introducerLength, end - 1).split(";")[0];
+  // Erase from start to cursor (1) has no transcript equivalent; skip it.
+  if (mode === "1") return null;
+  return ERASE_TO_END_OF_LINE;
+};
+
 // ECMA-48 nF sequences: zero or more intermediates (0x20-0x2f) then one final
 // byte (0x30-0x7e), e.g. `ESC ( B` (charset) or `ESC # 8` (DECALN).
 const isEscapeIntermediateByte = (ch: string): boolean => ch >= " " && ch <= "/";
@@ -113,7 +137,7 @@ const keepTranscriptChars = (span: string): string => {
     const code = span.charCodeAt(i);
     if (code >= 0x20 && code !== 0x7f && (code < 0x80 || code > 0x9f)) {
       kept += span[i];
-    } else if (code === 8 || code === 9 || code === 10 || code === 13) {
+    } else if (code === 8 || code === 9 || code === 10 || code === 13 || code === 31) {
       kept += span[i];
     }
   }
@@ -122,7 +146,8 @@ const keepTranscriptChars = (span: string): string => {
 
 /**
  * Reduce a display chunk to plain text: escape sequences are removed while
- * `\n` / `\r` / `\b` / `\t` survive so the history can track line edits.
+ * `\n` / `\r` / `\b` / `\t` and the erase-in-line marker survive so the history
+ * can track line edits.
  */
 export const stripTerminalDisplayToPlainText = (
   chunk: string,
@@ -136,13 +161,21 @@ export const stripTerminalDisplayToPlainText = (
       const end = consumeEscapeSequence(input, i);
       if (end === null) {
         const rest = input.slice(i);
+        if (rest.length <= MAX_PENDING_ESCAPE_CHARS) {
+          return { text: output, pending: rest };
+        }
+        // Cap the retained tail but keep its introducer: without it the payload
+        // of an oversized control string would be re-parsed as transcript text
+        // on the next chunk.
+        const introducerLength = escapeIntroducerLength(input, i);
         return {
           text: output,
-          pending: rest.length > MAX_PENDING_ESCAPE_CHARS
-            ? rest.slice(rest.length - MAX_PENDING_ESCAPE_CHARS)
-            : rest,
+          pending: rest.slice(0, introducerLength)
+            + rest.slice(rest.length - (MAX_PENDING_ESCAPE_CHARS - introducerLength)),
         };
       }
+      const eraseInLine = eraseInLineMarkerFor(input, i, end);
+      if (eraseInLine) output += eraseInLine;
       i = end;
       continue;
     }
@@ -161,6 +194,10 @@ const isAsciiOnly = (text: string): boolean => {
   }
   return true;
 };
+
+/** Cell columns a transcript span occupies (wide glyphs count twice). */
+const pieceCellWidth = (text: string): number =>
+  isAsciiOnly(text) ? text.length : stringCellWidth(text);
 
 /**
  * Wrap one transcript line into viewport-sized rows. Continuation rows carry
@@ -251,6 +288,7 @@ export const createTerminalOutputHistoryPreview = (options?: {
   let lines: string[] = [];
   let current = "";
   let cursor = 0;
+  let cursorCell = 0;
   let totalChars = 0;
   let pendingEscape = "";
   let cacheDirty = true;
@@ -262,6 +300,7 @@ export const createTerminalOutputHistoryPreview = (options?: {
     totalChars += current.length;
     current = "";
     cursor = 0;
+    cursorCell = 0;
     // Never trim away the last retained line.
     while (lines.length > maxLines || (totalChars > maxChars && lines.length > 1)) {
       const dropped = lines.shift();
@@ -273,18 +312,23 @@ export const createTerminalOutputHistoryPreview = (options?: {
   /**
    * Write one span at the open line's cursor. A cursor-addressed redraw
    * (cursor-home CSI stripped, no LF) would keep appending frames to the open
-   * line forever, so the budget is enforced here: the line is committed once it
-   * reaches the cap and each span is clipped to the remaining room, keeping the
-   * copy every write makes bounded.
+   * line forever, so the budget is enforced here: spans are written in bounded
+   * pieces, committing a full line at the cap, so nothing is dropped and the
+   * copy every write makes stays bounded.
    */
   const writeSpan = (span: string) => {
-    if (!span) return;
-    if (current.length >= maxChars) commitCurrentLine();
-    const clipped = span.slice(0, maxChars - current.length);
-    current = cursor >= current.length
-      ? current + clipped
-      : current.slice(0, cursor) + clipped + current.slice(cursor + clipped.length);
-    cursor = cursor >= current.length ? current.length : cursor + clipped.length;
+    let offset = 0;
+    while (offset < span.length) {
+      if (current.length >= maxChars) commitCurrentLine();
+      const piece = span.slice(offset, offset + (maxChars - current.length));
+      if (!piece) return;
+      current = cursor >= current.length
+        ? current + piece
+        : current.slice(0, cursor) + piece + current.slice(cursor + piece.length);
+      cursor = cursor >= current.length ? current.length : cursor + piece.length;
+      cursorCell += pieceCellWidth(piece);
+      offset += piece.length;
+    }
   };
 
   const writeText = (text: string) => {
@@ -298,11 +342,18 @@ export const createTerminalOutputHistoryPreview = (options?: {
       }
       if (ch === "\r") {
         cursor = 0;
+        cursorCell = 0;
         i += 1;
         continue;
       }
       if (ch === "\b") {
         cursor = Math.max(0, cursor - 1);
+        cursorCell = Math.max(0, cursorCell - 1);
+        i += 1;
+        continue;
+      }
+      if (ch === ERASE_TO_END_OF_LINE) {
+        current = current.slice(0, cursor);
         i += 1;
         continue;
       }
@@ -310,7 +361,7 @@ export const createTerminalOutputHistoryPreview = (options?: {
         // Expand to the next 8-column tab stop so row widths match how the
         // preview overlay renders the text; a literal tab renders at the tab
         // stop and would be clipped instead of wrapped onto a continuation row.
-        const padding = TERMINAL_TAB_STOP_COLUMNS - (cursor % TERMINAL_TAB_STOP_COLUMNS);
+        const padding = TERMINAL_TAB_STOP_COLUMNS - (cursorCell % TERMINAL_TAB_STOP_COLUMNS);
         writeSpan(" ".repeat(padding));
         i += 1;
         continue;
@@ -322,6 +373,7 @@ export const createTerminalOutputHistoryPreview = (options?: {
         && text[end] !== "\r"
         && text[end] !== "\b"
         && text[end] !== "\t"
+        && text[end] !== ERASE_TO_END_OF_LINE
       ) {
         end += 1;
       }

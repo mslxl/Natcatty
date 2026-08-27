@@ -83,6 +83,39 @@ test("tabs expand to terminal tab stops so preview rows wrap as they render", ()
   assert.deepEqual([...history.getLines()], ["a       b", "abc     d"]);
 });
 
+test("tab stops advance by cell columns, not characters", () => {
+  const history = createTerminalOutputHistoryPreview();
+  history.append("中\tb\n");
+  assert.deepEqual([...history.getLines()], ["中      b"]);
+});
+
+test("an oversized control string split across chunks leaks no payload", () => {
+  const payload = "y".repeat(5000);
+  const first = stripTerminalDisplayToPlainText(`ok\x1b]52;c;${payload}`);
+  assert.equal(first.text, "ok");
+  assert.equal(first.pending.length, 4096);
+  assert.equal(first.pending.startsWith("\x1b]"), true);
+
+  const second = stripTerminalDisplayToPlainText("\x07tail", first.pending);
+  assert.equal(second.text, "tail");
+});
+
+test("a span longer than the remaining budget continues into the next line", () => {
+  const history = createTerminalOutputHistoryPreview({ maxChars: 16 });
+  history.append("aaaaaaaaaaaaaaaaTTTTTTTT\n");
+  assert.ok([...history.getLines()].join("").includes("TTTTTTTT"));
+});
+
+test("erase-in-line after a carriage return drops the stale suffix", () => {
+  const history = createTerminalOutputHistoryPreview();
+  history.append("downloading 100%\rdownloading 5%\x1b[K\n");
+  assert.deepEqual([...history.getLines()], ["downloading 5%"]);
+
+  history.clear();
+  history.append("keep\r\x1b[2Knew\n");
+  assert.deepEqual([...history.getLines()], ["new"]);
+});
+
 test("bare carriage returns overwrite the line they restart", () => {
   const history = createTerminalOutputHistoryPreview();
   history.append("downloading 10%\r");
@@ -187,6 +220,9 @@ test("default retention bounds the preview history", () => {
   history.append("aaaaaaaa\n");
   history.append("bbbbbbbb\n");
   history.append("cccccccc\n");
-  // Lines longer than the character budget are clipped to it.
-  assert.deepEqual([...history.getLines()], ["cccccc"]);
+  // Retained lines plus the open line stay within twice the character budget,
+  // and the newest text survives.
+  const transcript = [...history.getLines()].join("");
+  assert.ok(transcript.length <= 2 * 6, transcript);
+  assert.ok(transcript.includes("cc"), transcript);
 });
