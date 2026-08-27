@@ -954,3 +954,15 @@ test("alternate-screen history preview stays selectable and copyable", async () 
   assert.match(source, /HISTORY_PREVIEW_HIDE_EVENT/);
   assert.match(source, /document\.addEventListener\("copy", handlePreviewNativeCopy, true\)/);
 });
+
+test("alternate-screen history preview falls back to the captured session output", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("./createXTermRuntime.ts", import.meta.url), "utf8");
+
+  // The fallback only applies while the app owns the alternate buffer and the
+  // normal buffer has no scrollback above the viewport (#2516).
+  assert.match(source, /bufferHasPreviewScrollback\(normalBuffer\)/);
+  assert.match(source, /outputHistory\.getPreviewRowCount\(term\.cols\)/);
+  assert.match(source, /outputHistory\.getPreviewRows\(\{/);
+  assert.match(source, /nextOutputHistoryPreviewTop\(/);
+});

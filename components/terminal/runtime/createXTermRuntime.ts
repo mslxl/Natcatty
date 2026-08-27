@@ -125,7 +125,9 @@ import {
   HISTORY_PREVIEW_HIDE_EVENT,
   HISTORY_PREVIEW_OVERLAY_ATTR,
   HISTORY_PREVIEW_WRAP_ATTR,
+  bufferHasPreviewScrollback,
   encodeHistoryPreviewWrapFlags,
+  type HistoryPreviewRow,
   getHistoryPreviewRows,
   getHistoryPreviewSelectionFromRoot,
   forcedHistoryScrollLinesForWheel,
@@ -139,6 +141,10 @@ import {
   shouldHideHistoryPreviewOnMouseDown,
   shouldKeepHistoryPreviewOnKey,
 } from "./terminalHistoryScrollOverride";
+import {
+  nextOutputHistoryPreviewTop,
+  type TerminalOutputHistoryPreview,
+} from "./terminalOutputHistory";
 import { shouldPassThroughCopyShortcut } from "./terminalCopyShortcut";
 import { shouldUseUrgentTerminalInterrupt } from "./terminalInterruptShortcut";
 import {
@@ -349,6 +355,11 @@ export type CreateXTermRuntimeContext = {
   serialLineBufferRef?: RefObject<string>;
   telnetLocalEchoRef?: RefObject<boolean>;
   onTerminalLogData?: (data: string) => void;
+  /**
+   * Captured session output used as the history preview source while an app
+   * owns the alternate buffer and the normal buffer has no scrollback (#2516).
+   */
+  terminalOutputHistory?: TerminalOutputHistoryPreview;
 
   // Callback when shell reports CWD change via OSC 7
   onCwdChange?: (cwd: string) => void;
@@ -997,20 +1008,43 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const showAlternateScreenHistoryPreview = (lines: number) => {
     if (term.buffer.active.type !== "alternate") return false;
     const normalBuffer = term.buffer.normal;
-    historyPreviewTop = nextHistoryPreviewTop({
-      buffer: normalBuffer,
-      currentTop: historyPreviewTop,
-      lines,
-    });
+    // Inside screen/vim/codex the app owns the alternate buffer, so the normal
+    // buffer has no rows above the viewport and there is nothing to preview.
+    // Fall back to the captured session output (#2516). Apps that request mouse
+    // reporting never get here — xterm hands those wheel events to the app.
+    const outputHistory = ctx.terminalOutputHistory;
+    const outputRowCount = outputHistory && !bufferHasPreviewScrollback(normalBuffer)
+      ? outputHistory.getPreviewRowCount(term.cols)
+      : 0;
+    let previewRows: HistoryPreviewRow[];
+    if (outputHistory && outputRowCount > 0) {
+      historyPreviewTop = nextOutputHistoryPreviewTop({
+        currentTop: historyPreviewTop,
+        lines,
+        rows: term.rows,
+        totalRows: outputRowCount,
+      });
+      previewRows = outputHistory.getPreviewRows({
+        cols: term.cols,
+        rows: term.rows,
+        top: historyPreviewTop,
+      }).rows;
+    } else {
+      historyPreviewTop = nextHistoryPreviewTop({
+        buffer: normalBuffer,
+        currentTop: historyPreviewTop,
+        lines,
+      });
+      previewRows = getHistoryPreviewRows({
+        buffer: normalBuffer,
+        rows: term.rows,
+        top: historyPreviewTop,
+      });
+    }
     const overlay = ensureHistoryPreviewOverlay();
     overlay.style.fontSize = `${currentTerminalFontSize()}px`;
     overlay.style.fontFamily = String(term.options.fontFamily ?? fontFamily);
     overlay.style.lineHeight = String(term.options.lineHeight ?? lineHeight);
-    const previewRows = getHistoryPreviewRows({
-      buffer: normalBuffer,
-      rows: term.rows,
-      top: historyPreviewTop,
-    });
     overlay.textContent = previewRows.map((row) => row.text).join("\n");
     overlay.setAttribute(HISTORY_PREVIEW_WRAP_ATTR, encodeHistoryPreviewWrapFlags(previewRows));
     return true;
