@@ -24,6 +24,16 @@ test("computeCursorInstallState: Agent CLI on PATH is a user Cursor install", ()
   assert.equal(state.installed, true);
 });
 
+test("computeCursorInstallState: logged-out CLI path is installed without cliLoginOk", () => {
+  const state = computeCursorInstallState({
+    sdkInstalled: true,
+    cliBinPath: "/bin/cursor-agent",
+    cliLoginOk: false,
+  });
+  assert.equal(state.installed, true);
+  assert.equal(state.sdkInstalled, true);
+});
+
 test("computeCursorInstallState: proven CLI login is a user Cursor install", () => {
   const state = computeCursorInstallState({
     sdkInstalled: false,
