@@ -69,6 +69,36 @@ test("cached temp root is recreated after OS cleanup", async () => {
   }
 });
 
+test("cached temp root is rebound after inode replacement", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-replaced-root-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o700);
+  try {
+    const script = [
+      'const fs = require("node:fs");',
+      'const path = require("node:path");',
+      'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
+      'const first = bridge.getTempDir();',
+      'fs.rmSync(first, { recursive: true, force: true });',
+      'fs.mkdirSync(first, { recursive: true, mode: 0o700 });',
+      'const second = bridge.getTempDir();',
+      'if (!fs.statSync(second).isDirectory()) process.exit(2);',
+      'const downloadPath = bridge.getTempFilePath("download.bin");',
+      'const relative = path.relative(second, downloadPath);',
+      'if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) process.exit(3);',
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: { ...process.env, TMPDIR: root, HOME: fakeHome },
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("tool output temp handlers write, read, and delete only Netcatty temp files", async () => {
   const handlers = new Map();
   tempDirBridge.registerHandlers({

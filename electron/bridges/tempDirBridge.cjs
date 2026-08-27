@@ -193,7 +193,11 @@ function getTempDir() {
       assertSafeTempDir(cachedTempDir, cachedTempDirIdentity);
       return cachedTempDir;
     } catch (error) {
-      if (error?.code !== "ENOENT") throw error;
+      // ENOENT: OS/temp cleaner removed the directory. Identity mismatch: the
+      // path still exists but was deleted and recreated (new inode). Both are
+      // recoverable if the replacement still passes full safety checks below.
+      const identityChanged = error?.message === "Netcatty temp directory identity changed during this process.";
+      if (error?.code !== "ENOENT" && !identityChanged) throw error;
       cachedTempDir = null;
       cachedTempDirIdentity = null;
     }
