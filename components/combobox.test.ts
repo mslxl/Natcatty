@@ -91,7 +91,7 @@ test("combobox exposes active-option semantics for keyboard navigation", () => {
   assert.match(source, /role="combobox"/);
   assert.match(source, /aria-activedescendant=/);
   assert.match(source, /role=\{listbox \? "listbox" : undefined\}/);
-  assert.match(source, /<ComboboxOptionsList id=\{listboxId\} listbox onScrollCapture=\{handleOptionsScrollCapture\}>/);
+  assert.match(source, /<ComboboxOptionsList id=\{listboxId\} listbox scrollRef=\{optionsScrollRef\} onScrollCapture=\{handleOptionsScrollCapture\}>/);
   assert.match(source, /<ComboboxOptionsList>\s*\{/);
   assert.match(source, /role="option"/);
   assert.match(source, /open && !disabled && hasActiveOption/);
@@ -180,6 +180,18 @@ test("combobox render window resets during render, before committing a changed r
   assert.match(
     source,
     /if \(windowKey\.open !== open \|\| windowKey\.filteredOptions !== filteredOptions\) \{\s*setWindowKey\(\{ open, filteredOptions \}\)\s*setRenderLimit\(COMBOBOX_INITIAL_RENDER_LIMIT\)\s*setWindowStart\(0\)/,
+  );
+});
+
+test("combobox resets the listbox scroll position alongside the render window", () => {
+  // The render-window reset only touches React state; the listbox DOM node
+  // would keep (or clamp) its previous scrollTop, so a fresh initial slice
+  // would be displayed near its bottom instead of at its first match.
+  assert.match(source, /const optionsScrollRef = React\.useRef<HTMLDivElement>\(null\)/);
+  assert.match(source, /ref=\{scrollRef\}/);
+  assert.match(
+    source,
+    /\/\/ Resetting the render window alone is not enough[\s\S]*?React\.useEffect\(\(\) => \{\s*if \(optionsScrollRef\.current\) optionsScrollRef\.current\.scrollTop = 0\s*\}, \[open, filteredOptions\]\)/,
   );
 });
 

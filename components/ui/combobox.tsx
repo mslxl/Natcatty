@@ -159,11 +159,13 @@ function ComboboxOptionsList({
     id,
     listbox = false,
     onScrollCapture,
+    scrollRef,
 }: {
     children: React.ReactNode;
     id?: string;
     listbox?: boolean;
     onScrollCapture?: React.UIEventHandler<HTMLDivElement>;
+    scrollRef?: React.RefObject<HTMLDivElement | null>;
 }) {
     const handleWheelCapture = (event: React.WheelEvent<HTMLDivElement>) => {
         const handled = applyComboboxWheelScroll(event.currentTarget, event.deltaY, event.deltaMode)
@@ -177,6 +179,7 @@ function ComboboxOptionsList({
     return (
         <div
             id={id}
+            ref={scrollRef}
             role={listbox ? "listbox" : undefined}
             className="max-h-[280px] overflow-y-auto overscroll-contain p-1"
             onWheelCapture={handleWheelCapture}
@@ -219,6 +222,7 @@ export function Combobox({
     const inputRef = React.useRef<HTMLInputElement>(null)
     const wasOpenRef = React.useRef(false)
     const activeOptionRef = React.useRef<HTMLButtonElement>(null)
+    const optionsScrollRef = React.useRef<HTMLDivElement>(null)
     // True while scroll events on the options list are caused by this
     // component scrolling the active option into view (keyboard navigation,
     // mouse hover) rather than by the user scrolling manually.
@@ -269,6 +273,13 @@ export function Combobox({
     const renderedOptions = React.useMemo(() => {
         return filteredOptions.slice(windowStart, windowStart + renderLimit)
     }, [filteredOptions, windowStart, renderLimit])
+
+    // Resetting the render window alone is not enough: the listbox DOM node
+    // keeps (or clamps) its previous scrollTop, so a fresh initial slice
+    // would be displayed near its bottom instead of at its first match.
+    React.useEffect(() => {
+        if (optionsScrollRef.current) optionsScrollRef.current.scrollTop = 0
+    }, [open, filteredOptions])
 
     const expandRenderWindow = React.useCallback(() => {
         setRenderLimit((current) => {
@@ -512,7 +523,7 @@ export function Combobox({
                 style={{ width: 'var(--radix-popover-trigger-width)' }}
             >
                 {/* Options List */}
-                <ComboboxOptionsList id={listboxId} listbox onScrollCapture={handleOptionsScrollCapture}>
+                <ComboboxOptionsList id={listboxId} listbox scrollRef={optionsScrollRef} onScrollCapture={handleOptionsScrollCapture}>
                     {filteredOptions.length === 0 && !showCreateOption ? (
                         <div className="py-4 text-center text-sm text-muted-foreground">
                             {emptyText}
