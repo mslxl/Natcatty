@@ -304,6 +304,12 @@ export function Combobox({
         if (!shouldExpandComboboxWindow(scrollTarget, renderedOptions.length, filteredOptions.length)) {
             return
         }
+        // A slid window that already reaches the final option cannot mount
+        // more rows by growing renderLimit (the slice is capped by the option
+        // count), so growing it here without mounting anything would leave an
+        // inflated limit behind; a later wrap back to index 0 would then reset
+        // windowStart to zero and mount the entire grown prefix in one commit.
+        if (windowStart + renderedOptions.length >= filteredOptions.length) return
         expandRenderWindow()
     }, [windowStart, renderedOptions.length, filteredOptions.length, expandRenderWindow])
 
