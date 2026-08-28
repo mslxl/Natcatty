@@ -666,10 +666,14 @@ async function verifyManifestContent(entry) {
   return Boolean(await readVerifiedManifestContent(entry));
 }
 
-async function listToolOutputManifestEntries() {
+async function listToolOutputManifestEntries(retry = true) {
   const tempDir = getTempDir();
+  const generation = tempDirRebindGeneration;
   const entries = [];
   const signingKey = await getToolOutputSigningKey();
+  if (generation !== tempDirRebindGeneration) {
+    return retry ? listToolOutputManifestEntries(false) : [];
+  }
   if (!signingKey) return entries;
   let files = [];
   try {
@@ -677,10 +681,16 @@ async function listToolOutputManifestEntries() {
   } catch {
     return entries;
   }
+  if (generation !== tempDirRebindGeneration || getTempDir() !== tempDir) {
+    return retry ? listToolOutputManifestEntries(false) : [];
+  }
   for (const file of files) {
     if (!file.endsWith(".log.meta.json")) continue;
     const entry = await readSafeManifest(path.join(tempDir, file), signingKey);
     if (entry) entries.push(entry);
+  }
+  if (generation !== tempDirRebindGeneration || getTempDir() !== tempDir) {
+    return retry ? listToolOutputManifestEntries(false) : [];
   }
   return entries;
 }
