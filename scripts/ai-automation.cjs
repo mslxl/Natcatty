@@ -2097,6 +2097,22 @@ function extractJsonObject(text) {
   throw new Error('Could not parse JSON from agent output.');
 }
 
+/**
+ * Claude Code `--json-schema` uses Ajv without draft/2020-12 loaded.
+ * A `$schema` URI for that draft fails before the model runs:
+ * `no schema with key or ref "https://json-schema.org/draft/2020-12/schema"`.
+ */
+function toClaudeJsonSchema(schema) {
+  const value = typeof schema === 'string' ? JSON.parse(schema) : schema;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Claude JSON Schema must be an object.');
+  }
+  const next = { ...value };
+  delete next.$schema;
+  delete next.$id;
+  return next;
+}
+
 function unwrapAgentJson(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   if (value.structured_output && typeof value.structured_output === 'object') {
@@ -4227,6 +4243,7 @@ module.exports = {
   prepareIssueFollowupContext,
   prepareAiCliSettings,
   unwrapAgentJson,
+  toClaudeJsonSchema,
   isAutomationTriageMarker,
   writeBraveResearchHelpers,
   writeJson,
