@@ -586,6 +586,43 @@ test("patched receive session: full CRC32 download, OO in one chunk", () => {
   assert.deepStrictEqual(r.sentNames, ["ZRINIT", "ZRPOS", "ZRINIT", "ZFIN"]);
 });
 
+test("fast receive keeps fragmented packets segmented until a frame is complete", () => {
+  const wire = buildWire(Array.from(Buffer.alloc(8192, 0x5a)), { frameEnd: "end_no_ack" });
+  const session = new Zmodem.Session.Receive();
+  session._last_header_crc = 16;
+  session._next_subpacket_handler = () => {};
+
+  const originalConcat = Buffer.concat;
+  let concatCount = 0;
+  Buffer.concat = function countedConcat() {
+    concatCount += 1;
+    return originalConcat.apply(this, arguments);
+  };
+
+  try {
+    for (const byte of wire) session.consume(Buffer.from([byte]));
+  } finally {
+    Buffer.concat = originalConcat;
+  }
+
+  assert.ok(concatCount <= 4, `fragmented packet was flattened ${concatCount} times`);
+});
+
+test("pending ZSINIT restores its ZACK handler before waiting", async () => {
+  const lib = requireFreshUnpatchedZmodem();
+  applyZmodemSendSessionFixes(lib);
+  const session = new lib.Session.Send(
+    lib.Header.build("ZRINIT", ["CANFDX", "CANOVIO"], 0),
+  );
+  session._zsinit_pending = true;
+  session._next_header_handler = { ZRINIT() {} };
+
+  const pending = session._ensure_receiver_escapes_ctrl_chars();
+  assert.equal(typeof session._next_header_handler.ZACK, "function");
+  session._on_zsinit_ack();
+  await pending;
+});
+
 test("patched send file parts are wire-equivalent to the original", () => {
   const originalLib = requireFreshUnpatchedZmodem();
   const patchedLib = requireFreshUnpatchedZmodem();

@@ -364,6 +364,42 @@ function applyZmodemFastPath(Zmodem) {
     return total;
   }
 
+  /** Find a small byte sequence without flattening pending chunks. */
+  function fastFindSequence(needle) {
+    const chunks = this._zmodem_fast_chunks;
+    if (!chunks || !chunks.length || !needle.length) return -1;
+    let matched = 0;
+    let offset = 0;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++, offset++) {
+        const byte = chunk[i];
+        if (byte === needle[matched]) {
+          matched += 1;
+          if (matched === needle.length) return offset - needle.length + 1;
+        } else {
+          matched = byte === needle[0] ? 1 : 0;
+        }
+      }
+    }
+    return -1;
+  }
+
+  /** Find a ZDLE frame-end marker without flattening an incomplete packet. */
+  function fastFindFrameEnd() {
+    const chunks = this._zmodem_fast_chunks;
+    if (!chunks || !chunks.length) return -1;
+    let previousWasZdle = false;
+    let offset = 0;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++, offset++) {
+        const byte = chunk[i];
+        if (previousWasZdle && FRAME_END_KEYS[byte]) return offset - 1;
+        previousWasZdle = byte === ZDLE;
+      }
+    }
+    return -1;
+  }
+
   /** Drop the first `n` fast bytes (like Array.splice(0, n)). */
   function fastConsumeAt(n) {
     const chunks = this._zmodem_fast_chunks;
@@ -413,8 +449,7 @@ function applyZmodemFastPath(Zmodem) {
       return this._check_for_abort_sequence();
     }
 
-    const buf = this._zmodem_fast_contiguous();
-    const at = buf.length ? buf.indexOf(ABORT_SEQUENCE_BUF) : -1;
+    const at = this._zmodem_fast_find_sequence(ABORT_SEQUENCE_BUF);
     if (at === -1) return false;
 
     this._zmodem_fast_consume_at(at + ABORT_SEQUENCE_BUF.length);
@@ -425,8 +460,8 @@ function applyZmodemFastPath(Zmodem) {
 
   /** Mirrors `_parse_and_consume_subpacket()`, parsing from fast bytes. */
   function fastParseSubpacket() {
+    if (this._zmodem_fast_find_frame_end() === -1) return null;
     const buf = this._zmodem_fast_contiguous();
-    if (!buf.length) return null;
 
     const crcLen = this._last_header_crc === 16 ? 2 : 4;
     const parsed = parseSubpacketFast(Zmodem, buf, crcLen);
@@ -660,6 +695,8 @@ function applyZmodemFastPath(Zmodem) {
       _zmodem_fast_push: fastPush,
       _zmodem_fast_contiguous: fastContiguous,
       _zmodem_fast_len: fastLen,
+      _zmodem_fast_find_sequence: fastFindSequence,
+      _zmodem_fast_find_frame_end: fastFindFrameEnd,
       _zmodem_fast_consume_at: fastConsumeAt,
       _zmodem_fast_move_all_to_array: fastMoveAllToArray,
       _zmodem_fast_move_array_to_fast: fastMoveArrayToFast,
@@ -804,6 +841,11 @@ function applyZmodemSendSessionFixes(Zmodem) {
           // A keepalive ZSINIT is awaiting its ZACK: sending another would
           // produce a stray ZACK that aborts the session as
           // "Unhandled header: ZACK". Share the pending ACK instead.
+          sess._next_header_handler = {
+            ZACK: function () {
+              sess._on_zsinit_ack();
+            },
+          };
           promise = new Promise(function (res) {
             if (!sess._zsinit_ack_waiters) sess._zsinit_ack_waiters = [];
             sess._zsinit_ack_waiters.push(res);
