@@ -62,6 +62,8 @@ function createTempDirReboundError() {
 async function loadOrCreateToolOutputSigningKey(safeStorage) {
   if (!isSecureToolOutputStorageAvailable(safeStorage)) return null;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
+  const generation = tempDirRebindGeneration;
+  const isCurrentGeneration = () => generation === tempDirRebindGeneration;
   try {
     const stat = await fs.promises.lstat(keyPath);
     if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 4096) {
@@ -72,15 +74,17 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
         // A transient read failure must not destroy the only key for existing output.
         return null;
       }
+      if (!isCurrentGeneration()) return null;
       try {
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-        if (decoded.length === 32) return decoded;
+        if (decoded.length === 32 && isCurrentGeneration()) return decoded;
       } catch {
         // A locked or temporarily unavailable OS keychain must not destroy the
         // only key capable of verifying previously persisted output.
         return null;
       }
     }
+    if (!isCurrentGeneration()) return null;
     if ((stat.isFile() || stat.isSymbolicLink())) {
       await fs.promises.unlink(keyPath);
     } else {
@@ -93,17 +97,21 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
   const key = crypto.randomBytes(32);
   const pendingPath = `${keyPath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.pending`;
   try {
+    if (!isCurrentGeneration()) return null;
     const encrypted = safeStorage.encryptString(key.toString("base64"));
     await fs.promises.writeFile(pendingPath, encrypted, { mode: 0o600, flag: "wx" });
+    if (!isCurrentGeneration()) return null;
     await fs.promises.rename(pendingPath, keyPath);
     return key;
   } catch (error) {
     await safeUnlink(pendingPath);
     if (error?.code !== "EEXIST") return null;
+    if (!isCurrentGeneration()) return null;
     try {
       const encrypted = await fs.promises.readFile(keyPath);
+      if (!isCurrentGeneration()) return null;
       const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-      return decoded.length === 32 ? decoded : null;
+      return decoded.length === 32 && isCurrentGeneration() ? decoded : null;
     } catch {
       return null;
     }
