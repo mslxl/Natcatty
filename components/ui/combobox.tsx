@@ -295,6 +295,12 @@ export function Combobox({
             setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
             return
         }
+        // Programmatic scrolls from scrolling the active option into view can
+        // also land near the bottom of a slid window (e.g. at the last window
+        // while keyboard-navigating). Those are not manual scrolls either, so
+        // skip expansion to keep the keyboard window at a fixed size instead
+        // of growing it on every ArrowUp/ArrowDown wrap boundary.
+        if (navigationalScrollRef.current) return
         if (!shouldExpandComboboxWindow(scrollTarget, renderedOptions.length, filteredOptions.length)) {
             return
         }

@@ -151,10 +151,20 @@ test("combobox keyboard scrolling into view does not reset a slid window", () =>
     source,
     /React\.useEffect\(\(\) => \{\s*\/\/ Scrolling the active option into view emits scroll events[\s\S]*?navigationalScrollRef\.current = true\s*activeOptionRef\.current\?\.scrollIntoView\(\{ block: 'nearest' \}\)\s*requestAnimationFrame\(\(\) => \{\s*navigationalScrollRef\.current = false\s*\}\)/,
   );
-  // Only the reset branch is suppressed; expansion still runs.
   assert.match(
     source,
     /if \(windowStart > 0 && shouldResetComboboxWindow\(scrollTarget\)\) \{\s*if \(navigationalScrollRef\.current\) return\s*setActiveIndex\(-1\)/,
+  );
+});
+
+test("combobox keyboard scrolling into view does not expand a slid window", () => {
+  // Programmatic scrolls from scrolling the active option into view can land
+  // near the bottom of the last window; they are not manual scrolls, so the
+  // keyboard window must stay a fixed size instead of growing on every
+  // ArrowUp/ArrowDown wrap boundary.
+  assert.match(
+    source,
+    /\/\/ skip expansion to keep the keyboard window at a fixed size instead[\s\S]*?if \(navigationalScrollRef\.current\) return\s*if \(!shouldExpandComboboxWindow\(/,
   );
 });
 
