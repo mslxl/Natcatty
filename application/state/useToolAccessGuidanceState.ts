@@ -26,8 +26,9 @@ export type ToolAccessGuidanceState = {
  * Owns the External MCP lifecycle synchronization (status fetch, persisted
  * enable-key subscriptions and start-up retry polling) so view components only
  * render the resolved guidance state. The status paths are only trusted while
- * External MCP is actually enabled: the host keeps reporting launcher and
- * discovery paths even when the runtime is disabled or after an idle shutdown.
+ * External MCP is actually enabled and running: the host keeps reporting
+ * launcher and discovery paths as soon as the switch is on (even while the
+ * runtime is still starting or after an idle shutdown).
  */
 export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAccessGuidanceState {
   const [skillPath, setSkillPath] = useState<string | null>(null);
@@ -38,7 +39,13 @@ export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAcc
   const refreshMcpStatus = useCallback(async (): Promise<string | null | undefined> => {
     const status = await netcattyBridge.get()?.externalMcpGetStatus?.();
     if (!status?.ok) return undefined;
-    const ready = Boolean(status.enabled);
+    // Do not trust `enabled` alone: the main process flips `enabled` before
+    // host credentials are resolved and the discovery file is written, and it
+    // keeps reporting the configured discovery/launcher paths while starting.
+    // Only treat the runtime as guidance-ready once it is actually running,
+    // otherwise the prompt could reference a discovery file that does not
+    // exist yet (and a launcher that exits because of it).
+    const ready = Boolean(status.enabled) && status.state === 'running';
     const launcherPath = ready ? status.launcherPath ?? null : null;
     const discoveryPath = ready ? status.discoveryPath ?? null : null;
     setMcpLauncherPath(launcherPath);
