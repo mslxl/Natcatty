@@ -1906,6 +1906,8 @@ test("stopAllPortForwards keeps a failed manual stop from auto-reconnecting", as
   const target = rule({ id: "bulk-stop-failed-no-reconnect" });
   await startPortForward(target, host(), [], [], [], () => undefined, true);
   await stopAllPortForwards();
+  statusListener?.("error", "late cleanup error");
+  await new Promise<void>((resolve) => setImmediate(resolve));
   setReconnectCallback(null);
 
   const connection = getActiveConnection(target.id);
