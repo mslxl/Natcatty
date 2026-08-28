@@ -59,6 +59,12 @@ function createTempDirReboundError() {
   return error;
 }
 
+async function readFileAtMost(file, maxBytes) {
+  const buffer = Buffer.alloc(maxBytes + 1);
+  const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+  return bytesRead > maxBytes ? null : buffer.subarray(0, bytesRead);
+}
+
 async function loadOrCreateToolOutputSigningKey(safeStorage) {
   if (!isSecureToolOutputStorageAvailable(safeStorage)) return null;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
@@ -77,7 +83,8 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
       const opened = await openSafeToolOutputFile(keyPath, 4096, false);
       if (!opened) return null;
       try {
-        const encrypted = await opened.file.readFile();
+        const encrypted = await readFileAtMost(opened.file, 4096);
+        if (!encrypted) return null;
         if (!isCurrentTempDir()) return null;
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
         if (decoded.length === 32 && isCurrentTempDir()) return decoded;
@@ -116,7 +123,8 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
       const opened = await openSafeToolOutputFile(keyPath, 4096, false);
       if (!opened) return null;
       try {
-        const encrypted = await opened.file.readFile();
+        const encrypted = await readFileAtMost(opened.file, 4096);
+        if (!encrypted) return null;
         if (!isCurrentTempDir()) return null;
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
         return decoded.length === 32 && isCurrentTempDir() ? decoded : null;

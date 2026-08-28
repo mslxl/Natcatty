@@ -211,11 +211,14 @@ test("tool output write retries when the temp root is replaced after key loading
     '    content: "before",',
     '  });',
     '  if (!before.ok) throw new Error(before.error);',
-    '  const originalReadFile = fs.promises.readFile;',
+    '  const originalOpen = fs.promises.open;',
     '  let replaced = false;',
-    '  fs.promises.readFile = async (filePath, ...args) => {',
-    '    if (!replaced && path.basename(filePath) === ".tool-output-signing-key") {',
-    '      const oldKeyFile = await originalReadFile(filePath, ...args);',
+    '  fs.promises.open = async (filePath, ...args) => {',
+    '    const opened = await originalOpen(filePath, ...args);',
+    '    if (replaced || path.basename(filePath) !== ".tool-output-signing-key") return opened;',
+    '    const originalRead = opened.read.bind(opened);',
+    '    opened.read = async (...readArgs) => {',
+    '      const oldKeyFile = await originalRead(...readArgs);',
     '      replaced = true;',
     '      const oldPath = `${first}.old`;',
     '      fs.renameSync(first, oldPath);',
@@ -223,8 +226,8 @@ test("tool output write retries when the temp root is replaced after key loading
     '      const replacementKey = Buffer.alloc(32, 7);',
     '      fs.writeFileSync(path.join(first, ".tool-output-signing-key"), safeStorage.encryptString(replacementKey.toString("base64")), { mode: 0o600 });',
     '      return oldKeyFile;',
-    '    }',
-    '    return originalReadFile(filePath, ...args);',
+    '    };',
+    '    return opened;',
     '  };',
     '  bridge.registerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, undefined, { safeStorage });',
     '  const after = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, {',
@@ -233,7 +236,7 @@ test("tool output write retries when the temp root is replaced after key loading
     '  });',
     '  const restored = await handlers.get("netcatty:tempdir:toolOutputRestore")({}, { handleId: "after-rebind-write", chatSessionId: "rebind-write-chat" });',
     '  const content = restored ? await handlers.get("netcatty:tempdir:toolOutputRead")({}, { path: restored.path }) : null;',
-    '  console.log(`RESULT:${JSON.stringify({ write: after, restored: Boolean(restored), content })}`);',
+    '  console.log(`RESULT:${JSON.stringify({ write: after, replaced, restored: Boolean(restored), content })}`);',
     '})().catch(error => { console.error(error); process.exit(1); });',
   ].join("\n");
   try {
@@ -243,7 +246,7 @@ test("tool output write retries when the temp root is replaced after key loading
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /RESULT:.*"write":\{"ok":true,.*"restored":true.*"content":"after"/);
+    assert.match(result.stdout, /RESULT:.*"write":\{"ok":true,.*"replaced":true.*"restored":true.*"content":"after"/);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }
