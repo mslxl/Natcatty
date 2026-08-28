@@ -149,6 +149,14 @@ export interface InlineMarkdownEditorProps {
 
 export const NOTE_EDIT_DECORATION_DEBOUNCE_MS = 160;
 
+export const shouldApplyMdxParseFailure = (input: {
+  currentNoteId?: string;
+  failedNoteId?: string;
+  currentMarkdown: string;
+  failedMarkdown: string;
+}): boolean => input.currentNoteId === input.failedNoteId
+  && input.currentMarkdown === input.failedMarkdown;
+
 export const getNoteDecorationMutationDelay = (editorMode: NoteEditorMode): number =>
   editorMode === "edit" || editorMode === "live" ? NOTE_EDIT_DECORATION_DEBOUNCE_MS : 0;
 
@@ -1584,8 +1592,16 @@ export const InlineMarkdownEditor = React.memo(
   // synchronous setState here would be dropped — defer it to a timer.
   const handleMdxParseError = useCallback((payload: { error: string; source: string }) => {
     const failedNoteId = noteIdRef.current;
+    const failedMarkdown = normalizeNotePublicAssetPaths(payload.source);
     window.setTimeout(() => {
-      if (noteIdRef.current !== failedNoteId) return;
+      if (!shouldApplyMdxParseFailure({
+        currentNoteId: noteIdRef.current,
+        failedNoteId,
+        currentMarkdown: latestMarkdownRef.current,
+        failedMarkdown,
+      })) return;
+      // The same note can receive a newer external value before the deferred
+      // callback runs. Do not show the old import failure over that content.
       setMdxParseFailure((current) => current ?? payload.error);
     }, 0);
   }, []);
@@ -2150,7 +2166,10 @@ export const InlineMarkdownEditor = React.memo(
           noteFontSize={noteCodeFontSize || noteFontSize}
         />
       ) : mdxFallbackActive ? (
-        <div data-note-markdown-source-fallback="true" className="flex min-h-0 flex-1 flex-col">
+        <div
+          data-note-markdown-source-fallback="true"
+          className="flex min-h-[calc(100vh-15rem)] min-w-0 flex-1 flex-col"
+        >
           <div
             data-note-markdown-source-notice="true"
             className="flex items-start gap-2 border-b border-border/60 bg-muted/40 px-4 py-2 text-xs text-muted-foreground"

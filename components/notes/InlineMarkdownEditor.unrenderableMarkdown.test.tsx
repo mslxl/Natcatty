@@ -87,7 +87,10 @@ type RenderEditorProps = {
   editorMode?: "edit" | "preview" | "source";
 };
 
-const renderEditor = async (window: DomHarness["window"], props: RenderEditorProps) => {
+const renderEditor = async (
+  window: DomHarness["window"],
+  props: RenderEditorProps,
+) => {
   const { act } = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { I18nProvider } = await import("../../application/i18n/I18nProvider.tsx");
@@ -232,4 +235,21 @@ test("retry imports the latest fallback draft, not the stale prop value", async 
   } finally {
     cleanup();
   }
+});
+
+test("a stale parse error is ignored when the same note has newer markdown", async () => {
+  const { shouldApplyMdxParseFailure } = await import("./InlineMarkdownEditor.tsx");
+
+  assert.equal(shouldApplyMdxParseFailure({
+    currentNoteId: "note-1",
+    failedNoteId: "note-1",
+    currentMarkdown: PLAIN_NOTE_MARKDOWN,
+    failedMarkdown: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+  }), false);
+  assert.equal(shouldApplyMdxParseFailure({
+    currentNoteId: "note-1",
+    failedNoteId: "note-1",
+    currentMarkdown: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+    failedMarkdown: NOTE_MARKDOWN_MDX_CANNOT_PARSE,
+  }), true);
 });
