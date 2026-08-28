@@ -608,6 +608,27 @@ test("fast receive keeps fragmented packets segmented until a frame is complete"
   assert.ok(concatCount <= 4, `fragmented packet was flattened ${concatCount} times`);
 });
 
+test("fast receive keeps abort detection after compacting an incomplete CRC", () => {
+  const wire = buildWire([0x41], { frameEnd: "end_no_ack" });
+  const marker = wire.lastIndexOf(Buffer.from([0x18, 0x68]));
+  assert.ok(marker >= 0);
+  const session = new Zmodem.Session.Receive();
+  session._last_header_crc = 16;
+  session._next_subpacket_handler = () => {};
+
+  // Leave one CRC byte pending after the frame marker. This makes the fast
+  // path compact its fragmented chunks before the remaining CRC and CAN
+  // abort sequence arrive.
+  for (let i = 0; i < marker + 3; i++) {
+    session.consume(wire.subarray(i, i + 1));
+  }
+  assert.throws(
+    () => session.consume(Buffer.from([wire[marker + 3], 0x18, 0x18, 0x18, 0x18, 0x18])),
+    (err) => err && err.type === "peer_aborted",
+  );
+  assert.equal(session.aborted(), true);
+});
+
 test("pending ZSINIT restores its ZACK handler before waiting", async () => {
   const lib = requireFreshUnpatchedZmodem();
   applyZmodemSendSessionFixes(lib);
