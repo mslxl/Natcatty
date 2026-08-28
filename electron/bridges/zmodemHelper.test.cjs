@@ -631,6 +631,37 @@ test("handleUpload times out when the remote never answers the offer", async () 
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test("handleUpload stops an unresolved offer promptly when cancelled", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
+  const filePath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  const controller = new AbortController();
+
+  const upload = handleUpload(
+    {
+      send_offer: () => new Promise(() => {}),
+      async close() {},
+    },
+    {
+      sessionId: "session-1",
+      signal: controller.signal,
+      getWebContents: () => null,
+      takeDragDropUpload: () => ({
+        filePaths: [filePath],
+        remoteNames: ["upload.txt"],
+      }),
+    },
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(
+    () => upload,
+    (err) => err && err.code === "NETCATTY_ZMODEM_CANCELLED",
+  );
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
 test("handleUpload allows a longer final wait after upload backpressure", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
   const filePath = path.join(tempDir, "upload.txt");

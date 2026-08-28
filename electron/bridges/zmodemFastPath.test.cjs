@@ -484,7 +484,7 @@ test("readDecodedBytes matches ZDLE.splice semantics", () => {
  * Returns everything observable, so two runs can be compared:
  * { sentNames, receivedHex, trailing, ended, aborted, firstError }.
  */
-function runSessionScenario({ lib, filePayload, chunkSize, asBuffers, trailingFeed }) {
+function runSessionScenario({ lib, filePayload, chunkSize, asBuffers, trailingFeed, crc32 = false }) {
   const fileBuffer = Buffer.from(filePayload);
 
   const sent = [];
@@ -525,7 +525,7 @@ function runSessionScenario({ lib, filePayload, chunkSize, asBuffers, trailingFe
     }
   };
 
-  const wire = buildSenderWire(lib, filePayload);
+  const wire = buildSenderWire(lib, filePayload, { crc32 });
   const wireChunks = [];
   for (let i = 0; i < wire.length; i += chunkSize) {
     wireChunks.push(wire.subarray(i, Math.min(i + chunkSize, wire.length)));
@@ -578,11 +578,36 @@ test("patched receive session: full CRC32 download, OO in one chunk", () => {
     chunkSize: 7,
     asBuffers: true,
     trailingFeed: TRAILING_WHOLE,
+    crc32: true,
   });
   assert.strictEqual(r.firstError, null);
   assert.strictEqual(r.ended, true);
   assert.strictEqual(r.trailing, "prompt$ ");
   assert.deepStrictEqual(r.sentNames, ["ZRINIT", "ZRPOS", "ZRINIT", "ZFIN"]);
+});
+
+test("patched send file parts are wire-equivalent to the original", () => {
+  const originalLib = requireFreshUnpatchedZmodem();
+  const patchedLib = requireFreshUnpatchedZmodem();
+  applyZmodemSendFastPath(patchedLib);
+
+  const payload = Buffer.alloc(8192 * 2 + 1);
+  for (let i = 0; i < payload.length; i++) {
+    payload[i] = (i * 73 + 19) & 0xff;
+  }
+
+  function sendFilePart(lib) {
+    const zrinit = lib.Header.build("ZRINIT", ["CANFDX", "CANOVIO"], 0);
+    const session = new lib.Session.Send(zrinit);
+    const wire = [];
+    session.set_sender((bytes) => wire.push(Buffer.from(bytes)));
+    session._stop_keepalive();
+    session._sending_file = true;
+    session._send_file_part(new Uint8Array(payload), "end_no_ack");
+    return wire;
+  }
+
+  assert.deepStrictEqual(sendFilePart(patchedLib), sendFilePart(originalLib));
 });
 
 test("session-level equivalence: fast path matches the original library pipeline", () => {

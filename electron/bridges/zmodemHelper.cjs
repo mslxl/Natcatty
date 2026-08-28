@@ -147,8 +147,8 @@ function createZmodemSentry(opts) {
   }
 
   function rememberOutgoingEcho(octets) {
+    if (!octets?.length || octets.length > ECHO_MAX_BYTES) return;
     const buf = Buffer.from(octets);
-    if (!buf.length || buf.length > ECHO_MAX_BYTES) return;
     prunePendingEchoes();
     pendingEchoes.push({
       buf,
@@ -481,6 +481,7 @@ function createZmodemSentry(opts) {
       const transferSignal = transferAbortController.signal;
       const transferOpts = {
         ...opts,
+        signal: transferSignal,
         getDragDropUpload: () => dragDropUpload,
         takeDragDropUpload,
         clearDragDropUpload,
@@ -723,11 +724,9 @@ const UPLOAD_SESSION_CLOSE_TIMEOUT_MS = 15000;
 /** Max wait for a single transport drain after write() returned false. */
 const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
 /** Upload read/send chunk size. */
-// 1 MiB read granularity: each chunk costs one event-loop round-trip
-// (drain check + yield + progress IPC), so larger chunks amortize that
-// overhead across many more bytes.  The wire subpackets stay at the
-// library's 8192-byte MAX_CHUNK_LENGTH.
-const UPLOAD_CHUNK_SIZE = 1024 * 1024;
+// Keep the batch bounded so SSH backpressure is observed before another
+// large group of 8192-byte wire subpackets enters the channel queue.
+const UPLOAD_CHUNK_SIZE = 64 * 1024;
 /** Default interval between non-final upload progress IPC events. */
 const DEFAULT_UPLOAD_PROGRESS_THROTTLE_MS = 100;
 
@@ -907,6 +906,9 @@ function waitForWritableDrain(stream, opts = {}) {
  */
 function createZmodemUploadDrainWaiter(opts) {
   return async function waitForDrain() {
+    if (opts.signal?.aborted) {
+      throw createZmodemCancelledError();
+    }
     if (!opts.getNeedsDrain()) return;
 
     if (typeof opts.waitForTransportDrain === "function") {
@@ -931,7 +933,10 @@ function createZmodemUploadDrainWaiter(opts) {
     }
 
     opts.clearNeedsDrain();
-    await new Promise((resolve) => setImmediate(resolve));
+    await racePromiseWithAbortSignal(
+      new Promise((resolve) => setImmediate(resolve)),
+      opts.signal,
+    );
   };
 }
 
@@ -991,7 +996,11 @@ function resolveUploadFileEndTimeoutMs(opts) {
 
 async function waitForUploadHandshake(promise, ms, message, opts) {
   try {
-    return await withTimeout(promise, ms, message);
+    return await withTimeout(
+      racePromiseWithAbortSignal(promise, opts?.signal),
+      ms,
+      message,
+    );
   } catch (err) {
     if (isZmodemTimeoutError(err)) {
       try { opts.onUploadTimeout?.(); } catch { /* ignore */ }

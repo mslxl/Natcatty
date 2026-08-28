@@ -314,8 +314,20 @@ function applyZmodemFastPath(Zmodem) {
   if (isFastPathDisabled()) return Zmodem;
   if (Zmodem.__netcattyZmodemFastPathApplied) return Zmodem;
 
-  const ORIGINAL_SENTRY_CONSUME = Zmodem.Sentry.prototype.consume;
-  const ORIGINAL_SESSION_CONSUME = Zmodem.Session.prototype.consume;
+  const sentryProto = Zmodem?.Sentry?.prototype;
+  const sessionProto = Zmodem?.Session?.prototype;
+  if (
+    !sentryProto ||
+    !sessionProto ||
+    typeof sentryProto.consume !== "function" ||
+    typeof sessionProto.consume !== "function" ||
+    !Zmodem.ZMLIB?.ABORT_SEQUENCE
+  ) {
+    return Zmodem;
+  }
+
+  const ORIGINAL_SENTRY_CONSUME = sentryProto.consume;
+  const ORIGINAL_SESSION_CONSUME = sessionProto.consume;
   const ABORT_SEQUENCE_BUF = Buffer.from(Zmodem.ZMLIB.ABORT_SEQUENCE);
 
   //--------------------------------------------------------------------
@@ -508,7 +520,7 @@ function applyZmodemFastPath(Zmodem) {
   }
 
   try {
-    Zmodem.Sentry.prototype.consume = function consume(input) {
+    sentryProto.consume = function consume(input) {
       let consumedViaFastPath = false;
 
       if (!(input instanceof Array)) {
@@ -628,7 +640,7 @@ function applyZmodemFastPath(Zmodem) {
       this._to_terminal(to_terminal);
     };
 
-    Zmodem.Session.prototype.consume = function consume(octets) {
+    sessionProto.consume = function consume(octets) {
       if (this.type === "receive" && octets instanceof Uint8Array) {
         return this._zmodem_fast_consume(octets);
       }
@@ -643,7 +655,7 @@ function applyZmodemFastPath(Zmodem) {
       );
     };
 
-    Object.assign(Zmodem.Session.prototype, {
+    Object.assign(sessionProto, {
       _zmodem_fast_consume: fastSessionConsume,
       _zmodem_fast_push: fastPush,
       _zmodem_fast_contiguous: fastContiguous,
@@ -659,8 +671,8 @@ function applyZmodemFastPath(Zmodem) {
     Zmodem.__netcattyZmodemFastPathApplied = true;
   } catch (err) {
     // Never break ZMODEM transfers over a patch problem.
-    Zmodem.Sentry.prototype.consume = ORIGINAL_SENTRY_CONSUME;
-    Zmodem.Session.prototype.consume = ORIGINAL_SESSION_CONSUME;
+    sentryProto.consume = ORIGINAL_SENTRY_CONSUME;
+    sessionProto.consume = ORIGINAL_SESSION_CONSUME;
     console.error(
       "[ZMODEM] fast path patch failed; using original pipeline:",
       err && err.message ? err.message : err,
@@ -703,6 +715,16 @@ function applyZmodemSendSessionFixes(Zmodem) {
   const Send = Zmodem.Session && Zmodem.Session.Send;
   if (!Send) return Zmodem;
   const proto = Send.prototype;
+  if (
+    [
+      proto._send_ZSINIT,
+      proto._start_keepalive,
+      proto._stop_keepalive,
+      proto._ensure_receiver_escapes_ctrl_chars,
+    ].some((method) => typeof method !== "function")
+  ) {
+    return Zmodem;
+  }
 
   const ORIGINAL_SEND_ZSINIT = proto._send_ZSINIT;
   const ORIGINAL_START_KEEPALIVE = proto._start_keepalive;
@@ -927,6 +949,7 @@ function applyZmodemSendFastPath(Zmodem) {
   try {
     const proto = Zmodem.Session.Send.prototype;
     const ORIGINAL_SEND_FILE_PART = proto._send_file_part;
+    if (typeof ORIGINAL_SEND_FILE_PART !== "function") return Zmodem;
 
     proto._send_file_part = function _send_file_part_fast(bytes_obj, final_packetend) {
       const frameEndNum = SEND_FRAME_END_NUM[final_packetend];
