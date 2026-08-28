@@ -1,13 +1,20 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import type { AIToolIntegrationMode } from "../../../../infrastructure/ai/types";
 import { cn } from "../../../../lib/utils";
+import {
+  readExternalMcpStoredEnabled,
+} from "../../../../application/state/useExternalMcpToggleState";
+import { AI_STATE_CHANGED_EVENT } from "../../../../application/state/aiStateEvents";
+import { STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED } from "../../../../infrastructure/config/storageKeys";
 import { getBridge } from "./types";
 import { EXTERNAL_MCP_DISCOVERY_ENV_VAR } from "./ExternalMcpCard";
 
 type ExternalMcpStatusLite = {
   ok?: boolean;
+  enabled?: boolean;
+  state?: string;
   launcherPath?: string | null;
   discoveryPath?: string | null;
 };
@@ -99,6 +106,21 @@ export const ToolAccessGuidance: React.FC<{ mode: AIToolIntegrationMode }> = ({ 
   const [mcpLauncherPath, setMcpLauncherPath] = useState<string | null>(null);
   const [mcpDiscoveryPath, setMcpDiscoveryPath] = useState<string | null>(null);
 
+  const refreshMcpStatus = useCallback(async (): Promise<string | null | undefined> => {
+    const raw = await getBridge()?.externalMcpGetStatus?.();
+    const status = raw as ExternalMcpStatusLite | undefined;
+    if (!status?.ok) return undefined;
+    // buildStatus keeps reporting the launcher/discovery paths even while the
+    // runtime is disabled or after an idle shutdown, so only trust them when
+    // External MCP is actually enabled; otherwise fall back to the enable hint.
+    const ready = Boolean(status.enabled);
+    const launcherPath = ready ? status.launcherPath ?? null : null;
+    const discoveryPath = ready ? status.discoveryPath ?? null : null;
+    setMcpLauncherPath(launcherPath);
+    setMcpDiscoveryPath(discoveryPath);
+    return launcherPath && discoveryPath ? launcherPath : null;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     if (mode === "skills") {
@@ -110,19 +132,53 @@ export const ToolAccessGuidance: React.FC<{ mode: AIToolIntegrationMode }> = ({ 
         }
       });
     } else {
-      void getBridge()?.externalMcpGetStatus?.().then((raw) => {
-        if (cancelled) return;
-        const status = raw as ExternalMcpStatusLite | undefined;
-        if (status?.ok) {
-          setMcpLauncherPath(status.launcherPath ?? null);
-          setMcpDiscoveryPath(status.discoveryPath ?? null);
-        }
-      });
+      void refreshMcpStatus();
     }
     return () => {
       cancelled = true;
     };
-  }, [mode]);
+  }, [mode, refreshMcpStatus]);
+
+  useEffect(() => {
+    if (mode === "skills") return;
+    let retryTimer: number | undefined;
+    let retries = 0;
+
+    const refetch = async () => {
+      const readyLauncherPath = await refreshMcpStatus();
+      // Right after an enable toggle the runtime may still be starting and the
+      // discovery file is not written yet; poll briefly so the prompt picks up
+      // the launcher/discovery paths once the host is ready.
+      if (retries < 3 && readExternalMcpStoredEnabled() && !readyLauncherPath) {
+        retries += 1;
+        retryTimer = window.setTimeout(() => {
+          void refetch();
+        }, 1200);
+      }
+    };
+
+    const refetchOnChange = () => {
+      retries = 0;
+      void refetch();
+    };
+    const handleAIStateChanged = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      if (key !== STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED) return;
+      refetchOnChange();
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED) return;
+      refetchOnChange();
+    };
+
+    window.addEventListener(AI_STATE_CHANGED_EVENT, handleAIStateChanged);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      if (retryTimer) window.clearTimeout(retryTimer);
+      window.removeEventListener(AI_STATE_CHANGED_EVENT, handleAIStateChanged);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [mode, refreshMcpStatus]);
 
   if (mode === "skills") {
     return (
