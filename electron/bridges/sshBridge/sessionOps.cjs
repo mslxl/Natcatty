@@ -643,8 +643,13 @@ function createSessionOpsApi(ctx) {
     emit_home "$home"
     emit_home "$HOME"
     exit 1`;
+        // No `exec` here: it would replace the wrapper shell that runs the
+        // watchdog cleanup below, leaving the watchdog subshell holding the
+        // channel's output pipes open until timeoutMs and racing the
+        // client-side timer (a valid cwd result could time out). The inner
+        // `sh -c` exit code propagates to the wrapper instead.
         const cmd = withRemoteWatchdog(
-          `exec sh -c ${quoteShellArg(posixScript)}`,
+          `sh -c ${quoteShellArg(posixScript)}`,
           timeoutMs,
         );
 
