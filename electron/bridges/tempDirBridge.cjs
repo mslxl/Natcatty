@@ -181,10 +181,17 @@ async function ensureToolOutputSigningKeyFile(key, expectedGeneration = tempDirR
     const stat = await fs.promises.lstat(keyPath);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096) return false;
     if (!mustRevalidateKey) return true;
-    const encrypted = await fs.promises.readFile(keyPath);
-    const persistedKey = Buffer.from(toolOutputSafeStorage.decryptString(encrypted), "base64");
-    return persistedKey.length === key.length
-      && crypto.timingSafeEqual(persistedKey, key);
+    const opened = await openSafeToolOutputFile(keyPath, 4096, false);
+    if (!opened) return false;
+    try {
+      const encrypted = await readFileAtMost(opened.file, 4096);
+      if (!encrypted) return false;
+      const persistedKey = Buffer.from(toolOutputSafeStorage.decryptString(encrypted), "base64");
+      return persistedKey.length === key.length
+        && crypto.timingSafeEqual(persistedKey, key);
+    } finally {
+      await opened.file.close().catch(() => {});
+    }
   } catch (error) {
     if (error?.code !== "ENOENT" || mustRevalidateKey) return false;
   }
