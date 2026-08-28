@@ -64,27 +64,32 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
   const generation = tempDirRebindGeneration;
   const isCurrentGeneration = () => generation === tempDirRebindGeneration;
+  const isCurrentTempDir = () => {
+    try {
+      return isCurrentGeneration() && getTempDir() === path.dirname(keyPath);
+    } catch {
+      return false;
+    }
+  };
   try {
     const stat = await fs.promises.lstat(keyPath);
     if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 4096) {
-      let encrypted;
+      const opened = await openSafeToolOutputFile(keyPath, 4096, false);
+      if (!opened) return null;
       try {
-        encrypted = await fs.promises.readFile(keyPath);
-      } catch {
-        // A transient read failure must not destroy the only key for existing output.
-        return null;
-      }
-      if (!isCurrentGeneration()) return null;
-      try {
+        const encrypted = await opened.file.readFile();
+        if (!isCurrentTempDir()) return null;
         const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-        if (decoded.length === 32 && isCurrentGeneration()) return decoded;
+        if (decoded.length === 32 && isCurrentTempDir()) return decoded;
       } catch {
         // A locked or temporarily unavailable OS keychain must not destroy the
         // only key capable of verifying previously persisted output.
         return null;
+      } finally {
+        await opened.file.close().catch(() => {});
       }
     }
-    if (!isCurrentGeneration()) return null;
+    if (!isCurrentTempDir()) return null;
     if ((stat.isFile() || stat.isSymbolicLink())) {
       await fs.promises.unlink(keyPath);
     } else {
@@ -97,21 +102,27 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
   const key = crypto.randomBytes(32);
   const pendingPath = `${keyPath}.${process.pid}.${crypto.randomBytes(6).toString("hex")}.pending`;
   try {
-    if (!isCurrentGeneration()) return null;
+    if (!isCurrentTempDir()) return null;
     const encrypted = safeStorage.encryptString(key.toString("base64"));
     await fs.promises.writeFile(pendingPath, encrypted, { mode: 0o600, flag: "wx" });
-    if (!isCurrentGeneration()) return null;
+    if (!isCurrentTempDir()) return null;
     await fs.promises.rename(pendingPath, keyPath);
     return key;
   } catch (error) {
     await safeUnlink(pendingPath);
     if (error?.code !== "EEXIST") return null;
-    if (!isCurrentGeneration()) return null;
+    if (!isCurrentTempDir()) return null;
     try {
-      const encrypted = await fs.promises.readFile(keyPath);
-      if (!isCurrentGeneration()) return null;
-      const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
-      return decoded.length === 32 && isCurrentGeneration() ? decoded : null;
+      const opened = await openSafeToolOutputFile(keyPath, 4096, false);
+      if (!opened) return null;
+      try {
+        const encrypted = await opened.file.readFile();
+        if (!isCurrentTempDir()) return null;
+        const decoded = Buffer.from(safeStorage.decryptString(encrypted), "base64");
+        return decoded.length === 32 && isCurrentTempDir() ? decoded : null;
+      } finally {
+        await opened.file.close().catch(() => {});
+      }
     } catch {
       return null;
     }
@@ -140,7 +151,9 @@ async function getToolOutputSigningKey({ retry = true } = {}) {
   toolOutputSigningKeyRecoveryGeneration = recoveryGeneration;
   try {
     const recovered = await recovery;
-    if (recoveryGeneration !== tempDirRebindGeneration) return null;
+    if (recoveryGeneration !== tempDirRebindGeneration) {
+      return retry ? getToolOutputSigningKey({ retry }) : null;
+    }
     toolOutputSigningKeyPromise = Promise.resolve(recovered);
     return recovered;
   } finally {
@@ -400,7 +413,7 @@ function isNetcattyTempPath(filePath) {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-async function openSafeToolOutputFile(filePath) {
+async function openSafeToolOutputFile(filePath, maxBytes = MAX_TOOL_OUTPUT_TEMP_BYTES, requireEvenBytes = true) {
   if (!isNetcattyTempPath(filePath)) return null;
   let file;
   try {
@@ -413,7 +426,7 @@ async function openSafeToolOutputFile(filePath) {
       await file.close();
       return null;
     }
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > MAX_TOOL_OUTPUT_TEMP_BYTES || stat.size % 2 !== 0) {
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > maxBytes || (requireEvenBytes && stat.size % 2 !== 0)) {
       await file.close();
       return null;
     }
