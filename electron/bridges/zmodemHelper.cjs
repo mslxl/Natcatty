@@ -1271,7 +1271,9 @@ async function handleUpload(zsession, opts) {
         opts.restoreRemoteModes(restores, { signal: opts.signal }),
         opts.signal,
       );
+      throwIfZmodemCancelled(opts.signal);
     } catch (err) {
+      if (isZmodemCancelledError(err)) throw err;
       console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
     }
   }

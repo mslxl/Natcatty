@@ -708,6 +708,7 @@ function createSessionOpsApi(ctx) {
               runTimeoutMs: 5000,
               maxOutputBytes: 1024 * 1024,
               signal,
+              invalidateTransportOnAbort: false,
             });
             let dir = null; const existing = []; const modes = {};
             for (const line of out.split("\n")) {
@@ -736,6 +737,7 @@ function createSessionOpsApi(ctx) {
             runTimeoutMs: 5000,
             maxOutputBytes: 64 * 1024,
             signal,
+            invalidateTransportOnAbort: false,
           },
         ).catch(() => {});
     }
@@ -760,6 +762,7 @@ function createSessionOpsApi(ctx) {
             runTimeoutMs: 5000,
             maxOutputBytes: 64 * 1024,
             signal,
+            invalidateTransportOnAbort: false,
           },
         ).catch(() => {});
     }

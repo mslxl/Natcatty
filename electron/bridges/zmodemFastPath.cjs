@@ -353,6 +353,10 @@ function applyZmodemFastPath(Zmodem) {
     if (!chunks || !chunks.length) return EMPTY_BUFFER;
     if (chunks.length > 1) {
       this._zmodem_fast_chunks = [Buffer.concat(chunks)];
+      // The chunk-index cursors refer to the old list. The frame marker, if
+      // any, is intentionally retained while its CRC bytes are still pending;
+      // the abort scan must restart on the merged buffer.
+      this._zmodem_fast_sequence_scan = null;
     }
     return this._zmodem_fast_chunks[0];
   }
