@@ -666,7 +666,7 @@ function createSessionOpsApi(ctx) {
     
     // Resolve the directory the running `rz` writes to (its own cwd) and report
     // which of `names` already exist there. Returns { dir, existing } or null.
-    async function probeReceiveConflicts(session, names) {
+    async function probeReceiveConflicts(session, names, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(names) || names.length === 0) {
           return null;
         }
@@ -707,6 +707,7 @@ function createSessionOpsApi(ctx) {
               openingTimeoutMs: 5000,
               runTimeoutMs: 5000,
               maxOutputBytes: 1024 * 1024,
+              signal,
             });
             let dir = null; const existing = []; const modes = {};
             for (const line of out.split("\n")) {
@@ -724,19 +725,24 @@ function createSessionOpsApi(ctx) {
     }
     
     // rm -f the given absolute remote paths (quoted; injection-safe).
-    async function removeRemoteFiles(session, paths) {
+    async function removeRemoteFiles(session, paths, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return;
         const argv = paths.map((p) => quoteShellArg(p)).join(" ");
         await executeBoundedSshCommand(
           session.conn,
           `exec sh -c 'rm -f -- "$@"' sh ${argv}`,
-          { openingTimeoutMs: 5000, runTimeoutMs: 5000, maxOutputBytes: 64 * 1024 },
+          {
+            openingTimeoutMs: 5000,
+            runTimeoutMs: 5000,
+            maxOutputBytes: 64 * 1024,
+            signal,
+          },
         ).catch(() => {});
     }
     
     // chmod the given { path, mode } entries back to their captured permissions
     // (parameterized; injection-safe). Modes are validated octal before use.
-    async function restoreRemoteModes(session, entries) {
+    async function restoreRemoteModes(session, entries, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(entries) || entries.length === 0) return;
         const args = [];
         for (const e of entries) {
@@ -749,7 +755,12 @@ function createSessionOpsApi(ctx) {
         await executeBoundedSshCommand(
           session.conn,
           `exec sh -c ${quoteShellArg(script)} sh ${args.join(" ")}`,
-          { openingTimeoutMs: 5000, runTimeoutMs: 5000, maxOutputBytes: 64 * 1024 },
+          {
+            openingTimeoutMs: 5000,
+            runTimeoutMs: 5000,
+            maxOutputBytes: 64 * 1024,
+            signal,
+          },
         ).catch(() => {});
     }
     

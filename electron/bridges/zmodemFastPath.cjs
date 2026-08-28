@@ -344,6 +344,7 @@ function applyZmodemFastPath(Zmodem) {
         ? u8
         : Buffer.from(u8.buffer, u8.byteOffset, u8.byteLength),
     );
+    this._zmodem_fast_length = (this._zmodem_fast_length || 0) + u8.length;
   }
 
   /** A single Buffer with all pending fast bytes (concats on demand). */
@@ -357,52 +358,75 @@ function applyZmodemFastPath(Zmodem) {
   }
 
   function fastLen() {
-    const chunks = this._zmodem_fast_chunks;
-    if (!chunks) return 0;
-    let total = 0;
-    for (let i = 0; i < chunks.length; i++) total += chunks[i].length;
-    return total;
+    return this._zmodem_fast_length || 0;
   }
 
-  /** Find a small byte sequence without flattening pending chunks. */
+  /** Find a small byte sequence incrementally without flattening chunks. */
   function fastFindSequence(needle) {
     const chunks = this._zmodem_fast_chunks;
     if (!chunks || !chunks.length || !needle.length) return -1;
-    let matched = 0;
-    let offset = 0;
-    for (const chunk of chunks) {
-      for (let i = 0; i < chunk.length; i++, offset++) {
+    let scan = this._zmodem_fast_sequence_scan;
+    if (!scan || scan.needle !== needle) {
+      scan = { needle, chunkIndex: 0, byteIndex: 0, offset: 0, matched: 0 };
+      this._zmodem_fast_sequence_scan = scan;
+    }
+    for (let chunkIndex = scan.chunkIndex; chunkIndex < chunks.length; chunkIndex++) {
+      const chunk = chunks[chunkIndex];
+      const start = chunkIndex === scan.chunkIndex ? scan.byteIndex : 0;
+      for (let i = start; i < chunk.length; i++) {
         const byte = chunk[i];
-        if (byte === needle[matched]) {
-          matched += 1;
-          if (matched === needle.length) return offset - needle.length + 1;
+        const offset = scan.offset++;
+        if (byte === needle[scan.matched]) {
+          scan.matched += 1;
+          if (scan.matched === needle.length) return offset - needle.length + 1;
         } else {
-          matched = byte === needle[0] ? 1 : 0;
+          scan.matched = byte === needle[0] ? 1 : 0;
         }
       }
+      scan.chunkIndex = chunkIndex + 1;
+      scan.byteIndex = 0;
     }
+    scan.chunkIndex = chunks.length;
+    scan.byteIndex = 0;
     return -1;
   }
 
-  /** Find a ZDLE frame-end marker without flattening an incomplete packet. */
+  /** Find a ZDLE frame-end marker incrementally without flattening a packet. */
   function fastFindFrameEnd() {
     const chunks = this._zmodem_fast_chunks;
     if (!chunks || !chunks.length) return -1;
-    let previousWasZdle = false;
-    let offset = 0;
-    for (const chunk of chunks) {
-      for (let i = 0; i < chunk.length; i++, offset++) {
-        const byte = chunk[i];
-        if (previousWasZdle && FRAME_END_KEYS[byte]) return offset - 1;
-        previousWasZdle = byte === ZDLE;
-      }
+    const existing = this._zmodem_fast_frame_end_at;
+    if (existing !== undefined) return existing;
+    let scan = this._zmodem_fast_frame_scan;
+    if (!scan) {
+      scan = { chunkIndex: 0, byteIndex: 0, offset: 0, previousWasZdle: false };
+      this._zmodem_fast_frame_scan = scan;
     }
+    for (let chunkIndex = scan.chunkIndex; chunkIndex < chunks.length; chunkIndex++) {
+      const chunk = chunks[chunkIndex];
+      const start = chunkIndex === scan.chunkIndex ? scan.byteIndex : 0;
+      for (let i = start; i < chunk.length; i++) {
+        const byte = chunk[i];
+        const offset = scan.offset++;
+        if (scan.previousWasZdle && FRAME_END_KEYS[byte]) {
+          this._zmodem_fast_frame_end_at = offset - 1;
+          return this._zmodem_fast_frame_end_at;
+        }
+        scan.previousWasZdle = byte === ZDLE;
+      }
+      scan.chunkIndex = chunkIndex + 1;
+      scan.byteIndex = 0;
+    }
+    scan.chunkIndex = chunks.length;
+    scan.byteIndex = 0;
     return -1;
   }
 
   /** Drop the first `n` fast bytes (like Array.splice(0, n)). */
   function fastConsumeAt(n) {
     const chunks = this._zmodem_fast_chunks;
+    const available = this._zmodem_fast_length || 0;
+    const toConsume = Math.min(Math.max(0, n), available);
     while (n > 0 && chunks.length) {
       const head = chunks[0];
       if (head.length > n) {
@@ -413,12 +437,20 @@ function applyZmodemFastPath(Zmodem) {
         n -= head.length;
       }
     }
+    this._zmodem_fast_length = available - toConsume;
+    this._zmodem_fast_frame_end_at = undefined;
+    this._zmodem_fast_frame_scan = null;
+    this._zmodem_fast_sequence_scan = null;
   }
 
   /** Move all pending fast bytes into `_input_buffer` (header parsing). */
   function fastMoveAllToArray() {
     const buf = this._zmodem_fast_contiguous();
     this._zmodem_fast_chunks = [];
+    this._zmodem_fast_length = 0;
+    this._zmodem_fast_frame_end_at = undefined;
+    this._zmodem_fast_frame_scan = null;
+    this._zmodem_fast_sequence_scan = null;
     // push.apply() takes up to ~32k args per call; chunk defensively.
     for (let i = 0; i < buf.length; i += 0x8000) {
       Array.prototype.push.apply(this._input_buffer, buf.subarray(i, i + 0x8000));
@@ -436,6 +468,10 @@ function applyZmodemFastPath(Zmodem) {
     const arr = this._input_buffer.splice(0);
     if (!this._zmodem_fast_chunks) this._zmodem_fast_chunks = [];
     this._zmodem_fast_chunks.unshift(Buffer.from(arr));
+    this._zmodem_fast_length = arr.length + (this._zmodem_fast_length || 0);
+    this._zmodem_fast_frame_end_at = undefined;
+    this._zmodem_fast_frame_scan = null;
+    this._zmodem_fast_sequence_scan = null;
   }
 
   /** Mirrors `_check_for_abort_sequence()`. */

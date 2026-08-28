@@ -32,13 +32,14 @@ function getElectron() {
 
 /**
  * Resolve per-file overwrite choices into an upload plan. Pure (no I/O):
- * `resolveDecision(name)` is awaited only for files in `existingList`, in input
- * order; `{ applyToRest: true }` reuses that action for the remaining conflicts.
+ * `resolveDecision(name, { signal })` is awaited only for files in
+ * `existingList`, in input order; `{ applyToRest: true }` reuses that action
+ * for the remaining conflicts.
  * Returns indices into the original `names` array so callers preserve per-file
  * identity even when two files share a basename.
  * Actions: 'overwrite' (rm remote then send), 'skip' (don't send), 'cancel' (abort all).
  */
-async function buildUploadPlan(names, existingList, resolveDecision) {
+async function buildUploadPlan(names, existingList, resolveDecision, signal) {
   const existing = new Set(existingList);
   const offerIndices = [];
   const removeIndices = [];
@@ -48,7 +49,11 @@ async function buildUploadPlan(names, existingList, resolveDecision) {
     if (!existing.has(name)) { offerIndices.push(idx); continue; }
     let action = bulkAction;
     if (!action) {
-      const decision = (await resolveDecision(name)) || { action: "skip" };
+      throwIfZmodemCancelled(signal);
+      const decision = (await racePromiseWithAbortSignal(
+        resolveDecision(name, { signal }),
+        signal,
+      )) || { action: "skip" };
       action = decision.action;
       if (decision.applyToRest && action !== "cancel") bulkAction = action;
     }
@@ -774,6 +779,10 @@ function createZmodemCancelledError() {
   return err;
 }
 
+function throwIfZmodemCancelled(signal) {
+  if (signal?.aborted) throw createZmodemCancelledError();
+}
+
 /**
  * Wait until a Node writable stream reports it can accept more data.
  * Used after stream.write() returns false so ZMODEM uploads do not flood
@@ -1068,6 +1077,7 @@ async function handleUpload(zsession, opts) {
   }
 
   try {
+    throwIfZmodemCancelled(opts.signal);
     const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
@@ -1083,28 +1093,47 @@ async function handleUpload(zsession, opts) {
   // transfer fails before the replacement is committed.
   if (!isDragDropUpload && opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
     try {
-      const probe = await opts.probeReceiveConflicts(allNames);
+      const probe = await racePromiseWithAbortSignal(
+        opts.probeReceiveConflicts(allNames, { signal: opts.signal }),
+        opts.signal,
+      );
+      throwIfZmodemCancelled(opts.signal);
       if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
         probeDir = probe.dir;
         probeModes = probe.modes || {};
-        plan = await buildUploadPlan(allNames, probe.existing, opts.requestOverwriteDecision);
+        plan = await buildUploadPlan(
+          allNames,
+          probe.existing,
+          opts.requestOverwriteDecision,
+          opts.signal,
+        );
+        throwIfZmodemCancelled(opts.signal);
         if (plan.aborted) {
           try { zsession.abort(); } catch { /* ignore */ }
           abortRemoteProcess(opts.writeToRemote);
           throw new Error("Transfer cancelled");
         }
         if (plan.removeIndices.length && opts.removeRemoteFiles) {
+          throwIfZmodemCancelled(opts.signal);
           const base = probe.dir.replace(/\/+$/, "");
           const targets = [...new Set(plan.removeIndices.map((i) => `${base}/${allNames[i]}`))];
           try {
-            await opts.removeRemoteFiles(targets);
+            await racePromiseWithAbortSignal(
+              opts.removeRemoteFiles(targets, { signal: opts.signal }),
+              opts.signal,
+            );
+            throwIfZmodemCancelled(opts.signal);
           } catch (err) {
+            if (isZmodemCancelledError(err)) throw err;
             console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
           }
         }
       }
     } catch (err) {
-      if (err instanceof Error && err.message === "Transfer cancelled") throw err;
+      if (
+        (err instanceof Error && err.message === "Transfer cancelled") ||
+        isZmodemCancelledError(err)
+      ) throw err;
       console.warn("[ZMODEM] conflict probe failed; proceeding:", err?.message || err);
     }
   }
@@ -1118,6 +1147,7 @@ async function handleUpload(zsession, opts) {
   const skippedOfferIndices = [];
 
   for (let i = 0; i < offers.length; i++) {
+    throwIfZmodemCancelled(opts.signal);
     const { originalIndex, filePath, stat, name } = offers[i];
     opts.resetUploadBackpressure?.();
 
@@ -1138,6 +1168,7 @@ async function handleUpload(zsession, opts) {
     // deadline: if rz dies before answering ZFILE (crash, YMODEM fallback),
     // send_offer() would park this loop forever and block all future
     // ZMODEM transfers. Bound it like xfer.end() / zsession.close().
+    throwIfZmodemCancelled(opts.signal);
     const xfer = await waitForUploadHandshake(
       zsession.send_offer({
         name,
@@ -1236,7 +1267,10 @@ async function handleUpload(zsession, opts) {
     const restores = buildModeRestores(probeDir, allNames, restoreIndices, probeModes);
     if (!restores.length) return;
     try {
-      await opts.restoreRemoteModes(restores);
+      await racePromiseWithAbortSignal(
+        opts.restoreRemoteModes(restores, { signal: opts.signal }),
+        opts.signal,
+      );
     } catch (err) {
       console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
     }

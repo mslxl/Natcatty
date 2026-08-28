@@ -587,7 +587,7 @@ test("patched receive session: full CRC32 download, OO in one chunk", () => {
 });
 
 test("fast receive keeps fragmented packets segmented until a frame is complete", () => {
-  const wire = buildWire(Array.from(Buffer.alloc(8192, 0x5a)), { frameEnd: "end_no_ack" });
+  const wire = buildWire(Array.from(Buffer.alloc(64 * 1024, 0x5a)), { frameEnd: "end_no_ack" });
   const session = new Zmodem.Session.Receive();
   session._last_header_crc = 16;
   session._next_subpacket_handler = () => {};

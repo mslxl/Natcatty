@@ -662,6 +662,95 @@ test("handleUpload stops an unresolved offer promptly when cancelled", async () 
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
+test("handleUpload does not delete an overwrite target after cancellation", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-cancel-overwrite-"));
+  const filePath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  const controller = new AbortController();
+  let removeCalls = 0;
+  let sendOfferCalls = 0;
+  let releaseDecision;
+
+  const upload = handleUpload(
+    {
+      send_offer() {
+        sendOfferCalls += 1;
+        return Promise.reject(new Error("send_offer should not run after cancellation"));
+      },
+      async close() {},
+    },
+    {
+      sessionId: "session-1",
+      signal: controller.signal,
+      getWebContents: () => null,
+      selectUploadFiles: async () => ({ canceled: false, filePaths: [filePath] }),
+      probeReceiveConflicts: async () => ({
+        dir: "/home/u",
+        existing: ["upload.txt"],
+        modes: { "upload.txt": "644" },
+      }),
+      requestOverwriteDecision: () => new Promise((resolve) => {
+        releaseDecision = resolve;
+      }),
+      removeRemoteFiles: async () => {
+        removeCalls += 1;
+      },
+    },
+  );
+
+  while (!releaseDecision) await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  releaseDecision({ action: "overwrite", applyToRest: false });
+  await assert.rejects(
+    () => upload,
+    (err) => err && err.code === "NETCATTY_ZMODEM_CANCELLED",
+  );
+  assert.equal(removeCalls, 0);
+  assert.equal(sendOfferCalls, 0);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("handleUpload aborts an in-flight remote overwrite cleanup", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-cancel-remove-"));
+  const filePath = path.join(tempDir, "upload.txt");
+  fs.writeFileSync(filePath, "payload");
+  const controller = new AbortController();
+  let releaseRemove;
+  let removeSignal;
+
+  const upload = handleUpload(
+    {
+      async send_offer() {
+        throw new Error("send_offer should not run after cancellation");
+      },
+      async close() {},
+    },
+    {
+      sessionId: "session-1",
+      signal: controller.signal,
+      getWebContents: () => null,
+      selectUploadFiles: async () => ({ canceled: false, filePaths: [filePath] }),
+      probeReceiveConflicts: async () => ({ dir: "/home/u", existing: ["upload.txt"] }),
+      requestOverwriteDecision: async () => ({ action: "overwrite", applyToRest: false }),
+      removeRemoteFiles: (_paths, { signal } = {}) => {
+        removeSignal = signal;
+        return new Promise((resolve) => { releaseRemove = resolve; });
+      },
+    },
+  );
+
+  while (!releaseRemove) await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(
+    () => upload,
+    (err) => err && err.code === "NETCATTY_ZMODEM_CANCELLED",
+  );
+  assert.equal(removeSignal, controller.signal);
+  assert.equal(removeSignal.aborted, true);
+  releaseRemove();
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
 test("handleUpload allows a longer final wait after upload backpressure", async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-"));
   const filePath = path.join(tempDir, "upload.txt");
