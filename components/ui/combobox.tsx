@@ -339,9 +339,33 @@ export function Combobox({
     // Keyboard navigation must never land on an option that is not mounted
     // yet, otherwise its aria-activedescendant id would not exist. Slide the
     // bounded window so the destination is mounted without mounting the
-    // entire prefix of a large list.
-    React.useEffect(() => {
-        if (activeIndex < 0) return
+    // entire prefix of a large list. This runs during render (React discards
+    // the render and re-renders immediately after a render-phase state
+    // update), so the commit that exposes a new active descendant already
+    // has that option mounted — a post-commit effect would commit an
+    // aria-activedescendant id that does not exist in the DOM yet.
+    const [activeWindowKey, setActiveWindowKey] = React.useState({
+        activeIndex,
+        showCreateOption,
+        windowStart,
+        renderLimit,
+        filteredCount: filteredOptions.length,
+    })
+    if (
+        activeIndex >= 0 &&
+        (activeWindowKey.activeIndex !== activeIndex ||
+            activeWindowKey.showCreateOption !== showCreateOption ||
+            activeWindowKey.windowStart !== windowStart ||
+            activeWindowKey.renderLimit !== renderLimit ||
+            activeWindowKey.filteredCount !== filteredOptions.length)
+    ) {
+        setActiveWindowKey({
+            activeIndex,
+            showCreateOption,
+            windowStart,
+            renderLimit,
+            filteredCount: filteredOptions.length,
+        })
         const optionIndex = activeIndex - (showCreateOption ? 1 : 0)
         const nextWindowStart = comboboxWindowStartForActiveIndex(
             optionIndex,
@@ -350,7 +374,7 @@ export function Combobox({
             filteredOptions.length,
         )
         if (nextWindowStart !== null) setWindowStart(nextWindowStart)
-    }, [activeIndex, showCreateOption, windowStart, renderLimit, filteredOptions.length])
+    }
 
     React.useEffect(() => {
         // Scrolling the active option into view emits scroll events even when
