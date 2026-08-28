@@ -192,6 +192,23 @@ test("bounded SSH exec aborts before callback and terminates a late stream", asy
   assert.equal(timers.active.size, 0);
 });
 
+test("bounded SSH exec can abort a shared-channel probe without invalidating the transport", async () => {
+  let invalidations = 0;
+  const controller = new AbortController();
+  const sshClient = {
+    exec() {},
+    destroy() { invalidations += 1; },
+  };
+  const result = executeBoundedSshCommand(sshClient, "probe", {
+    signal: controller.signal,
+    invalidateTransportOnAbort: false,
+  });
+
+  controller.abort(new Error("cancelled"));
+  await assert.rejects(result, /cancelled/);
+  assert.equal(invalidations, 0);
+});
+
 test("bounded SSH exec clears its run deadline after normal completion", async () => {
   const stream = createStream();
   const timers = trackedTimerApi();

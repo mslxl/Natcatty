@@ -158,7 +158,7 @@ function executeBoundedSshCommand(sshClient, command, options = {}) {
       terminate: true,
       // Before the callback arrives ssh2 owns an uncancellable channel-open
       // request. Closing the physical transport is the only public cleanup.
-      invalidateTransport: !streamRef,
+      invalidateTransport: !streamRef && options.invalidateTransportOnAbort !== false,
     });
     const append = (target, chunk) => {
       if (settled) return;

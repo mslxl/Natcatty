@@ -442,26 +442,43 @@ function createStartSessionApi(ctx) {
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }
         },
-        probeReceiveConflicts(names) {
-          return probeReceiveConflicts(sessions.get(sessionId), names);
+        probeReceiveConflicts(names, { signal } = {}) {
+          return probeReceiveConflicts(sessions.get(sessionId), names, { signal });
         },
-        removeRemoteFiles(paths) {
-          return removeRemoteFiles(sessions.get(sessionId), paths);
+        removeRemoteFiles(paths, { signal } = {}) {
+          return removeRemoteFiles(sessions.get(sessionId), paths, { signal });
         },
-        restoreRemoteModes(entries) {
-          return restoreRemoteModes(sessions.get(sessionId), entries);
+        restoreRemoteModes(entries, { signal } = {}) {
+          return restoreRemoteModes(sessions.get(sessionId), entries, { signal });
         },
-        requestOverwriteDecision(filename) {
+        requestOverwriteDecision(filename, { signal } = {}) {
           return new Promise((resolve) => {
             const requestId = randomUUID();
-            const timer = setTimeout(() => {
-              zmodemOverwritePending.delete(requestId);
-              resolve({ action: "skip", applyToRest: false });
-            }, 120000);
-            zmodemOverwritePending.set(requestId, (payload) => {
+            let settled = false;
+            const cleanup = () => {
               clearTimeout(timer);
-              resolve({ action: payload.action, applyToRest: !!payload.applyToRest });
-            });
+              try { signal?.removeEventListener("abort", onAbort); } catch { /* ignore */ }
+              zmodemOverwritePending.delete(requestId);
+            };
+            const finish = (decision) => {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              resolve(decision);
+            };
+            const onAbort = () => finish({ action: "cancel", applyToRest: false });
+            const timer = setTimeout(() => {
+              finish({ action: "skip", applyToRest: false });
+            }, 120000);
+            zmodemOverwritePending.set(requestId, (payload) => finish({
+              action: payload.action,
+              applyToRest: !!payload.applyToRest,
+            }));
+            if (signal?.aborted) {
+              onAbort();
+              return;
+            }
+            signal?.addEventListener("abort", onAbort, { once: true });
             safeSend(getCurrentSessionWebContents(), "netcatty:zmodem:overwrite-request", {
               sessionId, requestId, filename,
             });
