@@ -1357,6 +1357,15 @@ export const InlineMarkdownEditor = React.memo(
     latestSourceMarkdownRef.current = value;
     syncedSourceMarkdownRef.current = value;
     setAcceptedSourceMarkdown(value);
+    if (displayChanged && mdxFallbackActiveRef.current) {
+      // A sync/publish update replaced this note's unrenderable markdown while
+      // the source fallback was active. editorRef.setMarkdown below would hit
+      // the unmounted MDXEditor, so clear the failure instead: the rich editor
+      // remounts with the new markdown. If it is still unrenderable, onError
+      // re-arms the fallback.
+      setMdxParseFailure(null);
+      setMdxRetry(null);
+    }
     if (!displayChanged) return;
     try {
       editorRef.current?.setMarkdown(markdown);
