@@ -129,6 +129,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     startAllTunnels,
     stopAllTunnels,
     hasRuntimeTunnel,
+    hasAnyRuntimeTunnel,
     filteredRules,
     selectedRule: _selectedRule,
     preferFormMode,
@@ -172,6 +173,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   // Start a port forwarding tunnel
   const handleStartTunnel = useCallback(
     async (rule: PortForwardingRule) => {
+      if (bulkAction) return;
       const _rawHost = hostById.get(rule.hostId);
       if (!_rawHost) {
         setRuleStatus(rule.id, "error", t("pf.error.hostNotFound"));
@@ -225,12 +227,13 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [hostById, hosts, identities, keys, knownHosts, resolveEffectiveHost, setRuleStatus, startTunnel, t, terminalSettings],
+    [bulkAction, hostById, hosts, identities, keys, knownHosts, resolveEffectiveHost, setRuleStatus, startTunnel, t, terminalSettings],
   );
 
   // Stop a port forwarding tunnel
   const handleStopTunnel = useCallback(
     async (rule: PortForwardingRule) => {
+      if (bulkAction) return;
       setPendingOperations((prev) => new Set([...prev, rule.id]));
 
       try {
@@ -249,7 +252,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
         });
       }
     },
-    [stopTunnel, t],
+    [bulkAction, stopTunnel, t],
   );
 
   const startableRules = useMemo(
@@ -260,6 +263,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
     () => rules.filter((rule) => isPortForwardingRuleStoppable(rule, hasRuntimeTunnel(rule.id))),
     [hasRuntimeTunnel, rules],
   );
+  const hasAnyStoppableRuntime = hasAnyRuntimeTunnel();
 
   const handleStartAll = useCallback(async () => {
     if (bulkAction || startableRules.length === 0) return;
@@ -324,7 +328,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
   ]);
 
   const handleStopAll = useCallback(async () => {
-    if (bulkAction || stoppableRules.length === 0) return;
+    if (bulkAction || (stoppableRules.length === 0 && !hasAnyRuntimeTunnel())) return;
     setBulkAction("stop");
     setPendingOperations((prev) => {
       const next = new Set(prev);
@@ -357,7 +361,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
       });
       setBulkAction(null);
     }
-  }, [bulkAction, rules, stopAllTunnels, stoppableRules, t]);
+  }, [bulkAction, hasAnyRuntimeTunnel, rules, stopAllTunnels, stoppableRules, t]);
 
   // Wizard state
   const [showWizard, setShowWizard] = useState(false);
@@ -809,7 +813,7 @@ const PortForwarding: React.FC<PortForwardingProps> = ({
                 variant="secondary"
                 className={vaultHeaderSecondaryButtonClass}
                 onClick={() => { void handleStopAll(); }}
-                disabled={bulkAction !== null || stoppableRules.length === 0}
+                disabled={bulkAction !== null || (stoppableRules.length === 0 && !hasAnyStoppableRuntime)}
                 aria-label={t("pf.action.stopAll")}
               >
                 {bulkAction === "stop" ? (

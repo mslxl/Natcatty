@@ -18,6 +18,7 @@ import { netcattyBridge } from "../../infrastructure/services/netcattyBridge";
 import {
   clearReconnectTimer,
   getActiveConnection,
+  hasActivePortForwardRuntime,
   getPortForwardRuntimeAuthority,
   initReconnectCancelListener,
   reconcileWithBackend,
@@ -106,6 +107,7 @@ export interface UsePortForwardingStateResult {
   stopAllTunnels: (rules: PortForwardingRule[]) => Promise<StopAllActivePortForwardsResult>;
   stopRuleTunnels: (ruleId: string) => Promise<{ success: boolean; error?: string }>;
   hasRuntimeTunnel: (ruleId: string) => boolean;
+  hasAnyRuntimeTunnel: () => boolean;
 
   filteredRules: PortForwardingRule[];
   selectedRule: PortForwardingRule | undefined;
@@ -739,6 +741,8 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     return connection !== undefined && connection.status !== "inactive";
   }, []);
 
+  const hasAnyRuntimeTunnel = useCallback(() => hasActivePortForwardRuntime(), []);
+
   const startAllTunnels = useCallback(
     async (
       targetRules: PortForwardingRule[],
@@ -846,6 +850,7 @@ export const usePortForwardingState = (): UsePortForwardingStateResult => {
     stopAllTunnels,
     stopRuleTunnels: stopAndCleanupRuleAndWait,
     hasRuntimeTunnel,
+    hasAnyRuntimeTunnel,
 
     filteredRules,
     selectedRule,

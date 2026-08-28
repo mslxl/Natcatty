@@ -280,6 +280,12 @@ export const getActiveRuleIds = (): string[] => {
     .map(([ruleId]) => ruleId);
 };
 
+/** Return whether any tracked runtime still needs to be stopped. */
+export const hasActivePortForwardRuntime = (): boolean =>
+  Array.from(activeConnections.values()).some((connection) =>
+    isPortForwardingRuntimeBusy(connection),
+  );
+
 const finishRuleCleanup = (ruleId: string): void => {
   exhaustedReconnectRules.delete(ruleId);
   rulesPendingCleanup.delete(ruleId);
@@ -1396,18 +1402,28 @@ export const stopAllPortForwards = async (): Promise<void> => {
   for (const [ruleId, conn] of activeConnections) {
     // Clear any pending reconnect timer
     clearReconnectTimer(ruleId);
+    manualStopsInProgress.add(ruleId);
     
     try {
       if (bridge?.stopPortForward) {
-        await bridge.stopPortForward(conn.tunnelId);
+        const result = await bridge.stopPortForward(conn.tunnelId);
+        if (result && !result.success) {
+          throw new Error(result.error || `Failed to stop tunnel ${conn.tunnelId}`);
+        }
       }
       conn.unsubscribe?.();
+      activeConnections.delete(ruleId);
     } catch (err) {
       logger.warn(`[PortForwardingService] Failed to stop tunnel ${conn.tunnelId}:`, err);
+      preserveFailedStopConnection(
+        ruleId,
+        conn,
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      manualStopsInProgress.delete(ruleId);
     }
   }
-  
-  activeConnections.clear();
 
   // Also ask the backend to stop ALL tunnels it knows about.
   // This covers tunnels that were started by other windows or that

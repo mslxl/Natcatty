@@ -5,11 +5,13 @@ import type { Host, PortForwardingRule, SSHKey } from "../../domain/models.ts";
 import { STORAGE_KEY_PF_RECONNECT_CANCEL } from "../config/storageKeys.ts";
 import {
   getActiveConnection,
+  hasActivePortForwardRuntime,
   reconcileWithBackend,
   setReconnectCallback,
   startAllPortForwards,
   startPortForward,
   stopAllActivePortForwards,
+  stopAllPortForwards,
   stopAndCleanupRule,
   stopAndCleanupRuleAndWait,
   stopPortForward,
@@ -1820,6 +1822,63 @@ test("stopAllActivePortForwards stops running rules then calls backend stopAll",
   assert.equal(getActiveConnection("bulk-stop-2"), undefined);
 });
 
+test("stopAllPortForwards preserves a runtime when direct cleanup fails", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: () => () => undefined,
+        stopPortForward: async () => ({ success: false, error: "still running" }),
+        stopAllPortForwards: async () => undefined,
+      },
+    },
+  });
+
+  const target = rule({ id: "bulk-preserve-failed-stop" });
+  await startPortForward(target, host(), [], [], [], () => undefined);
+  await stopAllPortForwards();
+
+  assert.equal(hasActivePortForwardRuntime(), true);
+  assert.equal(getActiveConnection(target.id)?.status, "error");
+
+  stopAndCleanupRule(target.id);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+test("stopAllPortForwards prevents an auto-reconnect after a manual stop", async () => {
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  let reconnectCalls = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+        stopPortForward: async () => {
+          statusListener?.("inactive");
+          return { success: true };
+        },
+      },
+    },
+  });
+  setReconnectCallback(async () => {
+    reconnectCalls += 1;
+    return { success: true };
+  });
+
+  const target = rule({ id: "bulk-stop-no-reconnect" });
+  await startPortForward(target, host(), [], [], [], () => undefined, true);
+  await stopAllPortForwards();
+  setReconnectCallback(null);
+
+  assert.equal(getActiveConnection(target.id), undefined);
+  assert.equal(reconnectCalls, 0);
+});
+
 test("startAllPortForwards re-reads live rules before each queued start", async () => {
   const started: Array<{ ruleId: string; localPort: number }> = [];
   const liveRules = [
@@ -1939,4 +1998,3 @@ test("startAllPortForwards skips tracked error runtimes and stopAll stops them",
   stopAndCleanupRule("bulk-idle-after-error");
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
-
