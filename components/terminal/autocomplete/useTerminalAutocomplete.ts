@@ -27,6 +27,7 @@ import {
   shouldPreferRemoteShellCwd,
 } from "./remotePathCompleter";
 import { decideGhostSuggestion } from "./ghostSuggestionPolicy";
+import { isWindowsShellLineInput } from "./livePreviewSequence";
 import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
@@ -1300,7 +1301,7 @@ export function useTerminalAutocomplete(
       );
       if (line !== null && line.length > 0) {
         if (!settingsRef.current.allowLineReplacement) return false;
-        const clearSequence = hostOsRef.current === "windows"
+        const clearSequence = isWindowsShellLineInput(hostOsRef.current, prompt.promptText)
           ? "\b".repeat(line.length)
           : "\x15"; // Ctrl+U (readline kill-line)
         writeToTerminal(clearSequence);
