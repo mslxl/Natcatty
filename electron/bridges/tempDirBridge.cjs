@@ -665,14 +665,37 @@ async function readSafeManifestWithTempRootRecovery(manifestPath, signingKey, re
   return readSafeManifest(manifestPath);
 }
 
+function isToolOutputEntryStale(entry) {
+  if (entry.tempDir != null || entry.tempDirRebindGeneration != null) {
+    try {
+      if (entry.tempDir != null && entry.tempDir !== getTempDir()) return true;
+    } catch {
+      // The temp root cannot be resolved right now; treat the entry as stale.
+      return true;
+    }
+    if (entry.tempDirRebindGeneration != null && entry.tempDirRebindGeneration !== tempDirRebindGeneration) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function readVerifiedManifestContent(entry) {
+  if (isToolOutputEntryStale(entry)) return null;
+  const generation = tempDirRebindGeneration;
   const opened = await openSafeToolOutputFile(entry.contentPath);
   if (!opened) return null;
   try {
+    // The temp root may be rebound while the content is being read; never
+    // verify data across generations because entry.contentPath would then
+    // address the replacement root instead of the manifest's own root.
+    if (generation !== tempDirRebindGeneration) return null;
     if (opened.stat.size !== entry.manifest.contentBytes) return null;
     const contentBuffer = await opened.file.readFile();
+    if (generation !== tempDirRebindGeneration) return null;
     const digest = crypto.createHash("sha256").update(contentBuffer).digest("hex");
     if (digest !== entry.manifest.contentSha256) return null;
+    if (generation !== tempDirRebindGeneration) return null;
     return { stat: opened.stat, contentBuffer };
   } finally {
     await opened.file.close();
@@ -777,7 +800,10 @@ async function enforcePersistedToolOutputLimits() {
   let globalChars = 0;
   for (const entry of active) {
     if (!await verifyManifestContent(entry)) {
-      await deleteToolOutputPair(entry.contentPath);
+      // Never delete a pair whose pathname may now address a rebound root.
+      if (!isToolOutputEntryStale(entry)) {
+        await deleteToolOutputPair(entry.contentPath);
+      }
       continue;
     }
     const { chatSessionId, storedChars } = entry.manifest.record;
@@ -852,8 +878,11 @@ async function cleanupExpiredToolOutputFiles(now = Date.now()) {
         continue;
       }
       if (!await verifyManifestContent(entry)) {
-        if (await safeUnlink(entry.manifestPath)) deletedCount += 1;
-        if (await safeUnlink(entry.contentPath)) deletedCount += 1;
+        // Never delete a pair whose pathname may now address a rebound root.
+        if (!isToolOutputEntryStale(entry)) {
+          if (await safeUnlink(entry.manifestPath)) deletedCount += 1;
+          if (await safeUnlink(entry.contentPath)) deletedCount += 1;
+        }
         continue;
       }
       managedContent.add(path.basename(entry.contentPath));
@@ -1146,7 +1175,11 @@ function registerHandlers(ipcMain, shell, electronModule) {
       return null;
     }
     if (!await verifyManifestContent(entry)) {
-      await deleteToolOutputPair(entry.contentPath);
+      // A rebound temp root may hold different data at the same pathname;
+      // never delete it based on a stale generation's verification failure.
+      if (!isToolOutputEntryStale(entry)) {
+        await deleteToolOutputPair(entry.contentPath);
+      }
       return null;
     }
     if (
@@ -1176,43 +1209,58 @@ function registerHandlers(ipcMain, shell, electronModule) {
 
   ipcMain.handle("netcatty:tempdir:toolOutputRead", async (_event, payload = {}) => {
     const filePath = payload.path;
-    const manifestEntry = await readSafeManifestWithTempRootRecovery(toolOutputManifestPath(filePath));
-    if (!manifestEntry || path.resolve(manifestEntry.contentPath) !== path.resolve(filePath)) return null;
-    const chatSessionId = manifestEntry.manifest.record.chatSessionId;
-    const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
-    await toolOutputSessionDeletions.get(chatSessionId);
-    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) return null;
-    if (
-      manifestEntry.manifest.record.terminalSessionId
-      && closedToolOutputTerminalSessions.has(manifestEntry.manifest.record.terminalSessionId)
-    ) {
-      await deleteToolOutputPair(manifestEntry.contentPath);
-      return null;
-    }
-    if (isToolOutputEntryExpired(manifestEntry)) {
-      await deleteToolOutputPair(manifestEntry.contentPath);
-      return null;
-    }
-    const verified = await readVerifiedManifestContent(manifestEntry);
-    if (!verified) {
-      await deleteToolOutputPair(manifestEntry.contentPath);
-      return null;
-    }
-    const content = verified.contentBuffer.toString("utf16le");
-    const result = !payload.request ? content : await readToolOutputChunk(content, payload.request);
-    await touchToolOutputEntry(manifestEntry);
-    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) {
-      await deleteToolOutputPair(manifestEntry.contentPath);
-      return null;
-    }
-    if (
-      manifestEntry.manifest.record.terminalSessionId
-      && closedToolOutputTerminalSessions.has(manifestEntry.manifest.record.terminalSessionId)
-    ) {
-      await deleteToolOutputPair(manifestEntry.contentPath);
-      return null;
-    }
-    return result;
+    const readOnce = async (attempt) => {
+      const manifestEntry = await readSafeManifestWithTempRootRecovery(toolOutputManifestPath(filePath));
+      if (!manifestEntry || path.resolve(manifestEntry.contentPath) !== path.resolve(filePath)) return null;
+      const attemptGeneration = manifestEntry.tempDirRebindGeneration;
+      // Only remove persisted data while the temp root still matches the
+      // manifest's generation; after a rebind the same pathname addresses the
+      // replacement root, so the read must be retried instead of deleting
+      // current-generation data.
+      const deletePairIfCurrentGeneration = async () => {
+        if (tempDirRebindGeneration !== attemptGeneration) return;
+        await deleteToolOutputPair(manifestEntry.contentPath);
+      };
+      const chatSessionId = manifestEntry.manifest.record.chatSessionId;
+      const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
+      await toolOutputSessionDeletions.get(chatSessionId);
+      if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) return null;
+      if (
+        manifestEntry.manifest.record.terminalSessionId
+        && closedToolOutputTerminalSessions.has(manifestEntry.manifest.record.terminalSessionId)
+      ) {
+        await deletePairIfCurrentGeneration();
+        return null;
+      }
+      if (isToolOutputEntryExpired(manifestEntry)) {
+        await deletePairIfCurrentGeneration();
+        return null;
+      }
+      const verified = await readVerifiedManifestContent(manifestEntry);
+      if (!verified) {
+        if (tempDirRebindGeneration !== attemptGeneration) {
+          return attempt === 0 ? readOnce(1) : null;
+        }
+        await deletePairIfCurrentGeneration();
+        return null;
+      }
+      const content = verified.contentBuffer.toString("utf16le");
+      const result = !payload.request ? content : await readToolOutputChunk(content, payload.request);
+      await touchToolOutputEntry(manifestEntry);
+      if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) {
+        await deletePairIfCurrentGeneration();
+        return null;
+      }
+      if (
+        manifestEntry.manifest.record.terminalSessionId
+        && closedToolOutputTerminalSessions.has(manifestEntry.manifest.record.terminalSessionId)
+      ) {
+        await deletePairIfCurrentGeneration();
+        return null;
+      }
+      return result;
+    };
+    return readOnce(0);
   });
 
   ipcMain.handle("netcatty:tempdir:toolOutputDelete", async (_event, payload = {}) => {
