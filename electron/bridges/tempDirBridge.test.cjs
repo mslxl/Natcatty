@@ -231,13 +231,64 @@ test("tool output write retries when the temp root is replaced after key loading
     '    record: { schemaVersion: 1, handleId: "after-rebind-write", chatSessionId: "rebind-write-chat", capabilityId: "terminal.execute", totalChars: 5, storedChars: 5, sourceTruncated: false, preview: "after", storedAt: now, accessedAt: now },',
     '    content: "after",',
     '  });',
-    '  console.log(`RESULT:${JSON.stringify(after)}`);',
+    '  const restored = await handlers.get("netcatty:tempdir:toolOutputRestore")({}, { handleId: "after-rebind-write", chatSessionId: "rebind-write-chat" });',
+    '  const content = restored ? await handlers.get("netcatty:tempdir:toolOutputRead")({}, { path: restored.path }) : null;',
+    '  console.log(`RESULT:${JSON.stringify({ write: after, restored: Boolean(restored), content })}`);',
     '})().catch(error => { console.error(error); process.exit(1); });',
   ].join("\n");
   try {
     const result = spawnSync(process.execPath, ["-e", script], {
       cwd: path.resolve(__dirname, "../.."),
       env: isolatedTempChildEnv(root, fakeHome, { FAKE_SAFE_STORAGE_SECRET: "rebind-write-secret" }),
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /RESULT:.*"write":\{"ok":true,.*"restored":true.*"content":"after"/);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("tool output write keeps the loaded key during a temporary keychain failure", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-keychain-write-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o700);
+  const script = [
+    'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
+    'const handlers = new Map();',
+    'const secret = process.env.FAKE_SAFE_STORAGE_SECRET;',
+    'let keychainLocked = false;',
+    'const safeStorage = {',
+    '  isEncryptionAvailable: () => true,',
+    '  encryptString: value => Buffer.from(`${secret}:${value}`, "utf8"),',
+    '  decryptString: value => {',
+    '    if (keychainLocked) throw new Error("keychain locked");',
+    '    const text = value.toString("utf8");',
+    '    if (!text.startsWith(`${secret}:`)) throw new Error("wrong key");',
+    '    return text.slice(secret.length + 1);',
+    '  },',
+    '};',
+    'bridge.registerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, undefined, { safeStorage });',
+    '(async () => {',
+    '  const now = Date.now();',
+    '  const before = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, {',
+    '    record: { schemaVersion: 1, handleId: "before-keychain-lock", chatSessionId: "keychain-write-chat", capabilityId: "terminal.execute", totalChars: 6, storedChars: 6, sourceTruncated: false, preview: "before", storedAt: now, accessedAt: now },',
+    '    content: "before",',
+    '  });',
+    '  if (!before.ok) throw new Error(before.error);',
+    '  keychainLocked = true;',
+    '  const after = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, {',
+    '    record: { schemaVersion: 1, handleId: "after-keychain-lock", chatSessionId: "keychain-write-chat", capabilityId: "terminal.execute", totalChars: 5, storedChars: 5, sourceTruncated: false, preview: "after", storedAt: now, accessedAt: now },',
+    '    content: "after",',
+    '  });',
+    '  console.log(`RESULT:${JSON.stringify(after)}`);',
+    '})().catch(error => { console.error(error); process.exit(1); });',
+  ].join("\n");
+  try {
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: isolatedTempChildEnv(root, fakeHome, { FAKE_SAFE_STORAGE_SECRET: "keychain-write-secret" }),
       encoding: "utf8",
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);

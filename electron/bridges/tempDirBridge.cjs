@@ -27,6 +27,7 @@ const TOOL_OUTPUT_READ_MAX_CHARS = 12_000;
 const TOOL_OUTPUT_SEARCH_CONTEXT_CHARS = 320;
 const TOOL_OUTPUT_SEARCH_MAX_MATCHES = 20;
 const TOOL_OUTPUT_SIGNING_KEY_FILE = ".tool-output-signing-key";
+const TOOL_OUTPUT_TEMP_DIR_REBOUND = "NETCATTY_TEMP_DIR_REBOUND";
 
 // Cached temp directory path
 let cachedTempDir = null;
@@ -34,7 +35,9 @@ let cachedTempDirIdentity = null;
 let tempFileCounter = 0;
 let toolOutputSigningKeyPromise = Promise.resolve(crypto.randomBytes(32));
 let toolOutputSigningKeyRecoveryPromise = null;
+let toolOutputSigningKeyRecoveryGeneration = null;
 let toolOutputSafeStorage = null;
+let tempDirRebindGeneration = 0;
 const toolOutputSessionDeletions = new Map();
 const toolOutputChatDeletionGenerations = new Map();
 const closedToolOutputTerminalSessions = new Set();
@@ -48,6 +51,12 @@ function isSecureToolOutputStorageAvailable(safeStorage, platform = process.plat
 
 function getToolOutputChatDeletionGeneration(chatSessionId) {
   return toolOutputChatDeletionGenerations.get(chatSessionId) ?? 0;
+}
+
+function createTempDirReboundError() {
+  const error = new Error("Temporary directory was replaced while saving output.");
+  error.code = TOOL_OUTPUT_TEMP_DIR_REBOUND;
+  return error;
 }
 
 async function loadOrCreateToolOutputSigningKey(safeStorage) {
@@ -104,39 +113,53 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
 function configureToolOutputSigningKey(electronModule) {
   if (!electronModule) return;
   toolOutputSafeStorage = electronModule.safeStorage;
-  toolOutputSigningKeyRecoveryPromise = null;
   toolOutputSigningKeyPromise = loadOrCreateToolOutputSigningKey(toolOutputSafeStorage);
 }
 
 async function getToolOutputSigningKey({ retry = true } = {}) {
+  const generation = tempDirRebindGeneration;
   const key = await toolOutputSigningKeyPromise.catch(() => null);
+  if (generation !== tempDirRebindGeneration) {
+    return retry ? getToolOutputSigningKey({ retry }) : null;
+  }
   if (key || !retry || !toolOutputSafeStorage) return key;
-  if (toolOutputSigningKeyRecoveryPromise) return toolOutputSigningKeyRecoveryPromise;
+  if (toolOutputSigningKeyRecoveryPromise && toolOutputSigningKeyRecoveryGeneration === generation) {
+    return toolOutputSigningKeyRecoveryPromise;
+  }
   const recovery = loadOrCreateToolOutputSigningKey(toolOutputSafeStorage).catch(() => null);
+  const recoveryGeneration = tempDirRebindGeneration;
   toolOutputSigningKeyRecoveryPromise = recovery;
+  toolOutputSigningKeyRecoveryGeneration = recoveryGeneration;
   try {
     const recovered = await recovery;
+    if (recoveryGeneration !== tempDirRebindGeneration) return null;
     toolOutputSigningKeyPromise = Promise.resolve(recovered);
     return recovered;
   } finally {
     if (toolOutputSigningKeyRecoveryPromise === recovery) {
       toolOutputSigningKeyRecoveryPromise = null;
+      toolOutputSigningKeyRecoveryGeneration = null;
     }
   }
 }
 
-async function ensureToolOutputSigningKeyFile(key) {
+async function ensureToolOutputSigningKeyFile(key, expectedGeneration = tempDirRebindGeneration) {
   if (!isSecureToolOutputStorageAvailable(toolOutputSafeStorage)) return true;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
+  const mustRevalidateKey = expectedGeneration !== tempDirRebindGeneration;
   try {
     const stat = await fs.promises.lstat(keyPath);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return false;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 4096) return false;
+    if (!mustRevalidateKey) return true;
     const encrypted = await fs.promises.readFile(keyPath);
     const persistedKey = Buffer.from(toolOutputSafeStorage.decryptString(encrypted), "base64");
     return persistedKey.length === key.length
       && crypto.timingSafeEqual(persistedKey, key);
   } catch (error) {
-    if (error?.code !== "ENOENT") return false;
+    if (error?.code !== "ENOENT" || mustRevalidateKey) return false;
+  }
+  if (mustRevalidateKey) {
+    return false;
   }
   try {
     const encrypted = toolOutputSafeStorage.encryptString(key.toString("base64"));
@@ -206,8 +229,8 @@ function getTempDir() {
       cachedTempDirIdentity = null;
       // The previous key file lived on the old inode (or vanished with ENOENT).
       // Drop it so the next getToolOutputSigningKey() reloads from the rebound root.
+      tempDirRebindGeneration += 1;
       toolOutputSigningKeyPromise = Promise.resolve(null);
-      toolOutputSigningKeyRecoveryPromise = null;
     }
   }
   
@@ -838,9 +861,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
     const ownershipMarker = toolOutputOwnershipMarker(record.chatSessionId, record.terminalSessionId);
     const chatDeletionGeneration = getToolOutputChatDeletionGeneration(record.chatSessionId);
     const filePath = getTempFilePath(`${ownershipMarker.slice(1)}${record.handleId}.log`);
-    const manifestPath = toolOutputManifestPath(filePath);
-    const pendingManifestPath = getTempFilePath(`${record.handleId}.manifest.pending`);
-    try {
+  const manifestPath = toolOutputManifestPath(filePath);
+  const pendingManifestPath = getTempFilePath(`${record.handleId}.manifest.pending`);
+    const writeOnce = async attempt => {
+      try {
       if (record.terminalSessionId && closedToolOutputTerminalSessions.has(record.terminalSessionId)) {
         throw new Error("Terminal session is already closed.");
       }
@@ -850,18 +874,23 @@ function registerHandlers(ipcMain, shell, electronModule) {
       }
       let signingKey = await getToolOutputSigningKey();
       if (!signingKey) throw new Error("Secure local storage is unavailable.");
-      if (!await ensureToolOutputSigningKeyFile(signingKey)) {
+      const signingKeyGeneration = tempDirRebindGeneration;
+      if (!await ensureToolOutputSigningKeyFile(signingKey, signingKeyGeneration)) {
         // The temp root may have been rebound after the key was acquired.
         // Reload once so this write cannot sign into the replacement root with
         // a key that only belongs to the old inode.
         toolOutputSigningKeyPromise = Promise.resolve(null);
-        toolOutputSigningKeyRecoveryPromise = null;
         signingKey = await getToolOutputSigningKey();
-        if (!signingKey || !await ensureToolOutputSigningKeyFile(signingKey)) {
+        if (!signingKey || !await ensureToolOutputSigningKeyFile(signingKey, tempDirRebindGeneration)) {
           throw new Error("Unable to prepare secure local storage.");
         }
       }
+      let validatedGeneration = tempDirRebindGeneration;
       await fs.promises.writeFile(filePath, contentBuffer, { mode: 0o600, flag: "wx" });
+      getTempDir();
+      if (tempDirRebindGeneration !== validatedGeneration) {
+        throw createTempDirReboundError();
+      }
       const manifest = {
         record,
         contentFile: path.basename(filePath),
@@ -875,6 +904,10 @@ function registerHandlers(ipcMain, shell, electronModule) {
         flag: "wx",
       });
       await fs.promises.rename(pendingManifestPath, manifestPath);
+      getTempDir();
+      if (tempDirRebindGeneration !== validatedGeneration) {
+        throw createTempDirReboundError();
+      }
       if (getToolOutputChatDeletionGeneration(record.chatSessionId) !== chatDeletionGeneration) {
         await deleteToolOutputPair(filePath);
         throw new Error("Chat session was cleared while output was being saved.");
@@ -884,7 +917,14 @@ function registerHandlers(ipcMain, shell, electronModule) {
         throw new Error("Terminal session closed while output was being saved.");
       }
       await enforcePersistedToolOutputLimits();
+      getTempDir();
+      if (tempDirRebindGeneration !== validatedGeneration) {
+        throw createTempDirReboundError();
+      }
       const persistedEntry = await readSafeManifest(manifestPath);
+      if (tempDirRebindGeneration !== validatedGeneration) {
+        throw createTempDirReboundError();
+      }
       if (!persistedEntry || path.resolve(persistedEntry.contentPath) !== path.resolve(filePath)) {
         throw new Error("Saved output was removed while enforcing storage limits.");
       }
@@ -897,14 +937,19 @@ function registerHandlers(ipcMain, shell, electronModule) {
         throw new Error("Terminal session closed while output was being saved.");
       }
       return { ok: true, path: filePath, manifestPath };
-    } catch (error) {
-      await Promise.allSettled([
-        safeUnlink(pendingManifestPath),
-        safeUnlink(manifestPath),
-        safeUnlink(filePath),
-      ]);
-      return { ok: false, error: error?.message || "Unable to persist tool output." };
-    }
+      } catch (error) {
+        await Promise.allSettled([
+          safeUnlink(pendingManifestPath),
+          safeUnlink(manifestPath),
+          safeUnlink(filePath),
+        ]);
+        if (error?.code === TOOL_OUTPUT_TEMP_DIR_REBOUND && attempt === 0) {
+          return writeOnce(1);
+        }
+        return { ok: false, error: error?.message || "Unable to persist tool output." };
+      }
+    };
+    return writeOnce(0);
   });
 
   ipcMain.handle("netcatty:tempdir:toolOutputRestore", async (_event, payload = {}) => {
