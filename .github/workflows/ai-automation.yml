@@ -125,6 +125,13 @@ jobs:
           git show "FETCH_HEAD:scripts/ai-automation.cjs" > scripts/ai-automation.cjs
           test -s scripts/ai-automation.cjs
 
+      - name: Freeze trusted helper
+        run: &freeze_ai_helper |
+          set -euo pipefail
+          test -f scripts/ai-automation.cjs
+          cp scripts/ai-automation.cjs "$RUNNER_TEMP/ai-automation.cjs"
+          chmod 0444 "$RUNNER_TEMP/ai-automation.cjs"
+
       - name: Decide route
         id: decide
         uses: actions/github-script@v9
@@ -379,6 +386,9 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
+
       - name: Apply ready-for-human handoff
         uses: actions/github-script@v9
         env:
@@ -414,6 +424,9 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
 
       - name: Clear stale workflow labels
         uses: actions/github-script@v9
@@ -500,6 +513,9 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch }}
+
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
 
       - name: Remove stale ready-for-human labels
         uses: actions/github-script@v9
@@ -3737,6 +3753,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
+
       - name: Dispatch next queued issue batch
         if: >-
           needs.publish_implement.result == 'success' ||
@@ -5030,6 +5049,9 @@ jobs:
           git show "FETCH_HEAD:scripts/ai-automation.cjs" > scripts/ai-automation.cjs
           test -s scripts/ai-automation.cjs
 
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
+
       - name: Comment @codex review after human push
         uses: actions/github-script@v9
         with:
@@ -5178,6 +5200,9 @@ jobs:
           git show "FETCH_HEAD:scripts/ai-automation.cjs" > scripts/ai-automation.cjs
           test -s scripts/ai-automation.cjs
 
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
+
       - name: Comment @codex review after contributor push
         uses: actions/github-script@v9
         with:
@@ -5269,6 +5294,9 @@ jobs:
           mkdir -p scripts
           git show "FETCH_HEAD:scripts/ai-automation.cjs" > scripts/ai-automation.cjs
           test -s scripts/ai-automation.cjs
+
+      - name: Freeze trusted helper
+        run: *freeze_ai_helper
 
       - name: Poll open automation PRs
         uses: actions/github-script@v9
