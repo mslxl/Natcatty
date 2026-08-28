@@ -53,28 +53,30 @@ export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAcc
     return launcherPath && discoveryPath ? launcherPath : null;
   }, []);
 
-  // Initial one-shot fetch for the active mode.
+  // Initial one-shot fetch for the skills mode.
   useEffect(() => {
+    if (mode !== 'skills') return;
     let cancelled = false;
-    if (mode === 'skills') {
-      void netcattyBridge
-        .get()
-        ?.aiSkillsCliGetInvocation?.()
-        .then((result) => {
-          if (cancelled || !result?.ok) return;
-          setSkillPath(result.skillPath ?? null);
-          setCommandPrefix(result.commandPrefix || '');
-        });
-    } else {
-      void refreshMcpStatus().catch(() => undefined);
-    }
+    void netcattyBridge
+      .get()
+      ?.aiSkillsCliGetInvocation?.()
+      .then((result) => {
+        if (cancelled || !result?.ok) return;
+        setSkillPath(result.skillPath ?? null);
+        setCommandPrefix(result.commandPrefix || '');
+      });
     return () => {
       cancelled = true;
     };
-  }, [mode, refreshMcpStatus]);
+  }, [mode]);
 
   // Keep MCP guidance in sync with the shared persisted enable switch and
-  // retry briefly while the runtime finishes starting after an enable toggle.
+  // retry briefly while the runtime finishes starting. The fetch also runs on
+  // mount through the retrying `refetch()` path: when the settings window
+  // mounts while a persistently enabled runtime is still being restored, the
+  // startup reconciliation emits no enable-key event, so without an initial
+  // retrying fetch the fallback prompt would stay stale after the runtime
+  // reaches `running`.
   useEffect(() => {
     if (mode === 'skills') return;
     let cancelled = false;
@@ -114,6 +116,7 @@ export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAcc
 
     window.addEventListener(AI_STATE_CHANGED_EVENT, handleAIStateChanged);
     window.addEventListener('storage', handleStorage);
+    refetchOnChange();
     return () => {
       cancelled = true;
       if (retryTimer) window.clearTimeout(retryTimer);
