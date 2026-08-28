@@ -974,12 +974,19 @@ jobs:
           Write the JSON result to .ai-runtime/classification.json as well as printing it.
           "
           # The preceding trusted step stages the key. This shell never receives it.
+          CLASSIFY_SCHEMA="$(node -e '
+            const fs = require("node:fs");
+            const auto = require(process.env.RUNNER_TEMP + "/ai-automation.cjs");
+            process.stdout.write(JSON.stringify(auto.toClaudeJsonSchema(
+              JSON.parse(fs.readFileSync(process.argv[1], "utf8")),
+            )));
+          ' "$RUNNER_TEMP/classification.schema.json")"
           "$RUNNER_TEMP/ai-claude-authenticated" \
             --bare -p --permission-mode dontAsk \
             --settings "$HOME/.claude/settings.json" \
             --allowedTools "Read" "Grep" "Glob" "Bash(rg *)" "Bash(grep *)" "Bash(find *)" \
             --disallowedTools "WebSearch" "WebFetch" "Edit" "Write" "NotebookEdit" \
-            --output-format json --json-schema "$(cat "$RUNNER_TEMP/classification.schema.json")" --model "$AI_MODEL" \
+            --output-format json --json-schema "$CLASSIFY_SCHEMA" --model "$AI_MODEL" \
             "$PROMPT" > .ai-runtime/classify-raw.txt
           cat .ai-runtime/classify-raw.txt
 

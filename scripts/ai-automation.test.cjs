@@ -3893,6 +3893,45 @@ test('parseClassificationText unwraps Claude Code print JSON', () => {
   assert.equal(parsed.code_paths[0], 'components/App.tsx');
 });
 
+test('toClaudeJsonSchema strips draft URIs Claude Code Ajv cannot load', () => {
+  const schemaPath = path.join(
+    __dirname,
+    '..',
+    '.github',
+    'ai',
+    'schemas',
+    'classification.schema.json',
+  );
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  assert.equal(schema.$schema, undefined);
+  assert.equal(schema.type, 'object');
+  assert.ok(schema.required.includes('category'));
+
+  const stripped = auto.toClaudeJsonSchema({
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    $id: 'https://example.invalid/classification.json',
+    type: 'object',
+    required: ['category'],
+  });
+  assert.equal('$schema' in stripped, false);
+  assert.equal('$id' in stripped, false);
+  assert.equal(stripped.type, 'object');
+  assert.throws(() => auto.toClaudeJsonSchema([]), /must be an object/);
+});
+
+test('classify step passes a sanitized JSON Schema to Claude Code', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
+    'utf8',
+  );
+  const classify = workflow.match(
+    /- name: Classify with Claude Code\n[\s\S]*?(?=\n      - name:)/,
+  )?.[0] || '';
+  assert.match(classify, /toClaudeJsonSchema/);
+  assert.match(classify, /--json-schema "\$CLASSIFY_SCHEMA"/);
+  assert.doesNotMatch(classify, /--json-schema "\$\(cat /);
+});
+
 test('parseExternalResearchStream accepts Brave helper tool logs', (t) => {
   const logPath = path.join(os.tmpdir(), `brave-tool-${process.pid}.jsonl`);
   fs.writeFileSync(logPath, `${JSON.stringify({
