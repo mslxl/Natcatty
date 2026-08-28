@@ -9181,6 +9181,61 @@ test("staged SFTP downloads recover when the temp root disappears before the fir
   assert.deepEqual(await fs.promises.readFile(targetPath), payload);
 });
 
+test("staged SFTP downloads recover when the temp root is replaced after opening the stage", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-root-rebind-open-"));
+  const transferId = "download-root-rebind-after-open";
+  const targetPath = path.join(tempDir, "download.bin");
+  const payload = Buffer.from("recovered after stage open");
+  const stagedPath = tempDirBridge.getTransferTempFilePath(transferId, path.basename(targetPath));
+  const tempRoot = path.dirname(stagedPath);
+  const oldTempRoot = `${tempRoot}.after-open-old`;
+  const originalOpen = fs.promises.open;
+  const initialGeneration = tempDirBridge.getTempDirRebindGeneration();
+  let replacedAfterOpen = false;
+
+  t.after(async () => {
+    fs.promises.open = originalOpen;
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+    await fs.promises.rm(oldTempRoot, { recursive: true, force: true });
+  });
+
+  fs.promises.open = async (filePath, ...args) => {
+    const opened = await originalOpen(filePath, ...args);
+    if (!replacedAfterOpen && path.resolve(filePath) === path.resolve(stagedPath)) {
+      replacedAfterOpen = true;
+      fs.renameSync(tempRoot, oldTempRoot);
+      fs.mkdirSync(tempRoot, { recursive: true, mode: 0o700 });
+    }
+    return opened;
+  };
+
+  const { sftp } = createPipelinedDownloadSftp(payload);
+  const client = {
+    sftp,
+    stat() { return Promise.resolve({ size: payload.length }); },
+  };
+  transferBridge.init({ sftpClients: new Map([["source", client]]) });
+
+  const result = await transferBridge.startTransfer(
+    { sender: createSender() },
+    {
+      transferId,
+      sourcePath: "/tmp/source.bin",
+      targetPath,
+      sourceType: "sftp",
+      targetType: "local",
+      sourceSftpId: "source",
+      totalBytes: payload.length,
+      resumable: true,
+    },
+  );
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(replacedAfterOpen, true);
+  assert.equal(tempDirBridge.getTempDirRebindGeneration(), initialGeneration + 1);
+  assert.deepEqual(await fs.promises.readFile(targetPath), payload);
+});
+
 test("fast resumable downloads pause only at a complete checkpoint", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-transfer-fast-pause-"));
   t.after(async () => {

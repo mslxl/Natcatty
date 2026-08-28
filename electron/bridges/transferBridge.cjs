@@ -5044,17 +5044,27 @@ async function downloadFileWithTempRootRecovery({
 }) {
   const initialGeneration = tempDirBridge.getTempDirRebindGeneration();
   try {
-    return { localPath, result: await run(localPath) };
+    const result = await run(localPath);
+    tempDirBridge.getTempDir();
+    if (tempDirBridge.getTempDirRebindGeneration() === initialGeneration) {
+      return { localPath, result };
+    }
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
     tempDirBridge.getTempDir();
     if (tempDirBridge.getTempDirRebindGeneration() === initialGeneration) throw error;
-    const recoveredPath = tempDirBridge.getTransferTempFilePath(transferId, fileName);
-    transfer.checkpointBytes = 0;
-    transfer.downloadCheckpointBytes = 0;
-    transfer.stagedLocalPath = recoveredPath;
-    return { localPath: recoveredPath, result: await run(recoveredPath) };
   }
+  const recoveredPath = tempDirBridge.getTransferTempFilePath(transferId, fileName);
+  transfer.checkpointBytes = 0;
+  transfer.downloadCheckpointBytes = 0;
+  transfer.stagedLocalPath = recoveredPath;
+  const recoveryGeneration = tempDirBridge.getTempDirRebindGeneration();
+  const result = await run(recoveredPath);
+  tempDirBridge.getTempDir();
+  if (tempDirBridge.getTempDirRebindGeneration() !== recoveryGeneration) {
+    throw new Error("Temporary directory was replaced during SFTP download recovery.");
+  }
+  return { localPath: recoveredPath, result };
 }
 
 /**
