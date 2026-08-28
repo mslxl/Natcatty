@@ -78,7 +78,12 @@ export function useToolAccessGuidanceState(mode: AIToolIntegrationMode): ToolAcc
       if (cancelled) return;
       const readyLauncherPath = await refreshMcpStatus().catch(() => undefined);
       if (cancelled) return;
-      if (retries < EXTERNAL_MCP_READY_RETRY_LIMIT && readExternalMcpStoredEnabled() && !readyLauncherPath) {
+      // Retry while the fetched runtime status disagrees with the persisted
+      // switch: after an enable the runtime may still be starting, and the
+      // disable event is emitted before the lifecycle IPC settles, so a stale
+      // "enabled" status can survive the immediate refetch.
+      const statusReady = readyLauncherPath != null;
+      if (retries < EXTERNAL_MCP_READY_RETRY_LIMIT && readExternalMcpStoredEnabled() !== statusReady) {
         retries += 1;
         retryTimer = window.setTimeout(() => {
           void refetch();

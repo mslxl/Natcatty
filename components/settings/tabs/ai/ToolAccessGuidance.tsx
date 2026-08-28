@@ -15,7 +15,7 @@ export function buildMcpOnboardingPrompt(
     return [
       "Please connect Netcatty to this session via MCP.",
       "In the Netcatty desktop app, open Settings → AI → Tool Access, turn on External MCP,",
-      "then copy the generated prompt from the External MCP card and run it here.",
+      "then copy the generated prompt from the Tool Access section and run it here.",
       "After that, list the netcatty-external MCP tools and call get_environment to verify the connection.",
     ].join(" ");
   }
