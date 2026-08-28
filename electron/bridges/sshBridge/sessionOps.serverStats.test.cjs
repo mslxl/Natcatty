@@ -1009,9 +1009,21 @@ test("getServerStats wraps probes in a remote watchdog matching the client timeo
       command.includes('kill -9 $nc_tree "$$"'),
       "watchdog must kill the probe's descendant tree, not only the shell",
     );
+    // The watchdog's stdio must be detached from the channel so its `sleep`
+    // child cannot hold the channel's output descriptors open.
     assert.ok(
-      command.endsWith('; kill "$nc_watchdog_pid" 2>/dev/null; exit $nc_status'),
-      "missing watchdog cleanup",
+      command.includes(") </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!"),
+      "watchdog subshell must not inherit the channel's stdio",
+    );
+    // Cleanup must reap the watchdog's pending `sleep` (before killing the
+    // subshell, while the PPID walk can still find it): killing only the
+    // subshell would leave the `sleep` alive for the full watchdog duration,
+    // delaying the channel close and racing the client-side timeout.
+    assert.ok(
+      command.endsWith(
+        "; nc_kids=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root=\"$nc_watchdog_pid\" -v self=\"-1\" '{ pp[$1+0]=$2+0 } END { for (p in pp) { q=p+0; d=0; while (q>0 && d<4096) { if (q==root) { printf \"%s \", p+0; break } if (q==self) break; q=pp[q]+0; d++ } } }'); kill -9 $nc_kids \"$nc_watchdog_pid\" 2>/dev/null; exit $nc_status",
+      ),
+      " watchdog cleanup must reap the watchdog's pending sleep child",
     );
     assert.ok(command.includes("( sleep 10 &&"), "watchdog bound must match the 10s stats run timeout");
   }
@@ -1044,6 +1056,14 @@ test("getSessionDistroInfo wraps the os-release probe in a remote watchdog", asy
   assert.ok(
     commands[0].includes('kill -9 $nc_tree "$$"'),
     "distro watchdog must kill the probe's descendant tree, not only the shell",
+  );
+  assert.ok(
+    commands[0].includes(") </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!"),
+    "distro watchdog subshell must not inherit the channel's stdio",
+  );
+  assert.ok(
+    commands[0].includes('kill -9 $nc_kids "$nc_watchdog_pid"'),
+    "distro watchdog cleanup must reap the watchdog's pending sleep child",
   );
   assert.ok(commands[0].includes("cat /etc/os-release"));
 });

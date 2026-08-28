@@ -71,9 +71,17 @@ function decodeLsofFileName(value) {
  * whole descendant tree (found via a PPID walk over `ps`, excluding the
  * watchdog's own lineage) before killing the probe shell itself. On hosts
  * without a usable `ps` the watchdog degrades to the old self-kill. The
- * trailing cleanup only runs on the success path; after a watchdog kill the
- * leftover watchdog finishes its sleep and exits on its own, so at most one
- * short-lived `sleep` per abandoned probe remains.
+ * subshell's stdio is detached from the channel so nothing it forks (notably
+ * its `sleep`) can hold the channel's output descriptors open. The trailing
+ * cleanup runs on the success path and must also kill the watchdog's pending
+ * `sleep` child: killing only the subshell would leave that `sleep` alive
+ * until the full watchdog duration (which equals the client-side timeout),
+ * and while it lived it would hold the channel's descriptors, delaying the
+ * channel close until then — turning successful probes into timeouts.
+ * Children are enumerated via a PPID walk *before* the subshell is killed;
+ * once it dies they are reparented to init and unreachable. After a watchdog
+ * kill the main shell is SIGKILLed before reaching the cleanup, so the
+ * already-finished watchdog leaves no orphaned `sleep` behind.
  */
 function withRemoteWatchdog(command, timeoutMs) {
   const seconds = Math.max(1, Math.ceil((Number(timeoutMs) || 10000) / 1000));
@@ -85,13 +93,19 @@ function withRemoteWatchdog(command, timeoutMs) {
     // (killing ourselves mid-list would abort the remaining kills).
     `&& nc_self=$(sh -c 'echo $PPID' 2>/dev/null)`,
     `&& nc_tree=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$$" -v self="$nc_self" '${descendantTreeAwk}')`,
-    `&& kill -9 $nc_tree "$$" 2>/dev/null ) & nc_watchdog_pid=$!`,
+    `&& kill -9 $nc_tree "$$" 2>/dev/null ) </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!`,
   ].join(' ');
   return [
     watchdog,
     command,
     'nc_status=$?',
-    'kill "$nc_watchdog_pid" 2>/dev/null',
+    // Reap the watchdog's pending `sleep` before killing the subshell: after
+    // the subshell is SIGKILLed its children are reparented to init and a
+    // PPID walk can no longer find them.
+    'nc_kids=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$nc_watchdog_pid" -v self="-1" \'' +
+      descendantTreeAwk +
+      "')",
+    'kill -9 $nc_kids "$nc_watchdog_pid" 2>/dev/null',
     'exit $nc_status',
   ].join('; ');
 }
