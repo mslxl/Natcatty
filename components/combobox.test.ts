@@ -12,6 +12,8 @@ import {
   canComboboxOpen,
   getNextComboboxActiveIndex,
   shouldExpandComboboxWindow,
+  shouldResetComboboxWindow,
+  comboboxWindowStartForActiveIndex,
   COMBOBOX_INITIAL_RENDER_LIMIT,
   COMBOBOX_RENDER_LIMIT_STEP,
   type ComboboxScrollableTarget,
@@ -128,12 +130,44 @@ test("combobox render window expands when the list is scrolled near its bottom",
   assert.equal(shouldExpandComboboxWindow(target(0), 0, 0), false);
 });
 
+test("combobox slid windows reset when the list is scrolled back to its top", () => {
+  const target = (scrollTop: number): ComboboxScrollableTarget => ({
+    clientHeight: 280,
+    scrollHeight: 60 * 40,
+    scrollTop,
+  });
+
+  assert.equal(shouldResetComboboxWindow(target(0)), true);
+  assert.equal(shouldResetComboboxWindow(target(40)), true);
+  assert.equal(shouldResetComboboxWindow(target(120)), false);
+});
+
 test("combobox renders options incrementally so large font lists cannot freeze the picker", () => {
   assert.match(source, /const \[renderLimit, setRenderLimit\] = React\.useState\(COMBOBOX_INITIAL_RENDER_LIMIT\)/);
-  assert.match(source, /filteredOptions\.slice\(0, renderLimit\)/);
+  assert.match(source, /filteredOptions\.slice\(windowStart, windowStart \+ renderLimit\)/);
   assert.match(source, /renderedOptions\.map\(\(option, optionIndex\)/);
   assert.match(source, /onScrollCapture=\{handleOptionsScrollCapture\}/);
-  assert.match(source, /if \(activeIndex < renderedOptions\.length\) return\s*expandRenderWindow\(\)/);
+  assert.match(
+    source,
+    /const nextWindowStart = comboboxWindowStartForActiveIndex\(\s*optionIndex,\s*windowStart,\s*renderLimit,\s*filteredOptions\.length,\s*\)\s*if \(nextWindowStart !== null\) setWindowStart\(nextWindowStart\)/,
+  );
+});
+
+test("combobox keyboard navigation slides a bounded window instead of mounting the whole list", () => {
+  // Within the initial window: no shift.
+  assert.equal(comboboxWindowStartForActiveIndex(10, 0, 60, 500), null);
+  // ArrowUp wrap to the last option: slide so it is mounted, without
+  // growing the mounted count beyond the window size.
+  assert.equal(comboboxWindowStartForActiveIndex(499, 0, 60, 500), 440);
+  // Already mounted at the window edge: no further shift.
+  assert.equal(comboboxWindowStartForActiveIndex(499, 440, 60, 500), null);
+  // ArrowUp wrap back above the window start: slide so it is mounted.
+  assert.equal(comboboxWindowStartForActiveIndex(0, 440, 60, 500), 0);
+  // Small lists never need a window.
+  assert.equal(comboboxWindowStartForActiveIndex(2, 0, 60, 10), null);
+  // No active option or empty list: no shift.
+  assert.equal(comboboxWindowStartForActiveIndex(-1, 0, 60, 500), null);
+  assert.equal(comboboxWindowStartForActiveIndex(0, 0, 60, 0), null);
 });
 
 test("combobox trigger shows a focus-within ring for keyboard users", () => {

@@ -105,7 +105,8 @@ export const canComboboxOpen = (disabled: boolean, nextOpen: boolean): boolean =
  * Incremental rendering limits for large option lists (e.g. the font pickers
  * can list hundreds of locally installed fonts). Rendering every option at
  * once freezes the UI, so we mount an initial slice and grow the window as
- * the user scrolls or arrow-navigates deeper.
+ * the user scrolls deeper, and slide the bounded window when arrow
+ * navigation jumps to an option beyond it.
  */
 export const COMBOBOX_INITIAL_RENDER_LIMIT = 60
 export const COMBOBOX_RENDER_LIMIT_STEP = 120
@@ -127,6 +128,30 @@ export const shouldExpandComboboxWindow = (
     if (renderedCount >= optionCount) return false
     const distanceFromBottom = target.scrollHeight - (target.scrollTop + target.clientHeight)
     return distanceFromBottom <= COMBOBOX_EXPAND_SCROLL_THRESHOLD_PX
+}
+
+export const shouldResetComboboxWindow = (target: ComboboxScrollableTarget): boolean =>
+    target.scrollTop <= COMBOBOX_EXPAND_SCROLL_THRESHOLD_PX
+
+/**
+ * Keyboard navigation can land beyond the mounted window (e.g. ArrowUp wraps
+ * straight to the last option). Instead of growing the prefix until that
+ * index is mounted — which mounts every row for large lists — slide the
+ * bounded window so the destination sits at its edge. Returns the new window
+ * start, or null when the active option is already mounted.
+ */
+export const comboboxWindowStartForActiveIndex = (
+    activeOptionIndex: number,
+    windowStart: number,
+    renderLimit: number,
+    optionCount: number,
+): number | null => {
+    if (optionCount <= 0 || activeOptionIndex < 0) return null
+    if (activeOptionIndex < windowStart) return activeOptionIndex
+    if (activeOptionIndex >= windowStart + renderLimit) {
+        return Math.max(0, Math.min(activeOptionIndex - renderLimit + 1, optionCount - renderLimit))
+    }
+    return null
 }
 
 function ComboboxOptionsList({
@@ -188,6 +213,9 @@ export function Combobox({
     const [isSearching, setIsSearching] = React.useState(false)
     // Incremental rendering window for very large option lists
     const [renderLimit, setRenderLimit] = React.useState(COMBOBOX_INITIAL_RENDER_LIMIT)
+    // First mounted option index, so keyboard jumps slide the window instead
+    // of mounting the entire prefix of a large list.
+    const [windowStart, setWindowStart] = React.useState(0)
     const inputRef = React.useRef<HTMLInputElement>(null)
     const wasOpenRef = React.useRef(false)
     const activeOptionRef = React.useRef<HTMLButtonElement>(null)
@@ -226,12 +254,12 @@ export function Combobox({
     // never persists across uses.
     React.useEffect(() => {
         setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
+        setWindowStart(0)
     }, [options, isSearching, open])
 
     const renderedOptions = React.useMemo(() => {
-        if (filteredOptions.length <= renderLimit) return filteredOptions
-        return filteredOptions.slice(0, renderLimit)
-    }, [filteredOptions, renderLimit])
+        return filteredOptions.slice(windowStart, windowStart + renderLimit)
+    }, [filteredOptions, windowStart, renderLimit])
 
     const expandRenderWindow = React.useCallback(() => {
         setRenderLimit((current) => {
@@ -240,30 +268,25 @@ export function Combobox({
         })
     }, [options.length])
 
-    // Keyboard navigation must never land on an option that is not mounted
-    // yet, otherwise its aria-activedescendant id would not exist.
-    React.useEffect(() => {
-        if (activeIndex < renderedOptions.length) return
-        expandRenderWindow()
-    }, [activeIndex, renderedOptions.length, expandRenderWindow])
-
     const handleOptionsScrollCapture = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
         const target = event.currentTarget
-        if (
-            !shouldExpandComboboxWindow(
-                {
-                    clientHeight: target.clientHeight,
-                    scrollHeight: target.scrollHeight,
-                    scrollTop: target.scrollTop,
-                },
-                renderedOptions.length,
-                filteredOptions.length,
-            )
-        ) {
+        const scrollTarget = {
+            clientHeight: target.clientHeight,
+            scrollHeight: target.scrollHeight,
+            scrollTop: target.scrollTop,
+        }
+        // Scrolling back to the top restores the initial window so options
+        // above a slid window become reachable again.
+        if (windowStart > 0 && shouldResetComboboxWindow(scrollTarget)) {
+            setWindowStart(0)
+            setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
+            return
+        }
+        if (!shouldExpandComboboxWindow(scrollTarget, renderedOptions.length, filteredOptions.length)) {
             return
         }
         expandRenderWindow()
-    }, [renderedOptions.length, filteredOptions.length, expandRenderWindow])
+    }, [windowStart, renderedOptions.length, filteredOptions.length, expandRenderWindow])
 
     const showCreateOption = React.useMemo(() => {
         if (!allowCreate || !inputValue.trim() || !isSearching) return false
@@ -274,9 +297,25 @@ export function Combobox({
     const selectableOptionCount = filteredOptions.length + (showCreateOption ? 1 : 0)
     const hasActiveOption = activeIndex >= 0 && activeIndex < selectableOptionCount
 
+    // Keyboard navigation must never land on an option that is not mounted
+    // yet, otherwise its aria-activedescendant id would not exist. Slide the
+    // bounded window so the destination is mounted without mounting the
+    // entire prefix of a large list.
+    React.useEffect(() => {
+        if (activeIndex < 0) return
+        const optionIndex = activeIndex - (showCreateOption ? 1 : 0)
+        const nextWindowStart = comboboxWindowStartForActiveIndex(
+            optionIndex,
+            windowStart,
+            renderLimit,
+            filteredOptions.length,
+        )
+        if (nextWindowStart !== null) setWindowStart(nextWindowStart)
+    }, [activeIndex, showCreateOption, windowStart, renderLimit, filteredOptions.length])
+
     React.useEffect(() => {
         activeOptionRef.current?.scrollIntoView({ block: 'nearest' })
-    }, [activeIndex, renderedOptions.length])
+    }, [activeIndex, renderedOptions.length, windowStart])
 
     React.useEffect(() => {
         if (!disabled || !open) return
@@ -470,7 +509,7 @@ export function Combobox({
 
                             {/* Existing options (rendered incrementally for large lists) */}
                             {renderedOptions.map((option, optionIndex) => {
-                                const selectableIndex = optionIndex + (showCreateOption ? 1 : 0)
+                                const selectableIndex = optionIndex + windowStart + (showCreateOption ? 1 : 0)
                                 return (
                                     <button
                                         key={option.value}
