@@ -3963,6 +3963,39 @@ test('legacy cursor automation markers still count as processed replies', () => 
   );
 });
 
+test('writeBraveResearchHelpers writes shebang wrappers without YAML heredocs', (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-brave-helpers-'));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  auto.writeBraveResearchHelpers(tempDir);
+
+  for (const [name, mode] of [['web-search', 'search'], ['web-fetch', 'fetch']]) {
+    const filePath = path.join(tempDir, name);
+    const body = fs.readFileSync(filePath, 'utf8');
+    assert.equal(body.startsWith('#!/usr/bin/env bash\n'), true, name);
+    assert.match(body, new RegExp(`exec node "\\$\\(dirname "\\$0"\\)/ai-brave-search\\.cjs" ${mode} "\\$@"`));
+    assert.equal(fs.statSync(filePath).mode & 0o111, 0o111);
+  }
+  assert.throws(() => auto.writeBraveResearchHelpers(''), /research directory is required/);
+});
+
+test('ai-automation.yml stays valid YAML with no unindented block content', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
+    'utf8',
+  );
+  const badLines = workflow.split('\n').flatMap((line, index) => {
+    if (!line || line.startsWith('#') || line.startsWith(' ') || line.startsWith('\t')) {
+      return [];
+    }
+    if (/^[A-Za-z0-9_.-]+:(?:\s|$)/.test(line)) return [];
+    return [`${index + 1}: ${line}`];
+  });
+  assert.deepEqual(badLines, []);
+  assert.doesNotMatch(workflow, /^EOS$/m);
+  assert.doesNotMatch(workflow, /<<'EOS'/);
+});
+
 test('workflow confines Brave research to isolated read-only research passes', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
@@ -3983,7 +4016,8 @@ test('workflow confines Brave research to isolated read-only research passes', (
     assert.match(run, /web-search/);
     assert.match(run, /web-fetch/);
     assert.match(run, /BRAVE_TOOL_LOG/);
-    assert.match(run, /cat > "\$research_dir\/web-search" <<'EOS'/);
+    assert.match(run, /writeBraveResearchHelpers/);
+    assert.doesNotMatch(run, /<<'EOS'/);
     assert.match(run, /--settings "\$HOME\/\.claude\/settings\.json"/);
     assert.match(run, /--disallowedTools "WebSearch" "WebFetch"/);
     assert.doesNotMatch(run, /printf '%s\n'/);
