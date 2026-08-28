@@ -1298,6 +1298,7 @@ export type StopAllActivePortForwardsResult = {
 
 export type StopAllPortForwardsResult = {
   backendStopAllFailed: boolean;
+  directStopAttemptedRuleIds: string[];
   directStopFailures: BulkPortForwardRuleError[];
   error?: string;
 };
@@ -1392,6 +1393,7 @@ export const stopAllActivePortForwards = async (
     failed: 0,
     errors: [],
   };
+  const failedTargetErrors = new Map<string, BulkPortForwardRuleError>();
 
   for (const rule of targets) {
     stopAllInProgress.add(rule.id);
@@ -1406,8 +1408,7 @@ export const stopAllActivePortForwards = async (
     if (stopResult.success) {
       result.stopped += 1;
     } else {
-      result.failed += 1;
-      result.errors.push({
+      failedTargetErrors.set(rule.id, {
         ruleId: rule.id,
         label: rule.label,
         error: stopResult.error || 'Failed to stop',
@@ -1416,6 +1417,20 @@ export const stopAllActivePortForwards = async (
   }
 
   const cleanupResult = await stopAllPortForwards();
+  const cleanupFailures = new Map(
+    cleanupResult.directStopFailures.map((error) => [error.ruleId, error]),
+  );
+  for (const [ruleId, error] of failedTargetErrors) {
+    if (
+      cleanupResult.directStopAttemptedRuleIds.includes(ruleId)
+      && !cleanupFailures.has(ruleId)
+    ) {
+      result.stopped += 1;
+      continue;
+    }
+    result.failed += 1;
+    result.errors.push(error);
+  }
   const reportedRuleIds = new Set(result.errors.map((error) => error.ruleId));
   for (const error of cleanupResult.directStopFailures) {
     if (reportedRuleIds.has(error.ruleId)) continue;
@@ -1440,6 +1455,7 @@ export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> 
   const bridge = netcattyBridge.get();
   const result: StopAllPortForwardsResult = {
     backendStopAllFailed: false,
+    directStopAttemptedRuleIds: [],
     directStopFailures: [],
   };
   const guardedRuleIds = new Set<string>();
@@ -1454,9 +1470,10 @@ export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> 
     
     try {
       if (bridge?.stopPortForward) {
-        const result = await bridge.stopPortForward(conn.tunnelId);
-        if (result && !result.success) {
-          throw new Error(result.error || `Failed to stop tunnel ${conn.tunnelId}`);
+        result.directStopAttemptedRuleIds.push(ruleId);
+        const stopResult = await bridge.stopPortForward(conn.tunnelId);
+        if (stopResult && !stopResult.success) {
+          throw new Error(stopResult.error || `Failed to stop tunnel ${conn.tunnelId}`);
         }
       }
       conn.unsubscribe?.();
