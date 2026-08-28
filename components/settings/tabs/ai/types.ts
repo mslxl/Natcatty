@@ -162,6 +162,14 @@ export interface NetcattyAiBridge {
   codexAppServerGetStatus?: (agentCommand?: string, agentEnv?: Record<string, string>) => Promise<{ ok: boolean; available: boolean; error?: string }>;
   aiUserSkillsGetStatus?: () => Promise<UserSkillsStatusResult>;
   aiUserSkillsOpenFolder?: () => Promise<UserSkillsStatusResult>;
+  aiSkillsCliGetInvocation?: () => Promise<{
+    ok: boolean;
+    skillPath?: string | null;
+    commandPrefix?: string;
+    launcherPath?: string | null;
+    usesLauncher?: boolean;
+    error?: string;
+  }>;
   openExternal?: (url: string) => Promise<void>;
   externalMcpGetStatus?: () => Promise<Record<string, unknown>>;
   externalMcpSetEnabled?: (enabled: boolean) => Promise<Record<string, unknown>>;
