@@ -53,6 +53,33 @@ function decodeLsofFileName(value) {
   }
 }
 
+/**
+ * Wrap a one-shot remote probe so it cannot outlive the client-side timeout.
+ *
+ * If the renderer or transport abandons an exec (client-side run timeout,
+ * window close, teardown), sshd can keep the remote shell alive — on weak
+ * hosts these orphaned probe shells linger and burn CPU until someone kills
+ * them by hand (#3187). A watchdog subshell SIGKILLs the probe shell once the
+ * same bound the client enforces has elapsed, so an abandoned probe always
+ * terminates remotely even when the server never reacts to the channel close.
+ *
+ * POSIX-safe: `$$` inside a subshell still refers to the parent shell on
+ * bash/dash/ash, so the watchdog kills the probe shell itself. The trailing
+ * cleanup only runs on the success path; after a watchdog kill (or an `exec`
+ * replacing the shell) the leftover watchdog finishes its sleep and exits on
+ * its own, so at most one short-lived `sleep` per abandoned probe remains.
+ */
+function withRemoteWatchdog(command, timeoutMs) {
+  const seconds = Math.max(1, Math.ceil((Number(timeoutMs) || 10000) / 1000));
+  return [
+    `( sleep ${seconds} && kill -9 "$$" 2>/dev/null ) & nc_watchdog_pid=$!`,
+    command,
+    'nc_status=$?',
+    'kill "$nc_watchdog_pid" 2>/dev/null',
+    'exit $nc_status',
+  ].join('; ');
+}
+
 function createSessionOpsApi(ctx) {
   with (ctx) {
     const cwdRecoveryToken = Symbol('cwd-recovery');
@@ -109,7 +136,10 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
-      const command = "cat /etc/os-release 2>/dev/null || uname -a";
+      const command = withRemoteWatchdog(
+        "cat /etc/os-release 2>/dev/null || uname -a",
+        5000,
+      );
       try {
         const { stdout, stderr } = await executeBoundedSshCommand(session.conn, command, {
           openingTimeoutMs: 5000,
@@ -613,8 +643,11 @@ function createSessionOpsApi(ctx) {
     emit_home "$home"
     emit_home "$HOME"
     exit 1`;
-        const cmd = `exec sh -c ${quoteShellArg(posixScript)}`;
-    
+        const cmd = withRemoteWatchdog(
+          `exec sh -c ${quoteShellArg(posixScript)}`,
+          timeoutMs,
+        );
+
         void executeBoundedSshCommand(session.conn, cmd, {
           // Do not shorten channel opening: a timeout there invalidates the
           // shared SSH transport. Only bound the best-effort command itself.
@@ -1146,17 +1179,22 @@ function createSessionOpsApi(ctx) {
         `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
       ].join('; ');
 
+      // Client-side run bound shared by the stats and disk probes; the remote
+      // watchdog uses the same value so an abandoned probe self-kills instead
+      // of lingering on the target host (#3187).
+      const statsRunTimeoutMs = 10000;
+
       // Get mounted disk info. GNU and BusyBox support df -T; the awk parser
       // also accepts the legacy POSIX -kP layout as a fallback. PVE/LXC guests
       // often expose ZFS datasets and host bind mounts without a /dev/* source,
       // so keep non-pseudo filesystems. Skip FUSE/cloud/NFS/CIFS network mounts:
       // their quotas are not local capacity. Keep a loop-backed rootfs while
       // dropping snap loops, derive missing percentages, and fall back to "/".
-      const linuxDiskStatsCommand = [
+      const linuxDiskStatsCommand = withRemoteWatchdog([
         `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         `[ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         `echo "DISKS:$disks"`,
-      ].join('; ');
+      ].join('; '), statsRunTimeoutMs);
 
       // Dropbear rejects command requests larger than 9000 bytes by closing
       // the entire SSH transport, including an already-open interactive shell.
@@ -1164,10 +1202,13 @@ function createSessionOpsApi(ctx) {
       // additions cannot repeat issue #2924.
       const dropbearMaxCommandBytes = 9000;
       const latencyMarker = "NC_LATENCY_MARK";
-      const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const statsCommand = withRemoteWatchdog(
+        `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`,
+        statsRunTimeoutMs,
+      );
       const statsExecOptions = {
-        openingTimeoutMs: 10000,
-        runTimeoutMs: 10000,
+        openingTimeoutMs: statsRunTimeoutMs,
+        runTimeoutMs: statsRunTimeoutMs,
         maxOutputBytes: 1024 * 1024,
         setTimeoutFn: setTimeout,
         clearTimeoutFn: clearTimeout,

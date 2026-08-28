@@ -974,3 +974,65 @@ test("getServerStats returns an error for an unknown session", async () => {
 
   assert.equal(result.success, false);
 });
+
+test("getServerStats wraps probes in a remote watchdog matching the client timeout", async () => {
+  const commands = [];
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    _reuseEndpoint: { hostname: "slow.example", port: 22 },
+    conn: {
+      exec(command, cb) {
+        commands.push(command);
+        cb(null, fakeStream(LINUX_STATS));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(commands.length, 2);
+  for (const command of commands) {
+    // The watchdog must be armed before the probe and killed after it, with
+    // the same 10s bound the client enforces, so an abandoned probe cannot
+    // linger and burn CPU on the remote host (#3187).
+    assert.ok(
+      command.startsWith('( sleep 10 && kill -9 "$$" 2>/dev/null ) & nc_watchdog_pid=$!;'),
+      `missing watchdog arm: ${command.slice(0, 120)}`,
+    );
+    assert.ok(
+      command.endsWith('; kill "$nc_watchdog_pid" 2>/dev/null; exit $nc_status'),
+      "missing watchdog cleanup",
+    );
+    assert.ok(command.includes("( sleep 10 &&"), "watchdog bound must match the 10s stats run timeout");
+  }
+  assert.ok(commands[0].includes("NC_LATENCY_MARK"));
+  assert.ok(commands[1].includes('echo "DISKS:$disks"'));
+});
+
+test("getSessionDistroInfo wraps the os-release probe in a remote watchdog", async () => {
+  const commands = [];
+  const sessions = new Map();
+  sessions.set("sid", {
+    type: "ssh",
+    conn: {
+      exec(command, cb) {
+        commands.push(command);
+        cb(null, fakeStream('NAME="UnionTech OS Server 20"\nID=uos'));
+      },
+    },
+  });
+
+  const api = makeSessionOps(sessions);
+  const result = await api.getSessionDistroInfo({ sender: {} }, { sessionId: "sid" });
+
+  assert.equal(result.success, true);
+  assert.equal(commands.length, 1);
+  assert.ok(
+    commands[0].startsWith('( sleep 5 && kill -9 "$$" 2>/dev/null ) & nc_watchdog_pid=$!;'),
+    "distro probe must carry a 5s remote watchdog",
+  );
+  assert.ok(commands[0].includes("cat /etc/os-release"));
+});
