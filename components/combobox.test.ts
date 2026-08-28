@@ -4,12 +4,16 @@ import test from "node:test";
 
 import {
   applyComboboxWheelScroll,
+  comboboxNextRenderLimit,
   comboboxWheelDeltaToPixels,
   filterComboboxOptions,
   focusComboboxInput,
   selectComboboxInputIfFocused,
   canComboboxOpen,
   getNextComboboxActiveIndex,
+  shouldExpandComboboxWindow,
+  COMBOBOX_INITIAL_RENDER_LIMIT,
+  COMBOBOX_RENDER_LIMIT_STEP,
   type ComboboxScrollableTarget,
 } from "./ui/combobox.tsx";
 
@@ -85,12 +89,51 @@ test("combobox exposes active-option semantics for keyboard navigation", () => {
   assert.match(source, /role="combobox"/);
   assert.match(source, /aria-activedescendant=/);
   assert.match(source, /role=\{listbox \? "listbox" : undefined\}/);
-  assert.match(source, /<ComboboxOptionsList id=\{listboxId\} listbox>/);
+  assert.match(source, /<ComboboxOptionsList id=\{listboxId\} listbox onScrollCapture=\{handleOptionsScrollCapture\}>/);
   assert.match(source, /<ComboboxOptionsList>\s*\{/);
   assert.match(source, /role="option"/);
   assert.match(source, /open && !disabled && hasActiveOption/);
   assert.match(source, /const handleSelect = \(optValue: string\) => \{[\s\S]*?setOpen\(false\)\s*setActiveIndex\(-1\)/);
   assert.match(source, /const handleCreate = \(\) => \{[\s\S]*?setOpen\(false\)\s*setActiveIndex\(-1\)/);
+});
+
+test("combobox render window grows in bounded steps and stops at the end", () => {
+  assert.equal(comboboxNextRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT, 10), null);
+  assert.equal(
+    comboboxNextRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT, 500),
+    COMBOBOX_INITIAL_RENDER_LIMIT + COMBOBOX_RENDER_LIMIT_STEP,
+  );
+  assert.equal(comboboxNextRenderLimit(480, 500), 500);
+  assert.equal(comboboxNextRenderLimit(500, 500), null);
+  assert.equal(comboboxNextRenderLimit(600, 500), null);
+});
+
+test("combobox render window expands when the list is scrolled near its bottom", () => {
+  const target = (scrollTop: number): ComboboxScrollableTarget => ({
+    clientHeight: 280,
+    scrollHeight: 500 * 40,
+    scrollTop,
+  });
+
+  // Far from the bottom: keep the window as-is.
+  assert.equal(shouldExpandComboboxWindow(target(0), COMBOBOX_INITIAL_RENDER_LIMIT, 500), false);
+  // Near the bottom of the mounted slice: expand it.
+  assert.equal(
+    shouldExpandComboboxWindow(target(500 * 40 - 280 - 10), COMBOBOX_INITIAL_RENDER_LIMIT, 500),
+    true,
+  );
+  // Everything already rendered: never expand.
+  assert.equal(shouldExpandComboboxWindow(target(0), 500, 500), false);
+  // Empty list cannot expand.
+  assert.equal(shouldExpandComboboxWindow(target(0), 0, 0), false);
+});
+
+test("combobox renders options incrementally so large font lists cannot freeze the picker", () => {
+  assert.match(source, /const \[renderLimit, setRenderLimit\] = React\.useState\(COMBOBOX_INITIAL_RENDER_LIMIT\)/);
+  assert.match(source, /filteredOptions\.slice\(0, renderLimit\)/);
+  assert.match(source, /renderedOptions\.map\(\(option, optionIndex\)/);
+  assert.match(source, /onScrollCapture=\{handleOptionsScrollCapture\}/);
+  assert.match(source, /if \(activeIndex < renderedOptions\.length\) return\s*expandRenderWindow\(\)/);
 });
 
 test("combobox trigger shows a focus-within ring for keyboard users", () => {

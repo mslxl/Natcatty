@@ -101,14 +101,44 @@ export const selectComboboxInputIfFocused = (
 export const canComboboxOpen = (disabled: boolean, nextOpen: boolean): boolean =>
     !disabled || !nextOpen
 
+/**
+ * Incremental rendering limits for large option lists (e.g. the font pickers
+ * can list hundreds of locally installed fonts). Rendering every option at
+ * once freezes the UI, so we mount an initial slice and grow the window as
+ * the user scrolls or arrow-navigates deeper.
+ */
+export const COMBOBOX_INITIAL_RENDER_LIMIT = 60
+export const COMBOBOX_RENDER_LIMIT_STEP = 120
+const COMBOBOX_EXPAND_SCROLL_THRESHOLD_PX = 80
+
+export const comboboxNextRenderLimit = (
+    currentLimit: number,
+    optionCount: number,
+): number | null => {
+    if (optionCount <= currentLimit) return null
+    return Math.min(currentLimit + COMBOBOX_RENDER_LIMIT_STEP, optionCount)
+}
+
+export const shouldExpandComboboxWindow = (
+    target: ComboboxScrollableTarget,
+    renderedCount: number,
+    optionCount: number,
+): boolean => {
+    if (renderedCount >= optionCount) return false
+    const distanceFromBottom = target.scrollHeight - (target.scrollTop + target.clientHeight)
+    return distanceFromBottom <= COMBOBOX_EXPAND_SCROLL_THRESHOLD_PX
+}
+
 function ComboboxOptionsList({
     children,
     id,
     listbox = false,
+    onScrollCapture,
 }: {
     children: React.ReactNode;
     id?: string;
     listbox?: boolean;
+    onScrollCapture?: React.UIEventHandler<HTMLDivElement>;
 }) {
     const handleWheelCapture = (event: React.WheelEvent<HTMLDivElement>) => {
         const handled = applyComboboxWheelScroll(event.currentTarget, event.deltaY, event.deltaMode)
@@ -125,6 +155,7 @@ function ComboboxOptionsList({
             role={listbox ? "listbox" : undefined}
             className="max-h-[280px] overflow-y-auto overscroll-contain p-1"
             onWheelCapture={handleWheelCapture}
+            onScrollCapture={onScrollCapture}
         >
             {children}
         </div>
@@ -155,6 +186,8 @@ export function Combobox({
     const [activeIndex, setActiveIndex] = React.useState(-1)
     // Track if user is actively searching (typed something after opening)
     const [isSearching, setIsSearching] = React.useState(false)
+    // Incremental rendering window for very large option lists
+    const [renderLimit, setRenderLimit] = React.useState(COMBOBOX_INITIAL_RENDER_LIMIT)
     const inputRef = React.useRef<HTMLInputElement>(null)
     const wasOpenRef = React.useRef(false)
     const activeOptionRef = React.useRef<HTMLButtonElement>(null)
@@ -188,6 +221,50 @@ export function Combobox({
         return filterComboboxOptions(options, inputValue, isSearching)
     }, [options, inputValue, isSearching])
 
+    // Restart the window from its initial size whenever the picker opens, the
+    // option set, or the search mode changes, so a previously grown window
+    // never persists across uses.
+    React.useEffect(() => {
+        setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
+    }, [options, isSearching, open])
+
+    const renderedOptions = React.useMemo(() => {
+        if (filteredOptions.length <= renderLimit) return filteredOptions
+        return filteredOptions.slice(0, renderLimit)
+    }, [filteredOptions, renderLimit])
+
+    const expandRenderWindow = React.useCallback(() => {
+        setRenderLimit((current) => {
+            const next = comboboxNextRenderLimit(current, options.length)
+            return next ?? current
+        })
+    }, [options.length])
+
+    // Keyboard navigation must never land on an option that is not mounted
+    // yet, otherwise its aria-activedescendant id would not exist.
+    React.useEffect(() => {
+        if (activeIndex < renderedOptions.length) return
+        expandRenderWindow()
+    }, [activeIndex, renderedOptions.length, expandRenderWindow])
+
+    const handleOptionsScrollCapture = React.useCallback((event: React.UIEvent<HTMLDivElement>) => {
+        const target = event.currentTarget
+        if (
+            !shouldExpandComboboxWindow(
+                {
+                    clientHeight: target.clientHeight,
+                    scrollHeight: target.scrollHeight,
+                    scrollTop: target.scrollTop,
+                },
+                renderedOptions.length,
+                filteredOptions.length,
+            )
+        ) {
+            return
+        }
+        expandRenderWindow()
+    }, [renderedOptions.length, filteredOptions.length, expandRenderWindow])
+
     const showCreateOption = React.useMemo(() => {
         if (!allowCreate || !inputValue.trim() || !isSearching) return false
         const lower = inputValue.toLowerCase().trim()
@@ -199,7 +276,7 @@ export function Combobox({
 
     React.useEffect(() => {
         activeOptionRef.current?.scrollIntoView({ block: 'nearest' })
-    }, [activeIndex])
+    }, [activeIndex, renderedOptions.length])
 
     React.useEffect(() => {
         if (!disabled || !open) return
@@ -357,7 +434,7 @@ export function Combobox({
                 style={{ width: 'var(--radix-popover-trigger-width)' }}
             >
                 {/* Options List */}
-                <ComboboxOptionsList id={listboxId} listbox>
+                <ComboboxOptionsList id={listboxId} listbox onScrollCapture={handleOptionsScrollCapture}>
                     {filteredOptions.length === 0 && !showCreateOption ? (
                         <div className="py-4 text-center text-sm text-muted-foreground">
                             {emptyText}
@@ -391,8 +468,8 @@ export function Combobox({
                                 <div className="h-px bg-border/60 my-1" />
                             )}
 
-                            {/* Existing options */}
-                            {filteredOptions.map((option, optionIndex) => {
+                            {/* Existing options (rendered incrementally for large lists) */}
+                            {renderedOptions.map((option, optionIndex) => {
                                 const selectableIndex = optionIndex + (showCreateOption ? 1 : 0)
                                 return (
                                     <button
