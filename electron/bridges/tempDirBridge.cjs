@@ -1163,57 +1163,63 @@ function registerHandlers(ipcMain, shell, electronModule) {
     const handleId = String(payload.handleId ?? "");
     const chatSessionId = String(payload.chatSessionId ?? "");
     if (!isBoundedString(handleId, 200) || !isBoundedString(chatSessionId, 512)) return null;
-    const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
-    await toolOutputSessionDeletions.get(chatSessionId);
-    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) return null;
-    const entries = await listToolOutputManifestEntries();
-    const entry = entries.find(candidate => (
-      candidate.manifest.record.handleId === handleId
-      && candidate.manifest.record.chatSessionId === chatSessionId
-    ));
-    if (!entry) return null;
-    if (
-      entry.manifest.record.terminalSessionId
-      && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
-    ) {
-      await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
-      return null;
-    }
-    if (isToolOutputEntryExpired(entry)) {
-      await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
-      return null;
-    }
-    if (!await verifyManifestContent(entry)) {
-      // A rebound temp root may hold different data at the same pathname;
-      // never delete it based on a stale generation's verification failure.
-      if (!isToolOutputEntryStale(entry)) {
+    const restoreOnce = async (attempt) => {
+      const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
+      await toolOutputSessionDeletions.get(chatSessionId);
+      if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) return null;
+      const entries = await listToolOutputManifestEntries();
+      const entry = entries.find(candidate => (
+        candidate.manifest.record.handleId === handleId
+        && candidate.manifest.record.chatSessionId === chatSessionId
+      ));
+      if (!entry) return null;
+      if (
+        entry.manifest.record.terminalSessionId
+        && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
+      ) {
         await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
+        return null;
       }
-      return null;
-    }
-    if (
-      entry.manifest.record.terminalSessionId
-      && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
-    ) {
-      await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
-      return null;
-    }
-    await touchToolOutputEntry(entry);
-    if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) {
-      await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
-      return null;
-    }
-    if (
-      entry.manifest.record.terminalSessionId
-      && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
-    ) {
-      await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
-      return null;
-    }
-    return {
-      path: entry.contentPath,
-      record: entry.manifest.record,
+      if (isToolOutputEntryExpired(entry)) {
+        await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
+        return null;
+      }
+      if (!await verifyManifestContent(entry)) {
+        // A rebound temp root may hold different data at the same pathname;
+        // never delete it based on a stale generation's verification failure.
+        // Retry enumeration and verification against the current generation
+        // instead of reporting a durable handle as missing.
+        if (isToolOutputEntryStale(entry)) {
+          return attempt === 0 ? restoreOnce(1) : null;
+        }
+        await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
+        return null;
+      }
+      if (
+        entry.manifest.record.terminalSessionId
+        && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
+      ) {
+        await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
+        return null;
+      }
+      await touchToolOutputEntry(entry);
+      if (getToolOutputChatDeletionGeneration(chatSessionId) !== chatDeletionGeneration) {
+        await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
+        return null;
+      }
+      if (
+        entry.manifest.record.terminalSessionId
+        && closedToolOutputTerminalSessions.has(entry.manifest.record.terminalSessionId)
+      ) {
+        await deleteToolOutputPair(entry.contentPath, entry.tempDirRebindGeneration);
+        return null;
+      }
+      return {
+        path: entry.contentPath,
+        record: entry.manifest.record,
+      };
     };
+    return restoreOnce(0);
   });
 
   ipcMain.handle("netcatty:tempdir:toolOutputRead", async (_event, payload = {}) => {

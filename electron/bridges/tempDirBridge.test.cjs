@@ -252,6 +252,78 @@ test("tool output write retries when the temp root is replaced after key loading
   }
 });
 
+test("tool output restore retries when the temp root is replaced during content verification", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-rebind-restore-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o700);
+  const script = [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    'const crypto = require("node:crypto");',
+    'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
+    'const handlers = new Map();',
+    'const secret = process.env.FAKE_SAFE_STORAGE_SECRET;',
+    'const safeStorage = {',
+    '  isEncryptionAvailable: () => true,',
+    '  encryptString: value => Buffer.from(`${secret}:${value}`, "utf8"),',
+    '  decryptString: value => {',
+    '    const text = value.toString("utf8");',
+    '    if (!text.startsWith(`${secret}:`)) throw new Error("wrong key");',
+    '    return text.slice(secret.length + 1);',
+    '  },',
+    '};',
+    'bridge.registerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, undefined, { safeStorage });',
+    '(async () => {',
+    '  const now = Date.now();',
+    '  const first = bridge.getTempDir();',
+    '  const record = { schemaVersion: 1, handleId: "restore-rebind", chatSessionId: "restore-rebind-chat", capabilityId: "terminal.execute", totalChars: 6, storedChars: 6, sourceTruncated: false, preview: "before", storedAt: now, accessedAt: now };',
+    '  const saved = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, { record, content: "before" });',
+    '  if (!saved.ok) throw new Error(saved.error);',
+    '  const originalOpen = fs.promises.open;',
+    '  let rebound = false;',
+    '  fs.promises.open = async (filePath, ...args) => {',
+    '    const opened = await originalOpen(filePath, ...args);',
+    '    if (rebound || path.resolve(String(filePath)) !== path.resolve(saved.path)) return opened;',
+    '    rebound = true;',
+    '    const oldPath = `${first}.old`;',
+    '    fs.renameSync(first, oldPath);',
+    '    fs.mkdirSync(first, { recursive: true, mode: 0o700 });',
+    '    const replacementKey = Buffer.alloc(32, 7);',
+    '    fs.writeFileSync(path.join(first, ".tool-output-signing-key"), safeStorage.encryptString(replacementKey.toString("base64")), { mode: 0o600 });',
+    '    bridge.getTempDir();',
+    '    const contentBuffer = Buffer.from("after", "utf16le");',
+    '    fs.writeFileSync(saved.path, contentBuffer, { mode: 0o600, flag: "wx" });',
+    '    const manifest = {',
+    '      record,',
+    '      contentFile: path.basename(saved.path),',
+    '      contentBytes: contentBuffer.length,',
+    '      contentSha256: crypto.createHash("sha256").update(contentBuffer).digest("hex"),',
+    '    };',
+    '    manifest.signature = crypto.createHmac("sha256", replacementKey)',
+    '      .update(JSON.stringify({ record: manifest.record, contentFile: manifest.contentFile, contentBytes: manifest.contentBytes, contentSha256: manifest.contentSha256 }))',
+    '      .digest("hex");',
+    '    fs.writeFileSync(`${saved.path}.meta.json`, JSON.stringify(manifest), { mode: 0o600, flag: "wx" });',
+    '    return opened;',
+    '  };',
+    '  const restored = await handlers.get("netcatty:tempdir:toolOutputRestore")({}, { handleId: "restore-rebind", chatSessionId: "restore-rebind-chat" });',
+    '  const content = restored ? await handlers.get("netcatty:tempdir:toolOutputRead")({}, { path: restored.path }) : null;',
+    '  console.log(`RESULT:${JSON.stringify({ rebound, restored: Boolean(restored), content })}`);',
+    '})().catch(error => { console.error(error); process.exit(1); });',
+  ].join("\n");
+  try {
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: isolatedTempChildEnv(root, fakeHome, { FAKE_SAFE_STORAGE_SECRET: "rebind-restore-secret" }),
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /RESULT:.*"rebound":true.*"restored":true.*"content":"after"/);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("tool output write keeps the loaded key during a temporary keychain failure", async () => {
   const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-keychain-write-"));
   const fakeHome = path.join(root, "home");
