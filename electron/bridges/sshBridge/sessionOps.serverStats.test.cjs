@@ -997,10 +997,17 @@ test("getServerStats wraps probes in a remote watchdog matching the client timeo
   for (const command of commands) {
     // The watchdog must be armed before the probe and killed after it, with
     // the same 10s bound the client enforces, so an abandoned probe cannot
-    // linger and burn CPU on the remote host (#3187).
+    // linger and burn CPU on the remote host (#3187). It must also kill the
+    // probe's whole descendant tree: a probe blocked in an external child
+    // (df, ps, lsof, ...) would otherwise survive `kill -9 $$` and keep
+    // holding the channel's output descriptors.
     assert.ok(
-      command.startsWith('( sleep 10 && kill -9 "$$" 2>/dev/null ) & nc_watchdog_pid=$!;'),
+      command.startsWith('( sleep 10 &&'),
       `missing watchdog arm: ${command.slice(0, 120)}`,
+    );
+    assert.ok(
+      command.includes('kill -9 $nc_tree "$$"'),
+      "watchdog must kill the probe's descendant tree, not only the shell",
     );
     assert.ok(
       command.endsWith('; kill "$nc_watchdog_pid" 2>/dev/null; exit $nc_status'),
@@ -1031,8 +1038,12 @@ test("getSessionDistroInfo wraps the os-release probe in a remote watchdog", asy
   assert.equal(result.success, true);
   assert.equal(commands.length, 1);
   assert.ok(
-    commands[0].startsWith('( sleep 5 && kill -9 "$$" 2>/dev/null ) & nc_watchdog_pid=$!;'),
+    commands[0].startsWith('( sleep 5 &&'),
     "distro probe must carry a 5s remote watchdog",
+  );
+  assert.ok(
+    commands[0].includes('kill -9 $nc_tree "$$"'),
+    "distro watchdog must kill the probe's descendant tree, not only the shell",
   );
   assert.ok(commands[0].includes("cat /etc/os-release"));
 });

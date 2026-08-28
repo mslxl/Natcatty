@@ -64,15 +64,31 @@ function decodeLsofFileName(value) {
  * terminates remotely even when the server never reacts to the channel close.
  *
  * POSIX-safe: `$$` inside a subshell still refers to the parent shell on
- * bash/dash/ash, so the watchdog kills the probe shell itself. The trailing
- * cleanup only runs on the success path; after a watchdog kill (or an `exec`
- * replacing the shell) the leftover watchdog finishes its sleep and exits on
- * its own, so at most one short-lived `sleep` per abandoned probe remains.
+ * bash/dash/ash, so the watchdog knows the probe shell's PID. Killing only
+ * `$$` is not enough: a probe blocked in an external child (`df`, `ps`,
+ * `lsof`, `cat`, ...) leaves that child orphaned, still holding the channel's
+ * output descriptors. The watchdog therefore also SIGKILLs the probe shell's
+ * whole descendant tree (found via a PPID walk over `ps`, excluding the
+ * watchdog's own lineage) before killing the probe shell itself. On hosts
+ * without a usable `ps` the watchdog degrades to the old self-kill. The
+ * trailing cleanup only runs on the success path; after a watchdog kill the
+ * leftover watchdog finishes its sleep and exits on its own, so at most one
+ * short-lived `sleep` per abandoned probe remains.
  */
 function withRemoteWatchdog(command, timeoutMs) {
   const seconds = Math.max(1, Math.ceil((Number(timeoutMs) || 10000) / 1000));
+  const descendantTreeAwk =
+    '{ pp[$1+0]=$2+0 } END { for (p in pp) { q=p+0; d=0; while (q>0 && d<4096) { if (q==root) { printf "%s ", p+0; break } if (q==self) break; q=pp[q]+0; d++ } } }';
+  const watchdog = [
+    `( sleep ${seconds}`,
+    // Resolve the watchdog subshell's own PID so the tree walk can skip it
+    // (killing ourselves mid-list would abort the remaining kills).
+    `&& nc_self=$(sh -c 'echo $PPID' 2>/dev/null)`,
+    `&& nc_tree=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$$" -v self="$nc_self" '${descendantTreeAwk}')`,
+    `&& kill -9 $nc_tree "$$" 2>/dev/null ) & nc_watchdog_pid=$!`,
+  ].join(' ');
   return [
-    `( sleep ${seconds} && kill -9 "$$" 2>/dev/null ) & nc_watchdog_pid=$!`,
+    watchdog,
     command,
     'nc_status=$?',
     'kill "$nc_watchdog_pid" 2>/dev/null',
