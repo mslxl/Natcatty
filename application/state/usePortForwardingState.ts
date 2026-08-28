@@ -297,6 +297,7 @@ export const createPortForwardingStorageSyncHandlers = ({
 const applyRuntimeSnapshotProjection = (
   goneRuleIds: ReadonlySet<string> = new Set(),
   authorityAvailable = snapshotAvailable,
+  appearedRuleIds: readonly string[] = [],
 ) => {
   const normalizedRules = normalizeRulesWithConnections(globalRules, {
     reconciledGoneRuleIds: goneRuleIds,
@@ -306,7 +307,7 @@ const applyRuntimeSnapshotProjection = (
     setRuntimeProjection(normalizedRules);
   } else if (hasPortForwardingRuntimePresenceChanged({
     gone: [...goneRuleIds],
-    appeared: [],
+    appeared: appearedRuleIds,
   })) {
     globalRules = normalizedRules;
     notifyListeners();
@@ -368,7 +369,11 @@ const subscribeToPortForwardRuntime = (): (() => void) => {
         applyRuntimeSnapshotProjection(new Set(), false);
         return;
       }
-      applyRuntimeSnapshotProjection(new Set(reconciliation.gone), true);
+      applyRuntimeSnapshotProjection(
+        new Set(reconciliation.gone),
+        true,
+        reconciliation.appeared,
+      );
     } catch {
       if (disposed) return;
       snapshotAvailable = false;
@@ -396,7 +401,11 @@ const subscribeToPortForwardRuntime = (): (() => void) => {
         applyRuntimeSnapshotProjection(new Set(), false);
         return;
       }
-      applyRuntimeSnapshotProjection(new Set(reconciliation.gone), true);
+      applyRuntimeSnapshotProjection(
+        new Set(reconciliation.gone),
+        true,
+        reconciliation.appeared,
+      );
     });
   });
 
