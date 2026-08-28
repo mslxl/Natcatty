@@ -1298,6 +1298,7 @@ export type StopAllActivePortForwardsResult = {
 
 export type StopAllPortForwardsResult = {
   backendStopAllFailed: boolean;
+  directStopFailures: BulkPortForwardRuleError[];
   error?: string;
 };
 
@@ -1415,6 +1416,12 @@ export const stopAllActivePortForwards = async (
   }
 
   const cleanupResult = await stopAllPortForwards();
+  const reportedRuleIds = new Set(result.errors.map((error) => error.ruleId));
+  for (const error of cleanupResult.directStopFailures) {
+    if (reportedRuleIds.has(error.ruleId)) continue;
+    result.failed += 1;
+    result.errors.push(error);
+  }
   if (cleanupResult.backendStopAllFailed) {
     result.failed += 1;
     result.errors.push({
@@ -1431,7 +1438,11 @@ export const stopAllActivePortForwards = async (
  */
 export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> => {
   const bridge = netcattyBridge.get();
-  const result: StopAllPortForwardsResult = { backendStopAllFailed: false };
+  const result: StopAllPortForwardsResult = {
+    backendStopAllFailed: false,
+    directStopFailures: [],
+  };
+  const guardedRuleIds = new Set<string>();
   
   // Stop everything the renderer knows about
   for (const [ruleId, conn] of activeConnections) {
@@ -1439,6 +1450,7 @@ export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> 
     clearReconnectTimer(ruleId);
     manualStopsInProgress.add(ruleId);
     stopAllInProgress.add(ruleId);
+    guardedRuleIds.add(ruleId);
     
     try {
       if (bridge?.stopPortForward) {
@@ -1450,6 +1462,11 @@ export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> 
       conn.unsubscribe?.();
       activeConnections.delete(ruleId);
     } catch (err) {
+      result.directStopFailures.push({
+        ruleId,
+        label: ruleId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       logger.warn(`[PortForwardingService] Failed to stop tunnel ${conn.tunnelId}:`, err);
       preserveFailedStopConnection(
         ruleId,
@@ -1457,7 +1474,6 @@ export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> 
         err instanceof Error ? err.message : String(err),
       );
     } finally {
-      stopAllInProgress.delete(ruleId);
       manualStopsInProgress.delete(ruleId);
     }
   }
@@ -1475,6 +1491,7 @@ export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> 
       logger.warn('[PortForwardingService] Backend stopAllPortForwards failed:', err);
     }
   }
+  for (const ruleId of guardedRuleIds) stopAllInProgress.delete(ruleId);
   return result;
 };
 

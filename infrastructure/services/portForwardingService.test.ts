@@ -1918,6 +1918,10 @@ test("stopAllPortForwards keeps a failed manual stop from auto-reconnecting", as
           statusListener?.("error", "still running");
           return { success: false, error: "still running" };
         },
+        stopAllPortForwards: async () => {
+          statusListener?.("error", "late safety-net error");
+          throw new Error("backend safety-net failed");
+        },
       },
     },
   });
@@ -1973,6 +1977,29 @@ test("stopAllActivePortForwards suppresses reconnects on the legacy stop path", 
   assert.equal(result.failed, 1);
   assert.equal(reconnectCalls, 0);
   assert.equal(getActiveConnection(target.id)?.status, "error");
+  stopAndCleanupRule(target.id);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
+test("stopAllActivePortForwards reports failed cleanup for an unlisted runtime", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: () => () => undefined,
+        stopPortForward: async () => ({ success: false, error: "orphan still running" }),
+      },
+    },
+  });
+
+  const target = rule({ id: "bulk-unlisted-runtime" });
+  await startPortForward(target, host(), [], [], [], () => undefined);
+  const result = await stopAllActivePortForwards([], () => undefined);
+
+  assert.equal(result.failed, 1);
+  assert.equal(result.errors[0]?.ruleId, target.id);
+  assert.equal(result.errors[0]?.error, "orphan still running");
   stopAndCleanupRule(target.id);
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
