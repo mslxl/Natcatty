@@ -1382,9 +1382,15 @@ export const stopAllActivePortForwards = async (
   };
 
   for (const rule of targets) {
-    const stopResult = await stopPortForward(rule.id, (status, error) => {
-      onStatusChange(rule.id, status, error);
-    });
+    stopAllInProgress.add(rule.id);
+    let stopResult: { success: boolean; error?: string };
+    try {
+      stopResult = await stopPortForward(rule.id, (status, error) => {
+        onStatusChange(rule.id, status, error);
+      });
+    } finally {
+      stopAllInProgress.delete(rule.id);
+    }
     if (stopResult.success) {
       result.stopped += 1;
     } else {

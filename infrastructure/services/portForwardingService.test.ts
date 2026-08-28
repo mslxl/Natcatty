@@ -1916,6 +1916,42 @@ test("stopAllPortForwards keeps a failed manual stop from auto-reconnecting", as
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
 
+test("stopAllActivePortForwards suppresses reconnects on the legacy stop path", async () => {
+  let statusListener: ((status: PortForwardingRule["status"], error?: string | null) => void) | undefined;
+  let reconnectCalls = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: (_tunnelId: string, listener: typeof statusListener) => {
+          statusListener = listener;
+          return () => undefined;
+        },
+        stopPortForward: async () => {
+          statusListener?.("error", "still running");
+          return { success: false, error: "still running" };
+        },
+      },
+    },
+  });
+  setReconnectCallback(async () => {
+    reconnectCalls += 1;
+    return { success: true };
+  });
+
+  const target = rule({ id: "bulk-legacy-stop-no-reconnect" });
+  await startPortForward(target, host(), [], [], [], () => undefined, true);
+  const result = await stopAllActivePortForwards([target], () => undefined);
+  setReconnectCallback(null);
+
+  assert.equal(result.failed, 1);
+  assert.equal(reconnectCalls, 0);
+  assert.equal(getActiveConnection(target.id)?.status, "error");
+  stopAndCleanupRule(target.id);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});
+
 test("startAllPortForwards re-reads live rules before each queued start", async () => {
   const started: Array<{ ruleId: string; localPort: number }> = [];
   const liveRules = [
