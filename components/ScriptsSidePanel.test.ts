@@ -126,8 +126,11 @@ test("scripts side panel clears pending bulk delete when the panel hides", () =>
   // pending deletes so a later re-show does not resurrect a half-dismissed prompt.
   assert.match(
     source,
-    /if\s*\(\s*!isVisible\s*\)\s*setPendingDeleteIds\(\s*null\s*\)/,
+    /if\s*\(\s*isVisible\s*\)\s*return/,
   );
+  assert.match(source, /setIsPackageDialogOpen\(\s*false\s*\)/);
+  assert.match(source, /setRenamingPackagePath\(\s*''\s*\)/);
+  assert.match(source, /setNewPackageName\(\s*''\s*\)/);
 });
 
 test("scripts side panel package dialog traps focus and exposes dialog close contract", () => {

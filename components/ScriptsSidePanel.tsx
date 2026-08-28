@@ -398,8 +398,14 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
   }, [snippets]);
 
   useEffect(() => {
-    if (!isVisible) setPendingDeleteIds(null);
-    if (!isVisible) setPendingDeletePackagePath(null);
+    if (isVisible) return;
+    setPendingDeleteIds(null);
+    setPendingDeletePackagePath(null);
+    setIsPackageDialogOpen(false);
+    setPackageDialogMode('create');
+    setRenamingPackagePath('');
+    setNewPackageName('');
+    setPackageError('');
   }, [isVisible]);
 
   // Parent-owned confirm (compact toolbar popover) dispatches the shared delete
