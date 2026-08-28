@@ -558,11 +558,15 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
           setRenameError('');
         }
       }
+      if (deleteTarget?.type === 'package') {
+        const nextPath = applySnippetPackagePathChange(deleteTarget.id, change);
+        if (nextPath !== deleteTarget.id) setDeleteTarget(null);
+      }
     };
 
     window.addEventListener(SNIPPET_PACKAGE_PATH_CHANGE_EVENT, handlePackagePathChange);
     return () => window.removeEventListener(SNIPPET_PACKAGE_PATH_CHANGE_EVENT, handlePackagePathChange);
-  }, [isRenameDialogOpen, renamingPackagePath]);
+  }, [deleteTarget, isRenameDialogOpen, renamingPackagePath]);
 
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(listRef);
   const hasSnippetsSidePanel = rightPanelMode !== 'none';

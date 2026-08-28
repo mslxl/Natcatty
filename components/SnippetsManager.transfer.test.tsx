@@ -134,4 +134,6 @@ test("vault snippet package and snippet cards use asChild context-menu triggers"
   assert.match(snippetsManagerSource, /setEditingSnippet/);
   assert.match(snippetsManagerSource, /setIsRenameDialogOpen\(false\)/);
   assert.match(snippetsManagerSource, /setRenamingPackagePath\(null\)/);
+  assert.match(snippetsManagerSource, /deleteTarget\?\.type === 'package'/);
+  assert.match(snippetsManagerSource, /setDeleteTarget\(null\)/);
 });
