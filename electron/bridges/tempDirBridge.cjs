@@ -113,7 +113,8 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
     const encrypted = safeStorage.encryptString(key.toString("base64"));
     await fs.promises.writeFile(pendingPath, encrypted, { mode: 0o600, flag: "wx" });
     if (!isCurrentTempDir()) return null;
-    await fs.promises.rename(pendingPath, keyPath);
+    await fs.promises.link(pendingPath, keyPath);
+    await safeUnlink(pendingPath);
     return key;
   } catch (error) {
     await safeUnlink(pendingPath);
