@@ -130,7 +130,11 @@ async function ensureToolOutputSigningKeyFile(key) {
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
   try {
     const stat = await fs.promises.lstat(keyPath);
-    return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return false;
+    const encrypted = await fs.promises.readFile(keyPath);
+    const persistedKey = Buffer.from(toolOutputSafeStorage.decryptString(encrypted), "base64");
+    return persistedKey.length === key.length
+      && crypto.timingSafeEqual(persistedKey, key);
   } catch (error) {
     if (error?.code !== "ENOENT") return false;
   }
@@ -844,10 +848,18 @@ function registerHandlers(ipcMain, shell, electronModule) {
       if (getToolOutputChatDeletionGeneration(record.chatSessionId) !== chatDeletionGeneration) {
         throw new Error("Chat session was cleared while output was being saved.");
       }
-      const signingKey = await getToolOutputSigningKey();
+      let signingKey = await getToolOutputSigningKey();
       if (!signingKey) throw new Error("Secure local storage is unavailable.");
       if (!await ensureToolOutputSigningKeyFile(signingKey)) {
-        throw new Error("Unable to prepare secure local storage.");
+        // The temp root may have been rebound after the key was acquired.
+        // Reload once so this write cannot sign into the replacement root with
+        // a key that only belongs to the old inode.
+        toolOutputSigningKeyPromise = Promise.resolve(null);
+        toolOutputSigningKeyRecoveryPromise = null;
+        signingKey = await getToolOutputSigningKey();
+        if (!signingKey || !await ensureToolOutputSigningKeyFile(signingKey)) {
+          throw new Error("Unable to prepare secure local storage.");
+        }
       }
       await fs.promises.writeFile(filePath, contentBuffer, { mode: 0o600, flag: "wx" });
       const manifest = {

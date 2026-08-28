@@ -182,6 +182,71 @@ test("tool output signing key reloads when the temp root inode is replaced", asy
   }
 });
 
+test("tool output write retries when the temp root is replaced after key loading starts", async () => {
+  const root = await fs.promises.mkdtemp(path.join(require("node:os").tmpdir(), "netcatty-rebind-write-"));
+  const fakeHome = path.join(root, "home");
+  await fs.promises.mkdir(fakeHome);
+  await fs.promises.chmod(root, 0o700);
+  const script = [
+    'const fs = require("node:fs");',
+    'const path = require("node:path");',
+    'const bridge = require("./electron/bridges/tempDirBridge.cjs");',
+    'const handlers = new Map();',
+    'const secret = process.env.FAKE_SAFE_STORAGE_SECRET;',
+    'const safeStorage = {',
+    '  isEncryptionAvailable: () => true,',
+    '  encryptString: value => Buffer.from(`${secret}:${value}`, "utf8"),',
+    '  decryptString: value => {',
+    '    const text = value.toString("utf8");',
+    '    if (!text.startsWith(`${secret}:`)) throw new Error("wrong key");',
+    '    return text.slice(secret.length + 1);',
+    '  },',
+    '};',
+    'bridge.registerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, undefined, { safeStorage });',
+    '(async () => {',
+    '  const now = Date.now();',
+    '  const first = bridge.getTempDir();',
+    '  const before = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, {',
+    '    record: { schemaVersion: 1, handleId: "before-rebind-write", chatSessionId: "rebind-write-chat", capabilityId: "terminal.execute", totalChars: 6, storedChars: 6, sourceTruncated: false, preview: "before", storedAt: now, accessedAt: now },',
+    '    content: "before",',
+    '  });',
+    '  if (!before.ok) throw new Error(before.error);',
+    '  const originalReadFile = fs.promises.readFile;',
+    '  let replaced = false;',
+    '  fs.promises.readFile = async (filePath, ...args) => {',
+    '    if (!replaced && path.basename(filePath) === ".tool-output-signing-key") {',
+    '      const oldKeyFile = await originalReadFile(filePath, ...args);',
+    '      replaced = true;',
+    '      const oldPath = `${first}.old`;',
+    '      fs.renameSync(first, oldPath);',
+    '      fs.mkdirSync(first, { recursive: true, mode: 0o700 });',
+    '      const replacementKey = Buffer.alloc(32, 7);',
+    '      fs.writeFileSync(path.join(first, ".tool-output-signing-key"), safeStorage.encryptString(replacementKey.toString("base64")), { mode: 0o600 });',
+    '      return oldKeyFile;',
+    '    }',
+    '    return originalReadFile(filePath, ...args);',
+    '  };',
+    '  bridge.registerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, undefined, { safeStorage });',
+    '  const after = await handlers.get("netcatty:tempdir:toolOutputWrite")({}, {',
+    '    record: { schemaVersion: 1, handleId: "after-rebind-write", chatSessionId: "rebind-write-chat", capabilityId: "terminal.execute", totalChars: 5, storedChars: 5, sourceTruncated: false, preview: "after", storedAt: now, accessedAt: now },',
+    '    content: "after",',
+    '  });',
+    '  console.log(`RESULT:${JSON.stringify(after)}`);',
+    '})().catch(error => { console.error(error); process.exit(1); });',
+  ].join("\n");
+  try {
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: path.resolve(__dirname, "../.."),
+      env: isolatedTempChildEnv(root, fakeHome, { FAKE_SAFE_STORAGE_SECRET: "rebind-write-secret" }),
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /RESULT:.*"ok":true/);
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("tool output temp handlers write, read, and delete only Netcatty temp files", async () => {
   const handlers = new Map();
   tempDirBridge.registerHandlers({
