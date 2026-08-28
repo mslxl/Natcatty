@@ -146,6 +146,9 @@ test("scripts side panel package rows wrap in a rename and delete context menu",
   assert.match(source, /vault\.deleteConfirm\.packageDesc/);
   assert.match(source, /deleteSnippetPackage/);
   assert.match(source, /renameSnippetPackage/);
+  assert.match(source, /SNIPPET_PACKAGE_PATH_CHANGE_EVENT/);
+  assert.match(source, /detail: \{ from: renamingPackagePath, to: result\.newPath \}/);
+  assert.match(source, /detail: \{ from: path, to: null \}/);
   assert.match(source, /openRenamePackageDialog/);
   assert.match(source, /requestDeletePackage/);
 });

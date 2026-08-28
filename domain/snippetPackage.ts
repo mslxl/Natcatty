@@ -1,5 +1,12 @@
 export const SNIPPET_PACKAGE_NAME_PATTERN = /^[\w\p{L}\p{N}-]+$/u;
 
+export const SNIPPET_PACKAGE_PATH_CHANGE_EVENT = "netcatty:snippets:package-path-change";
+
+export type SnippetPackagePathChange = {
+  from: string;
+  to: string | null;
+};
+
 export type SnippetPackageRenameError = "empty" | "invalidChars" | "duplicate";
 
 type PackagedSnippet = { package?: string };
@@ -34,11 +41,24 @@ export function collectSnippetPackageTreePaths(
   return Array.from(paths);
 }
 
-const rewritePackagePath = (value: string, from: string, to: string): string => {
+export const rewriteSnippetPackagePath = (value: string, from: string, to: string): string => {
   if (value === from) return to;
   if (value.startsWith(`${from}/`)) return to + value.slice(from.length);
   return value;
 };
+
+export function applySnippetPackagePathChange(
+  value: string | undefined,
+  change: SnippetPackagePathChange,
+): string {
+  const packagePath = value || "";
+  if (!packagePath || !isSnippetPackagePathAtOrBelow(packagePath, change.from)) {
+    return packagePath;
+  }
+  return change.to === null
+    ? ""
+    : rewriteSnippetPackagePath(packagePath, change.from, change.to);
+}
 
 /** Remove a package and descendants; keep snippets and clear their package path. */
 export function deleteSnippetPackage<T extends PackagedSnippet>(
@@ -86,12 +106,12 @@ export function renameSnippetPackage<T extends PackagedSnippet>(
     ok: true,
     newPath,
     packages: Array.from(new Set(
-      packages.map((item) => rewritePackagePath(item, path, newPath)),
+      packages.map((item) => rewriteSnippetPackagePath(item, path, newPath)),
     )),
     snippets: snippets.map((snippet) => {
       const packagePath = snippet.package || "";
       if (!packagePath) return snippet;
-      const nextPath = rewritePackagePath(packagePath, path, newPath);
+      const nextPath = rewriteSnippetPackagePath(packagePath, path, newPath);
       return nextPath === packagePath ? snippet : { ...snippet, package: nextPath };
     }),
   };

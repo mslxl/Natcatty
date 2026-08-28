@@ -26,7 +26,13 @@ import {
 } from '../domain/snippetTargets.ts';
 import { removeHostConnectScript, syncHostsForSnippetTargetChange } from '../domain/hostConnectScripts.ts';
 import { flattenSnippetCommandPreview } from '../domain/snippetPreview.ts';
-import { deleteSnippetPackage, renameSnippetPackage } from '../domain/snippetPackage.ts';
+import {
+  applySnippetPackagePathChange,
+  deleteSnippetPackage,
+  SNIPPET_PACKAGE_PATH_CHANGE_EVENT,
+  renameSnippetPackage,
+  type SnippetPackagePathChange,
+} from '../domain/snippetPackage.ts';
 import { deleteSelectedSnippetsFromVault } from '../domain/snippetSelection.ts';
 import { DEFAULT_SCRIPT_TEMPLATE, isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
@@ -527,6 +533,28 @@ const SnippetsManager: React.FC<SnippetsManagerProps> = ({
   >(null);
   const [isSnippetImportDialogOpen, setIsSnippetImportDialogOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingSnippetImport | null>(null);
+
+  useEffect(() => {
+    const handlePackagePathChange = (event: Event) => {
+      const change = (event as CustomEvent<SnippetPackagePathChange>).detail;
+      if (!change?.from || (change.to !== null && !change.to)) return;
+
+      setSelectedPackage((current) => {
+        if (!current) return current;
+        const next = applySnippetPackagePathChange(current, change);
+        return next || null;
+      });
+      setEditingSnippet((current) => {
+        if (!current.package) return current;
+        const next = applySnippetPackagePathChange(current.package, change);
+        return next === current.package ? current : { ...current, package: next };
+      });
+    };
+
+    window.addEventListener(SNIPPET_PACKAGE_PATH_CHANGE_EVENT, handlePackagePathChange);
+    return () => window.removeEventListener(SNIPPET_PACKAGE_PATH_CHANGE_EVENT, handlePackagePathChange);
+  }, []);
+
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(listRef);
   const hasSnippetsSidePanel = rightPanelMode !== 'none';
   const splitGridColsRef = useRef(2);

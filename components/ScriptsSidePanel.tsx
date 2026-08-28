@@ -31,6 +31,7 @@ import {
   collectSnippetPackageTreePaths,
   deleteSnippetPackage,
   renameSnippetPackage,
+  SNIPPET_PACKAGE_PATH_CHANGE_EVENT,
 } from '../domain/snippetPackage.ts';
 import { isScriptSnippet } from '../domain/snippetScript.ts';
 import { reorderVaultItems, reorderVaultStrings, sortByVaultOrder } from '../domain/vaultOrder';
@@ -835,6 +836,9 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     if (result.newPath !== renamingPackagePath) {
       onPackagesChange(result.packages);
       onSnippetsChange(result.snippets);
+      window.dispatchEvent(new CustomEvent(SNIPPET_PACKAGE_PATH_CHANGE_EVENT, {
+        detail: { from: renamingPackagePath, to: result.newPath },
+      }));
     }
     setIsPackageDialogOpen(false);
     setNewPackageName('');
@@ -862,6 +866,9 @@ const ScriptsSidePanelInner: React.FC<ScriptsSidePanelProps> = ({
     const result = deleteSnippetPackage(packages, snippets, path);
     onPackagesChange(result.packages);
     onSnippetsChange(result.snippets);
+    window.dispatchEvent(new CustomEvent(SNIPPET_PACKAGE_PATH_CHANGE_EVENT, {
+      detail: { from: path, to: null },
+    }));
   }, [onPackagesChange, onSnippetsChange, packages, pendingDeletePackagePath, snippets]);
 
   const handleEditSnippet = useCallback((snippet: Snippet) => {

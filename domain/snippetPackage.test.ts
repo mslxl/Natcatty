@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { Snippet } from "./models.ts";
 import {
+  applySnippetPackagePathChange,
   collectSnippetPackageTreePaths,
   deleteSnippetPackage,
   renameSnippetPackage,
@@ -129,4 +130,19 @@ test("renameSnippetPackage no-ops when the name is unchanged", () => {
   assert.equal(result.newPath, "ops");
   assert.equal(result.packages, packages);
   assert.equal(result.snippets, snippets);
+});
+
+test("applySnippetPackagePathChange rewrites descendants and clears deleted paths", () => {
+  assert.equal(
+    applySnippetPackagePathChange("ops/linux", { from: "ops", to: "platform" }),
+    "platform/linux",
+  );
+  assert.equal(
+    applySnippetPackagePathChange("ops/linux", { from: "ops", to: null }),
+    "",
+  );
+  assert.equal(
+    applySnippetPackagePathChange("other", { from: "ops", to: "platform" }),
+    "other",
+  );
 });
