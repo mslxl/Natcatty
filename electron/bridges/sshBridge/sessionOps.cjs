@@ -729,15 +729,22 @@ function createSessionOpsApi(ctx) {
     async function removeRemoteFiles(session, paths, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return;
         const argv = paths.map((p) => quoteShellArg(p)).join(" ");
+        const commitToken = "NETCATTY_ZMODEM_COMMIT";
+        const command = `exec sh -c ${quoteShellArg(
+          `IFS= read -r token || exit 125; ` +
+          `[ "$token" = ${quoteShellArg(commitToken)} ] || exit 125; ` +
+          `rm -f -- "$@"`,
+        )} sh ${argv}`;
         await executeBoundedSshCommand(
           session.conn,
-          `exec sh -c 'rm -f -- "$@"' sh ${argv}`,
+          command,
           {
             openingTimeoutMs: 5000,
             runTimeoutMs: 5000,
             maxOutputBytes: 64 * 1024,
             signal,
             invalidateTransportOnAbort: false,
+            onStream: (stream) => stream.end(`${commitToken}\n`),
           },
         ).catch(() => {});
     }
@@ -754,15 +761,22 @@ function createSessionOpsApi(ctx) {
         }
         if (args.length === 0) return;
         const script = 'while [ "$#" -ge 2 ]; do chmod "$1" "$2" 2>/dev/null; shift 2; done';
+        const commitToken = "NETCATTY_ZMODEM_COMMIT";
+        const command = `exec sh -c ${quoteShellArg(
+          `IFS= read -r token || exit 125; ` +
+          `[ "$token" = ${quoteShellArg(commitToken)} ] || exit 125; ` +
+          script,
+        )} sh ${args.join(" ")}`;
         await executeBoundedSshCommand(
           session.conn,
-          `exec sh -c ${quoteShellArg(script)} sh ${args.join(" ")}`,
+          command,
           {
             openingTimeoutMs: 5000,
             runTimeoutMs: 5000,
             maxOutputBytes: 64 * 1024,
             signal,
             invalidateTransportOnAbort: false,
+            onStream: (stream) => stream.end(`${commitToken}\n`),
           },
         ).catch(() => {});
     }
