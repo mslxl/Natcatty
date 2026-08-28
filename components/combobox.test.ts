@@ -168,6 +168,21 @@ test("combobox keyboard scrolling into view does not expand a slid window", () =
   );
 });
 
+test("combobox render window resets during render, before committing a changed result set", () => {
+  // The reset must not live in a post-commit effect, otherwise a cleared or
+  // changed query commits the new result sliced with a stale oversized
+  // window before the effect can shrink it back.
+  assert.doesNotMatch(
+    source.slice(source.indexOf("const [windowKey, setWindowKey]"),
+      source.indexOf("const renderedOptions")),
+    /useEffect/,
+  );
+  assert.match(
+    source,
+    /if \(windowKey\.open !== open \|\| windowKey\.filteredOptions !== filteredOptions\) \{\s*setWindowKey\(\{ open, filteredOptions \}\)\s*setRenderLimit\(COMBOBOX_INITIAL_RENDER_LIMIT\)\s*setWindowStart\(0\)/,
+  );
+});
+
 test("combobox renders options incrementally so large font lists cannot freeze the picker", () => {
   assert.match(source, /const \[renderLimit, setRenderLimit\] = React\.useState\(COMBOBOX_INITIAL_RENDER_LIMIT\)/);
   assert.match(source, /filteredOptions\.slice\(windowStart, windowStart \+ renderLimit\)/);

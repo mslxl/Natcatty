@@ -256,12 +256,15 @@ export function Combobox({
     // Restart the window from its initial size whenever the picker opens or
     // the filtered result set changes (option set, search mode, or query), so
     // a previously grown or slid window never persists across a changed list.
-    // filteredOptions' identity changes whenever its inputs change, which
-    // covers query refinements while already searching.
-    React.useEffect(() => {
+    // The reset happens during render (React discards the render output and
+    // re-renders immediately after a render-phase state update), so a changed
+    // result set is never committed with a stale, oversized window.
+    const [windowKey, setWindowKey] = React.useState({ open, filteredOptions })
+    if (windowKey.open !== open || windowKey.filteredOptions !== filteredOptions) {
+        setWindowKey({ open, filteredOptions })
         setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
         setWindowStart(0)
-    }, [open, filteredOptions])
+    }
 
     const renderedOptions = React.useMemo(() => {
         return filteredOptions.slice(windowStart, windowStart + renderLimit)
