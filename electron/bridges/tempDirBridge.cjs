@@ -708,9 +708,11 @@ async function touchToolOutputEntry(entry, now = new Date()) {
       mode: 0o600,
       flag: "wx",
     });
-    if (generation !== tempDirRebindGeneration) return false;
+    getTempDir();
+    if (generation !== tempDirRebindGeneration) throw createTempDirReboundError();
     await fs.promises.rename(pendingPath, entry.manifestPath);
-    if (generation !== tempDirRebindGeneration) return false;
+    getTempDir();
+    if (generation !== tempDirRebindGeneration) throw createTempDirReboundError();
     entry.manifest = manifest;
     entry.manifestStat = await fs.promises.stat(entry.manifestPath);
     return true;
