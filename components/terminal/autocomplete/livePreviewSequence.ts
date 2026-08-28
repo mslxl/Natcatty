@@ -15,8 +15,8 @@ export function isWindowsShellLineInput(
 ): boolean {
   if (os === "windows") return true;
   // Hosts default to os:"linux" and the flag is easy to leave wrong. Windows
-  // shells do not kill the line on Ctrl-U — PSReadLine renders the raw byte
-  // literally (e.g. `tkn^Uuv run …`), so every highlighted suggestion piles
+  // shells do not kill the line on Ctrl-U; PSReadLine renders the raw byte
+  // literally (e.g. `tkn^Uuv run ...`), so every highlighted suggestion piles
   // onto the command line (#3184). The detected prompt is authoritative when
   // the flag disagrees: a drive-letter path with a backslash (`PS C:\Users>`,
   // `C:\Windows>`) only occurs in a Windows shell prompt.
