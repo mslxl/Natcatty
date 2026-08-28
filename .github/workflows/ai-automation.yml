@@ -845,16 +845,10 @@ jobs:
           mkdir -p "$research_dir" .ai-runtime
           "$RUNNER_TEMP/prepare-ai-research-input.sh" "$RESEARCH_INPUT_PATH" "$research_dir"
           cp "$RUNNER_TEMP/ai-brave-search.cjs" "$research_dir/ai-brave-search.cjs"
-          cat > "$research_dir/web-search" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-exec node "$(dirname "$0")/ai-brave-search.cjs" search "$@"
-EOS
-          cat > "$research_dir/web-fetch" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-exec node "$(dirname "$0")/ai-brave-search.cjs" fetch "$@"
-EOS
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/ai-automation.cjs");
+            auto.writeBraveResearchHelpers(process.argv[1]);
+          ' "$research_dir"
           chmod 0555 "$research_dir/web-search" "$research_dir/web-fetch" "$research_dir/ai-brave-search.cjs"
           : > "$research_dir/brave-tool.jsonl"
           prompt="$(cat "$RUNNER_TEMP/$RESEARCH_PROMPT_PATH")"
@@ -1662,16 +1656,10 @@ EOS
           mkdir -p "$research_dir" .ai-runtime
           "$RUNNER_TEMP/prepare-ai-research-input.sh" "$RESEARCH_INPUT_PATH" "$research_dir"
           cp "$RUNNER_TEMP/ai-brave-search.cjs" "$research_dir/ai-brave-search.cjs"
-          cat > "$research_dir/web-search" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-exec node "$(dirname "$0")/ai-brave-search.cjs" search "$@"
-EOS
-          cat > "$research_dir/web-fetch" <<'EOS'
-#!/usr/bin/env bash
-set -euo pipefail
-exec node "$(dirname "$0")/ai-brave-search.cjs" fetch "$@"
-EOS
+          node -e '
+            const auto = require(process.env.RUNNER_TEMP + "/ai-automation.cjs");
+            auto.writeBraveResearchHelpers(process.argv[1]);
+          ' "$research_dir"
           chmod 0555 "$research_dir/web-search" "$research_dir/web-fetch" "$research_dir/ai-brave-search.cjs"
           : > "$research_dir/brave-tool.jsonl"
           prompt="$(cat "$RUNNER_TEMP/$RESEARCH_PROMPT_PATH")"

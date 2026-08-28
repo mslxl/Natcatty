@@ -2943,6 +2943,32 @@ function writeText(filePath, value) {
   fs.writeFileSync(filePath, String(value ?? ''), 'utf8');
 }
 
+const BRAVE_RESEARCH_HELPERS = Object.freeze([
+  ['web-search', 'search'],
+  ['web-fetch', 'fetch'],
+]);
+
+/**
+ * Write PATH helpers for isolated Brave research. Keep this out of workflow
+ * YAML heredocs: an unindented `<<'EOS'` body is parsed as a top-level key
+ * and GitHub will not register the workflow.
+ */
+function writeBraveResearchHelpers(researchDir) {
+  const dir = String(researchDir || '').trim();
+  if (!dir) throw new Error('research directory is required');
+  for (const [name, mode] of BRAVE_RESEARCH_HELPERS) {
+    const script = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `exec node "$(dirname "$0")/ai-brave-search.cjs" ${mode} "$@"`,
+      '',
+    ].join('\n');
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, script, { encoding: 'utf8', mode: 0o555 });
+    fs.chmodSync(filePath, 0o555);
+  }
+}
+
 /**
  * Write Claude Code settings.json for an unattended CI run.
  */
@@ -4202,6 +4228,7 @@ module.exports = {
   prepareAiCliSettings,
   unwrapAgentJson,
   isAutomationTriageMarker,
+  writeBraveResearchHelpers,
   writeJson,
   writeText,
 };
