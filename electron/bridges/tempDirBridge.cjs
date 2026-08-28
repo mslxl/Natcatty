@@ -652,6 +652,19 @@ async function readSafeManifest(manifestPath, signingKey) {
   }
 }
 
+async function readSafeManifestWithTempRootRecovery(manifestPath, signingKey, retry = true) {
+  const generation = tempDirRebindGeneration;
+  const entry = await readSafeManifest(manifestPath, signingKey);
+  if (entry || !retry) return entry;
+  try {
+    getTempDir();
+  } catch {
+    return null;
+  }
+  if (generation === tempDirRebindGeneration) return null;
+  return readSafeManifest(manifestPath);
+}
+
 async function readVerifiedManifestContent(entry) {
   const opened = await openSafeToolOutputFile(entry.contentPath);
   if (!opened) return null;
@@ -700,7 +713,10 @@ async function listToolOutputManifestEntries(retry = true) {
   }
   for (const file of files) {
     if (!file.endsWith(".log.meta.json")) continue;
-    const entry = await readSafeManifest(path.join(tempDir, file), signingKey);
+    const entry = await readSafeManifestWithTempRootRecovery(path.join(tempDir, file), signingKey);
+    if (generation !== tempDirRebindGeneration || getTempDir() !== tempDir) {
+      return retry ? listToolOutputManifestEntries(false) : [];
+    }
     if (entry) entries.push(entry);
   }
   if (generation !== tempDirRebindGeneration || getTempDir() !== tempDir) {
@@ -1160,7 +1176,7 @@ function registerHandlers(ipcMain, shell, electronModule) {
 
   ipcMain.handle("netcatty:tempdir:toolOutputRead", async (_event, payload = {}) => {
     const filePath = payload.path;
-    const manifestEntry = await readSafeManifest(toolOutputManifestPath(filePath));
+    const manifestEntry = await readSafeManifestWithTempRootRecovery(toolOutputManifestPath(filePath));
     if (!manifestEntry || path.resolve(manifestEntry.contentPath) !== path.resolve(filePath)) return null;
     const chatSessionId = manifestEntry.manifest.record.chatSessionId;
     const chatDeletionGeneration = getToolOutputChatDeletionGeneration(chatSessionId);
