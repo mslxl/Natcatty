@@ -3996,6 +3996,34 @@ test('ai-automation.yml stays valid YAML with no unindented block content', () =
   assert.doesNotMatch(workflow, /<<'EOS'/);
 });
 
+test('jobs copy ai-automation.cjs to RUNNER_TEMP before requiring it', () => {
+  const workflow = fs.readFileSync(
+    path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
+    'utf8',
+  );
+  const jobsStart = workflow.indexOf('\njobs:\n');
+  assert.ok(jobsStart >= 0, 'jobs block missing');
+  const jobsSection = workflow.slice(jobsStart);
+  const jobs = [...jobsSection.matchAll(
+    /\n  ([a-zA-Z0-9_]+):\n([\s\S]*?)(?=\n  [a-zA-Z0-9_]+:|\n*$)/g,
+  )];
+  const requireHelper = /require\((?:`\$\{process\.env\.RUNNER_TEMP\}\/ai-automation\.cjs`|process\.env\.RUNNER_TEMP \+ ['"]\/ai-automation\.cjs['"])\)/;
+  const copyHelper = /cp (?:helpers\/)?scripts\/ai-automation\.cjs "\$RUNNER_TEMP\/ai-automation\.cjs"|git(?: -C helpers)? show "FETCH_HEAD:scripts\/ai-automation\.cjs" > "\$RUNNER_TEMP\/ai-automation\.cjs"|run: \*freeze_ai_helper/;
+  const missing = [];
+  for (const [, name, body] of jobs) {
+    if (!requireHelper.test(body)) continue;
+    if (!copyHelper.test(body)) missing.push(name);
+  }
+  assert.deepEqual(missing, []);
+  const route = jobs.find((match) => match[1] === 'route')?.[2] || '';
+  assert.match(route, /run: &freeze_ai_helper \|/);
+  assert.ok(
+    route.indexOf('cp scripts/ai-automation.cjs "$RUNNER_TEMP/ai-automation.cjs"') <
+      route.indexOf('name: Decide route'),
+    'route must freeze the helper before Decide route',
+  );
+});
+
 test('workflow confines Brave research to isolated read-only research passes', () => {
   const workflow = fs.readFileSync(
     path.join(__dirname, '..', '.github', 'workflows', 'ai-automation.yml'),
