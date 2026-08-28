@@ -65,6 +65,18 @@ async function readFileAtMost(file, maxBytes) {
   return bytesRead > maxBytes ? null : buffer.subarray(0, bytesRead);
 }
 
+async function hasPendingSigningKeyFile(keyPath) {
+  try {
+    const files = await fs.promises.readdir(path.dirname(keyPath));
+    return files.some(file => (
+      file.startsWith(`${TOOL_OUTPUT_SIGNING_KEY_FILE}.`)
+      && file.endsWith(".pending")
+    ));
+  } catch {
+    return false;
+  }
+}
+
 async function loadOrCreateToolOutputSigningKey(safeStorage) {
   if (!isSecureToolOutputStorageAvailable(safeStorage)) return null;
   const keyPath = path.join(getTempDir(), TOOL_OUTPUT_SIGNING_KEY_FILE);
@@ -79,8 +91,8 @@ async function loadOrCreateToolOutputSigningKey(safeStorage) {
   };
   try {
     const stat = await fs.promises.lstat(keyPath);
-    if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size <= 4096) {
-      const opened = await openSafeToolOutputFile(keyPath, 4096, false);
+    if (stat.isFile() && !stat.isSymbolicLink() && (stat.nlink === 1 || stat.nlink === 2) && stat.size <= 4096) {
+      const opened = await openSafeToolOutputFile(keyPath, 4096, false, true);
       if (!opened) return null;
       try {
         const encrypted = await readFileAtMost(opened.file, 4096);
@@ -429,7 +441,12 @@ function isNetcattyTempPath(filePath) {
   return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-async function openSafeToolOutputFile(filePath, maxBytes = MAX_TOOL_OUTPUT_TEMP_BYTES, requireEvenBytes = true) {
+async function openSafeToolOutputFile(
+  filePath,
+  maxBytes = MAX_TOOL_OUTPUT_TEMP_BYTES,
+  requireEvenBytes = true,
+  allowSigningKeyPublication = false,
+) {
   if (!isNetcattyTempPath(filePath)) return null;
   let file;
   try {
@@ -442,7 +459,15 @@ async function openSafeToolOutputFile(filePath, maxBytes = MAX_TOOL_OUTPUT_TEMP_
       await file.close();
       return null;
     }
-    if (!stat.isFile() || stat.nlink !== 1 || stat.size > maxBytes || (requireEvenBytes && stat.size % 2 !== 0)) {
+    const publishedSigningKey = allowSigningKeyPublication
+      && stat.nlink === 2
+      && await hasPendingSigningKeyFile(filePath);
+    if (
+      !stat.isFile()
+      || (!publishedSigningKey && stat.nlink !== 1)
+      || stat.size > maxBytes
+      || (requireEvenBytes && stat.size % 2 !== 0)
+    ) {
       await file.close();
       return null;
     }
@@ -899,8 +924,9 @@ function registerHandlers(ipcMain, shell, electronModule) {
     const chatDeletionGeneration = getToolOutputChatDeletionGeneration(record.chatSessionId);
     const filePath = getTempFilePath(`${ownershipMarker.slice(1)}${record.handleId}.log`);
   const manifestPath = toolOutputManifestPath(filePath);
-  const pendingManifestPath = getTempFilePath(`${record.handleId}.manifest.pending`);
+    const pendingManifestPath = getTempFilePath(`${record.handleId}.manifest.pending`);
     const writeOnce = async attempt => {
+      const attemptGeneration = tempDirRebindGeneration;
       try {
       if (record.terminalSessionId && closedToolOutputTerminalSessions.has(record.terminalSessionId)) {
         throw new Error("Terminal session is already closed.");
@@ -980,7 +1006,16 @@ function registerHandlers(ipcMain, shell, electronModule) {
           safeUnlink(manifestPath),
           safeUnlink(filePath),
         ]);
-        if (error?.code === TOOL_OUTPUT_TEMP_DIR_REBOUND && attempt === 0) {
+        let tempDirWasRebound = error?.code === TOOL_OUTPUT_TEMP_DIR_REBOUND;
+        if (!tempDirWasRebound && error?.code === "ENOENT" && attempt === 0) {
+          try {
+            getTempDir();
+          } catch {
+            // The normal error is returned below if the temp root cannot recover.
+          }
+          tempDirWasRebound = tempDirRebindGeneration !== attemptGeneration;
+        }
+        if (tempDirWasRebound && attempt === 0) {
           return writeOnce(1);
         }
         return { ok: false, error: error?.message || "Unable to persist tool output." };
