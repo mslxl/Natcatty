@@ -219,6 +219,10 @@ export function Combobox({
     const inputRef = React.useRef<HTMLInputElement>(null)
     const wasOpenRef = React.useRef(false)
     const activeOptionRef = React.useRef<HTMLButtonElement>(null)
+    // True while scroll events on the options list are caused by this
+    // component scrolling the active option into view (keyboard navigation,
+    // mouse hover) rather than by the user scrolling manually.
+    const navigationalScrollRef = React.useRef(false)
     const listboxId = React.useId()
 
     // Sync input value with external value when not focused
@@ -281,7 +285,11 @@ export function Combobox({
         // above a slid window become reachable again. The active index must
         // be cleared too, otherwise the active-option effect immediately
         // slides the window back to a stale active option.
+        // Scrolls emitted by scrolling the active option into view are not
+        // manual scrolls: skipping the reset keeps ArrowUp navigation able to
+        // slide into the preceding window without losing the active option.
         if (windowStart > 0 && shouldResetComboboxWindow(scrollTarget)) {
+            if (navigationalScrollRef.current) return
             setActiveIndex(-1)
             setWindowStart(0)
             setRenderLimit(COMBOBOX_INITIAL_RENDER_LIMIT)
@@ -319,7 +327,18 @@ export function Combobox({
     }, [activeIndex, showCreateOption, windowStart, renderLimit, filteredOptions.length])
 
     React.useEffect(() => {
+        // Scrolling the active option into view emits scroll events even when
+        // keyboard navigation slides the window toward the top of the list.
+        // Mark them as navigational so the manual-scroll reset below does not
+        // mistake them for the user scrolling back to the top, which would
+        // clear the active option and make preceding windows unreachable by
+        // ArrowUp. The flag is cleared on the next frame, once the scroll
+        // events for this update have been dispatched.
+        navigationalScrollRef.current = true
         activeOptionRef.current?.scrollIntoView({ block: 'nearest' })
+        requestAnimationFrame(() => {
+            navigationalScrollRef.current = false
+        })
     }, [activeIndex, renderedOptions.length, windowStart])
 
     React.useEffect(() => {

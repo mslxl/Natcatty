@@ -142,6 +142,22 @@ test("combobox slid windows reset when the list is scrolled back to its top", ()
   assert.equal(shouldResetComboboxWindow(target(120)), false);
 });
 
+test("combobox keyboard scrolling into view does not reset a slid window", () => {
+  // The scroll-into-view effect marks its scroll events as navigational so
+  // sliding toward the top by ArrowUp cannot trigger the manual-scroll
+  // reset (which would clear the active option and lose backward reach).
+  assert.match(source, /const navigationalScrollRef = React\.useRef\(false\)/);
+  assert.match(
+    source,
+    /React\.useEffect\(\(\) => \{\s*\/\/ Scrolling the active option into view emits scroll events[\s\S]*?navigationalScrollRef\.current = true\s*activeOptionRef\.current\?\.scrollIntoView\(\{ block: 'nearest' \}\)\s*requestAnimationFrame\(\(\) => \{\s*navigationalScrollRef\.current = false\s*\}\)/,
+  );
+  // Only the reset branch is suppressed; expansion still runs.
+  assert.match(
+    source,
+    /if \(windowStart > 0 && shouldResetComboboxWindow\(scrollTarget\)\) \{\s*if \(navigationalScrollRef\.current\) return\s*setActiveIndex\(-1\)/,
+  );
+});
+
 test("combobox renders options incrementally so large font lists cannot freeze the picker", () => {
   assert.match(source, /const \[renderLimit, setRenderLimit\] = React\.useState\(COMBOBOX_INITIAL_RENDER_LIMIT\)/);
   assert.match(source, /filteredOptions\.slice\(windowStart, windowStart \+ renderLimit\)/);
