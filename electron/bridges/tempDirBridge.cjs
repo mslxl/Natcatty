@@ -679,6 +679,16 @@ async function listToolOutputManifestEntries(retry = true) {
   try {
     files = await fs.promises.readdir(tempDir);
   } catch {
+    if (retry) {
+      try {
+        getTempDir();
+      } catch {
+        // Return the normal empty result if the temp root cannot recover.
+      }
+      if (generation !== tempDirRebindGeneration) {
+        return listToolOutputManifestEntries(false);
+      }
+    }
     return entries;
   }
   if (generation !== tempDirRebindGeneration || getTempDir() !== tempDir) {
