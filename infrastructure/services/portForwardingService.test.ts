@@ -1822,6 +1822,29 @@ test("stopAllActivePortForwards stops running rules then calls backend stopAll",
   assert.equal(getActiveConnection("bulk-stop-2"), undefined);
 });
 
+test("stopAllActivePortForwards reports a backend safety-net failure", async () => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      netcatty: {
+        startPortForward: async () => ({ success: true }),
+        onPortForwardStatus: () => () => undefined,
+        stopPortForwardByRuleId: async () => ({ stopped: 1, failed: 0, errors: [] }),
+        stopAllPortForwards: async () => {
+          throw new Error("backend unavailable");
+        },
+      },
+    },
+  });
+
+  const target = rule({ id: "bulk-stop-backend-failure" });
+  await startPortForward(target, host(), [], [], [], () => undefined);
+  const result = await stopAllActivePortForwards([target], () => undefined);
+
+  assert.equal(result.failed, 1);
+  assert.equal(result.errors[0]?.error, "backend unavailable");
+});
+
 test("stopAllPortForwards preserves a runtime when direct cleanup fails", async () => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,

@@ -1296,6 +1296,11 @@ export type StopAllActivePortForwardsResult = {
   errors: BulkPortForwardRuleError[];
 };
 
+export type StopAllPortForwardsResult = {
+  backendStopAllFailed: boolean;
+  error?: string;
+};
+
 type StartAllPortForwardHostResolver = (rule: PortForwardingRule) => Host | undefined;
 type StartAllPortForwardRuleLookup = (ruleId: string) => PortForwardingRule | undefined;
 
@@ -1409,15 +1414,24 @@ export const stopAllActivePortForwards = async (
     }
   }
 
-  await stopAllPortForwards();
+  const cleanupResult = await stopAllPortForwards();
+  if (cleanupResult.backendStopAllFailed) {
+    result.failed += 1;
+    result.errors.push({
+      ruleId: 'backend-stop-all',
+      label: 'All port forwarding tunnels',
+      error: cleanupResult.error || 'Failed to stop all port forwarding tunnels',
+    });
+  }
   return result;
 };
 
 /**
  * Stop all active tunnels (cleanup on unmount)
  */
-export const stopAllPortForwards = async (): Promise<void> => {
+export const stopAllPortForwards = async (): Promise<StopAllPortForwardsResult> => {
   const bridge = netcattyBridge.get();
+  const result: StopAllPortForwardsResult = { backendStopAllFailed: false };
   
   // Stop everything the renderer knows about
   for (const [ruleId, conn] of activeConnections) {
@@ -1456,9 +1470,12 @@ export const stopAllPortForwards = async (): Promise<void> => {
     try {
       await bridge.stopAllPortForwards();
     } catch (err) {
+      result.backendStopAllFailed = true;
+      result.error = err instanceof Error ? err.message : String(err);
       logger.warn('[PortForwardingService] Backend stopAllPortForwards failed:', err);
     }
   }
+  return result;
 };
 
 /**
